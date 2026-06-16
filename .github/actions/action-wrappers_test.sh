@@ -16,11 +16,18 @@
 #      job-level env path, never an input that could leak into logs / the inputs surface).
 #   2. mecatequi-extract-prompt/action.yml maps out-file -> OUT_FILE (the one env the script
 #      reads).
+#   3. mecatequi/action.yml (the MAIN action) maps its `instructions` input onto MQ_INSTRUCTIONS
+#      in the Run step's env AND wires that env to the binary via the conditional
+#      `args+=( --instructions … )`. Both are load-bearing: drop the env mapping and the
+#      operator framing never reaches the binary; drop the args+= line and it ships INERT
+#      (the input is accepted, the env is set, but the flag is never passed) while the Go unit
+#      tests stay green. Pinning both here closes that gap.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PUBLISH_YML="${HERE}/mecatequi-publish/action.yml"
 EXTRACT_YML="${HERE}/mecatequi-extract-prompt/action.yml"
+MECATEQUI_YML="${HERE}/mecatequi/action.yml"
 
 fail=0
 note() { printf '%s\n' "$*" >&2; }
@@ -38,6 +45,7 @@ lacks() {
 
 [ -f "${PUBLISH_YML}" ] || { note "FATAL: ${PUBLISH_YML} not found"; exit 1; }
 [ -f "${EXTRACT_YML}" ] || { note "FATAL: ${EXTRACT_YML} not found"; exit 1; }
+[ -f "${MECATEQUI_YML}" ] || { note "FATAL: ${MECATEQUI_YML} not found"; exit 1; }
 
 note "action-wrappers contract tests:"
 
@@ -78,6 +86,17 @@ lacks "${PUBLISH_YML}" '^[[:space:]]*GH_TOKEN:[[:space:]]+\$\{\{' \
 # ── mecatequi-extract-prompt: out-file -> OUT_FILE ────────────────────────────────────────
 has "${EXTRACT_YML}" '^[[:space:]]*OUT_FILE:[[:space:]]+\$\{\{[[:space:]]*inputs\.out-file[[:space:]]*\}\}' \
   "extract-prompt maps out-file -> OUT_FILE"
+
+# ── mecatequi (MAIN): the `instructions` input must reach the binary, end-to-end ──────────
+# The feature is only LIVE if BOTH halves of the wiring are present: (a) the input maps onto
+# the MQ_INSTRUCTIONS env in the Run step, and (b) that env is wired to the binary via the
+# `args+=( --instructions … )` conditional. With (a) but not (b) the flag is never passed and
+# the operator framing ships INERT — yet every Go unit test (which calls buildPrompt directly)
+# stays green. Pin both so that silent-inert regression goes RED here.
+has "${MECATEQUI_YML}" '^[[:space:]]*MQ_INSTRUCTIONS:[[:space:]]+\$\{\{[[:space:]]*inputs\.instructions[[:space:]]*\}\}' \
+  "mecatequi maps instructions -> MQ_INSTRUCTIONS (Run step env)"
+has "${MECATEQUI_YML}" 'args\+=\([[:space:]]*--instructions[[:space:]]+"\$\{MQ_INSTRUCTIONS\}"[[:space:]]*\)' \
+  "mecatequi wires MQ_INSTRUCTIONS to the binary via args+=( --instructions … )"
 
 if [ "${fail}" -ne 0 ]; then
   note "action-wrappers: FAILURES"

@@ -465,6 +465,41 @@ test_pr_title_from_issue_title() {
   rm -rf "${work}"
 }
 
+# ── Test 8b: MQ_PR_TITLE_TEMPLATE takes PRECEDENCE over a present issue title ──────────────
+# A title template is the highest-priority title source: when set (and confined to the
+# checkout) it wins even when `gh issue view` returns a perfectly good title. Plant a title
+# template UNDER the workspace with a distinctive placeholder render (`Custom: {{issue_ref}}`),
+# set a PRESENT issue title too, and assert the logged `gh pr create … --title …` carries the
+# RENDERED TEMPLATE (`Custom: #<n>`) and NOT the issue-title default (`Some Issue Title (#<n>)`).
+test_pr_title_template_precedence() {
+  local work; work="$(make_sandbox)"
+  make_stubs "${work}"
+  # A present issue title that WOULD be used if the template did not win.
+  printf 'Some Issue Title\n' > "${work}/issue-title.fixture"
+  # A title template under the workspace (MQ_WORKSPACE defaults to GITHUB_WORKSPACE=${work}).
+  mkdir -p "${work}/.github/mecatequi"
+  printf 'Custom: {{issue_ref}}\n' > "${work}/.github/mecatequi/pr-title.md"
+  printf '{"stop_reason":"end_turn","non_empty_diff":true,"diff_bytes":10,"final_text":"did work"}' > "${work}/summary.json"
+  printf 'diff --git a/src/ok.go b/src/ok.go\n' > "${work}/run.patch"
+  printf '1\t0\tsrc/ok.go\0' > "${work}/numstat.fixture"
+  run_publish "${work}" \
+    ISSUE_NUMBER=33 \
+    EXIT_CLASS=clean \
+    PATCH_PATH="${work}/run.patch" \
+    SUMMARY_PATH="${work}/summary.json" \
+    MQ_PR_TITLE_TEMPLATE=".github/mecatequi/pr-title.md"
+  if [ ! -e "${work}/PR_CREATED" ]; then
+    bad "title-template precedence: no PR was created"
+  elif called "Some Issue Title (#33)" "${work}/calls.log"; then
+    bad "title template did NOT win: the issue-title default 'Some Issue Title (#33)' was used"
+  elif called "Custom: #33" "${work}/calls.log"; then
+    pass "MQ_PR_TITLE_TEMPLATE wins over a present issue title (rendered 'Custom: #33')"
+  else
+    bad "the logged gh pr create carried neither the rendered template nor the issue-title default"
+  fi
+  rm -rf "${work}"
+}
+
 # ── Test 9: an EMPTY issue title falls back to the prior built-in literal ──────────────────
 # When `gh issue view` yields an empty title (transient API failure / unreachable issue),
 # the default must be byte-for-byte the prior literal "mecatequi: changes for issue #<n>".
@@ -539,6 +574,7 @@ test_empty_exit_class_is_setup_failure
 test_failed_comment_does_not_abort_silently
 test_render_template_literal_single_pass
 test_pr_title_from_issue_title
+test_pr_title_template_precedence
 test_pr_title_empty_falls_back
 test_pr_title_untrusted_metacharacters
 
