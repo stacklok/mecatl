@@ -188,7 +188,9 @@ inputs:
     description: >-
       OPTIONAL path (relative to the checkout) to a one-line PR-title template (same
       placeholders as pr-body-template), consumed by publish.sh via MQ_PR_TITLE_TEMPLATE.
-      When empty (default), the built-in title "mecatequi: changes for issue #<n>" is used.
+      When empty (default), the title is the triggering issue's own title as
+      "<issue title> (#<n>)", falling back to "mecatequi: changes for issue #<n>" when the
+      issue title cannot be fetched. A template here overrides that default.
       Use the SHORT placeholders in a title ({{issue_ref}}, {{stop_reason}}, {{branch}});
       prose placeholders like {{what_agent_did}} or {{summary_table}} flatten to one
       unwieldy line.
