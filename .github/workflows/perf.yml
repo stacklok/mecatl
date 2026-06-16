@@ -20,6 +20,11 @@
 #                 regression that slipped through still gets flagged. It also stores
 #                 `bench.txt` on gh-pages so the next PR's allocs gate has a baseline
 #                 to fetch (perf-tracking.md baseline-storage resolution).
+# perf-pr runs github-action-benchmark TWICE (a smaller-is-better then a
+# bigger-is-better scenario suite); the second invocation sets `skip-fetch-gh-pages`
+# to reuse the first's gh-pages fetch, because re-fetching is a non-fast-forward
+# against the local ref the first step already advanced — whereas perf-main's
+# `auto-push` keeps local and remote in sync so each step's fetch stays a fast-forward.
 #
 # Like ci.yml, this uses `pull_request` (NOT `pull_request_target`): PR code is
 # untrusted and must run without secrets and with a read-only token. The only
@@ -153,6 +158,12 @@ jobs:
       # deterministic (no machine-load noise). If a 2% false positive ever fires,
       # the escalation is to split scenario allocs into a third dedicated suite with
       # its own threshold; we do not pre-split until that cost is real.
+      #
+      # ORDERING INVARIANT: this (smaller) step MUST run FIRST and MUST keep fetching
+      # gh-pages (no skip-fetch-gh-pages here) — it is what populates the local gh-pages
+      # baseline that the (bigger) step below reuses via skip-fetch-gh-pages. Do NOT add
+      # skip-fetch here or reorder the two steps, or the bigger step loses its baseline
+      # and silently passes (no data to compare → no alert).
       - name: github-action-benchmark — scenarios (smaller)
         uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
@@ -177,6 +188,7 @@ jobs:
           fail-on-alert: true
           auto-push: false
           save-data-file: false
+          skip-fetch-gh-pages: true   # reuse the gh-pages fetched by the (smaller) step above; re-fetching here is a non-fast-forward against the local ref that step advanced
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload perf artifacts
