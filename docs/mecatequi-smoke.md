@@ -1,0 +1,1 @@
+This file was created by the mecatequi GitHub Action as an end-to-end smoke test, verifying that the action can successfully open a pull request with an AI-generated file change against the mecatl repository.
