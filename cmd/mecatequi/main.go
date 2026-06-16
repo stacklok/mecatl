@@ -80,7 +80,7 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 	}
 	defer built.Close()
 
-	prompt := buildPrompt(f.prompt, f.promptFileBody, f.untrustedPrompt)
+	prompt := buildPrompt(f.prompt, f.promptFileBody, f.instructions, f.untrustedPrompt)
 
 	// Wall-clock bound (defense-in-depth for CI): wrap the run ctx when --timeout > 0.
 	ctx := context.Background()

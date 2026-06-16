@@ -293,6 +293,15 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
 
+      # AGENT SELF-VERIFICATION TOOLCHAIN (Fix 3, OPTIONAL — not added here). The mecatequi
+      # action bakes in a `--instructions` framing asking the agent to run the repo's
+      # build/lint/test and make them green before finishing. A consumer who wants that
+      # self-verification must install their PROJECT's OWN build/lint/test toolchain on PATH
+      # BEFORE the mecatequi step — but a reusable workflow cannot, because the caller's stack
+      # is unknown. A consumer needing pre-mecatequi toolchain steps vendors the escape-hatch
+      # template (.github/workflows/mecatequi-example.yml) instead. Go for the binary build is
+      # provisioned by the mecatequi composite action itself.
+
       # Extract the UNTRUSTED prompt from the event JSON into a file via jq — never an inline
       # ${{ }} of the body. FULL-PATH sibling-action ref (see the header): `./` would resolve
       # to the caller's checkout, not mecatl's, so this must be the @v0.0.3-pinned full path.

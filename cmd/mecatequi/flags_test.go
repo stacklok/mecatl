@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/app"
@@ -57,6 +59,47 @@ func TestParseFlagsPromptInputs(t *testing.T) {
 		missing := filepath.Join(dir, "does-not-exist.txt")
 		if _, err := parseFlags([]string{"--prompt-file", missing}); err == nil {
 			t.Fatal("parseFlags with an unreadable --prompt-file: want error, got nil")
+		}
+	})
+}
+
+// TestParseFlagsInstructions covers the cmd-local --instructions knob: it is captured on
+// the flags struct, defaults to empty, and is DELIBERATELY not mapped onto app.Config (it
+// is a prompt-assembly knob consumed only by buildPrompt).
+func TestParseFlagsInstructions(t *testing.T) {
+	t.Run("captured on the flags struct", func(t *testing.T) {
+		f, err := parseFlags([]string{"--prompt", "x", "--instructions", "frame me"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		if f.instructions != "frame me" {
+			t.Errorf("f.instructions = %q, want %q", f.instructions, "frame me")
+		}
+	})
+
+	t.Run("defaults to empty", func(t *testing.T) {
+		f, err := parseFlags([]string{"--prompt", "x"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		if f.instructions != "" {
+			t.Errorf("f.instructions default = %q, want empty", f.instructions)
+		}
+	})
+
+	t.Run("does not leak into app.Config", func(t *testing.T) {
+		// app.Config has no field carrying the framing text; --instructions is a
+		// cmd-local prompt-assembly knob. Assert the parsed value is NOT present in the
+		// mapped config by stringifying every field with %+v (app.Config carries func/
+		// interface fields, so it is not JSON-marshalable — %+v still renders them all).
+		f, err := parseFlags([]string{"--prompt", "x", "--instructions", "DISTINCT_FRAMING_SENTINEL"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		cfg := appConfig(f, newDiagnostics())
+		blob := fmt.Sprintf("%+v", cfg)
+		if strings.Contains(blob, "DISTINCT_FRAMING_SENTINEL") {
+			t.Errorf("--instructions leaked into app.Config: %s", blob)
 		}
 	})
 }

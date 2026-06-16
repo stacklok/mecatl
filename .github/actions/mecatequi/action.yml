@@ -73,6 +73,27 @@ inputs:
       that is the operator's own trusted task.
     required: false
     default: "true"
+  instructions:
+    description: >-
+      TRUSTED operator framing emitted OUTSIDE the untrusted-prompt fence (never fenced),
+      via --instructions. The default bakes in two paragraphs every consumer gets with zero
+      config: write the final message as a pull-request description, and self-verify (run
+      the repo's build/lint/test and make them green) before finishing. Overriding this
+      input REPLACES both defaults — supply your own framing wholesale. Empty omits it
+      entirely. Distinct from prompt-file, which carries the task and IS fenced.
+    required: false
+    default: >-
+      Your FINAL assistant message becomes the body of the pull request this run opens.
+      Write it as a pull-request description: a crisp, structured summary of WHAT you
+      changed and WHY (what problem it solves, the approach, and anything a reviewer should
+      check) — not a conversational reply, a greeting, or a sign-off.
+
+
+      Before you finish, VERIFY your work: run the repository's own build, lint, and test
+      commands (e.g. the project's Makefile/Taskfile targets such as `task build`, `task
+      lint`, `task test`, or the language-native equivalents) and make them pass. If a
+      check fails, fix it and re-run until the build, lint, and tests are green; only then
+      end your turn. Do not claim success without having run them.
   workspace:
     description: Session workspace root (must be a git repository so the diff can be computed).
     required: false
@@ -264,6 +285,7 @@ runs:
       env:
         MQ_PROMPT_FILE: ${{ inputs.prompt-file }}
         MQ_UNTRUSTED: ${{ inputs.untrusted }}
+        MQ_INSTRUCTIONS: ${{ inputs.instructions }}
         MQ_WORKSPACE: ${{ inputs.workspace }}
         MQ_POSTURE: ${{ inputs.posture }}
         MQ_TIMEOUT: ${{ inputs.timeout }}
@@ -317,6 +339,7 @@ runs:
           --out-events "${MQ_OUT_EVENTS}"
         )
         [ "${fence_on}" = "true" ] && args+=( --untrusted-prompt )
+        [ -n "${MQ_INSTRUCTIONS}" ] && args+=( --instructions "${MQ_INSTRUCTIONS}" )
         [ -n "${MQ_MAX_RUN_TOKENS}" ] && args+=( --max-run-tokens "${MQ_MAX_RUN_TOKENS}" )
         [ -n "${MQ_MODEL}" ] && args+=( --model "${MQ_MODEL}" )
         [ -n "${MQ_DEFAULT_PROVIDER}" ] && args+=( --default-provider "${MQ_DEFAULT_PROVIDER}" )

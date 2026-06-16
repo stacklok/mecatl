@@ -30,6 +30,13 @@ type flags struct {
 	// untrustedPrompt fences the prompt body via agent.FenceUntrusted (cmd-side
 	// only). Default false: a normal CI prompt is the operator's own trusted task.
 	untrustedPrompt bool
+	// instructions is the TRUSTED operator-framing channel (--instructions). When
+	// non-empty buildPrompt emits it OUTSIDE the untrusted fence (never fenced), ahead
+	// of untrustedPromptInstruction — high-level framing such as how to format the final
+	// message or to self-verify before finishing. It is a cmd-local prompt-assembly knob,
+	// DELIBERATELY not mapped onto app.Config. Distinct from prompt/promptFile, which
+	// carry the task and ARE fenced under untrustedPrompt.
+	instructions string
 
 	// Output sinks. "-" means stdout. The SUMMARY is the stdout default (so a bare
 	// `mecatequi ... | jq` works); the diff and the event log are opt-in (empty
@@ -103,6 +110,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.StringVar(&f.prompt, "prompt", "", "the prompt to run (the agent's task). At least one of --prompt / --prompt-file is required; both may be given (literal first)")
 	fs.StringVar(&f.promptFile, "prompt-file", "", "path to a file whose contents are the prompt body. At least one of --prompt / --prompt-file is required")
 	fs.BoolVar(&f.untrustedPrompt, "untrusted-prompt", false, "treat the prompt body as UNTRUSTED data (e.g. a task description fetched from an external source): wrap it in the harness untrusted-data fence so the model treats it as data to act on, not instructions to obey. Default off (the prompt is the operator's own trusted task)")
+	fs.StringVar(&f.instructions, "instructions", "", "TRUSTED operator framing emitted OUTSIDE the untrusted-prompt fence (never fenced): high-level instructions such as how to format the final message or to self-verify before finishing. Empty (default) omits it. Distinct from --prompt/--prompt-file, which carry the task and ARE fenced under --untrusted-prompt")
 
 	fs.StringVar(&f.outSummary, "out-summary", "-", "where to write the run-summary JSON (\"-\" = stdout, the default). The summary is the machine-readable result Pipeline 2 consumes; pipe it to jq")
 	fs.StringVar(&f.outDiff, "out-diff", "", "where to write the working-tree git diff the run produced (\"-\" = stdout). EMPTY (default) disables it — the summary already carries non_empty_diff and diff_bytes; opt in with a path when you want the patch. Cannot share a sink with --out-summary/--out-events")

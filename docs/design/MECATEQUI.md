@@ -11,6 +11,13 @@ untrusted issue text from doing damage.
 The Go binary's contract is Pipeline 1 and is frozen. Everything here lives in `.github/`
 and `docs/` and changes no Go.
 
+> **Conscious additive-flag exception.** The frozen-contract rule is *additive-only*, not
+> *immutable*: a NEW flag whose default is empty and whose absence is byte-identical to the
+> prior behaviour can be added without breaking the contract or bumping a schema. `--instructions`
+> (§4) is the first such case — the additive-flag analogue of the Summary JSON's additive-only
+> rule. It is a cmd-local prompt-assembly knob, not a new `app.Config` field, and an empty
+> value produces the exact pre-flag prompt string.
+
 ## 1. Framing: the inverse of cloud-native
 
 The cloud-native arc (`docs/design/CLOUD-NATIVE.md`) makes the mecatl **process**
@@ -126,7 +133,13 @@ The Action codes against these frozen surfaces in `cmd/mecatequi`:
   `exit-class` output (`clean`/`run-failure`/`setup-failure`) and **never fails its own
   step on a non-zero code** — the caller branches on `exit-class`.
 - **Flags** — `cmd/mecatequi/flags.go` (`flags`). The action's inputs map onto the flags
-  one-for-one; secrets are read from the environment, never a flag or an action input.
+  one-for-one; secrets are read from the environment, never a flag or an action input. One
+  flag is **not** an `app.Config` knob: `--instructions` is a cmd-local prompt-assembly
+  channel (`cmd/mecatequi/prompt.go` (`buildPrompt`)) that emits TRUSTED operator framing
+  **outside** the untrusted-prompt fence — the symmetric counterpart to the harness's own
+  untrusted-data warning. The action bakes in a default that asks the agent to write its
+  final message as a PR description and to self-verify (build/lint/test) before finishing;
+  an empty value omits the channel and the prompt is byte-identical to the pre-flag string.
   `appConfig` (`cmd/mecatequi/flags.go`) applies the shared `internal/cliconfig`
   `ProviderFlags` — the SAME credential/base-URL helper `mecated` and `mecatui` use — so
   mecatequi reads all three provider keys (`OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
@@ -142,6 +155,7 @@ The Action codes against these frozen surfaces in `cmd/mecatequi`:
 |---|---|---|
 | `prompt-file` (required) | `--prompt-file` | — |
 | `untrusted` | `--untrusted-prompt` (when `true`) | `true` |
+| `instructions` | `--instructions` (omitted when empty) | baked-in PR-description + self-verify framing |
 | `workspace` | `--workspace` | `${{ github.workspace }}` |
 | `posture` | `--posture` | `auto` |
 | `timeout` | `--timeout` | `15m` |
@@ -162,6 +176,17 @@ rejects ids not in the embedded snapshot. `model` is the per-session passthrough
 Outputs (kebab-case, GitHub Actions house style): `patch-path`, `summary-path`,
 `events-path`, `summary-json` (compacted; best-effort and `$GITHUB_OUTPUT`-size-bounded —
 read `summary-path` for anything large), `stop-reason`, `non-empty-diff`, `exit-class`.
+
+The `mecatequi` composite action bakes in a default `--instructions` value (TRUSTED framing,
+emitted **outside** the prompt fence) so every consumer gets it with zero config: write the
+final message as a PR description, and self-verify (run the repo's build/lint/test and make
+them green) before finishing. For that self-verification to actually run, the agent needs the
+repo's build/lint/test tools on PATH — so the **live** `.github/workflows/mecatequi.yml`
+installs `task` + golangci-lint (v2.12.2) before the mecatequi step (Go itself is provisioned
+by the composite). Other-repo consumers must install their **own** project toolchain before
+the step; the example/reusable workflows document this but add no tools (their stacks are
+unknown). Override the `instructions` input to replace the baked-in framing wholesale; an
+empty value omits it.
 
 ### Configurable PR-description formatting
 
@@ -184,9 +209,17 @@ A missing **explicit** template path — or one that resolves **outside the chec
 defense-in-depth, CWE-22) — logs a `::warning::` and falls back to the built-in body (it
 never aborts the publish, and never reads an out-of-checkout file into the PR). The optional
 `pr-title-template` / `MQ_PR_TITLE_TEMPLATE` controls the title the same way (same
-confinement); its default is the prior title `mecatequi: changes for issue #<n>`. A rendered
+confinement). Its **default** is now `<issue title> (#<n>)` — the triggering issue's title,
+fetched READ-only via `gh issue view` in the **privileged publish job** (the agent job holds
+no GitHub token, so the token boundary is preserved). The fetched title reaches the title and
+the `{{issue_title}}` body placeholder only as a literal `jq --arg` value (the same
+literal-delivery the attacker-controllable `{{what_agent_did}}` uses — never argv, env, eval,
+envsubst, or sed), and the default title expands it only as a shell var into the
+`gh pr create --title "…"` argv token, never eval'd, so shell metacharacters in an untrusted
+title are inert. When the title cannot be fetched (transient API failure / unreachable issue)
+the default falls back to the prior literal `mecatequi: changes for issue #<n>`. A rendered
 title is flattened to one line — so use the **short** placeholders in a title
-(`{{issue_ref}}`, `{{stop_reason}}`, `{{branch}}`); prose placeholders like
+(`{{issue_ref}}`, `{{issue_title}}`, `{{stop_reason}}`, `{{branch}}`); prose placeholders like
 `{{what_agent_did}}` or `{{summary_table}}` flatten to one unwieldy line.
 
 **Placeholders (the documented allowlist):**
@@ -199,6 +232,7 @@ title is flattened to one line — so use the **short** placeholders in a title
 | `{{run_url}}` | link to the workflow run |
 | `{{issue}}` | the issue number, bare (e.g. `123`) |
 | `{{issue_ref}}` | the issue reference (e.g. `#123`) |
+| `{{issue_title}}` | the triggering issue's title (fetched READ-only via `gh issue view`) |
 | `{{stop_reason}}` | the terminal stop reason |
 | `{{non_empty_diff}}` | whether the run left a diff (`true`/`false`) |
 | `{{diff_bytes}}` | diff size in bytes |

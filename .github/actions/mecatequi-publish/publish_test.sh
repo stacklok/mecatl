@@ -66,6 +66,15 @@ case "\$1 \$2" in
   "pr create") : > "${work}/PR_CREATED" ;;
   "pr list") echo "" ;;                       # no existing PR
   "repo view") echo "main" ;;                 # default branch
+  "issue view")
+    # File-driven per-test override (parity with numstat.fixture): a test plants
+    # issue-title.fixture to control the title; otherwise a fixed descriptive default.
+    if [ -f "${work}/issue-title.fixture" ]; then
+      cat "${work}/issue-title.fixture"
+    else
+      echo "Add a widget to the gizmo"
+    fi
+    ;;
   "auth setup-git") : ;;
 esac
 exit 0
@@ -430,6 +439,94 @@ test_render_template_literal_single_pass() {
   rm -rf "${work}"
 }
 
+# ── Test 8: the DEFAULT PR title is derived from the issue title -> "<title> (#<n>)" ──────
+# A clean run with a diff and a descriptive issue title must open a PR whose --title is
+# "<issue title> (#<n>)" (the new default, replacing the prior "mecatequi: changes …"
+# literal). Assert the PR was created AND the logged `gh pr create … --title …` carries it.
+test_pr_title_from_issue_title() {
+  local work; work="$(make_sandbox)"
+  make_stubs "${work}"
+  printf 'Add a widget to the gizmo\n' > "${work}/issue-title.fixture"
+  printf '{"stop_reason":"end_turn","non_empty_diff":true,"diff_bytes":10,"final_text":"did work"}' > "${work}/summary.json"
+  printf 'diff --git a/src/ok.go b/src/ok.go\n' > "${work}/run.patch"
+  printf '1\t0\tsrc/ok.go\0' > "${work}/numstat.fixture"
+  run_publish "${work}" \
+    ISSUE_NUMBER=30 \
+    EXIT_CLASS=clean \
+    PATCH_PATH="${work}/run.patch" \
+    SUMMARY_PATH="${work}/summary.json"
+  if [ ! -e "${work}/PR_CREATED" ]; then
+    bad "issue-title default: no PR was created"
+  elif called "Add a widget to the gizmo (#30)" "${work}/calls.log"; then
+    pass "default PR title derives from the issue title: '<title> (#<n>)'"
+  else
+    bad "the logged gh pr create did not carry the issue-title default '<title> (#30)'"
+  fi
+  rm -rf "${work}"
+}
+
+# ── Test 9: an EMPTY issue title falls back to the prior built-in literal ──────────────────
+# When `gh issue view` yields an empty title (transient API failure / unreachable issue),
+# the default must be byte-for-byte the prior literal "mecatequi: changes for issue #<n>".
+test_pr_title_empty_falls_back() {
+  local work; work="$(make_sandbox)"
+  make_stubs "${work}"
+  : > "${work}/issue-title.fixture"   # empty title
+  printf '{"stop_reason":"end_turn","non_empty_diff":true,"diff_bytes":10,"final_text":"did work"}' > "${work}/summary.json"
+  printf 'diff --git a/src/ok.go b/src/ok.go\n' > "${work}/run.patch"
+  printf '1\t0\tsrc/ok.go\0' > "${work}/numstat.fixture"
+  run_publish "${work}" \
+    ISSUE_NUMBER=31 \
+    EXIT_CLASS=clean \
+    PATCH_PATH="${work}/run.patch" \
+    SUMMARY_PATH="${work}/summary.json"
+  if [ ! -e "${work}/PR_CREATED" ]; then
+    bad "empty-title fallback: no PR was created"
+  elif called "mecatequi: changes for issue #31" "${work}/calls.log"; then
+    pass "an empty issue title falls back to the prior literal title"
+  else
+    bad "empty-title fallback did not use the prior literal 'mecatequi: changes for issue #31'"
+  fi
+  rm -rf "${work}"
+}
+
+# ── Test 10 (SECURITY): an untrusted issue title with shell metacharacters is LITERAL ─────
+# The issue title is attacker-controllable. It reaches the title ONLY as a shell var
+# expanded into the `gh pr create --title "${pr_title}"` argv token (never eval'd) and the
+# {{issue_title}} placeholder via the literal `jq --arg` values JSON (never argv/env/eval).
+# Plant a title containing shell metacharacters, a $(...) command substitution, and an
+# injected {{run_url}}; assert (a) the $(...) did NOT run (no marker file), (b) a PR was
+# created, (c) the logged --title carries the metacharacters VERBATIM. Built single-quoted
+# in the fixture file so the TEST shell never expands it either.
+test_pr_title_untrusted_metacharacters() {
+  local work; work="$(make_sandbox)"
+  make_stubs "${work}"
+  local marker="${work}/TITLE_INJECTED_MARKER"
+  rm -f "${marker}"
+  # Single-quoted heredoc so neither this test shell nor publish.sh expands the payload.
+  cat > "${work}/issue-title.fixture" <<EOF
+Fix \$(touch ${marker}) & \`touch ${marker}\` {{run_url}} done
+EOF
+  printf '{"stop_reason":"end_turn","non_empty_diff":true,"diff_bytes":10,"final_text":"did work"}' > "${work}/summary.json"
+  printf 'diff --git a/src/ok.go b/src/ok.go\n' > "${work}/run.patch"
+  printf '1\t0\tsrc/ok.go\0' > "${work}/numstat.fixture"
+  run_publish "${work}" \
+    ISSUE_NUMBER=32 \
+    EXIT_CLASS=clean \
+    PATCH_PATH="${work}/run.patch" \
+    SUMMARY_PATH="${work}/summary.json"
+  if [ -e "${marker}" ]; then
+    bad "untrusted title EXECUTED a \$(...)/backtick (marker created) — title is not literal"
+  elif [ ! -e "${work}/PR_CREATED" ]; then
+    bad "untrusted-title test: no PR was created"
+  elif called 'Fix $(touch' "${work}/calls.log" && called '{{run_url}} done' "${work}/calls.log"; then
+    pass "untrusted issue title with metacharacters is carried into --title verbatim, never executed"
+  else
+    bad "the logged --title did not carry the untrusted metacharacters verbatim"
+  fi
+  rm -rf "${work}"
+}
+
 note "publish.sh tests:"
 test_protected_paths_rejected
 test_protected_paths_quoted_rejected
@@ -441,6 +538,9 @@ test_failure_comments
 test_empty_exit_class_is_setup_failure
 test_failed_comment_does_not_abort_silently
 test_render_template_literal_single_pass
+test_pr_title_from_issue_title
+test_pr_title_empty_falls_back
+test_pr_title_untrusted_metacharacters
 
 if [ "${fail}" -ne 0 ]; then
   note "publish.sh: FAILURES"

@@ -2289,6 +2289,7 @@ does).
 |---|---|---|
 | `prompt-file` (required) | `--prompt-file` | — |
 | `untrusted` | `--untrusted-prompt` (when `true`) | `true` |
+| `instructions` | `--instructions` (omitted when empty) | baked-in PR-description + self-verify framing |
 | `workspace` | `--workspace` | `${{ github.workspace }}` |
 | `posture` | `--posture` | `auto` |
 | `timeout` | `--timeout` | `15m` |
@@ -2321,6 +2322,14 @@ for it only when you hand-roll a workflow against the action directly.
 (`clean` / `run-failure` / `setup-failure`, derived from the captured exit code). Branch on
 `exit-class`, not the raw code — and remember exit 0 is **not** "task accomplished": read
 `stop-reason` and `non-empty-diff` to judge whether real work landed.
+
+The action bakes in a default `instructions` value (TRUSTED framing, emitted **outside** the
+prompt fence): write the final message as a PR description, and self-verify (run the repo's
+build/lint/test until green) before finishing. The **live** `.github/workflows/mecatequi.yml`
+installs `task` + golangci-lint before the run so that self-verification works; other-repo
+consumers must install their **own** build/lint/test toolchain before the mecatequi step (the
+example/reusable workflows note this but add no tools, since the stack is unknown). Override
+the `instructions` input to replace the framing wholesale; an empty value omits it.
 
 ### Adopting via the reusable workflow (recommended)
 
@@ -2579,13 +2588,16 @@ template file of `{{placeholder}}` tokens. Resolution, in order:
 
 Easiest activation: copy the shipped `.github/mecatequi/pr-body.md.example`, edit it, and
 **rename it to `.github/mecatequi/pr-body.md`** — no workflow change needed. An optional
-`MQ_PR_TITLE_TEMPLATE` overrides the PR title (same placeholders; default `mecatequi:
-changes for issue #<n>`). In a title, use the **short** placeholders (`{{issue_ref}}`,
-`{{stop_reason}}`, `{{branch}}`) — prose ones like `{{what_agent_did}}` or
-`{{summary_table}}` flatten to one unwieldy line.
+`MQ_PR_TITLE_TEMPLATE` overrides the PR title (same placeholders). The **default** title is
+`<issue title> (#<n>)` — the triggering issue's title, fetched READ-only via `gh issue view`
+in the privileged publish job (the agent job holds no GitHub token), falling back to the prior
+`mecatequi: changes for issue #<n>` literal when the title can't be fetched. In a title, use
+the **short** placeholders (`{{issue_ref}}`, `{{issue_title}}`, `{{stop_reason}}`,
+`{{branch}}`) — prose ones like `{{what_agent_did}}` or `{{summary_table}}` flatten to one
+unwieldy line.
 
 Placeholders: `{{what_agent_did}}`, `{{files_changed}}`, `{{summary_table}}`, `{{run_url}}`,
-`{{issue}}`, `{{issue_ref}}`, `{{stop_reason}}`, `{{non_empty_diff}}`, `{{diff_bytes}}`,
+`{{issue}}`, `{{issue_ref}}`, `{{issue_title}}`, `{{stop_reason}}`, `{{non_empty_diff}}`, `{{diff_bytes}}`,
 `{{total_tokens}}`, `{{branch}}`, `{{base}}`. An unknown `{{token}}` is left intact.
 
 Two things to know: the `⚠️ Agent-authored — review carefully before merging.` caveat is

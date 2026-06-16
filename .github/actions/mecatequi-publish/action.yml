@@ -77,7 +77,10 @@ inputs:
   pr-title-template:
     description: >-
       OPTIONAL path (relative to the checkout) to a one-line PR-title template (same
-      placeholders). Empty uses the built-in title "mecatequi: changes for issue #<n>".
+      placeholders, including {{issue_title}}). Empty uses the DEFAULT title
+      "<issue title> (#<n>)" — the triggering issue's title fetched READ-only via
+      `gh issue view` in this privileged job — falling back to the prior built-in
+      "mecatequi: changes for issue #<n>" when the title cannot be fetched.
     required: false
     default: ""
 

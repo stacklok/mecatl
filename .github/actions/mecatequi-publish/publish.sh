@@ -24,7 +24,12 @@
 #                   with {{placeholder}} tokens. When empty, the convention path
 #                   .github/mecatequi/pr-body.md is used if present, else the built-in body.
 #   MQ_PR_TITLE_TEMPLATE  OPTIONAL one-line PR-title template (same placeholders). When empty,
-#                   the built-in title "mecatequi: changes for issue #<n>" is used.
+#                   the DEFAULT title is "<issue title> (#<n>)" — the triggering issue's title
+#                   fetched READ-only via `gh issue view` in this privileged publish job
+#                   (the token boundary is preserved: the agent job holds no GitHub token, and
+#                   the fetched title reaches the body/title render only as a literal `jq --arg`
+#                   value, never argv/eval/env). When the title cannot be fetched (empty), the
+#                   prior built-in "mecatequi: changes for issue #<n>" is used as the fallback.
 #
 # PR-BODY / PR-TITLE TEMPLATING (untrusted-value safe). A repo may supply its own PR
 # description style via a template file with {{placeholder}} tokens. The substituted VALUES
@@ -386,6 +391,15 @@ if [ -z "${base}" ]; then
 fi
 [ -z "${base}" ] && base="${GITHUB_REF_NAME:-main}"
 
+# Fetch the triggering issue's title (READ-only) for the default PR title + the
+# {{issue_title}} placeholder. Same guarded-read idiom as defaultBranchRef above — a
+# transient API failure / unreachable issue yields an EMPTY title and the prior literal
+# fallback, never an abort. This is a READ in the privileged publish job; the agent job
+# holds no GitHub token, so the token boundary is preserved. Flatten to one line + trim a
+# trailing space (a PR title is single-line), mirroring the title-template flatten below.
+issue_title="$(gh issue view "${ISSUE_NUMBER}" --repo "${REPO}" --json title --jq '.title' 2>/dev/null || true)"
+issue_title="$(printf '%s' "${issue_title}" | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+
 # Post an honest "could not open the PR" comment and exit non-zero. Called from the
 # privileged tail (push / PR-create) so a failure THERE is never silent — the run decided
 # to open a PR, then could not, and the author must hear about it. $1 is the cause line.
@@ -516,6 +530,7 @@ jq -n \
   --arg run_url "${run_url}" \
   --arg issue "${ISSUE_NUMBER}" \
   --arg issue_ref "#${ISSUE_NUMBER}" \
+  --arg issue_title "${issue_title}" \
   --arg stop_reason "${stop_reason_val}" \
   --arg non_empty_diff "${non_empty_val}" \
   --arg diff_bytes "${diff_bytes_val}" \
@@ -529,6 +544,7 @@ jq -n \
     run_url: $run_url,
     issue: $issue,
     issue_ref: $issue_ref,
+    issue_title: $issue_title,
     stop_reason: $stop_reason,
     non_empty_diff: $non_empty_diff,
     diff_bytes: $diff_bytes,
@@ -552,16 +568,23 @@ pr_body_file="${RUNNER_TEMP}/mecatequi-pr-body.md"
   fi
 } > "${pr_body_file}"
 
-# Resolve the PR title: a template (same placeholders) or the built-in default. The default
-# is byte-for-byte the prior title. A title template is rendered, then flattened to one line
-# (a PR title is single-line) and the caveat is NOT prepended to the title.
-pr_title="mecatequi: changes for issue #${ISSUE_NUMBER}"
+# Resolve the PR title: a template (same placeholders) wins; else the issue title as
+# "<issue title> (#<n>)"; else the prior built-in literal (byte-for-byte) as the fallback.
+# A title template is rendered, then flattened to one line (a PR title is single-line) and
+# the caveat is NOT prepended to the title. The issue-title default uses ${issue_title}
+# ONLY as a shell var expanded into the `gh pr create --title "${pr_title}"` argv TOKEN —
+# never eval'd — so shell metacharacters in it are inert.
 if [ -n "${MQ_PR_TITLE_TEMPLATE}" ]; then
+  pr_title="mecatequi: changes for issue #${ISSUE_NUMBER}"
   if title_template="$(confine_to_workspace "${MQ_WORKSPACE}/${MQ_PR_TITLE_TEMPLATE}")"; then
     pr_title="$(render_template "${title_template}" "${values_json}" | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
   else
     echo "::warning::publish: pr-title-template '${MQ_PR_TITLE_TEMPLATE}' is missing or resolves outside the checkout; using the built-in PR title" >&2
   fi
+elif [ -n "${issue_title}" ]; then
+  pr_title="${issue_title} (#${ISSUE_NUMBER})"
+else
+  pr_title="mecatequi: changes for issue #${ISSUE_NUMBER}"
 fi
 
 if [ -n "${existing_pr}" ]; then

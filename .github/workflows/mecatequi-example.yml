@@ -131,6 +131,15 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
 
+      # AGENT SELF-VERIFICATION TOOLCHAIN (Fix 3, OPTIONAL — left out of this template on
+      # purpose). The mecatequi action bakes in a `--instructions` framing asking the agent
+      # to run the repo's build/lint/test and make them green before finishing. For that to
+      # work the agent needs your project's OWN build/lint/test tools on PATH at run time —
+      # add steps to install them HERE, before the `mecatequi` step below (e.g. setup-task +
+      # your linter for Go, or setup-node + your test runner for JS). We do NOT add them in
+      # this template because your stack is unknown to us. Go for the binary build is
+      # provisioned by the mecatequi composite action itself.
+
       # Defense-in-depth behind the job `if:`. The association crosses via env, never argv.
       - name: Author gate
         shell: bash
