@@ -10,11 +10,21 @@ package ui
 // never by the production ui package (the production package must stay free of the
 // perf dependency).
 //
-// TWO benchmarks: BenchmarkScrollbackView mutates the live block every op (the
+// TWO benchmarks: BenchmarkScrollbackView REVISES the live block every op (the
 // streaming frame — the join must rebuild, the join cache cannot help it, so it is
 // the worst-case floor), and BenchmarkScrollbackViewSteady re-renders without
 // mutating (the unchanged frame — cursor move, scroll, the twice-per-message
 // renderInput) which the join cache serves from memo, so its B/op collapses.
+//
+// The streaming bench REVISES (replaces) the live block with a FIXED-SIZE but
+// byte-DIFFERENT string each op via reviseAssistant, rather than APPENDING a byte
+// (which grew the block — and the markdown it renders — without bound, making
+// per-op work creep up with the iteration count and the captured allocs/op a
+// function of b.N: a determinism hazard on the gated suite). A fixed-size revision
+// still misses markdownAt's src-keyed cache every op (so the live block re-renders,
+// blockRenders bumps, and the join still ALL-MISSES — the same worst-case streaming
+// floor), but the live block no longer grows, so allocs/op is b.N-independent. The
+// determinism guard for this is TestScrollbackReviseAllocsIndependentOfN.
 //
 // It is a Benchmark, so `task test` (default -run) never runs it; it runs under
 // `task perf:scenarios`. It records a kpi.ScenarioResult with NO token KPIs (a
@@ -69,6 +79,30 @@ func buildScrollbackModel(tb testing.TB) Model {
 	return m
 }
 
+// reviseBodyLen is the fixed length (in bytes) of the live-block body the
+// streaming bench revises each op. It is large enough that the body renders as a
+// non-trivial markdown block (so the per-op render is representative work) and
+// fixed so the per-op cost — and therefore the captured allocs/op — does not drift
+// with the iteration count.
+const reviseBodyLen = 64
+
+// reviseBody returns a reviseBodyLen-byte body whose bytes differ from the
+// previous op's (it rotates a trailing character through a small alphabet by op
+// index) so markdownAt's src-keyed cache MISSES every op, while the LENGTH stays
+// constant so the live block never grows. The body is plain printable ASCII (no
+// markdown control characters / emoji) so the render work is stable and the
+// width-normalization fast path is hit identically each op.
+func reviseBody(op int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	buf := make([]byte, reviseBodyLen)
+	for i := range buf {
+		buf[i] = 'x'
+	}
+	// Rotate the trailing byte so consecutive ops differ; the rest stays constant.
+	buf[reviseBodyLen-1] = alphabet[op%len(alphabet)]
+	return string(buf)
+}
+
 // BenchmarkScrollbackView measures the conversation render path over a large
 // settled scrollback: the measured region is m.refreshView() (the string join +
 // vp.SetContent line split/measure). Allocations are the gated KPI.
@@ -85,12 +119,16 @@ func BenchmarkScrollbackView(b *testing.B) {
 	capt := kpi.NewCapture()
 	b.ReportAllocs()
 	capt.Begin()
+	op := 0
 	for b.Loop() {
-		// Bump the live block's revision each iteration so refreshView does real
-		// work (re-joins the scrollback and re-runs SetContent), rather than
-		// short-circuiting. This mirrors the steady-state streaming frame: one live
-		// block changes, the whole scrollback is re-joined into the viewport.
-		m.conv.appendAssistant(".")
+		// REVISE the live block with a fixed-size, byte-different body each op so
+		// refreshView does real work (markdownAt misses, the live block re-renders,
+		// the whole scrollback re-joins) without the block GROWING — keeping per-op
+		// work, and therefore allocs/op, independent of b.N. This mirrors the
+		// steady-state streaming frame: one live block changes, the whole scrollback
+		// is re-joined into the viewport.
+		m.conv.reviseAssistant(reviseBody(op))
+		op++
 		m.refreshView()
 	}
 	mtr := capt.End()

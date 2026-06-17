@@ -20,11 +20,12 @@
 #                 regression that slipped through still gets flagged. It also stores
 #                 `bench.txt` on gh-pages so the next PR's allocs gate has a baseline
 #                 to fetch (perf-tracking.md baseline-storage resolution).
-# perf-pr runs github-action-benchmark TWICE (a smaller-is-better then a
-# bigger-is-better scenario suite); the second invocation sets `skip-fetch-gh-pages`
-# to reuse the first's gh-pages fetch, because re-fetching is a non-fast-forward
-# against the local ref the first step already advanced — whereas perf-main's
-# `auto-push` keeps local and remote in sync so each step's fetch stays a fast-forward.
+# perf-pr runs github-action-benchmark THREE times (a smaller-is-better gate, a
+# bigger-is-better gate, then a smaller-is-better ADVISORY render-allocs suite); the
+# second and third invocations set `skip-fetch-gh-pages` to reuse the first's
+# gh-pages fetch, because re-fetching is a non-fast-forward against the local ref the
+# first step already advanced — whereas perf-main's `auto-push` keeps local and
+# remote in sync so each step's fetch stays a fast-forward.
 #
 # Like ci.yml, this uses `pull_request` (NOT `pull_request_target`): PR code is
 # untrusted and must run without secrets and with a read-only token. The only
@@ -37,6 +38,17 @@
 # DECISION is made by perf/cmd/allocsgate (a tested Go program, FAIL-CLOSED on an
 # empty/corrupt bench file); benchstat is the LOCAL human A/B tool (see `task bench`
 # help), deliberately NOT in the CI gate path.
+#
+# THE ONE ADVISORY-ALLOCS CARVE-OUT: the tui_scrollback_view* render benches'
+# allocs/op is NOT deterministic the way the loop scenarios' is — it carries a b.N
+# residual (the streaming bench re-joins the whole scrollback every op) and
+# process-wide runtime.ReadMemStats background noise (perf/kpi cannot goroutine-scope
+# the MemStats read). gh-pages history showed ~4.6% (view) / ~30% (steady) swings on
+# commits that touched no TUI code, which false-positives the 2% smaller-suite gate.
+# perfconvert routes those two allocs/op points to a dedicated ADVISORY
+# customSmallerIsBetter suite (fail-on-alert:false) — the escalation the smaller
+# suite anticipated, now SHIPPED. Their deterministic siblings (tokens/goroutine,
+# always 0) stay on the gated smaller suite.
 #
 # All third-party actions are SHA-pinned (with a # vX.Y.Z comment) so a re-pointed
 # tag from a compromised maintainer cannot change what runs here. Pins for
@@ -150,20 +162,23 @@ jobs:
           go run ./perf/cmd/perfconvert \
             -in perf-scenarios.json \
             -smaller perf-scenarios-smaller.json \
-            -bigger perf-scenarios-bigger.json
+            -bigger perf-scenarios-bigger.json \
+            -render perf-scenarios-render.json
 
       # The smaller-is-better suite (allocs/op + tokens + goroutine-delta) gates the
       # PR. ONE alert-threshold (102%) covers all three metrics in this unified
-      # suite; scenario allocs are therefore gated at 2% — SAFE because they are
-      # deterministic (no machine-load noise). If a 2% false positive ever fires,
-      # the escalation is to split scenario allocs into a third dedicated suite with
-      # its own threshold; we do not pre-split until that cost is real.
+      # suite; scenario allocs are therefore gated at 2% — SAFE because the LOOP
+      # scenarios' allocs are deterministic (no machine-load noise). The tui render
+      # benches' allocs/op is the ONE exception — it is NOT deterministic (a b.N
+      # residual + process-wide MemStats background noise), so perfconvert routes it
+      # to the dedicated ADVISORY render suite below; only the render benches'
+      # deterministic tokens/goroutine metrics (always 0) ride this gated suite.
       #
       # ORDERING INVARIANT: this (smaller) step MUST run FIRST and MUST keep fetching
       # gh-pages (no skip-fetch-gh-pages here) — it is what populates the local gh-pages
-      # baseline that the (bigger) step below reuses via skip-fetch-gh-pages. Do NOT add
-      # skip-fetch here or reorder the two steps, or the bigger step loses its baseline
-      # and silently passes (no data to compare → no alert).
+      # baseline that the (bigger) AND (render) steps below reuse via skip-fetch-gh-pages.
+      # Do NOT add skip-fetch here or reorder the steps, or the later steps lose their
+      # baseline and silently pass (no data to compare → no alert).
       - name: github-action-benchmark — scenarios (smaller)
         uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
@@ -191,6 +206,25 @@ jobs:
           skip-fetch-gh-pages: true   # reuse the gh-pages fetched by the (smaller) step above; re-fetching here is a non-fast-forward against the local ref that step advanced
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # The ADVISORY render-allocs suite: the tui_scrollback_view* allocs/op points
+      # ONLY. fail-on-alert:false because these are NON-deterministic on a shared
+      # runner (a b.N residual + process-wide runtime.ReadMemStats background noise
+      # that perf/kpi cannot goroutine-scope) — gh-pages history showed ~4.6% / ~30%
+      # swings on zero-TUI-code commits, which would false-positive the 2% gate. It
+      # records the trend without ever failing a PR. Same skip-fetch-gh-pages reuse +
+      # after-the-smaller-step ordering as the (bigger) step.
+      - name: github-action-benchmark — scenarios (render allocs, advisory)
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: mecatl scenarios (render allocs, advisory)
+          tool: customSmallerIsBetter
+          output-file-path: perf-scenarios-render.json
+          fail-on-alert: false
+          auto-push: false
+          save-data-file: false
+          skip-fetch-gh-pages: true   # reuse the gh-pages fetched by the (smaller) step above; re-fetching here is a non-fast-forward against the local ref that step advanced
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload perf artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -200,6 +234,7 @@ jobs:
             perf-scenarios.json
             perf-scenarios-smaller.json
             perf-scenarios-bigger.json
+            perf-scenarios-render.json
             bench-new.txt
             allocsgate.txt
           retention-days: 14
@@ -281,7 +316,8 @@ jobs:
           go run ./perf/cmd/perfconvert \
             -in perf-scenarios.json \
             -smaller perf-scenarios-smaller.json \
-            -bigger perf-scenarios-bigger.json
+            -bigger perf-scenarios-bigger.json \
+            -render perf-scenarios-render.json
 
       # The ns/op + allocs TREND dashboard (advisory — fail-on-alert:false). This is
       # the `go`-tool suite over the raw `task bench` output; it never fails a build,
@@ -320,6 +356,23 @@ jobs:
           benchmark-data-dir-path: dev/bench
           alert-threshold: '105%'
           fail-on-alert: true
+          auto-push: true
+          gh-pages-branch: gh-pages
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The ADVISORY render-allocs suite (tui_scrollback_view* allocs/op). It pushes
+      # the trend to gh-pages like the gated suites, but fail-on-alert:false — these
+      # allocs are non-deterministic on a shared runner (b.N residual + process-wide
+      # MemStats noise), so they record drift without ever failing the main run.
+      # auto-push keeps local and remote in sync so its fetch stays a fast-forward.
+      - name: github-action-benchmark — scenarios (render allocs, advisory)
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: mecatl scenarios (render allocs, advisory)
+          tool: customSmallerIsBetter
+          output-file-path: perf-scenarios-render.json
+          benchmark-data-dir-path: dev/bench
+          fail-on-alert: false
           auto-push: true
           gh-pages-branch: gh-pages
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -375,6 +428,7 @@ jobs:
             perf-scenarios.json
             perf-scenarios-smaller.json
             perf-scenarios-bigger.json
+            perf-scenarios-render.json
             bench-new.txt
             allocsgate.txt
           retention-days: 14

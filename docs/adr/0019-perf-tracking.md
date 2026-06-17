@@ -88,7 +88,7 @@ single_session_long      ~36,656 allocs/op   ~4.83 MB/op   goroutines Δ=0   cac
 team_fanout               ~2,690 allocs/op    ~599 KB/op    goroutines Δ=0   cache-hit 0.75
 background_subagents      ~1,307 allocs/op    ~258 KB/op    goroutines Δ=0
 compaction_cycle          ~4,204 allocs/op    ~570 KB/op    goroutines Δ=0   (39 compactions/40 turns; cache-hit 0 by design)
-tui_scrollback_view        ~6,270 allocs/op   ~33.4 MB/op   (400 blocks; STREAMING worst case — live block mutates every op, join always rebuilds)
+tui_scrollback_view        ~3,560 allocs/op   ~33.4 MB/op   (400 blocks; STREAMING worst case — live block REVISED every op with a fixed-size body, join always rebuilds; allocs/op b.N-independent)
 tui_scrollback_view_steady    ~51 allocs/op    ~137 KB/op   (400 blocks; UNCHANGED frame — join cache serves the memoized string; was ~94 allocs / ~32.5 MB/op pre-cache)
 ```
 
@@ -99,12 +99,35 @@ tui_scrollback_view_steady    ~51 allocs/op    ~137 KB/op   (400 blocks; UNCHANG
 > per-block cache hit on every block. The fix caches the whole joined string
 > (`renderer.joinCache`, keyed on a `blockRenders`/block-count/width/expand
 > signature) and reuses it verbatim on any frame that re-rendered no block. The
-> streaming bench (`tui_scrollback_view`) mutates the live block every op so the
-> join always rebuilds — it is the unchanged worst-case floor and is flat across the
+> streaming bench (`tui_scrollback_view`) REVISES the live block every op (with a
+> fixed-SIZE, byte-DIFFERENT body — see the bench-determinism note below) so the
+> join always rebuilds — it is the worst-case streaming floor and is flat across the
 > change. The realistic win is the UNCHANGED frame (cursor move, scroll, the
 > twice-per-message `renderInput`): `tui_scrollback_view_steady` falls from
 > ~32.5 MB/op to ~137 KB/op (−99.6% B/op; the residual is `vp.SetContent`'s line
 > split, the named follow-up).
+
+> **tui-scrollback bench determinism + advisory render suite (2026-06-17).** The
+> streaming bench originally APPENDED a byte to the live block every op, so the block
+> — and the markdown it rendered — GREW with the iteration count, making the captured
+> `allocs/op` a function of `b.N`. Combined with the process-wide
+> `runtime.ReadMemStats` background noise (`perf/kpi` cannot goroutine-scope the read,
+> and quiescing is invasive), the gh-pages trend showed the tui render allocs swinging
+> ~4.6 % (`tui_scrollback_view`) / ~30 % (`tui_scrollback_view_steady`) on commits
+> that touched no TUI code — enough to false-positive the gated 2 % smaller-suite
+> threshold. Two coordinated fixes: (1) the bench now REVISES the live block with a
+> fixed-SIZE, byte-DIFFERENT body per op
+> ([`cmd/mecatui/ui/conversation.go`](../../cmd/mecatui/ui/conversation.go)
+> (`reviseAssistant`)) so `markdownAt`'s `src`-keyed cache still misses every op (the
+> join still ALL-misses — the worst-case streaming floor) but the block no longer
+> grows, making `allocs/op` `b.N`-independent (guarded by
+> `TestScrollbackReviseAllocsIndependentOfN`); (2)
+> [`perf/cmd/perfconvert/main.go`](../../perf/cmd/perfconvert/main.go) routes the two
+> `tui_scrollback_view*`/`allocs_per_op` points to a dedicated ADVISORY
+> `customSmallerIsBetter` suite (`fail-on-alert:false`) — the deterministic
+> escalation the smaller-suite comment anticipated, now SHIPPED — while their
+> deterministic siblings (`tokens_total`/`goroutine_delta`, always 0) stay on the
+> gated smaller suite.
 
 > **prompt inventory-render swap (2026-06-15).** A stateless, byte-identical swap in
 > [`engine/prompt/builder.go`](../../engine/prompt/builder.go): `toolInventory` now
@@ -215,7 +238,10 @@ baseline. `task bench` is deliberately NOT part of `task test` — same posture 
 
 All scenarios are deterministic and offline (`mockllm` + `memfs`/`memstore` +
 `permpolicy`, fixed scripts, `time.Unix(0,0)` session epoch, `llm.Reset()` between
-iterations) — no network, no live model, no `os/exec`. They are Benchmarks, so the
+iterations) — no network, no live model, no `os/exec`. The ONE measurement-noise
+exception is the `tui_scrollback_view*` render benches' `allocs/op` (process-wide
+`runtime.ReadMemStats` background noise + a `b.N` residual), which is why that single
+metric rides the advisory render suite, not the gated one. They are Benchmarks, so the
 default `-run` skips them under `task test`; the only `Test*` in each home is a
 cheap `TestMain` JSON flush.
 
@@ -325,21 +351,32 @@ DELIBERATE SPLIT of two complementary OSS tools, not one:
 2. **`benchmark-action/github-action-benchmark`** for the scenario KPIs and the
    trend dashboard. The scenario JSON (`$MECATL_PERF_JSON`) is reshaped by a small
    converter, [`perf/cmd/perfconvert/main.go`](../../perf/cmd/perfconvert/main.go),
-   into two github-action-benchmark custom-format suites:
-   - **smaller-is-better** — per scenario `allocs_per_op`, `tokens_total`
-     (input+output), and `goroutine_delta`. One `alert-threshold: 102%` covers all
-     three; scenario allocs are consequently gated at 2 %, which is safe because
-     they are deterministic. Splitting into a third dedicated suite is the
-     escalation if a 2 % false positive ever fires.
-   - **bigger-is-better** — `cache_hit_rate`, emitted ONLY for the explicit
+   into three github-action-benchmark custom-format suites:
+   - **smaller-is-better** (gated) — per scenario `allocs_per_op` (EXCEPT the render
+     benches; see render below), plus `tokens_total` (input+output) and
+     `goroutine_delta` for ALL scenarios. One `alert-threshold: 102%` covers all
+     three metrics; the LOOP scenarios' allocs are consequently gated at 2 %, which
+     is safe because they are deterministic.
+   - **bigger-is-better** (gated) — `cache_hit_rate`, emitted ONLY for the explicit
      whitelist `{single_session_long, team_fanout}`. `alert-threshold: 105%`. The
      by-design-0 scenarios (`compaction_cycle`, the `tui_*` benches) must NOT emit a
      cache-hit point — the converter hardcodes the allowlist rather than a `>0`
      heuristic, so a genuine cache regression to 0 on a whitelisted scenario still
      produces a point and fails the gate.
+   - **render allocs (advisory)** — the `tui_scrollback_view*`/`allocs_per_op` points
+     ONLY, on a `customSmallerIsBetter` suite with `fail-on-alert:false`. SHIPPED as
+     the escalation the smaller suite anticipated: render allocs are the ONE advisory
+     exception to the otherwise hard-gated allocs/op, because they are NOT
+     deterministic on a shared runner (a `b.N` residual + process-wide
+     `runtime.ReadMemStats` background noise that `perf/kpi` cannot goroutine-scope —
+     the gh-pages history showed ~4.6 % / ~30 % swings on zero-TUI-code commits). The
+     advisory suite records their trend without ever failing a PR; the converter
+     hardcodes the `renderAllocAdvisory` allowlist (mirror it when a new render bench
+     is added).
 
-The **PR-vs-main split:** the PR job runs both github-action-benchmark suites with
-`fail-on-alert: true` but `auto-push: false` — it fails a regressing PR without ever
+The **PR-vs-main split:** the PR job runs the two GATED github-action-benchmark
+suites with `fail-on-alert: true` (plus the advisory render suite with
+`fail-on-alert: false`) but `auto-push: false` — it fails a regressing PR without ever
 writing the store. The main job (`push`) runs the same suites with `auto-push: true`
 to update the `gh-pages` dashboard, runs the advisory `go`-tool trend (ns/op +
 allocs, `fail-on-alert: false`), re-runs the allocs gate against the just-superseded

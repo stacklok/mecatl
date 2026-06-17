@@ -71,6 +71,14 @@ var oracleSteps = []struct {
 	{"startAssistant", func(c *conversation) { c.startAssistant() }},
 	{"appendReasoning", func(c *conversation) { c.appendReasoning("weighing the options\n") }},
 	{"appendAssistant", func(c *conversation) { c.appendAssistant("Here is **the** answer.\n") }},
+	// reviseAssistant REPLACES the live block's body (vs appendAssistant's grow); it
+	// rides the same currentAssistant() rev-bump gateway, so the oracle must see its
+	// render stay cache-equivalent after the replace. Open a fresh assistant block
+	// first so it targets a live block rather than opening one itself.
+	{"reviseAssistant", func(c *conversation) {
+		c.startAssistant()
+		c.reviseAssistant("Revised **answer** body.\n")
+	}},
 	{"endReasoningStream", func(c *conversation) { c.endReasoningStream() }},
 	{"addTurnStat", func(c *conversation) { c.addTurnStat("turn 1 · ↑1.2k ↓300 · 2.1s") }},
 	{"addTool", func(c *conversation) { c.addTool("call-1", "Read", `{"path":"main.go"}`) }},

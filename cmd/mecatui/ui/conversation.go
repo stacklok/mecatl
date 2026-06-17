@@ -302,6 +302,30 @@ func (c *conversation) appendAssistant(text string) {
 	c.blocks = append(c.blocks, block{kind: blockAssistant, raw: text})
 }
 
+// reviseAssistant REPLACES the current assistant block's raw content with text
+// (rather than growing it like appendAssistant). It opens a fresh assistant block
+// if the last block is not one, mirroring appendAssistant's defensive shape.
+//
+// It exists for the streaming-floor benchmark (scrollback_bench_test.go): calling
+// it with a same-LENGTH but byte-DIFFERENT string each op makes markdownAt's
+// src-keyed cache MISS every op (render.go markdownAt keys on (src, width); the
+// rev bump that currentAssistant() performs misses blockCache; a fresh per-block
+// render bumps blockRenders, so the join cache also misses — the worst-case
+// streaming floor where the whole scrollback re-joins each op) WITHOUT growing
+// b.raw. Because the live block stays a fixed size, the per-op work is constant
+// and allocs/op is INDEPENDENT of b.N — the join still all-misses (the worst-case
+// streaming floor) but the live block does not grow. The mutation rides the
+// currentAssistant() gateway (the codebase's sole rev-bump path for assistant
+// blocks) so it never pokes block.rev directly.
+func (c *conversation) reviseAssistant(text string) {
+	if b := c.currentAssistant(); b != nil {
+		b.raw = text
+		b.reasoningStreaming = false
+		return
+	}
+	c.blocks = append(c.blocks, block{kind: blockAssistant, raw: text})
+}
+
 // appendReasoning accumulates streamed reasoning-summary text into the current
 // turn's assistant block. Reasoning is an attribute of that block (not a
 // reordered sibling) precisely because reasoning and answer deltas can interleave

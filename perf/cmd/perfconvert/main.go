@@ -1,9 +1,26 @@
 // Command perfconvert turns the offline scenario harness's per-scenario JSON
 // KPIs (the []kpi.ScenarioResult that `task perf:scenarios` writes to
-// $MECATL_PERF_JSON) into the two github-action-benchmark "customSmallerIsBetter"
-// / "customBiggerIsBetter" files the perf workflow feeds to the trend dashboard +
-// alert gate. See docs/adr/0019-perf-tracking.md (Phase 3) and
-// .github/workflows/perf.yml.
+// $MECATL_PERF_JSON) into the THREE github-action-benchmark custom-format files
+// the perf workflow feeds to the trend dashboard + alert gate. See
+// docs/adr/0019-perf-tracking.md (Phase 3) and .github/workflows/perf.yml.
+//
+// THREE suites (a "customSmallerIsBetter" gate, a "customBiggerIsBetter" gate, and
+// a "customSmallerIsBetter" ADVISORY suite):
+//   - SMALLER (gated, fail-on-alert) — per scenario allocs_per_op (EXCEPT the
+//     render benches; see RENDER below), plus tokens_total and goroutine_delta for
+//     ALL scenarios (the tui render benches' tokens/goroutines are deterministic —
+//     always 0 — so they gate safely).
+//   - BIGGER (gated, fail-on-alert) — cache_hit_rate for the cacheHitWhitelist.
+//   - RENDER (ADVISORY, fail-on-alert:false) — allocs_per_op for ONLY the
+//     renderAllocAdvisory scenarios (the tui_scrollback_view* benches). These are
+//     split out because their allocs/op is NOT deterministic the way the loop
+//     scenarios' is: it carries a b.N residual (the streaming bench re-joins the
+//     whole scrollback every op) and process-wide runtime.ReadMemStats background
+//     noise (perf/kpi cannot goroutine-scope the MemStats read), so the gh-pages
+//     history showed view ~4.6% / steady ~30% swings on commits that touched no TUI
+//     code at all. Gating them at the shared 2% threshold false-positives; carrying
+//     them as advisory keeps the trend visible without failing a PR. (This is the
+//     escalation the SMALLER suite's comment anticipated — now shipped.)
 //
 // It imports ONLY perf/kpi + the standard library — same leaf posture as the kpi
 // package itself; it never reaches into engine/... or internal/....
@@ -13,7 +30,7 @@
 // the MEDIAN of each metric across the samples, so a single noisy sample cannot
 // move the gated value. The deterministic metrics (allocs/op, tokens) are
 // identical across samples anyway; the median is belt-and-braces and matters most
-// for any future advisory metric routed through here.
+// for the advisory render-allocs metric routed through here.
 package main
 
 import (
@@ -51,33 +68,53 @@ var cacheHitWhitelist = map[string]bool{
 	"team_fanout":         true,
 }
 
+// renderAllocAdvisory is the EXPLICIT allowlist of scenarios whose allocs_per_op is
+// routed to the ADVISORY render suite (fail-on-alert:false) instead of the gated
+// SMALLER suite. These are the mecatui scrollback render benches: their allocs/op
+// is non-deterministic on a shared CI runner (a b.N residual from the streaming
+// re-join + process-wide runtime.ReadMemStats background noise that perf/kpi can't
+// goroutine-scope), so the gh-pages history showed view ~4.6% / steady ~30% swings
+// on zero-TUI-code commits. Gating them at the shared 2% threshold false-positives;
+// the advisory suite keeps the trend visible without failing a PR. Their other
+// metrics (tokens_total, goroutine_delta) stay in SMALLER — those ARE deterministic
+// (always 0 for a render bench). Mirror this set in the docs/adr/0019 RENDER prose
+// + perf.yml when a new render bench is added.
+var renderAllocAdvisory = map[string]bool{
+	"tui_scrollback_view":        true,
+	"tui_scrollback_view_steady": true,
+}
+
 func main() {
 	in := flag.String("in", "", "path to the scenario KPI JSON ([]kpi.ScenarioResult)")
-	smaller := flag.String("smaller", "", "output path for the customSmallerIsBetter suite")
-	bigger := flag.String("bigger", "", "output path for the customBiggerIsBetter suite")
+	smaller := flag.String("smaller", "", "output path for the customSmallerIsBetter (gated) suite")
+	bigger := flag.String("bigger", "", "output path for the customBiggerIsBetter (gated) suite")
+	render := flag.String("render", "", "output path for the customSmallerIsBetter ADVISORY render-allocs suite")
 	flag.Parse()
 
-	if *in == "" || *smaller == "" || *bigger == "" {
-		fmt.Fprintln(os.Stderr, "usage: perfconvert -in <scenarios.json> -smaller <out> -bigger <out>")
+	if *in == "" || *smaller == "" || *bigger == "" || *render == "" {
+		fmt.Fprintln(os.Stderr, "usage: perfconvert -in <scenarios.json> -smaller <out> -bigger <out> -render <out>")
 		os.Exit(2)
 	}
 
-	if err := run(*in, *smaller, *bigger); err != nil {
+	if err := run(*in, *smaller, *bigger, *render); err != nil {
 		fmt.Fprintln(os.Stderr, "perfconvert:", err)
 		os.Exit(1)
 	}
 }
 
-func run(inPath, smallerPath, biggerPath string) error {
+func run(inPath, smallerPath, biggerPath, renderPath string) error {
 	rows, err := readResults(inPath)
 	if err != nil {
 		return err
 	}
-	smaller, bigger := convert(rows)
+	smaller, bigger, render := convert(rows)
 	if err := writePoints(smallerPath, smaller); err != nil {
 		return err
 	}
-	return writePoints(biggerPath, bigger)
+	if err := writePoints(biggerPath, bigger); err != nil {
+		return err
+	}
+	return writePoints(renderPath, render)
 }
 
 // readResults decodes the scenario JSON and HARD-fails on any row whose
@@ -102,9 +139,13 @@ func readResults(path string) ([]kpi.ScenarioResult, error) {
 	return rows, nil
 }
 
-// convert groups rows by Name and emits the two suites. Each metric is the MEDIAN
-// across that scenario's samples.
-func convert(rows []kpi.ScenarioResult) (smaller, bigger []benchPoint) {
+// convert groups rows by Name and emits the three suites. Each metric is the
+// MEDIAN across that scenario's samples. allocs_per_op routes to RENDER (advisory)
+// for the renderAllocAdvisory scenarios and to SMALLER (gated) for the rest;
+// tokens_total + goroutine_delta always go to SMALLER (deterministic for every
+// scenario, including the always-0 render benches); cache_hit_rate goes to BIGGER
+// for the cacheHitWhitelist.
+func convert(rows []kpi.ScenarioResult) (smaller, bigger, render []benchPoint) {
 	groups := groupByName(rows)
 	// Deterministic output order so the emitted files are stable across runs
 	// (github-action-benchmark and any human diff both benefit).
@@ -118,7 +159,12 @@ func convert(rows []kpi.ScenarioResult) (smaller, bigger []benchPoint) {
 		g := groups[name]
 
 		allocs := medianFloat(mapU64(g, func(r kpi.ScenarioResult) uint64 { return r.AllocsPerOp }))
-		smaller = append(smaller, benchPoint{Name: name + "/allocs_per_op", Unit: "allocs/op", Value: allocs})
+		allocPoint := benchPoint{Name: name + "/allocs_per_op", Unit: "allocs/op", Value: allocs}
+		if renderAllocAdvisory[name] {
+			render = append(render, allocPoint)
+		} else {
+			smaller = append(smaller, allocPoint)
+		}
 
 		tokens := medianFloat(mapI64(g, func(r kpi.ScenarioResult) int64 { return r.TokensInput + r.TokensOutput }))
 		smaller = append(smaller, benchPoint{Name: name + "/tokens_total", Unit: "tokens", Value: tokens})
@@ -131,7 +177,7 @@ func convert(rows []kpi.ScenarioResult) (smaller, bigger []benchPoint) {
 			bigger = append(bigger, benchPoint{Name: name + "/cache_hit_rate", Unit: "ratio", Value: hit})
 		}
 	}
-	return smaller, bigger
+	return smaller, bigger, render
 }
 
 func groupByName(rows []kpi.ScenarioResult) map[string][]kpi.ScenarioResult {
