@@ -825,7 +825,10 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	be.branchStart(i, composePrompt(shared, task))
 	start := time.Now()
 
-	child, cleanup, err := t.forker.Fork(ctx, ws, label)
+	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty
+	// state verbatim), so the degraded-fork advisory is never set on this path —
+	// discard it. (A mutating branch is not the read-only-overlay case.)
+	child, cleanup, _, err := t.forker.Fork(ctx, ws, label)
 	if err != nil {
 		res.failed = true
 		res.failReason = fmt.Sprintf("fork failed: %v", err)

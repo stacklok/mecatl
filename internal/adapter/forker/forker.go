@@ -67,6 +67,21 @@
 // That is exactly why worktree is the default. For mutating branches the stronger
 // isolation is worth the extra copy.
 //
+// Dirty-aware overlay (WithDirtyOverlay) — the read-only-child gap:
+//
+// A plain `git worktree add --detach HEAD` checks out the COMMITTED HEAD, so the
+// child sees a CLEAN tree: Read/Grep/Glob AND the child's `git status`/`git diff`
+// report no changes even when the operator has uncommitted, staged, or untracked
+// work in the parent. A read-only explorer asked to review the operator's
+// in-progress changes would then find nothing — it cannot see what the operator
+// sees. WithDirtyOverlay is the worktree-only MODE that closes that gap by mirroring
+// the parent's uncommitted state into the fresh worktree. It is best-effort: a
+// failed overlay resets the worktree to a pristine-HEAD checkout (the safe floor) AND
+// returns a degraded-fork advisory from Fork so the agent can tell the child it is
+// seeing committed HEAD only — the failure case is SURFACED, never silent. It is
+// inert on the force-copy path (copyTree already carries the parent's dirty state
+// verbatim). The full step-by-step mechanics live on WithDirtyOverlay's godoc.
+//
 // The copy path is bounded only by available disk and the size of the base tree; it
 // copies regular files and directories and SKIPS symlinks (so a symlink cannot
 // smuggle the copy outside the base). Neither path auto-merges results back — see
@@ -74,6 +89,7 @@
 package forker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -112,6 +128,11 @@ type Forker struct {
 	// .git too) instead of the git-worktree path, even for a git repo — giving the
 	// fork its OWN object DB/refs so a child's git/Bash writes stay inside the fork.
 	forceCopy bool
+	// dirtyOverlay, when true, mirrors the parent's uncommitted state (tracked
+	// modifications + staged changes + deletions + untracked non-ignored files) into
+	// a freshly-created worktree so a read-only child sees what the operator sees.
+	// Best-effort, no-op on a clean tree, inert on the force-copy path.
+	dirtyOverlay bool
 	// seq disambiguates concurrently-created child directories for the same label.
 	seq atomic.Uint64
 }
@@ -141,6 +162,42 @@ func WithForceCopy() Option {
 	return func(f *Forker) { f.forceCopy = true }
 }
 
+// WithDirtyOverlay makes Fork mirror the parent's UNCOMMITTED state into a freshly
+// created git worktree, closing the "a read-only child sees a clean tree" gap. A
+// plain `git worktree add --detach HEAD` checks out the committed HEAD, so a
+// read-only explorer (Subagent or read-only team member) cannot see the operator's
+// in-progress work — modified tracked files, staged changes, deletions, or new
+// untracked files. With this option set, after the worktree is created the forker:
+//
+//   - applies `git diff --no-ext-diff --binary HEAD` from the parent (tracked
+//     modifications + staged changes + deletions; --binary so binary files
+//     round-trip) onto the child via `git apply`; and
+//   - copies each untracked, non-ignored file (`git ls-files --others
+//     --exclude-standard`) into the child, skipping symlinks/irregular files.
+//
+// It is .gitignore-respecting, symlink-skipping, BEST-EFFORT, and a NO-OP on a clean
+// tree (a `git status --porcelain` probe short-circuits before any diff/apply,
+// keeping the common cheap path free).
+//
+// SURFACED degradation: best-effort does NOT mean silent. When the tree was dirty
+// but the overlay could not be applied (e.g. `git apply` rejected the patch), the
+// forker resets the worktree to a pristine-HEAD checkout (a partially-applied overlay
+// is worse than none — the clean worktree is the safe floor) AND Fork returns a
+// non-empty degraded-fork advisory describing that the child is seeing committed HEAD
+// only. The agent surfaces that advisory to the child so a read-only explorer does
+// not silently conclude "nothing changed" while the operator has uncommitted work.
+// On a clean tree or a successful overlay the advisory is empty.
+//
+// WithDirtyOverlay applies ONLY on the worktree branch. On the force-copy path
+// (WithForceCopy), the recursive copyTree already carries the parent's dirty state
+// verbatim, so combining the two is harmless: force-copy wins by call site and the
+// overlay never runs. It is the mode the composition root wires for read-only
+// children that need a shell (the Subagent worktree forker and the read-only team
+// member forker).
+func WithDirtyOverlay() Option {
+	return func(f *Forker) { f.dirtyOverlay = true }
+}
+
 // New constructs the default Forker. newWorkspace builds a child tool.Workspace
 // over an isolated directory (the composition root passes osfs.NewWorkspace);
 // it must be non-nil.
@@ -164,39 +221,48 @@ var _ tool.WorkspaceForker = (*Forker)(nil)
 // Fork creates an isolated child workspace derived from base. It uses a git
 // worktree when base's root is a git repo, else a recursive copy. The returned
 // cleanup removes the child's backing storage (worktree or copy).
-func (f *Forker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, error) {
+//
+// The advisory is non-empty ONLY on the dirty-overlay worktree path when the
+// overlay DEGRADED (the base was dirty but its uncommitted state could not be
+// mirrored into the child, so the child sees committed HEAD only). Every other path
+// — force-copy, plain worktree, copy fallback, clean tree, no overlay — returns "".
+func (f *Forker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	if base == nil {
-		return nil, nil, errors.New("forker: Fork requires a non-nil base workspace")
+		return nil, nil, "", errors.New("forker: Fork requires a non-nil base workspace")
 	}
 	baseRoot := base.Root()
 	if baseRoot == "" {
-		return nil, nil, errors.New("forker: base workspace has no root")
+		return nil, nil, "", errors.New("forker: base workspace has no root")
 	}
 
 	childDir, err := f.childDir(label)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	// Force-copy mode: always take the full recursive copy (including .git), giving
 	// the fork its own object DB/refs. This is the MUTATING-fork isolation mode — a
-	// child's git/Bash writes can never reach the base repo.
+	// child's git/Bash writes can never reach the base repo. copyTree already carries
+	// the parent's dirty state verbatim, so there is never a degraded-fork advisory.
 	if f.forceCopy {
-		return f.forkCopyInto(baseRoot, childDir)
+		ws, cleanup, ferr := f.forkCopyInto(baseRoot, childDir)
+		return ws, cleanup, "", ferr
 	}
 
 	repoRoot, isRepo := gitRepoRoot(ctx, baseRoot)
 	if isRepo {
-		ws, cleanup, ferr := f.forkWorktree(ctx, repoRoot, childDir)
+		ws, cleanup, advisory, ferr := f.forkWorktree(ctx, repoRoot, childDir)
 		if ferr != nil {
 			// Worktree creation failed (e.g. dirty/odd repo state): fall back to a
 			// copy so a fork never hard-fails just because git refused.
 			_ = os.RemoveAll(childDir)
-			return f.forkCopy(baseRoot, label)
+			cws, ccleanup, cerr := f.forkCopy(baseRoot, label)
+			return cws, ccleanup, "", cerr
 		}
-		return ws, cleanup, nil
+		return ws, cleanup, advisory, nil
 	}
-	return f.forkCopyInto(baseRoot, childDir)
+	ws, cleanup, ferr := f.forkCopyInto(baseRoot, childDir)
+	return ws, cleanup, "", ferr
 }
 
 // childDir reserves (creates) a uniquely-named, empty directory for a child fork,
@@ -214,18 +280,29 @@ func (f *Forker) childDir(label string) (string, error) {
 // forkWorktree adds a detached git worktree at childDir pointing at repoRoot's
 // HEAD. git refuses to create a worktree at an existing non-empty directory, so
 // childDir (created empty by childDir) is removed first and recreated by git.
-func (f *Forker) forkWorktree(ctx context.Context, repoRoot, childDir string) (tool.Workspace, func() error, error) {
+func (f *Forker) forkWorktree(ctx context.Context, repoRoot, childDir string) (tool.Workspace, func() error, string, error) {
 	// git worktree add wants to create the directory itself.
 	if err := os.RemoveAll(childDir); err != nil {
-		return nil, nil, fmt.Errorf("forker: prepare worktree dir: %w", err)
+		return nil, nil, "", fmt.Errorf("forker: prepare worktree dir: %w", err)
 	}
 	if err := f.runGit(ctx, repoRoot, "worktree", "add", "--detach", childDir, "HEAD"); err != nil {
-		return nil, nil, fmt.Errorf("forker: git worktree add: %w", err)
+		return nil, nil, "", fmt.Errorf("forker: git worktree add: %w", err)
+	}
+	// Dirty-aware overlay: mirror the parent's uncommitted state into the fresh
+	// worktree so a read-only child sees what the operator sees. Best-effort — a
+	// failure leaves a pristine-HEAD worktree (the safe floor), so the error is
+	// deliberately swallowed and Fork never hard-fails because of the overlay. When
+	// the overlay DEGRADED (the tree was dirty but the overlay failed and the child
+	// fell back to committed HEAD), overlayDirty returns a non-empty advisory the
+	// caller surfaces to the child so it knows it is NOT seeing the operator's work.
+	var advisory string
+	if f.dirtyOverlay {
+		advisory = f.overlayDirty(ctx, repoRoot, childDir)
 	}
 	ws, err := f.newWorkspace(childDir)
 	if err != nil {
 		_ = f.runGit(ctx, repoRoot, "worktree", "remove", "--force", childDir)
-		return nil, nil, fmt.Errorf("forker: open child workspace: %w", err)
+		return nil, nil, "", fmt.Errorf("forker: open child workspace: %w", err)
 	}
 	cleanup := func() error {
 		// Detached context: cleanup must run even if the fork's ctx was cancelled.
@@ -236,7 +313,7 @@ func (f *Forker) forkWorktree(ctx context.Context, repoRoot, childDir string) (t
 		_ = f.runGit(context.Background(), repoRoot, "worktree", "prune")
 		return rmErr
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, advisory, nil
 }
 
 // forkCopy creates a fresh child directory and recursively copies base into it.
@@ -309,6 +386,165 @@ func runGit(ctx context.Context, dir string, args ...string) error {
 		return err
 	}
 	return nil
+}
+
+// degradedOverlayAdvisory is the human-readable note overlayDirty returns when the
+// parent tree was dirty but its uncommitted state could not be mirrored into the
+// child — so the child is seeing committed HEAD only. The agent prepends it to the
+// child's view so a read-only explorer reasons honestly ("the diff looks clean but
+// the operator has uncommitted work I cannot see") instead of concluding there is
+// nothing to review. It is informational, never load-bearing for safety.
+const degradedOverlayAdvisory = "[harness note: the workspace had uncommitted changes, but they could not be overlaid into your isolated checkout — you are seeing the committed HEAD only. `git status`/`git diff` will look clean even though the operator has un-committed work.]"
+
+// overlayDirty mirrors the parent repo's UNCOMMITTED state (tracked modifications,
+// staged changes, deletions, and untracked non-ignored files) from parentRoot into
+// the freshly-created worktree at childDir, so a read-only child sees what the
+// operator sees rather than a clean HEAD checkout. It is best-effort: on ANY error
+// it resets the worktree to pristine HEAD (the pre-fix clean-worktree behaviour —
+// the safe floor, since a partially-applied overlay is worse than none).
+//
+// It returns a DEGRADED-fork advisory: a non-empty string (degradedOverlayAdvisory)
+// ONLY when the dirty probe saw changes AND the overlay failed — i.e. the tree was
+// dirty but the child fell back to committed HEAD. It returns "" on a clean tree
+// (nothing to overlay) or a successful overlay (the child genuinely sees the dirty
+// state). The error itself is intentionally NOT propagated — the worktree is usable
+// either way; only the human-facing advisory crosses back to the caller.
+//
+// Sequence:
+//
+//  1. Dirty probe — `git status --porcelain`. Empty ⇒ clean ⇒ no-op + "" (keeps the
+//     common cheap path free; no diff/apply runs).
+//  2. Tracked + staged + deletions — pipe `git diff --no-ext-diff --binary HEAD`
+//     from the parent into `git apply --whitespace=nowarn -` in the child. `diff
+//     HEAD` captures the net working-tree-vs-HEAD delta (exactly what `git status`
+//     reports); --binary round-trips binary files; deletions and renames-as-delete
+//     +add are reproduced by apply.
+//  3. Untracked non-ignored — `git ls-files --others --exclude-standard -z`, then
+//     copy each `<parentRoot>/<path>` to `<childDir>/<path>` via copyFile, SKIPPING
+//     symlinks/irregular files (os.Lstat check, mirroring copyTree's discipline).
+//
+// Every git invocation carries the SAME scrubbed/neutralizing env as runGit (via
+// runGitCapture), and the diff carries --no-ext-diff, so a shared `.git/config` or
+// attacker-named external diff driver cannot drive code here.
+func (*Forker) overlayDirty(ctx context.Context, parentRoot, childDir string) string {
+	// (1) Cheap dirty probe. A clean tree short-circuits before any diff/apply.
+	status, err := runGitCapture(ctx, parentRoot, nil, "status", "--porcelain")
+	if err != nil {
+		// The probe itself failed: we cannot tell whether the tree is dirty. Treat it
+		// as a possible-degradation and advise — the child may be missing uncommitted
+		// work, and a false-positive advisory on a genuinely-clean tree is harmless.
+		return degradedOverlayAdvisory
+	}
+	if len(bytes.TrimSpace(status)) == 0 {
+		return "" // clean tree — nothing to overlay, no degradation
+	}
+
+	if oerr := overlayDirtyInner(ctx, parentRoot, childDir); oerr != nil {
+		// Reset the worktree to pristine HEAD: a partial overlay is worse than none.
+		// The tree WAS dirty (probe saw changes) but the child now sees committed HEAD
+		// only — surface the degradation so the child does not report "nothing changed".
+		_, _ = runGitCapture(ctx, childDir, nil, "checkout", "--", ".")
+		_, _ = runGitCapture(ctx, childDir, nil, "clean", "-fd")
+		return degradedOverlayAdvisory
+	}
+	return "" // overlay succeeded — the child sees the dirty state
+}
+
+// overlayDirtyInner performs steps (2) and (3) of the overlay; split out so a
+// failure in either has ONE recovery path (reset-to-pristine) in overlayDirty.
+func overlayDirtyInner(ctx context.Context, parentRoot, childDir string) error {
+	// (2) Tracked + staged + deletions: apply `git diff HEAD` into the child.
+	patch, err := runGitCapture(ctx, parentRoot, nil, "diff", "--no-ext-diff", "--binary", "HEAD")
+	if err != nil {
+		return fmt.Errorf("forker: diff HEAD: %w", err)
+	}
+	if len(bytes.TrimSpace(patch)) > 0 {
+		// NB: `git apply` does NOT accept --no-ext-diff (a diff-family flag); the
+		// scrubbed env already neutralises any external diff driver. apply reads the
+		// patch from stdin ("-"). --whitespace=nowarn keeps a noisy-but-valid patch
+		// (trailing whitespace in the operator's edits) from being rejected.
+		if _, aerr := runGitCapture(ctx, childDir, patch,
+			"apply", "--whitespace=nowarn", "-"); aerr != nil {
+			return fmt.Errorf("forker: apply dirty patch: %w", aerr)
+		}
+	}
+
+	// (3) Untracked, non-ignored files: copy each into the child. --exclude-standard
+	// honours .gitignore (+ .git/info/exclude); -z is NUL-separated, robust to spaces.
+	others, err := runGitCapture(ctx, parentRoot, nil, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return fmt.Errorf("forker: ls-files --others: %w", err)
+	}
+	for _, rel := range splitNUL(others) {
+		if rel == "" {
+			continue
+		}
+		srcPath := filepath.Join(parentRoot, rel)
+		// SKIP symlinks/irregular files: a symlink could point outside the base, and
+		// copying its target would break isolation (mirrors copyTree's discipline).
+		info, lerr := os.Lstat(srcPath)
+		if lerr != nil {
+			continue // raced away mid-fork; honour best-effort
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if cerr := copyFile(srcPath, filepath.Join(childDir, rel)); cerr != nil {
+			return fmt.Errorf("forker: copy untracked %q: %w", rel, cerr)
+		}
+	}
+	return nil
+}
+
+// runGitCapture executes a git subcommand in dir, returning its stdout. It is the
+// capturing sibling of runGit (fire-and-forget) for the dirty-overlay path, which
+// must read diff/status/ls-files output and pipe a patch on stdin. It carries the
+// IDENTICAL scrubbed/neutralizing env line as runGit/gitRepoRoot (the single shared
+// git-hardening policy), sets cmd.Stdin from stdin when non-nil, and folds stderr
+// into the returned error on a non-zero exit.
+//
+// It is a package var (delegating to runGitCaptureImpl) so a test can WRAP it to
+// count the overlay's git invocations — the seam that lets TestForkDirtyOverlay-
+// CleanTreeNoOp prove the `git status --porcelain` short-circuit (a regression that
+// removed it would run diff/apply on a clean tree and the call count would jump).
+var runGitCapture = runGitCaptureImpl
+
+func runGitCaptureImpl(ctx context.Context, dir string, stdin []byte, args ...string) ([]byte, error) {
+	full := append([]string{"-C", dir}, args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
+	// SAME env as runGit/gitRepoRoot: envscrub removes the harness credentials, then
+	// gitenv neutralises hooks/pager/fsmonitor/external-diff and drops GIT_* danger.
+	cmd.Env = gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
+// splitNUL splits a NUL-separated, NUL-terminated byte slice (git -z output) into
+// its non-empty elements. It drops EVERY empty element (not just the trailing one
+// from the final separator), keeping it byte-for-byte equivalent to the sibling impl
+// in cmd/mecatequi/run.go (the two are deliberately kept identical until a third
+// `-z` parser appears and earns a shared helper — Rule of Three).
+func splitNUL(b []byte) []string {
+	parts := strings.Split(string(b), "\x00")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // copyTree recursively copies the directory tree rooted at src into dst (which

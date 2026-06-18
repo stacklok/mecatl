@@ -36,7 +36,7 @@ func TestForkGitWorktree(t *testing.T) {
 	}
 
 	f := forker.New(osfsWorkspace)
-	child, cleanup, err := f.Fork(context.Background(), baseWS, "idea-a")
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "idea-a")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestForkNeutralizesRepoHooks(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace)
-	child, cleanup, err := f.Fork(context.Background(), baseWS, "ro-member")
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "ro-member")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestForkCopyFallback(t *testing.T) {
 	}
 
 	f := forker.New(osfsWorkspace)
-	child, cleanup, err := f.Fork(context.Background(), baseWS, "copy idea!")
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "copy idea!")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestForkConcurrentCopiesAreDistinct(t *testing.T) {
 	done := make(chan int, n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
-			child, cleanup, err := f.Fork(context.Background(), baseWS, "x")
+			child, cleanup, _, err := f.Fork(context.Background(), baseWS, "x")
 			if err != nil {
 				errs[i] = err
 			} else {
@@ -242,7 +242,7 @@ func TestForkForceCopyIsFullyIsolatedRepo(t *testing.T) {
 	}
 
 	f := forker.New(osfsWorkspace, forker.WithForceCopy())
-	child, cleanup, err := f.Fork(context.Background(), baseWS, "mutating-branch")
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "mutating-branch")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestForkWorktreeSharesObjectDB(t *testing.T) {
 
 	// Default forker (no WithForceCopy) → worktree path for a repo.
 	f := forker.New(osfsWorkspace)
-	child, cleanup, err := f.Fork(context.Background(), baseWS, "wt")
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "wt")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}

@@ -267,8 +267,8 @@ func (b *appFakeBash) ran() []string {
 // shape) so a read-only member can carry Bash.
 type appFakeForker struct{}
 
-func (appFakeForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
-	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, nil
+func (appFakeForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, "", nil
 }
 
 // TestAskReviewerE2EHeadlessTeamAllow drives the WHOLE wired chain offline: a

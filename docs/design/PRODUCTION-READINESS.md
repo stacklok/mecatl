@@ -19,7 +19,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | Agent definitions (Tier-1 specialists) | ✅ shipped · ⛔ per-agent memory write path · ⛔ `local` tier | [AGENT-DEFINITIONS.md](../adr/0013-agent-definitions.md) | [subagents & teams](../architecture/subagents-and-teams.md) |
 | Agent teams (kernel, supervisor, coordination) | ✅ shipped (substrate) · ⛔ mutating-fork join strategies · ⛔ `TeamStore` restart durability | [AGENT-TEAMS-SPIKE.md](../adr/0014-agent-teams.md) | [subagents & teams](../architecture/subagents-and-teams.md) |
 | Background subagents + per-child cancel | ✅ shipped · ⛔ session-scoped detach (v2) | [BACKGROUND-SUBAGENTS.md](../adr/0015-background-subagents.md) | [subagents & teams](../architecture/subagents-and-teams.md) |
-| Parallelism — fork-join | ✅ shipped | — | [parallelism](../architecture/parallelism.md) |
+| Parallelism — fork-join | ✅ shipped · ✅ dirty-aware read-only fork (uncommitted-state overlay) · ⛔ submodule-pointer overlay (best-effort) | [dirty-aware-readonly-fork.md](../adr/0033-dirty-aware-readonly-fork.md) | [parallelism](../architecture/parallelism.md) |
 | Worktree binding (mecatui) | ✅ shipped · ⛔ per-worktree trust re-prompt | [worktree-binding.md](../adr/0032-worktree-binding.md) | [parallelism](../architecture/parallelism.md) |
 | Memory defaults (on-by-default) | ✅ shipped | [MEMORY-DEFAULTS.md](../adr/0008-memory-on-by-default.md) | [memory](../architecture/memory.md) |
 | Tiered memory (tier-0 index + BM25) | ✅ tier-0 index + BM25 `SearchMemory` · ⛔ semantic / embedding recall | [MEMORY-TIERING.md](../adr/0009-tiered-memory.md) · [MEMORY-TIER2.md](../adr/0010-semantic-memory-recall.md) | [memory](../architecture/memory.md) |

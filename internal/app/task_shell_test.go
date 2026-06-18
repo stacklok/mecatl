@@ -398,12 +398,96 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 	}
 }
 
+// TestSubagentSeesDirtyWorkspaceEndToEnd is the model-facing proof for the dirty-aware
+// overlay (ADR 0033): a read-only Subagent dispatched over a DIRTY parent repo — one
+// uncommitted tracked modification AND one new untracked file — runs `git status` and
+// `git diff` in its worktree and the captured REAL git output reflects the operator's
+// in-progress work. Without WithDirtyOverlay the worktree is a clean HEAD checkout and
+// both commands would report nothing; with it, the child sees what the operator sees.
+func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := t.TempDir()
+	initGitRepoTest(t, repo)
+	writeRepoFile(t, repo, "tracked.txt", "committed v1\n")
+	gitCommitTest(t, repo, "add tracked")
+	// Make the workspace DIRTY: modify the committed file and add an untracked one.
+	writeRepoFile(t, repo, "tracked.txt", "operator WIP edit\n")
+	writeRepoFile(t, repo, "scratch.txt", "operator scratch notes\n")
+
+	cfg := teamCfg(t)
+	cfg.Workspace = repo
+
+	rec := &recordingToolLogger{}
+	childProvider := mockllm.New(
+		mockllm.ToolCallTurn(session.ToolCall{ID: "s1", Name: "Bash", Args: gitArgs("git status --porcelain")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "d1", Name: "Bash", Args: gitArgs("git --no-pager diff --no-ext-diff")}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "c1", Name: "Bash", Args: gitArgs("cat scratch.txt")}),
+		mockllm.TextTurn("the workspace has uncommitted changes"),
+	)
+
+	worktreeBase := t.TempDir()
+	task := newSubagentToolForTestDirty(t, cfg, childProvider, rec, worktreeBase)
+
+	parentWS := osfsWSForTest(t, repo)
+	parentProvider := mockllm.New(
+		mockllm.ToolCallTurn(session.ToolCall{ID: "t1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"report the uncommitted changes"}`)}),
+		mockllm.TextTurn("parent received the dirty-state report"),
+	)
+	parentCat := tool.NewCatalog()
+	parentCat.MustRegister(task)
+	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
+
+	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 6}, time.Now())
+	run := parentEng.Run(context.Background(), sess, parentWS, "go")
+	for ev := range run.Events() {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
+			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
+		}
+	}
+
+	status := rec.contentForCall("s1")
+	diff := rec.contentForCall("d1")
+	scratch := rec.contentForCall("c1")
+
+	// git status must list BOTH the modified tracked file and the new untracked file.
+	if !strings.Contains(status, "tracked.txt") {
+		t.Errorf("git status missing the modified tracked file; got:\n%s", status)
+	}
+	if !strings.Contains(status, "scratch.txt") {
+		t.Errorf("git status missing the untracked file; got:\n%s", status)
+	}
+	// git diff must show the operator's uncommitted edit.
+	if !strings.Contains(diff, "operator WIP edit") {
+		t.Errorf("git diff missing the uncommitted edit; got:\n%s", diff)
+	}
+	// The untracked file's content is readable in the worktree.
+	if !strings.Contains(scratch, "operator scratch notes") {
+		t.Errorf("untracked scratch.txt not visible to child; got:\n%s", scratch)
+	}
+}
+
 // newSubagentToolForTest builds a Subagent tool wired exactly like buildSubagentTool's shell path
 // — a sandboxed command runner + a worktree forker (rooted under worktreeBase for the
 // cleanup assertion) — but with a child engine carrying the given recording logger so a
 // test can read the child's REAL Bash output. It mirrors the composition wiring without
 // going through buildSubagentTool (which builds an opaque child engine).
 func newSubagentToolForTest(t *testing.T, cfg Config, childProvider *mockllm.Provider, logger *recordingToolLogger, worktreeBase string) tool.Tool {
+	t.Helper()
+	return newSubagentToolForTestOpts(t, cfg, childProvider, logger, worktreeBase)
+}
+
+// newSubagentToolForTestDirty is newSubagentToolForTest with the forker carrying
+// WithDirtyOverlay (the composition wiring for read-only explorers), so the child's
+// worktree mirrors the parent's uncommitted state.
+func newSubagentToolForTestDirty(t *testing.T, cfg Config, childProvider *mockllm.Provider, logger *recordingToolLogger, worktreeBase string) tool.Tool {
+	t.Helper()
+	return newSubagentToolForTestOpts(t, cfg, childProvider, logger, worktreeBase, forker.WithDirtyOverlay())
+}
+
+func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm.Provider, logger *recordingToolLogger, worktreeBase string, forkOpts ...forker.Option) tool.Tool {
 	t.Helper()
 	runner := buildSandboxedCommandRunner(cfg)
 	if runner == nil {
@@ -422,8 +506,8 @@ func newSubagentToolForTest(t *testing.T, cfg Config, childProvider *mockllm.Pro
 		PromptConfig:     promptConfig(cfg, cfg.gitStatus),
 		Model:            cfg.Model,
 	})
-	roFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
-		forker.WithTempBase(worktreeBase))
+	opts := append([]forker.Option{forker.WithTempBase(worktreeBase)}, forkOpts...)
+	roFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }, opts...)
 	return agent.NewSubagentTool(childEng, agent.WithChildForker(roFk))
 }
 

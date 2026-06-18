@@ -188,7 +188,7 @@ func TestSkillReadRootsThreadedThroughTeamWiring(t *testing.T) {
 		{"mutating force-copy forker", fk},
 		{"read-only forker", roFk},
 	} {
-		child, cleanup, err := tc.fk.Fork(ctx, base, "readroots-pin")
+		child, cleanup, _, err := tc.fk.Fork(ctx, base, "readroots-pin")
 		if err != nil {
 			t.Fatalf("%s: Fork: %v", tc.name, err)
 		}

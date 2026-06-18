@@ -98,7 +98,7 @@ type uniqueForker struct {
 
 func newUniqueForker() *uniqueForker { return &uniqueForker{cleaned: map[string]bool{}} }
 
-func (m *uniqueForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (m *uniqueForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	m.mu.Lock()
 	m.seq++
 	root := fmt.Sprintf("/fork/%s/%d", label, m.seq)
@@ -110,7 +110,7 @@ func (m *uniqueForker) Fork(_ context.Context, _ tool.Workspace, label string) (
 		m.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, "", nil
 }
 
 func (m *uniqueForker) wasCleaned(root string) bool {

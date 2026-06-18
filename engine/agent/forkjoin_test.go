@@ -39,7 +39,7 @@ func newLabeledForker() *labeledForker {
 	}
 }
 
-func (m *labeledForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (m *labeledForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	m.mu.Lock()
 	m.seq++
 	m.created[label] = true
@@ -56,7 +56,7 @@ func (m *labeledForker) Fork(_ context.Context, _ tool.Workspace, label string) 
 		m.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, "", nil
 }
 
 func (m *labeledForker) wasCleaned(label string) bool {
@@ -561,9 +561,9 @@ type labelFailForker struct {
 	failAll   bool
 }
 
-func (m *labelFailForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (m *labelFailForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	if m.failAll || label == m.failLabel {
-		return nil, nil, fmt.Errorf("labelFailForker: scripted fork failure on %s", label)
+		return nil, nil, "", fmt.Errorf("labelFailForker: scripted fork failure on %s", label)
 	}
 	return m.inner.Fork(ctx, base, label)
 }

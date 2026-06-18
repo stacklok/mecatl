@@ -80,14 +80,14 @@ type memForker struct {
 	forkSeq     int
 }
 
-func (m *memForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (m *memForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	m.mu.Lock()
 	m.forkSeq++
 	seq := m.forkSeq
 	m.forks++
 	m.mu.Unlock()
 	if m.failOnLabel != "" && label == m.failOnLabel {
-		return nil, nil, fmt.Errorf("memForker: scripted failure on %s", label)
+		return nil, nil, "", fmt.Errorf("memForker: scripted failure on %s", label)
 	}
 	ws := memfs.NewWorkspace(fmt.Sprintf("/fork/%s/%d", label, seq))
 	cleanup := func() error {
@@ -96,7 +96,7 @@ func (m *memForker) Fork(_ context.Context, _ tool.Workspace, label string) (too
 		m.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, "", nil
 }
 
 func (m *memForker) counts() (forks, cleaned int) {

@@ -82,15 +82,15 @@ type recordingForker struct {
 	childs []string
 }
 
-func (rf *recordingForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, error) {
-	child, cleanup, err := rf.inner.Fork(ctx, base, label)
+func (rf *recordingForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+	child, cleanup, advisory, err := rf.inner.Fork(ctx, base, label)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	rf.mu.Lock()
 	rf.childs = append(rf.childs, child.Root())
 	rf.mu.Unlock()
-	return child, cleanup, nil
+	return child, cleanup, advisory, nil
 }
 
 func (rf *recordingForker) roots() []string {

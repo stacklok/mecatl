@@ -576,7 +576,7 @@ type recordingSubagentForker struct {
 	cleanups int
 }
 
-func (f *recordingSubagentForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (f *recordingSubagentForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	f.mu.Lock()
 	f.labels = append(f.labels, label)
 	f.mu.Unlock()
@@ -587,7 +587,7 @@ func (f *recordingSubagentForker) Fork(_ context.Context, _ tool.Workspace, labe
 		f.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, "", nil
 }
 
 // erroringForker always fails Fork. It proves the no-silent-fallback contract: a
@@ -595,8 +595,16 @@ func (f *recordingSubagentForker) Fork(_ context.Context, _ tool.Workspace, labe
 // against the shared parent ws.
 type erroringForker struct{}
 
-func (erroringForker) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, error) {
-	return nil, nil, errors.New("worktree add failed")
+func (erroringForker) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
+	return nil, nil, "", errors.New("worktree add failed")
+}
+
+// advisoryForker forks successfully but returns a fixed DEGRADED-fork advisory, so a
+// test can prove the advisory reaches the child's prompt (the model-facing channel).
+type advisoryForker struct{ advisory string }
+
+func (f advisoryForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, f.advisory, nil
 }
 
 // rootRecordingTool is a read-only child tool that records the Workspace.Root() it
@@ -691,6 +699,82 @@ func TestSubagentForksBeforeRunning(t *testing.T) {
 	}
 }
 
+// TestSubagentDegradedForkAdvisoryReachesChildPrompt is the model-facing proof for the
+// degraded-fork advisory: when the forker returns a non-empty advisory (the dirty
+// overlay could not be applied, so the child sees committed HEAD only), that note is
+// PREPENDED to the child LLM's first user message — model-visible, not just a log.
+// Without it the child would silently report "nothing to review" on a clean-looking
+// tree. The child provider's request observer captures the first user message text.
+func TestSubagentDegradedForkAdvisoryReachesChildPrompt(t *testing.T) {
+	const advisory = "[harness note: the workspace had uncommitted changes, but they could not be overlaid into your isolated checkout — you are seeing the committed HEAD only.]"
+
+	var firstUser string
+	var once sync.Once
+	childLLM := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			// Capture the FIRST request's last user message (the run prompt).
+			once.Do(func() {
+				for i := len(req.Messages) - 1; i >= 0; i-- {
+					if req.Messages[i].Role == session.RoleUser {
+						firstUser = req.Messages[i].Text
+						return
+					}
+				}
+			})
+		})},
+		mockllm.TextTurn("reviewed (saw committed HEAD only)"),
+	)
+	childEngine := childEngineWith(childLLM, tool.NewCatalog())
+
+	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(advisoryForker{advisory: advisory}))
+
+	got := runSubagentOnce(t, task, memfs.NewWorkspace("/base"), "review my changes")
+	if got.IsError {
+		t.Fatalf("Subagent result is an error: %q", got.Content)
+	}
+	if firstUser == "" {
+		t.Fatal("child provider observed no user message")
+	}
+	if !strings.HasPrefix(firstUser, advisory) {
+		t.Fatalf("child's first user message did not lead with the degraded-fork advisory.\nadvisory: %q\ngot:      %q", advisory, firstUser)
+	}
+	// The original prompt must still be present after the advisory.
+	if !strings.Contains(firstUser, "review my changes") {
+		t.Fatalf("child's prompt lost the original task; got: %q", firstUser)
+	}
+}
+
+// TestSubagentNoAdvisoryLeavesPromptUnchanged is the negative control: a forker that
+// returns an EMPTY advisory (normal fork) leaves the child's prompt as just the task —
+// no harness note is prepended.
+func TestSubagentNoAdvisoryLeavesPromptUnchanged(t *testing.T) {
+	var firstUser string
+	var once sync.Once
+	childLLM := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			once.Do(func() {
+				for i := len(req.Messages) - 1; i >= 0; i-- {
+					if req.Messages[i].Role == session.RoleUser {
+						firstUser = req.Messages[i].Text
+						return
+					}
+				}
+			})
+		})},
+		mockllm.TextTurn("done"),
+	)
+	childEngine := childEngineWith(childLLM, tool.NewCatalog())
+	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(advisoryForker{advisory: ""}))
+
+	got := runSubagentOnce(t, task, memfs.NewWorkspace("/base"), "plain task")
+	if got.IsError {
+		t.Fatalf("Subagent result is an error: %q", got.Content)
+	}
+	if firstUser != "plain task" {
+		t.Fatalf("child's prompt = %q, want exactly the task %q (no advisory prepended)", firstUser, "plain task")
+	}
+}
+
 // TestSubagentNilForkerRunsAgainstParent asserts the unchanged legacy behaviour: with
 // NO child forker wired, the child runs against the parent workspace (its tools see
 // the parent root) — no fork, exactly as before Phase 2.
@@ -751,7 +835,7 @@ type concurrencyForker struct {
 	entered chan struct{} // signals each Fork has incremented live
 }
 
-func (f *concurrencyForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (f *concurrencyForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	f.mu.Lock()
 	f.live++
 	if f.live > f.peak {
@@ -772,7 +856,7 @@ func (f *concurrencyForker) Fork(_ context.Context, _ tool.Workspace, label stri
 		f.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, "", nil
 }
 
 // TestSubagentShellGateCapsConcurrentForks asserts WithMaxConcurrentChildren bounds
@@ -856,7 +940,7 @@ type blockingForker struct {
 	calls   int
 }
 
-func (f *blockingForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (f *blockingForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	f.mu.Lock()
 	f.calls++
 	n := f.calls
@@ -865,7 +949,7 @@ func (f *blockingForker) Fork(_ context.Context, _ tool.Workspace, label string)
 		close(f.entered)
 		<-f.release // hold the single gate slot until the test releases it
 	}
-	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, nil
+	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, "", nil
 }
 
 func (f *blockingForker) callCount() int {

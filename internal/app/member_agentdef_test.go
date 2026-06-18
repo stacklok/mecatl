@@ -223,6 +223,6 @@ func sawToolDispatched(events []agent.TeamEvent, member, toolName string) bool {
 // offline isolation seam for the tests — it just roots a fresh memfs under a label).
 type memfsForker struct{}
 
-func (memfsForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
-	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, nil
+func (memfsForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, "", nil
 }

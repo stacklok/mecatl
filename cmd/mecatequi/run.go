@@ -417,7 +417,9 @@ func stderrSuffix(stderr []byte) string {
 }
 
 // splitNUL splits a NUL-separated, NUL-terminated byte slice (git -z output) into its
-// non-empty elements.
+// non-empty elements. Kept byte-for-byte identical to the sibling impl in
+// internal/adapter/forker/forker.go (a second `-z` parser); deliberately NOT extracted
+// into a shared helper until a third appears (Rule of Three, different layers).
 func splitNUL(b []byte) []string {
 	parts := strings.Split(string(b), "\x00")
 	out := make([]string, 0, len(parts))

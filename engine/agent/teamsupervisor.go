@@ -729,8 +729,16 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 }
 
 // forkOrWrap forks base via f, wrapping any I/O failure with ErrForkWorkspace.
+//
+// The degraded-fork advisory is DISCARDED here. The read-only member forker (roForker)
+// DOES carry the dirty-overlay, so a degraded read-only-member fork could surface this
+// advisory symmetrically to a member's prompt — a deliberate scope boundary: the
+// surfacing was implemented for the read-only SUBAGENT (the user's case), and threading
+// it through the member-engine prompt assembly is a separate, intentional follow-up,
+// not a silent omission. The mutating-member forker (s.forker) is force-copy and never
+// degrades, so for it the discard is correct unconditionally.
 func forkOrWrap(ctx context.Context, f tool.WorkspaceForker, base tool.Workspace, name string) (tool.Workspace, func() error, error) {
-	child, cl, err := f.Fork(ctx, base, name)
+	child, cl, _, err := f.Fork(ctx, base, name)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, name, err)
 	}

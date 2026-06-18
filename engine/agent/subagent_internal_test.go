@@ -198,7 +198,7 @@ func TestBuildSubagentRunOptionsFloor(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			opts, _, _ := buildSubagentRunOptions(tc.args, false)
+			opts, _, _ := buildSubagentRunOptions(tc.args, false, "")
 			if opts.MaxRunTokensOverride != tc.wantOpts {
 				t.Fatalf("buildSubagentRunOptions(%+v) MaxRunTokensOverride = %d, want %d",
 					tc.args, opts.MaxRunTokensOverride, tc.wantOpts)

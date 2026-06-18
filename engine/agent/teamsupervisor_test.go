@@ -569,7 +569,7 @@ type recordingForker struct {
 	cleanups int
 }
 
-func (f *recordingForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, error) {
+func (f *recordingForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
 	f.mu.Lock()
 	f.labels = append(f.labels, label)
 	f.mu.Unlock()
@@ -580,7 +580,7 @@ func (f *recordingForker) Fork(_ context.Context, _ tool.Workspace, label string
 		f.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, nil
+	return ws, cleanup, "", nil
 }
 
 // TestSupervisorMutatingMemberForksWorkspace asserts a Mutating member runs in an

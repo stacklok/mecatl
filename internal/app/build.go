@@ -4036,9 +4036,14 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// must move together — a Bash child without isolation would run its shell in the
 	// shared base (the exact hazard); a forker without Bash would fork for nothing.
 	if sandboxedRunner != nil {
-		// Worktree default (no WithForceCopy): shares the base repo's `.git` ⇒ full
-		// history for git log/show, with its own throwaway working tree.
-		taskForker := forker.New(newForkWorkspace(skillReadRoots))
+		// Worktree (no WithForceCopy): shares the base repo's `.git` ⇒ full history
+		// for git log/show, with its own throwaway working tree. WithDirtyOverlay
+		// mirrors the operator's UNCOMMITTED state (tracked edits + staged + deletions
+		// + untracked non-ignored files) into that worktree so a read-only explorer
+		// sees what the operator sees — a plain HEAD checkout would show a clean tree
+		// and empty diff, hiding the operator's in-progress work. Best-effort and a
+		// no-op on a clean tree (zero overhead on the common path).
+		taskForker := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay())
 		opts = append(opts, agent.WithChildForker(taskForker))
 	}
 	// Per-call model override factory: mint an explorer child engine for a requested
@@ -4154,10 +4159,13 @@ func buildSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider 
 //   - fk (force-copy, WithForceCopy): a Mutating member runs in a FULLY isolated fork
 //     (own .git object DB/refs), matching buildCatalog's Fork branch wiring, so its
 //     git commit/push/update-ref cannot escape into the base repo.
-//   - roFk (worktree, the forker DEFAULT — no WithForceCopy): a read-only-isolated
+//   - roFk (worktree + WithDirtyOverlay — no WithForceCopy): a read-only-isolated
 //     member runs in a cheap git worktree that SHARES the base repo's .git (⇒ full
 //     history for git log/show) but has its own working tree; it never edits, only
-//     inspects.
+//     inspects. WithDirtyOverlay mirrors the operator's UNCOMMITTED state (tracked
+//     edits + staged + deletions + untracked non-ignored files) into that worktree
+//     so the member reviews what the operator sees, not a clean HEAD checkout;
+//     best-effort and a no-op on a clean tree.
 //
 // The member Bash runs through a SANDBOXED command runner
 // (buildSandboxedCommandRunner) that neutralises the fixed-key git config-driven
@@ -4211,7 +4219,7 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	// TestUntrustedMutatingMemberKeepsBash pins. The main session keeps its own
 	// unhardened runner elsewhere.
 	fk := forker.New(newForkWorkspace(skillReadRoots), forker.WithForceCopy())
-	roFk := forker.New(newForkWorkspace(skillReadRoots))
+	roFk := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay())
 	memberRunner := buildSandboxedCommandRunner(cfg)
 	mutatingRunner := buildForceCopyRunner(cfg)
 	roIsolationAvailable := memberRunner != nil && roFk != nil

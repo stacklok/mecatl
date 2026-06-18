@@ -1209,6 +1209,41 @@ stays git-agnostic (the git knowledge is in `gitenv`/composition). The MAIN sess
 unhardened runner; a Mutating force-copy member's own `.git` makes config-hardening moot but it
 gets the hardened runner anyway.
 
+**Dirty-aware read-only fork (`forker.WithDirtyOverlay`, ADR 0033).** A `git worktree add
+--detach HEAD` checks out the COMMITTED head, so a read-only worktree child saw a CLEAN tree —
+Read/Grep/Glob AND `git status`/`git diff` reported no changes even with uncommitted operator
+work, making an explorer dispatched to "review my changes" find nothing. The two read-only
+worktree forkers (the Subagent `childForker` and the team `roForker`) now carry
+`forker.WithDirtyOverlay()`; the mutating force-copy forkers (`s.forker`, the Parallel branch
+forker) are UNCHANGED (`copyTree` already copies the dirty working tree verbatim, and
+`WithForceCopy` wins by call site so the overlay never runs there). After `git worktree add`
+succeeds, `forkWorktree` runs `advisory = f.overlayDirty(...)` when the overlay is enabled.
+`overlayDirty` is a cheap-path-first, best-effort, three-step mirror returning a degraded-fork
+ADVISORY string (not an error): (1) `git status --porcelain` — empty ⇒ no-op + "" (clean trees pay
+one probe, nothing else); (2) pipe `git diff --no-ext-diff --binary HEAD` from the parent into `git
+apply --whitespace=nowarn -` in the child (tracked edits + staged + deletions; `--binary`
+round-trips binaries; NB `git apply` rejects `--no-ext-diff`, a diff-only flag, so it rides the
+diff side only); (3) `git ls-files --others --exclude-standard -z` then `copyFile` each untracked,
+non-ignored path, SKIPPING symlinks / irregular files via `os.Lstat` (a symlink could escape the
+base — `copyTree`'s discipline). On ANY error the overlay resets the worktree to pristine HEAD
+(`git checkout -- .` + `git clean -fd`) — a partial overlay is worse than the clean-HEAD floor —
+AND returns a non-empty advisory (`degradedOverlayAdvisory`). The failure is SURFACED, not silent:
+`tool.WorkspaceForker.Fork` now returns an OPTIONAL generic degraded-fork advisory (empty on a
+clean tree / successful overlay / non-overlay path), and `SubagentTool` PREPENDS it to the child
+LLM's prompt (in `buildSubagentRunOptions`, composing with the resume-staleness note) so a
+read-only explorer reasons honestly ("the diff looks clean but the operator has uncommitted work I
+cannot see") instead of mis-reporting "nothing to review". The Parallel branch (force-copy, never
+degrades) discards it; the team read-only-member path (`forkOrWrap`) discards it too — a
+deliberate, documented scope boundary (the user's case was the read-only Subagent), threading it
+into member-prompt assembly is a tracked follow-up, not a silent omission. Every new git call goes
+through `runGitCapture` (a package var over `runGitCaptureImpl` so a test can count overlay git
+calls and pin the clean-tree short-circuit; captures stdout, pipes `stdin` when non-nil, folds
+stderr into the error) carrying the IDENTICAL `gitenv.Scrub(envscrub.Scrub(os.Environ()))` env, so
+the scrubbed-env posture above holds for the overlay's `status`/`diff`/`apply`/`ls-files` too. The
+isolation guarantee is unchanged (the overlay reads the parent, writes the child). Known
+limitation: an uncommitted submodule-POINTER change rides the diff as a gitlink update but the
+submodule's own working tree is not recursively overlaid (best-effort by design).
+
 **Subagent Bash permission asks resolve in a 4-step model (NOT a blanket auto-deny).** The
 old contract auto-DENIED every subagent permission ask, so a team member / Subagent child could
 NEVER run a command containing substitution/subshell — the `$(go list ./...)`-per-package
@@ -1542,8 +1577,11 @@ configured, `SubagentTool` holds a worktree `childForker` (`WithChildForker`) an
 run into a throwaway git worktree BEFORE running it (`buildChildEngine` registers Bash via the
 SAME `buildSandboxedCommandRunner`; `buildSubagentTool` wires the worktree forker iff a runner
 exists; per-def Subagent engines keep Bash via `scopedToolNamesMode`'s `allowShell` and share the
-one forker). So a `Subagent` to "investigate X" can now `git log`/`git show`/`cat`/build/test in an
-isolated checkout — Edit/Write still dropped, no Subagent/Parallel recursion. `SubagentTool.ReadOnly()`
+one forker; that forker carries `WithDirtyOverlay` — see the dirty-aware-fork note above — so the
+child's worktree mirrors the operator's uncommitted state instead of a clean HEAD). So a `Subagent`
+to "investigate X" can now `git log`/`git show`/`cat`/build/test in an isolated checkout that
+reflects the operator's in-progress work — Edit/Write still dropped, no Subagent/Parallel recursion.
+`SubagentTool.ReadOnly()`
 stays **true**: isolation (not catalog read-only-ness) is what keeps Subagent read-parallel — its
 writes land in the worktree, never the shared base; a fork FAILURE is a tool error, NOT a
 silent fallback to the shared ws. A `WithMaxConcurrentChildren` (default 4; old

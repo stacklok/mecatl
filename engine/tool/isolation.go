@@ -21,11 +21,21 @@ import "context"
 //     call exactly once after the child is no longer in use.
 type WorkspaceForker interface {
 	// Fork creates an isolated child workspace derived from base, returning the
-	// child workspace and a cleanup func. label is a short, human-meaningful tag
-	// (e.g. the branch idea or task name) implementations MAY fold into the child
-	// path or worktree branch for observability; it need not be unique and is not
-	// load-bearing. Implementations may use git worktrees, a copy, or an overlay;
-	// the agent never knows which. The returned cleanup is always non-nil when err
-	// is nil and removes the child's backing storage.
-	Fork(ctx context.Context, base Workspace, label string) (child Workspace, cleanup func() error, err error)
+	// child workspace, a cleanup func, and an OPTIONAL degraded-fork advisory. label
+	// is a short, human-meaningful tag (e.g. the branch idea or task name)
+	// implementations MAY fold into the child path or worktree branch for
+	// observability; it need not be unique and is not load-bearing. Implementations
+	// may use git worktrees, a copy, or an overlay; the agent never knows which. The
+	// returned cleanup is always non-nil when err is nil and removes the child's
+	// backing storage.
+	//
+	// advisory is an OPTIONAL human-readable note about a DEGRADED-but-usable fork —
+	// empty in the normal case. It is the channel for "the child is usable, but not
+	// exactly the workspace you'd expect": an implementation that could not fully
+	// reproduce the base (e.g. an overlay that fell back to a clean checkout) returns
+	// a note describing what the child is actually seeing, and the agent MAY prepend
+	// it to the child's view so the child reasons honestly about the degradation
+	// rather than silently. It is generic (not tied to any one isolation strategy)
+	// and never load-bearing for safety — purely informational.
+	Fork(ctx context.Context, base Workspace, label string) (child Workspace, cleanup func() error, advisory string, err error)
 }

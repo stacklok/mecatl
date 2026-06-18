@@ -122,8 +122,8 @@ func TestChildRegistryRemoveSemantics(t *testing.T) {
 // tests' erroringForker).
 type failingForkerInt struct{}
 
-func (failingForkerInt) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, error) {
-	return nil, nil, errors.New("worktree add failed")
+func (failingForkerInt) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
+	return nil, nil, "", errors.New("worktree add failed")
 }
 
 // TestSubagentForegroundForkFailureAbortsEntry pins the A5 foreground ghost fix:

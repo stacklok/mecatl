@@ -1115,7 +1115,7 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 //     tool (run-scoped — never registered into the shared catalog) whose parameters ARE the
 //     schema is created and the prompt is wrapped to instruct the child to call it. Omitted
 //     ⇒ today's free-text path.
-func buildSubagentRunOptions(args subagentArgs, resuming bool) (RunOptions, *submitResultTool, string) {
+func buildSubagentRunOptions(args subagentArgs, resuming bool, forkAdvisory string) (RunOptions, *submitResultTool, string) {
 	var runOpts RunOptions
 	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
 	// rejected earlier in run() as a model-visible error, so here we only need the
@@ -1135,7 +1135,13 @@ func buildSubagentRunOptions(args subagentArgs, resuming bool) (RunOptions, *sub
 	}
 	prompt := args.Prompt
 	if resuming {
-		prompt = resumeStalenessNote + "\n\n" + args.Prompt
+		prompt = resumeStalenessNote + "\n\n" + prompt
+	}
+	// A degraded-fork advisory (the dirty-overlay fell back to committed HEAD) is
+	// prepended so it reaches the child LLM's prompt — model-visible, not just a log.
+	// It composes with the resume note: both notes lead the prompt when both apply.
+	if forkAdvisory != "" {
+		prompt = forkAdvisory + "\n\n" + prompt
 	}
 	var submit *submitResultTool
 	if len(args.OutputSchema) > 0 && strings.TrimSpace(string(args.OutputSchema)) != "" {
@@ -1293,24 +1299,24 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // (forkChildWorkspace). The returned cleanup is ALWAYS non-nil (a no-op when
 // nothing survives) so the caller can defer it unconditionally; on a
 // session-build failure the just-created fork is torn down here.
-func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, ws tool.Workspace, args subagentArgs, resuming bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runWS tool.Workspace, cleanup func() error, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, ws tool.Workspace, args subagentArgs, resuming bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runWS tool.Workspace, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
 	if resuming {
 		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, args)
 		if !rok {
-			return nil, nil, noop, errRes, false
+			return nil, nil, noop, "", errRes, false
 		}
 		resumedChild = loaded
 	}
-	runWS, cleanupWS, errRes, fok := t.forkChildWorkspace(ctx, call.ID, ws, subagentGoal(args))
+	runWS, cleanupWS, advisory, errRes, fok := t.forkChildWorkspace(ctx, call.ID, ws, subagentGoal(args))
 	if !fok {
-		return nil, nil, noop, errRes, false
+		return nil, nil, noop, "", errRes, false
 	}
 	child, errRes, bok := t.buildChildSession(call.ID, childID, resumedChild, runWS.Root(), limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()
-		return nil, nil, noop, errRes, false
+		return nil, nil, noop, "", errRes, false
 	}
 	// RESUME-START persist (issue #38): children otherwise persist only at their
 	// TERMINAL, so a resumed child loaded for a new long run would keep its OLD
@@ -1322,7 +1328,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	if resuming {
 		t.persistChild(ctx, child)
 	}
-	return child, runWS, cleanupWS, session.ToolResult{}, true
+	return child, runWS, cleanupWS, advisory, session.ToolResult{}, true
 }
 
 func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
@@ -1482,7 +1488,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// Resume load + fork + session build (see prepareChildSession). The cleanup is
 	// always non-nil and tears the worktree down after the child fully drains (the
 	// run is drained below in this call), so a deferred cleanup is correct.
-	child, runWS, cleanupWS, errResult, ok := t.prepareChildSession(ctx, call, ws, args, resuming, childID, limits, forkHistory)
+	child, runWS, cleanupWS, forkAdvisory, errResult, ok := t.prepareChildSession(ctx, call, ws, args, resuming, childID, limits, forkHistory)
 	if !ok {
 		return errResult, nil
 	}
@@ -1502,9 +1508,10 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	}
 
 	// Build the run options (per-call token ceiling), the synthetic SubmitResult tool (when
-	// structured output is requested), and the effective prompt (with the resume staleness
-	// note prepended BEFORE the structured-output wrap). See buildSubagentRunOptions.
-	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming)
+	// structured output is requested), and the effective prompt (with the degraded-fork
+	// advisory + resume staleness note prepended BEFORE the structured-output wrap). See
+	// buildSubagentRunOptions.
+	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, forkAdvisory)
 
 	// A child forking a worktree (childForker != nil) runs ISOLATED, so its Bash asks
 	// are eligible for the A2 worktree-safe auto-approve; a forker-less child is
@@ -1713,7 +1720,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 			}})
 		}
 	}
-	runWS, cleanupWS, errResult, ok := t.forkChildWorkspace(ctx, b.call.ID, b.ws, goal)
+	runWS, cleanupWS, forkAdvisory, errResult, ok := t.forkChildWorkspace(ctx, b.call.ID, b.ws, goal)
 	if !ok {
 		endOnError(errResult)
 		return
@@ -1731,7 +1738,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		t.persistChild(ctx, child)
 	}
 
-	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming)
+	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming, forkAdvisory)
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
@@ -2156,18 +2163,24 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 // was available, so running it shared would be the exact hazard. Without a forker the
 // child runs against the parent ws unchanged. The returned cleanup is ALWAYS non-nil
 // (a no-op when nothing was forked) so the caller can defer it unconditionally.
-func (t *SubagentTool) forkChildWorkspace(ctx context.Context, callID session.ToolCallID, ws tool.Workspace, label string) (runWS tool.Workspace, cleanup func() error, errResult session.ToolResult, ok bool) {
+//
+// advisory is the forker's OPTIONAL degraded-fork note (empty in the normal case): a
+// dirty-overlay forker returns it when the parent had uncommitted work that could not
+// be mirrored into the child's checkout, so the child sees committed HEAD only. The
+// caller prepends it to the child's prompt so the child reasons honestly about the
+// degradation instead of silently reporting "nothing to review".
+func (t *SubagentTool) forkChildWorkspace(ctx context.Context, callID session.ToolCallID, ws tool.Workspace, label string) (runWS tool.Workspace, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
 	if t.childForker == nil {
-		return ws, func() error { return nil }, session.ToolResult{}, true
+		return ws, func() error { return nil }, "", session.ToolResult{}, true
 	}
-	forkWS, forkCleanup, err := t.childForker.Fork(ctx, ws, label)
+	forkWS, forkCleanup, advisory, err := t.childForker.Fork(ctx, ws, label)
 	if err != nil {
-		return nil, nil, session.NewToolError(callID, "Subagent: workspace isolation failed: "+err.Error()), false
+		return nil, nil, "", session.NewToolError(callID, "Subagent: workspace isolation failed: "+err.Error()), false
 	}
 	if forkCleanup == nil {
 		forkCleanup = func() error { return nil }
 	}
-	return forkWS, forkCleanup, session.ToolResult{}, true
+	return forkWS, forkCleanup, advisory, session.ToolResult{}, true
 }
 
 // buildChildSession produces the session one child run drives. On a FRESH call

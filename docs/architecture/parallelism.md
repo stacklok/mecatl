@@ -43,6 +43,22 @@ SAME untrusted-`.gitattributes` residual; the workspace-trust gate (issue #40,
 shipped — see [subagents & teams](subagents-and-teams.md)) covers both the same way: an untrusted workspace yields no
 read-only-member/subagent shell at all.
 
+A worktree forks from the committed `HEAD`, so a plain `git worktree add --detach
+HEAD` gives the read-only child a CLEAN tree — `git status`/`git diff` and the file
+tools would see no changes even when the operator has uncommitted work, hiding the
+in-progress changes an explorer is usually dispatched to review. **The read-only
+worktree forkers carry `forker.WithDirtyOverlay()`** (the Subagent child forker and
+the team `roForker`; see [ADR 0033](../adr/0033-dirty-aware-readonly-fork.md)) which,
+after the worktree is created and only when the parent is dirty (`git status
+--porcelain` probe), mirrors the parent's uncommitted state into it: applies `git
+diff --no-ext-diff --binary HEAD` (tracked edits + staged + deletions; `--binary`
+round-trips binaries) via `git apply`, and copies untracked, non-ignored files
+(`git ls-files --others --exclude-standard`, skipping symlinks). It is
+`.gitignore`-respecting, best-effort (any failure resets the worktree to pristine
+HEAD — a partial overlay is worse than none), a no-op on a clean tree, and its new
+`git` calls carry the SAME scrubbed `gitenv` env. The **force-copy** mutating forkers
+are untouched: `copyTree` already carries the parent's dirty state verbatim.
+
 A team's **returned deliverable** is the **lead's consolidated synthesis**, not a
 concatenation of member `LastText`: after the scheduling loop, `Supervisor.Run` drives
 ONE final synthesis turn on the lead whose output is `TeamOutcome.Report` (the Team
