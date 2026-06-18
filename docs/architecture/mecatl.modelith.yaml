@@ -208,6 +208,11 @@ entities:
         statement: >
           Every `Tool` is classified read-only or mutating, and that
           classification governs how its `ToolCalls` are dispatched.
+      - id: plan-mode-invisible-tools
+        statement: >
+          In plan mode, the `Catalog` hides mutating `Tools` from the model's
+          view before dispatch — a defense in depth ahead of the evaluator's
+          hard-deny gate, so the model never even sees a mutating `ToolSpec`.
 
   ToolCall:
     definition: >
@@ -293,11 +298,16 @@ entities:
   PermissionMode:
     definition: >
       A `Session`'s permission posture — default, plan, or acceptEdits — governing
-      which `Tools` may run (plan mode is read-only; acceptEdits auto-allows edits)
-      and, via ADR 0030 Layer 3, the effective `Model`: in plan mode the `Session`
-      re-resolves the plan slot to a strong-reasoning `Model` within the same
-      `Provider`. It is a value object owned by exactly one `Session`; a control
-      surface switches it out of band (e.g. ACP session/set_mode).
+      which `Tools` may run and, via ADR 0030 Layer 3, the effective `Model`: in
+      plan mode the `Session` re-resolves the plan slot to a strong-reasoning
+      `Model` within the same `Provider`. Plan mode is enforced at two layers
+      (catalog filter hides mutating `Tools`; evaluator gate hard-denies
+      mutations). `acceptEdits` is a declared-but-not-yet-implemented posture
+      (ADR 0022 Future work): it is carried as metadata and surfaced in mode
+      pickers, but the decision path treats it identically to `default`
+      (deny→ask→allow), so it auto-allows nothing today. It is a value object
+      owned by exactly one `Session`; a control surface switches it out of band
+      (e.g. ACP session/set_mode).
     relationships:
       - entity: Session
         cardinality: "1:1"
@@ -323,6 +333,12 @@ entities:
         statement: >
           The effective `Model` is fixed for the duration of a turn; a mode change
           re-resolves it only between turns, at the run-entry seam, never mid-stream.
+      - id: acceptedits-declared-not-implemented
+        statement: >
+          `acceptEdits` is carried as metadata and surfaced in mode pickers, but the
+          permission decision path never branches on it — it resolves identically to
+          `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real
+          auto-accept-edits tier is ADR 0022 Future work.
 
   PermissionRule:
     definition: >
@@ -656,6 +672,24 @@ scenarios:
       - "At the next run entry the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`, and `resolved_model` re-emits it."
     invariants_touched:
       [mode-switch-rejected-mid-turn, mode-model-same-provider, mode-model-fixed-per-turn, fixed-provider-per-session]
+
+  - name: Plan mode hides mutating tools and denies any mutation
+    actors: [Principal, Client]
+    steps:
+      - "`Client` switches the `Session`'s `PermissionMode` to plan between turns."
+      - "On the next turn the `Catalog` advertises only read-only `ToolSpecs` to the model, so no mutating `Tool` is visible."
+      - "If a mutation is somehow requested anyway, the evaluator's plan-mode gate hard-denies it before any learned allow is consulted."
+    invariants_touched:
+      [plan-mode-invisible-tools, plan-mode-denies-mutations, deny-dominant]
+
+  - name: acceptEdits is carried but not enforced
+    actors: [Principal, Client]
+    steps:
+      - "`Client` switches the `Session`'s `PermissionMode` to acceptEdits between turns; the mode picker advertises it."
+      - "On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing) and the decision path resolves `ToolCalls` through the normal deny→ask→allow fold — identically to `default`."
+      - "A mutating `ToolCall` still surfaces a `PermissionAsk`; nothing is auto-allowed by the mode alone."
+    invariants_touched:
+      [acceptedits-declared-not-implemented, deny-dominant, toolcall-authorized-before-execute]
 
   - name: The conversation is compacted without losing the task
     actors: [Principal]

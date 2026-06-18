@@ -153,7 +153,7 @@ A suspension of a `Run` when a `ToolCall` resolves to "ask": the loop pauses and
 
 ### `PermissionMode`
 
-A `Session`'s permission posture — default, plan, or acceptEdits — governing which `Tools` may run (plan mode is read-only; acceptEdits auto-allows edits) and, via ADR 0030 Layer 3, the effective `Model`: in plan mode the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`. It is a value object owned by exactly one `Session`; a control surface switches it out of band (e.g. ACP session/set_mode).
+A `Session`'s permission posture — default, plan, or acceptEdits — governing which `Tools` may run and, via ADR 0030 Layer 3, the effective `Model`: in plan mode the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`. Plan mode is enforced at two layers (catalog filter hides mutating `Tools`; evaluator gate hard-denies mutations). `acceptEdits` is a declared-but-not-yet-implemented posture (ADR 0022 Future work): it is carried as metadata and surfaced in mode pickers, but the decision path treats it identically to `default` (deny→ask→allow), so it auto-allows nothing today. It is a value object owned by exactly one `Session`; a control surface switches it out of band (e.g. ACP session/set_mode).
 
 **Relationships**
 
@@ -168,6 +168,8 @@ A `Session`'s permission posture — default, plan, or acceptEdits — governing
 - **mode-model-same-provider** — A mode-driven `Model` re-resolution stays within the `Session`'s bound `Provider`; the provider is fixed per session.
 
 - **mode-model-fixed-per-turn** — The effective `Model` is fixed for the duration of a turn; a mode change re-resolves it only between turns, at the run-entry seam, never mid-stream.
+
+- **acceptedits-declared-not-implemented** — `acceptEdits` is carried as metadata and surfaced in mode pickers, but the permission decision path never branches on it — it resolves identically to `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real auto-accept-edits tier is ADR 0022 Future work.
 
 
 ### `PermissionRule`
@@ -351,6 +353,8 @@ A capability the model can invoke by name — Read, Edit, Write, Grep, Glob, Bas
 **Invariants**
 
 - **tool-readonly-or-mutating** — Every `Tool` is classified read-only or mutating, and that classification governs how its `ToolCalls` are dispatched.
+
+- **plan-mode-invisible-tools** — In plan mode, the `Catalog` hides mutating `Tools` from the model's view before dispatch — a defense in depth ahead of the evaluator's hard-deny gate, so the model never even sees a mutating `ToolSpec`.
 
 
 ### `ToolCall`
@@ -548,6 +552,42 @@ erDiagram
 
 - **fixed-provider-per-session** — A `Session` is bound to one `Provider` and one `Model` for its entire lifetime; they are re-derived together, never swapped individually.
 
+
+### Plan mode hides mutating tools and denies any mutation
+
+**Actors:** Principal, Client
+
+**Steps**
+
+1. `Client` switches the `Session`'s `PermissionMode` to plan between turns.
+2. On the next turn the `Catalog` advertises only read-only `ToolSpecs` to the model, so no mutating `Tool` is visible.
+3. If a mutation is somehow requested anyway, the evaluator's plan-mode gate hard-denies it before any learned allow is consulted.
+
+**Invariants touched**
+
+- **plan-mode-invisible-tools** — In plan mode, the `Catalog` hides mutating `Tools` from the model's view before dispatch — a defense in depth ahead of the evaluator's hard-deny gate, so the model never even sees a mutating `ToolSpec`.
+
+- **plan-mode-denies-mutations** — In plan mode, every mutating `ToolCall` is denied.
+- **deny-dominant** — A deny in any scope is absolute; among ask and allow the higher configured scope wins, and a configured ask is never suppressed by a higher-scope allow.
+
+
+### acceptEdits is carried but not enforced
+
+**Actors:** Principal, Client
+
+**Steps**
+
+1. `Client` switches the `Session`'s `PermissionMode` to acceptEdits between turns; the mode picker advertises it.
+2. On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing) and the decision path resolves `ToolCalls` through the normal deny→ask→allow fold — identically to `default`.
+3. A mutating `ToolCall` still surfaces a `PermissionAsk`; nothing is auto-allowed by the mode alone.
+
+**Invariants touched**
+
+- **acceptedits-declared-not-implemented** — `acceptEdits` is carried as metadata and surfaced in mode pickers, but the permission decision path never branches on it — it resolves identically to `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real auto-accept-edits tier is ADR 0022 Future work.
+
+- **deny-dominant** — A deny in any scope is absolute; among ask and allow the higher configured scope wins, and a configured ask is never suppressed by a higher-scope allow.
+
+- **toolcall-authorized-before-execute** — A `ToolCall` executes only after the permission model resolves it to allow.
 
 ### The conversation is compacted without losing the task
 
