@@ -92,6 +92,32 @@ const (
 	EvNoProgress EventType = "no_progress"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
+	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
+	// conversation — the genuine client prompt (recordPrompt) AND the harness-authored
+	// synthetic continuations the loop records as user messages (the no-progress nudge,
+	// the background-pending nudge, the background-completion notice). It carries the
+	// UserPromptPayload (the recorded user-message Content — Text + Parts), enough for an
+	// event-sourced consumer to reconstruct the user Message faithfully.
+	//
+	// LOG-ONLY (the EvApproval / EvCompactionArchive precedent): the durable EventLog at
+	// the server relay consumes it, and the relay SKIPS it on the live client wire — the
+	// driving client already authored/holds the prompt, so re-sending it is redundant.
+	// It maps to the proto event-type string verbatim (no proto enum; the wire `type`
+	// field is a string passthrough, no task generate). The loop only EMITS it; the relay
+	// persists it — the loop never imports port.EventLog.
+	//
+	// WHY IT EXISTS: without it the durable log could not show WHAT THE USER ASKED (the
+	// relay never re-emits the user prompt it received), and an event-sourced fold of the
+	// log (engine/adapter/eventsource) could not reconstruct user-role turns — closing
+	// that gap is ADR 0038 / the ADR 0027 row-11 follow-up.
+	//
+	// NO-LEAK CONTRACT (gauntlet #7): a CHILD's user prompt (a Subagent goal, a team
+	// member task, a structured-output correction) is recorded into the CHILD session and
+	// emitted on the CHILD run's event stream, which is drained INSIDE the delegation tool
+	// and never forwarded to the parent run's log (exactly like every other child event).
+	// So this event only ever carries the top-level run's own user input — no child
+	// content crosses to the parent, the same posture as EvCompactionArchive.
+	EvUserPrompt EventType = "user_prompt"
 
 	// EvSubagentStart is emitted when a Subagent tool run begins. It is a
 	// REDACTED observability projection of a child loop — never the child's
@@ -340,6 +366,28 @@ type CompactionArchivePayload struct {
 	// are always recoverable from it regardless of how the Compactor split the cut.
 	// See the LOG-GROWTH COST note above for why the full slice (not a delta) is kept.
 	Replaced []Message
+}
+
+// UserPromptPayload is the structured detail carried by an EvUserPrompt Event: the
+// user-role message that was just recorded into the conversation. It carries the
+// flattened Text plus any non-text media Parts, mirroring the user Message a
+// reconstruction must rebuild (session.NewUserMessageWithParts). It is the durable
+// record of WHAT THE USER ASKED — both a genuine client prompt and the harness's own
+// synthetic continuation messages (nudges/notices), so an event-sourced fold of the
+// log reconstructs a COMPLETE conversation, not just genuine prompts.
+//
+// NO-LEAK CONTRACT (gauntlet #7): it carries only the TOP-LEVEL run's own user input.
+// A child run's prompt is emitted on the child stream (drained inside the delegation
+// tool), never on the parent's, so no child content crosses here — the same posture as
+// CompactionArchivePayload (the parent's own history).
+type UserPromptPayload struct {
+	// Text is the flattened user-message text (the prompt body, or a harness-authored
+	// continuation/notice).
+	Text string
+	// Parts carries any non-text media (image/audio) that rode alongside the text on
+	// the user message; nil for a text-only prompt. It mirrors Message.Parts so the
+	// reconstructed user Message is faithful.
+	Parts []Content
 }
 
 // ResultPayload is the terminal payload carried by an EvResult Event.
@@ -820,6 +868,12 @@ type Event struct {
 	// archive). It is the parent's own history, so it opens no leak surface; see
 	// CompactionArchivePayload.
 	CompactionArchive *CompactionArchivePayload
+	// UserPrompt is set on EvUserPrompt: the user-role message just recorded (Text +
+	// Parts). It is the durable record of what the user asked (and the harness's own
+	// synthetic continuations), consumed by the EventLog and reconstructed by an
+	// event-sourced fold; it is log-only (skipped on the live client wire). See
+	// UserPromptPayload.
+	UserPrompt *UserPromptPayload
 	// Usage is set on usage-bearing events. On EvResult it is the cumulative run
 	// total; turn.end carries its per-turn usage in TurnEnd, NOT here.
 	Usage *Usage

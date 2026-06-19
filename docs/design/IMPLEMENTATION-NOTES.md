@@ -3163,6 +3163,82 @@ history; a later reader reconstructs the rich timeline from BOTH. See
   secret-shaped arg never appears in any logged event body (mutation-killed: forwarding
   raw child args on a `subagent.tool` event → the sentinel surfaces in the log).
 
+### Event-sourced rehydration — the reference fold (`engine/adapter/eventsource`, issue #115, ADR 0038)
+
+The COMPLEMENT to Phase 3a/3b: those RECORD and CONSUME the durable log inside mecatl;
+this is the reusable RECONSTRUCTION direction for a host whose system of record IS an
+append-only event log (Atrium). It closes the reconstruction half of `0027-cloud-native.md`
+ledger-2 row 11 — recording shipped in 3a, the reconstruct GATE proved reconstructibility
+in 3b, and this is the reference IMPLEMENTATION of that reconstruction for the event-log
+case.
+
+- **One pure function, no SessionStore wrapper.** `engine/adapter/eventsource`'s
+  `Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error)`
+  folds a `port.EventLog.Read` stream into the aggregate. A host wires its OWN
+  `SessionStore.Load` over it; the engine ships no `EventLog`→`SessionStore` adapter. It is
+  an EXCLUDED reference adapter (stdlib + `engine/session` + `engine/adapter/sessnap`;
+  strict depguard `engine-adapter-eventsource`), so the adapter itself carries no public-API
+  promise. (The ONE guarded-surface change is the new `session.EvUserPrompt` event below,
+  reseeded via the #114 `task api:update` workflow + a classified CHANGELOG entry.)
+- **`EvUserPrompt` records user-role turns durably (the gap-closer).** The relay never
+  re-emits the user prompt it received, so before this the durable log could not show WHAT
+  THE USER ASKED, and a fold could not rebuild user turns. The loop now emits a LOG-ONLY
+  `session.EvUserPrompt` (carrying `UserPromptPayload{Text, Parts}`) at EVERY user-message
+  record site, routed through ONE record-then-emit helper (`emitUserPrompt` +
+  `recordContinuation`) so none is missed: the genuine prompt (`recordPrompt`) AND the
+  harness continuations — the no-progress nudge + background-pending nudge
+  (`finishTurnNoTools`) and the background-completion notice (`injectBackgroundNotice`).
+  Both relays (`grpc.go`/`http.go`) Append it and SKIP it on the live client wire (the
+  EvApproval/EvCompactionArchive log-only precedent; the client already holds its prompt).
+  CHILD ISOLATION (gauntlet #7): a child's prompt is emitted on the CHILD run's stream,
+  consumed by `drainChildObserved` (which forwards ONLY redacted `subagent.*` metadata,
+  never raw child events), so it never reaches the parent log — verified by
+  `TestPhase3LogNoChildLeak` (the child goal "investigate" must not appear as a parent
+  `EvUserPrompt`). The fold reconstructs user turns from it in stream order.
+- **Creation metadata is an INPUT, not an event.** The id/mode/limits/workspace/profile/
+  provider+model selector/createdAt that no event carries ride `eventsource.SessionMeta` —
+  the caller created the session and holds these. Deliberately NO `EvSessionCreated` (noted
+  as a future in ADR 0038), no wire widening.
+- **Reuses sessnap's state-driving logic, never copies it.** The terminal-transition
+  vocabulary was extracted from `Snapshot.Restore` into the exported
+  `sessnap.RestoreState(s, state, stop, pending, counters, usage)` and is shared by snapshot
+  rehydration AND the fold. The fold handles only the one case `RestoreState` cannot express
+  generically — an AWAITING session whose history legitimately ends on a dangling tool call
+  (the loop records the assistant message before dispatch pauses on the ask) — by driving the
+  trailing turn through the running aggregate (`BeginTurn`→`RecordAssistant`→`PauseForApproval`),
+  exactly as the live loop reached that state (`RecordAssistant` does no pairing validation;
+  `SeedHistory` would reject the dangling call).
+- **Usage is the SUM of per-run `EvResult.Usage`** (each `EvResult.Usage` is PER-RUN; the
+  cumulative aggregate is what the budget brake reads), and **Counters reflect the LATEST run
+  segment** (snapshotted at the most recent terminal `EvResult`, reset for the next run —
+  mirroring `resetToIdle` on `Reopen`). The pre-compaction head is recovered from
+  `EvCompactionArchive.Replaced`.
+- **The honest replay-fidelity boundary (the critical finding).** `Message.Reasoning`,
+  `Message.ProviderPhase`, and `ToolCall.ItemID` reach the conversation ONLY via
+  `RecordAssistant` — they are NOT event-carried — so a pure fold is byte-identical-replay
+  faithful ONLY for providers that leave them empty (plain chat / mockllm). For a reasoning
+  provider the SNAPSHOT carries them, which is why mecatl's own resume uses the snapshot; the
+  fold is for event-log-SoR hosts that accept the boundary or carry those fields in their own
+  richer schema. (`EvReasoningDelta` is a display SUMMARY — the loop never stores it on
+  `Message.Reasoning`, and neither does the fold.) With `EvUserPrompt` shipped, the
+  reconstructed conversation is otherwise COMPLETE — the reasoning-replay fields are the ONLY
+  residual gap (NOT user turns anymore). (Turn-0 AGENTS.md/CLAUDE.md instruction messages are
+  also not event-carried, but they are derivable from the workspace and outside the
+  reconstructed conversation.) The full field-by-field contract lives in
+  `engine/COMPATIBILITY.md` ("Session reconstruction contract") and on `port.SessionStore`.
+- **Tests** (`engine/adapter/eventsource/*_test.go`, offline): the unit suite folds hand-built
+  streams (structural conversation + pairing, multi-run cumulative-usage SUM + consecutive-failure
+  reset, `EvCompactionArchive` head recovery, unanswered-ask→awaiting+pending + trailing-assistant
+  preservation, terminal stop→state mapping, stream-error propagation, meta application, a
+  reflective contract-drift guard over `session.Session`/`Message`/`ToolCall` fields); the
+  determinism gate drives a real engine over mockllm, appends every `Run.Events()` event to a
+  `memstore` EventLog exactly as the relay does, persists a snapshot, then asserts `Fold` and
+  `SessionStore.Load` are deep-equal on the FULL Conversation (user prompt INCLUDED — no
+  user-strip carve-out) plus Counters/Usage/State/stop/pending; a reasoning-divergence test pins
+  the replay-field boundary (folded `Reasoning`=="" while snapshot `Reasoning`!=""); an
+  awaiting-drivable test resumes a folded awaiting session through `ResumeApproval` to a clean
+  terminal. It lives in the engine module (memstore implements `port.EventLog`), not composition.
+
 ### Durable event log — driver (cloud-native Phase 3c)
 
 The PROD/remote path for the durable log: `EventLogService`

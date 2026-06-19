@@ -20,6 +20,31 @@ var ErrSessionNotFound = errors.New("port: session not found")
 // SessionStore persists and retrieves server-side session state, enabling
 // pause/resume and reload. Adapters provide an in-memory store (default) and an
 // append-only JSONL replay log.
+//
+// EVENT-SOURCED Load (the reconstruction contract). mecatl's own adapters persist a
+// snapshot (engine/adapter/sessnap) and Load deserializes it. A host whose system of
+// record is an append-only EVENT LOG instead may implement Load by FOLDING its event
+// stream into a *session.Session — engine/adapter/eventsource.Fold is the reference
+// implementation. Such a backend MUST populate the fields a caller relies on:
+//
+//   - MUST round-trip (a folded session must carry these):
+//     Conversation (the user/assistant/tool message sequence, tool-pairing-valid —
+//     user-role turns INCLUDED, since the loop emits the log-only EvUserPrompt at every
+//     user-message record site), State, the recorded stop reason, the pending ask (when
+//     awaiting), cumulative Usage (the SUM of every per-run EvResult.Usage — the budget
+//     brake reads it), and the creation metadata the events do not carry (id, mode,
+//     limits, workspace, profile, provider/model selector, createdAt — supplied
+//     out-of-band, e.g. eventsource.SessionMeta).
+//   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
+//     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
+//
+// REPLAY-FIDELITY LIMITATION (the one residual gap): the opaque assistant-message replay
+// fields — Message.Reasoning, Message.ProviderPhase, ToolCall.ItemID — are NOT carried on
+// the event stream (they reach the conversation only via Session.RecordAssistant), so a
+// pure event fold is byte-identical-replay faithful ONLY for providers that leave them
+// empty (plain chat). A host that needs byte-identical replay for a reasoning provider
+// must carry those fields in its OWN richer event schema. See engine/COMPATIBILITY.md
+// ("Session reconstruction contract") and ADR 0038.
 type SessionStore interface {
 	// Save persists the current state of s.
 	Save(ctx context.Context, s *session.Session) error

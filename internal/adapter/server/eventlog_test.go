@@ -118,6 +118,9 @@ func TestEventLogRecordsApprovalVerdict(t *testing.T) {
 		if ev.GetType() == "approval" {
 			t.Fatalf("EvApproval must NOT be relayed to the client wire in 3a")
 		}
+		if ev.GetType() == "user_prompt" {
+			t.Fatalf("EvUserPrompt must NOT be relayed to the client wire (log-only, ADR 0038)")
+		}
 		if ev.GetType() == "permission.ask" {
 			if err := stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
@@ -182,6 +185,29 @@ func TestEventLogRecordsApprovalVerdict(t *testing.T) {
 	}
 	if approval.AskID == "" {
 		t.Fatalf("EvApproval must carry the askID")
+	}
+
+	// EvUserPrompt is log-only (ADR 0038): the genuine prompt "go" must be DURABLY
+	// recorded in the log (so the log shows what the user asked) and never relayed to
+	// the wire (asserted in the drain loop above).
+	var userPrompts int
+	var firstPrompt string
+	for _, ev := range logged {
+		if ev.Type == session.EvUserPrompt {
+			userPrompts++
+			if ev.UserPrompt == nil {
+				t.Fatalf("EvUserPrompt carries no UserPromptPayload")
+			}
+			if firstPrompt == "" {
+				firstPrompt = ev.UserPrompt.Text
+			}
+		}
+	}
+	if userPrompts == 0 {
+		t.Fatalf("log must record the user prompt (EvUserPrompt); got none: %v", typeNames(logged))
+	}
+	if firstPrompt != "go" {
+		t.Fatalf("first logged user prompt = %q, want %q (the durable record of what the user asked)", firstPrompt, "go")
 	}
 }
 

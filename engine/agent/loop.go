@@ -1096,7 +1096,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 		if stop == session.StopEndTurn && !*bgPendingNudged && r.children != nil {
 			if ids := r.children.liveBackgroundIDs(); len(ids) > 0 {
 				*bgPendingNudged = true
-				if err := sess.RecordUserPrompt(backgroundPendingNudgeText(ids), nil); err != nil {
+				if err := e.recordContinuation(r, sess, turnIdx, backgroundPendingNudgeText(ids)); err != nil {
 					e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
 					return true
 				}
@@ -1154,7 +1154,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 	}
 	*noProgressNudges++
 	e.emit(r, session.Event{Type: session.EvNoProgress, Turn: turnIdx, Text: advisory})
-	if err := sess.RecordUserPrompt(nudgeText, nil); err != nil {
+	if err := e.recordContinuation(r, sess, turnIdx, nudgeText); err != nil {
 		e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
 		return true
 	}
@@ -1179,7 +1179,11 @@ func (e *Engine) injectBackgroundNotice(ctx context.Context, r *Run, sess *sessi
 	if len(finished) == 0 {
 		return nil
 	}
-	if err := sess.RecordUserPrompt(backgroundNoticeText(finished), nil); err != nil {
+	// The notice is recorded at a turn boundary, before the upcoming BeginTurn, so it
+	// belongs to the turn about to start (Counters.Turns is the 0-based index of it).
+	// recordContinuation records it AND emits the log-only EvUserPrompt so the durable
+	// log/fold captures this harness-authored user message like every other.
+	if err := e.recordContinuation(r, sess, sess.Counters.Turns, backgroundNoticeText(finished)); err != nil {
 		return fmt.Errorf("agent: record background completion notice: %w", err)
 	}
 	e.save(ctx, sess)
@@ -1307,7 +1311,36 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	if rerr := sess.RecordUserPromptWithParts(finalText, parts, instr); rerr != nil {
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
+	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
+	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
+	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.
+	e.emitUserPrompt(r, 0, finalText, parts)
 	return true, "", nil
+}
+
+// emitUserPrompt emits the log-only EvUserPrompt event carrying a just-recorded
+// user-role message (Text + Parts). It is the SINGLE emit site for the event, called
+// at every place the loop records a user message — the genuine prompt and the
+// harness-authored synthetic continuations (no-progress nudge, background-pending
+// nudge, background-completion notice) — so the durable log (and an event-sourced
+// fold) sees a COMPLETE user-turn sequence. The event is log-only: the relay appends
+// it and skips it on the live client wire (the client already holds the prompt).
+func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content) {
+	e.emit(r, session.Event{Type: session.EvUserPrompt, Turn: turnIdx,
+		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts}})
+}
+
+// recordContinuation records a harness-authored synthetic user-role continuation
+// (a nudge or a background notice — text-only, no media, no project instructions)
+// through the aggregate AND emits the matching log-only EvUserPrompt, so no
+// user-message site bypasses the durable record. It mirrors recordPrompt's
+// record-then-emit shape for the non-genuine sites.
+func (e *Engine) recordContinuation(r *Run, sess *session.Session, turnIdx int, text string) error {
+	if err := sess.RecordUserPrompt(text, nil); err != nil {
+		return err
+	}
+	e.emitUserPrompt(r, turnIdx, text, nil)
+	return nil
 }
 
 // turnTiming carries the latency measurements runTurn derives from the model

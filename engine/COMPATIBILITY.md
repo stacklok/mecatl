@@ -109,8 +109,70 @@ At release time, `task api:release-check` runs `gorelease` (and, transitively,
 a base `engine/vX.Y.Z` tag, which does not exist yet. The `api-compat` text gate
 is the PR guard until the first tag is cut.
 
+## Session reconstruction contract (event-sourced Load)
+
+mecatl persists a session as a **snapshot** (`engine/adapter/sessnap`), and
+`port.SessionStore.Load` deserializes it. A host whose system of record is an
+**append-only event log** (e.g. Atrium) may instead implement `Load` by **folding**
+its event stream into a `*session.Session`. The reference implementation is
+[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`); [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md)
+records the decision. This section is the field-by-field contract such a backend must
+honour.
+
+### What a folded `Load` MUST populate vs. what is safe to lose
+
+| Field on the reconstructed `*session.Session` | Round-trip obligation | Source |
+| --- | --- | --- |
+| `Conversation` (user prompts, assistant text, tool calls, tool results — tool-pairing-valid) | **MUST** | `EvUserPrompt` (user-role turns — the genuine prompt + harness continuations), `EvMessageDelta` (assistant text), `EvToolCall`, `EvToolResult`; pre-compaction head from `EvCompactionArchive` |
+| `State` (idle / running / awaiting / completed / failed / cancelled) | **MUST** | derived from the terminal `EvResult.Stop` (or a trailing unanswered `EvPermissionAsk` → awaiting; no terminal → idle) |
+| recorded stop reason (`RecordedStopReason`) | **MUST** | `EvResult.Stop` |
+| pending ask (`PendingAsk`, when awaiting) | **MUST** | the trailing `EvPermissionAsk` with no following `EvApproval`/`EvResult` |
+| cumulative `Usage` | **MUST** | the **SUM** of every per-run `EvResult.Usage` (each `EvResult.Usage` is PER-RUN; the budget brake reads the cumulative aggregate) |
+| creation metadata: id, mode, limits, workspace, profile, provider/model selector, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta` |
+| `Counters` (turns / tool calls / consecutive failures) | run-scoped — reflects the **latest run segment** (they reset on `Reopen`), derived from the latest run's events | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
+| run plumbing (diagnostics binding, askID serials, ctx) | safe to lose — rebuilt fresh | n/a |
+
+**Creation metadata is not in events.** No event carries the session id, mode, limits,
+workspace, profile, provider/model selector, or createdAt. The caller — who created the
+session — supplies them alongside the stream (there is deliberately no
+`EvSessionCreated`; ADR 0038 notes it as a possible future). `eventsource.SessionMeta`
+is the reference shape.
+
+User-role turns (the genuine client prompt AND the harness-authored synthetic
+continuations — the no-progress nudge, the background-pending nudge, the
+background-completion notice) **are** event-carried, via the log-only `EvUserPrompt`
+event the loop emits at every user-message record site. So a fold reconstructs the
+**complete** conversation, in stream order — closing the "the log can't show what the
+user asked" gap (ADR 0027 row 11). (Turn-0 project-instruction messages discovered from
+AGENTS.md/CLAUDE.md are not event-carried; they are derivable from the workspace and are
+outside the reconstructed conversation.)
+
+### Replay-fidelity limitation (the one honest boundary)
+
+The conversation a fold rebuilds is complete **except** for the provider-private opaque
+replay fields. Three fields reach the conversation **only** via
+`Session.RecordAssistant` in the agent loop and are **never emitted on the event
+stream**:
+
+- `Message.Reasoning` — the provider reasoning REPLAY blob (OpenAI encrypted reasoning
+  content, Anthropic `(thinking, signature)`);
+- `Message.ProviderPhase` — the OpenAI Responses phase marker;
+- `ToolCall.ItemID` — the provider-assigned item id.
+
+(The `EvReasoningDelta` event carries a human-readable reasoning *summary*, which the
+loop deliberately never places on `Message.Reasoning` — so a fold must not either.)
+Consequently a session reconstructed by folding mecatl's own event stream is
+**byte-identical-replay faithful ONLY for providers that do not use those fields**: it
+replays byte-identically for plain-chat providers (e.g. the mock provider) but **not**
+for a reasoning provider, whose `Reasoning`/`ProviderPhase`/`ItemID` would be empty where
+the snapshot would carry them. This is why mecatl's **own** resume uses the snapshot
+(which carries those fields); the fold is for event-log-SoR hosts that accept this
+boundary or carry those fields in their **own** richer event schema. This is a documented
+contract limitation, not a bug.
+
 ## See also
 
+- [ADR 0038 — event-sourced rehydration](../docs/adr/0038-event-sourced-rehydration.md)
 - [ADR 0037 — engine stability contract](../docs/adr/0037-engine-stability-contract.md)
 - [ADR 0036 — `engine/` is its own Go module](../docs/adr/0036-engine-module.md)
 - [Project README](../README.md)

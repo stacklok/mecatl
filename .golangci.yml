@@ -213,6 +213,18 @@ linters:
           deny:
             - pkg: os
               desc: 'sessnap is the pure session-snapshot DTO; it must not touch os'
+        engine-adapter-eventsource:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/eventsource/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/adapter/sessnap
+          deny:
+            - pkg: os
+              desc: 'eventsource is the pure event-fold rehydration helper; it must not touch os'
         engine-adapter-permpolicy:
           list-mode: strict
           files:

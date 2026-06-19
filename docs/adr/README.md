@@ -29,6 +29,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
+- [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
 
 ### Memory & context
 - [0008 — Memory on by default](./0008-memory-on-by-default.md)

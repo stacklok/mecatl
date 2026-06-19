@@ -25,6 +25,22 @@ surface.
   [`engine/api/`](./api/), and the `api-compat` freshness gate that fails CI on
   an unflagged change to the exported surface. (#114,
   [ADR 0037](../docs/adr/0037-engine-stability-contract.md))
+- `engine/adapter/eventsource` reference fold (event-sourced `SessionStore.Load`
+  rehydration): `Fold` reconstructs a `*session.Session` from a `port.EventLog`
+  stream plus out-of-band creation metadata (`SessionMeta`), for hosts whose system
+  of record is an append-only event log. It is an EXCLUDED reference adapter (no
+  guarded-surface change) and ships with the documented reconstruction contract in
+  [COMPATIBILITY.md](./COMPATIBILITY.md) (the only residual limitation is the
+  provider-private `Reasoning`/`ProviderPhase`/`ItemID` replay fields). (#115,
+  [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md))
+- `session`: `EvUserPrompt` event (+ `UserPromptPayload` + `Event.UserPrompt`). The
+  durable event log now records the user-role messages the loop adds — the genuine
+  client prompt and the harness-authored synthetic continuations (nudges/notices) —
+  so an event-sourced fold reconstructs user-role turns (closing the "the log can't
+  show what the user asked" gap, ADR 0027 row 11). It is LOG-ONLY: the relay appends
+  it and skips it on the live client wire (the EvApproval/EvCompactionArchive
+  precedent; wire `type` string passthrough, no proto enum). (#115,
+  [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md))
 
 ### Hygiene
 

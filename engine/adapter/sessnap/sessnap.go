@@ -143,63 +143,99 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	for _, dto := range snap.Messages {
 		s.Conversation.Append(fromDTO(dto))
 	}
-	// Restore running totals directly; these are exported and authoritative.
-	s.Counters = snap.Counters
-	// Restore the inert creation labels and cumulative usage by direct assignment —
-	// exported authoritative values like Counters, with no state transition. Profile
-	// / ProviderID / ModelID are opaque to the domain; Usage seeds the budget so it
-	// survives restart (a nil pointer => the zero Usage, the pre-Usage default).
+	// Restore the inert creation labels by direct assignment — exported authoritative
+	// values, with no state transition. Profile / ProviderID / ModelID are opaque to
+	// the domain.
 	s.Profile = snap.Profile
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
+
+	// The cumulative usage to seed (a nil pointer => the zero Usage, the pre-Usage
+	// default), passed to RestoreState alongside the counters so it seeds the budget
+	// AFTER the state machine advances (Usage must survive the BeginTurn the
+	// running/awaiting restore performs).
+	var usage session.Usage
 	if snap.Usage != nil {
-		s.Usage = *snap.Usage
+		usage = *snap.Usage
 	}
 
-	// Drive the state machine to the recorded lifecycle state. New() lands in
-	// StateIdle; we advance from there.
-	switch snap.State {
+	// Drive the state machine to the recorded lifecycle state, seed the running
+	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
+	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// RestoreState drives a freshly-constructed (StateIdle) Session through the state
+// machine to the target lifecycle state, seeding the running totals (counters) and
+// cumulative usage. It is the SINGLE place the terminal/awaiting transition
+// vocabulary lives, shared by Snapshot.Restore (snapshot rehydration) and the
+// event-sourced fold (engine/adapter/eventsource) so the state-driving logic is
+// never copy-pasted.
+//
+// s MUST be a fresh StateIdle session (e.g. straight from session.New) with its
+// conversation already seeded; RestoreState only advances the lifecycle. stop is the
+// recorded terminal stop reason (used for the completed-vs-stop distinction); pending
+// is the parked ask (used only for StateAwaiting). counters seed the running totals
+// (preserved across the BeginTurn that running/awaiting restore performs); usage
+// seeds the cumulative budget figure. It returns an error on an unknown state or a
+// transition the aggregate rejects.
+func RestoreState(
+	s *session.Session,
+	state session.State,
+	stop session.StopReason,
+	pending *session.PendingAsk,
+	counters session.Counters,
+	usage session.Usage,
+) error {
+	// Restore running totals directly; these are exported and authoritative.
+	s.Counters = counters
+	// Usage seeds the budget so it survives restart.
+	s.Usage = usage
+
+	switch state {
 	case session.StateIdle:
 		// already idle
 	case session.StateRunning:
-		if err := beginTurnPreservingCounters(s, snap.Counters); err != nil {
-			return nil, err
+		if err := beginTurnPreservingCounters(s, counters); err != nil {
+			return err
 		}
 	case session.StateAwaiting:
-		if err := beginTurnPreservingCounters(s, snap.Counters); err != nil {
-			return nil, err
+		if err := beginTurnPreservingCounters(s, counters); err != nil {
+			return err
 		}
 		ask := session.PendingAsk{}
-		if snap.Pending != nil {
-			ask = *snap.Pending
+		if pending != nil {
+			ask = *pending
 		}
 		if err := s.PauseForApproval(ask); err != nil {
-			return nil, fmt.Errorf("sessnap: restore awaiting: %w", err)
+			return fmt.Errorf("sessnap: restore awaiting: %w", err)
 		}
 	case session.StateCompleted:
 		// Stop(reason) records the exact captured reason; Complete is the special
 		// case for a plain end-of-turn (StopEndTurn, or StopNone for an older
 		// snapshot that predates the recorded reason). Because RecordedStopReason
 		// captured the value faithfully, there is no inference here.
-		if snap.StopReason == session.StopNone || snap.StopReason == session.StopEndTurn {
+		if stop == session.StopNone || stop == session.StopEndTurn {
 			if err := s.Complete(); err != nil {
-				return nil, fmt.Errorf("sessnap: restore completed: %w", err)
+				return fmt.Errorf("sessnap: restore completed: %w", err)
 			}
-		} else if err := s.Stop(snap.StopReason); err != nil {
-			return nil, fmt.Errorf("sessnap: restore completed: %w", err)
+		} else if err := s.Stop(stop); err != nil {
+			return fmt.Errorf("sessnap: restore completed: %w", err)
 		}
 	case session.StateCancelled:
 		if err := s.Cancel(); err != nil {
-			return nil, fmt.Errorf("sessnap: restore cancelled: %w", err)
+			return fmt.Errorf("sessnap: restore cancelled: %w", err)
 		}
 	case session.StateFailed:
 		if err := s.Fail(); err != nil {
-			return nil, fmt.Errorf("sessnap: restore failed: %w", err)
+			return fmt.Errorf("sessnap: restore failed: %w", err)
 		}
 	default:
-		return nil, fmt.Errorf("sessnap: unknown state %q", snap.State)
+		return fmt.Errorf("sessnap: unknown state %q", state)
 	}
-	return s, nil
+	return nil
 }
 
 // beginTurnPreservingCounters enters StateRunning without letting BeginTurn's

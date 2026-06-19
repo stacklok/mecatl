@@ -215,6 +215,22 @@ func TestPhase3ReconstructFromStoreAndLog(t *testing.T) {
 			t.Fatalf("the reconstructed timeline is missing live event %q (kinds: %v)", want, kindNames(kinds))
 		}
 	}
+
+	// (d) WHAT THE USER ASKED survives in the log (ADR 0038 / EvUserPrompt): the durable
+	// log now records the user prompt text, so a from-store+log reconstruction can show
+	// what the user requested — the gap ADR 0027 row 11 left open. Before EvUserPrompt
+	// the relay never re-emitted the prompt, so the log could not show it.
+	foundPrompt := false
+	for _, ev := range logged {
+		if ev.Type == session.EvUserPrompt && ev.UserPrompt != nil && ev.UserPrompt.Text == "do the writes" {
+			foundPrompt = true
+			break
+		}
+	}
+	if !foundPrompt {
+		t.Fatalf("the reconstructed timeline does not contain the user's prompt text (EvUserPrompt); "+
+			"kinds: %v", kindNames(kinds))
+	}
 }
 
 // callIDKeys projects a tool-call-id set to a slice for a failure message.
@@ -326,6 +342,20 @@ func TestPhase3LogNoChildLeak(t *testing.T) {
 		}
 		if strings.Contains(string(blob), childLeakSentinel) {
 			t.Fatalf("REDACTION LEAK: child arg sentinel surfaced in a logged %s event: %s", ev.Type, blob)
+		}
+	}
+
+	// CHILD-ISOLATION for EvUserPrompt (ADR 0038): the child's OWN prompt is the
+	// delegated goal ("investigate"). It is emitted on the CHILD run's stream (drained
+	// inside the Subagent tool, like every child event) and must NEVER reach the PARENT
+	// log. So the parent log's EvUserPrompt events carry only the parent's input
+	// ("delegate it"), never the child goal. This pins that a child's user-prompt
+	// emission cannot leak onto the parent run's durable log.
+	for _, ev := range logged {
+		if ev.Type == session.EvUserPrompt && ev.UserPrompt != nil {
+			if strings.Contains(ev.UserPrompt.Text, "investigate") {
+				t.Fatalf("CHILD-ISOLATION LEAK: the child's delegated goal surfaced as a parent EvUserPrompt: %q", ev.UserPrompt.Text)
+			}
 		}
 	}
 }

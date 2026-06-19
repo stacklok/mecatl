@@ -1,0 +1,352 @@
+package eventsource_test
+
+import (
+	"encoding/json"
+	"errors"
+	"iter"
+	"testing"
+	"time"
+
+	"github.com/stacklok/mecatl/engine/adapter/eventsource"
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+// seq adapts a slice of events to the iter.Seq2 shape Fold consumes (all nil
+// errors — the happy path).
+func seq(evs []session.Event) iter.Seq2[session.Event, error] {
+	return func(yield func(session.Event, error) bool) {
+		for _, ev := range evs {
+			if !yield(ev, nil) {
+				return
+			}
+		}
+	}
+}
+
+func meta() eventsource.SessionMeta {
+	return eventsource.SessionMeta{
+		ID:        "s1",
+		Mode:      session.ModeDefault,
+		Limits:    session.Limits{},
+		Workspace: "/ws",
+		CreatedAt: time.Unix(0, 0),
+	}
+}
+
+// ev is a terse Event constructor.
+func toolCall(id, name, args string) session.ToolCall {
+	return session.NewToolCall(session.ToolCallID(id), name, json.RawMessage(args))
+}
+
+// TestFoldStructuralConversation reconstructs a text → tool-call → text run and
+// asserts the conversation pairing, the assistant text, the tool call/result, the
+// counters, the cumulative usage, and the completed terminal state.
+//
+// MUTATION-KILL: using a SINGLE EvResult.Usage instead of the SUM across runs would
+// break the multi-run usage assertion in TestFoldMultiRunUsageIsCumulative; dropping
+// EvCompactionArchive handling would lose the head turns in
+// TestFoldRecoversCompactionArchiveHead.
+func TestFoldStructuralConversation(t *testing.T) {
+	call := toolCall("c1", "Read", `{"path":"a.go"}`)
+	evs := []session.Event{
+		{Type: session.EvSessionInit},
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "let me "},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "look"},
+		{Type: session.EvToolCall, Turn: 0, ToolCall: &call},
+		{Type: session.EvToolResult, Turn: 0, ToolResult: ptr(session.NewToolResult("c1", "file contents"))},
+		{Type: session.EvTurnStart, Turn: 1},
+		{Type: session.EvMessageDelta, Turn: 1, Text: "all done"},
+		{Type: session.EvResult, Turn: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn, Text: "all done", Usage: session.Usage{InputTokens: 15, OutputTokens: 5}}},
+	}
+
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+
+	msgs := s.Conversation.Messages
+	// assistant("let me look", [c1]) → tool(c1) → assistant("all done")
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want 3: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != session.RoleAssistant || msgs[0].Text != "let me look" {
+		t.Fatalf("msg0 = %+v, want assistant 'let me look'", msgs[0])
+	}
+	if len(msgs[0].ToolCalls) != 1 || msgs[0].ToolCalls[0].ID != "c1" {
+		t.Fatalf("msg0 tool calls = %+v, want [c1]", msgs[0].ToolCalls)
+	}
+	if msgs[1].Role != session.RoleTool || msgs[1].ToolResult == nil || msgs[1].ToolResult.CallID != "c1" {
+		t.Fatalf("msg1 = %+v, want tool result for c1", msgs[1])
+	}
+	if msgs[2].Role != session.RoleAssistant || msgs[2].Text != "all done" {
+		t.Fatalf("msg2 = %+v, want assistant 'all done'", msgs[2])
+	}
+	// History must be provider-replayable.
+	if err := session.ValidateToolPairing(msgs); err != nil {
+		t.Fatalf("reconstructed history is not tool-pairing-valid: %v", err)
+	}
+
+	if s.State != session.StateCompleted {
+		t.Fatalf("state = %q, want completed", s.State)
+	}
+	if r, _ := s.RecordedStopReason(); r != session.StopEndTurn {
+		t.Fatalf("stop = %q, want end_turn", r)
+	}
+	if s.Usage != (session.Usage{InputTokens: 15, OutputTokens: 5}) {
+		t.Fatalf("usage = %+v, want {15,5}", s.Usage)
+	}
+	// Reasoning is never event-carried — the contract limitation.
+	if msgs[0].Reasoning != "" || msgs[0].ProviderPhase != "" {
+		t.Fatalf("reconstructed assistant carries Reasoning/ProviderPhase it cannot have: %+v", msgs[0])
+	}
+}
+
+// TestFoldMultiRunUsageIsCumulative drives a stream with TWO terminal EvResults (a
+// reopened session). EvResult.Usage is PER-RUN, so cumulative session.Usage is the
+// SUM. This exercises the per-run-vs-cumulative trap.
+func TestFoldMultiRunUsageIsCumulative(t *testing.T) {
+	evs := []session.Event{
+		// Run 1.
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "first"},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: session.Usage{InputTokens: 10, OutputTokens: 4}}},
+		// Run 2 (after a Reopen) — a fresh per-run counter segment.
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "second"},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: session.Usage{InputTokens: 7, OutputTokens: 3}}},
+	}
+
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+
+	want := session.Usage{InputTokens: 17, OutputTokens: 7}
+	if s.Usage != want {
+		t.Fatalf("cumulative usage = %+v, want %+v (sum of both runs, NOT a single EvResult)", s.Usage, want)
+	}
+	// Counters reflect the LATEST run segment (per-run, like resetToIdle on Reopen).
+	if s.Counters.Turns != 1 {
+		t.Fatalf("counters.Turns = %d, want 1 (latest run segment)", s.Counters.Turns)
+	}
+	// Both assistant turns survive.
+	if got := len(s.Conversation.Messages); got != 2 {
+		t.Fatalf("got %d messages, want 2", got)
+	}
+}
+
+// TestFoldRecoversCompactionArchiveHead asserts the pre-compaction head carried by
+// EvCompactionArchive is recovered and prefixes the post-compaction turns.
+func TestFoldRecoversCompactionArchiveHead(t *testing.T) {
+	head := []session.Message{
+		session.NewUserMessage("original task"),
+		session.NewAssistantMessage("old turn 1", "", nil),
+		session.NewAssistantMessage("old turn 2", "", nil),
+	}
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		// The compaction archive lands the pre-compaction head.
+		{Type: session.EvCompaction, Turn: 0, Text: "summary"},
+		{Type: session.EvCompactionArchive, Turn: 0, CompactionArchive: &session.CompactionArchivePayload{Replaced: head}},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "post-compaction answer"},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: session.Usage{InputTokens: 3, OutputTokens: 1}}},
+	}
+
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+
+	msgs := s.Conversation.Messages
+	// 3 head messages + 1 post-compaction assistant turn.
+	if len(msgs) != 4 {
+		t.Fatalf("got %d messages, want 4 (3 head + 1 post): %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != session.RoleUser || msgs[0].Text != "original task" {
+		t.Fatalf("head turn lost: msg0 = %+v", msgs[0])
+	}
+	if msgs[3].Text != "post-compaction answer" {
+		t.Fatalf("post-compaction turn = %+v, want 'post-compaction answer'", msgs[3])
+	}
+}
+
+// TestFoldUnansweredAskIsAwaiting asserts a trailing EvPermissionAsk with no
+// following EvApproval/EvResult lands the session in StateAwaiting with the pending
+// ask restored.
+func TestFoldUnansweredAskIsAwaiting(t *testing.T) {
+	call := toolCall("c1", "Bash", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Bash", Reason: "needs approval"}
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "running a command"},
+		{Type: session.EvToolCall, Turn: 0, ToolCall: &call},
+		{Type: session.EvPermissionAsk, Turn: 0, Ask: &ask},
+		// No EvApproval, no EvResult — the process died parked on the ask.
+	}
+
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if s.State != session.StateAwaiting {
+		t.Fatalf("state = %q, want awaiting", s.State)
+	}
+	got, ok := s.PendingAsk()
+	if !ok {
+		t.Fatalf("no pending ask restored")
+	}
+	if got.AskID != ask.AskID || got.Tool != "Bash" {
+		t.Fatalf("pending = %+v, want %+v", got, ask)
+	}
+}
+
+// TestFoldResolvedAskNotAwaiting asserts an ask FOLLOWED by an approval (then a
+// terminal result) is NOT awaiting — the verdict cleared it.
+func TestFoldResolvedAskNotAwaiting(t *testing.T) {
+	call := toolCall("c1", "Bash", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Bash"}
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvToolCall, Turn: 0, ToolCall: &call},
+		{Type: session.EvPermissionAsk, Turn: 0, Ask: &ask},
+		{Type: session.EvApproval, Turn: 0, Approval: &session.ApprovalPayload{AskID: ask.AskID, Verdict: session.VerdictStringAllowOnce, Tool: "Bash", Call: "c1"}},
+		{Type: session.EvToolResult, Turn: 0, ToolResult: ptr(session.NewToolResult("c1", "ok"))},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+	}
+
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if s.State != session.StateCompleted {
+		t.Fatalf("state = %q, want completed (the ask was resolved)", s.State)
+	}
+	if _, ok := s.PendingAsk(); ok {
+		t.Fatalf("ask should have been cleared by the approval")
+	}
+}
+
+// TestFoldTerminalStateMapping covers the stop→state mapping for the error and
+// cancelled terminals (the clean terminals are covered elsewhere).
+func TestFoldTerminalStateMapping(t *testing.T) {
+	cases := []struct {
+		stop  session.StopReason
+		state session.State
+	}{
+		{session.StopError, session.StateFailed},
+		{session.StopCancelled, session.StateCancelled},
+		{session.StopBudget, session.StateCompleted},
+		{session.StopNoProgress, session.StateCompleted},
+		{session.StopMaxTurns, session.StateCompleted},
+	}
+	for _, tc := range cases {
+		evs := []session.Event{
+			{Type: session.EvTurnStart, Turn: 0},
+			{Type: session.EvMessageDelta, Turn: 0, Text: "x"},
+			{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: tc.stop}},
+		}
+		s, err := eventsource.Fold(meta(), seq(evs))
+		if err != nil {
+			t.Fatalf("Fold(%s): %v", tc.stop, err)
+		}
+		if s.State != tc.state {
+			t.Fatalf("stop %q => state %q, want %q", tc.stop, s.State, tc.state)
+		}
+	}
+}
+
+// TestFoldNoTerminalIsIdle asserts a stream that stops mid-run (no terminal result,
+// no pending ask) reconstructs to a resumable idle session with intact history.
+func TestFoldNoTerminalIsIdle(t *testing.T) {
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "interrupted mid-thought"},
+	}
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if s.State != session.StateIdle {
+		t.Fatalf("state = %q, want idle", s.State)
+	}
+	if len(s.Conversation.Messages) != 1 {
+		t.Fatalf("got %d messages, want 1", len(s.Conversation.Messages))
+	}
+}
+
+// TestFoldStreamErrorPropagates asserts a per-item stream error is surfaced as
+// ErrStream and aborts the fold.
+func TestFoldStreamErrorPropagates(t *testing.T) {
+	boom := errors.New("backend read fault")
+	bad := func(yield func(session.Event, error) bool) {
+		yield(session.Event{Type: session.EvTurnStart}, nil)
+		yield(session.Event{}, boom)
+	}
+	_, err := eventsource.Fold(meta(), bad)
+	if !errors.Is(err, eventsource.ErrStream) {
+		t.Fatalf("err = %v, want ErrStream", err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapped backend fault", err)
+	}
+}
+
+// TestFoldMetaIsApplied confirms the creation metadata (which no event carries) is
+// applied to the reconstructed session.
+func TestFoldMetaIsApplied(t *testing.T) {
+	m := eventsource.SessionMeta{
+		ID:         "sess-42",
+		Mode:       session.ModePlan,
+		Limits:     session.Limits{MaxTurns: 9},
+		Workspace:  "/work/space",
+		Profile:    "no-fs",
+		ProviderID: "openrouter",
+		ModelID:    "anthropic/claude",
+		CreatedAt:  time.Unix(1700000000, 0),
+	}
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "hi"},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+	}
+	s, err := eventsource.Fold(m, seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if s.ID != "sess-42" || s.Mode != session.ModePlan || s.Workspace != "/work/space" ||
+		s.Profile != "no-fs" || s.ProviderID != "openrouter" || s.ModelID != "anthropic/claude" ||
+		s.Limits.MaxTurns != 9 || !s.CreatedAt.Equal(time.Unix(1700000000, 0)) {
+		t.Fatalf("meta not applied: %+v", s)
+	}
+}
+
+// TestFoldRoundTripsThroughSnapshot is a belt-and-braces cross-check: a folded
+// session must itself be snapshot-serializable (the host may persist it), proving the
+// reconstructed aggregate is internally consistent.
+func TestFoldRoundTripsThroughSnapshot(t *testing.T) {
+	call := toolCall("c1", "Read", `{"path":"a.go"}`)
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvMessageDelta, Turn: 0, Text: "look"},
+		{Type: session.EvToolCall, Turn: 0, ToolCall: &call},
+		{Type: session.EvToolResult, Turn: 0, ToolResult: ptr(session.NewToolResult("c1", "ok"))},
+		{Type: session.EvTurnStart, Turn: 1},
+		{Type: session.EvMessageDelta, Turn: 1, Text: "done"},
+		{Type: session.EvResult, Turn: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: session.Usage{InputTokens: 9, OutputTokens: 2}}},
+	}
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	line, err := sessnap.Marshal(s)
+	if err != nil {
+		t.Fatalf("Marshal folded session: %v", err)
+	}
+	if _, err := sessnap.Unmarshal(line); err != nil {
+		t.Fatalf("Unmarshal folded session: %v", err)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
