@@ -209,21 +209,19 @@ func (l *Local) start() error {
 		}
 	}
 
-	grpcPort, err := freePort()
+	// Reserve all three ports AT ONCE (holding the listeners open together) so
+	// the OS hands back three DISTINCT ports. Allocating them one-at-a-time with
+	// a close between calls lets the OS re-assign the same just-freed ephemeral
+	// port to the next bind — which collided http==metrics in CI and crashed the
+	// daemon at startup ("bind: address already in use"). This is the only spawn
+	// path, and the lease spec spawns three daemons per run, widening that window.
+	ports, err := freePorts(3)
 	if err != nil {
 		return err
 	}
-	httpPort, err := freePort()
-	if err != nil {
-		return err
-	}
-	metricsPort, err := freePort()
-	if err != nil {
-		return err
-	}
-	l.grpcAddr = "127.0.0.1:" + strconv.Itoa(grpcPort)
-	l.httpAddr = "127.0.0.1:" + strconv.Itoa(httpPort)
-	l.metricsAddr = "127.0.0.1:" + strconv.Itoa(metricsPort)
+	l.grpcAddr = "127.0.0.1:" + strconv.Itoa(ports[0])
+	l.httpAddr = "127.0.0.1:" + strconv.Itoa(ports[1])
+	l.metricsAddr = "127.0.0.1:" + strconv.Itoa(ports[2])
 
 	args := []string{
 		"--grpc-addr", l.grpcAddr,
@@ -343,14 +341,30 @@ func (l *Local) waitReady(timeout time.Duration) error {
 	return lastErr
 }
 
-// freePort binds :0 on loopback, reads the assigned port, and releases it.
-func freePort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+// freePorts reserves n distinct free loopback ports. It binds n listeners on
+// :0 SIMULTANEOUSLY, reads each assigned port, then releases them all — so the
+// OS cannot hand the same ephemeral port to two of them (which it can, and did
+// in CI, when ports are allocated one-at-a-time with a close between calls).
+// The bind→read→close→hand-to-daemon window is still racy in principle against
+// OTHER processes (loopback-private, and FlakeAttempts covers the rare case),
+// but it can no longer collide a single daemon's own ports against each other.
+func freePorts(n int) ([]int, error) {
+	lns := make([]net.Listener, 0, n)
+	defer func() {
+		for _, ln := range lns {
+			_ = ln.Close()
+		}
+	}()
+	ports := make([]int, 0, n)
+	for range n {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, err
+		}
+		lns = append(lns, ln)
+		ports = append(ports, ln.Addr().(*net.TCPAddr).Port)
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port, nil
+	return ports, nil
 }
 
 // initWorkspaceGit makes the workspace a real git repo with one commit, so the
