@@ -34,6 +34,9 @@ tasks:
       - go build -o bin/mecatequi ./cmd/mecatequi
       # mecatui stamps its build version into the welcome splash via -X main.version.
       - go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/mecatui ./cmd/mecatui
+      # engine/ is its own Go module (consumed via the committed go.work). Building
+      # it here keeps the importable-core module compiling alongside the binaries.
+      - cd engine && go build ./...
 
   install:
     desc: Install mecated and mecatui into GOBIN/GOPATH/bin
@@ -97,9 +100,24 @@ tasks:
       - ko resolve -f deploy/
 
   test:
-    desc: Run unit tests with the race detector
+    desc: Run unit tests with the race detector (root module + engine module + the standalone hygiene proof)
     cmds:
       - go test -race ./...
+      # engine/ is a separate module under the workspace — `./...` from the root
+      # does NOT cross the module boundary, so its tests are a second invocation.
+      - cd engine && go test -race ./...
+      - task: test:engine-standalone
+
+  test:engine-standalone:
+    desc: |
+      Prove the engine module builds + tests with NO workspace and NO host-repo
+      deps (GOWORK=off): the importable core's tiny dependency closure
+      (doublestar + x/sync + goleak) is self-contained. This is the hygiene gate
+      that an external consumer's `go get github.com/stacklok/mecatl/engine`
+      experience depends on — see docs/adr/0036-engine-module.md.
+    cmds:
+      - cd engine && GOWORK=off go build ./...
+      - cd engine && GOWORK=off go test ./...
 
   test:actions:
     desc: |
@@ -153,9 +171,10 @@ tasks:
       FUZZTIME: '{{.FUZZTIME | default "30s"}}'
     cmds:
       # `go test` fuzzes only ONE target per invocation, so run them in sequence.
-      - go test ./engine/governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
-      - go test ./engine/governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
-      - go test ./engine/governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
+      # The governance fuzzers live in the engine MODULE, so they run from engine/.
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
       - go test ./internal/adapter/openai/ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
 
   bench:
@@ -176,8 +195,9 @@ tasks:
     cmds:
       # -run='^$' skips the unit tests (cuts noise); -benchmem reports B/op and
       # allocs/op; -count gives benchstat the samples it needs for a confidence
-      # interval. Offline only — every benchmark uses mockllm + memfs.
-      - go test -bench=. -benchmem -count={{.BENCHCOUNT}} -run='^$' ./engine/prompt/ ./engine/governance/ ./engine/agent/
+      # interval. Offline only — every benchmark uses mockllm + memfs. The hot-path
+      # benchmarks live in the engine MODULE, so they run from engine/.
+      - cd engine && go test -bench=. -benchmem -count={{.BENCHCOUNT}} -run='^$' ./prompt/ ./governance/ ./agent/
 
   perf:scenarios:
     desc: |
@@ -284,24 +304,35 @@ tasks:
         silent: true
 
   test:cover:
-    desc: Run tests with coverage and write coverage/coverage.{out,html}
+    desc: Run tests with coverage and write coverage/coverage.{out,html} (root module + engine module)
     cmds:
       - mkdir -p coverage
       - go test -race -coverprofile=coverage/coverage.out -covermode=atomic ./...
       - go tool cover -func=coverage/coverage.out
       - go tool cover -html=coverage/coverage.out -o coverage/coverage.html
       - 'echo "HTML coverage report: coverage/coverage.html"'
+      # engine/ is a separate module — cover it in its own pass (sibling profile).
+      - cd engine && go test -race -coverprofile=../coverage/engine.out -covermode=atomic ./...
+      - go tool cover -func=coverage/engine.out
+      - go tool cover -html=coverage/engine.out -o coverage/engine.html
+      - 'echo "HTML engine coverage report: coverage/engine.html"'
 
   lint:
-    desc: Run golangci-lint (parallel-safe) and go vet
+    desc: Run golangci-lint (parallel-safe) and go vet over the root module + the engine module
     cmds:
       - golangci-lint run --allow-parallel-runners ./...
       - go vet ./...
+      # engine/ is its own module — it shares the ROOT golangci config (no
+      # engine-local .golangci.yml) so the depguard layering allowlists stay the
+      # single source of truth across the module boundary.
+      - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners ./...
+      - cd engine && go vet ./...
 
   lint:fix:
-    desc: Run golangci-lint with autofix (parallel-safe)
+    desc: Run golangci-lint with autofix (parallel-safe) over the root module + the engine module
     cmds:
       - golangci-lint run --allow-parallel-runners --fix ./...
+      - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --fix ./...
 
   lint:actions:
     desc: |
@@ -349,9 +380,21 @@ tasks:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
 
   tidy:
-    desc: Tidy go.mod / go.sum
+    desc: Tidy go.mod / go.sum for the root module + the engine module, then sync the workspace
     cmds:
+      # INVARIANT — do NOT reorder these three steps. The order
+      #   (1) root `go mod tidy`  →  (2) `go work sync`  →  (3) engine `GOWORK=off go mod tidy`
+      # is load-bearing. engine/ is a separate module: it must be tidied with the
+      # workspace OFF (step 3) so its go.sum reflects its OWN tiny closure, not the
+      # host repo's heavy cone. `go work sync` (step 2) aligns the shared transitive
+      # versions across both modules but can DROP `/go.mod` hash lines from
+      # engine/go.sum; the standalone tidy MUST run AFTER the sync to restore them.
+      # Reordering (running the sync last, or the engine tidy before it) leaves
+      # engine/go.sum missing those `/go.mod` lines, which breaks the GOWORK=off
+      # engine-standalone CI job on a fresh checkout. Keep this exact order.
       - go mod tidy
+      - go work sync
+      - cd engine && GOWORK=off go mod tidy
 
   generate:
     desc: Regenerate contracts/gen from contracts/proto via buf

@@ -54,7 +54,12 @@ under `engine/` — the
 importable core, fully self-contained (tests included: nothing under `engine/`
 imports `internal/...`) and intended to be importable as a library by external
 consumers — while the heavy adapters and the composition layer stay under
-`internal/`. The LLM provider sits behind the `port.LLMProvider` seam, with each
+`internal/`. `engine/` **is its own Go module**
+(`github.com/stacklok/mecatl/engine`), kept in this repo as a monorepo via a
+committed `go.work`; its standalone dependency closure is just `doublestar` +
+`x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
+pulls in that small set rather than mecatl's full require cone (see
+[ADR 0036](adr/0036-engine-module.md)). The LLM provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `internal/adapter/openai`, the native Anthropic Messages API in
 `internal/adapter/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and

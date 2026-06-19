@@ -51,20 +51,28 @@ $ task install
 `task install` installs `mecated` and `mecatui`; it intentionally skips
 `mecademo`, which is only a demo binary.
 
+The repo is a **Go workspace** (a committed `go.work`) spanning two modules: the
+root (`github.com/stacklok/mecatl`) and the importable core
+(`github.com/stacklok/mecatl/engine`). `task build` builds both. A plain
+`go build ./...` from the repo root does not cross the module boundary, so the
+Taskfile runs `cd engine && go build ./...` for you; the workspace lets the root
+module build against the in-tree engine via a `replace` directive.
+
 Other handy targets (`task --list` for the full set):
 
 | Task | What it does |
 | --- | --- |
-| `task build` | compile `bin/mecated`, `bin/mecademo`, `bin/mecatequi`, `bin/mecatui` |
+| `task build` | compile `bin/mecated`, `bin/mecademo`, `bin/mecatequi`, `bin/mecatui` + build the engine module |
 | `task install` | install `mecated` and `mecatui` into `GOBIN` / `GOPATH/bin` |
-| `task test` | `go test -race ./...` |
-| `task test:cover` | tests + `coverage/coverage.{out,html}` |
+| `task test` | `go test -race ./...` (root) + the engine module + the `GOWORK=off` standalone hygiene proof |
+| `task test:engine-standalone` | `cd engine && GOWORK=off go build ./... && go test ./...` — proves the engine's tiny closure is self-contained |
+| `task test:cover` | tests + `coverage/coverage.{out,html}` (root + engine) |
 | `task test:golden` | refresh the `mecatui` View/teatest golden files (`-update`), then re-run them |
 | `task e2e` | the **LIVE** e2e suite against OpenRouter — real money + network, needs `OPENROUTER_API_KEY` (see §10) |
 | `task fuzz` | bounded coverage-guided fuzzing of the security-critical parsers (`FUZZTIME=2m task fuzz`); not part of `task test` |
-| `task lint` | `golangci-lint run` + `go vet` |
+| `task lint` | `golangci-lint run` + `go vet` over the root module **and** the engine module (shared config) |
 | `task fmt` | `gofmt` + `goimports` |
-| `task tidy` | `go mod tidy` |
+| `task tidy` | tidy both `go.mod` files: root tidy → `go work sync` → engine `GOWORK=off go mod tidy` |
 | `task generate` | `buf generate` (no-op unless `buf` + `contracts/proto` present) |
 | `task ci` | tidy → fmt → lint → test → build |
 
@@ -73,6 +81,48 @@ the offline demo.
 
 The default `mecated` build is CGO-free and statically linkable (the ko image
 builds it with `CGO_ENABLED=0`).
+
+### Consuming `engine` as a library
+
+The importable core is its own Go module,
+`github.com/stacklok/mecatl/engine` ([ADR 0036](adr/0036-engine-module.md)). An
+external project depends on it directly, without dragging in mecatl's heavy
+require cone (the OpenAI/Anthropic SDKs, gRPC, the TUI stack, client-go, …):
+
+```console
+$ go get github.com/stacklok/mecatl/engine@latest
+```
+
+```go
+import (
+    "github.com/stacklok/mecatl/engine/agent"
+    "github.com/stacklok/mecatl/engine/session"
+    "github.com/stacklok/mecatl/engine/adapter/mockllm" // a reference adapter, for tests
+)
+```
+
+The engine module's entire dependency closure is `golang.org/x/sync`,
+`github.com/bmatcuk/doublestar/v4`, and (test-only) `go.uber.org/goleak` — so a
+consumer's build graph, SBOM, and vulnerability surface stay small. The
+ports the loop consumes (`engine/port`: `LLMProvider`, `SessionStore`, …) are
+interfaces you implement or wire to the in-tree reference adapters under
+`engine/adapter/*`.
+
+The module is released under submodule tags of the form `engine/vX.Y.Z` (Go's
+convention for a module in a subdirectory), separate from the root `vX.Y.Z`
+container-image tags.
+
+Working IN this repo, the committed `go.work` makes the root build against the
+in-tree engine automatically. To reproduce a downstream consumer's isolated view
+locally — no workspace, engine resolved against its own `go.mod`/`go.sum` alone —
+run with the workspace off:
+
+```console
+$ cd engine && GOWORK=off go build ./... && GOWORK=off go test ./...
+```
+
+That is exactly what `task test:engine-standalone` (and the `engine-standalone`
+CI job) run as the hygiene gate.
 
 ---
 

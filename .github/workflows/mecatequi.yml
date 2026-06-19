@@ -169,7 +169,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          # engine/ is its own module (go.work monorepo); its go.sum is part of
+          # the build cache key alongside the root's.
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
 
       # NO repo-token here, ON PURPOSE: this job runs the agent and its ONLY secret is the
       # LLM key (the token-boundary invariant above). setup-task's `repo-token` exists solely

@@ -170,8 +170,17 @@ in-tree reference adapters), fully self-contained — tests included — and int
 importable as a library by external consumers; `internal/` holds the heavy adapters and
 the composition layer.
 
+`engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in this
+repo as a monorepo via a committed `go.work` (`use ./` + `use ./engine`). There are two
+`go.mod` files: the root (`github.com/stacklok/mecatl`, with its full require cone) and
+`engine/go.mod` (a tiny closure — `doublestar` + `x/sync` + test-only `goleak`). An
+external project imports the core directly, e.g.
+`import "github.com/stacklok/mecatl/engine/agent"`, and pulls in only that small closure,
+not mecatl's heavy dependency cone. See [ADR 0036](docs/adr/0036-engine-module.md).
+
 | Path | Contents |
 |---|---|
+| `go.work`, `go.mod`, `engine/go.mod` | the committed Go workspace + the two module manifests (root + the importable-core engine module) |
 | `engine/session`, `engine/governance`, `engine/tool`, `engine/prompt` | the domain (aggregate, permission/hook types, tool catalog + FS interfaces, prompt assembly) |
 | `engine/port` | the port interfaces the loop consumes |
 | `engine/agent`, `engine/team` | the agent loop, dispatch, permission pause/resume, compaction, the Subagent/Parallel/Team delegation tools |
@@ -211,8 +220,12 @@ loop, ports, and adapters fit together). Then:
 task            # list tasks
 task ci         # tidy → fmt → lint → test → build
 task generate   # regenerate contracts/gen from contracts/proto (needs buf); also refreshes llms.txt
-go test ./engine/agent/ -run TestFullCycle   # a single test
+cd engine && go test ./agent/ -run TestFullCycle   # a single engine test (engine/ is its own module — run from engine/)
 ```
+
+`engine/` is a separate Go module (monorepo via `go.work`), so a `go test ./...` from the
+repo root does **not** cover it — run engine tests from `engine/`. `task test` does both,
+plus the `GOWORK=off` standalone hygiene proof.
 
 Tests are offline by design (a scripted mock provider + an in-memory filesystem); CI never
 needs a live model or network. Changed any Markdown? Run `task docs` before committing — the

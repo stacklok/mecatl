@@ -287,7 +287,11 @@ runs:
       with:
         go-version-file: ${{ github.action_path }}/../../../go.mod
         cache: true
-        cache-dependency-path: ${{ github.action_path }}/../../../go.sum
+        # engine/ is its own module (go.work monorepo); mecatequi (root module)
+        # depends on it, so its go.sum participates in the build cache key too.
+        cache-dependency-path: |
+          ${{ github.action_path }}/../../../go.sum
+          ${{ github.action_path }}/../../../engine/go.sum
 
     # ── Binary acquisition (build from the action's OWN checkout) ──────────────────
     # ISOLATED on purpose. To swap to a signed/checksum-verified release asset later, drop

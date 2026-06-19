@@ -27,6 +27,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0006 — v1 step-chain](./0006-v1-step-chain.md) *(historical)*
 - [0007 — Twelve-patterns audit](./0007-twelve-patterns-audit.md) *(historical)*
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
+- [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 
 ### Memory & context
 - [0008 — Memory on by default](./0008-memory-on-by-default.md)

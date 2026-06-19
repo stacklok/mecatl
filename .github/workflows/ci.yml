@@ -49,10 +49,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          # engine/ is its own module (consumed via the committed go.work), so its
+          # go.sum participates in the build cache key alongside the root's.
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
 
       - name: go build
         run: go build ./...
+
+      # engine/ is a separate module under the workspace — `./...` from the root
+      # does NOT cross the module boundary, so build it explicitly too.
+      - name: go build (engine module)
+        run: cd engine && go build ./...
 
   test:
     name: Test (race)
@@ -67,14 +76,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
 
-      # `task test` == `go test -race ./...`. We run the underlying command
-      # directly rather than pulling in the Task binary for a single command;
-      # CI and local `task ci` stay in lockstep because the go command is
-      # identical.
+      # `task test` == `go test -race ./...` (root) + the engine module + the
+      # standalone hygiene proof. We run the underlying commands directly rather
+      # than pulling in the Task binary; CI and local `task test` stay in lockstep
+      # because the go commands are identical. The standalone GOWORK=off proof
+      # lives in its own `engine-standalone` job below.
       - name: go test -race
         run: go test -race ./...
+
+      # engine/ is a separate module — `./...` from the root does NOT cross the
+      # module boundary, so its tests are a second invocation.
+      - name: go test -race (engine module)
+        run: cd engine && go test -race ./...
 
   lint:
     name: Lint
@@ -89,10 +106,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
 
       # golangci-lint-action manages its own cache and the linter binary. The
-      # Taskfile documents golangci-lint v2.x; pin to a concrete v2 release.
+      # Taskfile documents golangci-lint v2.x; pin to a concrete v2 release. It
+      # lints the ROOT module; the engine module is linted in a follow-on step
+      # using the binary this action installs onto PATH, sharing the ROOT config.
       - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           # Must be a golangci-lint built with Go >= the go.mod toolchain
@@ -107,8 +128,18 @@ jobs:
           # job's timeout-minutes so the linter, not the job, reports it.
           args: --timeout=8m
 
+      # engine/ is its own module — lint it with the SHARED root config (no
+      # engine-local .golangci.yml) so the depguard layering allowlists stay the
+      # single source of truth across the module boundary. Uses the binary the
+      # action above installed onto PATH.
+      - name: golangci-lint (engine module)
+        run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=8m ./...
+
       - name: go vet
         run: go vet ./...
+
+      - name: go vet (engine module)
+        run: cd engine && go vet ./...
 
       # Lint the GitHub Actions workflows + assert the reusable workflow's first-party
       # sibling-action pins match the release tag (the version-skew guard). actionlint is
@@ -154,7 +185,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
 
       - uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
         with:
@@ -165,9 +198,43 @@ jobs:
       # a smoke check (find shallow crashers fast), NOT the nightly deep fuzz —
       # the seed corpora already run under `go test` in the test job. The
       # Taskfile `fuzz` task runs the 4 FuzzXxx targets sequentially; at
-      # 20s/target that is ~80s plus build, comfortably under the timeout.
+      # 20s/target that is ~80s plus build, comfortably under the timeout. The
+      # governance fuzzers live in the engine module — `task fuzz` runs them from
+      # engine/ (workspace-on, so it resolves against the same checkout).
       - name: task fuzz (short)
         run: task fuzz FUZZTIME=20s
+
+  engine-standalone:
+    name: Engine module (standalone, GOWORK=off)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Proves the importable-core module builds + tests with NO workspace and NO
+    # host-repo deps: the engine's tiny dependency closure (doublestar + x/sync +
+    # goleak) is self-contained, so an external `go get
+    # github.com/stacklok/mecatl/engine` resolves only that closure, not mecatl's
+    # heavy require cone. See docs/adr/0036-engine-module.md.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: engine/go.mod
+          cache: true
+          cache-dependency-path: engine/go.sum
+
+      # GOWORK=off ignores the committed go.work, so the engine module resolves
+      # against its OWN go.mod/go.sum alone — exactly an external consumer's view.
+      - name: go build (engine standalone)
+        env:
+          GOWORK: off
+        run: cd engine && go build ./...
+
+      - name: go test (engine standalone)
+        env:
+          GOWORK: off
+        run: cd engine && go test ./...
 
   docs:
     name: Docs (matlatl)

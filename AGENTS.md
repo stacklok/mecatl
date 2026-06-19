@@ -29,17 +29,26 @@ binaries and is the wrong workflow.
 
 ```sh
 task build              # → bin/mecated, bin/mecademo, bin/mecatui  (NEVER `go build` to repo root)
-task test               # full suite, -race
+task test               # full suite, -race (root module + engine module + the GOWORK=off engine-standalone hygiene proof)
 task test:golden        # refresh mecatui View/teatest goldens (-update) then re-run
 task e2e                # LIVE e2e vs OpenRouter (real money, needs OPENROUTER_API_KEY exported) — NOT part of task test
 task bench              # hot-path testing.B microbenchmarks (-benchmem) for benchstat; BENCHCOUNT=N overrides — NOT part of task test
 task perf:scenarios     # OFFLINE whole-loop scenario benchmarks (perf-tracking Phase 2); MECATL_PERF_JSON=path for KPI JSON — NOT part of task test
 task pgo:collect        # collect a PROVISIONAL offline CPU profile for PGO into .scratch/pgo/ — NOT committed; see perf-tracking Phase 4
-task lint               # golangci-lint v2 + go vet
+task lint               # golangci-lint v2 + go vet (root module + engine module via --config ../.golangci.yml)
+task tidy               # tidy BOTH go.mod files: root tidy, go work sync, then engine GOWORK=off tidy
 task generate           # regenerate contracts/gen from contracts/proto via buf
-go test ./engine/agent/ -run TestFullCycle   # a single test
+cd engine && go test ./agent/ -run TestFullCycle   # a single engine test (engine/ is its OWN module — run go test from engine/, not the repo root)
 go run ./cmd/mecademo    # end-to-end demo, fully offline (mock provider)
 ```
+
+> `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in
+> this repo as a MONOREPO via the committed `go.work` (`use ./` + `use ./engine`).
+> The root module consumes it via `require …/engine` + `replace …/engine => ./engine`.
+> External consumers importing `engine/agent` get only the engine's tiny dep closure
+> (`doublestar` + `x/sync` + test-only `goleak`), not mecatl's heavy require cone. A
+> `go test ./...` from the repo root does NOT cross the module boundary — engine tests
+> are a second invocation from `engine/`. See ADR 0036.
 
 ## Architecture (where things live)
 
@@ -50,6 +59,11 @@ interfaces, the agent loop, and the in-tree reference adapters (`engine/adapter/
 fully self-contained (tests included: nothing under `engine/` imports `internal/...`)
 and intended to be importable as a library by external consumers; `internal/` holds
 the heavy adapters (`internal/adapter/*`) and the composition layer (`internal/app`).
+**`engine/` is its OWN Go module** (`github.com/stacklok/mecatl/engine`; ADR 0036),
+consumed in-repo via the committed `go.work` and a root `replace …/engine => ./engine`;
+its standalone dep closure is just `doublestar` + `x/sync` + test-only `goleak`, so an
+external consumer's graph stays small. The repo stays a monorepo — both modules move in
+lockstep.
 
 - `engine/session/` — DOMAIN: the `Session` aggregate (state machine), Conversation, the `ToolCall`/`ToolResult`/`Usage` value objects, the `Event` taxonomy.
 - `engine/governance/` — DOMAIN: permission `Effect`/`Scope`/`Rule` + `Evaluator`, bash splitting/canonicalization, hook event types. **Session-free** (`session` imports it, never the reverse).
@@ -67,7 +81,7 @@ the heavy adapters (`internal/adapter/*`) and the composition layer (`internal/a
 
 ## The layering rule (the thing to get right)
 
-Dependencies point **inward only**, machine-enforced two ways (both run under `task lint`/`task test`): the **depguard allowlist** in `.golangci.yml` (per-file — each core tier is `list-mode: strict` allowing only `$gostd` + the exact core packages it imports, with an `os` deny on top; a NEW heavy-adapter import is rejected by default) AND the **DAG test** in `engine/arch/layering_test.go` (whole-graph — transitive direction + cycle detection, which the per-file depguard cannot express). `engine/team` is part of the core (agent imports it).
+Dependencies point **inward only**, machine-enforced THREE ways (all run under `task lint`/`task test`): the **depguard allowlist** in `.golangci.yml` (per-file — each core tier is `list-mode: strict` allowing only `$gostd` + the exact core packages it imports, with an `os` deny on top; a NEW heavy-adapter import is rejected by default; the engine module shares THIS config via `--config ../.golangci.yml`, no engine-local copy); the **DAG test** in `engine/arch/layering_test.go` (whole-graph — transitive direction + cycle detection, which the per-file depguard cannot express); AND the **module boundary itself** (ADR 0036) — the engine is its own Go module, so a stray engine→host-repo import breaks the `GOWORK=off` standalone build outright (`task test:engine-standalone`). `engine/team` is part of the core (agent imports it).
 
 - Domain (`session`, `prompt`, `governance`, `tool`), `engine/team`, and `engine/agent` must **never** import an adapter, `contracts/gen`, `os`, the OpenAI/Anthropic SDKs, or gRPC.
 - `engine/port` imports only domain + stdlib. `engine/agent` imports only domain + `port` + `team` (+ stdlib + `golang.org/x/sync/errgroup`) — adapters are injected. (Core **test** files may import the `engine/adapter/*` reference adapters — `memfs`/`mockllm`/`permpolicy`/… — to run offline; the depguard core rules exclude `$test`, and the DAG test reads non-test imports only. The engine tree is fully self-contained, tests included: nothing under `engine/` imports `internal/...` — integration tests that need a heavy adapter live next to that adapter under `internal/adapter/`.)

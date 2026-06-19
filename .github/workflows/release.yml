@@ -20,6 +20,15 @@
 # Trigger is `push: tags: v*` only — release artifacts come from immutable tags,
 # never from branch state. No `pull_request_target` anywhere; nothing here runs
 # untrusted code.
+#
+# Module note: the importable core lives in its OWN Go module,
+# github.com/stacklok/mecatl/engine, released under SUBMODULE tags of the form
+# `engine/vX.Y.Z` (Go's required convention for a module in a subdirectory). Those
+# are SEPARATE from the root `v*` image tags this workflow publishes — the `v*`
+# trigger below does NOT match `engine/v*` (the glob has no leading path segment),
+# so an engine release never fires the container build, and vice versa. The engine
+# tagging cadence + the apidiff breaking-change gate are issue #114 (out of scope
+# here; see docs/adr/0036-engine-module.md).
 name: Release
 
 on:
@@ -93,7 +102,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          # engine/ is its own module (go.work monorepo); its go.sum is part of
+          # the build cache key alongside the root's.
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
 
       - uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d # v0.9
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
