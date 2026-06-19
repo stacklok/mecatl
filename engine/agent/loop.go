@@ -339,6 +339,15 @@ func (e *Engine) ContextWindow() int {
 	return e.deps.ContextWindow()
 }
 
+// Model returns the provider model identifier this engine sends on every request
+// (deps.Model). It is the read-only seam a delegation emitter uses to surface the
+// child's resolved model on its start event, independent of how the model was chosen
+// (inherited default, agent-def pin, per-call override, or the opt-in router). The
+// string is bare metadata (a model id); the engine stays model-string-only — no
+// adapter/proto type crosses here. Used by the Subagent / Parallel / Team delegation
+// emit sites to populate the generic Model field (issue #112, ADR 0035).
+func (e *Engine) Model() string { return e.deps.Model }
+
 // HasTool reports whether a tool with the given registered name is present in
 // the Engine's catalog. It is the read-only seam a surface adapter uses to
 // report capabilities (e.g. memory/skills/bash availability) from the BUILT

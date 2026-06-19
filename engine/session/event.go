@@ -423,7 +423,7 @@ type TurnEndPayload struct {
 // sent to the LLM.
 //
 // Which fields are set depends on the event kind:
-//   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel].
+//   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel], Model.
 //   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount.
 //   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, DurationMs.
 type SubagentPayload struct {
@@ -455,6 +455,14 @@ type SubagentPayload struct {
 	// the gRPC + HTTP relays and the mecatui client).
 	RoutedCategory string
 	RoutedModel    string
+	// Model is the concrete MODEL id the child ACTUALLY ran on (EvSubagentStart only),
+	// set unconditionally — inherited default, agent-def pin, per-call `model` override,
+	// or the opt-in router — independent of whether the router fired. It is BARE METADATA
+	// — a model id, never child content — so it is gauntlet-#7 safe (no child content
+	// crosses). When the router classified this delegation, Model == RoutedModel. It rides
+	// the proto/client wire end-to-end (subagent.start: Subagent.model = field 13),
+	// surfaced via the server mapper — see ADR 0035.
+	Model string
 	// ToolName is the name of a child tool that just ran. Set on EvSubagentTool
 	// only. It is the tool NAME alone — never the child's tool args or result.
 	ToolName string
@@ -489,7 +497,7 @@ type SubagentPayload struct {
 //
 // Which fields are set depends on the event kind:
 //   - EvParallelStart:                       ParentCallID, Join, BranchCount.
-//   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel].
+//   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel], Model.
 //   - EvParallelBranch (Kind=branch_tool):   ParentCallID, Kind, BranchIndex, ToolName, IsError, ToolCount.
 //   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed, Workspace.
 //   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, WinnerWorkspace, Usage (run total), Stop.
@@ -539,6 +547,14 @@ type ParallelPayload struct {
 	// = field 19 / routed_model = field 20), surfaced via the server mapper — see ADR 0034.
 	RoutedCategory string
 	RoutedModel    string
+	// Model is the concrete MODEL id the branch ACTUALLY ran on (branch_start kind only),
+	// set unconditionally — inherited default branch model or the opt-in router —
+	// independent of whether the router fired. It is BARE METADATA — a model id, never
+	// branch content — so it is gauntlet-#7 safe (no branch content crosses). When the
+	// router classified this branch, Model == RoutedModel. It rides the proto/client wire
+	// end-to-end (parallel.branch_start: Parallel.model = field 21), surfaced via the
+	// server mapper — see ADR 0035.
+	Model string
 
 	// ToolName is the name of a branch's child tool that just ran. Set on the
 	// branch_tool kind only. It is the tool NAME alone — never branch args/result.
@@ -604,6 +620,14 @@ type TeamMemberSpec struct {
 	// via the server mapper — see ADR 0034.
 	RoutedCategory string
 	RoutedModel    string
+	// Model is the concrete MODEL id the member's engine ACTUALLY runs on (EvTeamStart
+	// roster entry only), set unconditionally — inherited default member model, agent-def
+	// pin, or the opt-in router — independent of whether the router fired. It is BARE
+	// METADATA — a model id, never member content — so it is gauntlet-#7 safe (no member
+	// content crosses). When the router classified this member, Model == RoutedModel. It
+	// rides the proto/client wire end-to-end (team.start roster: TeamMemberSpec.model =
+	// field 7), surfaced via the server mapper — see ADR 0035.
+	Model string
 }
 
 // TeamTaskSnapshot is one entry in the team's shared task list, projected onto the

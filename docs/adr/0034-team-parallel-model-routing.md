@@ -74,6 +74,14 @@ id — never the member role/branch prompt or the classifier's reasoning (gauntl
 > carried by the mecatui client structs, rendered as a muted `routed: <category> → <model>`
 > cue on the ctrl+a Teams roster + Parallel group-focus branch rows, and asserted on the
 > wire by the live e2e specs. Still bare metadata only (gauntlet #7).
+>
+> **Update (generic per-delegation model — ADR 0035, issue #112).** The routed fields answer
+> "the router chose this" only; the common cases (router off, inherited/default, agent-def
+> pin, per-call override) surfaced no model at all. ADR 0035 widens the wire with a generic
+> `model` field on the same three payloads (`Subagent` 13 / `TeamMemberSpec` 7 / `Parallel`
+> 21) carrying the concrete model the child ACTUALLY ran on, set unconditionally. When
+> routed, `model == routed_model`; the `routed_*` provenance signal this ADR introduced
+> stays unchanged.
 
 The category→model→engine mapping stays entirely in composition (`internal/app`): the
 member factory and the new `buildParallelEngineFactory` build the routed engine through

@@ -468,7 +468,10 @@ func (e branchEmitter) start(join string, branchCount int) {
 // and routedModel are the OPT-IN model router's bare-metadata classification for this
 // branch (both empty when the router was off, missed, or the branch never started); they
 // ride the branch_start event exactly as SubagentPayload's routed fields ride subagent.start.
-func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel string) {
+// model is the concrete MODEL id this branch ACTUALLY runs on (issue #112, ADR 0035),
+// independent of whether the router fired — inherited default or routed. When routed,
+// model == routedModel.
+func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel, model string) {
 	if !e.active() {
 		return
 	}
@@ -481,6 +484,7 @@ func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel stri
 		Goal:           truncateGoal(strings.TrimSpace(goal)),
 		RoutedCategory: routedCategory,
 		RoutedModel:    routedModel,
+		Model:          model,
 	}})
 }
 
@@ -765,7 +769,7 @@ func cancelledBeforeStart(i int, be branchEmitter, clientCancelled bool) branchR
 	// A branch cancelled before it ever started was never routed, so the routed metadata
 	// is empty (a router miss and a never-routed branch are indistinguishable on the wire
 	// — both carry no category/model, which is correct: the branch ran on nothing).
-	be.branchStart(i, "", "", "")
+	be.branchStart(i, "", "", "", "")
 	be.branchEnd(res, session.StopCancelled, session.Usage{}, 0, 0)
 	return res
 }
@@ -868,7 +872,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// (truncated, model-authored) goal + the routed metadata; branch_end (below) carries
 	// the redacted terminal metadata. A fork-failed branch still gets its branch_end so
 	// EVERY branch is represented (no missing event).
-	be.branchStart(i, prompt, routedCategory, routedModel)
+	be.branchStart(i, prompt, routedCategory, routedModel, branchEngine.Model())
 	start := time.Now()
 
 	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty

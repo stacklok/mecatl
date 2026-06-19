@@ -163,15 +163,37 @@ func TestToProtoTable(t *testing.T) {
 			// Routed-category metadata is BARE metadata (a label + a model id), set on
 			// subagent.start only when the opt-in model router classified the delegation
 			// (ADR 0031). It must round-trip to the proto fields verbatim — gauntlet #7
-			// holds (no child content crosses).
+			// holds (no child content crosses). The generic Model field (issue #112 / ADR
+			// 0035) equals RoutedModel when routed.
 			name: "subagent.start routed",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 200, Turn: 1,
 				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
-					RoutedCategory: "small", RoutedModel: "openai/gpt-4.1-mini"}},
+					RoutedCategory: "small", RoutedModel: "openai/gpt-4.1-mini", Model: "openai/gpt-4.1-mini"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				s := got.GetSubagent()
 				if s == nil || s.GetRoutedCategory() != "small" || s.GetRoutedModel() != "openai/gpt-4.1-mini" {
 					t.Fatalf("subagent.start routed metadata mismatch: %+v", s)
+				}
+				if s.GetModel() != "openai/gpt-4.1-mini" || s.GetModel() != s.GetRoutedModel() {
+					t.Fatalf("subagent.start Model should equal RoutedModel when routed: %+v", s)
+				}
+			},
+		},
+		{
+			// The generic Model field (issue #112 / ADR 0035) is set UNCONDITIONALLY —
+			// here for the inherited/default case (no router fired, routed fields empty).
+			// It must round-trip verbatim; bare metadata, gauntlet #7.
+			name: "subagent.start inherited model",
+			in: session.Event{Type: session.EvSubagentStart, Seq: 201, Turn: 1,
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
+					Model: "openai/gpt-4.5"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				s := got.GetSubagent()
+				if s == nil || s.GetModel() != "openai/gpt-4.5" {
+					t.Fatalf("subagent.start inherited Model mismatch: %+v", s)
+				}
+				if s.GetRoutedCategory() != "" || s.GetRoutedModel() != "" {
+					t.Fatalf("subagent.start inherited must have empty routed fields: %+v", s)
 				}
 			},
 		},
@@ -209,9 +231,9 @@ func TestToProtoTable(t *testing.T) {
 			in: session.Event{Type: session.EvTeamStart, Seq: 30, Turn: 1,
 				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1",
 					Roster: []session.TeamMemberSpec{
-						{Name: "lead", Role: "coordinate", Lead: true},
+						{Name: "lead", Role: "coordinate", Lead: true, Model: "openai/gpt-4.5"},
 						{Name: "worker", Role: "investigate", Mutating: true,
-							RoutedCategory: "large", RoutedModel: "anthropic/claude-opus-4"},
+							RoutedCategory: "large", RoutedModel: "anthropic/claude-opus-4", Model: "anthropic/claude-opus-4"},
 					}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				tm := got.GetTeam()
@@ -232,6 +254,15 @@ func TestToProtoTable(t *testing.T) {
 				}
 				if r[1].GetRoutedCategory() != "large" || r[1].GetRoutedModel() != "anthropic/claude-opus-4" {
 					t.Fatalf("team.start routed member metadata mismatch: %+v", r[1])
+				}
+				// The generic Model field (issue #112 / ADR 0035) round-trips for BOTH
+				// members: the routed worker's Model == RoutedModel, and the unrouted lead
+				// carries its inherited model with empty routed fields.
+				if r[0].GetModel() != "openai/gpt-4.5" {
+					t.Fatalf("team.start lead inherited Model mismatch: %+v", r[0])
+				}
+				if r[1].GetModel() != "anthropic/claude-opus-4" || r[1].GetModel() != r[1].GetRoutedModel() {
+					t.Fatalf("team.start routed worker Model should equal RoutedModel: %+v", r[1])
 				}
 			},
 		},
@@ -394,7 +425,7 @@ func TestToProtoTable(t *testing.T) {
 			in: session.Event{Type: session.EvParallelBranch, Seq: 41, Turn: 1,
 				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchStart,
 					BranchIndex: 1, ChildID: "parallel-p1-1", BranchLabel: "branch-2", Goal: "explore beta",
-					RoutedCategory: "small", RoutedModel: "openai/gpt-4.1-mini"}},
+					RoutedCategory: "small", RoutedModel: "openai/gpt-4.1-mini", Model: "openai/gpt-4.1-mini"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
 				if p == nil || p.GetKind() != "branch_start" || p.GetBranchIndex() != 1 ||
@@ -411,6 +442,28 @@ func TestToProtoTable(t *testing.T) {
 				// content crosses).
 				if p.GetRoutedCategory() != "small" || p.GetRoutedModel() != "openai/gpt-4.1-mini" {
 					t.Fatalf("parallel branch_start routed metadata mismatch: %+v", p)
+				}
+				// The generic Model field (issue #112 / ADR 0035) equals RoutedModel when routed.
+				if p.GetModel() != "openai/gpt-4.1-mini" || p.GetModel() != p.GetRoutedModel() {
+					t.Fatalf("parallel branch_start Model should equal RoutedModel when routed: %+v", p)
+				}
+			},
+		},
+		{
+			// The generic Model field (issue #112 / ADR 0035) for the inherited/default
+			// branch case (no router fired, routed fields empty). Round-trips verbatim.
+			name: "parallel.branch branch_start inherited model",
+			in: session.Event{Type: session.EvParallelBranch, Seq: 41, Turn: 1,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchStart,
+					BranchIndex: 0, ChildID: "parallel-p1-0", BranchLabel: "branch-1", Goal: "explore alpha",
+					Model: "anthropic/claude-3.5"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				p := got.GetParallel()
+				if p == nil || p.GetModel() != "anthropic/claude-3.5" {
+					t.Fatalf("parallel branch_start inherited Model mismatch: %+v", p)
+				}
+				if p.GetRoutedCategory() != "" || p.GetRoutedModel() != "" {
+					t.Fatalf("parallel branch_start inherited must have empty routed fields: %+v", p)
 				}
 			},
 		},

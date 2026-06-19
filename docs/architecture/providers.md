@@ -349,6 +349,18 @@ and rendered by mecatui (the ctrl+a Teams roster row and the Parallel group-focu
 row). Bare metadata only — a category label + a model id, never member/branch content
 (gauntlet #7).
 
+**The per-delegation model surface (ADR 0035, issue #112).** The routed cue only answers
+"the router chose this"; it is empty for the common cases (router off, inherited/default,
+agent-def-pinned, per-call `model` override). A generic `model` field now rides ALL three
+delegation payloads — `Subagent` (field 13), `TeamMemberSpec` (field 7), `Parallel`
+(field 21) — carrying the **concrete model id the child actually ran on, regardless of how
+it was chosen**. It is populated at the existing emit sites from the child engine's
+resolved model via `Engine.Model()` / `Supervisor.MemberModel(name)`, set unconditionally,
+and is bare metadata (a model id, never child content), gauntlet-#7 safe. When routed,
+`model == routed_model`. mecatui renders `routed: …` when the router fired (not duplicated
+as a `model:` line), else `model: <id>` for the plain case. The gRPC `RunTeam` direct path
+emits no EvTeamStart roster, so the only roster projection site is the in-process Team tool.
+
 The category→model→engine mapping stays in composition (`buildMemberEngine` substitutes the
 routed model on the undefined branch; the new `buildParallelEngineFactory` mints the branch
 engine) — both through the contamination-safe per-provider path (window/compactor/counter

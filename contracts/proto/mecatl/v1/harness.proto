@@ -660,7 +660,7 @@ message Hook {
 // without ever seeing the child's content, preserving context isolation.
 //
 // Which fields are set depends on the event kind:
-//   - subagent.start: parent_call_id, child_id, goal, routed_category, routed_model.
+//   - subagent.start: parent_call_id, child_id, goal, routed_category, routed_model, model.
 //   - subagent.tool:  parent_call_id, child_id, tool_name, is_error, tool_count.
 //   - subagent.end:   parent_call_id, child_id, tool_count, usage, stop, duration_ms.
 message Subagent {
@@ -703,6 +703,13 @@ message Subagent {
   // id, never model-influenced free text — so it is context-isolation safe
   // (gauntlet #7). Mirrors session.SubagentPayload.RoutedModel.
   string routed_model = 12;
+  // model is the concrete MODEL id this child ACTUALLY ran on (subagent.start
+  // only), regardless of how it was chosen — inherited default, agent-def pin,
+  // per-call `model` override, or the opt-in router. BARE METADATA — a model id,
+  // never child content — so it is context-isolation safe (gauntlet #7: no child
+  // content crosses). When the router classified this delegation, model ==
+  // routed_model. Mirrors session.SubagentPayload.Model.
+  string model = 13;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -731,6 +738,13 @@ message TeamMemberSpec {
   // never model-influenced free text — so it is context-isolation safe (gauntlet #7).
   // Mirrors session.TeamMemberSpec.RoutedModel.
   string routed_model = 6;
+  // model is the concrete MODEL id this member's engine ACTUALLY runs on
+  // (team.start roster only), regardless of how it was chosen — inherited default
+  // member model, agent-def pin, or the opt-in router. BARE METADATA — a model id,
+  // never member content — so it is context-isolation safe (gauntlet #7: no member
+  // content crosses). When the router classified this member, model == routed_model.
+  // Mirrors session.TeamMemberSpec.Model.
+  string model = 7;
 }
 
 // Team is the BOUNDED observability projection carried by the three team.* events.
@@ -828,7 +842,7 @@ message Team {
 //
 // Which fields are set depends on the event kind:
 //   - parallel.start:                  parent_call_id, join, branch_count.
-//   - parallel.branch (branch_start):  parent_call_id, kind, branch_index, branch_label, goal, routed_category, routed_model.
+//   - parallel.branch (branch_start):  parent_call_id, kind, branch_index, branch_label, goal, routed_category, routed_model, model.
 //   - parallel.branch (branch_tool):   parent_call_id, kind, branch_index, tool_name, is_error, tool_count.
 //   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed, workspace.
 //   - parallel.end:                    parent_call_id, join, branch_count, winner, winner_workspace, usage (run total), stop.
@@ -898,6 +912,12 @@ message Parallel {
   // model-influenced free text — so it is context-isolation safe (gauntlet #7).
   // Mirrors session.ParallelPayload.RoutedModel.
   string routed_model = 20;
+  // model is the concrete MODEL id this branch ACTUALLY ran on (branch_start only),
+  // regardless of how it was chosen — inherited default branch model or the opt-in
+  // router. BARE METADATA — a model id, never branch content — so it is
+  // context-isolation safe (gauntlet #7: no branch content crosses). When the router
+  // classified this branch, model == routed_model. Mirrors session.ParallelPayload.Model.
+  string model = 21;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors

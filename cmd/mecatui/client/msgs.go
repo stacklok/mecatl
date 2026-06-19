@@ -143,12 +143,17 @@ type SubagentMsg struct {
 	Background     bool
 	RoutedCategory string
 	RoutedModel    string
-	ToolName       string
-	IsError        bool
-	ToolCount      int
-	Usage          Usage
-	Stop           string
-	DurationMs     int64
+	// Model is the concrete model id the child ACTUALLY ran on (subagent.start only),
+	// regardless of how it was chosen — inherited default, agent-def pin, per-call
+	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
+	// RoutedModel. Bare metadata, never child content, so gauntlet #7 holds.
+	Model      string
+	ToolName   string
+	IsError    bool
+	ToolCount  int
+	Usage      Usage
+	Stop       string
+	DurationMs int64
 }
 
 // TeamKind discriminates the three team.* event kinds carried by a TeamMsg, so
@@ -216,6 +221,10 @@ type TeamMemberSpec struct {
 	// #7 holds.
 	RoutedCategory string
 	RoutedModel    string
+	// Model is the concrete model id the member's engine ACTUALLY runs on (team.start
+	// roster only), regardless of how it was chosen (issue #112 / ADR 0035). When routed,
+	// Model == RoutedModel. Bare metadata, never member content, so gauntlet #7 holds.
+	Model string
 }
 
 // TeamMsg is the BOUNDED projection of an in-process team's run, as plain data
@@ -314,6 +323,10 @@ type ParallelMsg struct {
 	// content, so gauntlet #7 holds.
 	RoutedCategory string
 	RoutedModel    string
+	// Model is the concrete model id the branch ACTUALLY ran on (branch_start only),
+	// regardless of how it was chosen (issue #112 / ADR 0035). When routed, Model ==
+	// RoutedModel. Bare metadata, never branch content, so gauntlet #7 holds.
+	Model string
 	// ToolName / IsError / ToolCount carry per-branch tool activity (branch_tool;
 	// ToolCount is also final on branch_end).
 	ToolName  string
@@ -413,6 +426,7 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 		Background:     s.GetBackground(),
 		RoutedCategory: s.GetRoutedCategory(),
 		RoutedModel:    s.GetRoutedModel(),
+		Model:          s.GetModel(),
 		ToolName:       s.GetToolName(),
 		IsError:        s.GetIsError(),
 		ToolCount:      int(s.GetToolCount()),
@@ -438,6 +452,7 @@ func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 		Goal:            p.GetGoal(),
 		RoutedCategory:  p.GetRoutedCategory(),
 		RoutedModel:     p.GetRoutedModel(),
+		Model:           p.GetModel(),
 		ToolName:        p.GetToolName(),
 		IsError:         p.GetIsError(),
 		ToolCount:       int(p.GetToolCount()),
@@ -495,6 +510,7 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 			Lead:           r.GetLead(),
 			RoutedCategory: r.GetRoutedCategory(),
 			RoutedModel:    r.GetRoutedModel(),
+			Model:          r.GetModel(),
 		})
 	}
 	for _, tk := range t.GetTasks() {

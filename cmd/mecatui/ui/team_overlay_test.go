@@ -1373,8 +1373,8 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
 		c.setTeamStart("t1", "", []client.TeamMemberSpec{
-			{Name: "lead", Role: "coordinator", Lead: true},
-			{Name: "deep", Role: "investigate", RoutedCategory: "large", RoutedModel: "anthropic/claude-opus-4"},
+			{Name: "lead", Role: "coordinator", Lead: true, Model: "openai/gpt-4.5"},
+			{Name: "deep", Role: "investigate", RoutedCategory: "large", RoutedModel: "anthropic/claude-opus-4", Model: "anthropic/claude-opus-4"},
 		})
 	})
 	mm, _ := m.Update(ctrlKey('a'))
@@ -1383,8 +1383,18 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 	if !strings.Contains(out, "routed: large → anthropic/claude-opus-4") {
 		t.Errorf("routed member roster row should carry the routed cue:\n%s", out)
 	}
-	// The unrouted lead must not carry a routed cue — exactly one occurrence total.
+	// The plain (non-routed) lead member shows its inherited model as a "model:" cue
+	// (issue #112 / ADR 0035) — not a routed cue.
+	if !strings.Contains(out, "model: openai/gpt-4.5") {
+		t.Errorf("non-routed lead roster row should carry the plain model: cue:\n%s", out)
+	}
+	// Exactly one "routed:" occurrence (the routed member only); the lead carries model: instead.
 	if n := strings.Count(out, "routed:"); n != 1 {
 		t.Errorf("exactly one routed cue expected (the routed member only), got %d:\n%s", n, out)
+	}
+	// Exactly one plain "model:" occurrence (the lead only); the routed member shows the
+	// model inside its routed cue, not as a standalone "model:" line.
+	if n := strings.Count(out, "model:"); n != 1 {
+		t.Errorf("exactly one plain model: cue expected (the non-routed lead only), got %d:\n%s", n, out)
 	}
 }

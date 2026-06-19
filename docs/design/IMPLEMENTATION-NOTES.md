@@ -656,6 +656,23 @@ the Subagent router's `subagentRoutedLabel` helper, absent when unrouted. Bare m
 the routed model per member/branch ON THE WIRE (deterministic), replacing the prior
 "subagent routed" log-substring proxy.
 
+PER-DELEGATION MODEL SURFACE (issue #112, ADR 0035). The routed cue answered "the router
+chose this" but NOT "what model is this child actually running" for the common cases (router
+off, inherited/default, agent-def-pinned, per-call `model` override). A generic `model`
+string now rides ALL three delegation payloads — `SubagentPayload.Model` / `ParallelPayload.Model`
+(branch_start) / `TeamMemberSpec.Model` (EvTeamStart roster) — proto fields 13 / 21 / 7 on
+the `Subagent` / `Parallel` / `TeamMemberSpec` messages, populated at the existing emit
+sites from the child engine's resolved model via the new `Engine.Model()` accessor
+(`deps.Model`) and `Supervisor.MemberModel(name)` (mirroring `MemberRouting`). It is set
+UNCONDITIONALLY — independent of whether the router fired — and is bare metadata (a model
+id, never child content), gauntlet-#7 safe. When routed, `Model == RoutedModel`. The
+`toProtoSubagent`/`toProtoParallel`/`toProtoTeam` mapper + the mecatui client structs carry
+it; `subagentRoutedLabel` generalizes to `subagentModelLabel` — `routed: …` when the router
+fired (not duplicated as a `model:` line), else `model: <id>` for the plain case, else
+nothing. Applied at all four render sites (Subagent card, fleet lane, Parallel branch row,
+team roster row). The gRPC `RunTeam` direct path emits no EvTeamStart roster (the consumer
+holds it from CreateTeam), so the only roster projection site is the in-process Team tool.
+
 **Subagent structured output (`output_schema` + `SubmitResult` + bounded validation-retry).** When
 `subagentArgs.OutputSchema` (a model-authored JSON schema) is present, the child is given a synthetic
 `SubmitResult` tool (`engine/agent/structuredoutput.go`) whose PARAMETERS ARE that schema,

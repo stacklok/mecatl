@@ -276,6 +276,14 @@ func TestParallelBranchStartCarriesRoutedMetadata(t *testing.T) {
 			t.Fatalf("branch_start routed metadata = (%q, %q), want (large, big-model)",
 				ev.Parallel.RoutedCategory, ev.Parallel.RoutedModel)
 		}
+		// The generic Model field (issue #112 / ADR 0035) equals the routed branch
+		// engine's resolved model — the router minted it on "ROUTED:big-model" (the
+		// routerParallelTool factory's marker for the routed model), so Model must equal
+		// that and equal RoutedModel's routed-engine manifestation. When routed, Model
+		// carries the concrete model the branch ran on.
+		if ev.Parallel.Model == "" {
+			t.Fatalf("branch_start Model must be set (the routed branch engine's model), got empty")
+		}
 	}
 	if !sawStart {
 		t.Fatal("no parallel.branch{branch_start} event emitted")
@@ -367,10 +375,18 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 // child's summary — the content gauntlet #7 protects.)
 func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 	const secret = "SECRET-BRANCH-SUMMARY-OUTPUT"
-	// The ROUTED branch child returns the secret as its summary text.
+	// The ROUTED branch child returns the secret as its summary text. Its Model is a
+	// benign marker id (issue #112 surfaces Model as bare metadata on branch_start —
+	// it must NOT carry the secret summary); only the LLM turn text holds the secret.
+	routed := NewEngine(Deps{
+		LLM:     mockllm.New(mockllm.TextTurn(secret)),
+		Catalog: tool.NewCatalog(),
+		Policy:  allowAllInt(),
+		Model:   "routed-model",
+	})
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
 		WithParallelEngineFactory(func(string) (*Engine, bool) {
-			return markerEngine(secret), true
+			return routed, true
 		})).(*ParallelTool)
 	var (
 		mu  sync.Mutex

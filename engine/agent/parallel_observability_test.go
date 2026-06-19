@@ -377,6 +377,9 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// classifier's reasoning. Mirrors SubagentPayload's identically-justified routed
 		// fields; gauntlet-#7 safe (no branch content crosses).
 		"RoutedCategory": true, "RoutedModel": true,
+		// Model (issue #112 / ADR 0035) is the concrete MODEL id this branch ACTUALLY ran
+		// on, regardless of how it was chosen — bare metadata, never branch content.
+		"Model": true,
 	}
 	rt := reflect.TypeOf(session.ParallelPayload{})
 	for i := 0; i < rt.NumField(); i++ {

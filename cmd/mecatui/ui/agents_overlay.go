@@ -546,7 +546,7 @@ func subagentRosterLine(ln *subagentLane) string {
 		marker = " " + subagentBackgroundMarker
 	}
 	routed := ""
-	if r := subagentRoutedLabel(ln.routedCategory, ln.routedModel); r != "" {
+	if r := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.model); r != "" {
 		routed = " · " + r
 	}
 	return fmt.Sprintf("%s %s #%s%s%s · %s · %s · ↑%s ↓%s",
@@ -929,7 +929,7 @@ func parallelBranchLine(br *parallelBranch) string {
 		state = sanitizeTerminal(br.current) + "…"
 	}
 	routed := ""
-	if r := subagentRoutedLabel(br.routedCategory, br.routedModel); r != "" {
+	if r := subagentModelLabel(br.routedCategory, br.routedModel, br.model); r != "" {
 		routed = " · " + r
 	}
 	return fmt.Sprintf("%s %s · %s%s · %s · %s · ↑%s ↓%s",

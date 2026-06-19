@@ -387,7 +387,7 @@ func teamRosterLine(th theme.Theme, ln *teamLane, nameW int, teamDone bool) stri
 	if ln.role != "" {
 		line += " · " + truncate(sanitizeTerminal(ln.role), maxTeamRoleLen)
 	}
-	if r := subagentRoutedLabel(ln.routedCategory, ln.routedModel); r != "" {
+	if r := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.model); r != "" {
 		line += " · " + r
 	}
 	return line

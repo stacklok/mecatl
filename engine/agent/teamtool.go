@@ -368,6 +368,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, ws tool.Works
 		// metadata-only teamRoster projection (gauntlet #7 — no member content crosses).
 		for i := range roster {
 			roster[i].RoutedCategory, roster[i].RoutedModel = sup.MemberRouting(roster[i].Name)
+			roster[i].Model = sup.MemberModel(roster[i].Name)
 		}
 		emit(session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
 			ParentCallID: string(call.ID),

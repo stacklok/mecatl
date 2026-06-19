@@ -425,6 +425,15 @@ func branchStartParRouted(parent string, idx int, label, goal, routedCat, routed
 	return msg
 }
 
+// branchStartParModel is branchStartPar plus the generic model surface (issue #112 /
+// ADR 0035): the concrete model id the branch ACTUALLY ran on, for the non-routed case
+// (inherited default / agent-def pin / per-call override).
+func branchStartParModel(parent string, idx int, label, goal, model string) client.ParallelMsg {
+	msg := branchStartPar(parent, idx, label, goal)
+	msg.Model = model
+	return msg
+}
+
 // TestParallelBranchRoutedMetadata asserts the opt-in model router's bare metadata
 // (category + model, ADR 0034) surfaces on a branch row in the group focus view as a
 // muted "routed: <category> → <model>" cue — and is absent for an unrouted branch. It
@@ -433,9 +442,12 @@ func branchStartParRouted(parent string, idx int, label, goal, routedCat, routed
 func TestParallelBranchRoutedMetadata(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedParallel(m, "p1",
-		startPar("p1", "all", 2),
+		startPar("p1", "all", 3),
 		branchStartParRouted("p1", 0, "branch-1", "trivial single-step", "small", "openai/gpt-4.1-mini"),
-		branchStartPar("p1", 1, "branch-2", "unrouted"),
+		// branch-2 is the PLAIN (non-routed) inherited-model case (issue #112): it shows
+		// "model: <id>" instead of a routed cue.
+		branchStartParModel("p1", 1, "branch-2", "unrouted", "anthropic/claude-3.5"),
+		branchStartPar("p1", 2, "branch-3", "no model known"),
 	)
 	mm, _ := m.Update(ctrlKey('a'))
 	m = mm.(Model)
@@ -445,9 +457,19 @@ func TestParallelBranchRoutedMetadata(t *testing.T) {
 	if !strings.Contains(out, "routed: small → openai/gpt-4.1-mini") {
 		t.Errorf("routed branch should surface the routed-model cue in group focus:\n%s", out)
 	}
-	// The unrouted branch (branch-2) must not carry a routed cue. Assert there is exactly
-	// one "routed:" occurrence (the routed branch-1's), so the unrouted branch is clean.
+	// The plain inherited-model branch shows the model: cue.
+	if !strings.Contains(out, "model: anthropic/claude-3.5") {
+		t.Errorf("plain-model branch should surface the model: cue in group focus:\n%s", out)
+	}
+	// Exactly one "routed:" occurrence (the routed branch-1 only); the plain-model and
+	// unknown-model branches carry no routed cue.
 	if n := strings.Count(out, "routed:"); n != 1 {
 		t.Errorf("exactly one routed cue expected (the routed branch only), got %d:\n%s", n, out)
+	}
+	// Exactly one "model:" occurrence (the plain branch-2 only); the routed branch shows
+	// the model inside its routed cue, not as a standalone "model:" line, and the
+	// unknown-model branch shows nothing.
+	if n := strings.Count(out, "model:"); n != 1 {
+		t.Errorf("exactly one plain model: cue expected (the inherited-model branch only), got %d:\n%s", n, out)
 	}
 }

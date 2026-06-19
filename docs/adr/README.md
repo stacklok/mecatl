@@ -46,6 +46,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0030 — Layered model-selection heuristics](./0030-model-selection-heuristics.md)
 - [0031 — Semantic subagent model router](./0031-subagent-model-router.md)
 - [0034 — Extend the model router to team members and Parallel branches](./0034-team-parallel-model-routing.md)
+- [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

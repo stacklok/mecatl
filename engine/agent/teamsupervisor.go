@@ -750,6 +750,20 @@ func (s *Supervisor) MemberRouting(name string) (category, model string) {
 	return "", ""
 }
 
+// MemberModel returns the concrete MODEL id the named member's engine actually runs
+// on ("" for an unknown member). It is the read-only seam the Team tool uses to
+// surface the member's resolved model on the EvTeamStart roster — independent of how
+// it was chosen (inherited default member model, agent-def pin, or the opt-in router).
+// Captured at AddMember (the engine is built once and reused). Bare metadata, never
+// member content. When the router classified the member, MemberModel == the routed
+// model. See issue #112 / ADR 0035.
+func (s *Supervisor) MemberModel(name string) string {
+	if m, ok := s.members[name]; ok {
+		return m.engine.Model()
+	}
+	return ""
+}
+
 // CancelMember requests cancellation of ONE member by name: it fires the member's
 // per-member cancel, which unwinds a mid-drive turn (the drive ctx derives from the
 // member ctx → the existing StopCancelled classification in runTurn de-schedules it,

@@ -49,11 +49,18 @@ func (h *recordingHook) saw(p governance.HookPhase) bool {
 // policy (the recommended non-interactive subagent wiring), driven by the given
 // scripted child LLM.
 func childEngineWith(llm port.LLMProvider, cat *tool.Catalog) *agent.Engine {
+	return childEngineWithModel("child-model", llm, cat)
+}
+
+// childEngineWithModel builds a default explorer-style child engine with an explicit
+// model id (for the per-call override path, where the engine's Model must reflect the
+// override, not the hardcoded default).
+func childEngineWithModel(model string, llm port.LLMProvider, cat *tool.Catalog) *agent.Engine {
 	return agent.NewEngine(agent.Deps{
 		LLM:     llm,
 		Catalog: cat,
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
-		Model:   "child-model",
+		Model:   model,
 	})
 }
 
@@ -275,6 +282,45 @@ func TestSubagentGoalClampedSymmetrically(t *testing.T) {
 	}
 	if !strings.HasPrefix(goal, "line one") {
 		t.Fatalf("goal should derive from the description: %q", goal)
+	}
+}
+
+// TestSubagentStartCarriesResolvedModel asserts the generic Model field (issue #112 /
+// ADR 0035) is populated on EvSubagentStart with the child engine's resolved model,
+// independent of the opt-in router. Covers the inherited/default case: no router is
+// wired, so RoutedCategory/RoutedModel are empty and Model carries the child engine's
+// own model id ("child-model"). The model id is bare metadata (gauntlet #7).
+func TestSubagentStartCarriesResolvedModel(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(mockllm.New(mockllm.TextTurn("child summary")), catalogWith(t, childRead))
+	task := agent.NewSubagentTool(childEngine)
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate main.go"}`)),
+		mockllm.TextTurn("done"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	evs := drain(r)
+
+	var found bool
+	for _, ev := range evs {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			found = true
+			if ev.Subagent.Model != "child-model" {
+				t.Fatalf("EvSubagentStart.Model = %q, want %q (the child engine's resolved model)",
+					ev.Subagent.Model, "child-model")
+			}
+			// No router wired: the routed fields stay empty; Model is the sole model surface.
+			if ev.Subagent.RoutedCategory != "" || ev.Subagent.RoutedModel != "" {
+				t.Fatalf("EvSubagentStart routed fields should be empty without the router: %+v", ev.Subagent)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no subagent.start event observed")
 	}
 }
 

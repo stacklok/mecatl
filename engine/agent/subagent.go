@@ -1504,6 +1504,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 			Goal:           subagentGoal(args),
 			RoutedCategory: routedCategory,
 			RoutedModel:    routedModel,
+			Model:          engine.Model(),
 		}})
 	}
 
@@ -1670,6 +1671,7 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 			Background:     true,
 			RoutedCategory: b.routedCategory,
 			RoutedModel:    b.routedModel,
+			Model:          b.engine.Model(),
 		}})
 	}
 	go t.driveBackground(ctx, b)

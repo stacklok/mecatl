@@ -1120,7 +1120,7 @@ func (r *renderer) renderSubagent(b *block, expand bool) string {
 		out.WriteString(muted.Render("↳ " + sanitizeTerminal(b.subGoal)))
 		out.WriteString("\n")
 	}
-	if routed := subagentRoutedLabel(b.subRoutedCategory, b.subRoutedModel); routed != "" {
+	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subModel); routed != "" {
 		out.WriteString(muted.Render(routed))
 		out.WriteString("\n")
 	}
@@ -1143,24 +1143,33 @@ func (r *renderer) renderSubagent(b *block, expand bool) string {
 	return strings.TrimRight(out.String(), "\n")
 }
 
-// subagentRoutedLabel renders the opt-in model router's bare metadata for a
-// delegation as a muted one-line cue: "routed: <category> → <model>". It returns
-// "" when the child was not routed (no router, or a fail-soft miss that inherited
-// the default model). The category/model are server-derived bare metadata
-// (sanitized) — never child content — so gauntlet #7 holds.
-func subagentRoutedLabel(category, model string) string {
+// subagentModelLabel renders the model surface for a delegation as a muted one-line
+// cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
+// when the router classified the delegation (ADR 0031); otherwise it shows the
+// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112 / ADR 0035)
+// — inherited default, agent-def pin, or per-call override. It returns "" when no
+// model is known and the router did not fire. The category/model are server-derived
+// bare metadata (sanitized) — never child content — so gauntlet #7 holds. When routed,
+// model == routedModel, so the routed cue is shown (not duplicated as a model: line).
+func subagentModelLabel(category, routedModel, model string) string {
 	category = sanitizeTerminal(category)
+	routedModel = sanitizeTerminal(routedModel)
 	model = sanitizeTerminal(model)
-	if category == "" && model == "" {
-		return ""
+	// Router fired: show the routed cue (category + the routed model).
+	if category != "" || routedModel != "" {
+		if routedModel == "" {
+			return "routed: " + category
+		}
+		if category == "" {
+			return "routed: " + routedModel
+		}
+		return "routed: " + category + " → " + routedModel
 	}
-	if model == "" {
-		return "routed: " + category
+	// Plain case: show the concrete model the child ran on.
+	if model != "" {
+		return "model: " + model
 	}
-	if category == "" {
-		return "routed: " + model
-	}
-	return "routed: " + category + " → " + model
+	return ""
 }
 
 // subagentLiveLine is the calm, monotonic collapsed status line: token totals and

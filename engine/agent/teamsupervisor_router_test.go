@@ -77,6 +77,11 @@ func TestMemberRoutesAtAddMember(t *testing.T) {
 	if cat != "large" || model != "big-model" {
 		t.Fatalf("MemberRouting = (%q, %q), want (large, big-model)", cat, model)
 	}
+	// MemberModel (issue #112 / ADR 0035) reads back the concrete model the routed
+	// member's engine ACTUALLY runs on — the routed model, == MemberRouting's model.
+	if mm := sup.MemberModel("worker"); mm != "big-model" {
+		t.Fatalf("MemberModel = %q, want big-model (the routed model)", mm)
+	}
 }
 
 // A DEFINED member (spec.AgentType set) pins its own engine/model — the router must NOT
@@ -107,6 +112,12 @@ func TestDefinedMemberSkipsRouter(t *testing.T) {
 	if cat, model := sup.MemberRouting("specialist"); cat != "" || model != "" {
 		t.Fatalf("MemberRouting for a defined member = (%q, %q), want empty", cat, model)
 	}
+	// MemberModel (issue #112) still surfaces the concrete model a DEFINED member's
+	// engine runs on — the def's pinned model ("default" here), even though the router
+	// never fired (routed fields empty).
+	if mm := sup.MemberModel("specialist"); mm != "default" {
+		t.Fatalf("MemberModel for a defined member = %q, want default (the def's model)", mm)
+	}
 }
 
 // FAIL-SOFT: a router miss (ok=false) leaves the member on the default model and
@@ -131,6 +142,11 @@ func TestMemberRouteMissInheritsDefault(t *testing.T) {
 	mu.Unlock()
 	if cat, model := sup.MemberRouting("worker"); cat != "" || model != "" {
 		t.Fatalf("MemberRouting after a miss = (%q, %q), want empty", cat, model)
+	}
+	// MemberModel (issue #112): a router miss inherits the default model, so MemberModel
+	// reports the default ("default") even though the routed fields are empty.
+	if mm := sup.MemberModel("worker"); mm != "default" {
+		t.Fatalf("MemberModel after a miss = %q, want default (inherited)", mm)
 	}
 }
 

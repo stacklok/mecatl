@@ -1,10 +1,12 @@
 package agent_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -39,6 +41,47 @@ func TestSubagentPerCallModelRoutesToFactory(t *testing.T) {
 	}
 	if sawModel != "fast-mini" {
 		t.Fatalf("factory must receive the requested model, got %q", sawModel)
+	}
+}
+
+// TestSubagentPerCallModelCarriesOverrideOnStart asserts the generic Model field
+// (issue #112 / ADR 0035) on EvSubagentStart reflects the per-call `model` override —
+// the child engine minted for that model carries it as deps.Model, and Engine.Model()
+// surfaces it. The factory mints an engine whose Deps.Model IS the requested model
+// (mirroring composition's re-derivation), so the assertion proves the override flows
+// end-to-end to the wire field, not just to factory selection.
+func TestSubagentPerCallModelCarriesOverrideOnStart(t *testing.T) {
+	defaultEngine := childEngineWith(mockllm.New(mockllm.TextTurn("DEFAULT")), catalogWith(t))
+	overrideEngineFor := func(model string) *agent.Engine {
+		return childEngineWithModel(model, mockllm.New(mockllm.TextTurn("OVERRIDE:"+model)), catalogWith(t))
+	}
+	task := agent.NewSubagentTool(defaultEngine, agent.WithSubagentEngineFactory(
+		func(model string) (*agent.Engine, bool) { return overrideEngineFor(model), true }))
+
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"explore","model":"fast-mini"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	evs := drain(r)
+
+	var found bool
+	for _, ev := range evs {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			found = true
+			if ev.Subagent.Model != "fast-mini" {
+				t.Fatalf("EvSubagentStart.Model = %q, want %q (the per-call override model)",
+					ev.Subagent.Model, "fast-mini")
+			}
+			// A per-call override is NOT a router classification: the routed fields stay empty.
+			if ev.Subagent.RoutedCategory != "" || ev.Subagent.RoutedModel != "" {
+				t.Fatalf("per-call override must leave routed fields empty: %+v", ev.Subagent)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no subagent.start event observed")
 	}
 }
 
