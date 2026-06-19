@@ -24,6 +24,29 @@ BDD e2e suite** (`e2e/`, `task e2e`, the `e2e-live.yml` workflow) exercises the
 harness against a real model; it is opt-in (real money) and deliberately not
 part of `task test`.
 
+### Multi-replica deployment & single-writer enforcement
+
+By default mecatl assumes **session affinity** — route each session to exactly
+one process. The in-process run registry enforces single-writer *within* a
+process, but two replicas over one shared store have no cross-process exclusion
+(the v1 posture). For a deployment that cannot guarantee affinity (e.g. a load
+balancer that may reroute a session), wire an optional **session lease**
+(cloud-native Phase 4) so the harness enforces single-writer itself: a
+per-session lease is acquired at the run-entry funnel, held for the session's
+life, renewed by a `Service`-owned goroutine, and released on session end /
+shutdown. A second replica's run-start (or approve-resume) for a held session is
+refused with **HTTP 409 Conflict / gRPC `FAILED_PRECONDITION`**, and a crashed
+holder's lease lapses (after `--session-lease-ttl`, or immediately on process
+death for the flock backend) so a survivor takes over. Backends:
+`--session-lease-dir` (single-host flock), `--session-lease-k8s-namespace`
+(`coordination.k8s.io` Lease, in-cluster — needs a least-privilege `leases`
+Role), or `--session-lease-url` (a gRPC lease driver, independent of the store).
+Empty = no leasing, the **byte-identical** affinity default. The flags + the
+RBAC manifest are in the [usage guide](../usage.md) ("Cross-process session
+leasing"); the seam and adapters are in [observability &
+persistence](observability.md); the rationale and the resource/fidelity
+re-audit are in `docs/adr/0027-cloud-native.md`.
+
 ### Permission & bash governance details (`engine/governance`)
 
 The `permpolicy` adapter wraps `governance.Evaluator`. Resolution
