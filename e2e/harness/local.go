@@ -98,16 +98,24 @@ func NewLocalWith(extraArgs ...string) (*Local, error) {
 // store on disk), this spawn reads the prior's durable awaiting snapshot and can
 // resume it. Extra mecated flags append last, exactly like NewLocalWith.
 //
-// The prior MUST already be dead (Kill) before this is called — two live mecateds
-// over the same JSONL store would race writes. The caller owns Close on the
-// returned Local; the shared state tree is the PRIOR's, so closing this spawn
-// does not disturb the prior's artifacts.
+// Normally the prior MUST already be dead (Kill) before this is called — two
+// live mecateds over the same JSONL store would race writes. The single
+// exception is a deployment that wires a session lease (cloud-native Phase 4):
+// then two live spawns over one store are SAFE precisely because the lease
+// enforces single-writer (the lease-exclusion spec relies on this). The caller
+// owns Close on the returned Local.
+//
+// It binds the new spawn's state tree to the prior's SHARED tree (prior.stateRoot),
+// NOT prior.Root — so chaining (bootstrap → A → B) keeps every spawn on the SAME
+// store. Using prior.Root would point a third spawn at the second's OWN (empty)
+// root; for an ordinary first spawn prior.stateRoot == prior.Root, so 2-process
+// callers are unaffected.
 func NewLocalSharingStore(prior *Local, extraArgs ...string) (*Local, error) {
 	root, err := newScratchRoot()
 	if err != nil {
 		return nil, err
 	}
-	l := &Local{Root: root, stateRoot: prior.Root, extraArgs: extraArgs}
+	l := &Local{Root: root, stateRoot: prior.stateRoot, extraArgs: extraArgs}
 	if err := l.start(); err != nil {
 		_ = l.Close()
 		return nil, err
