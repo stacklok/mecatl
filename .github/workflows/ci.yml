@@ -236,6 +236,34 @@ jobs:
           GOWORK: off
         run: cd engine && go test ./...
 
+  api-compat:
+    name: API compat (engine public surface)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The engine module's public API surface (the seven core packages) is a
+    # committed compatibility contract — see engine/COMPATIBILITY.md + ADR 0037.
+    # This gate re-derives the surface and fails on any drift from the committed
+    # engine/api/*.txt baselines, forcing a deliberate, reviewed `task api:update`
+    # + an engine/CHANGELOG.md note. The dumper test lives in the ROOT module
+    # (internal/apicheck) so the engine go.mod stays free of go/tools. This test
+    # ALSO runs in the main `test` job via ./...; the dedicated job is for a clear
+    # named signal (acceptable redundancy, like fuzz-smoke).
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - name: go test ./internal/apicheck
+        run: go test ./internal/apicheck
+
   docs:
     name: Docs (matlatl)
     runs-on: ubuntu-24.04

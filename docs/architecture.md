@@ -59,7 +59,14 @@ consumers — while the heavy adapters and the composition layer stay under
 committed `go.work`; its standalone dependency closure is just `doublestar` +
 `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
 pulls in that small set rather than mecatl's full require cone (see
-[ADR 0036](adr/0036-engine-module.md)). The LLM provider sits behind the `port.LLMProvider` seam, with each
+[ADR 0036](adr/0036-engine-module.md)). The exported identifiers of the **seven
+core packages** (`session`, `governance`, `tool`, `prompt`, `port`, `team`,
+`agent`) are the engine's STABLE public surface, governed by a compatibility
+contract ([`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md)) and enforced
+by the `api-compat` gate — a change to that surface fails CI until the committed
+`engine/api/*.txt` snapshots and `engine/CHANGELOG.md` are updated
+([ADR 0037](adr/0037-engine-stability-contract.md)); the `engine/adapter/*`
+reference adapters carry no such promise. The LLM provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `internal/adapter/openai`, the native Anthropic Messages API in
 `internal/adapter/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and

@@ -51,6 +51,32 @@ tasks:
       - go test ./cmd/mecatui/ui/ -update
       - go test ./cmd/mecatui/ui/
 
+  api:check:
+    desc: |
+      The api-compat gate — fail if the engine module's public API surface (the
+      seven core packages) drifts from the committed engine/api/*.txt snapshots.
+      See engine/COMPATIBILITY.md + ADR 0037. (Also runs under `task test` via ./...)
+    cmds:
+      - go test ./internal/apicheck
+
+  api:update:
+    desc: |
+      Regenerate the committed engine/api/*.txt public-API snapshots after an
+      INTENTIONAL change to a core engine package. Commit the result and add an
+      engine/CHANGELOG.md entry classified per engine/COMPATIBILITY.md.
+    cmds:
+      - go test ./internal/apicheck -update
+
+  api:release-check:
+    desc: |
+      ADVISORY (never fails CI): run gorelease over the engine module to preview
+      the SemVer classification of the surface change. It needs a base engine/vX.Y.Z
+      tag to be meaningful — none exists yet, so until the first tag is cut the
+      authoritative PR guard is `task api:check`. See engine/COMPATIBILITY.md.
+    cmds:
+      - echo "advisory only — gorelease is meaningful once an engine/vX.Y.Z tag exists; the api-compat text gate (task api:check) is the PR guard until then."
+      - cd engine && go run golang.org/x/exp/cmd/gorelease@v0.0.0-20260611194520-c48552f49976 || true
+
   clean:
     desc: Remove the bin/ build output directory
     cmds:

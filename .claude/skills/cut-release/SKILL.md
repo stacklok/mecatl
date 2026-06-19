@@ -71,6 +71,20 @@ Run from the repo root.
    gh run list --workflow=release.yml --limit 3
    ```
 
+## The engine module is tagged separately
+
+The `vX.Y.Z` release above is the **root repo / `mecated` image** release. The importable
+core, `github.com/stacklok/mecatl/engine`, is its **own Go module** (ADR 0036) with its own
+tag grammar `engine/vX.Y.Z` (distinct from the root tags). It carries a public-API
+compatibility contract (`engine/COMPATIBILITY.md`, ADR 0037).
+
+- **No `engine/vX.Y.Z` tag has been cut yet.** Cutting the first one is a deliberate maintainer
+  decision (deferred per ADR 0037) — do NOT cut it as part of a routine root release unless asked.
+- When you DO cut an engine tag, first run **`task api:release-check`** (advisory `gorelease`) to
+  preview the SemVer classification of the surface change, and confirm `engine/CHANGELOG.md` has an
+  entry for everything since the last engine tag. The `api-compat` gate already guarantees the
+  committed `engine/api/*.txt` snapshots match the surface being tagged.
+
 ## Notes
 
 - **Tag and commit must match.** The pushed tag must point at the commit that carries the bumped

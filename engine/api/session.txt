@@ -1,0 +1,159 @@
+    method func (*Conversation).Append(m Message)
+    method func (*Conversation).Len() int
+    method func (*Session).BeginTurn() error
+    method func (*Session).Cancel() error
+    method func (*Session).Complete() error
+    method func (*Session).Fail() error
+    method func (*Session).Interrupt() error
+    method func (*Session).LimitTripped() (StopReason, bool)
+    method func (*Session).PauseForApproval(ask PendingAsk) error
+    method func (*Session).PendingAsk() (PendingAsk, bool)
+    method func (*Session).RecordAssistant(m Message) error
+    method func (*Session).RecordToolResults(results []ToolResult) error
+    method func (*Session).RecordUsage(u Usage) error
+    method func (*Session).RecordUserPrompt(text string, instructions []Message) error
+    method func (*Session).RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error
+    method func (*Session).RecordedStopReason() (StopReason, bool)
+    method func (*Session).Recover() error
+    method func (*Session).Rehome(workspace string) error
+    method func (*Session).Reopen() error
+    method func (*Session).ReplaceHistory(messages []Message) error
+    method func (*Session).ResetUsage() error
+    method func (*Session).ResumeWith() (PendingAsk, error)
+    method func (*Session).SeedHistory(messages []Message) error
+    method func (*Session).SetMode(mode PermissionMode) error
+    method func (*Session).Stop(reason StopReason) error
+    method func (*Session).StopReason() (StopReason, bool)
+    method func (Limits).WithDefaults(d Limits) Limits
+    method func (State).IsTerminal() bool
+    method func (Usage).Add(other Usage) Usage
+    method func (Usage).CacheHitRate() float64
+    method func (Usage).TotalTokens() int
+const EvApproval EventType = "approval"
+const EvCompaction EventType = "compaction"
+const EvCompactionArchive EventType = "compaction.archive"
+const EvHook EventType = "hook"
+const EvMessageDelta EventType = "message.delta"
+const EvNoProgress EventType = "no_progress"
+const EvParallelBranch EventType = "parallel.branch"
+const EvParallelEnd EventType = "parallel.end"
+const EvParallelStart EventType = "parallel.start"
+const EvPermissionAsk EventType = "permission.ask"
+const EvPermissionRetract EventType = "permission.retract"
+const EvReasoningDelta EventType = "reasoning.delta"
+const EvResult EventType = "result"
+const EvSessionInit EventType = "session.init"
+const EvSubagentEnd EventType = "subagent.end"
+const EvSubagentStart EventType = "subagent.start"
+const EvSubagentTool EventType = "subagent.tool"
+const EvTeamEnd EventType = "team.end"
+const EvTeamFindings EventType = "team.findings"
+const EvTeamMember EventType = "team.member"
+const EvTeamStart EventType = "team.start"
+const EvTeamTasks EventType = "team.tasks"
+const EvToolCall EventType = "tool.call"
+const EvToolProgress EventType = "tool.progress"
+const EvToolResult EventType = "tool.result"
+const EvTurnEnd EventType = "turn.end"
+const EvTurnStart EventType = "turn.start"
+const HookBlocked HookDecision = "blocked"
+const HookInfo HookDecision = "info"
+const HookModified HookDecision = "modified"
+const MaxMediaBytes untyped int = 10485760
+const MaxPromptMediaBytes untyped int = 20971520
+const MaxPromptMediaParts untyped int = 16
+const MediaAudio MediaKind = "audio"
+const MediaImage MediaKind = "image"
+const ModeAccept PermissionMode = "acceptEdits"
+const ModeDefault PermissionMode = "default"
+const ModePlan PermissionMode = "plan"
+const ParallelBranchEnd ParallelEventKind = "branch_end"
+const ParallelBranchStart ParallelEventKind = "branch_start"
+const ParallelBranchTool ParallelEventKind = "branch_tool"
+const RoleAssistant Role = "assistant"
+const RoleSystem Role = "system"
+const RoleTool Role = "tool"
+const RoleUser Role = "user"
+const StateAwaiting State = "awaiting"
+const StateCancelled State = "cancelled"
+const StateCompleted State = "completed"
+const StateFailed State = "failed"
+const StateIdle State = "idle"
+const StateRunning State = "running"
+const StopBudget StopReason = "budget"
+const StopCancelled StopReason = "cancelled"
+const StopEndTurn StopReason = "end_turn"
+const StopError StopReason = "error"
+const StopMaxConsecutiveFailures StopReason = "max_consecutive_failures"
+const StopMaxToolCalls StopReason = "max_tool_calls"
+const StopMaxTurns StopReason = "max_turns"
+const StopNoProgress StopReason = "no_progress"
+const StopNone StopReason = ""
+const StopStructuredOutput StopReason = "structured_output"
+const VerdictAllowAlways ApprovalVerdict = 2
+const VerdictAllowOnce ApprovalVerdict = 1
+const VerdictDeny ApprovalVerdict = 0
+const VerdictStringAllowAlways untyped string = "allow_always"
+const VerdictStringAllowOnce untyped string = "allow_once"
+const VerdictStringDeny untyped string = "deny"
+func CloneMessages(msgs []Message) []Message
+func ForkSnapshot(c *Conversation) []Message
+func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session
+func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Message
+func NewAudioContent(mime string, data []byte) (Content, error)
+func NewAudioURLContent(mime string, rawURL string) (Content, error)
+func NewContent(kind MediaKind, mime string, data []byte, rawURL string) (Content, error)
+func NewImageContent(mime string, data []byte) (Content, error)
+func NewImageURLContent(mime string, rawURL string) (Content, error)
+func NewSystemMessage(text string) Message
+func NewToolCall(id ToolCallID, name string, args json.RawMessage) ToolCall
+func NewToolError(callID ToolCallID, content string) ToolResult
+func NewToolMessage(result ToolResult) Message
+func NewToolResult(callID ToolCallID, content string) ToolResult
+func NewUserMessage(text string) Message
+func NewUserMessageWithParts(text string, parts []Content) Message
+func ParseArgs(call ToolCall, dst any) (msg string, ok bool)
+func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
+func ValidateMediaParts(parts []Content) error
+func ValidateMediaURL(raw string) error
+func ValidateToolPairing(msgs []Message) error
+func VerdictString(v ApprovalVerdict) string
+type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
+type ApprovalVerdict int
+type CompactionArchivePayload struct{Replaced []Message}
+type Content struct{Kind MediaKind; MIMEType string; Data []byte; URL string}
+type Conversation struct{Messages []Message}
+type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload}
+type EventType string
+type HookDecision string
+type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID}
+type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
+type MediaKind string
+type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; Parts []Content}
+type ParallelEventKind string
+type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
+type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; ConfiguredAsk bool; FlooredConfiguredAllow bool}
+type PermissionMode string
+type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
+type Role string
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; CreatedAt time.Time}
+type SessionID string
+type State string
+type StopReason string
+type SubagentPayload struct{ParentCallID string; ChildID string; Goal string; Background bool; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Usage Usage; Stop StopReason; DurationMs int64}
+type TeamFindingSnapshot struct{Member string; Body string}
+type TeamMemberDisposition struct{Name string; Disposition string; Reason string}
+type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; Model string}
+type TeamPayload struct{ParentCallID string; TeamID string; Roster []TeamMemberSpec; Member string; MemberSessionID string; InnerKind EventType; Text string; ToolName string; Detail string; IsError bool; Rounds int; Stop StopReason; Usage Usage; ContextUsed int64; ContextWindow int64; Tasks []TeamTaskSnapshot; Findings []TeamFindingSnapshot; Dispositions []TeamMemberDisposition}
+type TeamTaskSnapshot struct{ID string; Description string; State string; Assignee string; Deps []string}
+type ToolCall struct{ID ToolCallID "json:\"ID\""; Name string "json:\"Name\""; Args json.RawMessage "json:\"Args\""; ItemID string "json:\"item_id,omitempty\""}
+type ToolCallID string
+type ToolResult struct{CallID ToolCallID; Content string; IsError bool}
+type Turn struct{Index int; Assistant Message; Results []ToolResult; Usage Usage}
+type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64}
+type Usage struct{InputTokens int; OutputTokens int; CacheReadTokens int; CacheWriteTokens int}
+var ErrIllegalTransition error
+var ErrInvalidContent error
+var ErrInvalidMediaURL error
+var ErrNoPendingAsk error

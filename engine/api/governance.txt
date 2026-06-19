@@ -1,0 +1,45 @@
+    method func (*Evaluator).Evaluate(tool string, args json.RawMessage, planMode bool) PermissionDecision
+    method func (*Evaluator).EvaluateWith(tool string, args json.RawMessage, planMode bool, extra []Rule) PermissionDecision
+    method func (*Evaluator).LearnableRule(tool string, args json.RawMessage) (Rule, bool)
+    method func (Scope).HasHigherPrecedenceThan(other Scope) bool
+const Allow Effect = "allow"
+const Ask Effect = "ask"
+const AudienceAll Audience = 0
+const AudienceMain Audience = 1
+const AudienceSubagent Audience = 2
+const Deny Effect = "deny"
+const PhasePostToolUse HookPhase = "PostToolUse"
+const PhasePreToolUse HookPhase = "PreToolUse"
+const PhaseSessionStart HookPhase = "SessionStart"
+const PhaseStop HookPhase = "Stop"
+const PhaseSubagentStop HookPhase = "SubagentStop"
+const PhaseTaskCompleted HookPhase = "TaskCompleted"
+const PhaseTaskCreated HookPhase = "TaskCreated"
+const PhaseTeammateIdle HookPhase = "TeammateIdle"
+const PhaseUserPromptSubmit HookPhase = "UserPromptSubmit"
+const ScopeBuiltinDefault Scope = 5
+const ScopeCLI Scope = 1
+const ScopeLocalProject Scope = 2
+const ScopeManaged Scope = 0
+const ScopeSharedProject Scope = 3
+const ScopeUser Scope = 4
+func Canonicalize(cmd string) string
+func HasSubstitutionOrGrouping(seg string) bool
+func IsReadOnlyTool(tool string) bool
+func IsolationApprovable(cmd string) bool
+func NewEvaluator(rules []Rule, opts ...EvaluatorOption) *Evaluator
+func ReadOnlyBash(cmd string) bool
+func SplitCommands(cmd string) []string
+func SubstitutionReadOnly(seg string) bool
+func WithAudience(a Audience) EvaluatorOption
+func WithLooseSubstitution(loose bool) EvaluatorOption
+type Audience int
+type Effect string
+type Evaluator struct{}
+type EvaluatorOption func(*Evaluator)
+type HookEvent struct{Phase HookPhase; Tool string; Input json.RawMessage; SessionID string; CallID string}
+type HookOutcome struct{Block bool; Message string; Mutated json.RawMessage}
+type HookPhase string
+type PermissionDecision struct{Effect Effect; Reason string; ConfiguredAsk bool; FlooredConfiguredAllow bool}
+type Rule struct{Scope Scope; Tool string; Pattern string; Effect Effect; Exact bool; Audience Audience}
+type Scope int

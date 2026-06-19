@@ -166,9 +166,11 @@ the composition layer (`internal/app`, called from the `cmd/` mains).
 ## Project layout
 
 `engine/` is the importable core (the domain, the ports, the agent loop, and the
-in-tree reference adapters), fully self-contained — tests included — and intended to be
-importable as a library by external consumers; `internal/` holds the heavy adapters and
-the composition layer.
+in-tree reference adapters), fully self-contained — tests included — and importable as a
+library by external consumers with a **published compatibility contract** for its seven
+core packages (see [`engine/COMPATIBILITY.md`](engine/COMPATIBILITY.md): a change to the
+exported surface fails the `api-compat` gate until the baseline + changelog are updated);
+`internal/` holds the heavy adapters and the composition layer.
 
 `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in this
 repo as a monorepo via a committed `go.work` (`use ./` + `use ./engine`). There are two
@@ -181,6 +183,7 @@ not mecatl's heavy dependency cone. See [ADR 0036](docs/adr/0036-engine-module.m
 | Path | Contents |
 |---|---|
 | `go.work`, `go.mod`, `engine/go.mod` | the committed Go workspace + the two module manifests (root + the importable-core engine module) |
+| `engine/COMPATIBILITY.md`, `engine/CHANGELOG.md`, `engine/api/*.txt` | the engine public-API stability contract: policy, change record, and committed surface snapshots (the `api-compat` gate, [ADR 0037](docs/adr/0037-engine-stability-contract.md)) |
 | `engine/session`, `engine/governance`, `engine/tool`, `engine/prompt` | the domain (aggregate, permission/hook types, tool catalog + FS interfaces, prompt assembly) |
 | `engine/port` | the port interfaces the loop consumes |
 | `engine/agent`, `engine/team` | the agent loop, dispatch, permission pause/resume, compaction, the Subagent/Parallel/Team delegation tools |

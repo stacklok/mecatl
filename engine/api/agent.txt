@@ -1,0 +1,185 @@
+    ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
+    ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
+    ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
+    ifacemethod func (PreservedForkStore).Preserve(root string, cleanup func() error)
+    ifacemethod func (TokenCounter).Count(text string) int
+    ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
+    method func (*Engine).Capabilities() port.ProviderCapabilities
+    method func (*Engine).ContextWindow() int
+    method func (*Engine).HasTool(name string) bool
+    method func (*Engine).Model() string
+    method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, ws tool.Workspace, askID string, verdict session.ApprovalVerdict) *Run
+    method func (*Engine).Run(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string) *Run
+    method func (*Engine).RunContent(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content) *Run
+    method func (*Engine).RunContentWith(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content, opts RunOptions) *Run
+    method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*InspectMemberTool).ReadOnly() bool
+    method func (*InspectMemberTool).Spec() tool.ToolSpec
+    method func (*InspectSubagentTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*InspectSubagentTool).ReadOnly() bool
+    method func (*InspectSubagentTool).Spec() tool.ToolSpec
+    method func (*LRUForkReaper).Len() int
+    method func (*LRUForkReaper).Preserve(root string, cleanup func() error)
+    method func (*ParallelTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
+    method func (*ParallelTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*ParallelTool).ReadOnly() bool
+    method func (*ParallelTool).Spec() tool.ToolSpec
+    method func (*Run).Approve(askID string, v session.ApprovalVerdict)
+    method func (*Run).Cancel()
+    method func (*Run).CancelChild(childID string) bool
+    method func (*Run).Events() <-chan session.Event
+    method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*SubagentStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*SubagentStatusTool).ReadOnly() bool
+    method func (*SubagentStatusTool).Spec() tool.ToolSpec
+    method func (*SubagentTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
+    method func (*SubagentTool).ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)
+    method func (*SubagentTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*SubagentTool).ReadOnly() bool
+    method func (*SubagentTool).Spec() tool.ToolSpec
+    method func (*Supervisor).AddMember(ctx context.Context, spec MemberSpec) error
+    method func (*Supervisor).CancelMember(name string) bool
+    method func (*Supervisor).MemberModel(name string) string
+    method func (*Supervisor).MemberRouting(name string) (category string, model string)
+    method func (*Supervisor).Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome
+    method func (*TeamTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
+    method func (*TeamTool).ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)
+    method func (*TeamTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*TeamTool).ReadOnly() bool
+    method func (*TeamTool).Spec() tool.ToolSpec
+    method func (*UserModelReviewer).Review(ctx context.Context, sessionID string) error
+    method func (CascadeCompactor).Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error)
+    method func (HeuristicCompactor).Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, error)
+    method func (HeuristicTokenCounter).Count(text string) int
+    method func (HeuristicTokenCounter).CountMessages(msgs []session.Message) int
+const DefaultAskReviewMaxDenies untyped int = 3
+const DefaultPreservedForkCap untyped int = 8
+const DispositionDone MemberDisposition = "done"
+const DispositionStopped MemberDisposition = "stopped"
+const MinSubagentRunTokens untyped int = 25000
+const ParallelSessionPrefix untyped string = "parallel-"
+const StopReasonBudget MemberStopReason = "budget"
+const StopReasonCancelled MemberStopReason = "cancelled"
+const StopReasonError MemberStopReason = "error"
+const SubagentSessionPrefix untyped string = "subagent-"
+const TeamSessionPrefix untyped string = "team-"
+const UntrustedFence untyped string = "<<<UNTRUSTED"
+func DefaultChildLimits() session.Limits
+func FenceUntrusted(body string) string
+func MemberSessionID(teamID string, member string) session.SessionID
+func MemberToolNames() map[string]struct{}
+func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
+func NeutraliseFraming(s string) string
+func NewEngine(deps Deps) *Engine
+func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
+func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
+func NewInspectMemberTool(store port.SessionStore) tool.Tool
+func NewInspectSubagentTool(store port.SessionStore) tool.Tool
+func NewLRUForkReaper(capacity int) *LRUForkReaper
+func NewParallelTool(childEngine *Engine, forker tool.WorkspaceForker, opts ...ParallelOption) tool.Tool
+func NewSubagentStatusTool() tool.Tool
+func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
+func NewSupervisor(t *team.Team, base tool.Workspace, factory MemberEngine, opts ...SupervisorOption) *Supervisor
+func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
+func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
+func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
+func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, ok bool)
+func StripLoneCodeFence(s string) string
+func TeamStop(o TeamOutcome) session.StopReason
+func TightenTeamTokenBudget(serverBudget int, request int) int
+func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
+func WithAskReviewPolicy(p string) EngineAskReviewerOption
+func WithChildForker(f tool.WorkspaceForker) SubagentOption
+func WithChildLimits(l session.Limits) SubagentOption
+func WithChildMode(m session.PermissionMode) SubagentOption
+func WithChildSessionPrefix(p string) SubagentOption
+func WithForker(f tool.WorkspaceForker) SupervisorOption
+func WithJudgeLimits(l session.Limits) EngineJudgeOption
+func WithJudgeSessionPrefix(p string) EngineJudgeOption
+func WithMaxBranches(n int) ParallelOption
+func WithMaxConcurrentChildren(n int) SubagentOption
+func WithMaxRounds(n int) SupervisorOption
+func WithMemberSessionPrefix(p string) SupervisorOption
+func WithMemberStore(store port.SessionStore) SupervisorOption
+func WithMemberTurnBudget(n int) SupervisorOption
+func WithParallelChildLimits(l session.Limits) ParallelOption
+func WithParallelChildMode(m session.PermissionMode) ParallelOption
+func WithParallelChildSessionPrefix(p string) ParallelOption
+func WithParallelConcurrency(n int) ParallelOption
+func WithParallelEngineFactory(f func(model string) (*Engine, bool)) ParallelOption
+func WithParallelJudge(j BranchJudge) ParallelOption
+func WithParallelStore(store port.SessionStore) ParallelOption
+func WithParallelSubagentStopHook(h port.HookRunner) ParallelOption
+func WithReadOnlyForker(f tool.WorkspaceForker) SupervisorOption
+func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
+func WithSubagentNoFSNote() SubagentOption
+func WithSubagentShellDisabledNote(reason string) SubagentOption
+func WithSubagentStopHook(h port.HookRunner) SubagentOption
+func WithSubagentStore(store port.SessionStore) SubagentOption
+func WithTeamConcurrency(n int) SupervisorOption
+func WithTeamGoal(goal string) SupervisorOption
+func WithTeamHooks(h port.HookRunner) SupervisorOption
+func WithTeamLimits(l session.Limits) SupervisorOption
+func WithTeamMode(m session.PermissionMode) SupervisorOption
+func WithTeamTokenBudget(n int) SupervisorOption
+func WithTeamToolForker(f tool.WorkspaceForker) TeamOption
+func WithTeamToolHooks(h port.HookRunner) TeamOption
+func WithTeamToolReadOnlyForker(f tool.WorkspaceForker) TeamOption
+func WithTeamToolStore(s port.SessionStore) TeamOption
+func WithTeamToolTokenBudget(n int) TeamOption
+func WithUntrustedGoal(untrusted bool) SupervisorOption
+func WithWinnerReaper(s PreservedForkStore) ParallelOption
+func WriteUntrustedBlock(b *strings.Builder, body string)
+type AgentMeta struct{Name string; Description string; Limits session.Limits}
+type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
+type BranchSummary struct{Label string; Summary string; Failed bool}
+type CascadeCompactor struct{Counter TokenCounter; BudgetTokens int; KeepLastTurns int; StripToolBodyChars int; MaxCollapseChars int; LLM port.LLMProvider; Model string; SummaryMaxTokens int}
+type ChildAskReview struct{Allowed bool; Reason string}
+type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
+type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
+type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, ok bool); ProgressiveTools bool}
+type Engine struct{}
+type EngineAskReviewerOption func(*engineAskReviewer)
+type EngineJudgeOption func(*engineJudge)
+type HeuristicCompactor struct{MaxToolBodyChars int; KeepLastTurns int}
+type HeuristicTokenCounter struct{CharsPerToken int}
+type InspectMemberTool struct{}
+type InspectSubagentTool struct{}
+type LRUForkReaper struct{}
+type MemberBuild struct{Engine *Engine; Mode session.PermissionMode; Limits session.Limits; Close func() error; MCPToolNames []string; IsolateReadOnly bool}
+type MemberDisposition string
+type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild
+type MemberOutcome struct{Name string; LastText string; Stopped bool; Disposition MemberDisposition; Reason MemberStopReason; Completed []string; Lead bool}
+type MemberSpec struct{Name string; AgentType string; Lead bool; Mutating bool; InitialPrompt string}
+type MemberStopReason string
+type ModelRouteCategory struct{Name string; Description string}
+type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
+type ParallelOption func(*ParallelTool)
+type ParallelTool struct{}
+type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
+type Run struct{}
+type RunOptions struct{MaxRunTokensOverride int; ExtraTools []tool.Tool}
+type SubagentOption func(*SubagentTool)
+type SubagentStatusTool struct{}
+type SubagentTool struct{}
+type Supervisor struct{}
+type SupervisorOption func(*Supervisor)
+type TeamEvent struct{Member string; MemberSessionID string; Event session.Event; ContextWindow int}
+type TeamMemberArg struct{Name string "json:\"name\""; Role string "json:\"role\""; Mutating bool "json:\"mutating,omitempty\""}
+type TeamMemberEngineFactory func(t *team.Team, spec MemberSpec, routedModel string) MemberBuild
+type TeamOption func(*TeamTool)
+type TeamOutcome struct{Rounds int; Quiescent bool; Members []MemberOutcome; Report string; Findings []session.TeamFindingSnapshot; BudgetExhausted bool; Usage session.Usage}
+type TeamTool struct{}
+type TokenCounter interface{Count(text string) int; CountMessages(msgs []session.Message) int}
+type UserModelReviewer struct{}
+var ErrCompactionWouldOrphan error
+var ErrForkWorkspace error
+var ErrMemberAlreadyAdded error
+var ErrMemberNameRequired error
+var ErrNilEngine error
+var ErrNoForker error
+var ErrNotAwaiting error
+var ErrNotReviewable error
+var ErrReadOnlyMemberMutating error
+var ErrReadOnlyShellNoForker error

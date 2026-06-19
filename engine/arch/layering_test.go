@@ -18,21 +18,11 @@ import (
 	"testing"
 )
 
-const modulePrefix = "github.com/stacklok/mecatl/"
-
 // corePackages is the seven-package clean core whose inward-only dependency rule
-// these tests enforce. Listed high→low in the layering order from CLAUDE.md:
-// domain leaves (session, governance) → domain (tool, prompt) → port → team →
-// application (agent).
-var corePackages = []string{
-	modulePrefix + "engine/session",
-	modulePrefix + "engine/governance",
-	modulePrefix + "engine/tool",
-	modulePrefix + "engine/prompt",
-	modulePrefix + "engine/port",
-	modulePrefix + "engine/team",
-	modulePrefix + "engine/agent",
-}
+// these tests enforce. It is an alias for the package-exported CorePackages
+// (surface.go) — the SINGLE source of truth shared with internal/apicheck's
+// public-API gate — so the layering tests and the gate can never drift.
+var corePackages = CorePackages
 
 // forbiddenPrefixes are the "outward / heavy" dependency families a core package
 // must never reach, even transitively. Hitting any of these is the canonical

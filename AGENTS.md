@@ -31,6 +31,8 @@ binaries and is the wrong workflow.
 task build              # → bin/mecated, bin/mecademo, bin/mecatui  (NEVER `go build` to repo root)
 task test               # full suite, -race (root module + engine module + the GOWORK=off engine-standalone hygiene proof)
 task test:golden        # refresh mecatui View/teatest goldens (-update) then re-run
+task api:check          # api-compat gate: fail if the engine public surface drifts from engine/api/*.txt (also under task test)
+task api:update         # regenerate engine/api/*.txt after an INTENTIONAL core-API change (commit + engine/CHANGELOG.md note)
 task e2e                # LIVE e2e vs OpenRouter (real money, needs OPENROUTER_API_KEY exported) — NOT part of task test
 task bench              # hot-path testing.B microbenchmarks (-benchmem) for benchstat; BENCHCOUNT=N overrides — NOT part of task test
 task perf:scenarios     # OFFLINE whole-loop scenario benchmarks (perf-tracking Phase 2); MECATL_PERF_JSON=path for KPI JSON — NOT part of task test
@@ -148,6 +150,7 @@ gauntlet items in `docs/harnesses/08-design-considerations.md` each have a passi
 - Commit directly to `main`. End commit messages with the `Co-Authored-By` trailer.
 - Never `git add -A` — stage explicit paths.
 - For smoke tests / scratch files, use the repo-local `.scratch/` dir (gitignored) — **not** `/tmp` or `mktemp`.
+- **Changed a core `engine/` exported API?** The `api-compat` gate will fail until you run `task api:update`, commit the changed `engine/api/*.txt`, and note the change in `engine/CHANGELOG.md` classified per `engine/COMPATIBILITY.md` (Added = minor, Changed/Removed = breaking). See ADR 0037.
 - **Changed any Markdown? Run `task generate` (or `task docs`) before committing — always.** `llms.txt` is generated and goes stale the instant docs change; never hand-edit it. `task docs` regenerates it (`task docs:llms`) and runs the strict link gate (`task docs:check`); `task generate` also refreshes it. The CI `docs` job will fail the PR on a stale `llms.txt` or any link regression — `matlatl check . --strict` (no broken links/anchors, orphans, unreachable, or ambiguous links; corpus config in `.matlatl.yml` / `.matlatlignore`). On a merge/rebase conflict in `llms.txt`, don't hand-merge — take either side and re-run `task docs:llms`.
 
 ## See also

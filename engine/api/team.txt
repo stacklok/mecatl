@@ -1,0 +1,50 @@
+    method func (*Team).AddMember(name string, agentType string) error
+    method func (*Team).AppendFinding(member string, body string) error
+    method func (*Team).ClaimNext(member string) (Task, bool, error)
+    method func (*Team).ClaimTask(id TaskID, member string) error
+    method func (*Team).CompleteTask(id TaskID, member string) error
+    method func (*Team).CreateTask(description string, deps ...TaskID) (TaskID, error)
+    method func (*Team).Drain(member string) ([]Message, error)
+    method func (*Team).Findings() []Finding
+    method func (*Team).InProgressFor(member string) bool
+    method func (*Team).Members() []Member
+    method func (*Team).Name() string
+    method func (*Team).Quiescent() bool
+    method func (*Team).ReleaseTasks(member string)
+    method func (*Team).RemoveMember(name string)
+    method func (*Team).Send(from string, to string, body string) error
+    method func (*Team).SetMemberSession(name string, sid session.SessionID) error
+    method func (*Team).SetMemberState(name string, state MemberState) error
+    method func (*Team).Tasks() []Task
+const MaxFindings untyped int = 512
+const MaxInboxMessages untyped int = 256
+const MaxMembers untyped int = 32
+const MaxTasks untyped int = 512
+const MemberIdle MemberState = "idle"
+const MemberSpawning MemberState = "spawning"
+const MemberStopped MemberState = "stopped"
+const MemberWorking MemberState = "working"
+const OperatorSender untyped string = "operator"
+const TaskCompleted TaskState = "completed"
+const TaskInProgress TaskState = "in_progress"
+const TaskPending TaskState = "pending"
+func New(name string) *Team
+type Finding struct{Seq int; Member string; Body string}
+type Member struct{Name string; AgentType string; Session session.SessionID; State MemberState}
+type MemberState string
+type Message struct{Seq int; From string; To string; Body string}
+type Task struct{ID TaskID; Description string; Deps []TaskID; Assignee string; State TaskState}
+type TaskID string
+type TaskState string
+type Team struct{}
+var ErrMemberExists error
+var ErrReservedName error
+var ErrTaskNotClaimable error
+var ErrTaskState error
+var ErrTooManyFindings error
+var ErrTooManyMembers error
+var ErrTooManyMessages error
+var ErrTooManyTasks error
+var ErrUnknownMember error
+var ErrUnknownSender error
+var ErrUnknownTask error

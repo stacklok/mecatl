@@ -1,0 +1,58 @@
+    ifacemethod func (Clock).Now() time.Time
+    ifacemethod func (Diagnostics).Log(ctx context.Context, level Level, msg string, args ...any)
+    ifacemethod func (Diagnostics).With(args ...any) Diagnostics
+    ifacemethod func (EventLog).Append(ctx context.Context, id session.SessionID, ev session.Event) error
+    ifacemethod func (EventLog).Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error]
+    ifacemethod func (EventSink).Emit(ctx context.Context, ev session.Event)
+    ifacemethod func (HookRunner).Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)
+    ifacemethod func (LLMProvider).Capabilities() ProviderCapabilities
+    ifacemethod func (LLMProvider).Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)
+    ifacemethod func (PermissionPolicy).Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
+    ifacemethod func (PermissionPolicy).Learn(sessionID session.SessionID, c session.ToolCall)
+    ifacemethod func (PermissionStore).Record(sessionID session.SessionID, rule governance.Rule)
+    ifacemethod func (PermissionStore).Rules(sessionID session.SessionID) []governance.Rule
+    ifacemethod func (PrunableStore).Delete(ctx context.Context, id session.SessionID) error
+    ifacemethod func (PrunableStore).List(ctx context.Context) ([]StoredSession, error)
+    ifacemethod func (SessionLease).Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error)
+    ifacemethod func (SessionLease).Release(ctx context.Context, l Lease) error
+    ifacemethod func (SessionLease).Renew(ctx context.Context, l Lease) (Lease, error)
+    ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
+    ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
+    ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
+    method func (NopDiagnostics).Log(context.Context, Level, string, ...any)
+    method func (NopDiagnostics).With(...any) Diagnostics
+const ChunkDone ChunkKind = 5
+const ChunkPhase ChunkKind = 6
+const ChunkReasoning ChunkKind = 1
+const ChunkReasoningItem ChunkKind = 2
+const ChunkText ChunkKind = 0
+const ChunkToolCall ChunkKind = 3
+const ChunkUsage ChunkKind = 4
+const LevelDebug Level = 0
+const LevelError Level = 3
+const LevelInfo Level = 1
+const LevelWarn Level = 2
+type Chunk struct{Kind ChunkKind; Text string; ToolCall *session.ToolCall; Usage *session.Usage; Stop session.StopReason}
+type ChunkKind int
+type Clock interface{Now() time.Time}
+type Diagnostics interface{Log(ctx context.Context, level Level, msg string, args ...any); With(args ...any) Diagnostics}
+type EventLog interface{Append(ctx context.Context, id session.SessionID, ev session.Event) error; Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error]}
+type EventSink interface{Emit(ctx context.Context, ev session.Event)}
+type HookRunner interface{Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)}
+type LLMProvider interface{Capabilities() ProviderCapabilities; Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)}
+type LLMRequest struct{System prompt.Layered; Messages []session.Message; Tools []tool.ToolSpec; Model string}
+type Lease struct{SessionID session.SessionID; Owner string; Token uint64; Expiry time.Time}
+type Level int
+type NopDiagnostics struct{}
+type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
+type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
+type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}
+type PrunableStore interface{Delete(ctx context.Context, id session.SessionID) error; List(ctx context.Context) ([]StoredSession, error)}
+type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
+type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*session.Session, error); Save(ctx context.Context, s *session.Session) error}
+type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
+type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
+var ErrLeaseHeld error
+var ErrLeaseUnsupported error
+var ErrPruneUnsupported error
+var ErrSessionNotFound error
