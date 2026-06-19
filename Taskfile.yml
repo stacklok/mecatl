@@ -354,6 +354,34 @@ tasks:
       - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners ./...
       - cd engine && go vet ./...
 
+  vuln:
+    desc: |
+      Run govulncheck over the root module + the engine module (manual / CI
+      target — NOT part of `task test`: it needs the network to fetch the Go
+      vulnerability database, like `task e2e`/`task bench` are excluded). It
+      reports only REACHABLE vulnerabilities (call-graph analysis). Pinned via
+      `go run` (not a require), the same pin as the `vuln` CI job.
+
+      govulncheck has no native allowlist, so the JSON stream is filtered through
+      .github/scripts/govulncheck-gate.go (a `go run` filter — no jq/external
+      tool): it fails on any NEW reachable vuln while accepting a documented
+      allowlist. The ROOT module allowlists two unfixable-upstream docker CVEs
+      (GO-2026-4887/4883, transitive via toolhive, reachable only in internal/);
+      the ENGINE module is STRICT (no allowlist). `pipefail` + the gate's
+      fail-closed checks make a govulncheck error a hard fail, never a vacuous
+      pass. Supply-chain hygiene that travels with the engine library when
+      Atrium pins it. See issue #118.
+    cmds:
+      # `set -o pipefail` per cmd: go-task does NOT enable it, so without it a
+      # mid-scan govulncheck crash (after the JSON `config` preamble) would let
+      # the gate see zero findings and pass green. pipefail propagates the
+      # govulncheck failure, matching the CI job.
+      - cmd: set -o pipefail; go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run .github/scripts/govulncheck-gate.go GO-2026-4887 GO-2026-4883 # v1.1.4
+      # engine/ is a separate module — `./...` from the root does NOT cross the
+      # module boundary, so its scan is a second invocation against engine/go.mod.
+      # No allowlist: the engine library's closure is clean and must stay clean.
+      - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+
   lint:fix:
     desc: Run golangci-lint with autofix (parallel-safe) over the root module + the engine module
     cmds:

@@ -1,0 +1,63 @@
+# Dependabot config (issue #118). Keeps both Go modules' go.mod/go.sum and the
+# SHA-pinned GitHub Actions current — supply-chain hygiene that travels with the
+# engine library when Atrium pins it.
+#
+# Dependabot processes each gomod directory INDEPENDENTLY, so the workspace's two
+# modules (root + engine) each get their own update config. Minor+patch bumps are
+# GROUPED into a single PR per ecosystem to cut review noise; majors stay separate
+# (they can break, so they deserve an individual PR).
+#
+# The repo SHA-pins every GitHub Action with a `# vX.Y.Z` comment. Dependabot
+# SUPPORTS and PRESERVES that style: it bumps the SHA and the trailing comment
+# together, so this config does not weaken the pinning discipline.
+version: 2
+
+updates:
+  # Root module (the heavy dependency cone).
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Engine submodule (the importable core's tiny, self-contained closure).
+  - package-ecosystem: gomod
+    directory: "/engine"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # SHA-pinned GitHub Actions (bumps the pin SHA + its `# vX.Y.Z` comment).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch

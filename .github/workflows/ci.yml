@@ -264,6 +264,67 @@ jobs:
       - name: go test ./internal/apicheck
         run: go test ./internal/apicheck
 
+  vuln:
+    name: Vulnerabilities (govulncheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Supply-chain hygiene that travels with the engine library: govulncheck
+    # reports only REACHABLE vulnerabilities (call-graph analysis, not a bare
+    # require-list scan), so a reachable CVE in either module's dependency cone
+    # reds the PR. Both modules are scanned — the engine module's tiny closure
+    # separately from the root's heavy cone, so an Atrium pin of the engine
+    # library inherits this gate against its own deps.
+    #
+    # govulncheck has NO native allowlist and its text mode exits non-zero on ANY
+    # finding, so we run `-format json` (which exits 0 even WITH findings) and
+    # filter through .github/scripts/govulncheck-gate.go, which fails on any NEW
+    # reachable id while accepting a documented allowlist. `set -o pipefail` +
+    # the gate's own fail-closed checks make a govulncheck build/network error a
+    # hard FAIL (never a vacuous pass).
+    #
+    # ROOT ALLOWLIST (accepted-risk, reviewed 2026-06-19):
+    #   GO-2026-4887, GO-2026-4883 — github.com/docker/docker, transitive via
+    #   github.com/stacklok/toolhive, reachable ONLY through the ToolHive MCP
+    #   source in internal/ (NOT the engine library). Fixed: N/A (no upstream
+    #   patch exists). Drop these the moment a fixed docker/toolhive lands.
+    # ENGINE: STRICT — no allowlist; it is clean and must stay clean.
+    # See docs/usage.md (supply-chain) + issue #118.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      # Self-test the gate filter on synthetic JSON first (offline) so a broken
+      # gate is caught here rather than silently mis-judging the real scan below.
+      - name: Test govulncheck gate
+        run: bash .github/scripts/govulncheck-gate_test.sh
+
+      # govulncheck is PINNED via `go run` (the house idiom — like
+      # actionlint@v1.7.7 above), not added as a require. `./...` from the root
+      # does NOT cross the engine module boundary, so the engine module is a
+      # second, separate invocation against its OWN go.mod/go.sum.
+      - name: govulncheck (root module — allowlisted gate)
+        shell: bash
+        run: |
+          set -o pipefail
+          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run .github/scripts/govulncheck-gate.go GO-2026-4887 GO-2026-4883 # v1.1.4
+
+      - name: govulncheck (engine module — strict, no allowlist)
+        shell: bash
+        run: |
+          set -o pipefail
+          cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+
   docs:
     name: Docs (matlatl)
     runs-on: ubuntu-24.04

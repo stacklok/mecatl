@@ -25,3 +25,10 @@ surface.
   [`engine/api/`](./api/), and the `api-compat` freshness gate that fails CI on
   an unflagged change to the exported surface. (#114,
   [ADR 0037](../docs/adr/0037-engine-stability-contract.md))
+
+### Hygiene
+
+- CI now runs `govulncheck` on the engine module (a reachable-vulnerability scan
+  of its own dependency closure, separate from the root module's), and
+  `.github/dependabot.yml` keeps the engine `go.mod` current — supply-chain
+  hygiene for the engine library's consumers. No public-API change. (#118)

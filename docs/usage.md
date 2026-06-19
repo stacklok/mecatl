@@ -71,6 +71,7 @@ Other handy targets (`task --list` for the full set):
 | `task e2e` | the **LIVE** e2e suite against OpenRouter — real money + network, needs `OPENROUTER_API_KEY` (see §10) |
 | `task fuzz` | bounded coverage-guided fuzzing of the security-critical parsers (`FUZZTIME=2m task fuzz`); not part of `task test` |
 | `task lint` | `golangci-lint run` + `go vet` over the root module **and** the engine module (shared config) |
+| `task vuln` | `govulncheck` (reachable-vuln scan) over the root module **and** the engine module; needs the network for the vuln DB, **not** part of `task test` |
 | `task fmt` | `gofmt` + `goimports` |
 | `task tidy` | tidy both `go.mod` files: root tidy → `go work sync` → engine `GOWORK=off go mod tidy` |
 | `task generate` | `buf generate` (no-op unless `buf` + `contracts/proto` present) |
@@ -123,6 +124,33 @@ $ cd engine && GOWORK=off go build ./... && GOWORK=off go test ./...
 
 That is exactly what `task test:engine-standalone` (and the `engine-standalone`
 CI job) run as the hygiene gate.
+
+#### Supply-chain hygiene
+
+CI runs `govulncheck` per module (the `vuln` job; `task vuln` locally) — a
+**reachable**-vulnerability scan (call-graph analysis, not a bare require-list
+scan) that reds the build on a finding. Both modules are scanned separately, so
+the engine library's tiny closure is gated against its own dependencies
+independently of the root's heavy cone — the hygiene travels with the engine
+when a downstream consumer (e.g. Atrium) pins it.
+
+govulncheck has no native allowlist, so its JSON output is filtered through
+`.github/scripts/govulncheck-gate.go` (a dependency-free `go run` filter, with
+an offline self-test): it **fails on any new reachable vulnerability** while
+accepting a small, documented allowlist. The **engine module is gated with NO
+allowlist** — it is clean and must stay clean. The **root app allowlists exactly
+two unfixable-upstream docker CVEs** (`GO-2026-4887`, `GO-2026-4883` in
+`github.com/docker/docker`, transitive via `github.com/stacklok/toolhive`),
+which are reachable **only** through the ToolHive adapter in `internal/` — never
+the engine library — and have **no upstream fix** (Fixed: N/A). They are
+accepted-risk (reviewed 2026-06-19) and the allowlist lives inline in the `vuln`
+CI job; drop them the moment a fixed docker/toolhive lands. The gate still fails
+on any *other* reachable vuln, and fails closed if govulncheck itself errors.
+
+A `.github/dependabot.yml` keeps both `go.mod` files and the SHA-pinned GitHub
+Actions current (weekly, minor+patch grouped to cut noise; the SHA-pin
+`# vX.Y.Z` comments are preserved). See
+[issue #118](https://github.com/stacklok/mecatl/issues/118).
 
 ---
 
