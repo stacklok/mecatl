@@ -466,6 +466,27 @@ func eventLogStatus(err error) error {
 	}
 }
 
+// leaseStatus maps a wrapped session lease's error onto the driver protocol's
+// status vocabulary: ErrLeaseHeld → FAILED_PRECONDITION (a live competitor holds
+// it; consistent with ErrNoActiveRun's mapping in the server relay),
+// ErrLeaseUnsupported → UNIMPLEMENTED (the sticky-disable signal, the
+// ErrPruneUnsupported precedent), context errors → CANCELLED / DEADLINE_EXCEEDED,
+// everything else → INTERNAL.
+func leaseStatus(err error) error {
+	switch {
+	case errors.Is(err, port.ErrLeaseHeld):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, port.ErrLeaseUnsupported):
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, err.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, err.Error())
+	default:
+		return status.Error(codes.Internal, err.Error())
+	}
+}
+
 // toProtoServerEntries projects store entries onto the wire form for
 // responses, carrying the store's stamped UpdatedAt (toProtoEntry already
 // guards the zero time → unset).

@@ -113,6 +113,25 @@
   after a restart so a previously-approved tool does not re-ask. See
   `docs/adr/0027-cloud-native.md` Phase 3 and the `eventlogconformance` suite.
 
+- **SessionLease** (`port.SessionLease`, cloud-native Phase 4) — OPTIONAL
+  cross-process single-writer enforcement for multi-replica deployments over a
+  shared store. **The loop never imports it** — the lease is acquired at the
+  run-entry funnel (`internal/adapter/server/service.go` (`acquireLease`), called
+  by `StartRunContent`/`resumeFromAwaiting` AFTER the per-session `runEntryMu`),
+  renewed by a Service-owned goroutine (`renewLoop`), and released on
+  `CloseSession`/shutdown (cancel-detached short-timeout ctx). A competing live
+  owner refuses the run with `ErrSessionLeasedElsewhere` (gRPC
+  `FAILED_PRECONDITION` / HTTP 409 Conflict); a lost lease cancels the run
+  (fail-safe, `StopCancelled` is recoverable). Backends (discovered by type
+  assertion, the `PrunableStore` precedent): `memlease` (in-memory reference;
+  `memstore` also implements it), `flocklease` (single-host flock), `grpcdriver`
+  `SessionLeaseService` (`--session-lease-url`, multi-host), `k8slease`
+  (`coordination.k8s.io` Lease, `--session-lease-k8s-namespace`, in-cluster). Wired
+  ONLY when an operator selects a backend (`internal/app` (`buildSessionLease`));
+  nil otherwise — byte-identical default (single-writer-by-affinity). The
+  conformance contract is `leaseconformance`. See `docs/adr/0027-cloud-native.md`
+  Phase 4.
+
 ### Remote store + source drivers (`internal/adapter/grpcdriver`)
 
 > Design rationale — the port/driver pattern, the per-seam lifecycle and

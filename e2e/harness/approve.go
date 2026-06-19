@@ -55,6 +55,38 @@ func ApproveOverHTTP(ctx context.Context, httpAddr, sessionID, askID, verdict st
 	return resp.Body, nil
 }
 
+// PromptOverHTTP starts a run on a session via POST /v1/sessions/{id}/prompt and
+// returns the HTTP status code plus the response body. It is the cloud-native
+// Phase 4 lease probe: a run-start refused by the cross-process lease comes back
+// 409 Conflict (ErrSessionLeasedElsewhere → writeServiceError), which a streaming
+// SSE client would otherwise hide. The caller inspects the status; on a 2xx it
+// must drain+close the body itself (it is an SSE stream).
+func PromptOverHTTP(ctx context.Context, httpAddr, sessionID, text string) (status int, body []byte, err error) {
+	reqBody, merr := json.Marshal(struct {
+		Text string `json:"text"`
+	}{Text: text})
+	if merr != nil {
+		return 0, nil, merr
+	}
+	url := fmt.Sprintf("http://%s/v1/sessions/%s/prompt", httpAddr, sessionID)
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	if rerr != nil {
+		return 0, nil, rerr
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	resp, derr := http.DefaultClient.Do(req)
+	if derr != nil {
+		return 0, nil, fmt.Errorf("POST %s: %w", url, derr)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// Read a bounded slice of the body for diagnosis / the refusal message. A 2xx
+	// SSE stream would be unbounded, so cap the read — the caller asserting a 409
+	// only needs the status and a short message.
+	body, _ = io.ReadAll(io.LimitReader(resp.Body, 8192))
+	return resp.StatusCode, body, nil
+}
+
 // DrainSSE reads an SSE stream to completion, returning the concatenated raw bytes
 // (the caller can grep the frames). It always Closes the body. A 204 No Content
 // (the same-process ack path) yields empty bytes — harmless for the rehydrate

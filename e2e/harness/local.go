@@ -196,7 +196,7 @@ func (l *Local) start() error {
 		// fixtures, and git-init the workspace. A shared-store second spawn SKIPS
 		// all of this — the prior already laid the tree out and its store holds the
 		// live (awaiting) snapshot the restart leg resumes.
-		for _, d := range []string{"workspace", "store", "memory", "usermodel", "soul"} {
+		for _, d := range []string{"workspace", "store", "memory", "usermodel", "soul", "lease"} {
 			if err := os.MkdirAll(l.stateDir(d), 0o755); err != nil {
 				return err
 			}
@@ -403,6 +403,8 @@ func (l *Local) StateDir(kind StateKind) string {
 		return l.stateDir("usermodel")
 	case StateStore:
 		return l.stateDir("store")
+	case StateLease:
+		return l.stateDir("lease")
 	case StateArtifacts:
 		// Artifacts are PER-PROCESS (this spawn's own log/transcripts).
 		return l.dir("artifacts")

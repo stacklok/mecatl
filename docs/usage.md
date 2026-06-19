@@ -189,6 +189,11 @@ $ go run ./cmd/mecated --openai --workspace "$PWD"
 | `--main-retention` | `0` | how long persisted **main** (top-level operator/service) session snapshots are retained before the GC sweep deletes them; child sessions use `--child-retention` instead. Durable-store-only. `0` (default) **disables** the main age pass entirely, so main sessions are never touched — `mecated`'s behaviour is unchanged unless you opt in (`mecatui` defaults it on for its durable per-workspace store). |
 | `--main-retention-max-total` | `0` | max persisted **main** session snapshots kept **store-wide** (a single global cap, not per-family); the oldest beyond the cap are deleted, skipping in-flight runs. Durable-store-only. `0` (default) disables the cap. |
 | `--child-gc-interval` | `1h` | how often the session retention GC re-sweeps after the startup sweep; `0` = sweep at startup only. Only meaningful when a child or main retention/cap knob is active. |
+| `--session-lease-url` | `""` | `host:port` of a remote **session-lease gRPC driver** (`mecatl.driver.v1.SessionLeaseService`) for **cross-process single-writer enforcement** (cloud-native Phase 4, multi-replica). Empty = **NO leasing** (the byte-identical single-writer-by-affinity default). Mutually exclusive with `--session-lease-dir` / `--session-lease-k8s-namespace`. Same auth/TLS posture as `--session-store-url`. **See the session-leasing note below.** |
+| `--session-lease-dir` | `""` | directory for a **single-host flock** session lease (cross-process single-writer among processes on ONE machine; flock auto-releases on crash). **NOT safe across hosts** — use `--session-lease-k8s-namespace` or `--session-lease-url` for multi-host/multi-replica. Empty = no leasing. |
+| `--session-lease-k8s-namespace` | `""` | Kubernetes namespace for `coordination.k8s.io` Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster). The ServiceAccount needs RBAC on `leases` in `coordination.k8s.io` for this namespace (**see the session-leasing note below**). Empty = no leasing. |
+| `--session-lease-ttl` | `30s` | session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected. |
+| `--session-lease-renew-interval` | `0` | how often the per-session renewer refreshes a held lease; `0` = `--session-lease-ttl` / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected. |
 | `--driver-auth-token` | `""` | bearer token sent on every store-driver RPC (or `MECATL_DRIVER_AUTH_TOKEN`; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with `--driver-tls`. |
 | `--driver-tls` | `false` | enable transport TLS on the store-driver connections. |
 | `--driver-tls-ca` | `""` | PEM CA bundle to verify the store driver's certificate (with `--driver-tls`; empty uses system roots). |
@@ -2230,6 +2235,85 @@ Setting any `--driver-tls-*` file **without** `--driver-tls` is a fatal
 startup error (it would otherwise be silently ignored). There are **no
 retries and no default deadline** on driver RPCs — a driver failure surfaces
 as the same unit failure a disk error would.
+
+### Cross-process session leasing (multi-replica single-writer)
+
+By default mecatl assumes **session affinity**: route every session to exactly
+one mecated process and never run two processes against the same session id
+concurrently. The in-process run registry enforces single-writer WITHIN a
+process, but two replicas over one shared store have no cross-process exclusion —
+last-write-wins on the JSONL store. For a deployment that cannot guarantee
+affinity (e.g. a load balancer that may reroute a session), wire a **session
+lease** so the harness enforces single-writer itself (cloud-native Phase 4):
+
+```sh
+# Single host, several mecated processes sharing one --store-dir:
+mecated --store-dir /var/lib/mecatl/store --session-lease-dir /var/lib/mecatl/leases
+
+# In-cluster multi-replica (coordination.k8s.io Lease per session):
+mecated --session-store-url store-driver:7443 --session-lease-k8s-namespace mecatl
+
+# Or a dedicated lease driver, independent of the store:
+mecated --session-store-url store-driver:7443 --session-lease-url lease-driver:7443
+```
+
+When a lease is wired, the run-entry path acquires a per-session lease before
+driving the engine. A second replica's run-start (or approve-resume) for a
+session another replica holds is **refused with HTTP 409 Conflict** (gRPC
+`FAILED_PRECONDITION`); the lease is held for the session's life, renewed in the
+background (`--session-lease-renew-interval`, default `--session-lease-ttl`/3),
+and released on session end / shutdown. A crashed holder's lease lapses after
+`--session-lease-ttl` (or, for the flock backend, releases immediately on process
+death), after which a survivor takes over. Losing the lease mid-run cancels the
+run cleanly (recoverable). The three backends are **mutually exclusive**; empty =
+no leasing (the byte-identical default).
+
+- **`--session-lease-dir` (flock):** SINGLE-HOST only. Several mecated processes
+  on ONE machine sharing the dir contend via `flock(2)`, with free crash recovery
+  (the OS releases a dead process's lock). NOT safe across hosts (flock semantics
+  over NFS/EFS are unreliable) — use k8s or the driver for multi-host.
+- **`--session-lease-k8s-namespace` (Kubernetes):** the in-cluster multi-replica
+  path. Each session is a `coordination.k8s.io/v1` Lease object named
+  `mecatl-lease-<hash>` (the raw id is in the `mecatl.stacklok.com/session-id`
+  annotation). Uses in-cluster config, or the default kubeconfig out-of-cluster.
+  The pod's ServiceAccount needs this **namespace-scoped RBAC**:
+
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: mecatl-session-lease
+    namespace: mecatl
+  rules:
+    - apiGroups: ["coordination.k8s.io"]
+      resources: ["leases"]
+      verbs: ["get", "create", "update", "delete"]
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: mecatl-session-lease
+    namespace: mecatl
+  subjects:
+    - kind: ServiceAccount
+      name: mecatl            # the mecated pod's ServiceAccount
+      namespace: mecatl
+  roleRef:
+    kind: Role
+    name: mecatl-session-lease
+    apiGroup: rbac.authorization.k8s.io
+  ```
+
+  A missing RBAC verb surfaces as a hard error (a Forbidden, never a silent
+  no-lease run).
+- **`--session-lease-url` (driver):** a remote `mecatl.driver.v1.SessionLeaseService`
+  (multi-host, store-independent), sharing the same `--driver-tls`/auth posture and
+  connection cache as the store drivers above.
+
+Without an explicit backend, mecatl can also discover a lease from a session
+store that happens to implement the lease seam (type-assertion, like the
+retention seam); today's jsonlstore does not, so the no-flag default is no
+leasing. See `docs/adr/0027-cloud-native.md` Phase 4 for the full design.
 
 ### Remote content-source drivers (skills + soul)
 

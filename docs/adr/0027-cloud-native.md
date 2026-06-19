@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026
-- Scope: process disposability — snapshot fidelity, awaiting-approval evict/rehydrate, durable event log, multi-replica readiness
+- Scope: process disposability — snapshot fidelity, awaiting-approval evict/rehydrate, durable event log, multi-replica readiness (session leasing, SHIPPED)
 
 ## Context
 
@@ -10,11 +10,11 @@ The harness already had turn-boundary persistence and a stateless full-replay LL
 
 ## Decision
 
-Deliver the arc in four phases: Phase 1 adds three missing snapshot fields (profile, provider/model selector, cumulative usage) and generalizes the rehydration seam; Phase 2 adds a resume-from-awaiting loop entry so a post-restart `Approve` re-enters the loop at the exact pending ask; Phase 3 adds a durable append-only event log (port, local JSONL adapter, gRPC driver service) with two consumers (compaction archive, permstore verdict replay); Phase 4 (multi-replica leasing) is deferred until a real deployment needs it. The loop stays storage-agnostic throughout — it only emits events, never imports the log port.
+Deliver the arc in four phases: Phase 1 adds three missing snapshot fields (profile, provider/model selector, cumulative usage) and generalizes the rehydration seam; Phase 2 adds a resume-from-awaiting loop entry so a post-restart `Approve` re-enters the loop at the exact pending ask; Phase 3 adds a durable append-only event log (port, local JSONL adapter, gRPC driver service) with two consumers (compaction archive, permstore verdict replay); Phase 4 adds cross-process single-writer enforcement via session leasing (a new `port.SessionLease` seam with in-memory/flock/gRPC-driver/k8s adapters, acquired at the run-entry funnel and renewed by a Service-owned goroutine). The loop stays storage-agnostic throughout — it only emits events, never imports the log or lease port; the lease renewer and held-lease registry live on the server `Service`/composition, the same discipline as the event log.
 
 ## Consequences
 
-Phases 0–3 are shipped; the harness is now genuinely disposable across process restarts. Teams are the largest honest gap: mid-round team coordination state does not survive restart (row 10 of the fidelity ledger). Phase 4 (session leasing for multi-replica deployments) is deferred. The v1 constraint — session-affinity routing, one writer per session — must be stated in operator deployment guidance until Phase 4 ships. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
+Phases 0–4 are shipped; the harness is now genuinely disposable across process restarts AND safe under a multi-replica deployment that wires a session lease. Teams are the largest honest gap: mid-round team coordination state does not survive restart (row 10 of the fidelity ledger). Phase 4 makes single-writer enforcement CODE-ENFORCED when a lease backend is wired (decision (c) update below); without a lease backend the unchanged v1 constraint — session-affinity routing, one writer per session — still applies and is the byte-identical default. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
 
 ---
 
@@ -378,14 +378,78 @@ already row 8 (jsonlstore) / row 4+9 (RESOLVED via the log); 3c only swaps WHERE
 lives (local file vs remote driver), not WHAT it durably holds. The re-audit verdict is
 CLEAN: no new resource whose lifecycle escapes a call.
 
-### Phase 4: multi-replica readiness (defer until a real deployment wants it)
+### Phase 4: multi-replica readiness — session leasing (SHIPPED)
 
-- Session leasing: single-writer enforcement (the inventory below says what else
-  needs leases; sessions almost certainly first). Probably a driver-protocol concern
-  (lease/renew on `SessionStoreService` or a sibling), Chubby / Kubernetes-Lease
-  semantics.
-- Until then the stated v1 constraint stands: session-affinity routing, one writer
-  per session (decision (c) below).
+Cross-process single-writer enforcement via a per-session lease, so two replicas
+over one shared store never both drive the same session id. The seam is a NEW
+optional port, discovered by type assertion exactly like `PrunableStore`, wired
+ONLY when an operator selects a backend by flag — the default path is
+byte-identical with no lease.
+
+- **`port.SessionLease`** (`engine/port/lease.go`): `Acquire`/`Renew`/`Release`
+  over an immutable `Lease` value (`SessionID`, `Owner`, a monotonic fencing
+  `Token`, an `Expiry`). Two sentinels mirror the `PrunableStore` precedent:
+  `ErrLeaseHeld` (held by a live competitor / lost on Renew — TRANSIENT) and
+  `ErrLeaseUnsupported` (the backend can never lease — sticky-disable). The
+  contract is pinned by `engine/adapter/leaseconformance/leaseconformance.go`
+  (`Run`), the SAME suite every adapter passes.
+- **Adapters** (the EventLog-seam template): the in-memory reference
+  (`engine/adapter/memlease`, `port.Clock`-injected; `engine/adapter/memstore` also
+  implements it so the type-assert discovery path is exercised offline), the
+  single-host flock lease (`internal/adapter/flocklease`, a per-id flock sentinel +
+  an atomic record file, crash-recovery for free), the gRPC driver
+  (`SessionLeaseService` in `contracts/proto/mecatl/driver/v1/session_lease.proto`,
+  client/server in `internal/adapter/grpcdriver/sessionlease.go` — the multi-host
+  path), and the Kubernetes lease (`internal/adapter/k8slease`, a
+  `coordination.k8s.io/v1` Lease per session — the in-cluster multi-replica path;
+  `leaseTransitions` is the fencing token, a resourceVersion CAS Update maps a 409
+  Conflict to `ErrLeaseHeld`).
+- **Run-entry gate.** The lease is acquired at the run-entry funnel
+  (`internal/adapter/server/service.go` (`acquireLease`)), called by
+  `StartRunContent` and `resumeFromAwaiting` AFTER the per-session `runEntryMu` so
+  same-process exclusion stays cheap and the `resumeMu→runEntryMu` lock order
+  holds. A competing live owner refuses the run with
+  `ErrSessionLeasedElsewhere` (gRPC `FAILED_PRECONDITION` / HTTP 409). The lease is
+  acquired ONCE per session (held for its life), renewed by a Service-owned
+  goroutine (`renewLoop`), and released on `CloseSession` / shutdown via a
+  cancel-detached short-timeout ctx (the `appendEvent` precedent). A lost lease
+  (Renew → `ErrLeaseHeld`) cancels the live run (fail-safe: `StopCancelled` is
+  recoverable). The loop NEVER imports `port.SessionLease`.
+- **Composition** (`internal/app/build.go` (`buildSessionLease`)): an INDEPENDENT
+  override (`--session-lease-url` driver / `--session-lease-k8s-namespace` /
+  `--session-lease-dir` flock) wins, else the configured store is type-asserted for
+  the seam, else no lease (the v1 default). The owner identity is built once per
+  Build (`<hostname>-<pid>-<nonce>`) so two Builds in one process get distinct
+  owners (the cross-process gate's twin-Build test relies on it). The token is
+  plumbed but NOT consulted (CAS-Save enforcement deferred — the lease grant itself
+  is the enforcement).
+
+Gate (CI-green, offline): the two-Build drill
+`internal/app/lease_exclusion_test.go` (`TestCrossProcessLeaseExclusion`,
+`TestCrossProcessDoubleExecutionPreventedByLease` — the cross-process twin of
+`TestConcurrentApproveAfterRestartExecutesOnce`,
+`TestCompositionByteIdenticalWithoutLease`): two Builds over a shared store + flock
+lease, distinct owners; Build #2's run-start is refused with
+`ErrSessionLeasedElsewhere` while #1 holds the lease, and succeeds after #1
+releases. The LIVE counterpart is `e2e/lease_exclusion_test.go` (two real mecated
+over a shared `--store-dir` + `--session-lease-dir`: B's run-start → HTTP 409 while
+A holds, B succeeds after A is SIGKILLed and the flock auto-releases). The
+server-layer renewer/sticky-disable/release behaviour is pinned by
+`internal/adapter/server/lease_test.go`.
+
+**Phase 4 re-audit (List 1 / List 2).** Phase 4 added ONE new outlives-a-call
+resource (List 1 row 27): the `Service.heldLeases` map plus its per-session
+renewer goroutines — owner `server.Service`, scope SESSION, cleanup =
+renewer-cancel + `Release` on `CloseSession`/`Close`, re-attach = reacquired on the
+next run-entry (or a crashed holder's lease lapses after the TTL and a survivor
+takes over). List 2 is UNCHANGED: a lease is DERIVED state (nothing a restart
+needs to reload — a restarted process re-acquires on the next run-entry), so it
+adds no rehydrate-fidelity row. The re-audit verdict is CLEAN. Decision (c) below
+moves to CODE-ENFORCED-when-wired.
+
+The stated v1 constraint still stands as the DEFAULT (no lease backend): session-
+affinity routing, one writer per session. A deployment that cannot guarantee
+affinity now wires a lease backend instead of relying on the deployer.
 
 ### Sequencing rationale
 
@@ -438,6 +502,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 24 | `modelRouterBreaker` (per-run model-router circuit breaker, ADR 0031; ADR 0034 reuses the SAME per-run breaker for team members + Parallel branches — NO new breaker) | `agent.Run` | run | dies with the run | lost (run-scoped by design, mirroring `askReviewBreaker` row 22) | `engine/agent/modelrouter.go` (`modelRouterBreaker`); armed in `engine/agent/loop.go` (`RunContentWith`) |
 | 25 | `gitWorktreeLister` (osfs-backed worktree discovery, issue #102) | `app.Build` | process lifetime | none (value type, no goroutine, no Close needed) | reconstructible (rebuilt from `cfg.Shell` at next Build; no state) | `internal/app/build.go` (`buildWorktreeLister`) |
 | 26 | routed team-member / Parallel-branch child engine (ADR 0034) | `buildMemberEngine` (member) / `buildParallelEngineFactory` (branch), minted in composition | per-AddMember (member; reused across rounds, torn down on member teardown) / per-call (branch; torn down with the branch fork) | dies with the member/branch (the SAME lifecycle as the non-routed member/branch engine it replaces — routing changes only the model, not the lifetime) | reconstructible (a new team/Parallel call re-classifies + re-mints); decision = derive (nothing persisted; the routed model is List-2 row 18) | `internal/app/build.go` (`buildMemberEngine`, `buildParallelEngineFactory`) |
+| 27 | held session leases + per-session renewer goroutines (`Service.heldLeases`, Phase 4) | `server.Service` | session (one lease + renewer per leased session) | renewer cancelled + `SessionLease.Release` (cancel-detached short-timeout ctx) on `CloseSession` and shutdown `Close`; a lost lease cancels the run and drops the hold | **reconstructible** (a restart re-acquires on the next run-entry; a crashed holder's lease lapses after the TTL and a survivor takes over — no persisted state, the lease is derived); only constructed when a lease backend is wired (`SessionLease != nil`), else absent (byte-identical default) | `internal/adapter/server/service.go` (`heldLeases`, `acquireLease`, `renewLoop`, `releaseLease`); wired at `internal/app/build.go` (`buildSessionLease`) |
 
 ### Does resource-lifetime management earn a seam now?
 
@@ -593,12 +658,17 @@ which is exactly why the inference was not deleted when the field landed. As bui
 the same additive treatment carries `ProviderID`/`ModelID` (the selector pair) and
 the pointer-omitempty `usage` field.
 
-### (c) v1 multi-replica stance: session affinity, single writer (OPEN)
+### (c) v1 multi-replica stance: session affinity, single writer (RESOLVED — CODE-ENFORCED when a lease is wired, Phase 4)
 
-Stated as a deployment requirement until Phase 4 leasing: **route every session to
-exactly one harness process; never run two processes against the same session id
-concurrently.** This is a constraint on the deployer, not a property the code
-enforces, and the code today assumes it everywhere a writer exists:
+Originally stated as a deployment requirement: **route every session to exactly
+one harness process; never run two processes against the same session id
+concurrently.** As of Phase 4 this is now CODE-ENFORCED whenever an operator wires
+a session-lease backend (`--session-lease-dir` / `--session-lease-k8s-namespace` /
+`--session-lease-url`): the run-entry funnel acquires a per-session lease and a
+second replica is refused with `ErrSessionLeasedElsewhere` (HTTP 409). Without a
+lease backend the original constraint is the byte-identical DEFAULT and remains a
+deployer responsibility; the code below still assumes it everywhere a writer exists
+in the no-lease default:
 
 - **jsonlstore is append-only with an in-process mutex only.** `Save` serializes
   through `st.mu` and appends a snapshot line via `O_APPEND` open-write-close
@@ -630,13 +700,18 @@ enforces, and the code today assumes it everywhere a writer exists:
   Deferred §7), mitigated by age ordering and idempotent best-effort deletes, not by
   exclusion.
 
-**Recommendation: state the constraint in `docs/usage.md`/deployment guidance when
-the first shared-store deployment ships, and solve it in Phase 4 as a
-driver-protocol lease** (lease/renew on `SessionStoreService` or a sibling service),
-not as in-process locking; a process-local guard cannot enforce a cross-replica
-property, and the flock precedent (memory store) is explicitly single-host. The
-Phase 0 inventory confirms sessions are the first and, for now, only resource that
-needs a lease; the GC liveness gap rides the same mechanism for free.
+**Resolution (Phase 4, SHIPPED): solved as a standalone `port.SessionLease` seam,
+acquired at the run-entry funnel, not as in-process locking** — a process-local
+guard cannot enforce a cross-replica property. Recommendation as built: a
+SIBLING port discovered by type assertion (not folded into `SessionStoreService`),
+so the lease backend is chosen independently of the store (the same independence
+`--event-log-url` has). The flock adapter is honestly single-host (the memory-store
+flock precedent); the k8s and gRPC-driver adapters are the multi-host paths. The
+Phase 0 inventory confirmed sessions are the first and, for now, only resource that
+needs a lease; the GC liveness gap (`Service.IsLive` is process-local) is NOT yet
+on the lease — a follow-up could consult the lease for cross-process liveness, but
+that rides its own change. Operator guidance (the flag matrix, k8s RBAC, the
+flock single-host caveat, the multi-replica posture) is in `docs/usage.md`.
 
 ## Relationship to other docs
 

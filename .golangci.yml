@@ -250,6 +250,30 @@ linters:
           deny:
             - pkg: os
               desc: 'wallclock is the stateless production port.Clock; it must not touch os'
+        engine-adapter-memlease:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memlease/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/session
+          deny:
+            - pkg: os
+              desc: 'memlease is the in-memory reference port.SessionLease; it must not touch os'
+        engine-adapter-leaseconformance:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/leaseconformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/session
+          deny:
+            - pkg: os
+              desc: 'leaseconformance drives the abstract SessionLease contract; it must not touch the real OS'
         engine-adapter-fsconformance:
           list-mode: strict
           files:
@@ -461,6 +485,13 @@ linters:
           - goconst
           - unparam
         path: engine/adapter/eventlogconformance/
+      - linters:
+          - gocyclo
+          - errcheck
+          - gosec
+          - goconst
+          - unparam
+        path: engine/adapter/leaseconformance/
       - linters:
           - revive
         path: .golangci.yml

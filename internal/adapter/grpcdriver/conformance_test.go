@@ -2,13 +2,17 @@ package grpcdriver
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
+	"github.com/stacklok/mecatl/engine/adapter/leaseconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memconformance"
+	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
@@ -61,6 +65,43 @@ func TestGRPCEventLogConformance(t *testing.T) {
 			driverv1.RegisterEventLogServiceServer(gs, NewEventLogServer(memstore.NewEventLog()))
 		})
 		return NewEventLog(conn)
+	})
+}
+
+// leaseFakeClock is an advanceable port.Clock the lease conformance suite drives
+// forward to cross the TTL. The advance callback closes over the SERVER-SIDE
+// memlease clock — the wire cannot carry "advance the clock", so the suite reaches
+// the server's clock directly through this shared value.
+type leaseFakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *leaseFakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *leaseFakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
+// TestGRPCSessionLeaseConformance runs the shared SessionLease conformance table
+// over grpcdriver → bufconn → NewSessionLeaseServer(memlease.New(...)): the SAME
+// suite the in-memory reference passes, now over the full client → wire →
+// server-wrapper → reference-backend path, including FAILED_PRECONDITION →
+// ErrLeaseHeld. The advance callback drives the server-side fake clock.
+func TestGRPCSessionLeaseConformance(t *testing.T) {
+	leaseconformance.Run(t, func(t *testing.T) (port.SessionLease, func(time.Duration)) {
+		clk := &leaseFakeClock{t: time.Unix(1_700_000_000, 0)}
+		backend := memlease.New(clk, leaseconformance.TTL)
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionLeaseServiceServer(gs, NewSessionLeaseServer(backend))
+		})
+		return NewSessionLease(conn), clk.advance
 	})
 }
 

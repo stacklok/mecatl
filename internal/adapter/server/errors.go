@@ -51,4 +51,15 @@ var (
 	// session frees a slot. Adapters map it to ResourceExhausted / HTTP 429, mirroring
 	// ErrTooManyTeams.
 	ErrTooManySessionEngines = errors.New("server: too many live per-session engines")
+	// ErrSessionLeasedElsewhere is returned by the run-entry funnel
+	// (StartRunContent / resumeFromAwaiting) when a cross-process session lease
+	// (cloud-native Phase 4, ADR 0027) for the id is held by a DIFFERENT, still-live
+	// process: in a multi-replica deployment another replica owns this session, so
+	// this one must NOT drive it (the single-writer invariant). It is the
+	// composition-side surfacing of port.ErrLeaseHeld at the run-entry gate.
+	// Adapters map it to FailedPrecondition / HTTP 409 Conflict — distinct from
+	// ErrNoActiveRun: the session exists and is well-formed, it is just owned
+	// elsewhere right now (a later retry, after the holder releases or its lease
+	// lapses, can succeed). Only ever returned when a SessionLease is wired.
+	ErrSessionLeasedElsewhere = errors.New("server: session is leased by another process")
 )

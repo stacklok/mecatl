@@ -180,6 +180,16 @@ type config struct {
 	driverTLSCert    string
 	driverTLSKey     string
 
+	// Session leasing (cloud-native Phase 4): OPTIONAL cross-process single-writer
+	// enforcement for multi-replica deployments over a shared store. Empty =
+	// no leasing (the byte-identical single-writer-by-affinity default). Exactly
+	// one backend: URL (driver), k8s namespace, or flock dir.
+	sessionLeaseURL           string
+	sessionLeaseDir           string
+	sessionLeaseK8sNamespace  string
+	sessionLeaseTTL           time.Duration
+	sessionLeaseRenewInterval time.Duration
+
 	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona fragment.
 	// ON by default reading the conventional ~/.config/mecatl/soul.md (fail-soft if
 	// absent). soulFile overrides the path; noSoul disables it entirely.
@@ -763,6 +773,11 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SessionStoreURL:              cfg.sessionStoreURL,
 		MemoryStoreURL:               cfg.memoryStoreURL,
 		EventLogURL:                  cfg.eventLogURL,
+		SessionLeaseURL:              cfg.sessionLeaseURL,
+		SessionLeaseDir:              cfg.sessionLeaseDir,
+		SessionLeaseK8sNamespace:     cfg.sessionLeaseK8sNamespace,
+		SessionLeaseTTL:              cfg.sessionLeaseTTL,
+		SessionLeaseRenewInterval:    cfg.sessionLeaseRenewInterval,
 		SkillSourceURL:               cfg.skillSourceURL,
 		SoulSourceURL:                cfg.soulSourceURL,
 		AgentSourceURL:               cfg.agentSourceURL,
@@ -1006,6 +1021,11 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = sweep at startup only. Only meaningful when a child or main retention/cap knob is active")
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.eventLogURL, "event-log-url", "", "host:port of a remote event-log gRPC driver (mecatl.driver.v1.EventLogService) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); INDEPENDENT of the session store. Empty keeps the local default (the --store-dir jsonl log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
+	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host:port of a remote session-lease gRPC driver (mecatl.driver.v1.SessionLeaseService) for cross-process single-writer enforcement (cloud-native Phase 4, multi-replica). Empty = NO leasing (the byte-identical single-writer-by-affinity default: route every session to one replica). Mutually exclusive with --session-lease-dir / --session-lease-k8s-namespace. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
+	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for a SINGLE-HOST flock session lease (cross-process single-writer enforcement among processes on ONE machine; flock auto-releases on crash). NOT safe across hosts — use --session-lease-k8s-namespace or --session-lease-url for multi-host/multi-replica. Empty = no leasing")
+	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,list,watch,create,update,delete on leases in coordination.k8s.io for this namespace (see docs/usage.md). Empty = no leasing")
+	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
+	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on the store-driver connections (--session-store-url/--memory-store-url)")
 	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")

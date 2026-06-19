@@ -360,6 +360,11 @@ func toStatus(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrNoActiveRun):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrSessionLeasedElsewhere):
+		// Cloud-native Phase 4: another replica holds the session's single-writer
+		// lease. Well-formed request, transiently owned elsewhere — FailedPrecondition
+		// (consistent with ErrNoActiveRun; HTTP maps it to 409 Conflict).
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrNoMCPProvider):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrTeamsDisabled):

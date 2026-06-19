@@ -428,6 +428,34 @@ type Config struct {
 	// paths. Only the ContextWindow scalar is resolved; provider/model identity never
 	// recomputes.
 	ResolveContextWindow func(providerID, modelID string) int64
+
+	// SessionLease is the OPTIONAL cross-process single-writer seam (cloud-native
+	// Phase 4, ADR 0027). When wired, the run-entry funnel acquires a per-session
+	// lease (AFTER the same-process runEntryMu, so same-process exclusion stays
+	// cheap) before driving the engine, refreshes it from a Service-owned renewer
+	// goroutine, and releases it on CloseSession / shutdown. A competing process
+	// holding the lease makes StartRunContent / resumeFromAwaiting fail with
+	// ErrSessionLeasedElsewhere. Optional and nil-safe: when nil there is NO
+	// acquire, NO renewer, and NO release — byte-identical to the pre-Phase-4
+	// single-writer-by-affinity posture. The loop NEVER imports port.SessionLease;
+	// the renewer and the held-lease registry live entirely on Service (the same
+	// storage-agnostic discipline as EventLog). A backend that reports
+	// ErrLeaseUnsupported is stickily disabled (one INFO, then the no-lease path).
+	SessionLease port.SessionLease
+
+	// LeaseOwner is this process's owner-identity string for SessionLease, built
+	// once per Build (e.g. "<hostname>-<pid>-<nonce>") so two Builds in one
+	// process get distinct owners. Ignored when SessionLease is nil.
+	LeaseOwner string
+
+	// LeaseTTL is the lease lifetime requested at Acquire and the renew window;
+	// the renewer ticks at LeaseRenewInterval (default LeaseTTL/3). A non-positive
+	// value defaults to defaultLeaseTTL. Ignored when SessionLease is nil.
+	LeaseTTL time.Duration
+
+	// LeaseRenewInterval is how often the renewer refreshes a held lease. A
+	// non-positive value defaults to LeaseTTL/3. Ignored when SessionLease is nil.
+	LeaseRenewInterval time.Duration
 }
 
 // defaultMaxTeams is the live-team registry cap applied when Config.MaxTeams is
@@ -439,6 +467,24 @@ const defaultMaxTeams = 64
 // legitimate per-conversation resource) but finite, so a client that never
 // releases its selector/MCP sessions cannot grow the map without bound (CWE-770).
 const defaultMaxSessionEngines = 1024
+
+// defaultLeaseTTL is the session-lease lifetime applied when Config.LeaseTTL is
+// zero and a SessionLease is wired. The renewer ticks at LeaseTTL/3 by default,
+// so a 30s TTL is refreshed every 10s — comfortably ahead of expiry even with a
+// slow store, while keeping a crashed holder's lease recoverable within ~30s.
+const defaultLeaseTTL = 30 * time.Second
+
+// leaseAcquireTimeout bounds a SessionLease.Acquire / Release call. Acquire runs
+// on the run-entry hot path UNDER s.runEntryMu, so a wedged k8s/driver backend
+// must not stall run-entry indefinitely; Release runs on a detached ctx at
+// session close. Both are single small RPCs, so a few seconds is generous.
+const leaseAcquireTimeout = 5 * time.Second
+
+// leaseRenewFraction bounds a SessionLease.Renew call to a fraction of the renew
+// interval, so a wedged backend's Renew gives up well before the next tick (and
+// long before the TTL) rather than blocking the renewer goroutine. The bound is
+// computed from LeaseRenewInterval (renewTimeout), never a flag.
+const leaseRenewFraction = 2
 
 // ErrConfig is returned by NewService when a required dependency is missing.
 var ErrConfig = errors.New("server: invalid config")
@@ -542,6 +588,29 @@ type Service struct {
 	// an already-replayed session would only re-derive idempotent rules. Guarded by
 	// s.mu.
 	replayedApprovals map[session.SessionID]struct{}
+
+	// heldLeases tracks the cross-process session leases this process currently
+	// holds (cloud-native Phase 4, ADR 0027). A lease is acquired ONCE per session
+	// on first run-entry (after the per-session runEntryMu) and held for the
+	// session's life: a per-session renewer goroutine refreshes it, and CloseSession
+	// / shutdown stop the renewer and Release it. Guarded by s.mu. Nil/empty when
+	// Config.SessionLease is not wired (the byte-identical default). See List 1
+	// (the resource inventory) in ADR 0027.
+	heldLeases map[session.SessionID]*heldLease
+
+	// leaseDisabled is set (once) when Config.SessionLease reports
+	// ErrLeaseUnsupported: the seam never works on this backend, so the run-entry
+	// gate stickily stops consulting it and degrades to the no-lease path (the
+	// ErrPruneUnsupported sticky-disable precedent). Guarded by s.mu.
+	leaseDisabled bool
+}
+
+// heldLease is one process-held session lease plus the cancel that stops its
+// renewer goroutine. The lease VALUE is refreshed in place by the renewer (under
+// s.mu) so the latest token/expiry is what a Release sends.
+type heldLease struct {
+	lease  port.Lease
+	cancel context.CancelFunc
 }
 
 // sessionEngine couples a per-session engine (built over that session's
@@ -660,6 +729,17 @@ func NewService(cfg Config) (*Service, error) {
 	if cfg.Diagnostics == nil {
 		cfg.Diagnostics = port.NopDiagnostics{}
 	}
+	if cfg.SessionLease != nil {
+		if cfg.LeaseTTL <= 0 {
+			cfg.LeaseTTL = defaultLeaseTTL
+		}
+		if cfg.LeaseRenewInterval <= 0 {
+			cfg.LeaseRenewInterval = cfg.LeaseTTL / 3
+		}
+		if cfg.LeaseRenewInterval <= 0 {
+			cfg.LeaseRenewInterval = cfg.LeaseTTL // tiny-TTL guard: never a zero ticker.
+		}
+	}
 	svc := &Service{
 		cfg:               cfg,
 		runs:              make(map[session.SessionID]*runState),
@@ -667,6 +747,7 @@ func NewService(cfg Config) (*Service, error) {
 		sessionEngines:    make(map[session.SessionID]*sessionEngine),
 		sessionWorkspaces: make(map[session.SessionID]tool.Workspace),
 		replayedApprovals: make(map[session.SessionID]struct{}),
+		heldLeases:        make(map[session.SessionID]*heldLease),
 	}
 	// Seed the model inventory from the static snapshot. ListModels and the
 	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
@@ -1020,6 +1101,10 @@ func (s *Service) CloseSession(id session.SessionID) {
 	if ok && se.close != nil {
 		_ = se.close()
 	}
+	// Stop the session's renewer and release its cross-process lease (cloud-native
+	// Phase 4): the session is ending, so a competitor may now take it over. No-op
+	// when no lease is wired or held.
+	s.releaseLease(id)
 }
 
 // EndSession is the precondition-checked sibling of CloseSession: the
@@ -1049,11 +1134,23 @@ func (s *Service) Close() {
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
 	s.sessionWorkspaces = make(map[session.SessionID]tool.Workspace)
+	// Snapshot the held-lease ids so we can stop renewers + release each outside
+	// the guard (releaseLease re-takes s.mu).
+	leasedIDs := make([]session.SessionID, 0, len(s.heldLeases))
+	for id := range s.heldLeases {
+		leasedIDs = append(leasedIDs, id)
+	}
 	s.mu.Unlock()
 	for _, se := range engines {
 		if se.close != nil {
 			_ = se.close()
 		}
+	}
+	// Stop every renewer and release every held cross-process lease on shutdown
+	// (cloud-native Phase 4), so a restarted process can take the sessions over
+	// without waiting out the TTL. Best-effort (detached short-timeout ctx).
+	for _, id := range leasedIDs {
+		s.releaseLease(id)
 	}
 }
 
@@ -1324,6 +1421,13 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	// so unrelated sessions run concurrently.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	// Cross-process single-writer gate (cloud-native Phase 4): take the session
+	// lease AFTER the in-process runEntryMu so same-process exclusion stays cheap.
+	// A competing live owner refuses the run with ErrSessionLeasedElsewhere; nil
+	// SessionLease is the byte-identical no-lease default.
+	if err := s.acquireLease(ctx, id); err != nil {
+		return nil, err
+	}
 	engine, ws, err := s.engineAndWorkspaceFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -1884,6 +1988,12 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	// though it cannot fire on this path.
 	entryUnlock := s.runEntryMu.lock(id)
 	defer entryUnlock()
+	// Cross-process single-writer gate (cloud-native Phase 4): the resumed run is a
+	// run-entry like any other, so it acquires the session lease too — a competing
+	// process that took over this evicted session must refuse the resume.
+	if err := s.acquireLease(ctx, id); err != nil {
+		return nil, err
+	}
 	engine, ws, err := s.engineAndWorkspaceFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -1967,6 +2077,198 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 	if err := s.cfg.EventLog.Append(ctx, id, ev); err != nil {
 		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "event log append failed",
 			"session", string(id), "event", string(ev.Type), "err", err.Error())
+	}
+}
+
+// acquireLease takes (or confirms) the cross-process single-writer lease for id
+// (cloud-native Phase 4). It is called at the run-entry seam AFTER the
+// per-session runEntryMu so same-process exclusion stays cheap and the
+// resumeMu->runEntryMu lock order holds; the lease is the CROSS-process layer on
+// top of that in-process lock.
+//
+// It is nil-safe (no SessionLease wired -> nil, the byte-identical default) and
+// session-scoped: the lease is acquired ONCE, on first run-entry, and held for
+// the session's life (a re-entry while already held is a no-op). On a competing
+// live owner it returns ErrSessionLeasedElsewhere; on ErrLeaseUnsupported it
+// stickily disables leasing (one INFO) and returns nil. Any other Acquire error
+// is surfaced as an infrastructure failure (the operator misconfigured the
+// backend; fail loud rather than silently run two writers).
+//
+// HOLD-FOR-SESSION-LIFE is deliberate: once Acquire succeeds the lease is kept
+// even if the caller's subsequent run-launch (engineAndWorkspaceFor) fails — the
+// lease is released ONLY by CloseSession / shutdown (releaseLease), never per-run.
+// A future reader must NOT "fix" this into a run-scoped release: that would drop
+// the lease between turns and let a competitor steal a session this process is
+// still driving across re-entries.
+//
+// The Acquire RPC is bounded by leaseAcquireTimeout so a wedged backend cannot
+// stall run-entry indefinitely (this runs under s.runEntryMu on the hot path).
+func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error {
+	if s.cfg.SessionLease == nil {
+		return nil
+	}
+	s.mu.Lock()
+	if s.leaseDisabled {
+		s.mu.Unlock()
+		return nil
+	}
+	if _, held := s.heldLeases[id]; held {
+		s.mu.Unlock()
+		return nil // already ours for this session; acquire only on first entry.
+	}
+	s.mu.Unlock()
+
+	acqCtx, acqCancel := context.WithTimeout(ctx, leaseAcquireTimeout)
+	lease, err := s.cfg.SessionLease.Acquire(acqCtx, id, s.cfg.LeaseOwner)
+	acqCancel()
+	switch {
+	case errors.Is(err, port.ErrLeaseHeld):
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	case errors.Is(err, port.ErrLeaseUnsupported):
+		s.mu.Lock()
+		firstTime := !s.leaseDisabled
+		s.leaseDisabled = true
+		s.mu.Unlock()
+		if firstTime {
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
+				"owner", s.cfg.LeaseOwner)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("server: acquire session lease %q: %w", id, err)
+	}
+
+	// Store the hold and start the renewer. A second acquire that raced us (lost
+	// the Acquire call, won the map insert) is collapsed: keep the first, cancel
+	// our just-started renewer for the duplicate.
+	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	s.mu.Lock()
+	if _, dup := s.heldLeases[id]; dup {
+		s.mu.Unlock()
+		cancel()
+		return nil
+	}
+	s.heldLeases[id] = &heldLease{lease: lease, cancel: cancel}
+	s.mu.Unlock()
+	go s.renewLoop(renewCtx, id)
+	return nil
+}
+
+// renewLoop refreshes the held lease for id on a ticker until renewCtx is
+// cancelled (CloseSession / shutdown). The renewer is OWNED BY Service -- the
+// loop never imports port.SessionLease (the storage-agnostic discipline).
+//
+// SINGLE SOURCE OF TRUTH: each tick reads the CURRENT lease from
+// heldLeases[id].lease UNDER s.mu (not a goroutine-local copy), refreshes it, and
+// writes the refreshed value back under s.mu — so releaseLease/onLeaseLost always
+// see the latest token/expiry and there is no unguarded read of the lease value.
+//
+// LOSS HANDLING is graceful for TRANSIENT faults, definitive for ErrLeaseHeld:
+//   - Renew -> ErrLeaseHeld is DEFINITIVE loss (someone else took the lease): cancel
+//     the run immediately.
+//   - Any other (transient/infra) Renew error gets a GRACE: with TTL/3 ticks there
+//     are ~3 attempts before real expiry, so a single backend blip must not kill a
+//     long reasoning turn. We declare loss only once a renew has failed AND
+//     clock.Now() is within one renew-interval of the lease's Expiry (i.e. the next
+//     tick would land past expiry). Until then we keep the run and retry next tick.
+//   - A ctx-cancelled error is just shutdown/close racing a tick -> exit quietly.
+func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
+	ticker := time.NewTicker(s.cfg.LeaseRenewInterval)
+	defer ticker.Stop()
+	renewTimeout := s.cfg.LeaseRenewInterval / leaseRenewFraction
+	if renewTimeout <= 0 {
+		renewTimeout = s.cfg.LeaseRenewInterval
+	}
+	for {
+		select {
+		case <-renewCtx.Done():
+			return
+		case <-ticker.C:
+			// Read the current lease under the lock (single source of truth). If the
+			// hold is gone (released concurrently) there is nothing to renew.
+			s.mu.Lock()
+			h, ok := s.heldLeases[id]
+			if !ok {
+				s.mu.Unlock()
+				return
+			}
+			lease := h.lease
+			s.mu.Unlock()
+
+			rCtx, rCancel := context.WithTimeout(renewCtx, renewTimeout)
+			refreshed, err := s.cfg.SessionLease.Renew(rCtx, lease)
+			rCancel()
+			switch {
+			case errors.Is(err, context.Canceled):
+				return // shutdown / close raced the tick.
+			case errors.Is(err, port.ErrLeaseHeld):
+				// Definitive loss: a competitor holds it now.
+				s.onLeaseLost(renewCtx, id, err)
+				return
+			case err != nil:
+				// Transient/infra fault: keep the run unless we are within one renew
+				// interval of expiry (the next tick would land past it).
+				if s.cfg.Now().Add(s.cfg.LeaseRenewInterval).Before(lease.Expiry) {
+					continue // still have headroom; retry next tick.
+				}
+				s.onLeaseLost(renewCtx, id, err)
+				return
+			}
+			s.mu.Lock()
+			if h, ok := s.heldLeases[id]; ok {
+				h.lease = refreshed // keep the latest token/expiry for Release.
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+// onLeaseLost handles a declared lease loss: WARN, cancel the renewer's own ctx
+// (so the goroutine's WithCancel child is not leaked), cancel the session's live
+// run so a competitor can take over, and drop the hold. The cancelled run
+// terminates cleanly (StopCancelled is recoverable), so this is fail-safe.
+func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, cause error) {
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lost session lease; cancelling run",
+		"session", string(id), "owner", s.cfg.LeaseOwner, "err", cause.Error())
+	if run, ok := s.LookupRun(id); ok {
+		run.Cancel()
+	}
+	s.mu.Lock()
+	if h, ok := s.heldLeases[id]; ok {
+		h.cancel() // release the renewer's WithCancel child (self-cancel is harmless).
+		delete(s.heldLeases, id)
+	}
+	s.mu.Unlock()
+}
+
+// releaseLease stops the session's renewer and releases its cross-process lease,
+// best-effort. It is called by CloseSession and shutdown. The lease VALUE is
+// snapshotted UNDER s.mu (port.Lease is an immutable value, so the copy is
+// race-free against a concurrent renewer writing heldLeases[id].lease). The
+// Release runs on a cancel-detached, short-timeout context (the appendEvent
+// precedent) so a shutdown-cancelled ctx cannot abort the release. A nil
+// SessionLease or an unheld id is a no-op.
+func (s *Service) releaseLease(id session.SessionID) {
+	if s.cfg.SessionLease == nil {
+		return
+	}
+	s.mu.Lock()
+	h, ok := s.heldLeases[id]
+	var lease port.Lease
+	if ok {
+		lease = h.lease // guarded snapshot of the latest token/expiry.
+		delete(s.heldLeases, id)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	h.cancel() // stop the renewer first.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), leaseAcquireTimeout)
+	defer cancel()
+	if err := s.cfg.SessionLease.Release(ctx, lease); err != nil {
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session lease release failed",
+			"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
 	}
 }
 

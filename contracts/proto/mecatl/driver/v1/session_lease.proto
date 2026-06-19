@@ -1,0 +1,120 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: the remote session-lease protocol.
+//
+// SessionLeaseService is the wire seam behind the harness's `port.SessionLease`
+// (engine/port/lease.go): cross-process single-writer enforcement for the
+// cloud-native multi-replica posture (ADR 0027 Phase 4). An operator-run driver
+// process (or a coordination backend a driver fronts) grants a per-session lease
+// to exactly one process at a time, so two replicas over one shared store never
+// both drive the same session id concurrently. The driver sits at the SAME
+// trust tier as an on-disk store directory: operator-configured infrastructure,
+// not a model-facing surface.
+//
+// The lease is a small opaque-to-the-wire VALUE: a session id, an owner-identity
+// string, a monotonic fencing token (the epoch, advanced only on a takeover
+// acquisition), and a wall-clock expiry. There is no opaque payload — unlike the
+// session snapshot or the event-log envelope, the lease's fields ARE the
+// protocol.
+//
+// Driver contract (mirrors port.SessionLease):
+//   - Acquire grants the lease if it is free, expired, or already held by the
+//     same owner; otherwise it is held by a live owner elsewhere and the driver
+//     returns FAILED_PRECONDITION (the client maps it to port.ErrLeaseHeld). A
+//     successful Acquire returns the granted lease (bumped token on a takeover).
+//   - Renew extends an EXISTING lease the caller still holds (owner + token match,
+//     unexpired), returning the refreshed lease (new expiry, SAME token). If the
+//     caller no longer holds it (expired-and-taken, released, owner/token
+//     mismatch) the driver returns FAILED_PRECONDITION → port.ErrLeaseHeld (the
+//     loss signal; the renewer treats it as cancel-the-run).
+//   - Release relinquishes the lease if the caller still holds it (owner + token
+//     match); idempotent (releasing an unheld/unknown lease is success).
+//   - A driver that does not implement leasing at all answers UNIMPLEMENTED; the
+//     client maps it to port.ErrLeaseUnsupported (the sticky-disable signal,
+//     PrunableStore's ErrPruneUnsupported precedent), and composition degrades to
+//     the byte-identical no-lease path.
+//
+// All three RPCs are UNARY: a lease operation is a single small request/response,
+// unlike the event log's streaming Read.
+//
+// Validation: required-field annotations are authored with `buf.validate.field`
+// for documentation and future runtime enforcement; V1 enforces them in the Go
+// client/server wrappers (internal/adapter/grpcdriver).
+
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// SessionLeaseService grants, renews, and releases per-session single-writer
+// leases. Every RPC is the remote analogue of the same-named port.SessionLease
+// method.
+service SessionLeaseService {
+  // Acquire grants the lease for session_id to owner if it is free, expired, or
+  // already held by owner. If it is held by a live, unexpired owner elsewhere
+  // the response is FAILED_PRECONDITION (client → port.ErrLeaseHeld). A driver
+  // that does not support leasing answers UNIMPLEMENTED (client →
+  // port.ErrLeaseUnsupported).
+  rpc Acquire(AcquireRequest) returns (LeaseResponse);
+
+  // Renew extends an existing lease the caller still holds, returning the
+  // refreshed lease (new expiry, SAME token). A caller who no longer holds it
+  // gets FAILED_PRECONDITION (client → port.ErrLeaseHeld, the loss signal).
+  rpc Renew(RenewRequest) returns (LeaseResponse);
+
+  // Release relinquishes a held lease; idempotent (releasing an unheld lease is
+  // success). A mismatched owner/token is a no-op success — Release only ever
+  // drops the caller's OWN hold.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
+
+// Lease is the granted single-writer lease value, round-tripped verbatim.
+message Lease {
+  // session_id is the session the lease guards.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+
+  // owner is the holding process's owner-identity string.
+  string owner = 2 [(buf.validate.field).string.min_len = 1];
+
+  // token is the monotonic fencing epoch: it advances only on a takeover
+  // Acquire and is stable across a successful Renew. A future CAS-Save can use
+  // it to reject a stale writer; V1 plumbs it but does not consult it.
+  uint64 token = 3;
+
+  // expiry is the wall-clock instant the lease lapses if not renewed.
+  google.protobuf.Timestamp expiry = 4 [(buf.validate.field).required = true];
+}
+
+// AcquireRequest asks to acquire (or take over an expired/own) lease.
+message AcquireRequest {
+  // session_id is the session to lease.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+
+  // owner is the acquiring process's owner-identity string.
+  string owner = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// RenewRequest carries the lease the caller currently holds and wishes to extend.
+message RenewRequest {
+  // lease is the held lease to refresh (owner + token must still match).
+  Lease lease = 1 [(buf.validate.field).required = true];
+}
+
+// ReleaseRequest carries the lease the caller wishes to relinquish.
+message ReleaseRequest {
+  // lease is the held lease to release (owner + token must match to take effect).
+  Lease lease = 1 [(buf.validate.field).required = true];
+}
+
+// LeaseResponse carries the granted/refreshed lease.
+message LeaseResponse {
+  // lease is the resulting lease (bumped token on a takeover Acquire; same token
+  // on a Renew).
+  Lease lease = 1 [(buf.validate.field).required = true];
+}
+
+// ReleaseResponse is empty: a successful Release has no payload.
+message ReleaseResponse {}

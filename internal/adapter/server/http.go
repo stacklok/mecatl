@@ -1029,6 +1029,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		// Known session, but its run is not live in this process (e.g. the
 		// stream was lost across a restart): nothing to deliver the control to.
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrSessionLeasedElsewhere):
+		// Cloud-native Phase 4: another replica holds the session's single-writer
+		// lease. 409 Conflict — the session exists and is well-formed, it is just
+		// owned by another process right now (a later retry can succeed).
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrNoMCPProvider):
 		// No MCP provider is wired: the precondition for read/get is unmet.
 		writeError(w, http.StatusPreconditionFailed, err.Error())

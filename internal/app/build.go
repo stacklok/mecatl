@@ -17,6 +17,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,6 +28,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -43,10 +49,12 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/envscrub"
+	"github.com/stacklok/mecatl/internal/adapter/flocklease"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/gitenv"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/k8slease"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -284,6 +292,28 @@ type Config struct {
 	DriverTLSCA     string
 	DriverTLSCert   string
 	DriverTLSKey    string
+
+	// Session leasing (cloud-native Phase 4, ADR 0027): OPTIONAL cross-process
+	// single-writer enforcement for multi-replica deployments over a shared store.
+	// Exactly ONE backend is selected, in this precedence — an INDEPENDENT override
+	// first (mirroring --event-log-url being independent of the store), else the
+	// configured store is type-asserted for port.SessionLease, else NO lease is
+	// wired (the byte-identical, single-writer-by-affinity v1 default):
+	//   - SessionLeaseURL: a mecatl.driver.v1.SessionLeaseService driver (the
+	//     multi-host / multi-replica path; shares the Driver* auth/TLS + connection
+	//     cache).
+	//   - SessionLeaseK8sNamespace: a coordination.k8s.io Lease per session in that
+	//     namespace (the in-cluster multi-replica path; needs RBAC — see usage.md).
+	//   - SessionLeaseDir: a single-host flock lease under that directory (one
+	//     machine, several processes; flock auto-releases on crash).
+	// All empty = no override → type-assert the store → else no lease.
+	SessionLeaseURL          string
+	SessionLeaseDir          string
+	SessionLeaseK8sNamespace string
+	// SessionLeaseTTL is the lease lifetime (default 30s when a lease is wired);
+	// SessionLeaseRenewInterval is the renewer tick (default TTL/3).
+	SessionLeaseTTL           time.Duration
+	SessionLeaseRenewInterval time.Duration
 
 	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona fragment
 	// injected as a turn-0 user message. ON by default reading the conventional
@@ -1028,7 +1058,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose = connClose
 	}
 
-	store, eventLog, storeClose, err := buildStore(cfg)
+	// buildStore + the OPTIONAL session lease (cloud-native Phase 4) are built
+	// together: the lease resolves AFTER the store (so its type-assert fallback can
+	// see it) and its close chains onto the store's, so Build holds one teardown
+	// (storeClose) for the pair. sessionLease is nil when no backend is selected
+	// (the byte-identical default).
+	store, eventLog, sessionLease, leaseOwner, storeClose, err := buildStoreAndLease(cfg)
 	if err != nil {
 		commandConnClose()
 		return nil, err
@@ -1211,6 +1246,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// improving). Only the ContextWindow scalar is resolved here; provider/model
 		// identity stays the resolved value.
 		ResolveContextWindow: func(p, m string) int64 { return int64(reg.echoWindowResolver(cfg, p, m)()) },
+		// Session lease (cloud-native Phase 4): nil unless a backend was selected,
+		// so the default path takes no lease, starts no renewer, and releases
+		// nothing — byte-identical. The owner identity is built once per Build.
+		SessionLease:       sessionLease,
+		LeaseOwner:         leaseOwner,
+		LeaseTTL:           cfg.SessionLeaseTTL,
+		LeaseRenewInterval: cfg.SessionLeaseRenewInterval,
 	}
 	applyTeamConfig(&svcCfg, cfg, reg, provider, mainMgr, agentReg, assets.skillReadRoots, assets.skillIndex, assets)
 
@@ -1624,6 +1666,117 @@ func buildStore(cfg Config) (port.SessionStore, port.EventLog, func(), error) {
 		closeStore = chainClose(closeStore, closeLog)
 	}
 	return store, log, closeStore, nil
+}
+
+// buildStoreAndLease builds the session store (+ its durable EventLog) and, on
+// top, the OPTIONAL cross-process session lease (cloud-native Phase 4). The lease
+// resolves AFTER the store so its type-assert fallback can discover a
+// store-provided lease; its close chains onto the store's, so the caller holds a
+// single teardown for the pair. sessionLease is nil (and leaseOwner empty) when no
+// lease backend is selected — the byte-identical default.
+func buildStoreAndLease(cfg Config) (port.SessionStore, port.EventLog, port.SessionLease, string, func(), error) {
+	store, eventLog, storeClose, err := buildStore(cfg)
+	if err != nil {
+		return nil, nil, nil, "", nil, err
+	}
+	sessionLease, leaseOwner, leaseClose, err := buildSessionLease(cfg, store)
+	if err != nil {
+		storeClose()
+		return nil, nil, nil, "", nil, err
+	}
+	return store, eventLog, sessionLease, leaseOwner, chainClose(leaseClose, storeClose), nil
+}
+
+// buildSessionLease resolves the OPTIONAL cross-process session lease (cloud-native
+// Phase 4, ADR 0027). It returns (lease, owner, close, err): lease is nil (and
+// close a no-op) when no backend is selected — the byte-identical default that
+// takes no lease, starts no renewer, and releases nothing. The owner identity is
+// built ONCE here (hostname-pid-nonce) so two Builds in one process get DISTINCT
+// owners (the cross-process gate's twin-Build test relies on it).
+//
+// Resolution precedence mirrors --event-log-url's INDEPENDENT-of-store stance:
+//  1. an explicit override backend (URL → driver, k8s namespace → coordination
+//     Lease, dir → flock) wins;
+//  2. else the configured SessionStore is type-asserted for port.SessionLease
+//     (the issue's literal requirement: a store that also leases opts in);
+//  3. else no lease (the single-writer-by-affinity v1 default).
+//
+// The lease close is meaningful only for the driver backend (its dialled conn);
+// flock/k8s/type-assert hold no Build-scoped resource of their own, so their close
+// is a no-op.
+func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, string, func(), error) {
+	noop := func() {}
+	owner := leaseOwnerIdentity()
+	ttl := cfg.SessionLeaseTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+
+	switch {
+	case cfg.SessionLeaseURL != "":
+		conn, closeConn, err := cfg.drivers().dial(cfg, cfg.SessionLeaseURL)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("dial session-lease driver %q: %w", cfg.SessionLeaseURL, err)
+		}
+		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: grpc driver", "target", cfg.SessionLeaseURL, "owner", owner)
+		return grpcdriver.NewSessionLease(conn), owner, closeConn, nil
+
+	case cfg.SessionLeaseK8sNamespace != "":
+		clientset, err := newK8sClientset()
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("build k8s clientset for session lease: %w", err)
+		}
+		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: kubernetes", "namespace", cfg.SessionLeaseK8sNamespace, "owner", owner)
+		return k8slease.New(clientset, cfg.SessionLeaseK8sNamespace, ttl, wallclock.Clock{}), owner, noop, nil
+
+	case cfg.SessionLeaseDir != "":
+		l, err := flocklease.New(cfg.SessionLeaseDir, ttl, wallclock.Clock{})
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("open flock session lease %q: %w", cfg.SessionLeaseDir, err)
+		}
+		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: flock (single-host)", "dir", cfg.SessionLeaseDir, "owner", owner)
+		return l, owner, noop, nil
+	}
+
+	// No override → type-assert the configured store for the optional seam (the
+	// PrunableStore discovery precedent). A store that does not implement it (the
+	// jsonlstore today) means no lease — exactly the v1 default.
+	if lease, ok := store.(port.SessionLease); ok {
+		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: store-provided", "owner", owner)
+		return lease, owner, noop, nil
+	}
+	return nil, "", noop, nil
+}
+
+// leaseOwnerIdentity builds this Build's lease owner string: hostname-pid-nonce.
+// The nonce makes two Builds in ONE process (the offline two-Build gate) distinct
+// owners, so neither can renew or release the other's lease.
+func leaseOwnerIdentity() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown-host"
+	}
+	var n [8]byte
+	_, _ = rand.Read(n[:])
+	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(n[:]))
+}
+
+// newK8sClientset builds a Kubernetes clientset for the k8s session lease,
+// preferring in-cluster config (the multi-replica deployment target) and falling
+// back to the default kubeconfig loading rules (KUBECONFIG / ~/.kube/config) for
+// out-of-cluster operation.
+func newK8sClientset() (kubernetes.Interface, error) {
+	restCfg, err := rest.InClusterConfig()
+	if err != nil {
+		restCfg, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			clientcmd.NewDefaultClientConfigLoadingRules(),
+			&clientcmd.ConfigOverrides{},
+		).ClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("load kubeconfig (no in-cluster config): %w", err)
+		}
+	}
+	return kubernetes.NewForConfig(restCfg)
 }
 
 // buildSessionStore constructs the SessionStore plus the STORE-DERIVED default
