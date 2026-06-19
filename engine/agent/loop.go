@@ -276,6 +276,24 @@ type Engine struct {
 	deps Deps
 }
 
+// now returns the engine's wall-clock time from the injected Clock, or the zero
+// time when no Clock is configured (the same optional-Clock contract the loop's
+// timing reads already honour: no clock → zero timestamp / zero duration). It is
+// the ONLY wall-clock source permitted in the engine core: a direct time.Now() in
+// non-test core code is forbidden by engine/arch's TestNoWallClockInEngineCore, so
+// the engine is fully clock-injectable (deterministic) for an embedding host that
+// drives every wall-clock read through the injected Clock (issue #116).
+//
+// It is nil-receiver-safe: it replaced direct time.Now() calls, which never
+// panicked, so a (provably-non-nil today) child-engine reference that a future
+// refactor zeroed must degrade to the zero time, not a panic.
+func (e *Engine) now() time.Time {
+	if e == nil || e.deps.Clock == nil {
+		return time.Time{}
+	}
+	return e.deps.Clock.Now()
+}
+
 // NewEngine constructs an Engine from deps, applying defaults for the optional
 // Compactor and CompactionRatio.
 func NewEngine(deps Deps) *Engine {
@@ -488,6 +506,15 @@ type Run struct {
 
 // runSerial mints the process-unique Run.serial discriminator (see Run.serial).
 var runSerial atomic.Int64
+
+// childSerial mints a process-unique, monotonic discriminator for the ephemeral
+// in-memory child sessions (guardrail checker, fork judge, ask reviewer, model
+// router) whose ids were previously derived from time.Now().UnixNano(). A counter
+// is collision-free even under a fake (fixed) clock — where UnixNano would repeat
+// and alias two children onto one id — so it keeps those ids unique without a
+// direct wall-clock read, part of the engine's full clock-injectability (issue
+// #116). Mirrors runSerial.
+var childSerial atomic.Int64
 
 // ErrNotAwaiting is the terminal cause driveFromAwaiting fails with when it is
 // asked to resume a session that is NOT parked on a pending ask (no PendingAsk),

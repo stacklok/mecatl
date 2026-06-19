@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -673,7 +672,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
-	sess := session.New(s.sessionID(spec.Name), mode, ws.Root(), limits, time.Now())
+	sess := session.New(s.sessionID(spec.Name), mode, ws.Root(), limits, build.Engine.now())
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
 
 	// Mint the per-member cancellation pair and register the member in the PARENT

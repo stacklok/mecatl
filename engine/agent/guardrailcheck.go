@@ -36,11 +36,11 @@ func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (stri
 	defer cancel()
 
 	sess := session.New(
-		session.SessionID(fmt.Sprintf("guardrail-checker-%d", time.Now().UnixNano())),
+		session.SessionID(fmt.Sprintf("guardrail-checker-%d", childSerial.Add(1))),
 		session.ModeDefault,
 		"/",
 		guardrailCheckLimits,
-		time.Now(),
+		engine.now(),
 	)
 	// A tool-less in-memory session under the zero (headless) child posture: the
 	// checker scores text and calls no tools, so judgeWorkspace{} keeps it isolated

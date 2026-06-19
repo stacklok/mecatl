@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -123,11 +122,11 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 	// root keeps it isolated and deterministic. We use a noopWorkspace so the judge
 	// never reads the parent tree.
 	sess := session.New(
-		session.SessionID(fmt.Sprintf("%s-%d", j.idPrefix, time.Now().UnixNano())),
+		session.SessionID(fmt.Sprintf("%s-%d", j.idPrefix, childSerial.Add(1))),
 		j.childMode,
 		"/",
 		j.limits,
-		time.Now(),
+		j.engine.now(),
 	)
 
 	run := j.engine.Run(ctx, sess, judgeWorkspace{}, buildJudgePrompt(candidates, criteria))

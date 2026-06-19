@@ -873,7 +873,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// the redacted terminal metadata. A fork-failed branch still gets its branch_end so
 	// EVERY branch is represented (no missing event).
 	be.branchStart(i, prompt, routedCategory, routedModel, branchEngine.Model())
-	start := time.Now()
+	start := branchEngine.now()
 
 	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty
 	// state verbatim), so the degraded-fork advisory is never set on this path —
@@ -882,7 +882,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	if err != nil {
 		res.failed = true
 		res.failReason = fmt.Sprintf("fork failed: %v", err)
-		be.branchEnd(res, session.StopError, session.Usage{}, 0, time.Since(start))
+		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
 		return res, session.StopError
 	}
 	res.cleanup = cleanup
@@ -893,7 +893,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		t.childMode,
 		child.Root(),
 		t.limits,
-		time.Now(),
+		branchEngine.now(),
 	)
 
 	run := branchEngine.Run(ctx, childSess, child, prompt)
@@ -947,7 +947,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		}
 		res.summary = final
 	}
-	be.branchEnd(res, stop, usage, toolCount, time.Since(start))
+	be.branchEnd(res, stop, usage, toolCount, branchEngine.now().Sub(start))
 	return res, stop
 }
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -105,7 +104,7 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 		// session's root as a harmless label so logs correlate.
 		sess.Workspace,
 		userModelReviewLimits,
-		time.Now(),
+		r.engine.now(),
 	)
 
 	run := r.engine.Run(ctx, child, noopWorkspace{root: sess.Workspace}, reviewPrompt(transcript))

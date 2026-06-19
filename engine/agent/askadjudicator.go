@@ -221,11 +221,11 @@ func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewReques
 	// A tool-less in-memory session: the reviewer scores text and calls no tools,
 	// so judgeWorkspace{} (empty, read-only) keeps it isolated and deterministic.
 	sess := session.New(
-		session.SessionID(fmt.Sprintf("%s-%d", a.idPrefix, time.Now().UnixNano())),
+		session.SessionID(fmt.Sprintf("%s-%d", a.idPrefix, childSerial.Add(1))),
 		session.ModeDefault,
 		"/",
 		askReviewLimits,
-		time.Now(),
+		a.engine.now(),
 	)
 	run := a.engine.Run(ctx, sess, judgeWorkspace{}, buildAskReviewPrompt(a.policy, req))
 	// Zero-capability posture: the reviewer is non-interactive and its own asks

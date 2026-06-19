@@ -1522,7 +1522,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 		childID:  string(childID),
 		askLabel: fmt.Sprintf("subagent %q", subagentGoal(args))}
 
-	start := time.Now()
+	start := engine.now()
 	started = true
 	// Drain the child's Event stream entirely INSIDE the Subagent tool. Nothing from the
 	// child surfaces to the parent except the final summary string and, when observed,
@@ -1548,7 +1548,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 			ToolCount:    toolCount,
 			Usage:        usage,
 			Stop:         stop,
-			DurationMs:   time.Since(start).Milliseconds(),
+			DurationMs:   engine.now().Sub(start).Milliseconds(),
 		}})
 	}
 
@@ -1745,7 +1745,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
 
-	start := time.Now()
+	start := b.engine.now()
 	final, st, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runOpts, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
 	stop = st
 
@@ -1761,7 +1761,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 			ToolCount:    toolCount,
 			Usage:        usage,
 			Stop:         st,
-			DurationMs:   time.Since(start).Milliseconds(),
+			DurationMs:   b.engine.now().Sub(start).Milliseconds(),
 		}})
 	}
 	t.fireSubagentStop(ctx, child)
@@ -2198,7 +2198,7 @@ func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID sess
 	if resumedChild == nil {
 		// When a named agent def pins limits, the child runs under THOSE; otherwise it uses
 		// the Subagent tool's default limits.
-		child := session.New(childID, t.childMode, root, limits, time.Now())
+		child := session.New(childID, t.childMode, root, limits, t.childEngine.now())
 		// fork:true (issue #34): seed the FRESH child from the deep copy of the parent
 		// conversation taken synchronously in run()/startBackground. SeedHistory is
 		// idle-only and re-validates tool pairing (the snapshot is already
