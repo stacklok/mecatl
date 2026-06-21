@@ -133,8 +133,18 @@ jobs:
 
       # The harness leaves the scratch root in place on failure — the
       # transcripts ARE the deliverable of a failed run. Local spawns write
-      # .scratch/e2e-<ts>-<rand>/artifacts/ (incl. mecated.log); the remote
-      # target falls back to .scratch/e2e-artifacts/.
+      # .scratch/e2e-<ts>-<rand>/artifacts/ (incl. mecated.log + the per-scenario
+      # transcript-*.jsonl event stream); the remote target falls back to
+      # .scratch/e2e-artifacts/.
+      #
+      # include-hidden-files: TRUE is load-bearing — the artifacts live under
+      # `.scratch`, a DOT-directory, and actions/upload-artifact treats anything
+      # whose path has a leading-dot segment as hidden and EXCLUDES it by default.
+      # Without this the upload silently matched ZERO files (masked by the old
+      # if-no-files-found: ignore), so every failed live run uploaded nothing and
+      # the event-stream transcripts never escaped the runner — flakes were
+      # undebuggable. if-no-files-found is now `warn` (not `ignore`) so a future
+      # path/exclusion regression is VISIBLE in the job log instead of silent.
       - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -143,5 +153,6 @@ jobs:
           path: |
             .scratch/e2e-*/artifacts/**
             .scratch/e2e-artifacts/**
+          include-hidden-files: true
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: warn

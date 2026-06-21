@@ -131,43 +131,66 @@ func verdictReplaySpecs() {
 				stream2, err := cli2.OpenConverse(ctx)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "open converse on local #2")
 
-				// Resume the SAME session and prompt for ANOTHER Write to the SAME path.
-				// StartRunContent -> loadAndReopen runs ReplayApprovals first, re-Learning
-				// the path-keyed rule into #2's fresh permstore from the logged verdict.
-				gomega.Expect(stream2.SendPrompt(sessionID, writePrompt("omega"), nil)).
-					To(gomega.Succeed(), "resume + send turn 2 on local #2")
-
-				// Drain the resumed run to its terminal. The LOAD-BEARING oracle is the
-				// REPLAY property, NOT the read-ledger behaviour:
-				//
-				//   - REPLAY (what this spec proves): the resumed Write is AUTO-ALLOWED —
-				//     NO permission.ask fires for Write at all. This holds ONLY if
-				//     ReplayApprovals rebuilt the path-keyed rule into #2's fresh in-memory
-				//     permstore from the durable allow-always verdict (the Phase 3b loop).
-				//     Had the rule NOT been replayed, the first resumed Write would have
-				//     raised an ask.
-				//   - READ-LEDGER (what this spec deliberately TOLERATES): osfs keeps an
-				//     in-memory, per-workspace read-before-write ledger that RESETS on
-				//     restart (Phase 0 rehydrate-fidelity ledger row #8, reset-by-design).
-				//     #2's ledger is empty, so the FIRST auto-allowed overwrite of the
-				//     pre-restart replay.txt is correctly REFUSED ("not read this session,
-				//     or it changed"); the model self-recovers (Read replay.txt, then
-				//     re-Write) and the run ends end_turn with the new content on disk.
-				//
-				// So we must NOT assert the first resumed Write resolves non-error — that
-				// conflates "replay auto-allows the Write" (passes) with "the Write
-				// succeeds first try" (the read-ledger reset legitimately intercepts).
-				// Instead: assert NO Write ask (the replay oracle), a natural end_turn
-				// terminal, AT LEAST ONE non-error Write result (the recovery Write), and
-				// the eventual file content.
-				ctx2, cancel := context.WithTimeout(ctx, 90*time.Second)
+				// ONE ReadLoop spans BOTH resumed turns below (the read-ledger primer +
+				// the Write turn) — starting a second reader on the same stream would
+				// race the first (same discipline as the stream1 comment above). Sized
+				// for two short turns.
+				ctx2, cancel := context.WithTimeout(ctx, 150*time.Second)
 				defer cancel()
 				msgs := make(chan tea.Msg, 256)
 				go stream2.ReadLoop(ctx2, msgs)
 
+				// READ-LEDGER PRIMER (root-cause de-flake). osfs keeps an in-memory,
+				// per-workspace read-before-write ledger that RESETS on restart (Phase 0
+				// rehydrate-fidelity ledger row #8, reset-by-design). #2's ledger is
+				// empty, so an IMMEDIATE auto-allowed overwrite of the pre-restart
+				// replay.txt is correctly REFUSED ("not read this session, or it
+				// changed"). Relying on the model to self-recover from that refusal
+				// (Read replay.txt, then re-Write) is a model-variance flake ORTHOGONAL
+				// to the replay property under test — haiku usually recovers, but not
+				// always. So issue an explicit Read turn FIRST to record replay.txt in
+				// #2's ledger; the subsequent auto-allowed Write then succeeds on the
+				// first attempt, deterministically. This does NOT touch the replay
+				// oracle: this first resumed run is ALSO what drives loadAndReopen ->
+				// ReplayApprovals (re-Learning the path-keyed rule into #2's fresh
+				// permstore from the logged verdict), and the Write below is still
+				// AUTO-ALLOWED with NO ask — which is exactly what this spec proves.
+				gomega.Expect(stream2.SendPrompt(sessionID,
+					"Use the Read tool to read the file "+noteName+" in the workspace and reply with its exact contents. Call no other tool.", nil)).
+					To(gomega.Succeed(), "resume + send the read-ledger primer turn on local #2")
+				// Drain the primer turn to its terminal (its events are not asserted on —
+				// it exists only to populate the read-ledger + trigger ReplayApprovals).
+			primer:
+				for {
+					select {
+					case <-ctx2.Done():
+						ginkgo.Fail("read-ledger primer turn never reached a terminal\n--- mecated log tail ---\n" + local2.LogTail(4096))
+					case m, ok := <-msgs:
+						if !ok {
+							break primer
+						}
+						if _, isResult := m.(client.ResultMsg); isResult {
+							break primer
+						}
+					}
+				}
+
+				// Now prompt for ANOTHER Write to the SAME path. The LOAD-BEARING oracle
+				// is the REPLAY property: the resumed Write is AUTO-ALLOWED — NO
+				// permission.ask fires for Write at all. This holds ONLY if
+				// ReplayApprovals rebuilt the path-keyed rule into #2's fresh in-memory
+				// permstore from the durable allow-always verdict (the Phase 3b loop);
+				// had the rule NOT been replayed, this Write would have raised an ask.
+				// With the read-ledger now primed, the auto-allowed Write also succeeds
+				// on the FIRST attempt, so the file-content + non-error-result
+				// assertions below are deterministic rather than dependent on model
+				// self-recovery.
+				gomega.Expect(stream2.SendPrompt(sessionID, writePrompt("omega"), nil)).
+					To(gomega.Succeed(), "resume + send turn 2 on local #2")
+
 				var writeAsks []client.PermissionAskMsg
 				writeCallIDs := map[string]bool{} // ids of Write tool.calls in the resumed run
-				var anyWriteResultOK bool         // some Write call resolved non-error (the recovery write)
+				var anyWriteResultOK bool         // some auto-allowed Write call resolved non-error
 				var terminal *client.ResultMsg
 			drain:
 				for {
@@ -192,8 +215,8 @@ func verdictReplaySpecs() {
 								writeCallIDs[v.ID] = true
 							}
 						case client.ToolResultMsg:
-							// A non-error result for ANY resumed Write call is the recovery
-							// write (the first attempt may error on the reset read-ledger).
+							// A non-error result for the auto-allowed resumed Write — the
+							// read-ledger primer turn above means it succeeds first try.
 							if writeCallIDs[v.CallID] && !v.IsError {
 								anyWriteResultOK = true
 							}
@@ -220,14 +243,15 @@ func verdictReplaySpecs() {
 					"a Write was re-asked after restart — the logged allow-always verdict was NOT replayed into the fresh permstore; "+
 						"observed Write asks: "+formatWriteAsks(writeAsks)+logTail)
 
-				// At least one auto-allowed Write ultimately SUCCEEDED (the recovery write
-				// after the reset read-ledger refused the first overwrite). We assert
-				// "at least one non-error", NOT "the first", precisely because the
-				// read-ledger reset legitimately errors the first attempt.
+				// At least one auto-allowed Write resolved non-error. With the read-ledger
+				// primed by the explicit Read turn above, the auto-allowed Write succeeds
+				// on the first attempt — no model self-recovery from a read-ledger refusal
+				// is required, so this assertion is deterministic (it was the model-variance
+				// flake before the primer turn was added).
 				gomega.Expect(writeCallIDs).NotTo(gomega.BeEmpty(),
 					"the resumed run never surfaced a Write tool.call"+logTail)
 				gomega.Expect(anyWriteResultOK).To(gomega.BeTrue(),
-					"no auto-allowed Write in the resumed run resolved non-error (expected the recovery write to succeed after the reset read-ledger refusal)"+logTail)
+					"no auto-allowed Write in the resumed run resolved non-error (with the read-ledger primed, the replayed-verdict Write should succeed first try)"+logTail)
 
 				// NATURAL terminal: the resumed run completed end_turn — NOT StopBudget
 				// (the headroom removes the budget confound) and NOT a park on a re-raised
@@ -238,9 +262,9 @@ func verdictReplaySpecs() {
 					"the resumed run did not reach a clean end_turn terminal (stop="+terminal.Stop+")"+logTail)
 
 				// Corroborating side-effect: the file EVENTUALLY holds the NEW content,
-				// proving the auto-allowed writes ultimately succeed (turn 1 wrote "alpha";
-				// turn 2 writes "omega" to the same path, after the model recovers from the
-				// read-ledger refusal). Content match tolerates model-added trailing
+				// proving the auto-allowed write ultimately succeeds (turn 1 wrote "alpha";
+				// turn 2 writes "omega" to the same path, first try now that the read-ledger
+				// was primed). Content match tolerates model-added trailing
 				// punctuation/whitespace (LLM output is not byte-exact — the same trim
 				// approach approve-after-kill uses).
 				gomega.Eventually(func() (string, error) {

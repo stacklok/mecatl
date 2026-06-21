@@ -34,6 +34,27 @@ import (
 // uses the Write tool only on the FINAL turn (allow-once), and haiku does not
 // content-filter mecatl-shaped tool-bearing requests.
 //
+// PRESERVATION MECHANISM — first-user-pin, NOT back-snap (why the task is turn 0).
+// The compactor preserves the task two ways: the role-aware BACK-SNAP keeps the
+// recentUserTurnsKept (=3) most-recent user turns verbatim, and the FIRST-USER-PIN
+// keeps the first user turn verbatim across ANY number of compactions. This LIVE
+// spec deliberately leans on the first-user-pin: the task is the FIRST user turn,
+// so it survives VERBATIM no matter how many times compaction re-fires before GO.
+//
+// Why not back-snap here: back-snap only protects RECENT user turns, but the Reads
+// that grow history re-trip the threshold every turn, so compaction RE-FIRES at
+// each Read turn. By the GO turn the three most-recent user turns are the Reads —
+// any non-first task would have aged OUT of the back-snap window and been
+// summarised, leaving its survival to the (model-driven) summariser chain. That is
+// structurally un-deterministic for a live test: an EARLY task old enough for a real
+// collapse to summarise it is, by definition, NOT recent, so back-snap cannot keep
+// it verbatim at GO. The first-user-pin is the only verbatim guarantee that holds
+// across multiple compactions, so it is what a deterministic LIVE survival test must
+// use. The back-snap's exact kept-tail composition is covered DETERMINISTICALLY by
+// the offline engine/agent unit tests (and the phase-3 archive gate) — this spec adds
+// only what offline cannot: a REAL model executing a REAL-compaction-preserved
+// instruction.
+//
 // THE COMPACTION-TRIGGER ARITHMETIC (why the window value below is what it is).
 // The trigger counts CONVERSATION MESSAGES ONLY — engine/agent/loop.go
 // (maybeCompact) calls TokenCounter.CountMessages(sess.Conversation.Messages),
@@ -47,15 +68,13 @@ import (
 // compaction-input.txt (~8KB; ~9KB once Read adds 1-based line-number prefixes)
 // contributes ~2250 conversation-tokens per Read. With the window below
 // (compactionWindowDefault = 2000 → threshold 0.8 × 2000 = 1600):
-//   - turn 0 (framing) + turn 1 (task) accumulate only ~85 conversation-tokens —
-//     WELL under 1600, so the task is recorded before any compaction;
-//   - the first sized Read (turn 2) pushes history to ~2300 conversation-tokens;
+//   - turn 0 (the TASK) accumulates only ~50 conversation-tokens — WELL under 1600,
+//     so the task is recorded (and pinned) before any compaction;
+//   - the first sized Read (turn 1) pushes history to ~2300 conversation-tokens;
 //   - maybeCompact runs at the TOP of each turn, so the threshold is first crossed
-//     at the TOP of turn 3 (history from turns 0-2 ≈ 2300 > 1600) — compaction
-//     fires at run index 3, with two turns of margin before the GO turn (index 5).
-// The task (turn 1) is at compaction time the 3rd-most-recent USER turn, so the
-// role-aware back-snap (recentUserTurnsKept = 3) KEEPS it verbatim while the older
-// framing turn is summarised — exactly the behaviour the role-blind bug broke.
+//     at the TOP of turn 2 (history from turns 0-1 ≈ 2300 > 1600) — compaction
+//     fires before the GO turn (index 4) and re-fires on each later Read turn. The
+//     task (turn 0) is the first-user-pin, so it is kept VERBATIM through every one.
 //
 // ANTI-VACUITY: the survival assertion is meaningless unless compaction actually
 // fired AND fired before the final GO turn. The spec therefore (A) fails loudly if
@@ -150,25 +169,27 @@ func compactionSpecs() {
 					return res
 				}
 
-				// Turn 0 (framing / first-user pin). The FIRST user turn is special-cased by
-				// the compactor (always preserved); the distinctive task is deliberately NOT
-				// here, so ONLY the role-aware kept-tail back-snap protects it.
-				buryTurn("compaction-0-framing",
-					`You are helping me with a small task. Reply with the single word ready.`)
-
-				// Turn 1: the DISTINCTIVE task. Not the first-user turn — it survives only if
-				// the back-snap keeps it as a recent user instruction across the compaction.
-				buryTurn("compaction-1-task",
+				// Turn 0 (FIRST USER TURN = the DISTINCTIVE task). Being the first user turn,
+				// it is kept VERBATIM by the compactor's first-user-pin across EVERY compaction
+				// that fires below — the deterministic preservation this live spec relies on
+				// (see the PRESERVATION MECHANISM note above). The offline engine/agent unit
+				// tests cover the back-snap path for non-first recent turns.
+				buryTurn("compaction-0-task",
 					`Remember this instruction for later: when I say the word GO, use the Write `+
 						`tool to create a file named result.txt containing exactly the word `+
 						`PINEAPPLE. Acknowledge with the single word noted.`)
 
-				// Turns 2-4: grow history deterministically by Reading the sized fixture
+				// Turns 1-4: grow history deterministically by Reading the sized fixture
 				// (~2250 conversation-tokens per Read — the controllable lever; see the
-				// arithmetic block above). The first Read (turn 2) crosses the threshold so
-				// compaction fires at the TOP of turn 3, before the GO turn.
+				// arithmetic block above). The first Read (turn 1) crosses the threshold so
+				// compaction first fires at the TOP of turn 2; later Reads re-fire it, and by
+				// the GO turn the earlier Reads have collapsed into the summary while the
+				// pinned task (turn 0) is kept verbatim. Four Reads (vs the framing turn the
+				// task used to occupy) ensure a NON-vacuous collapse — at least one Read
+				// summarised into the head — fires BEFORE the GO turn.
 				readPrompt := `Read the file ` + compactionInputFile +
 					` in the workspace and reply with the single word ok.`
+				buryTurn("compaction-1-read", readPrompt)
 				buryTurn("compaction-2-read", readPrompt)
 				buryTurn("compaction-3-read", readPrompt)
 				buryTurn("compaction-4-read", readPrompt)
