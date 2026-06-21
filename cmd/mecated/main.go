@@ -349,6 +349,9 @@ type config struct {
 	// forkPreservedCap bounds how many PRESERVED winner forks (join=first/judge)
 	// survive at once; the oldest beyond the cap is LRU-reaped. 0 => the default.
 	forkPreservedCap int
+	// parallelAutoMerge opts in to auto-merging a single-branch join=first
+	// Parallel winner's diff back into the parent workspace. Default OFF.
+	parallelAutoMerge bool
 
 	// Teams: enable the experimental agent-teams capability (CreateTeam /
 	// SpawnTeammate / RunTeam). Opt-in, default off.
@@ -829,6 +832,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		ExaAPIKey:               cfg.exaAPIKey,
 		WebSearchOff:            cfg.websearchOff,
 		ForkPreservedCap:        cfg.forkPreservedCap,
+		ParallelAutoMerge:       cfg.parallelAutoMerge,
 		EnableTeams:             cfg.enableTeams,
 		MCPServers:              cfg.mcpServers,
 		MCPResourceTools:        cfg.mcpResourceTools,
@@ -1076,6 +1080,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.websearchAuthHeader, "websearch-auth-header", "", "WEBSEARCH: HTTP header the WEBSEARCH_API_KEY is sent in (default \"Authorization\" as a Bearer token; set e.g. \"X-API-Key\" to send the raw key). Ignored when no key is set. See docs/usage.md \"Enabling web search\"")
 	fs.StringVar(&cfg.websearchQueryParam, "websearch-query-param", "", "WEBSEARCH: URL query parameter the search string is placed in (default \"q\"). Tune for a generic JSON search endpoint that expects a different parameter name. See docs/usage.md \"Enabling web search\"")
 	fs.IntVar(&cfg.forkPreservedCap, "fork-preserved-cap", agent.DefaultPreservedForkCap, "max PRESERVED winner forks (join=first/judge) kept on disk at once; the oldest beyond this is LRU-reaped. Preserved forks stay inspectable until reaped")
+	fs.BoolVar(&cfg.parallelAutoMerge, "parallel-auto-merge", false, "OPT-IN: auto-merge a SINGLE-BRANCH join=first Parallel winner's diff back into this workspace after the run, so a delegated implementer's edits land without a manual copy/merge step. Multi-branch runs never auto-merge. On a conflict the merge surfaces a tool error and PRESERVES the winner's fork for manual resolution. Default OFF (the no-auto-merge boundary holds). See docs/adr/0039-parallel-auto-merge.md")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", true, "register the experimental agent-teams capability (CreateTeam/SpawnTeammate/RunTeam); on by default and inert until a client drives a team. Pass --enable-teams=false to disable")
 
 	fs.Var(&cfg.mcpServers, "mcp-server", "remote MCP server as name=URL (repeatable); auth token read from MCP_<NAME>_TOKEN")

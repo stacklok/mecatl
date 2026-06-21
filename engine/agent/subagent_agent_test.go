@@ -141,10 +141,13 @@ func TestSubagentSpecEnumeratesAgents(t *testing.T) {
 // shell-bearing deployment's prompt-cache-stable spec never shifts.
 func TestSubagentSpecShellDisabledNoteOption(t *testing.T) {
 	// The historical shell clause, pinned byte-for-byte (the model plans build/test/git
-	// delegation off this exact promise).
+	// delegation off this exact promise). The wording is precise: the child CAN write
+	// scratch files via Bash, but the worktree is DISCARDED AND there are no Edit/Write
+	// tools, so file changes never reach the parent.
 	const shellClause = "(Read/Grep/Glob) plus a full shell in an isolated, throwaway git worktree — " +
-		"it can build, test, and inspect history, but its file changes are DISCARDED " +
-		"(no Edit/Write) and it cannot delegate further."
+		"it can build, test, inspect history, and write scratch files, but the worktree is DISCARDED " +
+		"after the run (no Edit/Write tools; use Parallel when you need the diff kept) and it cannot " +
+		"delegate further."
 	const reason = "no shell on this workspace because it is untrusted (run with --trust-project to enable it)"
 
 	eng := childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t))

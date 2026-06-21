@@ -853,14 +853,19 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 			Schema:      subagentSchema,
 		}
 	}
-	// The shell clause is honest per composition: the default (shell wired) claims the
-	// isolated-worktree shell; with WithSubagentShellDisabledNote set it is REPLACED by
-	// a read-only-only description carrying the reason, so the model never delegates
-	// build/test/git work the child cannot perform. Without the note the assembled
-	// description is byte-identical to the historical one
-	// (TestSubagentSpecShellDisabledNoteOption pins both sides).
+	// shellClause is honest per composition. The default (shell wired) claims the
+	// isolated-worktree shell; the wording is precise: the child CAN write scratch
+	// files via Bash, but the worktree is DISCARDED after the run AND the child has
+	// no Edit/Write tools, so its file changes never reach the parent — use Parallel
+	// (whose winner's fork is preserved, or --parallel-auto-merge for a single branch)
+	// when you need the diff kept. With WithSubagentShellDisabledNote set the clause is
+	// REPLACED by a read-only-only description carrying the reason, so the model never
+	// delegates build/test/git work the child cannot perform. Without the note the
+	// assembled description is byte-stable (TestSubagentSpecShellDisabledNoteOption pins
+	// both sides).
 	shellClause := "plus a full shell in an isolated, throwaway git worktree — it can build, " +
-		"test, and inspect history, but its file changes are DISCARDED (no Edit/Write)"
+		"test, inspect history, and write scratch files, but the worktree is DISCARDED after " +
+		"the run (no Edit/Write tools; use Parallel when you need the diff kept)"
 	if t.shellDisabledNote != "" {
 		shellClause = "ONLY — " + t.shellDisabledNote + " — with no Edit/Write"
 	}

@@ -544,6 +544,20 @@ type Config struct {
 	// are capped so many Parallel calls cannot grow disk without bound.
 	ForkPreservedCap int
 
+	// ParallelAutoMerge is the OPT-IN (default OFF) flag that auto-merges a
+	// SINGLE-BRANCH join=first Parallel winner's diff back into the parent
+	// workspace after the run, so a delegated implementer's edits actually land
+	// without a manual copy/merge step. It crosses the historical no-auto-merge
+	// boundary (a frozen-ADR topic — see docs/adr/0039-parallel-auto-merge.md),
+	// so it is OFF by default and the operator must opt in (--parallel-auto-merge).
+	// Multi-branch runs NEVER auto-merge (the boundary stays for fan-out). On a
+	// conflict the merge surfaces a tool error naming the conflict + the preserved
+	// fork path; the fork is left intact for manual resolution. The merge is a
+	// POST-RUN step, so ParallelTool.ReadOnly() stays true and read-parallel /
+	// mutate-serial is unaffected. The merge runs in the PARENT workspace under
+	// the parent's trust posture.
+	ParallelAutoMerge bool
+
 	// EnableTeams turns on the agent-teams capability (the CreateTeam /
 	// SpawnTeammate / RunTeam RPCs). It is OPT-IN and EXPERIMENTAL: default off.
 	// When false, server.Config.MemberEngine stays nil and the team RPCs return

@@ -769,7 +769,37 @@ pullable. The composition layer threads the shared store into `registerParallelT
 `TestParallelNilStoreSkipsPersist`, `TestParallelRendersBranchIDPerJoinMode`,
 `TestInspectSubagentAcceptsParallelPrefix`, `TestInspectSubagentRejectsTeamPrefix`,
 `TestInspectParallelBranchUnknownIDErrors`, `TestInspectParallelBranchStoreFailureDistinct`,
-`internal/app.TestRegisterParallelToolThreadsStore`. Floor-scoped (`ScopeBuiltinDefault`) ALLOW in `defaultRules()` (issue #37, decided for
+`internal/app.TestRegisterParallelToolThreadsStore`.
+
+**Parallel auto-merge (ADR 0039) + the join=all dead-paths fix.** Two related
+changes landed together. (1) **Bug fix:** `joinBranches` (the `join=all` AND the
+`join=first`/`judge` all-failed renderer) used to print `workspace: <childRoot>`
+for each branch — but the caller had ALREADY torn down every fork before
+rendering, so those paths pointed at deleted temp dirs the model then tried to
+Read/Glob and failed on. `joinBranches` no longer prints workspace paths (the
+`branch id:` line stays — it keys `InspectSubagent`, which reads the persisted
+session-store transcript, NOT the filesystem, so a torn-down fork does not
+invalidate it); it prints an honest one-line note that branch workspaces were
+torn down after the join and how to keep changes next time. The Parallel spec
+text was updated to say `join=all` tears down every fork. (2) **Auto-merge
+(ADR 0039):** an OPT-IN `--parallel-auto-merge` flag (default OFF) wires a
+`tool.ForkMerger` (`forker.Merger` — `git diff --no-ext-diff --binary HEAD` from
+the fork piped to `git apply` in the parent, plus untracked-file copy, same
+scrubbed env as `overlayDirty`) into the Parallel tool via `WithAutoMerge`. When
+a `join=first` run has exactly ONE branch and a successful winner, its diff is
+auto-merged back into the parent workspace AFTER `preserveWinner` and BEFORE
+`Execute` returns; the result notes the auto-merge (and drops the
+"inspect/merge/clean" guidance — the changes already landed). Multi-branch runs
+and `join=judge`/`join=all` NEVER auto-merge (the no-auto-merge boundary stays
+for fan-out). On a conflict `Execute` returns a tool error naming the conflict +
+the preserved fork path (the fork is left intact for manual resolution); it
+NEVER forces. `ParallelTool.ReadOnly()` stays `true` — the merge is a POST-RUN
+step, not a dispatch-time mutation, so read-parallel / mutate-serial is
+unaffected. The merge runs in the PARENT workspace under the parent's trust
+posture. Guards: `agent.TestParallelAutoMerge(SingleBranchSuccess|
+ConflictSurfacesToolError|MultiBranchNeverMerges|JoinAllNeverMerges|
+NilMergerIsNoOp)` + `forker.TestMerger(AppliesForkDiffToParent|CleanForkIsNoOp|
+ConflictSurfacesError)`. Floor-scoped (`ScopeBuiltinDefault`) ALLOW in `defaultRules()` (issue #37, decided for
 `InspectSubagent` + `InspectMember` + `SubagentStatus` together): all three are read-only pulls of
 harness-owned data (persisted child/member transcripts; the run-local child registry), bounded-rendered,
 prefix-gated — and the children were already permission-gated when they ran. Overridable to ask/deny by

@@ -389,3 +389,137 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// TestMergerAppliesForkDiffToParent asserts that Merger.Merge applies a fork's
+// working-tree changes (tracked modifications + untracked new files) back into
+// the parent workspace — the auto-merge fast path. Skipped when git is
+// unavailable.
+func TestMergerAppliesForkDiffToParent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "existing.txt"), "from base\n")
+	gitCommit(t, base)
+
+	// Fork the base so we have an isolated child to edit in.
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace)
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "impl")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// Edit a tracked file and add an untracked file in the fork (the child's
+	// "implementation").
+	childRoot := child.Root()
+	if err := os.WriteFile(filepath.Join(childRoot, "existing.txt"), []byte("from fork\n"), 0o644); err != nil {
+		t.Fatalf("edit tracked in fork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "new.txt"), []byte("new from fork\n"), 0o644); err != nil {
+		t.Fatalf("write untracked in fork: %v", err)
+	}
+
+	// The parent must still have the original content before the merge.
+	if got, _ := os.ReadFile(filepath.Join(base, "existing.txt")); string(got) != "from base\n" {
+		t.Fatalf("parent existing.txt mutated before merge: %q", got)
+	}
+
+	// Merge the fork's diff back into the parent.
+	m := forker.NewMerger()
+	if err := m.Merge(context.Background(), childRoot, baseWS); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	// The parent now has BOTH the tracked edit and the untracked new file.
+	got, err := os.ReadFile(filepath.Join(base, "existing.txt"))
+	if err != nil {
+		t.Fatalf("parent existing.txt missing after merge: %v", err)
+	}
+	if string(got) != "from fork\n" {
+		t.Fatalf("parent existing.txt not merged: got %q, want %q", got, "from fork\n")
+	}
+	gotNew, err := os.ReadFile(filepath.Join(base, "new.txt"))
+	if err != nil {
+		t.Fatalf("parent new.txt missing after merge: %v", err)
+	}
+	if string(gotNew) != "new from fork\n" {
+		t.Fatalf("parent new.txt not merged: got %q", gotNew)
+	}
+}
+
+// TestMergerCleanForkIsNoOp asserts that a fork with NO working-tree changes
+// short-circuits — Merge returns nil without touching the parent.
+func TestMergerCleanForkIsNoOp(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "tracked.txt"), "from base\n")
+	gitCommit(t, base)
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace)
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "clean")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// No edits in the fork — it's a clean checkout of HEAD.
+	m := forker.NewMerger()
+	if err := m.Merge(context.Background(), child.Root(), baseWS); err != nil {
+		t.Fatalf("Merge of a clean fork must be a no-op, got: %v", err)
+	}
+}
+
+// TestMergerConflictSurfacesError asserts that a merge conflict (the parent has
+// diverging edits to the same file) returns a non-nil error naming the fork
+// path, and does NOT force the apply.
+func TestMergerConflictSurfacesError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "shared.txt"), "from base\n")
+	gitCommit(t, base)
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace)
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "conflict")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// Diverging edit: the fork changes line 1 one way, the parent changes it
+	// another way — `git apply` will reject the patch.
+	if err := os.WriteFile(filepath.Join(child.Root(), "shared.txt"), []byte("from fork\n"), 0o644); err != nil {
+		t.Fatalf("edit in fork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "shared.txt"), []byte("from parent\n"), 0o644); err != nil {
+		t.Fatalf("edit in parent: %v", err)
+	}
+
+	m := forker.NewMerger()
+	err = m.Merge(context.Background(), child.Root(), baseWS)
+	if err == nil {
+		t.Fatal("Merge of a conflicting fork must return an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "preserved at") {
+		t.Fatalf("conflict error must name the preserved fork path for manual resolution, got: %v", err)
+	}
+}

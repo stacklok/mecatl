@@ -39,3 +39,37 @@ type WorkspaceForker interface {
 	// and never load-bearing for safety — purely informational.
 	Fork(ctx context.Context, base Workspace, label string) (child Workspace, cleanup func() error, advisory string, err error)
 }
+
+// ForkMerger is the OPTIONAL seam by which a preserved winning fork's changes
+// are merged BACK into the parent workspace. It is the auto-merge half of
+// Parallel's single-branch fast path: a Parallel run with exactly one branch
+// and join=first, when wired with a merger, applies the winner's diff to the
+// parent so a delegated implementer's edits actually LAND without a manual
+// copy/merge step.
+//
+// It lives here in engine/tool, next to WorkspaceForker, for the same layering
+// reason (port already imports tool). The interface is additive — no frozen
+// domain type changes.
+//
+// Contract:
+//   - Merge applies the fork's working-tree-vs-HEAD diff to the parent
+//     workspace. It MUST NOT force: on a conflict it returns a non-nil error
+//     naming the conflict and the fork path so the operator can resolve
+//     manually. The fork is left intact (the caller still owns its cleanup /
+//     reaper slot) so a failed merge is recoverable.
+//   - The merge runs in the PARENT workspace under the PARENT's trust posture,
+//     not the fork's — the fork's content is untrusted child-authored data, but
+//     applying a diff is a parent-side operation (the same trust the parent's
+//     own Edit/Write carries). Composition decides whether to wire a merger at
+//     all (--parallel-auto-merge, default OFF).
+//   - nil merger (the default) means no auto-merge: the historical no-auto-merge
+//     boundary holds unchanged. ParallelTool.ReadOnly() stays true regardless —
+//     the merge is a POST-RUN step, not a dispatch-time mutation, so
+//     read-parallel / mutate-serial is unaffected.
+type ForkMerger interface {
+	// Merge applies the diff of the fork at forkRoot (its working tree vs its
+	// HEAD) into the parent workspace parentWS. On conflict it returns a
+	// non-nil error describing the conflict; the fork at forkRoot is left in
+	// place for manual resolution.
+	Merge(ctx context.Context, forkRoot string, parentWS Workspace) error
+}

@@ -429,3 +429,154 @@ func firstToolResult(t *testing.T, evs []session.Event) *session.ToolResult {
 	t.Fatalf("no tool result event in %v", typesOf(evs))
 	return nil
 }
+
+// fakeMerger is a tool.ForkMerger test double: it records every Merge call and
+// can be scripted to return a conflict error (errOnCall == the 1-based call
+// index) to exercise the conflict-surfacing path.
+type fakeMerger struct {
+	mu        sync.Mutex
+	calls     []fakeMergeCall
+	errOnCall int // 1-based; 0 = never error
+}
+
+type fakeMergeCall struct {
+	ForkRoot   string
+	ParentRoot string
+}
+
+func (m *fakeMerger) Merge(_ context.Context, forkRoot string, parentWS tool.Workspace) error {
+	m.mu.Lock()
+	m.calls = append(m.calls, fakeMergeCall{ForkRoot: forkRoot, ParentRoot: parentWS.Root()})
+	n := len(m.calls)
+	m.mu.Unlock()
+	if m.errOnCall > 0 && n == m.errOnCall {
+		return fmt.Errorf("simulated conflict in %s", forkRoot)
+	}
+	return nil
+}
+
+func (m *fakeMerger) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.calls)
+}
+
+// TestParallelAutoMergeSingleBranchSuccess asserts that a SINGLE-BRANCH
+// join=first run with WithAutoMerge wired merges the winner's fork into the
+// parent workspace and the result notes the auto-merge.
+func TestParallelAutoMergeSingleBranchSuccess(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(&branchProvider{summary: "implemented the thing"}, catalogWith(t, childRead))
+	merger := &fakeMerger{}
+	fork := agent.NewParallelTool(childEngine, &memForker{}, agent.WithAutoMerge(merger))
+
+	res := runParallel(t, fork, "c1", `{"tasks":["implement X"],"join":"first"}`)
+	if res.IsError {
+		t.Fatalf("auto-merge success path returned an error: %q", res.Content)
+	}
+	if merger.callCount() != 1 {
+		t.Fatalf("merger called %d times, want 1 (single-branch winner)", merger.callCount())
+	}
+	if !strings.Contains(res.Content, "auto-merged into this workspace") {
+		t.Fatalf("result must note the auto-merge, got:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, "PRESERVED — not auto-deleted") {
+		t.Fatalf("auto-merged result must NOT carry the preserved-workspace guidance (the changes already landed), got:\n%s", res.Content)
+	}
+}
+
+// TestParallelAutoMergeConflictSurfacesToolError asserts that a merge conflict
+// returns a tool ERROR naming the conflict + the preserved fork path (the fork
+// is left intact for manual resolution), and the merger WAS called.
+func TestParallelAutoMergeConflictSurfacesToolError(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(&branchProvider{summary: "implemented"}, catalogWith(t, childRead))
+	merger := &fakeMerger{errOnCall: 1}
+	fork := agent.NewParallelTool(childEngine, &memForker{}, agent.WithAutoMerge(merger))
+
+	res := runParallel(t, fork, "c1", `{"tasks":["implement X"],"join":"first"}`)
+	if !res.IsError {
+		t.Fatalf("a merge conflict must surface a tool error, got a success result:\n%s", res.Content)
+	}
+	if merger.callCount() != 1 {
+		t.Fatalf("merger must be called once even on conflict, got %d", merger.callCount())
+	}
+	if !strings.Contains(res.Content, "auto-merge") || !strings.Contains(res.Content, "FAILED") {
+		t.Fatalf("error must name the auto-merge failure, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "PRESERVED") {
+		t.Fatalf("error must say the fork is PRESERVED for manual resolution, got:\n%s", res.Content)
+	}
+}
+
+// TestParallelAutoMergeMultiBranchNeverMerges asserts that a MULTI-BRANCH
+// join=first run NEVER calls the merger even when WithAutoMerge is wired — the
+// no-auto-merge boundary stays for fan-out.
+func TestParallelAutoMergeMultiBranchNeverMerges(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(&branchProvider{summary: "branch"}, catalogWith(t, childRead))
+	merger := &fakeMerger{}
+	fork := agent.NewParallelTool(childEngine, &memForker{}, agent.WithAutoMerge(merger))
+
+	res := runParallel(t, fork, "c1", `{"tasks":["A","B"],"join":"first"}`)
+	if res.IsError {
+		t.Fatalf("multi-branch run must succeed, got error: %q", res.Content)
+	}
+	if merger.callCount() != 0 {
+		t.Fatalf("multi-branch run must NOT auto-merge; merger called %d times", merger.callCount())
+	}
+	if strings.Contains(res.Content, "auto-merged") {
+		t.Fatalf("multi-branch result must not claim an auto-merge, got:\n%s", res.Content)
+	}
+}
+
+// TestParallelAutoMergeJoinAllNeverMerges asserts that join=all NEVER calls the
+// merger (no winner to merge), even for a single branch.
+func TestParallelAutoMergeJoinAllNeverMerges(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(&branchProvider{summary: "branch"}, catalogWith(t, childRead))
+	merger := &fakeMerger{}
+	fork := agent.NewParallelTool(childEngine, &memForker{}, agent.WithAutoMerge(merger))
+
+	res := runParallel(t, fork, "c1", `{"tasks":["A"],"join":"all"}`)
+	if res.IsError {
+		t.Fatalf("join=all single branch must succeed, got error: %q", res.Content)
+	}
+	if merger.callCount() != 0 {
+		t.Fatalf("join=all must NOT auto-merge; merger called %d times", merger.callCount())
+	}
+}
+
+// TestParallelAutoMergeNilMergerIsNoOp asserts that WITHOUT WithAutoMerge the
+// historical no-auto-merge boundary holds (the merge never fires).
+func TestParallelAutoMergeNilMergerIsNoOp(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(&branchProvider{summary: "branch"}, catalogWith(t, childRead))
+	fork := agent.NewParallelTool(childEngine, &memForker{}) // no WithAutoMerge
+
+	res := runParallel(t, fork, "c1", `{"tasks":["A"],"join":"first"}`)
+	if res.IsError {
+		t.Fatalf("nil-merger single-branch must succeed, got error: %q", res.Content)
+	}
+	if strings.Contains(res.Content, "auto-merged") {
+		t.Fatalf("nil-merger result must not claim an auto-merge, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "PRESERVED — not auto-deleted") {
+		t.Fatalf("nil-merger result must still carry the preserved-workspace guidance, got:\n%s", res.Content)
+	}
+}

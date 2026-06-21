@@ -49,8 +49,44 @@ text, log strings — as named files in the plan, so they aren't an afterthought
 Surface the plan to the user before implementing if the approach is non-obvious
 or has trade-offs worth a decision.
 
+**Size and complexity-rate every implementation task.** The architect must tag
+each task with: a **diff-size band** (S = a few lines in one file; M = one or
+two files, tens of lines; L = multi-file, hundreds of lines), a **complexity
+rating** (mechanical = direct translation of the plan; moderate = some design
+choices within the plan's bounds; tricky = load-bearing decisions the plan
+under-specifies), **dependencies/ordering** (which tasks must land first), and
+**single-pass vs chunked** (can one agent do it in one drive, or must it be
+broken across drives/agents). The orchestrator uses this tagging to pick the
+implementer path in step 2.
+
 ### 2. Implement (build + test, no commit)
-Spawn a **separate** expert agent to execute the plan. It:
+Spawn a **separate** expert agent to execute the plan. It is the **executor of
+a plan it did not author** — whether that agent is you (the orchestrator) or a
+delegated agent is a *tooling* choice, not a rigor choice. The rigor that
+matters is **plan ≠ review**: the plan is written by a separate architect, and
+the review is run by fresh-context agents that see only the diff + the plan,
+never the implementer's reasoning. That independence is what makes the review
+meaningful — NOT whether the implementer was you or a delegate.
+
+**Delegate as ONE unit.** Hand the implementer the plan + the whole task; do
+NOT relay file contents through the orchestrator, and do NOT spawn one subagent
+per file. Chunking by file destroys the plan's coherence and forces the
+orchestrator to re-author context the implementer could have read itself.
+
+**Pick the implementer path by what your tools allow:**
+- **Write-capable delegation with merge-back** (a delegated agent whose edits
+  land in this workspace, or a Parallel single-branch run with
+  `--parallel-auto-merge` whose winner's diff is merged back) → **delegate**.
+- **Read-only subagent** (a Subagent whose worktree is discarded; no
+  Edit/Write) → **implement directly yourself** — the subagent can investigate
+  and produce code as text in its final message, but it cannot land edits. You
+  write the files from its output.
+- **Fork-with-merge** (a single-branch `Parallel` with `join: first`/`judge`,
+  whose winner's fork is preserved) → **delegate, then merge** the winner's
+  diff back into this workspace (or rely on `--parallel-auto-merge` to do it
+  automatically).
+
+The implementer:
 - builds and runs the project's **offline** test suite (per `CLAUDE.md`),
 - **writes tests at the level the change demands** — unit tests for logic, and
   an **end-to-end test through the project's real harness** (the agent loop,
@@ -62,9 +98,6 @@ Spawn a **separate** expert agent to execute the plan. It:
 - **updates the docs the plan flagged as stale** in the same pass — code and
   its documentation land together, not in a follow-up,
 - does **NOT** commit — leaves changes in the working tree for review.
-
-Keeping plan and implementation in different agents preserves the
-independence that makes the review meaningful.
 
 ### 3. Review (panel, parallel)
 Invoke the **`panel-review`** skill (spec + standards + domain specialists,

@@ -3,6 +3,8 @@
 package e2e_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -98,5 +100,72 @@ When InspectSubagent returns, reply with the single word done.`)
 			gomega.Expect(inspected).To(gomega.BeTrue(),
 				"no successful InspectSubagent of a parallel- branch id observed (the branch transcript was not pulled)\n"+failureReport())
 		})
+
+		// ADR 0039 — the auto-merge fast path. A SINGLE-BRANCH join=first Parallel
+		// run with --parallel-auto-merge wired merges the winner's diff back into
+		// the parent workspace, so a delegated implementer's edits land without a
+		// manual copy/merge step. The live proof: the branch writes a sentinel
+		// file in its isolated fork, and after the Parallel call returns the
+		// sentinel file EXISTS in the PARENT workspace (loc.Workspace()). Without
+		// auto-merge the fork is preserved (or torn down) but the parent tree is
+		// untouched — the sentinel would be absent. This is the regression guard
+		// for the capability the operator asked for ("everything through
+		// sub-agents" with edits that actually land).
+		ginkgo.It("auto-merges a single-branch join=first winner's file into the parent workspace",
+			ginkgo.SpecTimeout(6*time.Minute),
+			func(ctx ginkgo.SpecContext) {
+				// A dedicated mecated with --parallel-auto-merge over its OWN
+				// scratch tree (the harness git-inits the workspace + commits the
+				// fixtures, so the force-copy fork has a base to diff against).
+				loc, err := harness.NewLocalWith("--parallel-auto-merge")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawning the --parallel-auto-merge mecated failed")
+				defer func() { _ = loc.Close() }()
+
+				// The sentinel the branch will write. Distinctive enough that no
+				// model would invent it; the file name is unique in the workspace.
+				const (
+					sentinelFile = "AUTOMERGE-SENTINEL.txt"
+					sentinelBody = "AUTOMERGE-4E2C9A1B\n"
+				)
+
+				driver := harness.NewDriver(loc)
+				report := func(res *harness.RunResult, runErr error) string {
+					return harness.Summary(res, runErr, loc.LogTail(4096))
+				}
+
+				// One branch, join=first: the auto-merge eligibility condition.
+				// The branch writes the sentinel file via Bash, then the Parallel
+				// call returns and the auto-merge applies the fork's diff back.
+				res, err := driver.Run(ctx, harness.RunOpts{
+					Scenario: "parallel-auto-merge", Timeout: 6 * time.Minute,
+					ApproveTools: []string{"Parallel"}, // backup; the CLI config allows it
+				}, `Use the tool named "Parallel" — not the Subagent tool — exactly once, with these arguments: tasks = ["Use the Bash tool to create a file named `+sentinelFile+` containing exactly the text `+sentinelBody+` (no trailing newline beyond the one in that text). Call no other tool. After the file is written, reply with the single word done."] and join = "first". Never call Subagent and call no other tool. When the Parallel tool returns, reply with the single word done.`)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), report(res, err))
+				gomega.Expect(res).NotTo(gomega.BeNil(), report(res, err))
+
+				// A Parallel call must have happened with a single branch.
+				calls := res.ToolCalls("Parallel")
+				gomega.Expect(calls).NotTo(gomega.BeEmpty(), "no Parallel tool.call observed\n"+report(res, err))
+				starts := res.ParallelMsgs(client.ParallelStart)
+				gomega.Expect(starts).NotTo(gomega.BeEmpty(), "no parallel.start observed\n"+report(res, err))
+				gomega.Expect(starts[0].BranchCount).To(gomega.Equal(1),
+					"expected a 1-branch fan-out (the auto-merge eligibility condition)\n"+report(res, err))
+
+				// The Parallel result must NOT be an error (a merge conflict would
+				// surface here — that's a real failure, not a regression).
+				tr := res.ToolResult(calls[0].ID)
+				gomega.Expect(tr).NotTo(gomega.BeNil(), report(res, err))
+				gomega.Expect(tr.IsError).To(gomega.BeFalse(),
+					"Parallel tool result errored (auto-merge conflict?)\n"+report(res, err))
+
+				// THE regression assertion: the sentinel file landed in the PARENT
+				// workspace. Without auto-merge the fork's writes never reach the
+				// parent tree, so this file would not exist.
+				got, readErr := os.ReadFile(filepath.Join(loc.Workspace(), sentinelFile))
+				gomega.Expect(readErr).NotTo(gomega.HaveOccurred(),
+					"the auto-merged sentinel file is absent from the parent workspace — auto-merge did not land the winner's diff\n"+report(res, err))
+				gomega.Expect(string(got)).To(gomega.ContainSubstring("AUTOMERGE-4E2C9A1B"),
+					"the auto-merged sentinel file content is wrong — got %q\n%s", got, report(res, err))
+			})
 	})
 }

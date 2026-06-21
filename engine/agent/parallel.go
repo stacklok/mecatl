@@ -163,6 +163,19 @@ type ParallelTool struct {
 	// preserved indefinitely (its cleanup is simply never called).
 	winnerReaper PreservedForkStore
 
+	// autoMerger, when non-nil, merges a SINGLE-BRANCH join=first winner's diff
+	// back into the parent workspace after the run — the opt-in (--parallel-auto-
+	// merge, default OFF) fast path that lets a delegated implementer's edits
+	// actually land without a manual copy/merge step. nil (the default) keeps the
+	// historical no-auto-merge boundary unchanged. Multi-branch runs NEVER
+	// auto-merge (the boundary stays for fan-out). The merge is a POST-RUN step:
+	// it runs AFTER the winner is preserved and BEFORE Execute returns, so
+	// ParallelTool.ReadOnly() stays true (read-parallel / mutate-serial is
+	// unaffected — the merge is not a dispatch-time mutation). On a merge
+	// conflict Execute returns a tool error naming the conflict and the preserved
+	// fork path; the fork is left intact for manual resolution. See tool.ForkMerger.
+	autoMerger tool.ForkMerger
+
 	// store, when non-nil, best-effort persists each branch's child session after its
 	// run so the PULL InspectSubagent tool can later load its transcript by the
 	// "branch id:" the result text surfaces (issue #30). Mirrors SubagentTool.store
@@ -237,6 +250,25 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption {
 	return func(t *ParallelTool) { t.winnerReaper = s }
 }
 
+// WithAutoMerge injects the OPTIONAL tool.ForkMerger that auto-merges a
+// SINGLE-BRANCH join=first winner's diff back into the parent workspace after
+// the run. It is the composition-owned, opt-in (--parallel-auto-merge, default
+// OFF) capability that lets a delegated implementer's edits actually land
+// without a manual copy/merge step. nil (the default) keeps the historical
+// no-auto-merge boundary unchanged.
+//
+// The merger fires ONLY for a single-branch join=first run with a successful
+// winner. Multi-branch runs and join=judge/join=all NEVER auto-merge (the
+// no-auto-merge boundary stays for fan-out). The merge is a POST-RUN step
+// (after preserveWinner, before Execute returns), so ReadOnly() stays true and
+// read-parallel / mutate-serial is unaffected. On a conflict Execute returns a
+// tool error naming the conflict and the preserved fork path; the fork is left
+// intact for manual resolution. See tool.ForkMerger and the forker.Merger
+// adapter.
+func WithAutoMerge(m tool.ForkMerger) ParallelOption {
+	return func(t *ParallelTool) { t.autoMerger = m }
+}
+
 // WithParallelStore injects the optional session store each branch's child session is
 // best-effort persisted to after its run (issue #30), so the PULL InspectSubagent tool
 // can later load a branch's transcript by the "branch id:" line the Parallel result
@@ -309,11 +341,16 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 			"Each branch cannot see this conversation or the other branches, so make every " +
 			"task in `tasks` self-contained (use `shared` for common context). " +
 			"`join` controls the result: 'all' (default) returns every branch summary so YOU " +
-			"pick; 'first' returns the first branch that SUCCEEDS and cancels the rest (only for " +
-			"interchangeable branches); 'judge'/'best' has an LLM pick the single best branch " +
-			"against `criteria`. Branches do NOT auto-merge — forked workspace paths are reported " +
-			"so you can inspect or merge them yourself; for 'first'/'judge' the WINNER's fork is " +
-			"PRESERVED (not torn down) so its changes survive for inspection. " +
+			"pick — but every branch's fork is TORN DOWN after the join, so to keep a branch's " +
+			"file changes you must copy them out before the call returns (or re-run with " +
+			"'first'/'judge' or --parallel-auto-merge); 'first' returns the first branch that " +
+			"SUCCEEDS and cancels the rest (only for interchangeable branches) and PRESERVES the " +
+			"winner's fork; 'judge'/'best' has an LLM pick the single best branch against " +
+			"`criteria` and PRESERVES the winner's fork. Branches do NOT auto-merge (unless " +
+			"--parallel-auto-merge is on and there is a single branch) — forked workspace paths " +
+			"are reported for 'first'/'judge' so you can inspect or merge them yourself; for " +
+			"'first'/'judge' the WINNER's fork is PRESERVED (not torn down) so its changes survive " +
+			"for inspection. " +
 			"Each branch reports a `branch id:` line you can pass to InspectSubagent to pull " +
 			"that branch's bounded transcript (e.g. to debug a failed or not-selected branch).",
 		Schema: parallelSchema,
@@ -632,8 +669,27 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 		results[i].runCleanup()
 	}
 	t.preserveWinner(results[winner])
+	// AUTO-MERGE (opt-in, --parallel-auto-merge): when a merger is wired AND this
+	// is a SINGLE-BRANCH join=first run with a successful winner, merge the
+	// winner's diff back into the parent workspace so a delegated implementer's
+	// edits actually land. Multi-branch runs NEVER auto-merge (the no-auto-merge
+	// boundary stays for fan-out). The merge is a POST-RUN step (after
+	// preserveWinner, before be.end/return), so ReadOnly() stays true. On a
+	// conflict, surface a tool error naming the conflict + the preserved fork
+	// path; the fork is left intact for manual resolution. See tool.ForkMerger.
+	autoMerged := false
+	if t.autoMerger != nil && len(results) == 1 && results[winner].childRoot != "" {
+		if merr := t.autoMerger.Merge(ctx, results[winner].childRoot, ws); merr != nil {
+			be.end(joinFirst, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopError)
+			return session.NewToolError(callID, fmt.Sprintf(
+				"Parallel: auto-merge of the winning branch into this workspace FAILED: %v "+
+					"(the winner's fork is PRESERVED at %q for manual resolution)",
+				merr, results[winner].childRoot))
+		}
+		autoMerged = true
+	}
 	be.end(joinFirst, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopEndTurn)
-	return session.NewToolResult(callID, joinFirstResult(results, winner))
+	return session.NewToolResult(callID, joinFirstResult(results, winner, autoMerged))
 }
 
 // executeJudge runs every branch, then (when ≥2 succeeded) asks the injected
@@ -1026,7 +1082,20 @@ func branchLabel(i int) string {
 // joinBranches renders the per-branch results into a single, clearly-delimited
 // summary string. Branches are sorted by index so the joined output is
 // deterministic regardless of completion order. Each branch reports its status,
-// its isolated workspace path (the no-auto-merge artifact), and its summary.
+// its branch id (for InspectSubagent transcript pulls), and its summary.
+//
+// joinBranches is the renderer for join=all AND the all-failed degradation of
+// join=first/join=judge. In EVERY one of those paths the caller has ALREADY torn
+// down every fork before rendering (see Execute: join=all runs runCleanup on
+// every result before calling joinBranches; the first/judge all-failed paths do
+// the same). So joinBranches deliberately does NOT print a `workspace:` line —
+// the fork dirs no longer exist, and printing their paths would hand the parent
+// model dead paths it would then try to Read/Glob and fail on. The branch id:
+// line stays: it keys InspectSubagent, which reads the persisted session-store
+// transcript, NOT the filesystem, so a torn-down fork does not invalidate it.
+// To keep a winning branch's filesystem changes, use join=first or join=judge
+// (the winner's fork is PRESERVED) or --parallel-auto-merge (a single-branch
+// join=first auto-merges the winner's diff back into this workspace).
 func joinBranches(results []branchResult) string {
 	sorted := sortedByIndex(results)
 	ok := countOK(sorted)
@@ -1034,6 +1103,12 @@ func joinBranches(results []branchResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Parallel joined %d branch(es): %d succeeded, %d failed.\n",
 		len(sorted), ok, len(sorted)-ok)
+	// Every fork has been torn down before this renderer runs (join=all cleans
+	// every fork; the first/judge all-failed paths clean every fork). Say so
+	// honestly once, up front, so the model does not go hunting for paths and
+	// knows how to keep changes next time.
+	b.WriteString("(branch workspaces were torn down after the join; to keep a winner's " +
+		"changes use join=first or join=judge, or --parallel-auto-merge for a single branch.)\n")
 	for _, r := range sorted {
 		b.WriteString("\n=== ")
 		b.WriteString(r.label)
@@ -1043,9 +1118,6 @@ func joinBranches(results []branchResult) string {
 			b.WriteString("\n")
 		} else {
 			b.WriteString(" [OK] ===\n")
-		}
-		if r.childRoot != "" {
-			fmt.Fprintf(&b, "workspace: %s\n", r.childRoot)
 		}
 		// The discoverable "branch id:" line (issue #30): the parent model reads it and
 		// passes it to InspectSubagent to pull this branch's bounded transcript.
@@ -1082,13 +1154,20 @@ func countOK(results []branchResult) int {
 }
 
 // joinFirstResult renders the join=first outcome: the winning branch's summary,
-// the preserved-workspace note, and a one-line tally of the also-rans. winner is
-// a real branchResult.index.
-func joinFirstResult(results []branchResult, winner int) string {
+// the preserved-workspace note, an optional auto-merge note, and a one-line
+// tally of the also-rans. winner is a real branchResult.index. autoMerged is true
+// when the single-branch winner's diff was auto-merged back into the parent
+// workspace (--parallel-auto-merge); the result then says so and drops the
+// "inspect/merge/clean" guidance (the changes are already in this workspace).
+func joinFirstResult(results []branchResult, winner int, autoMerged bool) string {
 	w := results[winner]
 	var b strings.Builder
 	fmt.Fprintf(&b, "Parallel (join=first): %s succeeded first of %d branch(es).\n", w.label, len(results))
-	writeWinnerWorkspace(&b, w)
+	if autoMerged {
+		fmt.Fprintf(&b, "winner auto-merged into this workspace (--parallel-auto-merge): %s\n", w.childRoot)
+	} else {
+		writeWinnerWorkspace(&b, w)
+	}
 	fmt.Fprintf(&b, "\n=== %s [WINNER] ===\n", w.label)
 	// The winner's discoverable "branch id:" (issue #30) — prominent so the model can
 	// inspect the chosen branch's transcript via InspectSubagent.

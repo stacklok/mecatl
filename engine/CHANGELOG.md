@@ -11,6 +11,21 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ## [Unreleased]
 
+### Added
+
+- `tool.ForkMerger` — an OPTIONAL port (`Merge(ctx, forkRoot, parentWS) error`)
+  by which a preserved winning fork's changes are merged BACK into the parent
+  workspace. Additive interface in `engine/tool` (next to `WorkspaceForker`); no
+  frozen domain type changes. See `docs/adr/0039-parallel-auto-merge.md`.
+- `agent.WithAutoMerge(m tool.ForkMerger) ParallelOption` — wires a merger into
+  the Parallel tool. When set AND a `join=first` run has exactly one branch with
+  a successful winner, the winner's diff is auto-merged into the parent
+  workspace after the run. nil (the default) keeps the historical no-auto-merge
+  boundary unchanged. Multi-branch runs never auto-merge. The merge is a
+  POST-RUN step, so `ParallelTool.ReadOnly()` stays `true`. On a conflict the
+  tool returns an error naming the conflict + the preserved fork path; it never
+  forces. See `docs/adr/0039-parallel-auto-merge.md`.
+
 ## [0.0.3] - 2026-06-21
 
 ### Hygiene

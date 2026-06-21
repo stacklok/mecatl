@@ -296,6 +296,19 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		cfg.diag().Log(ctx, port.LevelWarn,
 			"Parallel preserved-fork reaper missing from catalog assets; preserved winner forks will NOT be bounded (Phase A builds it under EnableParallel — hand-rolled assets?)")
 	}
+	// AUTO-MERGE (opt-in, --parallel-auto-merge / cfg.ParallelAutoMerge, default
+	// OFF — see docs/adr/0039-parallel-auto-merge.md): wire a forker.Merger so a
+	// SINGLE-BRANCH join=first winner's diff is merged back into the parent
+	// workspace after the run. Multi-branch runs never auto-merge. The merger is
+	// a composition-owned adapter injected as a tool.ForkMerger — engine/agent
+	// stays layering-clean (no forker import). Off by default so the historical
+	// no-auto-merge boundary holds unless the operator opts in.
+	if cfg.ParallelAutoMerge {
+		opts = append(opts, agent.WithAutoMerge(forker.NewMerger()))
+		if s.narrate {
+			cfg.diag().Log(ctx, port.LevelInfo, "Parallel auto-merge ENABLED (single-branch join=first winner merged into the parent workspace)")
+		}
+	}
 	cat.MustRegister(agent.NewParallelTool(parallelChild, fk, opts...))
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Parallel tool ENABLED (parallel isolated MUTATING child branches; judge selection wired)",

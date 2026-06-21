@@ -5,6 +5,7 @@
     ifacemethod func (FileSystem).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (FileSystem).Stat(ctx context.Context, path string) (FileInfo, error)
     ifacemethod func (FileSystem).Write(ctx context.Context, path string, data []byte) error
+    ifacemethod func (ForkMerger).Merge(ctx context.Context, forkRoot string, parentWS Workspace) error
     ifacemethod func (MemoryStore).Forget(ctx context.Context, key string) error
     ifacemethod func (MemoryStore).Index(ctx context.Context) ([]MemoryEntry, error)
     ifacemethod func (MemoryStore).List(ctx context.Context, prefix string) ([]MemoryEntry, error)
@@ -63,6 +64,7 @@ type CommandRunner interface{Run(ctx context.Context, command string, workdir st
 type Disclosable interface{Advertised() ToolSpec; Tool}
 type FileInfo struct{Name string; Size int64; Mode fs.FileMode; ModTime time.Time; IsDir bool}
 type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, error); Read(ctx context.Context, path string) ([]byte, error); Stat(ctx context.Context, path string) (FileInfo, error); Write(ctx context.Context, path string, data []byte) error}
+type ForkMerger interface{Merge(ctx context.Context, forkRoot string, parentWS Workspace) error}
 type GrepMatch struct{Path string; Line int; Text string}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
 type MemoryStore interface{Forget(ctx context.Context, key string) error; Index(ctx context.Context) ([]MemoryEntry, error); List(ctx context.Context, prefix string) ([]MemoryEntry, error); Recall(ctx context.Context, key string) (MemoryEntry, bool, error); RememberEntry(ctx context.Context, e MemoryEntry) error; Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)}

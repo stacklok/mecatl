@@ -642,3 +642,127 @@ func sanitizeLabel(label string) string {
 	}
 	return s
 }
+
+// Merger is the tool.ForkMerger implementation: it merges a preserved winning
+// fork's working-tree changes BACK into the parent workspace. It is the
+// auto-merge half of Parallel's single-branch fast path (--parallel-auto-merge),
+// the composition-owned, opt-in (default OFF) capability that lets a delegated
+// implementer's edits actually land without a manual copy/merge step.
+//
+// Mechanism (mirrors overlayDirty, in the reverse direction — fork → parent):
+//   - (1) Cheap clean probe on the fork: a clean fork short-circuits (nothing
+//     to merge), returning nil without touching the parent.
+//   - (2) Tracked + staged + deletions: pipe `git diff --no-ext-diff --binary
+//     HEAD` from the fork into `git apply --whitespace=nowarn -` in the parent.
+//     --binary round-trips binary files; --no-ext-diff + the scrubbed env keeps
+//     an attacker-named external diff driver from firing.
+//   - (3) Untracked, non-ignored files in the fork: `git ls-files --others
+//     --exclude-standard -z`, then copy each into the parent, skipping
+//     symlinks/irregular files (same discipline as copyTree/overlayDirtyInner —
+//     a symlink could point outside the fork).
+//
+// On ANY failure (diff/apply rejected, copy failed) it returns a non-nil error
+// naming the fork path so the operator can resolve manually. It NEVER forces:
+// a partial merge is worse than none. The fork is left intact (the caller still
+// owns its cleanup / reaper slot) so a failed merge is recoverable. The merge
+// runs in the PARENT workspace under the parent's trust posture (the same trust
+// the parent's own Edit/Write carries) — applying a diff is a parent-side
+// operation, not a fork-side one.
+//
+// Every git invocation carries the SAME scrubbed/neutralizing env as runGit /
+// overlayDirty (gitenv.Scrub(envscrub.Scrub(os.Environ()))), so a shared or
+// copied `.git/config` and attacker-named drivers cannot drive code here.
+type Merger struct{}
+
+// NewMerger constructs the default ForkMerger. It is stateless; the constructor
+// exists so composition can inject it as a tool.ForkMerger without the forker
+// package needing to know about the tool port (the adapter meets the port at
+// construction).
+func NewMerger() *Merger { return &Merger{} }
+
+// Merge implements tool.ForkMerger. See the Merger type doc for the contract.
+func (*Merger) Merge(ctx context.Context, forkRoot string, parentWS tool.Workspace) error {
+	parentRoot := parentWS.Root()
+	if parentRoot == "" {
+		return fmt.Errorf("forker: merge requires a non-empty parent workspace root")
+	}
+	if forkRoot == "" {
+		return fmt.Errorf("forker: merge requires a non-empty fork root")
+	}
+
+	// (1) Cheap clean probe on the fork. A clean fork (no working-tree changes)
+	// has nothing to merge — return nil without touching the parent.
+	status, err := runGitCapture(ctx, forkRoot, nil, "status", "--porcelain")
+	if err != nil {
+		// The probe failed (not a git repo / git absent). We cannot tell whether
+		// the fork has changes; surface honestly rather than silently skipping.
+		return fmt.Errorf("forker: merge probe failed on fork %q: %w", forkRoot, err)
+	}
+	if len(bytes.TrimSpace(status)) == 0 {
+		return nil // clean fork — nothing to merge
+	}
+
+	if merr := mergeForkInner(ctx, forkRoot, parentRoot); merr != nil {
+		// Do NOT force / clean / reset the parent on a partial merge — a partial
+		// apply may have already written some files, and the operator needs to
+		// see the exact failure state to resolve. Surface the fork path so the
+		// operator can inspect/resolve manually.
+		return fmt.Errorf("forker: auto-merge of fork %q into parent %q failed: %w "+
+			"(the fork is preserved at %q for manual resolution)", forkRoot, parentRoot, merr, forkRoot)
+	}
+	return nil
+}
+
+// mergeForkInner performs steps (2) and (3) of the merge; split out so a failure
+// in either has ONE error-reporting path in Merge (the caller surfaces the fork
+// path for manual resolution).
+func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
+	// (2) Tracked + staged + deletions: apply the fork's `git diff HEAD` into the
+	// parent.
+	patch, err := runGitCapture(ctx, forkRoot, nil, "diff", "--no-ext-diff", "--binary", "HEAD")
+	if err != nil {
+		return fmt.Errorf("diff HEAD: %w", err)
+	}
+	if len(bytes.TrimSpace(patch)) > 0 {
+		// `git apply` does NOT accept --no-ext-diff (a diff-family flag); the
+		// scrubbed env already neutralises any external diff driver. apply reads
+		// the patch from stdin ("-"). --whitespace=nowarn keeps a noisy-but-valid
+		// patch from being rejected.
+		if _, aerr := runGitCapture(ctx, parentRoot, patch,
+			"apply", "--whitespace=nowarn", "-"); aerr != nil {
+			return fmt.Errorf("apply fork patch: %w", aerr)
+		}
+	}
+
+	// (3) Untracked, non-ignored files in the fork: copy each into the parent.
+	// --exclude-standard honours .gitignore; -z is NUL-separated, robust to
+	// spaces. These files are NOT in `git diff HEAD` (they're untracked), so the
+	// patch in step (2) does not carry them — they must be copied explicitly.
+	others, err := runGitCapture(ctx, forkRoot, nil, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return fmt.Errorf("ls-files --others: %w", err)
+	}
+	for _, rel := range splitNUL(others) {
+		if rel == "" {
+			continue
+		}
+		srcPath := filepath.Join(forkRoot, rel)
+		// SKIP symlinks/irregular files: a symlink could point outside the fork,
+		// and copying its target would land arbitrary content in the parent
+		// (mirrors copyTree/overlayDirtyInner discipline).
+		info, lerr := os.Lstat(srcPath)
+		if lerr != nil {
+			continue // raced away; honour best-effort
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if cerr := copyFile(srcPath, filepath.Join(parentRoot, rel)); cerr != nil {
+			return fmt.Errorf("copy untracked %q: %w", rel, cerr)
+		}
+	}
+	return nil
+}
+
+// Compile-time assertion that Merger satisfies the seam.
+var _ tool.ForkMerger = (*Merger)(nil)

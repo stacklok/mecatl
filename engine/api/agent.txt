@@ -89,6 +89,7 @@ func TeamStop(o TeamOutcome) session.StopReason
 func TightenTeamTokenBudget(serverBudget int, request int) int
 func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
 func WithAskReviewPolicy(p string) EngineAskReviewerOption
+func WithAutoMerge(m tool.ForkMerger) ParallelOption
 func WithChildForker(f tool.WorkspaceForker) SubagentOption
 func WithChildLimits(l session.Limits) SubagentOption
 func WithChildMode(m session.PermissionMode) SubagentOption
