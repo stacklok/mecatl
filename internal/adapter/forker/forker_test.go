@@ -523,15 +523,86 @@ func TestMergerConflictSurfacesError(t *testing.T) {
 		t.Fatalf("conflict error must name the preserved fork path for manual resolution, got: %v", err)
 	}
 	// ATOMIC-OR-NOTHING: the failed merge must leave the parent tree EXACTLY as it
-	// was (the `git apply --check` dry-run runs before the real apply, so a
-	// conflicting patch never partially writes the parent). The parent's own edit
-	// ("from parent") must survive verbatim — no partial-apply corruption.
+	// was. git apply is itself atomic (it validates all hunks before writing any) and
+	// the `git apply --check` dry-run is defense-in-depth on top; either way a
+	// conflicting patch never partially writes the parent. The parent's own edit
+	// ("from parent") must survive verbatim. The cross-file atomicity property — a
+	// patch where one file applies cleanly and another conflicts must write NEITHER —
+	// is locked explicitly by TestMergerMultiFileConflictLeavesCleanFileUntouched.
 	got, rerr := os.ReadFile(filepath.Join(base, "shared.txt"))
 	if rerr != nil {
 		t.Fatalf("read parent shared.txt after failed merge: %v", rerr)
 	}
 	if string(got) != "from parent\n" {
 		t.Fatalf("a conflicting merge must leave the parent tree untouched; want %q, got %q", "from parent\n", string(got))
+	}
+}
+
+// TestMergerMultiFileConflictLeavesCleanFileUntouched locks the CROSS-FILE
+// atomic-or-nothing property the single-file conflict test cannot show: a merge
+// whose patch touches TWO files — one that would apply cleanly, one that
+// conflicts with a divergent parent edit — must write NEITHER (no partial
+// apply), and surface the conflict as an error naming the preserved fork. This
+// is the QA-panel must-add: it proves the conflict path leaves a clean sibling
+// file untouched, which the single-file scenario (where there is no clean
+// sibling) structurally cannot. The property holds via git apply's own
+// all-or-nothing hunk validation (the --check pre-pass is defense-in-depth).
+func TestMergerMultiFileConflictLeavesCleanFileUntouched(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "clean.txt"), "from base clean\n")
+	writeFile(t, filepath.Join(base, "shared.txt"), "from base shared\n")
+	gitCommit(t, base)
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace)
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "multiconflict")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// The fork edits BOTH files. clean.txt is untouched in the parent (its hunk
+	// would apply); shared.txt is edited divergently in the parent (its hunk
+	// conflicts), so `git apply` rejects the WHOLE patch.
+	if err := os.WriteFile(filepath.Join(child.Root(), "clean.txt"), []byte("from fork clean\n"), 0o644); err != nil {
+		t.Fatalf("edit clean.txt in fork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(child.Root(), "shared.txt"), []byte("from fork shared\n"), 0o644); err != nil {
+		t.Fatalf("edit shared.txt in fork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "shared.txt"), []byte("from parent shared\n"), 0o644); err != nil {
+		t.Fatalf("divergent edit shared.txt in parent: %v", err)
+	}
+
+	m := forker.NewMerger()
+	if err := m.Merge(context.Background(), child.Root(), baseWS); err == nil {
+		t.Fatal("a multi-file merge with a conflicting file must return an error, got nil")
+	}
+
+	// THE PROPERTY: clean.txt — which would have applied cleanly on its own — must
+	// NOT have been written, because the whole patch was rejected atomically. A
+	// partial apply would leave it as "from fork clean".
+	gotClean, err := os.ReadFile(filepath.Join(base, "clean.txt"))
+	if err != nil {
+		t.Fatalf("read parent clean.txt after failed merge: %v", err)
+	}
+	if string(gotClean) != "from base clean\n" {
+		t.Fatalf("PARTIAL APPLY: clean.txt was written despite the conflicting sibling; want %q, got %q", "from base clean\n", string(gotClean))
+	}
+	// And the conflicting file keeps the parent's divergent edit.
+	gotShared, err := os.ReadFile(filepath.Join(base, "shared.txt"))
+	if err != nil {
+		t.Fatalf("read parent shared.txt after failed merge: %v", err)
+	}
+	if string(gotShared) != "from parent shared\n" {
+		t.Fatalf("a conflicting merge must leave the parent's shared.txt untouched; want %q, got %q", "from parent shared\n", string(gotShared))
 	}
 }
 

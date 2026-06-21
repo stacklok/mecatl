@@ -756,13 +756,16 @@ func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 		if patchTouchesGitattributes(patch) {
 			return fmt.Errorf("refusing to apply a patch that touches .gitattributes — an untrusted branch may not repoint the parent's git filter/diff drivers (the fork is preserved for manual resolution)")
 		}
-		// ATOMIC-OR-NOTHING: dry-run the apply FIRST (`git apply --check`). `git apply`
-		// is not transactional — a patch that applies some hunks and then conflicts
-		// leaves the parent tree PARTIALLY written, which is worse than a clean failure
-		// (the operator can no longer trust the working tree). The --check pass detects
-		// a conflicting patch WITHOUT modifying the parent, so a conflicting merge leaves
-		// the parent tree completely untouched. Only once the check passes do we run the
-		// real apply (which, having been verified, applies cleanly).
+		// ATOMIC-OR-NOTHING (defense-in-depth): dry-run the apply FIRST (`git apply
+		// --check`). `git apply` is ITSELF atomic for the common case — it validates
+		// every hunk across every file before writing any, so a multi-file patch whose
+		// later file conflicts applies NOTHING (verified: a 2-file patch with one
+		// conflicting file leaves the clean file untouched in the parent). So the parent
+		// is already protected from partial writes by git apply's own behaviour; the
+		// --check pre-pass is belt-and-suspenders — an explicit, intention-revealing
+		// pre-validation that keeps the failure path obviously side-effect-free should a
+		// future git edge case ever be less strict. It costs one extra git invocation on
+		// the (non-hot) merge path. Only once the check passes do we run the real apply.
 		if _, cerr := runGitCapture(ctx, parentRoot, patch,
 			"apply", "--check", "--whitespace=nowarn", "-"); cerr != nil {
 			return fmt.Errorf("apply fork patch: %w", cerr)

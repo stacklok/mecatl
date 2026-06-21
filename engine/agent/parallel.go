@@ -399,6 +399,13 @@ func (*ParallelTool) ReadOnly() bool { return true }
 // ACTUALLY merge: the auto-merger wired, exactly ONE task, and join in {first,judge}
 // (autoMergeWinner only merges a single-branch winner). A malformed/unparseable args
 // payload returns false (the call errors later anyway, and never merges).
+//
+// It keys on the TASK count (len(nonEmptyTasks)==1) whereas autoMergeWinner keys on
+// the RESULT count (len(results)==1); these differ only when the lone branch fails to
+// START (1 task, 0 results → no merge). That makes MutatesParent a deliberate
+// OVER-approximation: at worst it flushes a non-merging single-branch call serially
+// instead of in the read batch — a throughput cost on a rare path, never a correctness
+// gap (it never UNDER-declares a call that will merge).
 func (t *ParallelTool) MutatesParent(call session.ToolCall) bool {
 	if t.autoMerger == nil {
 		return false
