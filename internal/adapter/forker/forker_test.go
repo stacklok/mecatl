@@ -522,6 +522,17 @@ func TestMergerConflictSurfacesError(t *testing.T) {
 	if !strings.Contains(err.Error(), "preserved at") {
 		t.Fatalf("conflict error must name the preserved fork path for manual resolution, got: %v", err)
 	}
+	// ATOMIC-OR-NOTHING: the failed merge must leave the parent tree EXACTLY as it
+	// was (the `git apply --check` dry-run runs before the real apply, so a
+	// conflicting patch never partially writes the parent). The parent's own edit
+	// ("from parent") must survive verbatim — no partial-apply corruption.
+	got, rerr := os.ReadFile(filepath.Join(base, "shared.txt"))
+	if rerr != nil {
+		t.Fatalf("read parent shared.txt after failed merge: %v", rerr)
+	}
+	if string(got) != "from parent\n" {
+		t.Fatalf("a conflicting merge must leave the parent tree untouched; want %q, got %q", "from parent\n", string(got))
+	}
 }
 
 // TestMergerRefusesGitattributesPatch asserts the SECURITY mitigation: the merge
@@ -591,6 +602,56 @@ func TestMergerRefusesGitattributesPatch(t *testing.T) {
 	}
 	if string(got) != "from base\n" {
 		t.Fatalf("the refused merge leaked the tracked edit into the parent: got %q", got)
+	}
+}
+
+// TestMergerRefusesUntrackedGitattributes is the FIX B guard: the step-(3) untracked
+// copy loop must ALSO refuse a NEW (untracked) `.gitattributes`. The step-(2) patch
+// screen only covers TRACKED changes, so a child that CREATES a .gitattributes (here
+// in a subdir, exercising the "/.gitattributes" suffix branch) would otherwise bypass
+// the filter/diff-driver-repointing defense. The merge returns an error naming the
+// refusal; the file must NOT appear in the parent.
+func TestMergerRefusesUntrackedGitattributes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "existing.txt"), "from base\n")
+	gitCommit(t, base)
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace, forker.WithForceCopy())
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "untracked-attrs")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// In the fork: create a NEW, UNTRACKED .gitattributes in a subdir (never staged,
+	// so it is NOT in `git diff HEAD` — it rides the untracked copy loop, step 3).
+	childRoot := child.Root()
+	if err := os.MkdirAll(filepath.Join(childRoot, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir sub in fork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "sub", ".gitattributes"), []byte("*.txt filter=evil\n"), 0o644); err != nil {
+		t.Fatalf("write untracked sub/.gitattributes in fork: %v", err)
+	}
+
+	m := forker.NewMerger()
+	err = m.Merge(context.Background(), childRoot, baseWS)
+	if err == nil {
+		t.Fatal("Merge of a fork with an untracked .gitattributes must be refused, got nil")
+	}
+	if !strings.Contains(err.Error(), ".gitattributes") {
+		t.Fatalf("refusal error must name .gitattributes, got: %v", err)
+	}
+	// The parent must NOT have gained the untracked .gitattributes.
+	if _, err := os.Stat(filepath.Join(base, "sub", ".gitattributes")); !os.IsNotExist(err) {
+		t.Fatalf("the refused merge leaked sub/.gitattributes into the parent (err=%v)", err)
 	}
 }
 

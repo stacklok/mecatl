@@ -29,6 +29,27 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   adapter runs `git diff --no-textconv` and refuses `.gitattributes`-touching
   patches (closes attacker-named `diff.*.textconv`/`filter.*.smudge` RCE from an
   untrusted fork `.git`). See `docs/adr/0039-parallel-auto-merge.md`.
+- `agent.WithWritableChildEngine(e *Engine) SubagentOption`,
+  `agent.WithWritableChildForker(f tool.WorkspaceForker) SubagentOption`, and
+  `agent.WithSubagentAutoMerge(m tool.ForkMerger) SubagentOption` — wire the
+  WRITABLE-subagent path (the `mode:"read-write"` Subagent arg). A read-write call
+  runs the writable child engine (an Edit/Write-bearing explorer) in a force-copy
+  fork; its working-tree diff is merged back into the parent workspace after the
+  run via the injected merger (the SAME composition-owned, process-wide serialized
+  `tool.ForkMerger` Parallel's `WithAutoMerge` uses). The merge is a POST-RUN step,
+  so `SubagentTool.ReadOnly()` stays `true`. On a conflict the tool returns an error
+  naming the preserved fork and does not force; nil options leave the writable path
+  unwired (a `mode:"read-write"` arg then surfaces a model-addressable "not
+  supported" error). `mode:"read-write"` is rejected with `background`/`agent` and
+  composes with `fork`/`model`/`resume`/`output_schema`.
+- `agent.(*SubagentTool).MutatesParent(call session.ToolCall) bool` and
+  `agent.(*ParallelTool).MutatesParent(call session.ToolCall) bool` — implement an
+  internal optional `parentMutatingCaller` seam the dispatcher consults: a `ReadOnly()`
+  tool stays read-only for fan-out, but a CALL that will merge a fork diff back into
+  the parent workspace (a `mode:"read-write"` Subagent, or a single-branch
+  `join=first`/`judge` auto-merging Parallel) reports `true` and is excluded from the
+  concurrent read batch (dispatch-serial), so its post-run merge never overlaps a
+  sibling parent read. Returns `false` for read-only fan-out and for malformed args.
 
 ## [0.0.3] - 2026-06-21
 

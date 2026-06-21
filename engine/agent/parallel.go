@@ -170,8 +170,10 @@ type ParallelTool struct {
 	// historical no-auto-merge boundary unchanged. Multi-branch runs NEVER
 	// auto-merge (the boundary stays for fan-out). The merge is a POST-RUN step:
 	// it runs AFTER the winner is preserved and BEFORE Execute returns, so
-	// ParallelTool.ReadOnly() stays true (read-parallel / mutate-serial is
-	// unaffected — the merge is not a dispatch-time mutation). On a merge
+	// ParallelTool.ReadOnly() stays true (read-only fan-out keeps batching); but a
+	// merge-completing CALL is excluded from the concurrent read batch via
+	// MutatesParent (dispatch-serial — see parentMutatingCaller), so it never
+	// overlaps a sibling parent read. On a merge
 	// conflict Execute returns a tool error naming the conflict and the preserved
 	// fork path; the fork is left intact for manual resolution. See tool.ForkMerger.
 	autoMerger tool.ForkMerger
@@ -257,11 +259,14 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption {
 // without a manual copy/merge step. nil (the default) keeps the historical
 // no-auto-merge boundary unchanged.
 //
-// The merger fires ONLY for a single-branch join=first run with a successful
-// winner. Multi-branch runs and join=judge/join=all NEVER auto-merge (the
-// no-auto-merge boundary stays for fan-out). The merge is a POST-RUN step
-// (after preserveWinner, before Execute returns), so ReadOnly() stays true and
-// read-parallel / mutate-serial is unaffected. On a conflict Execute returns a
+// The merger fires ONLY for a single-branch run (len(tasks)==1) with a
+// successful winner under join=first/judge. Multi-branch runs and join=all
+// NEVER auto-merge (the no-auto-merge boundary stays for fan-out). The merge is
+// a POST-RUN step (after preserveWinner, before Execute returns), so ReadOnly()
+// stays true for read-only fan-out; a merge-completing CALL is excluded from the
+// concurrent read batch via MutatesParent (dispatch-serial — see
+// parentMutatingCaller), so it never overlaps a sibling parent read, and
+// cross-run merge-vs-merge is serialized by the shared SerializingMerger. On a conflict Execute returns a
 // tool error naming the conflict and the preserved fork path; the fork is left
 // intact for manual resolution. See tool.ForkMerger and the forker.Merger
 // adapter.
@@ -345,10 +350,9 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 			"need into your reply before the call returns; 'first' returns the first branch that " +
 			"SUCCEEDS, cancels the rest, and keeps the winner's fork (path reported); 'judge'/'best' " +
 			"has an LLM pick the single best branch against `criteria` and keeps the winner's fork " +
-			"(path reported). For a SINGLE-BRANCH 'first'/'judge' run, the winner's file changes " +
-			"are auto-merged into this workspace — a delegated implementer's edits land without a " +
-			"manual copy step. Multi-branch runs never auto-merge (fan-out is for exploration, not " +
-			"landing all branches); inspect a preserved winner's fork path yourself if you need to. " +
+			"(path reported). To land a single task's edits, use Subagent with mode:\"read-write\" — " +
+			"Parallel is for running 2+ independent or competing branches; multi-branch runs never " +
+			"auto-merge (inspect a preserved winner's fork path yourself if you need to). " +
 			"Each branch reports a `branch id:` line you can pass to InspectSubagent to pull " +
 			"that branch's bounded transcript (e.g. to debug a failed or not-selected branch).",
 		Schema: parallelSchema,
@@ -379,7 +383,40 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 // branch keeps Edit/Write (it is meant to IMPLEMENT in its fork), while a Subagent child
 // drops them and is shell-only (a read-only explorer that may run git/build/test but
 // cannot edit the project).
+//
+// ReadOnly() stays true for read-only fan-out; a merge-completing CALL (single-branch
+// join=first/judge with the merger wired) is excluded from the concurrent read batch
+// via MutatesParent (dispatch-serial — see parentMutatingCaller), and cross-run
+// merge-vs-merge is serialized by the shared SerializingMerger.
 func (*ParallelTool) ReadOnly() bool { return true }
+
+// MutatesParent implements the optional parentMutatingCaller seam (FIX C): it reports
+// whether THIS specific call will auto-merge a single branch's fork diff back into the
+// PARENT workspace. ReadOnly() stays true so multi-branch / join=all fan-out keeps
+// batching in parallel; a call for which this returns true is excluded from the
+// concurrent read batch (dispatch-serial via runOne) so its post-run merge never
+// overlaps a sibling parent Read/Grep/Glob. It returns true ONLY for a call that will
+// ACTUALLY merge: the auto-merger wired, exactly ONE task, and join in {first,judge}
+// (autoMergeWinner only merges a single-branch winner). A malformed/unparseable args
+// payload returns false (the call errors later anyway, and never merges).
+func (t *ParallelTool) MutatesParent(call session.ToolCall) bool {
+	if t.autoMerger == nil {
+		return false
+	}
+	var args parallelArgs
+	if _, ok := session.ParseArgs(call, &args); !ok {
+		return false
+	}
+	if len(nonEmptyTasks(args.Tasks)) != 1 {
+		return false
+	}
+	switch normalizeJoin(args.Join) {
+	case joinFirst, joinJudge:
+		return true
+	default:
+		return false
+	}
+}
 
 // branchResult is the joined outcome of one branch.
 type branchResult struct {

@@ -43,6 +43,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0014 — Agent teams](./0014-agent-teams.md)
 - [0015 — Background subagents](./0015-background-subagents.md)
 - [0039 — Parallel single-branch auto-merge](./0039-parallel-auto-merge.md)
+- [0040 — Writable Subagent mode + serialized merge-back](./0040-writable-subagent-and-serialized-merge.md)
 
 ### Providers & APIs
 - [0016 — Multi-provider](./0016-multi-provider.md)

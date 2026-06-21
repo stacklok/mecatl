@@ -140,14 +140,12 @@ func TestSubagentSpecEnumeratesAgents(t *testing.T) {
 // load-bearing shell clause stays byte-identical to the historical description, so a
 // shell-bearing deployment's prompt-cache-stable spec never shifts.
 func TestSubagentSpecShellDisabledNoteOption(t *testing.T) {
-	// The historical shell clause, pinned byte-for-byte (the model plans build/test/git
-	// delegation off this exact promise). The wording is precise: the child CAN write
-	// scratch files via Bash, but the worktree is DISCARDED AND there are no Edit/Write
-	// tools, so file changes never reach the parent.
-	const shellClause = "(Read/Grep/Glob) plus a full shell in an isolated, throwaway git worktree — " +
-		"it can build, test, inspect history, and write scratch files, but the worktree is DISCARDED " +
-		"after the run (no Edit/Write tools; use Parallel when you need the diff kept) and it cannot " +
-		"delegate further."
+	// The shell clause, pinned byte-for-byte (the model plans build/test/git delegation
+	// off this exact promise). The read-only and read-write modes are SEPARATE, legible
+	// sentences: this clause describes the read-only default's throwaway-worktree shell;
+	// the read-write mode is described by its own sentence in the body.
+	const shellClause = "By default the subagent is READ-ONLY: it can Read/Grep/Glob and run build/test/git " +
+		"in a throwaway worktree, but it has no Edit/Write and its file changes are discarded after the run."
 	const reason = "no shell on this workspace because it is untrusted (run with --trust-project to enable it)"
 
 	eng := childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t))
@@ -164,14 +162,14 @@ func TestSubagentSpecShellDisabledNoteOption(t *testing.T) {
 
 	// With the note: the worktree-shell promise is GONE and the reason rides verbatim.
 	noted := agent.NewSubagentTool(eng, agent.WithSubagentShellDisabledNote(reason)).Spec().Description
-	if strings.Contains(noted, "throwaway git worktree") {
+	if strings.Contains(noted, "throwaway worktree") {
 		t.Fatalf("spec with the note must not still promise the worktree shell, got:\n%s", noted)
 	}
 	if !strings.Contains(noted, reason) {
 		t.Fatalf("spec with the note must carry the reason verbatim, got:\n%s", noted)
 	}
 	// It still describes the read-only surface and the no-delegation rule.
-	for _, want := range []string{"(Read/Grep/Glob) ONLY", "no Edit/Write", "cannot delegate further"} {
+	for _, want := range []string{"READ-ONLY", "no Edit/Write", "cannot delegate further"} {
 		if !strings.Contains(noted, want) {
 			t.Fatalf("spec with the note must still state %q, got:\n%s", want, noted)
 		}
@@ -190,7 +188,7 @@ func TestSubagentSpecNoFSNoteOption(t *testing.T) {
 
 	// Without the option: the historical file-tool surface, byte-stable.
 	plain := agent.NewSubagentTool(eng).Spec().Description
-	if !strings.Contains(plain, "(Read/Grep/Glob)") {
+	if !strings.Contains(plain, "Read/Grep/Glob") {
 		t.Fatalf("precondition: the historical spec names the read-only file tools, got:\n%s", plain)
 	}
 

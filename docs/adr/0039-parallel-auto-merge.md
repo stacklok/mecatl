@@ -4,7 +4,7 @@
 - Date: 2026-06-21
 - Scope: `engine/agent` (the Parallel tool), `engine/tool` (the `ForkMerger` port), `internal/adapter/forker` (the `Merger` adapter), `internal/app` (composition wiring)
 - Supersedes: none
-- Superseded by: none
+- Superseded by: 0040
 
 ## Context
 

@@ -74,19 +74,25 @@ chunked-L task spawns one delegate per chunk (each gets its slice of the plan +
 its predecessor's landed diff), not one delegate per file.
 
 **The implementer path in mecatl:**
-- **To land edits** → a **single-branch `Parallel` with `join: "first"`**. The
-  branch runs with Edit/Write/Bash in its own isolated fork, and the winner's
-  diff is **auto-merged back into this workspace** (default-on, no flag). Hand it
-  the plan + the task as the single branch's prompt. This is the "everything
-  through sub-agents" path — the implementer's edits land without you writing
-  files yourself.
-- **If you cannot delegate a write-capable agent** (no Parallel available, or the
-  change is tiny and delegation is overhead) → **implement directly yourself**,
-  applying the plan with your own Edit/Write. A read-only `Subagent` CANNOT land
-  edits — it has no Edit/Write tools and its worktree is discarded; use it only
-  to investigate and produce code as text, which you then write. If the operator
-  wants everything through sub-agents and only read-only delegation is
-  available, **surface that gap** — don't silently self-implement.
+- **To land edits (one task)** → a **`Subagent` with `mode: "read-write"`**. The
+  child runs with Edit/Write/Bash in its own isolated force-copy fork, and on a
+  clean finish its diff is **auto-merged back into this workspace** (default-on,
+  no flag). Hand it the plan + the task as `prompt`. This is the blessed
+  "everything through sub-agents" single-task path — the implementer's edits land
+  without you writing files yourself. (On a merge conflict the call returns an
+  error naming a preserved fork; review that diff with Read and apply it yourself,
+  or re-delegate a narrower task — don't blindly retry.)
+- **For 2+ competing/independent implementations** → a **multi-branch `Parallel`**
+  (fan-out, pick a winner). Reserve `Parallel` for genuine fan-out; a single-branch
+  `Parallel` still auto-merges (back-compat) but the writable `Subagent` is the
+  clearer single-task verb.
+- **If you cannot delegate a write-capable agent** (no writable delegation
+  available, or the change is tiny and delegation is overhead) → **implement
+  directly yourself**, applying the plan with your own Edit/Write. A *read-only*
+  `Subagent` (the default, `mode:"read-only"`) CANNOT land edits — its worktree is
+  discarded; use it only to investigate and produce code as text. If the operator
+  wants everything through sub-agents and only read-only delegation is available,
+  **surface that gap** — don't silently self-implement.
 
 The implementer:
 - builds and runs the project's **offline** test suite (per `CLAUDE.md`),

@@ -62,7 +62,14 @@ VERBATIM, no re-fence — the child inherits the parent's EXACT raw message post
 main loop records tool results unfenced anyway, and the read-only explorer sandbox adds
 no new untrusted ingress; re-fencing would also bust the byte-stable prompt-cache
 prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
-`model`/`agent`/`resume`; a forked child runs on the parent's engine). When
+`model`/`agent`/`resume`; a forked child runs on the parent's engine).
+`mode: "read-write"` (ADR 0040; closed set `{"","read-only","read-write"}`, default
+read-only) runs the child in a FORCE-COPY fork with Edit/Write and, on a CLEAN
+finish, AUTO-MERGES its diff back into the parent workspace via the shared
+serialized `ForkMerger` — the blessed "delegate one task and land its edits" path
+(default-wired, no flag; rejected with `agent` and under the no-FS profile, and
+NEVER merged on an error/cancelled terminal; a merge conflict surfaces an
+actionable error naming the preserved fork). When
 neither `agent` nor `model` pins one, a def-less child runs on the global
 `--subagent-model` default (the analogue of `CLAUDE_CODE_SUBAGENT_MODEL`; a concrete
 id or a `--model-alias` name, resolved same-provider; precedence `def.Model >
@@ -90,24 +97,32 @@ RunTeam path has its own member cancel: the `CancelTeammate(team_id, member)` un
 (HTTP `POST /v1/teams/{id}/members/cancel`, issue #29) reaches a running team's
 member directly through `Supervisor.CancelMember` — no parent registry on that path.
 
-The child is a **read-only explorer with a shell** — capability flows down from the
-parent (which has Bash); isolation, not catalog read-only-ness, is the security
-boundary:
+The child is a **read-only explorer with a shell** by default — capability flows down
+from the parent (which has Bash); isolation, not catalog read-only-ness, is the
+security boundary:
 - The composition layer wires `childEngine` with **Read/Grep/Glob plus Bash**
   (`buildChildEngine` registers Bash via the **sandboxed** runner —
   `buildSandboxedCommandRunner`, the SAME hardening team members get, since the
   worktree shares the parent `.git`), **never `Subagent`/`Parallel`/`ToolSearch`** (no
-  recursion / fan-out) and **never Edit/Write** (it inspects, it does not edit the
-  project). Per-def Subagent engines keep Bash via `scopedToolNamesMode`'s `allowShell`
-  and share the one `SubagentTool` forker. With no runner (`--no-bash`) the child is a
-  Bash-less read-only explorer and no forker is wired — the original behaviour. The
-  policy is **allow-all** so the child never prompts a human (`internal/app`:
-  `buildSubagentTool` / `buildChildEngine` / `buildAgentSubagentEngines`).
-- `SubagentTool.ReadOnly()` stays **`true`**, letting the parent run `Subagent` concurrently
-  with other read-only tools. This is safe because the child's (mutating-classified)
-  Bash writes land in the **isolated worktree**, never the shared base the parent's
-  other read-only calls race over; the only shared surface is the `.git` object
-  DB/refs (git-locked; config-driven code-exec vectors neutralised via `gitenv`).
+  recursion / fan-out) and **never Edit/Write** (the read-only explorer inspects, it
+  does not edit the project). A `mode:"read-write"` call instead runs the SEPARATE
+  `writableChildEngine` (`buildWritableSubagentChildEngine`: the explorer surface +
+  **Edit/Write**, over a FORCE-COPY fork + `buildForceCopyRunner`), whose diff is
+  merged back — see the per-call knobs above. Per-def Subagent engines keep Bash via
+  `scopedToolNamesMode`'s `allowShell` and share the one `SubagentTool` forker. With no
+  runner (`--no-bash`) the child is a Bash-less read-only explorer and no forker is
+  wired — the original behaviour. The policy is **allow-all** so the child never
+  prompts a human (`internal/app`: `buildSubagentTool` / `buildChildEngine` /
+  `buildWritableSubagentChildEngine` / `buildAgentSubagentEngines`).
+- `SubagentTool.ReadOnly()` stays **`true`**, letting the parent run read-only `Subagent`
+  calls concurrently with other read-only tools. This is safe because the child's
+  (mutating-classified) Bash writes land in the **isolated fork**, never the shared base
+  the parent's other read-only calls race over; the only shared surface is the `.git`
+  object DB/refs (git-locked; config-driven code-exec vectors neutralised via `gitenv`).
+  A `mode:"read-write"` call WILL mutate the parent on completion (the merge-back), so it
+  declares `MutatesParent(call)==true` and the dispatcher runs it **alone, mutate-serial**
+  — never batched with a sibling read it could tear; cross-run merges are additionally
+  serialized by the process-wide `SerializingMerger` mutex (ADR 0040).
 - `WithMaxConcurrentChildren` (default 4; `WithMaxConcurrentSubagentShells` is a
   deprecated alias) sizes the **child concurrency gate**, acquired at the top of
   `run()` for ALL children (forking and forker-less) — Subagent is read-parallel, so

@@ -122,6 +122,7 @@ var _ = ginkgo.Describe("mecatl live e2e", ginkgo.Ordered, ginkgo.Serial, ginkgo
 	providerSpecs()
 	skillSpecs()
 	subagentSpecs()
+	subagentWritableSpecs()
 	dirtyForkSpecs()
 	parallelSpecs()
 	parallelRouterSpecs()

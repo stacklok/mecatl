@@ -15,15 +15,49 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+// parentMutatingCaller is an OPTIONAL interface a ReadOnly() tool may implement to
+// declare that a SPECIFIC call will mutate the PARENT workspace at run end (FIX C).
+// A tool stays ReadOnly()==true so its read-only fan-out keeps batching in parallel,
+// but a call for which MutatesParent reports true is excluded from the concurrent
+// read batch (dispatch-serial, flushed alone via runOne) so its post-run merge into
+// the parent can never overlap a sibling parent Read/Grep/Glob — a torn read. A tool
+// that does NOT implement this interface is wholly unaffected.
+//
+// Both implementers (SubagentTool, ParallelTool) return true ONLY for a call that
+// will ACTUALLY merge (mode:"read-write" with the writable engine + merger wired;
+// single-branch first/judge Parallel with the merger wired). This is the PER-RUN
+// dispatch-serial half; the SerializingMerger mutex is the COMPLEMENTARY cross-run
+// half (it serializes merge-vs-merge across concurrent sessions/runs targeting the
+// same workspace — dispatch-serial only orders calls within one run).
+type parentMutatingCaller interface {
+	MutatesParent(call session.ToolCall) bool
+}
+
+// readBatchable reports whether a call may join the concurrent read batch: it must
+// be a known ReadOnly tool whose this-call posture is NOT parent-mutating. A
+// parent-mutating call (parentMutatingCaller.MutatesParent true) is excluded so it
+// flushes alone via runOne, exactly like a mutating tool — see parentMutatingCaller.
+func readBatchable(t tool.Tool, known bool, c session.ToolCall) bool {
+	if !known || !t.ReadOnly() {
+		return false
+	}
+	if pm, ok := t.(parentMutatingCaller); ok && pm.MutatesParent(c) {
+		return false
+	}
+	return true
+}
+
 // dispatch executes a turn's tool calls and returns their results in the
 // original call order, plus a cancelled flag set when ctx was cancelled (mid
 // permission-await or mid-execution) so the loop can terminate as cancelled.
 //
 // Ordering contract (gauntlet #4, read-parallel / mutate-serial):
 //   - Calls are processed in their original order, batched into maximal runs of
-//     consecutive read-only tools.
+//     consecutive read-batchable tools (readBatchable: known ReadOnly, not
+//     parent-mutating-this-call).
 //   - A read-only batch runs CONCURRENTLY (one goroutine per call).
-//   - A mutating tool runs ALONE, strictly serially, never overlapping anything.
+//   - A mutating tool — or a read-only tool whose THIS call mutates the parent
+//     (parentMutatingCaller) — runs ALONE, strictly serially, never overlapping.
 //   - Permission "asks" are sequenced one at a time (we never ask for two at
 //     once): a batch that contains an Ask is resolved call-by-call before the
 //     read-only calls that follow it execute.
@@ -48,8 +82,13 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, ws
 		c := calls[i]
 		t, known := e.lookupTool(r, c.Name)
 
-		// Mutating (or unknown) tools flush alone, serially.
-		if !known || !t.ReadOnly() {
+		// Mutating (or unknown) tools flush alone, serially — AND a read-only tool
+		// whose THIS call will mutate the parent workspace (parentMutatingCaller, FIX
+		// C): a writable Subagent or single-branch auto-merging Parallel call merges
+		// its fork diff into the parent at run end, so it must NOT overlap a sibling
+		// parent Read/Grep/Glob in the same concurrent batch (torn read). Such a call
+		// flushes ALONE via runOne, restoring read-parallel/mutate-serial.
+		if !readBatchable(t, known, c) {
 			res, cancelled := e.runOne(ctx, r, sess, ws, turnIdx, c, t, known, enqueue)
 			if cancelled {
 				return nil, true
@@ -59,13 +98,13 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, ws
 			continue
 		}
 
-		// Gather the maximal run of consecutive read-only calls.
+		// Gather the maximal run of consecutive read-batchable calls.
 		j := i
 		var batch []session.ToolCall
 		for j < len(calls) {
 			nc := calls[j]
 			nt, ok := e.lookupTool(r, nc.Name)
-			if !ok || !nt.ReadOnly() {
+			if !readBatchable(nt, ok, nc) {
 				break
 			}
 			batch = append(batch, nc)

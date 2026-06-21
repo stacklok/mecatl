@@ -40,12 +40,12 @@ type WorkspaceForker interface {
 	Fork(ctx context.Context, base Workspace, label string) (child Workspace, cleanup func() error, advisory string, err error)
 }
 
-// ForkMerger is the OPTIONAL seam by which a preserved winning fork's changes
-// are merged BACK into the parent workspace. It is the auto-merge half of
-// Parallel's single-branch fast path: a Parallel run with exactly one branch
-// and join=first, when wired with a merger, applies the winner's diff to the
-// parent so a delegated implementer's edits actually LAND without a manual
-// copy/merge step.
+// ForkMerger is the OPTIONAL seam by which a preserved fork's changes are merged
+// BACK into the parent workspace. It serves TWO delegation paths: Parallel's
+// single-branch fast path (a Parallel run with exactly one branch and
+// join=first/judge applies the winner's diff to the parent) AND the writable
+// Subagent (mode:"read-write" — a force-copy explorer's edits are merged back), so
+// a delegated implementer's edits actually LAND without a manual copy/merge step.
 //
 // It lives here in engine/tool, next to WorkspaceForker, for the same layering
 // reason (port already imports tool). The interface is additive — no frozen
@@ -61,11 +61,17 @@ type WorkspaceForker interface {
 //     not the fork's — the fork's content is untrusted child-authored data, but
 //     applying a diff is a parent-side operation (the same trust the parent's
 //     own Edit/Write carries). Composition decides whether to wire a merger at
-//     all (--parallel-auto-merge, default OFF).
+//     all — when wired, auto-merge is DEFAULT-ON (no flag; see ADR 0039). The
+//     composition-injected merger is SERIALIZED process-wide (a single mutex in a
+//     serializing decorator) so concurrent merges from Parallel and the writable
+//     Subagent never interleave their writes into a parent workspace.
 //   - nil merger (the default) means no auto-merge: the historical no-auto-merge
-//     boundary holds unchanged. ParallelTool.ReadOnly() stays true regardless —
-//     the merge is a POST-RUN step, not a dispatch-time mutation, so
-//     read-parallel / mutate-serial is unaffected.
+//     boundary holds unchanged. ParallelTool.ReadOnly()/SubagentTool.ReadOnly()
+//     stay true so read-only fan-out keeps batching in parallel; but a CALL that
+//     will actually merge is excluded from the concurrent read batch via
+//     MutatesParent (dispatch-serial, flushed alone — see agent.parentMutatingCaller),
+//     so its post-run merge never overlaps a sibling parent read, and cross-run
+//     merge-vs-merge is serialized by the shared SerializingMerger mutex.
 type ForkMerger interface {
 	// Merge applies the diff of the fork at forkRoot (its working tree vs its
 	// HEAD) into the parent workspace parentWS. On conflict it returns a

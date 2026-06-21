@@ -215,7 +215,7 @@ func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 		defer func() { _ = closeFn() }()
 	}
 	desc := task.Spec().Description
-	if strings.Contains(desc, "throwaway git worktree") {
+	if strings.Contains(desc, "throwaway worktree") {
 		t.Errorf("untrusted Subagent spec still promises the worktree shell:\n%s", desc)
 	}
 	for _, want := range []string{"untrusted", "--trust-project"} {
@@ -230,7 +230,7 @@ func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 		defer func() { _ = closeTrusted() }()
 	}
 	descTrusted := taskTrusted.Spec().Description
-	if !strings.Contains(descTrusted, "throwaway git worktree") {
+	if !strings.Contains(descTrusted, "throwaway worktree") {
 		t.Errorf("trusted Subagent spec must keep claiming the worktree shell, got:\n%s", descTrusted)
 	}
 	if strings.Contains(descTrusted, "untrusted") {
@@ -262,7 +262,7 @@ func TestNoBashFlagNoteDistinctFromUntrusted(t *testing.T) {
 		if strings.Contains(desc, "untrusted") {
 			t.Errorf("%s: the untrusted note must be reserved for the trust gate, got:\n%s", name, desc)
 		}
-		if !strings.Contains(desc, "throwaway git worktree") {
+		if !strings.Contains(desc, "throwaway worktree") {
 			t.Errorf("%s: a shell-less deployment keeps the historical (byte-stable) description, got:\n%s", name, desc)
 		}
 	}
@@ -425,7 +425,7 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 	// (the spec-note and gate tests alone could each pass against two different
 	// builds).
 	desc := task.Spec().Description
-	if strings.Contains(desc, "throwaway git worktree") {
+	if strings.Contains(desc, "throwaway worktree") {
 		t.Errorf("the SAME Subagent tool whose child runs Bash-less still promises the worktree shell:\n%s", desc)
 	}
 	for _, want := range []string{"untrusted", "--trust-project"} {

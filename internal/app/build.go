@@ -2843,6 +2843,14 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		forkReaper = agent.NewLRUForkReaper(forkPreservedCap(cfg))
 	}
 
+	// ONE process-wide serializing merger shared by every merge-driving tool
+	// (Parallel single-branch auto-merge AND the writable Subagent). It wraps a
+	// stateless forker.Merger in a forker.SerializingMerger so concurrent merges
+	// across ALL sessions are serialized by a single mutex (correctness over
+	// throughput on this off-hot-path post-run write). Built unconditionally — the
+	// writable Subagent path needs it even when Parallel is disabled.
+	autoMerger := forker.NewSerializingMerger(forker.NewMerger())
+
 	assets := catalogAssets{
 		globalMgr:      mainMgr,
 		agentReg:       agentReg,
@@ -2858,6 +2866,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		// assets — no second list to drift.
 		skillReadRoots: seam.readRoots,
 		forkReaper:     forkReaper,
+		autoMerger:     autoMerger,
 		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME
@@ -3935,6 +3944,33 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
+// buildWritableSubagentChildEngine constructs the child *Engine a mode:"read-write"
+// Subagent call runs on: a WRITABLE explorer with Read/Grep/Glob/Edit/Write (+ Bash
+// when the force-copy runner is wired), isolated in a force-copy fork whose diff is
+// auto-merged back into the parent workspace. The catalog and Deps mirror
+// parallelChildDeps exactly (the read-only explorer surface LAYERED with Edit/Write,
+// built through childEngineDepsForProvider) — a writable Subagent is the same
+// mutating-in-its-own-fork surface a Parallel branch gets, just delivered through
+// the Subagent tool's single-child path with a serialized post-run merge. The role
+// is "task:read-write" — it lands in roleFamily's "subagent" bucket (a writable
+// subagent IS a subagent, not a separate cost story like Parallel) while staying
+// distinguishable in raw role-tagged diagnostics. It resolves its model through the
+// SAME def-less chain (SubagentModel > parentModel) as the read-only explorer and
+// Parallel branches.
+func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) *agent.Engine {
+	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+	// Read-only explorer surface (Read/Grep/Glob + sandboxed Bash) LAYERED with
+	// Edit/Write — a writable child MAY mutate its OWN force-copy fork. Subagent/
+	// Parallel/ToolSearch stay excluded (readOnlyExplorerCatalog never adds them), so
+	// a writable child can't recurse or fan out.
+	childCat := readOnlyExplorerCatalog(runner)
+	childCat.MustRegister(tools.EditTool{})
+	childCat.MustRegister(tools.WriteTool{})
+	deps := childEngineDepsForProvider(cfg, "task:read-write", provider, model, windowFn,
+		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
+	return agent.NewEngine(deps)
+}
+
 // buildParallelEngineFactory returns the per-branch model-override factory the Parallel
 // tool invokes when the OPT-IN model router (ADR 0034) classifies a branch onto a model.
 // It mirrors the SHAPE of buildSubagentEngineFactory — given an opaque model id it mints a
@@ -4252,6 +4288,33 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// crosses (same shape/spirit as WithAgentEngines).
 	opts = append(opts, agent.WithSubagentEngineFactory(
 		buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
+	// WRITABLE subagent (mode:"read-write"): a child engine whose catalog adds
+	// Edit/Write over the read-only explorer surface, isolated in a FORCE-COPY fork
+	// whose diff is auto-merged back into the parent workspace after the run. This
+	// MIRRORS the Parallel branch wiring exactly:
+	//   - engine: readOnlyExplorerCatalog(forceCopyRunner) + Edit + Write, built
+	//     through childEngineDepsForProvider (the same path parallelChildDeps uses).
+	//   - runner: buildForceCopyRunner — the HARDENED, trust-UNGATED runner (#40); a
+	//     force-copy fork is a pure FS copy with NO fork-time git, so the checkout RCE
+	//     the trust gate closes cannot fire here, and run-time git over the copied
+	//     .git is hardened via gitenv.Scrub (same posture as Parallel branches /
+	//     mutating team members).
+	//   - forker: forker.New(..., WithForceCopy) — own .git, so the child's git can't
+	//     escape into the base (the same isolation a Parallel branch gets).
+	//   - merger: the SHARED process-wide serialized merger from the assets, so a
+	//     writable Subagent merge-back is serialized against every other merge in the
+	//     process (Parallel's auto-merge AND other writable subagents).
+	// Skipped under no-FS (buildNoFSSubagentTool, above, wires no writable path).
+	forceCopyRunner := buildForceCopyRunner(cfg)
+	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, forceCopyRunner)
+	writableForker := forker.New(newForkWorkspace(skillReadRoots), forker.WithForceCopy())
+	opts = append(opts,
+		agent.WithWritableChildEngine(writableEngine),
+		agent.WithWritableChildForker(writableForker),
+	)
+	if a.autoMerger != nil {
+		opts = append(opts, agent.WithSubagentAutoMerge(a.autoMerger))
+	}
 	return agent.NewSubagentTool(
 		buildChildEngine(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner),
 		opts...,

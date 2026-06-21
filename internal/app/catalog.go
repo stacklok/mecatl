@@ -79,6 +79,14 @@ type catalogAssets struct {
 	skillIndex     skillIndex
 	skillReadRoots []string
 	forkReaper     *agent.LRUForkReaper
+	// autoMerger is the ONE process-wide serializing tool.ForkMerger shared by
+	// every merge-driving tool (Parallel single-branch auto-merge AND the writable
+	// Subagent, mode:"read-write"). It wraps a forker.Merger in a forker.Serializing-
+	// Merger so concurrent merges across sessions are serialized by a single mutex
+	// (a per-session instance would not serialize cross-session). Built ONCE in
+	// Phase A like forkReaper. Nil only on hand-rolled assets (the option is then
+	// skipped, no auto-merge).
+	autoMerger tool.ForkMerger
 	// searchProvider is the process-wide tool.SearchProvider the WebSearch core
 	// tool is built over (issue #26). It is resolved ONCE in buildCatalog
 	// (buildSearchProvider): the operator-configured HTTP adapter when --websearch-url
@@ -305,7 +313,13 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// stays layering-clean (no forker import). The merger applies the security
 	// mitigations (git diff --no-textconv + .gitattributes-patch refusal) so an
 	// untrusted branch cannot repoint the parent's git drivers at merge time.
-	opts = append(opts, agent.WithAutoMerge(forker.NewMerger()))
+	// Use the SHARED process-wide serializing merger from the assets (built once in
+	// Phase A), NOT a fresh forker.NewMerger() — so the SAME mutex serializes every
+	// merge across Parallel AND the writable Subagent, process-wide. A nil merger
+	// (hand-rolled assets) skips auto-merge entirely (the historical boundary).
+	if a.autoMerger != nil {
+		opts = append(opts, agent.WithAutoMerge(a.autoMerger))
+	}
 	cat.MustRegister(agent.NewParallelTool(parallelChild, fk, opts...))
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Parallel tool ENABLED (parallel isolated MUTATING child branches; judge selection wired)",

@@ -99,6 +99,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/stacklok/mecatl/engine/tool"
@@ -650,9 +651,12 @@ func sanitizeLabel(label string) string {
 
 // Merger is the tool.ForkMerger implementation: it merges a preserved winning
 // fork's working-tree changes BACK into the parent workspace. It is the
-// auto-merge half of Parallel's single-branch fast path (--parallel-auto-merge),
-// the composition-owned, opt-in (default OFF) capability that lets a delegated
-// implementer's edits actually land without a manual copy/merge step.
+// composition-owned merge half of BOTH merge-back paths — a Parallel
+// single-branch winner (ADR 0039) AND a writable Subagent (mode:"read-write",
+// ADR 0040) — DEFAULT-ON with no flag, the capability that lets a delegated
+// implementer's edits actually land without a manual copy/merge step. The
+// composition root wraps it in a SerializingMerger (one process-wide mutex) so
+// concurrent merges from different runs/sessions cannot interleave their writes.
 //
 // Mechanism (mirrors overlayDirty, in the reverse direction — fork → parent):
 //   - (1) Cheap clean probe on the fork: a clean fork short-circuits (nothing
@@ -752,6 +756,17 @@ func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 		if patchTouchesGitattributes(patch) {
 			return fmt.Errorf("refusing to apply a patch that touches .gitattributes — an untrusted branch may not repoint the parent's git filter/diff drivers (the fork is preserved for manual resolution)")
 		}
+		// ATOMIC-OR-NOTHING: dry-run the apply FIRST (`git apply --check`). `git apply`
+		// is not transactional — a patch that applies some hunks and then conflicts
+		// leaves the parent tree PARTIALLY written, which is worse than a clean failure
+		// (the operator can no longer trust the working tree). The --check pass detects
+		// a conflicting patch WITHOUT modifying the parent, so a conflicting merge leaves
+		// the parent tree completely untouched. Only once the check passes do we run the
+		// real apply (which, having been verified, applies cleanly).
+		if _, cerr := runGitCapture(ctx, parentRoot, patch,
+			"apply", "--check", "--whitespace=nowarn", "-"); cerr != nil {
+			return fmt.Errorf("apply fork patch: %w", cerr)
+		}
 		if _, aerr := runGitCapture(ctx, parentRoot, patch,
 			"apply", "--whitespace=nowarn", "-"); aerr != nil {
 			return fmt.Errorf("apply fork patch: %w", aerr)
@@ -769,6 +784,15 @@ func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 	for _, rel := range splitNUL(others) {
 		if rel == "" {
 			continue
+		}
+		// SECURITY (FIX B): refuse an UNTRACKED .gitattributes too. The step-(2)
+		// patch screen (patchTouchesGitattributes) only covers TRACKED changes; a
+		// child that CREATES a new .gitattributes (at the repo root or in any
+		// subdir) is untracked and would otherwise bypass the filter/diff-driver
+		// repointing defense and land verbatim in the parent. Mirror the patch-side
+		// refusal wording and preserve the fork for manual resolution.
+		if rel == ".gitattributes" || strings.HasSuffix(rel, "/.gitattributes") {
+			return fmt.Errorf("refusing to merge an untracked .gitattributes (%q) — an untrusted branch may not repoint the parent's git filter/diff drivers (the fork is preserved for manual resolution)", rel)
 		}
 		srcPath := filepath.Join(forkRoot, rel)
 		// SKIP symlinks/irregular files: a symlink could point outside the fork,
@@ -790,6 +814,51 @@ func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 
 // Compile-time assertion that Merger satisfies the seam.
 var _ tool.ForkMerger = (*Merger)(nil)
+
+// SerializingMerger wraps an inner tool.ForkMerger with a single mutex so that
+// concurrent Merge calls are SERIALIZED — at most one fork's working-tree diff is
+// applied to a parent workspace at a time, process-wide.
+//
+// Why it exists: a merge applies a fork's `git diff HEAD` into a PARENT workspace
+// (a write of arbitrary files). Two delegation paths now drive merges — Parallel's
+// single-branch auto-merge AND the writable Subagent (mode:"read-write") — and a
+// process may run many sessions concurrently. Without serialization, two merges
+// targeting the SAME parent workspace (or two merges sharing any on-disk state the
+// inner merger touches) could interleave their `git apply` / file-copy writes and
+// corrupt the parent tree. The mutex makes merge-back a process-wide critical
+// section: correctness over throughput, which is the right call for a write that is
+// already a post-run, off-the-hot-path step.
+//
+// The decorator is composition-owned: ONE instance is built in Phase A (like the
+// fork reaper / shared MCP manager) and injected — as a tool.ForkMerger — into BOTH
+// the Parallel path (WithAutoMerge) and the writable Subagent path
+// (WithSubagentAutoMerge), so the SAME mutex serializes across every merge in the
+// process. A per-session instance would NOT serialize across sessions, defeating
+// the point. It owns its own sync.Mutex (zero-value-ready) and forwards the inner
+// result/error verbatim.
+type SerializingMerger struct {
+	mu    sync.Mutex
+	inner tool.ForkMerger
+}
+
+// NewSerializingMerger wraps inner so its Merge calls are serialized process-wide
+// by a single mutex the returned decorator owns. Construct ONE instance in
+// composition and share it across every merge-driving tool.
+func NewSerializingMerger(inner tool.ForkMerger) *SerializingMerger {
+	return &SerializingMerger{inner: inner}
+}
+
+// Merge implements tool.ForkMerger: it takes the decorator's mutex for the whole
+// duration of the inner Merge, so at most one merge runs at a time, then returns
+// the inner result verbatim.
+func (m *SerializingMerger) Merge(ctx context.Context, forkRoot string, parentWS tool.Workspace) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.inner.Merge(ctx, forkRoot, parentWS)
+}
+
+// Compile-time assertion that SerializingMerger satisfies the seam.
+var _ tool.ForkMerger = (*SerializingMerger)(nil)
 
 // patchTouchesGitattributes reports whether the given unified-diff patch touches
 // any `.gitattributes` file (at the repo root or any subdirectory). It scans the

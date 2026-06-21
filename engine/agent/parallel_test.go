@@ -515,6 +515,47 @@ func TestParallelAutoMergeConflictSurfacesToolError(t *testing.T) {
 	}
 }
 
+// TestParallelMutatesParent unit-tests the MutatesParent predicate (FIX C): a call
+// that WILL auto-merge (single-branch join=first/judge with the merger wired) reports
+// true so the dispatcher flushes it alone (dispatch-serial); multi-branch, join=all,
+// and a no-merger tool report false; malformed args report false.
+func TestParallelMutatesParent(t *testing.T) {
+	childEngine := childEngineWith(&branchProvider{summary: "x"}, catalogWith(t))
+	wired := agent.NewParallelTool(childEngine, &memForker{}, agent.WithAutoMerge(&fakeMerger{})).(interface {
+		MutatesParent(session.ToolCall) bool
+	})
+
+	cases := []struct {
+		name string
+		args string
+		want bool
+	}{
+		{"single-branch first merges", `{"tasks":["impl"],"join":"first"}`, true},
+		{"single-branch judge merges", `{"tasks":["impl"],"join":"judge"}`, true},
+		{"single-branch best (judge alias) merges", `{"tasks":["impl"],"join":"best"}`, true},
+		{"single-branch all does not", `{"tasks":["impl"],"join":"all"}`, false},
+		{"single-branch default join (all) does not", `{"tasks":["impl"]}`, false},
+		{"multi-branch first does not", `{"tasks":["a","b"],"join":"first"}`, false},
+		{"empty tasks does not", `{"tasks":[]}`, false},
+		{"malformed args", `{not json`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := wired.MutatesParent(toolCall("p1", "Parallel", tc.args)); got != tc.want {
+				t.Fatalf("MutatesParent(%s) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+
+	// No merger wired → never merges, so MutatesParent is always false.
+	noMerger := agent.NewParallelTool(childEngine, &memForker{}).(interface {
+		MutatesParent(session.ToolCall) bool
+	})
+	if noMerger.MutatesParent(toolCall("p1", "Parallel", `{"tasks":["impl"],"join":"first"}`)) {
+		t.Fatal("single-branch first with no merger wired must not report MutatesParent")
+	}
+}
+
 // TestParallelAutoMergeMultiBranchNeverMerges asserts that a MULTI-BRANCH
 // join=first run NEVER calls the merger even when WithAutoMerge is wired — the
 // no-auto-merge boundary stays for fan-out.
