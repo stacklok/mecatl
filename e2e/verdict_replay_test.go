@@ -128,17 +128,6 @@ func verdictReplaySpecs() {
 				defer func() { _ = local2.Close() }()
 
 				cli2 := local2.Client()
-				stream2, err := cli2.OpenConverse(ctx)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "open converse on local #2")
-
-				// ONE ReadLoop spans BOTH resumed turns below (the read-ledger primer +
-				// the Write turn) — starting a second reader on the same stream would
-				// race the first (same discipline as the stream1 comment above). Sized
-				// for two short turns.
-				ctx2, cancel := context.WithTimeout(ctx, 150*time.Second)
-				defer cancel()
-				msgs := make(chan tea.Msg, 256)
-				go stream2.ReadLoop(ctx2, msgs)
 
 				// READ-LEDGER PRIMER (root-cause de-flake). osfs keeps an in-memory,
 				// per-workspace read-before-write ledger that RESETS on restart (Phase 0
@@ -148,45 +137,44 @@ func verdictReplaySpecs() {
 				// changed"). Relying on the model to self-recover from that refusal
 				// (Read replay.txt, then re-Write) is a model-variance flake ORTHOGONAL
 				// to the replay property under test — haiku usually recovers, but not
-				// always. So issue an explicit Read turn FIRST to record replay.txt in
-				// #2's ledger; the subsequent auto-allowed Write then succeeds on the
-				// first attempt, deterministically. This does NOT touch the replay
-				// oracle: this first resumed run is ALSO what drives loadAndReopen ->
-				// ReplayApprovals (re-Learning the path-keyed rule into #2's fresh
-				// permstore from the logged verdict), and the Write below is still
-				// AUTO-ALLOWED with NO ask — which is exactly what this spec proves.
-				gomega.Expect(stream2.SendPrompt(sessionID,
-					"Use the Read tool to read the file "+noteName+" in the workspace and reply with its exact contents. Call no other tool.", nil)).
-					To(gomega.Succeed(), "resume + send the read-ledger primer turn on local #2")
-				// Drain the primer turn to its terminal (its events are not asserted on —
-				// it exists only to populate the read-ledger + trigger ReplayApprovals).
-			primer:
-				for {
-					select {
-					case <-ctx2.Done():
-						ginkgo.Fail("read-ledger primer turn never reached a terminal\n--- mecated log tail ---\n" + local2.LogTail(4096))
-					case m, ok := <-msgs:
-						if !ok {
-							break primer
-						}
-						if _, isResult := m.(client.ResultMsg); isResult {
-							break primer
-						}
-					}
-				}
+				// always. So issue an explicit Read turn FIRST (as its OWN converse run —
+				// a converse stream takes ONE prompt then closes, so the Write turn below
+				// needs a fresh stream) to record replay.txt in #2's ledger; the
+				// auto-allowed Write turn then succeeds on the first attempt,
+				// deterministically. This first resumed run is ALSO what drives
+				// loadAndReopen -> ReplayApprovals (re-Learning the path-keyed rule into
+				// #2's fresh permstore from the logged verdict), so the Write turn stays
+				// AUTO-ALLOWED with NO ask — exactly what this spec proves. The driver
+				// opens/drains/closes its own stream; Read raises no ask, so the driver's
+				// auto-approver resolves nothing.
+				primerDrv := harness.NewDriver(local2)
+				_, primerErr := primerDrv.Run(ctx, harness.RunOpts{
+					Scenario:  "verdict-replay-primer",
+					Timeout:   90 * time.Second,
+					SessionID: sessionID,
+				}, "Use the Read tool to read the file "+noteName+" in the workspace and reply with its exact contents. Call no other tool.")
+				gomega.Expect(primerErr).NotTo(gomega.HaveOccurred(),
+					"read-ledger primer turn on local #2\n--- mecated log tail ---\n"+local2.LogTail(4096))
 
-				// Now prompt for ANOTHER Write to the SAME path. The LOAD-BEARING oracle
-				// is the REPLAY property: the resumed Write is AUTO-ALLOWED — NO
-				// permission.ask fires for Write at all. This holds ONLY if
-				// ReplayApprovals rebuilt the path-keyed rule into #2's fresh in-memory
-				// permstore from the durable allow-always verdict (the Phase 3b loop);
-				// had the rule NOT been replayed, this Write would have raised an ask.
-				// With the read-ledger now primed, the auto-allowed Write also succeeds
-				// on the FIRST attempt, so the file-content + non-error-result
-				// assertions below are deterministic rather than dependent on model
-				// self-recovery.
+				// Now resume + prompt for ANOTHER Write to the SAME path on a FRESH
+				// converse stream. The LOAD-BEARING oracle is the REPLAY property: the
+				// resumed Write is AUTO-ALLOWED — NO permission.ask fires for Write at
+				// all. This holds ONLY if ReplayApprovals rebuilt the path-keyed rule
+				// into #2's fresh in-memory permstore from the durable allow-always
+				// verdict (the Phase 3b loop); had the rule NOT been replayed, this Write
+				// would have raised an ask. With the read-ledger primed by the turn
+				// above, the auto-allowed Write also succeeds on the FIRST attempt, so
+				// the file-content + non-error-result assertions below are deterministic
+				// rather than dependent on model self-recovery.
+				stream2, err := cli2.OpenConverse(ctx)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "open converse on local #2")
 				gomega.Expect(stream2.SendPrompt(sessionID, writePrompt("omega"), nil)).
 					To(gomega.Succeed(), "resume + send turn 2 on local #2")
+
+				ctx2, cancel := context.WithTimeout(ctx, 90*time.Second)
+				defer cancel()
+				msgs := make(chan tea.Msg, 256)
+				go stream2.ReadLoop(ctx2, msgs)
 
 				var writeAsks []client.PermissionAskMsg
 				writeCallIDs := map[string]bool{} // ids of Write tool.calls in the resumed run
