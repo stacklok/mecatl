@@ -207,7 +207,23 @@ func compactionSpecs() {
 				}
 
 				// Final turn: trigger the task. Write is allow-once'd by the driver policy.
-				final := runTurn("compaction-5-go", `GO`, []string{"Write"})
+				//
+				// The trigger word is wrapped in an ACT-NOW directive that does NOT restate
+				// the task: a bare "GO" is ambiguous to a live model — observed in a failing
+				// run where haiku read it as a readiness ping and replied "Ready." with NO
+				// tool call (while a passing run on the same code wrote the file). The
+				// directive removes that no-op failure mode WITHOUT revealing what to do:
+				// the file name (result.txt) and content (PINEAPPLE) are never mentioned
+				// here, so the survival assertion still requires the model to have RECALLED
+				// the pinned instruction across the compaction — only now it reliably ACTS
+				// on it instead of merely acknowledging. (Compliance ≠ preservation: the
+				// first-user-pin guarantees the task is present; this guarantees the terse
+				// trigger elicits the action.)
+				final := runTurn("compaction-5-go",
+					`GO. This is the trigger word from the instruction I gave you earlier. `+
+						`Carry out that instruction IN FULL right now using the appropriate tool — `+
+						`do not merely acknowledge or reply that you are ready.`,
+					[]string{"Write"})
 
 				// --- Assertion A (ANTI-VACUITY): compaction must have fired. ---
 				totalCompactions := 0
