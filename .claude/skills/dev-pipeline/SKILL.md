@@ -60,31 +60,33 @@ broken across drives/agents). The orchestrator uses this tagging to pick the
 implementer path in step 2.
 
 ### 2. Implement (build + test, no commit)
-Spawn a **separate** expert agent to execute the plan. It is the **executor of
-a plan it did not author** — whether that agent is you (the orchestrator) or a
-delegated agent is a *tooling* choice, not a rigor choice. The rigor that
-matters is **plan ≠ review**: the plan is written by a separate architect, and
-the review is run by fresh-context agents that see only the diff + the plan,
-never the implementer's reasoning. That independence is what makes the review
-meaningful — NOT whether the implementer was you or a delegate.
+Delegate the plan to a **separate implementer agent** that executes it. The rigor
+that matters is **plan ≠ review**: the plan is written by a separate architect
+(step 1), and the review is run by fresh-context agents that see only the diff +
+the plan, never the implementer's reasoning (step 3). That independence is what
+makes the review meaningful.
 
-**Delegate as ONE unit.** Hand the implementer the plan + the whole task; do
-NOT relay file contents through the orchestrator, and do NOT spawn one subagent
-per file. Chunking by file destroys the plan's coherence and forces the
-orchestrator to re-author context the implementer could have read itself.
+**Delegate as ONE unit per task.** Hand the implementer the plan + the whole
+task; do NOT relay file contents through the orchestrator, and do NOT spawn one
+agent per file. Chunking is by **task-dependency boundary** (one delegate per
+step-1 task), never by file — "ONE unit" means one task, not the whole issue. A
+chunked-L task spawns one delegate per chunk (each gets its slice of the plan +
+its predecessor's landed diff), not one delegate per file.
 
-**Pick the implementer path by what your tools allow:**
-- **Write-capable delegation with merge-back** (a delegated agent whose edits
-  land in this workspace, or a Parallel single-branch run with
-  `--parallel-auto-merge` whose winner's diff is merged back) → **delegate**.
-- **Read-only subagent** (a Subagent whose worktree is discarded; no
-  Edit/Write) → **implement directly yourself** — the subagent can investigate
-  and produce code as text in its final message, but it cannot land edits. You
-  write the files from its output.
-- **Fork-with-merge** (a single-branch `Parallel` with `join: first`/`judge`,
-  whose winner's fork is preserved) → **delegate, then merge** the winner's
-  diff back into this workspace (or rely on `--parallel-auto-merge` to do it
-  automatically).
+**The implementer path in mecatl:**
+- **To land edits** → a **single-branch `Parallel` with `join: "first"`**. The
+  branch runs with Edit/Write/Bash in its own isolated fork, and the winner's
+  diff is **auto-merged back into this workspace** (default-on, no flag). Hand it
+  the plan + the task as the single branch's prompt. This is the "everything
+  through sub-agents" path — the implementer's edits land without you writing
+  files yourself.
+- **If you cannot delegate a write-capable agent** (no Parallel available, or the
+  change is tiny and delegation is overhead) → **implement directly yourself**,
+  applying the plan with your own Edit/Write. A read-only `Subagent` CANNOT land
+  edits — it has no Edit/Write tools and its worktree is discarded; use it only
+  to investigate and produce code as text, which you then write. If the operator
+  wants everything through sub-agents and only read-only delegation is
+  available, **surface that gap** — don't silently self-implement.
 
 The implementer:
 - builds and runs the project's **offline** test suite (per `CLAUDE.md`),
