@@ -523,3 +523,141 @@ func TestMergerConflictSurfacesError(t *testing.T) {
 		t.Fatalf("conflict error must name the preserved fork path for manual resolution, got: %v", err)
 	}
 }
+
+// TestMergerRefusesGitattributesPatch asserts the SECURITY mitigation: the merge
+// refuses to apply a patch that touches `.gitattributes` — an untrusted branch must
+// not silently land attribute changes that repoint the parent's git filter/diff
+// drivers (a filter.<drv>.smudge in the parent's config would fire on
+// attacker-controlled blob content at merge time). The merge returns an error
+// naming the refusal; the parent tree is untouched.
+//
+// Uses WithForceCopy (the real Parallel-branch topology: the fork gets its OWN
+// `.git` the branch can write to), and STAGES the .gitattributes so `git diff HEAD`
+// carries it as a tracked change (a committed change would move HEAD and yield an
+// empty diff; staged is the realistic pre-commit state).
+func TestMergerRefusesGitattributesPatch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "existing.txt"), "from base\n")
+	gitCommit(t, base)
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	// Force-copy: the fork has its own .git the branch can write to.
+	f := forker.New(osfsWorkspace, forker.WithForceCopy())
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "attrs")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// In the fork: add a .gitattributes (repointing a filter) + STAGE it so
+	// `git diff HEAD` carries it, plus a staged tracked edit so the patch has both.
+	childRoot := child.Root()
+	if err := os.WriteFile(filepath.Join(childRoot, ".gitattributes"), []byte("*.txt filter=evil\n"), 0o644); err != nil {
+		t.Fatalf("write .gitattributes in fork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "existing.txt"), []byte("from fork\n"), 0o644); err != nil {
+		t.Fatalf("edit tracked in fork: %v", err)
+	}
+	runGit(t, childRoot, "add", ".gitattributes", "existing.txt")
+
+	// The parent must be untouched before the merge (sanity).
+	if _, err := os.Stat(filepath.Join(base, ".gitattributes")); !os.IsNotExist(err) {
+		t.Fatalf("parent already has a .gitattributes before merge (err=%v)", err)
+	}
+
+	m := forker.NewMerger()
+	err = m.Merge(context.Background(), childRoot, baseWS)
+	if err == nil {
+		t.Fatal("Merge of a .gitattributes-touching fork must be refused, got nil")
+	}
+	if !strings.Contains(err.Error(), ".gitattributes") {
+		t.Fatalf("refusal error must name .gitattributes, got: %v", err)
+	}
+	// The parent must NOT have the .gitattributes (the merge refused before apply).
+	if _, err := os.Stat(filepath.Join(base, ".gitattributes")); !os.IsNotExist(err) {
+		t.Fatalf("the refused merge leaked .gitattributes into the parent (err=%v)", err)
+	}
+	// And the tracked edit must NOT have landed either (the whole patch was refused).
+	got, readErr := os.ReadFile(filepath.Join(base, "existing.txt"))
+	if readErr != nil {
+		t.Fatalf("parent existing.txt missing: %v", readErr)
+	}
+	if string(got) != "from base\n" {
+		t.Fatalf("the refused merge leaked the tracked edit into the parent: got %q", got)
+	}
+}
+
+// TestMergerTextconvDoesNotFire asserts the SECURITY mitigation: the merge's
+// `git diff` runs with --no-textconv, so an attacker-installed
+// `diff.<drv>.textconv` in the fork's .git/config does NOT execute at merge time
+// (and its stdout does NOT masquerade as the merged content). Without --no-textconv
+// the textconv command would fire and the sentinel file would appear; with it, the
+// diff is emitted from raw blob content and no textconv runs.
+//
+// Uses WithForceCopy (the real Parallel-branch topology: the fork has its own
+// `.git` the branch can arm a textconv driver in).
+func TestMergerTextconvDoesNotFire(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "tracked.txt"), "from base\n")
+	gitCommit(t, base)
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace, forker.WithForceCopy())
+	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "textconv")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// Arm an attacker textconv in the FORK's .git/config + a tracked edit so the
+	// fork is dirty. The textconv command writes a sentinel file if it fires.
+	sentinel := filepath.Join(t.TempDir(), "TEXCONV_FIRED.txt")
+	childRoot := child.Root()
+	runGit(t, childRoot, "config", "diff.evil.textconv",
+		"/bin/sh -c \"echo FIRED > "+sentinel+"\"")
+	// Put the attribute in the fork's .git/info/attributes (NOT carried by the
+	// patch, so the .gitattributes refusal doesn't block this test) — the textconv
+	// fires on `git diff` for files the attribute selects, regardless of how the
+	// attribute was set. The force-copy fork has a real .git dir.
+	infoAttrs := filepath.Join(childRoot, ".git", "info", "attributes")
+	if err := os.MkdirAll(filepath.Dir(infoAttrs), 0o755); err != nil {
+		t.Fatalf("mkdir .git/info: %v", err)
+	}
+	if err := os.WriteFile(infoAttrs, []byte("tracked.txt diff=evil\n"), 0o644); err != nil {
+		t.Fatalf("write .git/info/attributes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "tracked.txt"), []byte("from fork\n"), 0o644); err != nil {
+		t.Fatalf("edit tracked in fork: %v", err)
+	}
+
+	m := forker.NewMerger()
+	if err := m.Merge(context.Background(), childRoot, baseWS); err != nil {
+		t.Fatalf("Merge (textconv test) failed: %v", err)
+	}
+	// The sentinel must NOT exist — the textconv did NOT fire under --no-textconv.
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Fatalf("the attacker textconv FIRED during the merge's git diff (sentinel %q exists) — --no-textconv is not suppressing diff.*.textconv", sentinel)
+	}
+	// And the merged content must be the real edit, not the textconv's stdout.
+	got, readErr := os.ReadFile(filepath.Join(base, "tracked.txt"))
+	if readErr != nil {
+		t.Fatalf("parent tracked.txt missing after merge: %v", readErr)
+	}
+	if string(got) != "from fork\n" {
+		t.Fatalf("merged content is the textconv stdout, not the real edit: got %q", got)
+	}
+}

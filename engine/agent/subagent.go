@@ -857,7 +857,7 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 	// isolated-worktree shell; the wording is precise: the child CAN write scratch
 	// files via Bash, but the worktree is DISCARDED after the run AND the child has
 	// no Edit/Write tools, so its file changes never reach the parent — use Parallel
-	// (whose winner's fork is preserved, or --parallel-auto-merge for a single branch)
+	// (whose single-branch winner is auto-merged back into this workspace by default)
 	// when you need the diff kept. With WithSubagentShellDisabledNote set the clause is
 	// REPLACED by a read-only-only description carrying the reason, so the model never
 	// delegates build/test/git work the child cannot perform. Without the note the

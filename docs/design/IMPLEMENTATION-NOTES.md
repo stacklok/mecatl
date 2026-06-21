@@ -782,24 +782,33 @@ session-store transcript, NOT the filesystem, so a torn-down fork does not
 invalidate it); it prints an honest one-line note that branch workspaces were
 torn down after the join and how to keep changes next time. The Parallel spec
 text was updated to say `join=all` tears down every fork. (2) **Auto-merge
-(ADR 0039):** an OPT-IN `--parallel-auto-merge` flag (default OFF) wires a
-`tool.ForkMerger` (`forker.Merger` — `git diff --no-ext-diff --binary HEAD` from
-the fork piped to `git apply` in the parent, plus untracked-file copy, same
-scrubbed env as `overlayDirty`) into the Parallel tool via `WithAutoMerge`. When
-a `join=first` run has exactly ONE branch and a successful winner, its diff is
-auto-merged back into the parent workspace AFTER `preserveWinner` and BEFORE
-`Execute` returns; the result notes the auto-merge (and drops the
-"inspect/merge/clean" guidance — the changes already landed). Multi-branch runs
-and `join=judge`/`join=all` NEVER auto-merge (the no-auto-merge boundary stays
-for fan-out). On a conflict `Execute` returns a tool error naming the conflict +
-the preserved fork path (the fork is left intact for manual resolution); it
-NEVER forces. `ParallelTool.ReadOnly()` stays `true` — the merge is a POST-RUN
-step, not a dispatch-time mutation, so read-parallel / mutate-serial is
-unaffected. The merge runs in the PARENT workspace under the parent's trust
-posture. Guards: `agent.TestParallelAutoMerge(SingleBranchSuccess|
+(ADR 0039):** a `tool.ForkMerger` (`forker.Merger` — `git diff --no-ext-diff
+--no-textconv --binary HEAD` from the fork piped to `git apply` in the parent,
+plus untracked-file copy, same scrubbed env as `overlayDirty`) is wired into the
+Parallel tool via `WithAutoMerge` UNCONDITIONALLY (default-on, NO operator flag —
+for a single-branch winner there is no fan-out, so the no-auto-merge boundary
+does not apply). The shared `autoMergeWinner` helper fires for a SINGLE-BRANCH
+(`len(results) == 1`) winner of `join=first` OR `join=judge` — both one-branch
+winners land (the paths collapse: a one-branch judge run and a one-branch first
+run are the same "delegate and land" case). The winner's diff is auto-merged back
+into the parent workspace AFTER `preserveWinner` and BEFORE `Execute` returns;
+the result notes the auto-merge (and drops the "inspect/merge/clean" guidance —
+the changes already landed). Multi-branch runs and `join=all` NEVER auto-merge
+(the no-auto-merge boundary stays for fan-out). On a conflict `Execute` returns a
+tool error naming the conflict + the preserved fork path (the fork is left intact
+for manual resolution); it NEVER forces. `ParallelTool.ReadOnly()` stays `true` —
+the merge is a POST-RUN step, not a dispatch-time mutation, so read-parallel /
+mutate-serial is unaffected. The merge runs in the PARENT workspace under the
+parent's trust posture. SECURITY: the merge's `git diff` runs `--no-textconv`
+(closes `diff.<drv>.textconv` RCE from an attacker-authored fork `.git/config`,
+which `--no-ext-diff` does NOT suppress — verified) and refuses
+`.gitattributes`-touching patches (closes `filter.<drv>.smudge` RCE via attribute
+repointing); `--no-textconv` is also applied to `overlayDirty`'s `git diff` for
+defence-in-depth parity. Guards: `agent.TestParallelAutoMerge(SingleBranchSuccess|
 ConflictSurfacesToolError|MultiBranchNeverMerges|JoinAllNeverMerges|
-NilMergerIsNoOp)` + `forker.TestMerger(AppliesForkDiffToParent|CleanForkIsNoOp|
-ConflictSurfacesError)`. Floor-scoped (`ScopeBuiltinDefault`) ALLOW in `defaultRules()` (issue #37, decided for
+NilMergerIsNoOp|JudgeSingleBranch)` + `forker.TestMerger(AppliesForkDiffToParent|
+CleanForkIsNoOp|ConflictSurfacesError|RefusesGitattributesPatch|
+TextconvDoesNotFire)`. Floor-scoped (`ScopeBuiltinDefault`) ALLOW in `defaultRules()` (issue #37, decided for
 `InspectSubagent` + `InspectMember` + `SubagentStatus` together): all three are read-only pulls of
 harness-owned data (persisted child/member transcripts; the run-local child registry), bounded-rendered,
 prefix-gated — and the children were already permission-gated when they ran. Overridable to ask/deny by

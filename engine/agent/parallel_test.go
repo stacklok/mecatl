@@ -580,3 +580,30 @@ func TestParallelAutoMergeNilMergerIsNoOp(t *testing.T) {
 		t.Fatalf("nil-merger result must still carry the preserved-workspace guidance, got:\n%s", res.Content)
 	}
 }
+
+// TestParallelAutoMergeJudgeSingleBranch asserts the auto-merge extends to
+// join=judge single-branch winners (the UX-panel "collapse paths (a) and (c)"
+// fix): a one-branch join=judge run with a merger wired merges the winner's diff
+// into the parent and the result notes the auto-merge.
+func TestParallelAutoMergeJudgeSingleBranch(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	childEngine := childEngineWith(&branchProvider{summary: "implemented"}, catalogWith(t, childRead))
+	merger := &fakeMerger{}
+	fork := agent.NewParallelTool(childEngine, &memForker{},
+		agent.WithParallelJudge(&fakeJudge{pick: "branch-1", rationale: "only candidate"}),
+		agent.WithAutoMerge(merger))
+
+	res := runParallel(t, fork, "c1", `{"tasks":["implement X"],"join":"judge"}`)
+	if res.IsError {
+		t.Fatalf("judge single-branch auto-merge must succeed, got error: %q", res.Content)
+	}
+	if merger.callCount() != 1 {
+		t.Fatalf("merger called %d times, want 1 (judge single-branch winner)", merger.callCount())
+	}
+	if !strings.Contains(res.Content, "auto-merged into this workspace") {
+		t.Fatalf("judge result must note the auto-merge, got:\n%s", res.Content)
+	}
+}

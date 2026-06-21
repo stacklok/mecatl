@@ -22,14 +22,15 @@ the Subagent `agentId:` trailer (issue #30; `InspectSubagent`'s gate admits both
 every fork is torn down after the join (the result reports branch ids for
 transcript pulls, NOT workspace paths — the forks are gone); for `join=first` /
 `join=judge` the WINNER's fork is PRESERVED (its cleanup is dropped) and its path
-is reported so the operator can inspect or merge it manually. The OPT-IN
-`--parallel-auto-merge` flag (default OFF; see
-[ADR 0039](../adr/0039-parallel-auto-merge.md)) adds a single-branch fast path:
-when a `join=first` run has exactly ONE branch and a successful winner, its diff
-is auto-merged back into the parent workspace via `tool.ForkMerger` (the
-`forker.Merger` adapter — `git diff HEAD` from the fork piped to `git apply` in
-the parent, plus untracked-file copy). Multi-branch runs and `join=judge`/
-`join=all` NEVER auto-merge. On a conflict the merge surfaces a tool error and
+is reported. A SINGLE-BRANCH `join=first`/`join=judge` winner is auto-merged back
+into the parent workspace BY DEFAULT (no flag; see
+[ADR 0039](../adr/0039-parallel-auto-merge.md)): the winner's diff is applied via
+`tool.ForkMerger` (the `forker.Merger` adapter — `git diff --no-textconv HEAD`
+from the fork piped to `git apply` in the parent, plus untracked-file copy; the
+merge refuses `.gitattributes`-touching patches and runs `--no-textconv` to close
+attacker-named `diff.*.textconv`/`filter.*.smudge` RCE from an untrusted fork
+`.git`). Multi-branch runs and `join=all` NEVER auto-merge (the no-auto-merge
+boundary stays for fan-out). On a conflict the merge surfaces a tool error and
 PRESERVES the fork for manual resolution; it never forces. `Parallel.ReadOnly()`
 stays `true` — the merge is a POST-RUN step, not a dispatch-time mutation, so
 read-parallel / mutate-serial is unaffected.

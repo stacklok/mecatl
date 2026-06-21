@@ -101,24 +101,25 @@ When InspectSubagent returns, reply with the single word done.`)
 				"no successful InspectSubagent of a parallel- branch id observed (the branch transcript was not pulled)\n"+failureReport())
 		})
 
-		// ADR 0039 — the auto-merge fast path. A SINGLE-BRANCH join=first Parallel
-		// run with --parallel-auto-merge wired merges the winner's diff back into
-		// the parent workspace, so a delegated implementer's edits land without a
-		// manual copy/merge step. The live proof: the branch writes a sentinel
-		// file in its isolated fork, and after the Parallel call returns the
-		// sentinel file EXISTS in the PARENT workspace (loc.Workspace()). Without
-		// auto-merge the fork is preserved (or torn down) but the parent tree is
-		// untouched — the sentinel would be absent. This is the regression guard
-		// for the capability the operator asked for ("everything through
+		// ADR 0039 — the auto-merge fast path. A SINGLE-BRANCH join=first
+		// Parallel run auto-merges the winner's diff back into the parent
+		// workspace (default-on, no flag), so a delegated implementer's edits land
+		// without a manual copy/merge step. The live proof: the branch writes a
+		// sentinel file in its isolated fork, and after the Parallel call returns
+		// the sentinel file EXISTS in the PARENT workspace (loc.Workspace()).
+		// Without auto-merge the fork is preserved (or torn down) but the parent
+		// tree is untouched — the sentinel would be absent. This is the regression
+		// guard for the capability the operator asked for ("everything through
 		// sub-agents" with edits that actually land).
 		ginkgo.It("auto-merges a single-branch join=first winner's file into the parent workspace",
 			ginkgo.SpecTimeout(6*time.Minute),
 			func(ctx ginkgo.SpecContext) {
-				// A dedicated mecated with --parallel-auto-merge over its OWN
-				// scratch tree (the harness git-inits the workspace + commits the
-				// fixtures, so the force-copy fork has a base to diff against).
-				loc, err := harness.NewLocalWith("--parallel-auto-merge")
-				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawning the --parallel-auto-merge mecated failed")
+				// A dedicated mecated over its OWN scratch tree (the harness
+				// git-inits the workspace + commits the fixtures, so the force-copy
+				// fork has a base to diff against). Auto-merge is default-on, so no
+				// flag is needed.
+				loc, err := harness.NewLocalWith()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawning the auto-merge mecated failed")
 				defer func() { _ = loc.Close() }()
 
 				// The sentinel the branch will write. Distinctive enough that no

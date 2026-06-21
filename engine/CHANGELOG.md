@@ -18,13 +18,17 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   workspace. Additive interface in `engine/tool` (next to `WorkspaceForker`); no
   frozen domain type changes. See `docs/adr/0039-parallel-auto-merge.md`.
 - `agent.WithAutoMerge(m tool.ForkMerger) ParallelOption` — wires a merger into
-  the Parallel tool. When set AND a `join=first` run has exactly one branch with
-  a successful winner, the winner's diff is auto-merged into the parent
-  workspace after the run. nil (the default) keeps the historical no-auto-merge
-  boundary unchanged. Multi-branch runs never auto-merge. The merge is a
-  POST-RUN step, so `ParallelTool.ReadOnly()` stays `true`. On a conflict the
-  tool returns an error naming the conflict + the preserved fork path; it never
-  forces. See `docs/adr/0039-parallel-auto-merge.md`.
+  the Parallel tool. When set AND a `join=first` or `join=judge` run has exactly
+  one branch with a successful winner, the winner's diff is auto-merged into the
+  parent workspace after the run. nil (the default for the option itself) keeps
+  the no-auto-merge behaviour for that tool instance; composition wires a merger
+  unconditionally (default-on — see `docs/adr/0039-parallel-auto-merge.md`).
+  Multi-branch runs never auto-merge. The merge is a POST-RUN step, so
+  `ParallelTool.ReadOnly()` stays `true`. On a conflict the tool returns an error
+  naming the conflict + the preserved fork path; it never forces. The `forker.Merger`
+  adapter runs `git diff --no-textconv` and refuses `.gitattributes`-touching
+  patches (closes attacker-named `diff.*.textconv`/`filter.*.smudge` RCE from an
+  untrusted fork `.git`). See `docs/adr/0039-parallel-auto-merge.md`.
 
 ## [0.0.3] - 2026-06-21
 

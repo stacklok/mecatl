@@ -341,16 +341,14 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 			"Each branch cannot see this conversation or the other branches, so make every " +
 			"task in `tasks` self-contained (use `shared` for common context). " +
 			"`join` controls the result: 'all' (default) returns every branch summary so YOU " +
-			"pick — but every branch's fork is TORN DOWN after the join, so to keep a branch's " +
-			"file changes you must copy them out before the call returns (or re-run with " +
-			"'first'/'judge' or --parallel-auto-merge); 'first' returns the first branch that " +
-			"SUCCEEDS and cancels the rest (only for interchangeable branches) and PRESERVES the " +
-			"winner's fork; 'judge'/'best' has an LLM pick the single best branch against " +
-			"`criteria` and PRESERVES the winner's fork. Branches do NOT auto-merge (unless " +
-			"--parallel-auto-merge is on and there is a single branch) — forked workspace paths " +
-			"are reported for 'first'/'judge' so you can inspect or merge them yourself; for " +
-			"'first'/'judge' the WINNER's fork is PRESERVED (not torn down) so its changes survive " +
-			"for inspection. " +
+			"pick — every branch's fork is torn down after the join, so copy any changes you " +
+			"need into your reply before the call returns; 'first' returns the first branch that " +
+			"SUCCEEDS, cancels the rest, and keeps the winner's fork (path reported); 'judge'/'best' " +
+			"has an LLM pick the single best branch against `criteria` and keeps the winner's fork " +
+			"(path reported). For a SINGLE-BRANCH 'first'/'judge' run, the winner's file changes " +
+			"are auto-merged into this workspace — a delegated implementer's edits land without a " +
+			"manual copy step. Multi-branch runs never auto-merge (fan-out is for exploration, not " +
+			"landing all branches); inspect a preserved winner's fork path yourself if you need to. " +
 			"Each branch reports a `branch id:` line you can pass to InspectSubagent to pull " +
 			"that branch's bounded transcript (e.g. to debug a failed or not-selected branch).",
 		Schema: parallelSchema,
@@ -669,27 +667,43 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 		results[i].runCleanup()
 	}
 	t.preserveWinner(results[winner])
-	// AUTO-MERGE (opt-in, --parallel-auto-merge): when a merger is wired AND this
-	// is a SINGLE-BRANCH join=first run with a successful winner, merge the
-	// winner's diff back into the parent workspace so a delegated implementer's
-	// edits actually land. Multi-branch runs NEVER auto-merge (the no-auto-merge
-	// boundary stays for fan-out). The merge is a POST-RUN step (after
-	// preserveWinner, before be.end/return), so ReadOnly() stays true. On a
-	// conflict, surface a tool error naming the conflict + the preserved fork
-	// path; the fork is left intact for manual resolution. See tool.ForkMerger.
-	autoMerged := false
-	if t.autoMerger != nil && len(results) == 1 && results[winner].childRoot != "" {
-		if merr := t.autoMerger.Merge(ctx, results[winner].childRoot, ws); merr != nil {
-			be.end(joinFirst, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopError)
-			return session.NewToolError(callID, fmt.Sprintf(
-				"Parallel: auto-merge of the winning branch into this workspace FAILED: %v "+
-					"(the winner's fork is PRESERVED at %q for manual resolution)",
-				merr, results[winner].childRoot))
-		}
-		autoMerged = true
+	// AUTO-MERGE (default-on, no flag — see docs/adr/0039-parallel-auto-merge.md):
+	// for a SINGLE-BRANCH winner, merge the winner's diff back into the parent
+	// workspace so a delegated implementer's edits actually land. Multi-branch runs
+	// NEVER auto-merge (the no-auto-merge boundary stays for fan-out). The merge is
+	// a POST-RUN step (after preserveWinner, before be.end/return), so ReadOnly()
+	// stays true. On a conflict, surface a tool error naming the conflict + the
+	// preserved fork path; the fork is left intact for manual resolution.
+	autoMerged, errResult := t.autoMergeWinner(ctx, ws, results, winner, joinFirst, be, callID)
+	if errResult != nil {
+		return *errResult
 	}
 	be.end(joinFirst, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopEndTurn)
 	return session.NewToolResult(callID, joinFirstResult(results, winner, autoMerged))
+}
+
+// autoMergeWinner merges a SINGLE-BRANCH winner's diff back into the parent
+// workspace when a merger is wired. It is the shared post-run step for
+// executeFirst and executeJudge (both single-branch winners land). It returns
+// autoMerged=true on a successful merge, or a non-nil errorResult (already
+// carrying the right join-label be.end + the tool error) when the merge FAILED —
+// the caller returns it verbatim. Multi-branch runs (len(results) > 1) skip the
+// merge (the no-auto-merge boundary stays for fan-out) and return (false, nil).
+// A nil merger (the no-merger test path) also returns (false, nil), so the
+// historical no-auto-merge behaviour is byte-identical when unwired.
+func (t *ParallelTool) autoMergeWinner(ctx context.Context, ws tool.Workspace, results []branchResult, winner int, join string, be branchEmitter, callID session.ToolCallID) (bool, *session.ToolResult) {
+	if t.autoMerger == nil || len(results) != 1 || results[winner].childRoot == "" {
+		return false, nil
+	}
+	if merr := t.autoMerger.Merge(ctx, results[winner].childRoot, ws); merr != nil {
+		be.end(join, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopError)
+		errRes := session.NewToolError(callID, fmt.Sprintf(
+			"Parallel: auto-merge of the winning branch into this workspace FAILED: %v "+
+				"(the winner's fork is PRESERVED at %q for manual resolution)",
+			merr, results[winner].childRoot))
+		return false, &errRes
+	}
+	return true, nil
 }
 
 // executeJudge runs every branch, then (when ≥2 succeeded) asks the injected
@@ -733,8 +747,15 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 		results[i].runCleanup()
 	}
 	t.preserveWinner(results[winner])
+	// AUTO-MERGE (default-on): a SINGLE-BRANCH join=judge winner's diff is merged
+	// back into the parent workspace, same as join=first. Multi-branch judge runs
+	// never auto-merge (the no-auto-merge boundary stays for fan-out).
+	autoMerged, errResult := t.autoMergeWinner(ctx, ws, results, winner, joinJudge, be, callID)
+	if errResult != nil {
+		return *errResult
+	}
 	be.end(joinJudge, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopEndTurn)
-	return session.NewToolResult(callID, joinJudgeResult(results, winner, rationale))
+	return session.NewToolResult(callID, joinJudgeResult(results, winner, rationale, autoMerged))
 }
 
 // judgeWinner asks the injected judge to pick among the SUCCESSFUL branches. It
@@ -1209,7 +1230,7 @@ func writeOtherBranchIDs(b *strings.Builder, results []branchResult, winner int)
 // joinJudgeResult renders the join=judge outcome: the winner's summary, the
 // judge's rationale, the preserved-workspace note, and a compact index-sorted
 // scoreboard of the not-selected branches. winner is a real branchResult.index.
-func joinJudgeResult(results []branchResult, winner int, rationale string) string {
+func joinJudgeResult(results []branchResult, winner int, rationale string, autoMerged bool) string {
 	sorted := sortedByIndex(results)
 	ok := countOK(sorted)
 	w := results[winner]
@@ -1220,7 +1241,11 @@ func joinJudgeResult(results []branchResult, winner int, rationale string) strin
 	if rationale != "" {
 		fmt.Fprintf(&b, "rationale: %s\n", rationale)
 	}
-	writeWinnerWorkspace(&b, w)
+	if autoMerged {
+		fmt.Fprintf(&b, "winner auto-merged into this workspace: %s\n", w.childRoot)
+	} else {
+		writeWinnerWorkspace(&b, w)
+	}
 	fmt.Fprintf(&b, "\n=== %s [WINNER] ===\n", w.label)
 	// The winner's discoverable "branch id:" (issue #30).
 	if w.childID != "" {

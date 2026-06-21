@@ -454,7 +454,12 @@ func (*Forker) overlayDirty(ctx context.Context, parentRoot, childDir string) st
 // failure in either has ONE recovery path (reset-to-pristine) in overlayDirty.
 func overlayDirtyInner(ctx context.Context, parentRoot, childDir string) error {
 	// (2) Tracked + staged + deletions: apply `git diff HEAD` into the child.
-	patch, err := runGitCapture(ctx, parentRoot, nil, "diff", "--no-ext-diff", "--binary", "HEAD")
+	// --no-textconv is defence-in-depth: the overlay's source `.git` is the trusted
+	// PARENT today, so textconv here is the operator's own config — but the flag is
+	// cheap and closes the attacker-named-driver class if the overlay's source ever
+	// becomes untrusted. Consistent with the merge path (mergeForkInner), which IS
+	// load-bearing (the fork's .git is attacker-authored).
+	patch, err := runGitCapture(ctx, parentRoot, nil, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD")
 	if err != nil {
 		return fmt.Errorf("forker: diff HEAD: %w", err)
 	}
@@ -691,12 +696,16 @@ func (*Merger) Merge(ctx context.Context, forkRoot string, parentWS tool.Workspa
 	}
 
 	// (1) Cheap clean probe on the fork. A clean fork (no working-tree changes)
-	// has nothing to merge — return nil without touching the parent.
+	// has nothing to merge — return nil without touching the parent. If the fork
+	// is NOT a git repo (a non-git workspace — the forker's copy fallback, or a
+	// memfs test workspace), the merge is a no-op: there is no git diff to apply
+	// and no git ls-files to enumerate untracked files, so the git-based merge
+	// concept does not apply. Degrade gracefully (return nil) rather than erroring
+	// — the parent's own Edit/Write is the user's tool for a non-git workspace.
 	status, err := runGitCapture(ctx, forkRoot, nil, "status", "--porcelain")
 	if err != nil {
-		// The probe failed (not a git repo / git absent). We cannot tell whether
-		// the fork has changes; surface honestly rather than silently skipping.
-		return fmt.Errorf("forker: merge probe failed on fork %q: %w", forkRoot, err)
+		// not a git repo / git absent — nothing git-based to merge.
+		return nil
 	}
 	if len(bytes.TrimSpace(status)) == 0 {
 		return nil // clean fork — nothing to merge
@@ -718,16 +727,31 @@ func (*Merger) Merge(ctx context.Context, forkRoot string, parentWS tool.Workspa
 // path for manual resolution).
 func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 	// (2) Tracked + staged + deletions: apply the fork's `git diff HEAD` into the
-	// parent.
-	patch, err := runGitCapture(ctx, forkRoot, nil, "diff", "--no-ext-diff", "--binary", "HEAD")
+	// parent. --no-textconv is SECURITY-LOAD-BEARING: the fork's `.git/config` is
+	// attacker-authored (a force-copy branch has write to its own .git), and an
+	// attacker-installed `diff.<drv>.textconv = /bin/sh -c "..."` would fire during
+	// `git diff` — executing an attacker-chosen command on the PARENT host at merge
+	// time and letting its stdout masquerade as the merged content. `--no-ext-diff`
+	// suppresses only `diff.external`; it does NOT suppress `diff.*.textconv`
+	// (verified). `--no-textconv` is the flag that closes it (verified). The scrubbed
+	// env (gitenv.Scrub) is defence-in-depth for the fixed keys; --no-textconv closes
+	// the attacker-named-driver class the env structurally cannot.
+	patch, err := runGitCapture(ctx, forkRoot, nil, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD")
 	if err != nil {
 		return fmt.Errorf("diff HEAD: %w", err)
 	}
 	if len(bytes.TrimSpace(patch)) > 0 {
-		// `git apply` does NOT accept --no-ext-diff (a diff-family flag); the
-		// scrubbed env already neutralises any external diff driver. apply reads
-		// the patch from stdin ("-"). --whitespace=nowarn keeps a noisy-but-valid
-		// patch from being rejected.
+		// SECURITY: reject any change to `.gitattributes` in the patch. An untrusted
+		// branch must not silently land attribute changes that repoint the parent's
+		// filter/diff drivers — a staged `.gitattributes` adding `filter=<name>` to an
+		// existing tracked file would cause the parent's `filter.<name>.smudge` (e.g.
+		// git-lfs/git-crypt) to fire on attacker-controlled blob content at merge time.
+		// `git apply` does NOT accept --no-ext-diff/--no-textconv (diff-family flags);
+		// the scrubbed env neutralises the fixed keys. apply reads the patch from stdin
+		// ("-"). --whitespace=nowarn keeps a noisy-but-valid patch from being rejected.
+		if patchTouchesGitattributes(patch) {
+			return fmt.Errorf("refusing to apply a patch that touches .gitattributes — an untrusted branch may not repoint the parent's git filter/diff drivers (the fork is preserved for manual resolution)")
+		}
 		if _, aerr := runGitCapture(ctx, parentRoot, patch,
 			"apply", "--whitespace=nowarn", "-"); aerr != nil {
 			return fmt.Errorf("apply fork patch: %w", aerr)
@@ -766,3 +790,32 @@ func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 
 // Compile-time assertion that Merger satisfies the seam.
 var _ tool.ForkMerger = (*Merger)(nil)
+
+// patchTouchesGitattributes reports whether the given unified-diff patch touches
+// any `.gitattributes` file (at the repo root or any subdirectory). It scans the
+// `diff --git a/<path> b/<path>` header lines — a path ending in `.gitattributes`
+// (case-sensitive, the git convention) means the patch would add/modify/delete an
+// attributes file. The merge refuses such patches: an untrusted branch must not
+// silently land attribute changes that repoint the parent's git filter/diff
+// drivers (a security-relevant file). The check is on the patch HEADER only
+// (cheap, no parse of the hunks) and is conservative: it flags any `.gitattributes`
+// anywhere in the tree, not just the root, because a subdirectory attributes file
+// also applies to its subtree.
+func patchTouchesGitattributes(patch []byte) bool {
+	for _, line := range bytes.Split(patch, []byte("\n")) {
+		// A diff header looks like: "diff --git a/foo/.gitattributes b/foo/.gitattributes"
+		if !bytes.HasPrefix(line, []byte("diff --git ")) {
+			continue
+		}
+		// The trailing path (after "b/") is the canonical destination. Check both
+		// the a/ and b/ paths in case of a rename, but the b/ path is the one that
+		// would land. A simple suffix check on the whole header line is sufficient
+		// and robust to renames.
+		if bytes.HasSuffix(line, []byte("/.gitattributes")) ||
+			bytes.HasSuffix(line, []byte(" .gitattributes")) ||
+			bytes.Contains(line, []byte("/.gitattributes\t")) {
+			return true
+		}
+	}
+	return false
+}
