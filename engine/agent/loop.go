@@ -454,6 +454,11 @@ type Run struct {
 	// resolve the new one (CWE-863). Set once before the run goroutine starts and
 	// only read after, so it needs no synchronisation.
 	serial int64
+	// askDiscriminator is the resolved trailing askID component for this run:
+	// opts.AskIDDiscriminator when the host supplied a valid (non-empty,
+	// colon-free) value, else the process-global "r<serial>" fallback. Resolved
+	// once in startRun. See newAskID + RunOptions.AskIDDiscriminator + ADR-0044.
+	askDiscriminator string
 	// ctx is the run's context, captured at RunContent. Engine.emit forwards it
 	// to the injected EventSink so telemetry adapters can read a trace span from
 	// it and correlate spans/metrics to the originating request. Each run (including
@@ -567,6 +572,29 @@ type RunOptions struct {
 	// read-parallel path); a structured-output SubmitResult records into a per-run sink
 	// and performs no workspace mutation, so it is read-only.
 	ExtraTools []tool.Tool
+	// AskIDDiscriminator, when non-empty, REPLACES the trailing process-global
+	// "r<serial>" component of every askID minted this run (see agent.newAskID),
+	// making the askID reconstructable across processes from persisted state. The
+	// askID format is "<sessionID>:<n>:<callID>:<discriminator>". HOST CONTRACT:
+	// the host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
+	// STABLE across processes for the SAME attempt — this preserves the CWE-863
+	// replay guard the process-global serial provides (the Interrupt/re-mint
+	// scenario documented on newAskID): a stale verdict for a retracted ask must
+	// never resolve a re-minted ask of a different attempt. (c) It MUST be
+	// colon-free to keep the askID grammar unambiguous; a value containing a colon
+	// is IGNORED and the run falls back to the process-global "r<serial>" (a WARN
+	// is logged) rather than minting an ambiguous id. Empty (the zero value) keeps
+	// the legacy "r<serial>" behavior with no change — mecatui, tests, and
+	// in-memory hosts pass nothing and are unaffected. A durable host (e.g. Atrium)
+	// passes its own RunID. Same opt-in RunOptions seam pattern as
+	// MaxRunTokensOverride/ExtraTools. See ADR-0044.
+	//
+	// FOOTGUN GUARD: after startRun the RESOLVED value (this when valid, else the
+	// "r<serial>" fallback) lives on Run.askDiscriminator. askID minting (newAskID,
+	// in authorize) MUST read r.askDiscriminator — NEVER this raw, un-validated
+	// r.opts.AskIDDiscriminator, which may be empty or colon-bearing and would
+	// bypass the colon/empty fallback.
+	AskIDDiscriminator string
 }
 
 // Events returns the channel of domain Events for this run. It is closed when the
@@ -780,6 +808,20 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, opts RunOp
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
+	}
+	// Resolve the trailing askID discriminator once (ADR-0044): a host-supplied,
+	// colon-free value makes the run's askIDs reconstructable across processes;
+	// otherwise fall back to the process-global serial. A colon would make the
+	// askID grammar ambiguous, so it is rejected (fall back) with a WARN rather
+	// than minted — sanitizing by stripping could collapse two distinct host ids
+	// onto one askID and re-open the CWE-863 replay collision.
+	if d := opts.AskIDDiscriminator; d != "" && !strings.Contains(d, ":") {
+		r.askDiscriminator = d
+	} else {
+		if d != "" {
+			r.diag.Log(ctx, port.LevelWarn, "ask-id discriminator contains a colon; falling back to run serial", "session", string(sess.ID))
+		}
+		r.askDiscriminator = fmt.Sprintf("r%d", r.serial)
 	}
 	// An interactive engine's run installs the child-ask router so a subagent's
 	// surfaced ask can be routed back through this (parent) Run.Approve. A headless or

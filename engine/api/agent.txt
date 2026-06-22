@@ -163,7 +163,7 @@ type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
 type Run struct{}
-type RunOptions struct{MaxRunTokensOverride int; ExtraTools []tool.Tool}
+type RunOptions struct{MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
 type SubagentOption func(*SubagentTool)
 type SubagentStatusTool struct{}
 type SubagentTool struct{}

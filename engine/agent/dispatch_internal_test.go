@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestNewAskIDSessionPrefixContract(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := newAskID(tc.sessID, tc.n, tc.callID, 7)
+			got := newAskID(tc.sessID, tc.n, tc.callID, "r7")
 			if !strings.HasPrefix(got, string(tc.sessID)+":") {
 				t.Fatalf("newAskID(%q, %d, %q) = %q, must start with %q (the prefix cmd/mecatui isChildAsk consumes)",
 					tc.sessID, tc.n, tc.callID, got, string(tc.sessID)+":")
@@ -40,12 +41,60 @@ func TestNewAskIDSessionPrefixContract(t *testing.T) {
 // brake (a retracted run's replayed verdict must never resolve a later run's
 // re-minted ask). The suffix must not disturb the consumed prefix.
 func TestNewAskIDRunSerialDisjoint(t *testing.T) {
-	a := newAskID("subagent-p1", 0, "k1", 1)
-	b := newAskID("subagent-p1", 0, "k1", 2)
+	a := newAskID("subagent-p1", 0, "k1", "r1")
+	b := newAskID("subagent-p1", 0, "k1", "r2")
 	if a == b {
 		t.Fatalf("askIDs of two runs over the same (session, n, call) must differ; both = %q", a)
 	}
 	if !strings.HasPrefix(a, "subagent-p1:") || !strings.HasPrefix(b, "subagent-p1:") {
 		t.Fatalf("the run-serial suffix must not disturb the consumed session-id prefix: %q / %q", a, b)
+	}
+}
+
+// TestNewAskIDDiscriminatorReconstructable pins ADR-0044's headline property: the
+// trailing component is now a plain string, so the SAME (session, n, callID,
+// discriminator) inputs mint an IDENTICAL askID across two independent calls — a
+// durable host that persists its discriminator can reconstruct the askID in a
+// later process. Distinct discriminators still mint disjoint askIDs (the CWE-863
+// brake under the host's unique-per-attempt contract).
+func TestNewAskIDDiscriminatorReconstructable(t *testing.T) {
+	a := newAskID("sess-abc", 2, "call-7", "run-42")
+	b := newAskID("sess-abc", 2, "call-7", "run-42")
+	if a != b {
+		t.Fatalf("the same (session, n, callID, discriminator) must reconstruct an identical askID: %q != %q", a, b)
+	}
+	c := newAskID("sess-abc", 2, "call-7", "run-43")
+	if a == c {
+		t.Fatalf("distinct discriminators must mint disjoint askIDs (CWE-863 brake); both = %q", a)
+	}
+}
+
+// TestNewAskIDNoDiscriminatorMatchesSerial pins that the "r<serial>" fallback
+// reproduces today's EXACT askID format byte-for-byte: when startRun passes the
+// process-global serial as "r<n>", the minted id equals the legacy layout, so an
+// in-memory host that supplies no discriminator is unaffected (ADR-0044 "no
+// change when unset").
+func TestNewAskIDNoDiscriminatorMatchesSerial(t *testing.T) {
+	const (
+		id     session.SessionID  = "sess-x"
+		n                         = 3
+		callID session.ToolCallID = "c0"
+	)
+	got := newAskID(id, n, callID, "r5")
+	want := fmt.Sprintf("%s:%d:%s:r5", id, n, callID)
+	if got != want {
+		t.Fatalf("the r<serial> fallback must reproduce the legacy format: got %q, want %q", got, want)
+	}
+}
+
+// TestNewAskIDDiscriminatorPreservesPrefix pins that a host-supplied discriminator
+// does NOT disturb the consumed "<sessionID>:" prefix that cmd/mecatui's isChildAsk
+// classifies main-vs-subagent on (ADR-0044 constraint 1). It mirrors the prefix
+// assertion of TestNewAskIDSessionPrefixContract for the discriminator path.
+func TestNewAskIDDiscriminatorPreservesPrefix(t *testing.T) {
+	const sessionID session.SessionID = "sess-main-1"
+	askID := newAskID(sessionID, 1, "call-9", "run-42")
+	if !strings.HasPrefix(askID, string(sessionID)+":") {
+		t.Fatalf("a host discriminator must preserve the %q prefix isChildAsk consumes; got %q", string(sessionID)+":", askID)
 	}
 }

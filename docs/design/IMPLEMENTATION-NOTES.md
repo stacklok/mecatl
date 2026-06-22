@@ -1003,10 +1003,14 @@ the child's surfaced askIDs, invokes `cancel()` OUTSIDE the registry lock, then 
 `childAskRouter.unregister` (a locked delete) BEFORE emitting the new `permission.retract` event
 (string-passthrough EventType; payload rides the existing `Event.Ask` carrying the AskID ONLY) — a
 racing late approval falls through to the parent's own registry and dies as an unknown-ask no-op.
-askIDs additionally carry a per-RUN ":r<runSerial>" SUFFIX (`newAskID`; the leading "<sessionID>:"
-prefix isChildAsk consumes is untouched): without it, cancel-a-parked-ask → `resume` the same child
-id in the same run (Counters reset) → the provider re-mints the same call id → the new ask would
-COLLIDE with the retracted one and a stale queued ResumeApproval could resolve it (CWE-863).
+askIDs additionally carry a trailing ":<discriminator>" SUFFIX (`newAskID`; the leading "<sessionID>:"
+prefix isChildAsk consumes is untouched). The discriminator is the host-supplied
+`RunOptions.AskIDDiscriminator` when set (a durable, cross-process-reconstructable value, colon-free —
+ADR-0044, #117) else the process-global "r<runSerial>" fallback resolved once in `startRun`. Without a
+disjoint per-RUN suffix, cancel-a-parked-ask → `resume` the same child id in the same run (Counters
+reset) → the provider re-mints the same call id → the new ask would COLLIDE with the retracted one and
+a stale queued ResumeApproval could resolve it (CWE-863); the serial guarantees disjointness
+automatically, a host discriminator inherits it via the unique/stable-per-attempt host contract.
 Ask OWNERSHIP is recorded at the single surfacing seam: `childPosture` gains an explicit `childID`
 field (set at ALL THREE construction sites — subagent: childID; team: `m.sess.ID`; parallel:
 `childSess.ID` — because `role` does NOT universally carry the session id), passed through
@@ -3282,13 +3286,13 @@ history; a later reader reconstructs the rich timeline from BOTH. See
   `internal/adapter/server/service.go` (`maybeReplayApprovals`), at most once per id per
   process (gated by `replayedApprovals`; a fresh live session learns as it runs, a re-run
   only re-derives idempotent rules). **Correlation — metadata-only event → real rule from
-  history.** The `EvApproval` is metadata-only (tool NAME + verdict + askID; NO raw args,
-  gauntlet #7), so the `governance.Rule` cannot be rebuilt from the event alone. Instead
-  the askID encodes the ToolCall id (the grammar `engine/agent/dispatch.go` (`newAskID`)
-  owns: `<sessionID>:<n>:<callID>:r<runSerial>`), so for each allow-always verdict the
-  closure walks the LOADED conversation for the ToolCall whose id matches
-  (`callIDFromAskID` strips the sessionID prefix + the `:r<serial>` suffix + the leading
-  `<n>:` segment, taking the callID whole) and re-drives `Policy.Learn` on THAT call —
+  history.** The `EvApproval` is metadata-only (tool NAME + verdict + askID + the structured
+  `session.ApprovalPayload.Call` tool-call id; NO raw args, gauntlet #7), so the
+  `governance.Rule` cannot be rebuilt from the event alone. Instead the event carries the
+  ToolCall id DIRECTLY in `ApprovalPayload.Call` (NOT a grammar parse — there is no
+  `callIDFromAskID` function; the request half is the new `session.PendingAsk.Call`,
+  ADR-0044, #148), so for each allow-always verdict the closure walks the LOADED conversation
+  for the ToolCall whose id matches `ev.Approval.Call` and re-drives `Policy.Learn` on THAT call —
   the SAME Learn path the live verdict took, which re-derives the narrow tool+pattern
   rule via `governance.LearnableRule` and Records it. The real args come from the
   session's own history (a trust boundary it already crossed), never from the durable

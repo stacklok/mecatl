@@ -504,7 +504,7 @@ func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, w
 		return decision, false
 	}
 
-	askID := newAskID(sess.ID, sess.Counters.ToolCalls, c.ID, r.serial)
+	askID := newAskID(sess.ID, sess.Counters.ToolCalls, c.ID, r.askDiscriminator)
 	ask := session.PendingAsk{
 		AskID:  askID,
 		Tool:   c.Name,
@@ -1118,13 +1118,18 @@ func ptr(v session.ToolResult) *session.ToolResult {
 // whether the askID is prefixed with the live session id (the child session id IS
 // the namespace) — don't change the PREFIX without updating that consumer.
 //
-// The trailing ":r<runSerial>" component is the per-RUN discriminator (a SUFFIX,
-// so the consumed prefix contract is untouched): without it, two RUNS of the same
-// session can re-mint an identical askID — cancel a parked ask, `resume` the same
-// child id in the same parent run (Counters reset on Interrupt), and the provider
-// re-mints the same call id — letting a stale/queued ResumeApproval for the
-// RETRACTED ask resolve the NEW one (CWE-863). The serial makes every run's askIDs
-// disjoint, so a replayed old verdict dies as an unknown-ask no-op.
-func newAskID(id session.SessionID, n int, callID session.ToolCallID, runSerial int64) string {
-	return fmt.Sprintf("%s:%d:%s:r%d", id, n, callID, runSerial)
+// The trailing discriminator component is a SUFFIX (so the consumed prefix
+// contract is untouched): it is the host-supplied RunOptions.AskIDDiscriminator
+// when set (a durable, cross-process-reconstructable value — ADR-0044), else the
+// process-global "r<serial>" fallback resolved in startRun. Either way it makes
+// two RUNS of the same session mint disjoint askIDs: without it, cancel a parked
+// ask, `resume` the same child id in the same parent run (Counters reset on
+// Interrupt), and the provider re-mints the same call id — letting a stale/queued
+// ResumeApproval for the RETRACTED ask resolve the NEW one (CWE-863). The serial
+// guarantees disjointness automatically; a host-supplied discriminator inherits
+// the SAME guarantee via the host contract (unique-per-attempt AND
+// stable-per-attempt-across-processes — see RunOptions.AskIDDiscriminator), so a
+// replayed old verdict dies as an unknown-ask no-op.
+func newAskID(id session.SessionID, n int, callID session.ToolCallID, discriminator string) string {
+	return fmt.Sprintf("%s:%d:%s:%s", id, n, callID, discriminator)
 }

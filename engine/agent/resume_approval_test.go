@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -379,5 +381,108 @@ func TestPendingAskCarriesGatedCallID(t *testing.T) {
 	ask := captureFirstAsk(t, e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
 	if ask.Call != "w1" {
 		t.Fatalf("PendingAsk.Call = %q, want the gated ToolCall.ID %q", ask.Call, "w1")
+	}
+}
+
+// TestRunOptionsAskIDDiscriminatorReplacesSerial (#117/ADR-0044, T5 positive
+// case): a host-supplied colon-free discriminator REPLACES the "r<serial>"
+// trailing askID component, making the askID reconstructable across processes.
+func TestRunOptionsAskIDDiscriminatorReplacesSerial(t *testing.T) {
+	policy := permpolicy.NewPolicy(nil, permstore.New())
+	sess := session.New("s-disc-ok", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	write := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "wrote"), nil
+		}}
+	e := newEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"a.go"}`))),
+		Catalog: catalogWith(t, write),
+		Policy:  policy,
+	})
+	r := e.RunContentWith(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil,
+		agent.RunOptions{AskIDDiscriminator: "run-42"})
+	ask := captureFirstAsk(t, r)
+	if !strings.HasSuffix(ask.AskID, ":run-42") {
+		t.Fatalf("askID = %q, want it to end with the host discriminator %q", ask.AskID, ":run-42")
+	}
+	if !strings.HasPrefix(ask.AskID, "s-disc-ok:") {
+		t.Fatalf("askID = %q, must preserve the consumed session-id prefix", ask.AskID)
+	}
+}
+
+// TestAskIDDiscriminatorReconstructableAcrossRuns (#117/ADR-0044) proves the
+// END-TO-END property the feature exists for: two INDEPENDENT runs (two separate
+// RunContentWith→startRun→authorize→newAskID chains) over the SAME session id with
+// the SAME AskIDDiscriminator and the SAME scripted tool-call mint a byte-IDENTICAL
+// emitted PendingAsk.AskID — what a restarted/second process reconstructs from
+// persisted state. This is stronger than the newAskID unit test: it exercises the
+// full wiring (the resolved discriminator on Run.askDiscriminator flowing into the
+// emitted askID), not just the formatter. The two runs use FRESH idle sessions with
+// the same id so n (Counters.ToolCalls) and the scripted callID match.
+func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
+	const discriminator = "run-42"
+	mint := func() string {
+		policy := permpolicy.NewPolicy(nil, permstore.New())
+		// Same session id across both runs (a different PROCESS loading the same id).
+		sess := session.New("s-reconstruct", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		write := &fakeTool{name: "Write", readOnly: false,
+			exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+				return session.NewToolResult(in.ID, "wrote"), nil
+			}}
+		e := newEngine(agent.Deps{
+			LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"a.go"}`))),
+			Catalog: catalogWith(t, write),
+			Policy:  policy,
+		})
+		r := e.RunContentWith(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil,
+			agent.RunOptions{AskIDDiscriminator: discriminator})
+		return captureFirstAsk(t, r).AskID
+	}
+	first := mint()
+	second := mint()
+	if first != second {
+		t.Fatalf("two independent runs over the same session id + discriminator must mint an IDENTICAL askID (cross-process reconstructability); got %q vs %q", first, second)
+	}
+	if !strings.HasSuffix(first, ":"+discriminator) {
+		t.Fatalf("the reconstructable askID must carry the host discriminator suffix; got %q", first)
+	}
+}
+
+// TestRunOptionsAskIDDiscriminatorColonFallsBack (#117/ADR-0044, T5 negative
+// case): a colon-containing discriminator is IGNORED (it would make the askID
+// grammar ambiguous) and the run falls back to the process-global "r<serial>"
+// component — the minted askID must NOT embed the rejected value.
+func TestRunOptionsAskIDDiscriminatorColonFallsBack(t *testing.T) {
+	policy := permpolicy.NewPolicy(nil, permstore.New())
+	sess := session.New("s-disc-colon", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	write := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "wrote"), nil
+		}}
+	diag := newRecordingDiag()
+	e := newEngine(agent.Deps{
+		LLM:         mockllm.New(mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"a.go"}`))),
+		Catalog:     catalogWith(t, write),
+		Policy:      policy,
+		Diagnostics: diag,
+	})
+	r := e.RunContentWith(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil,
+		agent.RunOptions{AskIDDiscriminator: "a:b"})
+	ask := captureFirstAsk(t, r)
+	if strings.Contains(ask.AskID, ":a:b") {
+		t.Fatalf("a colon-containing discriminator must be IGNORED, but askID embedded it: %q", ask.AskID)
+	}
+	// Fallback shape: trailing component is "r<serial>".
+	last := ask.AskID[strings.LastIndex(ask.AskID, ":")+1:]
+	if !strings.HasPrefix(last, "r") {
+		t.Fatalf("colon-fallback askID trailing component = %q, want an \"r<serial>\" fallback", last)
+	}
+	// The rejection must be OPERATOR-VISIBLE, not silent: assert the WARN fired.
+	line, ok := diag.findLine("falling back to run serial")
+	if !ok {
+		t.Fatal("colon-containing discriminator did not emit the fallback WARN diagnostic")
+	}
+	if line.level != port.LevelWarn {
+		t.Fatalf("fallback diagnostic level = %v, want WARN", line.level)
 	}
 }

@@ -36,6 +36,14 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   correlation of a pending ask back to its tool call (no askID grammar parse). It is
   an opaque identifier, not secret content (it is already implicitly encoded inside the
   askID), so surfacing it opens no new leak surface. (#148)
+- `agent.RunOptions.AskIDDiscriminator` (`string`) — an opt-in, host-supplied trailing
+  askID component that REPLACES the process-global `"r<serial>"` suffix, making the
+  askID `"<sessionID>:<n>:<callID>:<discriminator>"` reconstructable across processes
+  from persisted state. The host contract requires it to be unique-per-attempt,
+  stable-per-attempt-across-processes, and colon-free (a colon-containing value is
+  ignored with a WARN and falls back to the serial). Empty (the zero value) preserves
+  the `"r<serial>"` fallback with no behaviour change. See
+  `docs/adr/0044-host-supplied-askid-discriminator.md`. (ADR-0044, #117)
 - `prompt.IsInjectedTurn0Fragment(text string) bool` — reports whether a string is
   the body of a harness-injected turn-0 context fragment (project instructions /
   soul / memory index / user model) rather than a genuine user instruction. The four

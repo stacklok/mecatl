@@ -1181,9 +1181,10 @@ func (m Model) pasteGateOpen() bool {
 // isChildAsk reports whether askID identifies a surfaced SUBAGENT (child)
 // permission ask rather than one from the main session. The askID namespace
 // contract (engine/agent/dispatch.go newAskID; CLAUDE.md: "the child session id
-// IS the namespace") is "<sessionID>:<n>:<callID>:r<runSerial>" — only the
-// LEADING "<sessionID>:" prefix is consumed here (the trailing run-serial is the
-// server's per-run uniqueness suffix and is opaque to the client). A MAIN-agent
+// IS the namespace") is "<sessionID>:<n>:<callID>:<discriminator>" — only the
+// LEADING "<sessionID>:" prefix is consumed here (the trailing discriminator is the
+// server's per-run uniqueness suffix — a host-supplied value or "r<runSerial>",
+// ADR-0044 — and is opaque to the client). A MAIN-agent
 // ask is prefixed with the live session id, a child ask is prefixed with the
 // CHILD session id. So an askID that contains a colon but is NOT prefixed by
 // "<sessionID>:" is a child ask. Fail-safe both directions: a colon-free fixture
