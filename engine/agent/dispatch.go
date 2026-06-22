@@ -510,6 +510,7 @@ func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, w
 		Tool:   c.Name,
 		Args:   c.Args,
 		Reason: decision.Reason,
+		Call:   c.ID,
 		// The two child-ask decision bits ride the PendingAsk verbatim (issue #32)
 		// so resolveChildAsk can honour a configured Ask (never auto-approved) and
 		// resolve a substitution-floored configured Allow without surfacing.
@@ -943,6 +944,11 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 			surfaced := session.PendingAsk{
 				AskID: askID,
 				Tool:  ask.Tool,
+				// Propagate the child's gated tool-call id (issue #148): the child
+				// engine's own authorize populated ask.Call, so the surfaced ask
+				// carries the same opaque correlation id (no new leak — see
+				// PendingAsk.Call).
+				Call: ask.Call,
 				// Clamp/redact the command: a subagent's Bash args can contain peer-injected
 				// untrusted text. Frame it explicitly as a quoted subagent REQUEST so the
 				// human reads it as "the subagent wants to run X", never as a trusted

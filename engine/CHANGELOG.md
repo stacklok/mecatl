@@ -30,6 +30,12 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- `session.PendingAsk.Call` (`session.ToolCallID`) — the opaque gated tool-call id on
+  the ask REQUEST half, mirroring `session.ApprovalPayload.Call` on the verdict half.
+  It round-trips in the sessnap snapshot, giving a host durable, grammar-free
+  correlation of a pending ask back to its tool call (no askID grammar parse). It is
+  an opaque identifier, not secret content (it is already implicitly encoded inside the
+  askID), so surfacing it opens no new leak surface. (#148)
 - `prompt.IsInjectedTurn0Fragment(text string) bool` — reports whether a string is
   the body of a harness-injected turn-0 context fragment (project instructions /
   soul / memory index / user model) rather than a genuine user instruction. The four

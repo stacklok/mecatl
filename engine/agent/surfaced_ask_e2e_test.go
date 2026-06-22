@@ -60,6 +60,41 @@ func TestE2E_SurfacedAskAllowed(t *testing.T) {
 	}
 }
 
+// TestE2E_SurfacedChildAskCarriesChildGatedCallID (#148): the SURFACED child ask
+// propagates the CHILD's gated ToolCall.ID onto PendingAsk.Call (the child
+// engine's own authorize populated it, and the surfacing closure forwards it), so
+// a host sees the same opaque correlation id on a surfaced ask as on a direct one.
+func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
+	bash := &fakeBash{}
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"cat $(zap)"}`)),
+		mockllm.TextTurn("child: command output processed"),
+	)
+	childEngine := bashChildEngine(childLLM, bash)
+	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
+
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run the command"}`)),
+		mockllm.TextTurn("parent: done"),
+	)
+	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+
+	var surfaced *session.PendingAsk
+	drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && surfaced == nil {
+			ask := *ev.Ask
+			surfaced = &ask
+		}
+	})
+	if surfaced == nil {
+		t.Fatal("no surfaced child ask was observed")
+	}
+	if surfaced.Call != "k1" {
+		t.Fatalf("surfaced child ask .Call = %q, want the child's gated ToolCall.ID %q", surfaced.Call, "k1")
+	}
+}
+
 // TestE2E_SurfacedAskDenied drives the same surfaced-ask path but the scripted approver
 // DENIES. The child gets a denied tool result and degrades gracefully — the run still
 // terminates with a deliverable, never hangs.

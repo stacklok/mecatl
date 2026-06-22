@@ -187,6 +187,15 @@ type PendingAsk struct {
 	Args json.RawMessage
 	// Reason explains why approval is required.
 	Reason string
+	// Call is the id of the gated ToolCall this ask pauses on. It is the
+	// REQUEST-half twin of ApprovalPayload.Call (the verdict half): an OPAQUE
+	// identifier, NOT secret content — it is already implicitly encoded inside
+	// AskID (see agent.newAskID) — so surfacing it directly opens no new leak
+	// surface. It is durable, grammar-free correlation data: a host that pauses
+	// on a PendingAsk reads Call instead of parsing the AskID grammar. Unlike the
+	// run-scoped ConfiguredAsk/FlooredConfiguredAllow below, it round-trips in the
+	// snapshot (it is correlation data, not run-scoped policy state).
+	Call ToolCallID `json:"call,omitempty"`
 	// ConfiguredAsk carries governance.PermissionDecision.ConfiguredAsk onto the
 	// pending ask: the Ask came from a deliberately-configured rule (above the
 	// built-in floor). An approval layer keys "never auto-approve a configured

@@ -107,6 +107,7 @@ func TestRoundTripAwaitingPreservesPendingAsk(t *testing.T) {
 		Tool:   "Bash",
 		Args:   json.RawMessage(`{"cmd":"rm -rf /"}`),
 		Reason: "destructive",
+		Call:   "call-1",
 	}
 	if err := want.PauseForApproval(ask); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
@@ -123,7 +124,8 @@ func TestRoundTripAwaitingPreservesPendingAsk(t *testing.T) {
 		t.Fatalf("restored session has no pending ask; want one")
 	}
 	if gotAsk.AskID != ask.AskID || gotAsk.Tool != ask.Tool ||
-		gotAsk.Reason != ask.Reason || string(gotAsk.Args) != string(ask.Args) {
+		gotAsk.Reason != ask.Reason || string(gotAsk.Args) != string(ask.Args) ||
+		gotAsk.Call != ask.Call {
 		t.Fatalf("pending ask = %+v, want %+v", gotAsk, ask)
 	}
 

@@ -134,7 +134,7 @@ type MediaKind string
 type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; Parts []Content}
 type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
-type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; ConfiguredAsk bool; FlooredConfiguredAllow bool}
+type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool}
 type PermissionMode string
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
 type Role string

@@ -329,3 +329,55 @@ func TestResumeApprovalMultiToolSiblingCloseOut(t *testing.T) {
 		t.Fatalf("resume stop = %q, want %q", rp.Stop, session.StopEndTurn)
 	}
 }
+
+// captureFirstAsk runs the engine, cancels at the first permission ask, and
+// returns the captured PendingAsk. Offline (mockllm + memfs); models a host that
+// pauses on the ask. It mirrors drainApproving's 10s watchdog so a wiring
+// regression fails THIS test rather than hanging the whole suite.
+func captureFirstAsk(t *testing.T, r *agent.Run) session.PendingAsk {
+	t.Helper()
+	var got *session.PendingAsk
+	deadline := time.After(10 * time.Second)
+	ch := r.Events()
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				if got == nil {
+					t.Fatal("the engine never raised a permission ask")
+				}
+				return *got
+			}
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && got == nil {
+				ask := *ev.Ask
+				got = &ask
+				r.Cancel()
+			}
+		case <-deadline:
+			r.Cancel()
+			t.Fatal("timed out waiting for a permission ask (10s); likely a wiring regression")
+		}
+	}
+}
+
+// TestPendingAskCarriesGatedCallID (#148): a gated dispatch surfaces a PendingAsk
+// whose .Call equals the dispatched ToolCall.ID — the REQUEST-half twin of
+// ApprovalPayload.Call, so a host correlates the ask to its tool call without
+// parsing the askID grammar.
+func TestPendingAskCarriesGatedCallID(t *testing.T) {
+	policy := permpolicy.NewPolicy(nil, permstore.New()) // Write asks by default
+	sess := session.New("s-ask-call", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	write := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "wrote"), nil
+		}}
+	e := newEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"a.go"}`))),
+		Catalog: catalogWith(t, write),
+		Policy:  policy,
+	})
+	ask := captureFirstAsk(t, e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	if ask.Call != "w1" {
+		t.Fatalf("PendingAsk.Call = %q, want the gated ToolCall.ID %q", ask.Call, "w1")
+	}
+}
