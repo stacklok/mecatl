@@ -63,13 +63,15 @@ main loop records tool results unfenced anyway, and the read-only explorer sandb
 no new untrusted ingress; re-fencing would also bust the byte-stable prompt-cache
 prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
 `model`/`agent`/`resume`; a forked child runs on the parent's engine).
-`mode: "read-write"` (ADR 0040; closed set `{"","read-only","read-write"}`, default
-read-only) runs the child in a FORCE-COPY fork with Edit/Write and, on a CLEAN
-finish, AUTO-MERGES its diff back into the parent workspace via the shared
-serialized `ForkMerger` — the blessed "delegate one task and land its edits" path
-(default-wired, no flag; rejected with `agent` and under the no-FS profile, and
-NEVER merged on an error/cancelled terminal; a merge conflict surfaces an
-actionable error naming the preserved fork). When
+`mode: "read-write"` (ADR 0041, superseding 0040's writable path; closed set
+`{"","read-only","read-write"}`, default read-only) runs the child DIRECTLY against
+the REAL parent workspace with Edit/Write — NO fork, NO copy, NO merge-back. Its
+Edit/Write/Bash mutate the real tree IN PLACE, exactly as the main agent does, and
+git is the rollback layer — the "delegate one task and land its edits" path
+(default-wired, no flag; rejected with `agent`/`background` and under the no-FS
+profile). The result text honestly notes the edits landed directly (review with `git
+diff`/`git status`); a crashed/cancelled child can leave PARTIAL edits behind
+(recoverable via git — the accepted direct-write trade-off). When
 neither `agent` nor `model` pins one, a def-less child runs on the global
 `--subagent-model` default (the analogue of `CLAUDE_CODE_SUBAGENT_MODEL`; a concrete
 id or a `--model-alias` name, resolved same-provider; precedence `def.Model >
@@ -107,22 +109,27 @@ security boundary:
   recursion / fan-out) and **never Edit/Write** (the read-only explorer inspects, it
   does not edit the project). A `mode:"read-write"` call instead runs the SEPARATE
   `writableChildEngine` (`buildWritableSubagentChildEngine`: the explorer surface +
-  **Edit/Write**, over a FORCE-COPY fork + `buildForceCopyRunner`), whose diff is
-  merged back — see the per-call knobs above. Per-def Subagent engines keep Bash via
-  `scopedToolNamesMode`'s `allowShell` and share the one `SubagentTool` forker. With no
-  runner (`--no-bash`) the child is a Bash-less read-only explorer and no forker is
-  wired — the original behaviour. The policy is **allow-all** so the child never
-  prompts a human (`internal/app`: `buildSubagentTool` / `buildChildEngine` /
+  **Edit/Write**, over the REAL parent workspace + the MAIN session's command runner
+  `buildCommandRunner` — main-session parity, NO fork — ADR 0041); it is NOT isolated
+  (`isolated:false`, so the A2 isolation auto-approve does not apply to its Bash) and
+  git is the rollback. Per-def Subagent engines keep Bash via `scopedToolNamesMode`'s
+  `allowShell` and share the one read-only `SubagentTool` forker. With no runner
+  (`--no-bash`) the child is a Bash-less read-only explorer and no forker is wired — the
+  original behaviour. The policy is **allow-all** so the child never prompts a human
+  (`internal/app`: `buildSubagentTool` / `buildChildEngine` /
   `buildWritableSubagentChildEngine` / `buildAgentSubagentEngines`).
 - `SubagentTool.ReadOnly()` stays **`true`**, letting the parent run read-only `Subagent`
-  calls concurrently with other read-only tools. This is safe because the child's
-  (mutating-classified) Bash writes land in the **isolated fork**, never the shared base
-  the parent's other read-only calls race over; the only shared surface is the `.git`
-  object DB/refs (git-locked; config-driven code-exec vectors neutralised via `gitenv`).
-  A `mode:"read-write"` call WILL mutate the parent on completion (the merge-back), so it
-  declares `MutatesParent(call)==true` and the dispatcher runs it **alone, mutate-serial**
-  — never batched with a sibling read it could tear; cross-run merges are additionally
-  serialized by the process-wide `SerializingMerger` mutex (ADR 0040).
+  calls concurrently with other read-only tools. This is safe because a read-only
+  child's (mutating-classified) Bash writes land in the **isolated worktree**, never the
+  shared base the parent's other read-only calls race over; the only shared surface is
+  the `.git` object DB/refs (git-locked; config-driven code-exec vectors neutralised via
+  `gitenv`).
+  A `mode:"read-write"` call WILL mutate the parent IN PLACE during its run (direct-write,
+  ADR 0041), so it declares `MutatesParent(call)==true` and the dispatcher runs it
+  **alone, mutate-serial** — never batched with a sibling read it could tear.
+  `MutatesParent` is decoupled from any merger (there is none); the
+  `parentMutatingCaller` seam and the `SerializingMerger` are reused only by Parallel's
+  single-branch merge (ADR 0040).
 - `WithMaxConcurrentChildren` (default 4; `WithMaxConcurrentSubagentShells` is a
   deprecated alias) sizes the **child concurrency gate**, acquired at the top of
   `run()` for ALL children (forking and forker-less) — Subagent is read-parallel, so

@@ -810,45 +810,50 @@ NilMergerIsNoOp|JudgeSingleBranch)` + `forker.TestMerger(AppliesForkDiffToParent
 CleanForkIsNoOp|ConflictSurfacesError|RefusesGitattributesPatch|
 TextconvDoesNotFire)`.
 
-**Writable Subagent (`mode:"read-write"`) + serialized merge-back (ADR 0040).**
-`Subagent` gained a `mode` arg (closed set `{"","read-only","read-write"}`); a
-`mode:"read-write"` call runs its child in a FORCE-COPY fork (own `.git`, like a
-Parallel branch) with Edit/Write LAYERED onto the read-only explorer catalog
-(`buildWritableSubagentChildEngine`, role `task:read-write`, `buildForceCopyRunner`
-— trust-UNGATED, sound because force-copy does no fork-time checkout), and on a
-CLEAN finish auto-merges the child's diff into the parent via the SAME
-`ForkMerger`. It is DEFAULT-wired (no flag, no `Config`; the no-FS profile
-excludes it); the per-call default stays read-only. `mergeWritableChild` fires as
-a post-run step (after `driveChild`/persist/hook, before render) gated on a
-non-error, non-cancelled terminal (`mergeableStop`) and `!clientCancelled`/no
-time-budget — a `StopError`/`StopCancelled` child's partial edits NEVER land. On
-conflict it returns an ACTIONABLE model-facing error (cause + preserved fork path
-+ "review with Read, apply with Edit/Write, or re-delegate narrower; do NOT
-retry") and suppresses the fork cleanup. Wired via `WithSubagentAutoMerge` /
-`WithWritableChildEngine` / `WithWritableChildForker`. **Serialization (two
-complementary layers).** (a) PER-RUN dispatch-serial: an UNEXPORTED
-`parentMutatingCaller` interface (`MutatesParent(call) bool`) lets the dispatcher
-exclude a merge-completing CALL from the concurrent read batch (it flushes alone,
-like a mutating tool) — `SubagentTool.MutatesParent` true for a wired
-`mode:"read-write"` call, `ParallelTool.MutatesParent` true for a single-branch
-`first`/`judge` auto-merging call; read-only fan-out stays parallel and
-`ReadOnly()` is unchanged. This also closes the pre-existing merge-vs-sibling-read
-exposure on the Parallel path. (b) ACROSS-RUN: `forker.SerializingMerger` (one
-process-wide `sync.Mutex`) wraps `forker.Merger`, built ONCE on
-`catalogAssets.autoMerger` and injected into BOTH Parallel (`WithAutoMerge`) and
-Subagent (`WithSubagentAutoMerge`), so merges from concurrent sessions sharing a
-workspace cannot interleave. **Merge atomicity + hardening (shared, so Parallel
-benefits):** `mergeForkInner` now runs `git apply --check` before applying (a
-conflicting patch leaves the parent UNTOUCHED — no partial write) and refuses an
-UNTRACKED `.gitattributes` in the untracked-copy step (the patch-side refusal
-previously missed it). Parallel single-branch auto-merge STAYS (back-compat) but
-is no longer DOCUMENTED as the implement path — the dev-pipeline skill + both
-Spec texts route single-task landing to `Subagent(mode:"read-write")`, Parallel to
-2+-branch fan-out. Guards: `agent.TestSubagentWritable*`, `TestMutatesParent*` /
-`TestParallelMutatesParent`, `agent.TestMutatesParentCallIsDispatchSerial` +
+**Writable Subagent (`mode:"read-write"`) — DIRECT-WRITE (ADR 0041, supersedes
+0040's writable path).** `Subagent` has a `mode` arg (closed set
+`{"","read-only","read-write"}`); a `mode:"read-write"` call runs its child
+DIRECTLY against the REAL parent workspace — NO fork, NO copy, NO merge-back. Its
+Edit/Write/Bash mutate the real tree IN PLACE, exactly as the main agent does, and
+git is the rollback layer. The writable child engine
+(`buildWritableSubagentChildEngine`, role `task:read-write`) LAYERS Edit/Write onto
+the read-only explorer catalog and uses the MAIN session's command runner
+(`buildCommandRunner` — main-session parity: a writable child's Bash hits the real
+repo, so it must resolve as the main session's does under the operator's
+posture/policy, not the trust-ungated force-copy runner). It is DEFAULT-wired (no
+flag, no `Config`; the no-FS profile excludes it); the per-call default stays
+read-only. `prepareChildSession` passes a NIL forker for the writable path, so
+`forkChildWorkspace` returns the parent workspace directly. There is NO
+post-run merge step — `finishForegroundRun` renders the time-budget error first, then
+`renderWritableSubagentResult` adds an honest DIRECT-WRITE note ("edited your
+workspace directly — review with `git diff`/`git status`, undo with `git
+checkout`/`git stash`"); a non-clean terminal (`StopError`/cancel) warns the edits
+may be PARTIAL (a crashed/cancelled child leaves its completed edits in the tree —
+there is no fork to quarantine them; the accepted direct-write trade-off). The
+writable child posture is `isolated:false` (it shares the real tree), so
+`governance.IsolationApprovable` (the A2 isolation auto-approve) does NOT apply to
+its Bash. Wired via `WithWritableChildEngine` only (the now-removed
+`WithWritableChildForker`/`WithSubagentAutoMerge` were a clean break — see
+`engine/CHANGELOG.md`). **Dispatch-serial (the LOAD-BEARING correctness fix).** A
+direct-write child mutates the real tree DURING its run, so the dispatcher MUST keep
+it mutate-serial: the UNEXPORTED `parentMutatingCaller` seam (`MutatesParent(call)
+bool`, reused from ADR 0040) excludes the call from the concurrent read batch (it
+flushes alone). `SubagentTool.MutatesParent` is now DECOUPLED from any merger — true
+whenever the writable engine is wired and the call is `mode:"read-write"` (there no
+longer is a merger). `ReadOnly()` stays true so read-only fan-out batches in
+parallel. **Scope is the serial Subagent ONLY.** Parallel branches and mutating Team
+members keep the FORCE-COPY fork + serialized merge-back (`forker.SerializingMerger`
+over `forker.Merger`, built ONCE on `catalogAssets.autoMerger` and injected into
+Parallel via `WithAutoMerge` — now its sole consumer, built only when Parallel is
+enabled): those have genuine concurrency that direct-write would race. Moving them to
+git worktrees is possible future work, out of scope. Guards:
+`agent.TestSubagentWritable*` (direct-write E2E + partial-edit-survives +
+no-fork-via-`failingForker`), `TestSubagentMutatesParent` /
+`TestMutatesParentCallIsDispatchSerial` +
 `TestReadOnlySubagentStaysBatchedWithSiblingRead`,
-`forker.TestSerializingMergerSerializes` + `TestMergerRefusesUntrackedGitattributes`,
-e2e `subagentWritableSpecs`.
+`TestWritableChildPostureNotIsolated` (the `isolated:false` mutation guard), and the
+composition `TestBuildSubagentToolWritableWritesParentDirectly` /
+`TestSharedMergerReachesParallel`.
 
 Floor-scoped (`ScopeBuiltinDefault`) ALLOW in `defaultRules()` (issue #37, decided for
 `InspectSubagent` + `InspectMember` + `SubagentStatus` together): all three are read-only pulls of

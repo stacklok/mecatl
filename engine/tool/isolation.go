@@ -41,11 +41,12 @@ type WorkspaceForker interface {
 }
 
 // ForkMerger is the OPTIONAL seam by which a preserved fork's changes are merged
-// BACK into the parent workspace. It serves TWO delegation paths: Parallel's
+// BACK into the parent workspace. It serves ONE delegation path: Parallel's
 // single-branch fast path (a Parallel run with exactly one branch and
-// join=first/judge applies the winner's diff to the parent) AND the writable
-// Subagent (mode:"read-write" — a force-copy explorer's edits are merged back), so
-// a delegated implementer's edits actually LAND without a manual copy/merge step.
+// join=first/judge applies the winner's diff to the parent), so a delegated
+// implementer's edits actually LAND without a manual copy/merge step. (The writable
+// Subagent does NOT use this seam — mode:"read-write" edits the parent tree directly
+// during the run; see ADR 0041.)
 //
 // It lives here in engine/tool, next to WorkspaceForker, for the same layering
 // reason (port already imports tool). The interface is additive — no frozen
@@ -63,8 +64,8 @@ type WorkspaceForker interface {
 //     own Edit/Write carries). Composition decides whether to wire a merger at
 //     all — when wired, auto-merge is DEFAULT-ON (no flag; see ADR 0039). The
 //     composition-injected merger is SERIALIZED process-wide (a single mutex in a
-//     serializing decorator) so concurrent merges from Parallel and the writable
-//     Subagent never interleave their writes into a parent workspace.
+//     serializing decorator) so concurrent merges from Parallel never
+//     interleave their writes into a parent workspace.
 //   - nil merger (the default) means no auto-merge: the historical no-auto-merge
 //     boundary holds unchanged. ParallelTool.ReadOnly()/SubagentTool.ReadOnly()
 //     stay true so read-only fan-out keeps batching in parallel; but a CALL that

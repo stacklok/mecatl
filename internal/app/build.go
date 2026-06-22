@@ -2843,13 +2843,17 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		forkReaper = agent.NewLRUForkReaper(forkPreservedCap(cfg))
 	}
 
-	// ONE process-wide serializing merger shared by every merge-driving tool
-	// (Parallel single-branch auto-merge AND the writable Subagent). It wraps a
-	// stateless forker.Merger in a forker.SerializingMerger so concurrent merges
-	// across ALL sessions are serialized by a single mutex (correctness over
-	// throughput on this off-hot-path post-run write). Built unconditionally — the
-	// writable Subagent path needs it even when Parallel is disabled.
-	autoMerger := forker.NewSerializingMerger(forker.NewMerger())
+	// ONE process-wide serializing merger for the Parallel single-branch auto-merge.
+	// It wraps a stateless forker.Merger in a forker.SerializingMerger so concurrent
+	// merges across ALL sessions are serialized by a single mutex (correctness over
+	// throughput on this off-hot-path post-run write). Built ONLY when Parallel is
+	// enabled, mirroring forkReaper just above — the writable Subagent no longer
+	// merges (it writes the parent tree directly, ADR 0041), so Parallel is the sole
+	// consumer.
+	var autoMerger tool.ForkMerger
+	if cfg.EnableParallel {
+		autoMerger = forker.NewSerializingMerger(forker.NewMerger())
+	}
 
 	assets := catalogAssets{
 		globalMgr:      mainMgr,
@@ -3946,23 +3950,25 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 
 // buildWritableSubagentChildEngine constructs the child *Engine a mode:"read-write"
 // Subagent call runs on: a WRITABLE explorer with Read/Grep/Glob/Edit/Write (+ Bash
-// when the force-copy runner is wired), isolated in a force-copy fork whose diff is
-// auto-merged back into the parent workspace. The catalog and Deps mirror
-// parallelChildDeps exactly (the read-only explorer surface LAYERED with Edit/Write,
-// built through childEngineDepsForProvider) — a writable Subagent is the same
-// mutating-in-its-own-fork surface a Parallel branch gets, just delivered through
-// the Subagent tool's single-child path with a serialized post-run merge. The role
-// is "task:read-write" — it lands in roleFamily's "subagent" bucket (a writable
-// subagent IS a subagent, not a separate cost story like Parallel) while staying
-// distinguishable in raw role-tagged diagnostics. It resolves its model through the
-// SAME def-less chain (SubagentModel > parentModel) as the read-only explorer and
-// Parallel branches.
+// when a runner is wired) that runs DIRECTLY against the PARENT workspace — no fork,
+// no copy, no merge-back (ADR 0041). Its Edit/Write/Bash mutate the real tree in
+// place, exactly as the main agent does; git is the rollback layer. The catalog
+// LAYERS Edit/Write onto the read-only explorer surface (built through
+// childEngineDepsForProvider). The runner is the MAIN session's command runner
+// (buildCommandRunner — main-session parity): a writable child's Bash hits the REAL
+// repo, so it must resolve exactly as the main session's does under the operator's
+// posture/policy, not the trust-ungated force-copy runner (which was sound only
+// because a force-copy fork does no fork-time git). The role is "task:read-write" —
+// it lands in roleFamily's "subagent" bucket (a writable subagent IS a subagent)
+// while staying distinguishable in raw role-tagged diagnostics. It resolves its model
+// through the SAME def-less chain (SubagentModel > parentModel) as the read-only
+// explorer and Parallel branches.
 func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) *agent.Engine {
 	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	// Read-only explorer surface (Read/Grep/Glob + sandboxed Bash) LAYERED with
-	// Edit/Write — a writable child MAY mutate its OWN force-copy fork. Subagent/
-	// Parallel/ToolSearch stay excluded (readOnlyExplorerCatalog never adds them), so
-	// a writable child can't recurse or fan out.
+	// Read-only explorer surface (Read/Grep/Glob + Bash) LAYERED with Edit/Write — a
+	// writable child MAY mutate the parent tree DIRECTLY. Subagent/Parallel/ToolSearch
+	// stay excluded (readOnlyExplorerCatalog never adds them), so a writable child
+	// can't recurse or fan out.
 	childCat := readOnlyExplorerCatalog(runner)
 	childCat.MustRegister(tools.EditTool{})
 	childCat.MustRegister(tools.WriteTool{})
@@ -4288,33 +4294,26 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// crosses (same shape/spirit as WithAgentEngines).
 	opts = append(opts, agent.WithSubagentEngineFactory(
 		buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
-	// WRITABLE subagent (mode:"read-write"): a child engine whose catalog adds
-	// Edit/Write over the read-only explorer surface, isolated in a FORCE-COPY fork
-	// whose diff is auto-merged back into the parent workspace after the run. This
-	// MIRRORS the Parallel branch wiring exactly:
-	//   - engine: readOnlyExplorerCatalog(forceCopyRunner) + Edit + Write, built
-	//     through childEngineDepsForProvider (the same path parallelChildDeps uses).
-	//   - runner: buildForceCopyRunner — the HARDENED, trust-UNGATED runner (#40); a
-	//     force-copy fork is a pure FS copy with NO fork-time git, so the checkout RCE
-	//     the trust gate closes cannot fire here, and run-time git over the copied
-	//     .git is hardened via gitenv.Scrub (same posture as Parallel branches /
-	//     mutating team members).
-	//   - forker: forker.New(..., WithForceCopy) — own .git, so the child's git can't
-	//     escape into the base (the same isolation a Parallel branch gets).
-	//   - merger: the SHARED process-wide serialized merger from the assets, so a
-	//     writable Subagent merge-back is serialized against every other merge in the
-	//     process (Parallel's auto-merge AND other writable subagents).
+	// WRITABLE subagent (mode:"read-write", ADR 0041): a child engine whose catalog
+	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
+	// the PARENT workspace — no fork, no copy, no merge-back. Its Edit/Write/Bash
+	// mutate the real tree in place, exactly as the main agent does; git is the
+	// rollback layer. The dispatcher keeps the call mutate-serial (Subagent.
+	// MutatesParent) so it never overlaps a sibling read.
+	//   - engine: readOnlyExplorerCatalog(runner) + Edit + Write, built through
+	//     childEngineDepsForProvider.
+	//   - runner: the MAIN session's command runner (buildCommandRunner) — MAIN-SESSION
+	//     PARITY. The force-copy runner was trust-UNGATED only because a force-copy
+	//     fork has no fork-time git; running on the REAL workspace means a writable
+	//     child's Bash must resolve exactly as the main session's does under the
+	//     operator's posture/policy, so it uses the SAME runner the main session uses.
+	//   - no forker: the writable child passes a nil forker (prepareChildSession), so
+	//     forkChildWorkspace returns the parent ws directly.
+	//   - no merger: there is nothing to merge — the child already wrote the parent
+	//     tree. (The shared autoMerger stays for Parallel single-branch auto-merge.)
 	// Skipped under no-FS (buildNoFSSubagentTool, above, wires no writable path).
-	forceCopyRunner := buildForceCopyRunner(cfg)
-	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, forceCopyRunner)
-	writableForker := forker.New(newForkWorkspace(skillReadRoots), forker.WithForceCopy())
-	opts = append(opts,
-		agent.WithWritableChildEngine(writableEngine),
-		agent.WithWritableChildForker(writableForker),
-	)
-	if a.autoMerger != nil {
-		opts = append(opts, agent.WithSubagentAutoMerge(a.autoMerger))
-	}
+	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, buildCommandRunner(cfg))
+	opts = append(opts, agent.WithWritableChildEngine(writableEngine))
 	return agent.NewSubagentTool(
 		buildChildEngine(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner),
 		opts...,

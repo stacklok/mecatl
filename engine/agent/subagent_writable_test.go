@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -15,10 +14,22 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// writableChildWriting scripts a child that calls a "Write" fakeTool (recording
-// the workspace root it ran against), then emits a final summary. recordedRoot
-// captures the workspace root the child's mutating tool actually saw, so a test
-// can assert the child ran in the FORK, not the shared parent base.
+// failingForker is a tool.WorkspaceForker that FAILS the test if Fork is ever
+// called. A direct-write (mode:"read-write") Subagent must NOT fork — it runs
+// against the real parent workspace (ADR 0041) — so wiring this as the read-only
+// childForker proves the writable path never forks.
+type failingForker struct{ t *testing.T }
+
+func (f *failingForker) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
+	f.t.Helper()
+	f.t.Fatal("a mode:\"read-write\" Subagent must NOT fork the workspace (direct-write, ADR 0041)")
+	return nil, nil, "", errors.New("unreachable")
+}
+
+// writableChildWriting scripts a child that calls a "Write" fakeTool (recording the
+// workspace root it ran against), then emits a final summary. recordedRoot captures
+// the workspace root the child's mutating tool actually saw, so a test can assert the
+// child ran against the REAL parent workspace, not a fork.
 func writableChildWriting(t *testing.T, summary string, recordedRoot *atomic.Pointer[string]) *agent.Engine {
 	t.Helper()
 	writeTool := &fakeTool{name: "Write", readOnly: false,
@@ -34,31 +45,29 @@ func writableChildWriting(t *testing.T, summary string, recordedRoot *atomic.Poi
 	return childEngineWith(llm, catalogWith(t, writeTool))
 }
 
-// newWritableSubagent assembles a Subagent tool with the full writable wiring: a
+// newWritableSubagent assembles a Subagent tool with the direct-write wiring: a
 // read-only explorer engine (whose summary differs so a test can tell which engine
-// ran), a writable child engine, a memForker as the writable forker, and the given
-// merger. The read-only childEngine is the mandatory first arg.
-func newWritableSubagent(t *testing.T, writable *agent.Engine, fk tool.WorkspaceForker, merger tool.ForkMerger, extra ...agent.SubagentOption) tool.Tool {
+// ran) plus a writable child engine. The read-only childEngine is the mandatory first
+// arg. There is no forker and no merger — a writable child writes the parent tree
+// directly (ADR 0041).
+func newWritableSubagent(t *testing.T, writable *agent.Engine, extra ...agent.SubagentOption) tool.Tool {
 	t.Helper()
 	readOnly := childEngineWith(mockllm.New(mockllm.TextTurn("READ-ONLY EXPLORER RAN")), catalogWith(t))
 	opts := append([]agent.SubagentOption{
 		agent.WithWritableChildEngine(writable),
-		agent.WithWritableChildForker(fk),
-		agent.WithSubagentAutoMerge(merger),
 	}, extra...)
 	return agent.NewSubagentTool(readOnly, opts...)
 }
 
-// TestSubagentWritableSelectsWritableEngineAndMerges proves a mode:"read-write"
-// call runs the WRITABLE child engine (not the read-only explorer), the child's
-// mutating tool runs against the FORK workspace, and the injected merger's Merge is
-// called EXACTLY ONCE post-run with the fork root. The result notes the merge.
-func TestSubagentWritableSelectsWritableEngineAndMerges(t *testing.T) {
+// TestSubagentWritableSelectsWritableEngineAndWritesParentWorkspace proves a
+// mode:"read-write" call runs the WRITABLE child engine (not the read-only explorer),
+// the child's mutating tool runs against the REAL parent workspace (no fork), and the
+// result carries the honest direct-write note.
+func TestSubagentWritableSelectsWritableEngineAndWritesParentWorkspace(t *testing.T) {
 	var recordedRoot atomic.Pointer[string]
 	writable := writableChildWriting(t, "WRITABLE CHILD DID THE WORK", &recordedRoot)
-	mf := &memForker{}
-	merger := &fakeMerger{}
-	task := newWritableSubagent(t, writable, mf, merger)
+	// Wire a failing read-only forker: the writable path must never reach it.
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
 
 	res := runOneSubagent(t, task, "p1", `{"prompt":"implement the fix","mode":"read-write"}`)
 	if res.IsError {
@@ -71,240 +80,299 @@ func TestSubagentWritableSelectsWritableEngineAndMerges(t *testing.T) {
 	if strings.Contains(res.Content, "READ-ONLY EXPLORER RAN") {
 		t.Fatalf("read-write call must NOT run the read-only explorer engine, got:\n%s", res.Content)
 	}
-	// The merger was called exactly once, with the fork root.
-	if merger.callCount() != 1 {
-		t.Fatalf("merger called %d times, want exactly 1", merger.callCount())
+	// The child's mutating tool ran against the REAL parent workspace (/ws), NOT a fork.
+	if rr := recordedRoot.Load(); rr == nil || *rr != "/ws" {
+		t.Fatalf("child Write ran against root %v, want the real parent workspace /ws (direct-write)", rr)
 	}
-	if got := merger.calls[0].ForkRoot; !strings.HasPrefix(got, "/fork/") {
-		t.Fatalf("merger called with fork root %q, want a /fork/... fork path", got)
+	// The result honestly tells the model its edits landed directly in the workspace.
+	if !strings.Contains(res.Content, "edited your workspace directly") {
+		t.Fatalf("result must note the edits were applied directly, got:\n%s", res.Content)
 	}
-	if merger.calls[0].ParentRoot != "/ws" {
-		t.Fatalf("merger called with parent root %q, want /ws (the parent workspace)", merger.calls[0].ParentRoot)
-	}
-	// The child's mutating tool ran in the FORK, not the shared parent base.
-	if rr := recordedRoot.Load(); rr == nil || !strings.HasPrefix(*rr, "/fork/") {
-		t.Fatalf("child Write ran against root %v, want a /fork/... isolated fork", rr)
-	}
-	// The fork was cleaned up on the success path.
-	if forks, cleaned := mf.counts(); forks != 1 || cleaned != 1 {
-		t.Fatalf("forks=%d cleaned=%d, want 1/1 (fork cleaned on merge success)", forks, cleaned)
-	}
-	// The result notes the merge so the model knows the edits landed.
-	if !strings.Contains(res.Content, "merged into your workspace") {
-		t.Fatalf("result must note the merge-back, got:\n%s", res.Content)
+	if strings.Contains(res.Content, "merge") || strings.Contains(res.Content, "fork") {
+		t.Fatalf("direct-write result must NOT mention merge/fork, got:\n%s", res.Content)
 	}
 }
 
-// writableChildWritingThenError scripts a writable child that calls Write
-// SUCCESSFULLY, then the next turn yields a GENUINE in-stream provider error so the
-// child run terminates StopError (the loop calls session.Fail). It exercises FIX A:
-// a crashed child's partial edits must NOT be merged into the parent.
-func writableChildWritingThenError(t *testing.T, recordedRoot *atomic.Pointer[string]) *agent.Engine {
-	t.Helper()
+// TestSubagentWritableDirectWriteE2E drives a mode:"read-write" Subagent through the
+// real harness (a parent Engine.Run whose turn calls Subagent) over a memfs workspace,
+// and asserts (a) the file the child writes lands in the REAL parent workspace, (b) NO
+// fork happened (the read-only childForker is a failingForker that fails the test if
+// Fork is ever called on the writable path), and (c) gauntlet #7 holds (the parent
+// never sees the child's intermediate tool events/content).
+func TestSubagentWritableDirectWriteE2E(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+
 	writeTool := &fakeTool{name: "Write", readOnly: false,
-		exec: func(_ context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
-			r := ws.Root()
-			recordedRoot.Store(&r)
-			return session.NewToolResult(in.ID, "wrote a partial, half-finished edit"), nil
-		}}
-	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"x.txt","content":"partial"}`)),
-		mockllm.ErrorTurn(errors.New("provider stream blew up")),
-	)
-	return childEngineWith(llm, catalogWith(t, writeTool))
-}
-
-// TestSubagentWritableStopErrorDoesNotMerge is the FIX A ship-blocker guard: a
-// writable child that does a successful Write but then terminates StopError (provider
-// stream error / MaxConsecutiveFailures / hook rejection) must NOT have its partial,
-// internally-inconsistent edits merged into the parent — and the fork is cleaned up
-// normally (nothing intentional is landing), NOT preserved.
-func TestSubagentWritableStopErrorDoesNotMerge(t *testing.T) {
-	var recordedRoot atomic.Pointer[string]
-	writable := writableChildWritingThenError(t, &recordedRoot)
-	mf := &memForker{}
-	merger := &fakeMerger{}
-	task := newWritableSubagent(t, writable, mf, merger)
-
-	runOneSubagent(t, task, "p1", `{"prompt":"implement the fix","mode":"read-write"}`)
-
-	// The child wrote into the fork (so there WAS a diff that could have merged).
-	if rr := recordedRoot.Load(); rr == nil || !strings.HasPrefix(*rr, "/fork/") {
-		t.Fatalf("child Write should have run in the fork, got root %v", rr)
-	}
-	// FIX A: a StopError terminal must NEVER merge.
-	if merger.callCount() != 0 {
-		t.Fatalf("a StopError child must NOT merge, but merger was called %d times", merger.callCount())
-	}
-	// The fork is cleaned up normally on a non-merged terminal (not preserved).
-	if forks, cleaned := mf.counts(); forks != 1 || cleaned != 1 {
-		t.Fatalf("forks=%d cleaned=%d, want 1/1 (fork cleaned, not preserved, on a non-merged StopError)", forks, cleaned)
-	}
-}
-
-// TestSubagentWritableClientCancelDoesNotMerge is the FIX A ship-blocker guard for a
-// client cancel (CancelChild): the user withdrew the delegation, so its partial edits
-// must NOT be landed in the parent. Driven through a parent run so the child is
-// genuinely client-cancelled mid-drive.
-func TestSubagentWritableClientCancelDoesNotMerge(t *testing.T) {
-	park := newParkingTool()
-	writeTool := &fakeTool{name: "Write", readOnly: false,
-		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
-			return session.NewToolResult(in.ID, "wrote a partial edit"), nil
+		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
+			if err := w.Write(context.Background(), "child-output.txt", []byte("written by the writable subagent\n")); err != nil {
+				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
+			}
+			return session.NewToolResult(in.ID, "wrote child-output.txt"), nil
 		}}
 	childLLM := mockllm.New(
-		mockllm.ChunksTurn(
-			mockllm.ToolCallChunk(toolCall("w1", "Write", `{"path":"x.txt","content":"hi"}`)),
-			mockllm.DoneChunk(session.StopEndTurn),
-		),
-		mockllm.ChunksTurn(
-			mockllm.TextChunk("about to park"),
-			mockllm.ToolCallChunk(toolCall("w2", "Wait", `{}`)),
-			mockllm.DoneChunk(session.StopEndTurn),
-		),
-		mockllm.TextTurn("never reached"),
+		mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"child-output.txt"}`)),
+		mockllm.TextTurn("CHILD SECRET INTERMEDIATE"),
 	)
-	writable := childEngineWith(childLLM, catalogWith(t, writeTool, park))
-	mf := &memForker{}
-	merger := &fakeMerger{}
-	task := newWritableSubagent(t, writable, mf, merger)
+	writable := childEngineWith(childLLM, catalogWith(t, writeTool))
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"implement","mode":"read-write"}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), ws, "go")
 
-	gotChild := make(chan string, 1)
-	var cancelDone sync.WaitGroup
-	cancelDone.Add(1)
-	go func() {
-		defer cancelDone.Done()
-		childID := <-gotChild
-		<-park.started
-		r.CancelChild(childID)
-	}()
-
-	drainObserving(t, r, func(ev session.Event) {
-		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
-			select {
-			case gotChild <- ev.Subagent.ChildID:
-			default:
-			}
+	var sawChildContent bool
+	for _, ev := range drain(r) {
+		// gauntlet #7: the parent's own event stream must never carry the child's
+		// intermediate tool result text or message content.
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, "wrote child-output.txt") {
+			sawChildContent = true
 		}
-	})
-	cancelDone.Wait()
+		if ev.Type == session.EvMessageDelta && strings.Contains(ev.Text, "CHILD SECRET INTERMEDIATE") {
+			sawChildContent = true
+		}
+	}
+	if sawChildContent {
+		t.Fatal("parent run leaked the child's intermediate tool result/content (gauntlet #7)")
+	}
 
-	if merger.callCount() != 0 {
-		t.Fatalf("a client-cancelled writable child must NOT merge, but merger was called %d times", merger.callCount())
+	// (a) The file landed in the REAL parent workspace (proving direct-write — the
+	// child wrote the very workspace the parent owns, not a fork copy).
+	if got, err := ws.Read(context.Background(), "child-output.txt"); err != nil {
+		t.Fatalf("the writable subagent's edit did not land in the real workspace: %v", err)
+	} else if !strings.Contains(string(got), "written by the writable subagent") {
+		t.Fatalf("workspace file has unexpected content: %q", got)
+	}
+	// (b) No fork occurred: the failingForker would have failed the test if the
+	// writable path forked.
+}
+
+// TestSubagentWritablePartialEditSurvivesStopError is the adversarial direct-write
+// guard: a writable child that does a successful Write to the REAL tree but then
+// terminates StopError leaves that first edit IN the tree (NOT rolled back / NOT
+// quarantined — there is no fork to roll back), no fork was created, and the result
+// text honestly reports the failure + that edits may have PARTIALLY landed.
+func TestSubagentWritablePartialEditSurvivesStopError(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+
+	writeTool := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
+			if err := w.Write(context.Background(), "partial.txt", []byte("first edit landed\n")); err != nil {
+				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
+			}
+			return session.NewToolResult(in.ID, "wrote partial.txt"), nil
+		}}
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"partial.txt"}`)),
+		mockllm.ErrorTurn(errors.New("provider stream blew up")),
+	)
+	writable := childEngineWith(childLLM, catalogWith(t, writeTool))
+	// The failingForker proves no fork was created (the writable path must not fork).
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
+
+	res, err := task.Execute(context.Background(),
+		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)), ws)
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+
+	// (a) The first edit IS present in the real tree (not rolled back / not quarantined).
+	if got, rerr := ws.Read(context.Background(), "partial.txt"); rerr != nil {
+		t.Fatalf("the writable child's first edit must survive a StopError (no rollback), but it is gone: %v", rerr)
+	} else if !strings.Contains(string(got), "first edit landed") {
+		t.Fatalf("partial edit content unexpected: %q", got)
+	}
+	// (b) No fork was created (the failingForker would have failed the test).
+	// (c) The result honestly reports the failure + that edits may have partially landed.
+	if !res.IsError {
+		t.Fatalf("a StopError child must surface a tool error, got success:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "may be PARTIAL") {
+		t.Fatalf("result must warn that the edits may be partial, got:\n%s", res.Content)
 	}
 }
 
-// TestSubagentWritableTimeoutDoesNotMerge is the FIX A ship-blocker guard for a
-// time-budget terminal: a writable child that blows its timeout_ms is stopped with the
-// time-budget error and must NOT merge its half-finished fork.
-func TestSubagentWritableTimeoutDoesNotMerge(t *testing.T) {
+// TestSubagentWritablePartialEditSurvivesStopCancelled closes the untested half of the
+// StopError||StopCancelled OR: a writable child lands ONE innocuous edit in the REAL
+// tree, then blocks; the PARENT ctx is cancelled mid-run. The edit must survive (no
+// rollback / no quarantine — direct-write) and the result must honestly warn the model
+// the edits may be PARTIAL.
+func TestSubagentWritablePartialEditSurvivesStopCancelled(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
 	block := &signalThenBlockTool{entered: make(chan struct{}, 1)}
+	writeTool := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
+			if err := w.Write(context.Background(), "cancelled.txt", []byte("first edit landed\n")); err != nil {
+				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
+			}
+			return session.NewToolResult(in.ID, "wrote cancelled.txt"), nil
+		}}
 	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"cancelled.txt"}`)),
 		mockllm.ToolCallTurn(toolCall("b1", "Block", `{}`)),
 		mockllm.TextTurn("never reached"),
 	)
-	writable := childEngineWith(childLLM, catalogWith(t, block))
-	mf := &memForker{}
-	merger := &fakeMerger{}
-	task := newWritableSubagent(t, writable, mf, merger)
+	writable := childEngineWith(childLLM, catalogWith(t, writeTool, block))
+	task := newWritableSubagent(t, writable)
 
-	res := runOneSubagent(t, task, "p1", `{"prompt":"loop forever","mode":"read-write","timeout_ms":120}`)
+	parentCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type out struct {
+		res session.ToolResult
+		err error
+	}
+	done := make(chan out, 1)
+	go func() {
+		res, err := task.Execute(parentCtx,
+			session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)), ws)
+		done <- out{res, err}
+	}()
+
+	<-block.entered // the child has landed its edit and is now in-flight in Block
+	cancel()        // cancel the PARENT mid-run
+
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("transport error: %v", got.err)
+	}
+	// (a) The first edit survives in the real tree (no rollback).
+	if data, rerr := ws.Read(context.Background(), "cancelled.txt"); rerr != nil {
+		t.Fatalf("the writable child's edit must survive a cancel (no rollback): %v", rerr)
+	} else if !strings.Contains(string(data), "first edit landed") {
+		t.Fatalf("partial edit content unexpected: %q", data)
+	}
+	// (b) The result honestly warns the edits may be partial.
+	if !strings.Contains(got.res.Content, "may be PARTIAL") {
+		t.Fatalf("a cancelled writable child must warn the edits may be partial, got:\n%s", got.res.Content)
+	}
+}
+
+// TestSubagentWritableTimeoutSurfacesTimeBudgetError is the time-budget guard: a
+// writable child that lands ONE real edit and then blows its timeout_ms is stopped with
+// the time-budget error AND warned that its edits may be PARTIAL. Under direct-write (ADR
+// 0041) the edit DID land in the real tree, and a mid-task timeout kill can leave
+// half-finished work — so the timeout terminal must carry the same git-recovery thread
+// the StopError/cancel path gets, never the benign "edited directly" note.
+func TestSubagentWritableTimeoutSurfacesTimeBudgetError(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+	block := &signalThenBlockTool{entered: make(chan struct{}, 1)}
+	writeTool := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
+			if err := w.Write(context.Background(), "timed-out.txt", []byte("first edit landed\n")); err != nil {
+				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
+			}
+			return session.NewToolResult(in.ID, "wrote timed-out.txt"), nil
+		}}
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"timed-out.txt"}`)),
+		mockllm.ToolCallTurn(toolCall("b1", "Block", `{}`)),
+		mockllm.TextTurn("never reached"),
+	)
+	writable := childEngineWith(childLLM, catalogWith(t, writeTool, block))
+	task := newWritableSubagent(t, writable)
+
+	res, err := task.Execute(context.Background(),
+		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"loop forever","mode":"read-write","timeout_ms":120}`)), ws)
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
 	if !res.IsError || !strings.Contains(res.Content, "time budget") {
 		t.Fatalf("a timed-out writable child must surface the time-budget error, got %+v", res)
 	}
-	if merger.callCount() != 0 {
-		t.Fatalf("a timed-out writable child must NOT merge, but merger was called %d times", merger.callCount())
+	// The first edit DID land in the real tree (direct-write) and the model is warned
+	// the work may be PARTIAL — a timeout is a mid-task kill, not a clean end.
+	if got, rerr := ws.Read(context.Background(), "timed-out.txt"); rerr != nil {
+		t.Fatalf("the writable child's edit must survive a timeout (no rollback): %v", rerr)
+	} else if !strings.Contains(string(got), "first edit landed") {
+		t.Fatalf("partial edit content unexpected: %q", got)
+	}
+	if !strings.Contains(res.Content, "may be PARTIAL") {
+		t.Fatalf("a writable timeout must warn the edits may be partial, got:\n%s", res.Content)
 	}
 }
 
-// TestSubagentWritableConflictPreservesFork proves a merge CONFLICT surfaces a
-// model-addressable tool error naming the PRESERVED fork, and the fork is NOT
-// cleaned up (so the operator can resolve it by hand).
-func TestSubagentWritableConflictPreservesFork(t *testing.T) {
-	var recordedRoot atomic.Pointer[string]
-	writable := writableChildWriting(t, "did work", &recordedRoot)
-	mf := &memForker{}
-	merger := &fakeMerger{errOnCall: 1}
-	task := newWritableSubagent(t, writable, mf, merger)
-
-	res := runOneSubagent(t, task, "p1", `{"prompt":"implement the fix","mode":"read-write"}`)
-	if !res.IsError {
-		t.Fatalf("a merge conflict must surface a tool error, got a success:\n%s", res.Content)
-	}
-	if merger.callCount() != 1 {
-		t.Fatalf("merger must be called once even on conflict, got %d", merger.callCount())
-	}
-	if !strings.Contains(res.Content, "preserved") {
-		t.Fatalf("conflict error must say the fork is preserved, got:\n%s", res.Content)
-	}
-	// The message must be RECOVERABLE for a model, not just name a path: it states
-	// the cause + that nothing was applied, prescribes recovery with its own tools,
-	// and warns against a blind retry.
-	for _, want := range []string{"NOTHING was applied", "Read", "Edit/Write", "re-delegate", "Do NOT simply retry"} {
-		if !strings.Contains(res.Content, want) {
-			t.Fatalf("conflict error must carry actionable recovery guidance %q, got:\n%s", want, res.Content)
-		}
-	}
-	forkRoot := merger.calls[0].ForkRoot
-	if !strings.Contains(res.Content, forkRoot) {
-		t.Fatalf("conflict error must name the preserved fork %q, got:\n%s", forkRoot, res.Content)
-	}
-	// The fork is NOT cleaned up on conflict (preserved for manual resolution).
-	if forks, cleaned := mf.counts(); forks != 1 || cleaned != 0 {
-		t.Fatalf("forks=%d cleaned=%d, want 1 forked / 0 cleaned (fork preserved on conflict)", forks, cleaned)
-	}
-}
-
-// TestSubagentWritableNoMergerWhenNothingToMerge proves that with a nil-returning
-// merger (no diff) the result honestly reports no changes were merged.
-func TestSubagentWritableNoChangesNote(t *testing.T) {
-	// A writable child that produces NO mutating tool call still merges via the
-	// merger; the fakeMerger returns nil (success) so the note is "merged".
-	// To exercise the "no changes" note we wire a nil merger so mergeWritableChild
-	// short-circuits (merged=false) — modelling a deployment with no merger.
-	writable := childEngineWith(mockllm.New(mockllm.TextTurn("explored, no edits")), catalogWith(t))
-	mf := &memForker{}
-	task := agent.NewSubagentTool(
-		childEngineWith(mockllm.New(mockllm.TextTurn("ro")), catalogWith(t)),
-		agent.WithWritableChildEngine(writable),
-		agent.WithWritableChildForker(mf),
-		// No WithSubagentAutoMerge: mergeWritableChild short-circuits, merged=false.
+// TestSubagentWritableWithOutputSchemaComposes is the positive composition guard for
+// read-write + output_schema (the schema description advertises this; only +fork was
+// exercised before): a writable child calls SubmitResult with a VALID payload, and the
+// Subagent result carries the validated JSON. It runs the WRITABLE engine (not the
+// read-only explorer) and the result still carries the direct-write note.
+func TestSubagentWritableWithOutputSchemaComposes(t *testing.T) {
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("k1", "SubmitResult", `{"name":"Ada","age":36}`)),
+		mockllm.TextTurn("done"),
 	)
-	res := runOneSubagent(t, task, "p1", `{"prompt":"look around","mode":"read-write"}`)
+	writable := childEngineWith(childLLM, catalogWith(t))
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
+
+	res := runOneSubagent(t, task, "p1",
+		`{"prompt":"profile Ada","mode":"read-write","output_schema":`+personSchema+`}`)
 	if res.IsError {
-		t.Fatalf("unexpected error: %q", res.Content)
+		t.Fatalf("read-write + output_schema with a valid payload must succeed, got error: %q", res.Content)
 	}
-	if !strings.Contains(res.Content, "no file changes to merge") {
-		t.Fatalf("result must note no changes were merged, got:\n%s", res.Content)
+	if !strings.Contains(res.Content, `"name":"Ada"`) || !strings.Contains(res.Content, `"age":36`) {
+		t.Fatalf("result must carry the validated payload, got:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, "READ-ONLY EXPLORER RAN") {
+		t.Fatalf("read-write call must run the writable engine, not the explorer, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "edited your workspace directly") {
+		t.Fatalf("read-write result must still carry the direct-write note, got:\n%s", res.Content)
 	}
 }
 
-// TestSubagentWritableReadOnlyStaysTrue PINS the D2 invariant: configuring a
-// writable Subagent tool does NOT flip ReadOnly() — the merge is a post-run step,
-// not a dispatch-time mutation, so read-only fan-out stays parallel-safe.
+// TestSubagentWritableNotIsolatedSkipsA2 is the BEHAVIORAL isolated:false guard,
+// driving the REAL run() posture (not a hand-built childPosture): a writable child
+// issuing an isolation-APPROVABLE Bash substitution (`go test $(echo ./...)`) under a
+// HEADLESS parent must AUTO-DENY it — because a direct-write child is isolated:false
+// (ADR 0041), so the A2 isolation auto-approve (which only fires when isolated) does
+// NOT apply. If run()'s posture were `isolated: true || ...` (the pre-0041 bug) the A2
+// path would auto-APPROVE and the Bash would RUN — so this test FAILS under that
+// mutation. The read-only forker is a failingForker to also prove no fork happens.
+func TestSubagentWritableNotIsolatedSkipsA2(t *testing.T) {
+	bash := &fakeBash{}
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("k1", "Bash", `{"command":"go test $(echo ./...)"}`)),
+		mockllm.TextTurn("child: adapted after the denied command"),
+	)
+	writable := bashChildEngine(childLLM, bash)
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
+
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"implement","mode":"read-write"}`)),
+		mockllm.TextTurn("parent: done"),
+	)
+	// newEngine ⇒ Interactive=false (headless): an unresolved ask auto-denies.
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	drainWithTimeout(t, r)
+
+	if got := bash.ran(); len(got) != 0 {
+		t.Fatalf("a NON-isolated (direct-write) writable child's isolation-approvable Bash must NOT be "+
+			"A2 auto-approved under a headless parent — it must auto-deny; but the command ran: %v", got)
+	}
+}
+
+// TestSubagentWritableReadOnlyStaysTrue PINS the invariant: configuring a writable
+// Subagent tool does NOT flip ReadOnly() — read-only fan-out stays parallel-safe; a
+// read-write CALL is excluded from the concurrent batch via MutatesParent instead.
 func TestSubagentWritableReadOnlyStaysTrue(t *testing.T) {
 	writable := childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t))
-	task := newWritableSubagent(t, writable, &memForker{}, &fakeMerger{})
+	task := newWritableSubagent(t, writable)
 	if !task.ReadOnly() {
 		t.Fatal("a writable-configured SubagentTool must still report ReadOnly()==true")
 	}
 }
 
-// TestSubagentModeCombinationGuards is the D2/D3/D4 combination table: an unknown
-// mode, read-write+background, and read-write+agent are all rejected; read-write
-// with no writable engine wired is "not supported"; read-write+fork is ALLOWED (the
-// merge fires). read-write+model is also allowed (composes).
+// TestSubagentModeCombinationGuards is the combination table: an unknown mode,
+// read-write+background, and read-write+agent are all rejected; read-write with no
+// writable engine wired is "not supported"; read-write+fork is ALLOWED (composes).
 func TestSubagentModeCombinationGuards(t *testing.T) {
 	makeWritable := func() tool.Tool {
 		var rr atomic.Pointer[string]
-		return newWritableSubagent(t, writableChildWriting(t, "ok", &rr), &memForker{}, &fakeMerger{})
+		return newWritableSubagent(t, writableChildWriting(t, "ok", &rr))
 	}
 
 	t.Run("unknown mode rejected", func(t *testing.T) {
@@ -316,19 +384,15 @@ func TestSubagentModeCombinationGuards(t *testing.T) {
 
 	t.Run("explicit read-only accepted (read-only explorer runs)", func(t *testing.T) {
 		// The explicit "read-only" literal is accepted exactly like "" — it runs the
-		// read-only explorer and never merges (TEST GAP: pin the literal, not just "").
+		// read-only explorer (TEST GAP: pin the literal, not just "").
 		var rr atomic.Pointer[string]
-		merger := &fakeMerger{}
-		task := newWritableSubagent(t, writableChildWriting(t, "should NOT run", &rr), &memForker{}, merger)
+		task := newWritableSubagent(t, writableChildWriting(t, "should NOT run", &rr))
 		res := runOneSubagent(t, task, "p1", `{"prompt":"look around","mode":"read-only"}`)
 		if res.IsError {
 			t.Fatalf("explicit mode:\"read-only\" must be accepted, got error: %q", res.Content)
 		}
 		if !strings.Contains(res.Content, "READ-ONLY EXPLORER RAN") {
 			t.Fatalf("explicit read-only must run the read-only explorer, got:\n%s", res.Content)
-		}
-		if merger.callCount() != 0 {
-			t.Fatalf("a read-only call must never merge, got %d merge calls", merger.callCount())
 		}
 	})
 
@@ -344,8 +408,6 @@ func TestSubagentModeCombinationGuards(t *testing.T) {
 		readOnly := childEngineWith(mockllm.New(mockllm.TextTurn("ro")), catalogWith(t))
 		task := agent.NewSubagentTool(readOnly,
 			agent.WithWritableChildEngine(writableChildWriting(t, "ok", &rr)),
-			agent.WithWritableChildForker(&memForker{}),
-			agent.WithSubagentAutoMerge(&fakeMerger{}),
 			agent.WithAgentEngines(
 				map[string]*agent.Engine{"reviewer": childEngineWith(mockllm.New(mockllm.TextTurn("r")), catalogWith(t))},
 				[]agent.AgentMeta{{Name: "reviewer", Description: "reviews"}},
@@ -365,32 +427,26 @@ func TestSubagentModeCombinationGuards(t *testing.T) {
 		}
 	})
 
-	t.Run("read-write + fork allowed and merges", func(t *testing.T) {
+	t.Run("read-write + fork allowed", func(t *testing.T) {
 		var rr atomic.Pointer[string]
 		writable := writableChildWriting(t, "forked writable", &rr)
-		merger := &fakeMerger{}
 		readOnly := childEngineWith(mockllm.New(mockllm.TextTurn("ro")), catalogWith(t))
-		task := agent.NewSubagentTool(readOnly,
-			agent.WithWritableChildEngine(writable),
-			agent.WithWritableChildForker(&memForker{}),
-			agent.WithSubagentAutoMerge(merger),
-		)
+		task := agent.NewSubagentTool(readOnly, agent.WithWritableChildEngine(writable))
 		// fork:true needs a parent fork-history seam; drive through a parent run so
 		// caps.forkHistory is wired (mode:"read-write" + fork composes).
 		res := runWritableForkWithParent(t, task)
 		if res.IsError {
 			t.Fatalf("read-write+fork must be allowed, got error: %q", res.Content)
 		}
-		if merger.callCount() != 1 {
-			t.Fatalf("read-write+fork must still merge, merger called %d times, want 1", merger.callCount())
+		if !strings.Contains(res.Content, "forked writable") {
+			t.Fatalf("read-write+fork must run the writable child, got:\n%s", res.Content)
 		}
 	})
 }
 
-// runWritableForkWithParent drives a single mode:"read-write",fork:true Subagent
-// call through a parent engine loop so the parent fork-history seam (caps.forkHistory)
-// is wired (a plain Execute has none). It returns the parent's single Subagent
-// ToolResult.
+// runWritableForkWithParent drives a single mode:"read-write",fork:true Subagent call
+// through a parent engine loop so the parent fork-history seam (caps.forkHistory) is
+// wired (a plain Execute has none). It returns the parent's single Subagent ToolResult.
 func runWritableForkWithParent(t *testing.T, task tool.Tool) session.ToolResult {
 	t.Helper()
 	parentCat := catalogWith(t, task)

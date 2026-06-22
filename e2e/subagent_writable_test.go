@@ -15,23 +15,23 @@ import (
 
 // subagentWritableSpecs is the live counterpart to the offline writable-Subagent
 // tests: a real model run that delegates a write task with mode:"read-write" and
-// asserts the child's edit actually LANDS in the parent workspace via the
-// force-copy fork + serialized merge-back. It mirrors the Parallel single-branch
-// auto-merge spec (parallel_test.go) — the writable Subagent is the blessed
-// "delegate one task and land its edits" path (ADR 0040), so it earns the same
-// real-filesystem regression assertion.
+// asserts the child's edit actually LANDS in the parent workspace. With direct-write
+// (ADR 0041) the child writes the REAL parent workspace IN PLACE — no fork, no
+// merge — exactly as the main agent does; the sentinel file therefore appears in the
+// parent tree directly. The writable Subagent is the "delegate one task and land its
+// edits" path, so it earns the real-filesystem regression assertion.
 //
-// Without the merge-back the child's writes stay in its discarded force-copy fork
-// and the sentinel would be absent from the parent tree. Writable mode is
-// default-wired (no flag), so nothing special is enabled here.
+// Without direct-write the child's writes would not reach the parent tree and the
+// sentinel would be absent. Writable mode is default-wired (no flag), so nothing
+// special is enabled here.
 func subagentWritableSpecs() {
 	ginkgo.Describe("subagent writable mode", func() {
 		ginkgo.It("lands a mode:read-write subagent's edit in the parent workspace",
 			ginkgo.SpecTimeout(6*time.Minute),
 			func(ctx ginkgo.SpecContext) {
-				// A dedicated mecated over its OWN git-inited scratch tree (the
-				// harness commits the fixtures, so the force-copy fork has a base
-				// to diff against). Writable Subagent is default-on, no flag.
+				// A dedicated mecated over its OWN git-inited scratch tree (git is the
+				// rollback layer for the direct-write child). Writable Subagent is
+				// default-on, no flag.
 				loc, err := harness.NewLocalWith()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawning the writable-subagent mecated failed")
 				defer func() { _ = loc.Close() }()
@@ -49,8 +49,8 @@ func subagentWritableSpecs() {
 				}
 
 				// One writable Subagent call: the child writes the sentinel via
-				// Bash/Write in its force-copy fork, then on its clean finish the
-				// diff is auto-merged back into the parent workspace.
+				// Bash/Write DIRECTLY into the real parent workspace (no fork, no
+				// merge — ADR 0041).
 				res, err := driver.Run(ctx, harness.RunOpts{
 					Scenario: "subagent-writable", Timeout: 6 * time.Minute,
 					ApproveTools: []string{"Subagent"}, // backup; the CLI config allows it
@@ -58,24 +58,23 @@ func subagentWritableSpecs() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), report(res, err))
 				gomega.Expect(res).NotTo(gomega.BeNil(), report(res, err))
 
-				// A Subagent call must have happened and not errored (a merge
-				// conflict would surface as an error result — a real failure here).
+				// A Subagent call must have happened and not errored.
 				calls := res.ToolCalls("Subagent")
 				gomega.Expect(calls).NotTo(gomega.BeEmpty(), "no Subagent tool.call observed\n"+report(res, err))
 				tr := res.ToolResult(calls[0].ID)
 				gomega.Expect(tr).NotTo(gomega.BeNil(), report(res, err))
 				gomega.Expect(tr.IsError).To(gomega.BeFalse(),
-					"Subagent tool result errored (merge conflict?)\n"+report(res, err))
+					"Subagent tool result errored\n"+report(res, err))
 
 				// THE regression assertion: the child's edit landed in the PARENT
-				// workspace. Without the writable merge-back the force-copy fork is
-				// discarded and the parent tree is untouched, so this file would not
-				// exist.
+				// workspace. With direct-write the child writes the real tree in place,
+				// so the file exists directly; if the child were somehow isolated from
+				// the parent tree it would be absent.
 				got, readErr := os.ReadFile(filepath.Join(loc.Workspace(), sentinelFile))
 				gomega.Expect(readErr).NotTo(gomega.HaveOccurred(),
-					"the writable subagent's file is absent from the parent workspace — merge-back did not land the child's diff\n"+report(res, err))
+					"the writable subagent's file is absent from the parent workspace — the direct-write edit did not land\n"+report(res, err))
 				gomega.Expect(string(got)).To(gomega.ContainSubstring("SUBAGENTRW-7F1D3E80"),
-					"the merged file content is wrong — got %q\n%s", got, report(res, err))
+					"the written file content is wrong — got %q\n%s", got, report(res, err))
 			})
 	})
 }

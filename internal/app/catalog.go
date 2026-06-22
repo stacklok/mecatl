@@ -79,13 +79,14 @@ type catalogAssets struct {
 	skillIndex     skillIndex
 	skillReadRoots []string
 	forkReaper     *agent.LRUForkReaper
-	// autoMerger is the ONE process-wide serializing tool.ForkMerger shared by
-	// every merge-driving tool (Parallel single-branch auto-merge AND the writable
-	// Subagent, mode:"read-write"). It wraps a forker.Merger in a forker.Serializing-
-	// Merger so concurrent merges across sessions are serialized by a single mutex
-	// (a per-session instance would not serialize cross-session). Built ONCE in
-	// Phase A like forkReaper. Nil only on hand-rolled assets (the option is then
-	// skipped, no auto-merge).
+	// autoMerger is the ONE process-wide serializing tool.ForkMerger used by the
+	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
+	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a
+	// forker.SerializingMerger so concurrent merges across sessions are serialized
+	// by a single mutex (a per-session instance would not serialize cross-session).
+	// Built ONCE in Phase A like forkReaper, and only when Parallel is enabled. Nil
+	// on hand-rolled assets or with Parallel disabled (the option is then skipped,
+	// no auto-merge).
 	autoMerger tool.ForkMerger
 	// searchProvider is the process-wide tool.SearchProvider the WebSearch core
 	// tool is built over (issue #26). It is resolved ONCE in buildCatalog
@@ -315,8 +316,8 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// untrusted branch cannot repoint the parent's git drivers at merge time.
 	// Use the SHARED process-wide serializing merger from the assets (built once in
 	// Phase A), NOT a fresh forker.NewMerger() — so the SAME mutex serializes every
-	// merge across Parallel AND the writable Subagent, process-wide. A nil merger
-	// (hand-rolled assets) skips auto-merge entirely (the historical boundary).
+	// Parallel merge process-wide. A nil merger (hand-rolled assets) skips auto-merge
+	// entirely (the historical boundary).
 	if a.autoMerger != nil {
 		opts = append(opts, agent.WithAutoMerge(a.autoMerger))
 	}

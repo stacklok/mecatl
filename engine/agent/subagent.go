@@ -350,19 +350,22 @@ type subagentArgs struct {
 
 	// Mode selects the child's workspace posture. The default ("" or "read-only")
 	// runs the historical read-only explorer (no Edit/Write; a shell-bearing child's
-	// worktree is discarded after the run). "read-write" runs a WRITABLE explorer: a
-	// force-copy isolated fork with Edit/Write in its catalog, whose working-tree
-	// changes are AUTO-MERGED back into the parent workspace after the run (a
-	// post-run, serialized step — see the writable merge). A conflict on merge-back
-	// surfaces a model-addressable error naming the PRESERVED fork for manual
-	// resolution (the fork is NOT cleaned up on conflict). Validated to the closed
-	// set {"", "read-only", "read-write"}; an unknown value is a model-addressable
-	// error. read-write is REJECTED with `background` (an async merge after the
-	// parent turn advances is unsafe) and with `agent` (named specialists run
-	// read-only in v1); it COMPOSES with fork/model/resume/output_schema/timeout_ms/
-	// limits. Under a no-filesystem session there is no writable child engine wired,
-	// so read-write is a model-addressable "not supported" error. Omitted (the
-	// default) = today's read-only behaviour, unchanged.
+	// worktree is discarded after the run). "read-write" runs a WRITABLE explorer
+	// with Edit/Write in its catalog that runs DIRECTLY against the PARENT workspace
+	// (no fork, no copy, no merge-back) — its Edit/Write/Bash mutate the real tree in
+	// place, exactly as the main agent does, so its edits land immediately. There is
+	// no isolation; git is the rollback layer (a crashed/cancelled child can leave
+	// partial edits behind, recoverable via git diff/checkout/stash — ADR 0041).
+	// Because it mutates the parent in-place, the dispatcher runs a read-write call
+	// ALONE (mutate-serial, via MutatesParent), never concurrently with a sibling
+	// read. Validated to the closed set {"", "read-only", "read-write"}; an unknown
+	// value is a model-addressable error. read-write is REJECTED with `background`
+	// (a detached child writing the parent tree after the turn advances is unsafe)
+	// and with `agent` (named specialists run read-only in v1); it COMPOSES with
+	// fork/model/resume/output_schema/timeout_ms/limits. Under a no-filesystem
+	// session there is no writable child engine wired, so read-write is a
+	// model-addressable "not supported" error. Omitted (the default) = today's
+	// read-only behaviour, unchanged.
 	Mode string `json:"mode,omitempty"`
 
 	// Fork seeds this child from a DEEP COPY of the PARENT conversation (issue #34)
@@ -470,7 +473,7 @@ var subagentSchema = json.RawMessage(`{
     "mode": {
       "type": "string",
       "enum": ["read-only", "read-write"],
-      "description": "Workspace mode (default 'read-only'). 'read-write' gives the subagent Edit and Write tools in an ISOLATED force-copy of this workspace; when it finishes, its file changes are AUTOMATICALLY MERGED BACK into your workspace, so its edits LAND (no manual copy needed). If the merge conflicts with concurrent changes, you get an error naming the preserved fork directory so you can resolve it by hand (nothing is force-applied). Use 'read-write' when you want a focused subagent to actually make and keep file changes (e.g. 'implement this fix and edit the files'); omit (or 'read-only') for an investigation that should not touch your files. Cannot be combined with 'background' or 'agent'; composes with 'fork', 'model', 'resume', 'output_schema'."
+      "description": "Workspace mode (default 'read-only'). 'read-write' gives the subagent the Edit and Write tools and lets it change files DIRECTLY in your workspace — exactly as you do — so its edits land immediately, with no copy or merge step. There is no isolation: a read-write subagent that crashes or goes wrong can leave partial edits in your working tree, the same as any interrupted edit; recover with git (git diff / git checkout / git stash) since your repository is the safety net. Use 'read-write' when you want a focused subagent to actually make and keep file changes (e.g. 'implement this fix and edit the files'); omit (or 'read-only') for an investigation that must not touch your files. Runs serially — never concurrently with your other tools — so it cannot race your own reads or writes. Cannot be combined with 'background' or 'agent'; composes with 'fork', 'model', 'resume', 'output_schema'."
     }
   },
   "required": ["prompt"]
@@ -585,35 +588,17 @@ type SubagentTool struct {
 	engineFactory func(model string) (*Engine, bool)
 
 	// writableChildEngine runs a mode:"read-write" child: a WRITABLE explorer whose
-	// catalog includes Edit/Write (built by the composition root with a force-copy
-	// runner — readOnlyExplorerCatalog(forceCopyRunner) + Edit + Write, mirroring a
-	// Parallel branch). It is SEPARATE from childEngine (the read-only explorer): a
-	// read-write call selects this engine instead, so the read-only fan-out path is
-	// byte-identical when read-write is never used. nil (the default, and ALWAYS on
-	// the no-FS path) means writable subagents are not wired — a read-write arg then
-	// surfaces a model-addressable "not supported in this deployment" error.
+	// catalog includes Edit/Write (built by the composition root over the read-only
+	// explorer catalog + Edit + Write, using the MAIN session's command runner). It
+	// is SEPARATE from childEngine (the read-only explorer): a read-write call selects
+	// this engine instead, so the read-only fan-out path is byte-identical when
+	// read-write is never used. A read-write child runs DIRECTLY against the parent
+	// workspace — no fork, no copy, no merge-back (ADR 0041) — so its Edit/Write/Bash
+	// mutate the real tree in place, exactly as the main agent does, and git is the
+	// rollback layer. nil (the default, and ALWAYS on the no-FS path) means writable
+	// subagents are not wired — a read-write arg then surfaces a model-addressable
+	// "not supported in this deployment" error.
 	writableChildEngine *Engine
-
-	// writableForker isolates a read-write child in a FORCE-COPY fork (its own .git,
-	// so the child's git cannot escape into the base) instead of the read-only
-	// path's worktree. The writable child's Edit/Write/Bash land in this fork; the
-	// fork's working-tree diff is then auto-merged back via autoMerger. nil disables
-	// writable forking (read-write then errors as unsupported — the engine nil check
-	// fires first). Wired in lockstep with writableChildEngine by the composition root.
-	writableForker tool.WorkspaceForker
-
-	// autoMerger merges a read-write child's force-copy fork diff BACK into the
-	// parent workspace as a POST-RUN step (after driveChild/persistChild/
-	// fireSubagentStop, before rendering the result), so the writable explorer's
-	// edits LAND. It is the composition-owned, process-wide SERIALIZED tool.ForkMerger
-	// (the SAME instance Parallel's auto-merge uses — one mutex serializes every merge
-	// in the process). On a merge conflict it returns a non-nil error; the Subagent
-	// tool then surfaces a model-addressable error naming the PRESERVED fork and
-	// SUPPRESSES the normal fork teardown so the operator can resolve it. ReadOnly()
-	// stays true regardless (the merge is a post-run step, not a dispatch-time
-	// mutation — see ReadOnly). nil means no merge-back (read-write then errors,
-	// since writableChildEngine is also nil on that path).
-	autoMerger tool.ForkMerger
 
 	// shellDisabledNote, when non-empty, replaces Spec()'s isolated-worktree-shell
 	// clause with an honest read-only-only description carrying this reason (set by
@@ -811,34 +796,15 @@ func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOpt
 
 // WithWritableChildEngine injects the child *Engine a mode:"read-write" Subagent
 // call runs on: a WRITABLE explorer whose catalog includes Edit/Write (the
-// composition root builds it with a force-copy runner — readOnlyExplorerCatalog +
-// Edit + Write, mirroring a Parallel branch). It is SEPARATE from the read-only
+// composition root builds it over the read-only explorer catalog + Edit + Write,
+// using the MAIN session's command runner). It is SEPARATE from the read-only
 // childEngine; a read-write call selects this engine instead, so the read-only
-// fan-out path is byte-identical when read-write is never used. Wire it together
-// with WithWritableChildForker and WithSubagentAutoMerge. nil (the default, and the
-// no-FS path) leaves writable subagents unwired (a read-write arg then errors).
+// fan-out path is byte-identical when read-write is never used. A read-write child
+// runs DIRECTLY against the parent workspace — no fork, no copy, no merge-back (ADR
+// 0041); git is the rollback layer. nil (the default, and the no-FS path) leaves
+// writable subagents unwired (a read-write arg then errors).
 func WithWritableChildEngine(e *Engine) SubagentOption {
 	return func(t *SubagentTool) { t.writableChildEngine = e }
-}
-
-// WithWritableChildForker injects the FORCE-COPY workspace forker a read-write
-// child isolates in (its own .git, so the child's git cannot escape into the base).
-// Mirrors WithChildForker but for the writable path; wired in lockstep with
-// WithWritableChildEngine. nil disables writable forking.
-func WithWritableChildForker(f tool.WorkspaceForker) SubagentOption {
-	return func(t *SubagentTool) { t.writableForker = f }
-}
-
-// WithSubagentAutoMerge injects the tool.ForkMerger that merges a read-write
-// child's force-copy fork diff BACK into the parent workspace after the run, so the
-// writable explorer's edits LAND. It should be the SAME composition-owned,
-// process-wide SERIALIZED merger Parallel's WithAutoMerge uses (one mutex serializes
-// every merge in the process). The merge is a POST-RUN step, not a dispatch-time
-// mutation, so SubagentTool.ReadOnly() stays true (see ReadOnly). nil (the default)
-// disables merge-back (read-write then errors, since the writable engine is also
-// unwired on that path).
-func WithSubagentAutoMerge(m tool.ForkMerger) SubagentOption {
-	return func(t *SubagentTool) { t.autoMerger = m }
 }
 
 // WithAgentEngines injects the per-definition child engines (keyed by agent name)
@@ -959,10 +925,11 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 		"work ('run the tests and report failures', 'bisect the history'), or an implementation task " +
 		"('implement this fix and edit the files'). " +
 		shellClause + ". " +
-		"Set mode:\"read-write\" to let it edit and write files; on a clean finish its diff is " +
-		"auto-merged into your workspace — this is how you delegate an implementation task and have " +
-		"the edits LAND. If the merge conflicts, the call returns an error with the preserved fork " +
-		"path and nothing is applied. " +
+		"Set mode:\"read-write\" to let it edit and write files DIRECTLY in your workspace — exactly " +
+		"as you do — so its edits land immediately, with no copy or merge step. This is how you " +
+		"delegate an implementation task and have the edits LAND. It runs serially (never alongside " +
+		"your other tools) so it cannot race you; there is no isolation, so review its result with " +
+		"`git diff`/`git status` and undo with `git checkout`/`git stash` if needed. " +
 		"The subagent cannot delegate further. " +
 		"The subagent's FINAL MESSAGE is its deliverable — you receive only that " +
 		"(see `prompt`; with `background: true` the call instead returns at once and you collect the " +
@@ -1060,23 +1027,27 @@ func (t *SubagentTool) agentEnumeration() string {
 // exactly as it always was. Either way Subagent is read-parallel-safe and ReadOnly()
 // honestly returns true.
 //
-// ReadOnly() stays true for read-only fan-out; a merge-completing CALL
-// (mode:"read-write") is excluded from the concurrent read batch via MutatesParent
-// (dispatch-serial — see parentMutatingCaller), and cross-run merge-vs-merge is
-// serialized by the shared SerializingMerger.
+// ReadOnly() stays true for read-only fan-out; a mode:"read-write" CALL mutates the
+// parent workspace IN PLACE during the run (direct-write, ADR 0041 — no fork, no
+// merge), so it is excluded from the concurrent read batch via MutatesParent
+// (dispatch-serial, run alone — see parentMutatingCaller) so its in-place edits never
+// overlap a sibling parent read.
 func (*SubagentTool) ReadOnly() bool { return true }
 
-// MutatesParent implements the optional parentMutatingCaller seam (FIX C): it
-// reports whether THIS specific call will merge a writable child's fork diff back
-// into the PARENT workspace at run end. ReadOnly() stays true so read-only Subagent
-// fan-out keeps batching in parallel; a call for which this returns true is excluded
-// from the concurrent read batch (dispatch-serial, flushed alone via runOne) so the
-// post-run merge never overlaps a sibling parent Read/Grep/Glob — a torn read. It
-// returns true ONLY for a call that will ACTUALLY merge: mode:"read-write" with both
-// the writable child engine and the auto-merger wired. A malformed/unparseable args
-// payload returns false (the call errors later anyway, and never merges).
+// MutatesParent implements the optional parentMutatingCaller seam: it reports
+// whether THIS specific call will mutate the PARENT workspace. ReadOnly() stays true
+// so read-only Subagent fan-out keeps batching in parallel; a call for which this
+// returns true is excluded from the concurrent read batch (dispatch-serial, flushed
+// alone via runOne) so the writable child's IN-PLACE Edit/Write/Bash against the real
+// tree never overlaps a sibling parent Read/Grep/Glob — a torn read. This is the
+// LOAD-BEARING correctness fix for direct-write (ADR 0041): a mode:"read-write" child
+// mutates the real workspace DURING its run (no fork, no merge), so the dispatcher
+// MUST keep it mutate-serial — independent of any merger (there no longer is one). It
+// returns true ONLY for a call that will ACTUALLY run writable: mode:"read-write"
+// with the writable child engine wired. A malformed/unparseable args payload returns
+// false (the call errors later anyway, and never writes).
 func (t *SubagentTool) MutatesParent(call session.ToolCall) bool {
-	if t.writableChildEngine == nil || t.autoMerger == nil {
+	if t.writableChildEngine == nil {
 		return false
 	}
 	var args subagentArgs
@@ -1354,8 +1325,8 @@ const (
 // writable child; "" / "read-only" return writable=false. On any violation it
 // returns a model-addressable error ToolResult (ok=false). The checks (in order):
 //   - mode must be in {"", "read-only", "read-write"} — an unknown value is rejected;
-//   - read-write + background is rejected (an async merge after the parent turn
-//     advances is unsafe — D3);
+//   - read-write + background is rejected (a detached child writing the parent tree
+//     after the turn advances would race the parent — D3);
 //   - read-write + agent is rejected (named specialists run read-only in v1 — D3);
 //   - read-write with no writable child engine wired is rejected as "not supported
 //     in this deployment" — this is also the no-FS gate (D4), since the no-FS
@@ -1376,7 +1347,7 @@ func (t *SubagentTool) validateMode(callID session.ToolCallID, args subagentArgs
 	switch {
 	case args.Background:
 		return false, session.NewToolError(callID,
-			"Subagent: mode:\"read-write\" cannot be combined with `background` — a writable subagent's edits are merged back synchronously after it finishes; omit `background`"), false
+			"Subagent: mode:\"read-write\" cannot be combined with `background` — a writable subagent writes directly to your workspace and must run inline (serially) so it cannot race your own edits; omit `background`"), false
 	case strings.TrimSpace(args.Agent) != "":
 		return false, session.NewToolError(callID,
 			"Subagent: mode:\"read-write\" cannot be combined with `agent` — named specialist agents run read-only; omit `agent` to use a writable explorer"), false
@@ -1471,7 +1442,8 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 	// (inherited/SubagentModel-default) model is used — the per-call `model` arg does
 	// not re-engine a writable child (an accepted v1 residual; the engine still
 	// re-derives its own window/compactor/counter at build time). The per-call
-	// turn/tool tighten-only limits below still apply.
+	// turn/tool tighten-only limits below still apply. The writable child runs
+	// DIRECTLY against the parent workspace (no fork — ADR 0041); git is the rollback.
 	if writable {
 		engine = t.writableChildEngine
 	}
@@ -1502,12 +1474,15 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 		}
 		resumedChild = loaded
 	}
-	// A mode:"read-write" child forks a FORCE-COPY workspace (its own .git) so its
-	// Edit/Write/Bash land in an isolated copy whose diff is auto-merged back after
-	// the run; a read-only child forks the worktree path (or runs shared if no shell).
+	// A mode:"read-write" child runs DIRECTLY against the parent workspace (no fork —
+	// ADR 0041): its Edit/Write/Bash mutate the real tree in place, exactly as the
+	// main agent does, and git is the rollback layer. So a writable call passes NO
+	// forker (nil) — forkChildWorkspace then returns the parent ws directly. A
+	// read-only child still uses t.childForker (a throwaway git worktree when it has a
+	// shell, else the shared parent ws — read-parallel-safe via worktree isolation).
 	forker := t.childForker
 	if writable {
-		forker = t.writableForker
+		forker = nil
 	}
 	runWS, cleanupWS, advisory, errRes, fok := t.forkChildWorkspace(ctx, call.ID, ws, subagentGoal(args), forker)
 	if !fok {
@@ -1554,8 +1529,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// selection so the FIRST conflict is the model's signal: validateMode normalizes
 	// the `mode` arg and enforces the read-write bans (background/agent/unwired);
 	// validateFork enforces fork's mutual exclusions and returns the synchronous
-	// parent-conversation snapshot. writable selects the writable child engine +
-	// force-copy forker + post-run merge below.
+	// parent-conversation snapshot. writable selects the writable child engine, which
+	// edits the parent tree directly during the run (no fork, no merge — ADR 0041).
 	writable, forkHistory, errResult, ok := t.validatePreconditions(call.ID, args, caps)
 	if !ok {
 		return errResult, nil
@@ -1691,17 +1666,12 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	if !ok {
 		return errResult, nil
 	}
-	// preserveFork is set by the writable merge-back step on a MERGE CONFLICT so the
-	// fork SURVIVES for manual resolution (mirroring Parallel's preserved-winner
-	// path) — the deferred cleanup then becomes a no-op. On every other path the
-	// fork is torn down normally after the child fully drains.
-	preserveFork := false
-	defer func() {
-		if preserveFork {
-			return
-		}
-		_ = cleanupWS()
-	}()
+	// Tear down the run workspace after the child fully drains. For a writable
+	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
+	// forkChildWorkspace for a nil forker (the child ran against the parent ws, which
+	// the parent owns); for a read-only worktree child it tears the throwaway
+	// checkout down.
+	defer func() { _ = cleanupWS() }()
 
 	// Announce the subagent before it runs, carrying only the parent call id, the
 	// child id, and a short, plain-text goal label (sanitization happens in the
@@ -1723,12 +1693,19 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// buildSubagentRunOptions.
 	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, forkAdvisory)
 
-	// A child forking a worktree (read-only childForker) OR a writable child (its own
-	// force-copy fork) runs ISOLATED, so its Bash asks are eligible for the A2
-	// worktree-safe auto-approve; a forker-less read-only child is base-sharing (no
-	// auto-approve). The parent caps carry interactivity + the surface back-channel
-	// for an interactive parent; headless leaves them zero (auto-deny).
-	posture := childPosture{isolated: writable || t.childForker != nil, caps: caps, role: string(childID),
+	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
+	// Bash asks are eligible for the A2 worktree-safe auto-approve; a forker-less
+	// read-only child is base-sharing (no auto-approve). A WRITABLE (direct-write)
+	// child is NEVER isolated — it shares the REAL parent tree (ADR 0041, it forked
+	// nothing) REGARDLESS of whether the read-only childForker is wired — so its Bash
+	// resolves at MAIN-SESSION PARITY through the child policy/posture under the
+	// operator's posture (the A2 isolation auto-approve correctly does NOT apply: its
+	// Bash now hits the real repo). Hence the `!writable` guard: in production BOTH the
+	// read-only childForker and the writable engine are wired, so keying isolation on
+	// `t.childForker != nil` alone would WRONGLY mark a direct-write child isolated. The
+	// parent caps carry interactivity + the surface back-channel for an interactive
+	// parent; headless leaves them zero (auto-deny).
+	posture := childPosture{isolated: !writable && t.childForker != nil, caps: caps, role: string(childID),
 		childID:  string(childID),
 		askLabel: fmt.Sprintf("subagent %q", subagentGoal(args))}
 
@@ -1765,22 +1742,19 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// Fire SubagentStop best-effort, regardless of how the child ended.
 	t.fireSubagentStop(ctx, child)
 
-	// Terminal rendering (time-budget / client-cancel / writable merge-back). Split
-	// out so run() stays readable — see finishForegroundRun.
+	// Terminal rendering (time-budget / client-cancel / writable note). Split out so
+	// run() stays readable — see finishForegroundRun.
 	return t.finishForegroundRun(ctx, foregroundFinish{
-		call: call, parentWS: ws, runWS: runWS, childID: childID,
+		call: call, childID: childID,
 		final: final, stop: stop, submit: submit, writable: writable,
 		timeoutCtx: timeoutCtx, timeoutMs: args.TimeoutMs,
 		clientCancelled: caps.childWasClientCancelled(childID),
-		preserveFork:    &preserveFork,
 	}), nil
 }
 
 // foregroundFinish bundles the terminal-rendering inputs for finishForegroundRun.
 type foregroundFinish struct {
 	call            session.ToolCall
-	parentWS        tool.Workspace
-	runWS           tool.Workspace
 	childID         session.SessionID
 	final           string
 	stop            session.StopReason
@@ -1789,110 +1763,38 @@ type foregroundFinish struct {
 	timeoutCtx      context.Context //nolint:containedctx // deadline-disambiguation handle, mirrors run()'s timeoutCtx local
 	timeoutMs       *int
 	clientCancelled bool
-	preserveFork    *bool
-}
-
-// mergeableStop reports whether a writable child's terminal stop reason permits
-// landing its fork diff into the parent (FIX A — the partial-edit hazard). A
-// StopError (provider stream error, MaxConsecutiveFailures, hook rejection) or a
-// StopCancelled (parent-run cancel) means the child stopped with incomplete,
-// possibly internally-inconsistent edits: merging them while renderSubagentResult
-// tells the model the subagent FAILED would silently land a crashed child's work.
-// Everything else — the clean (StopEndTurn/StopNoProgress/StopNone) and limit/budget
-// (StopMaxTurns/StopMaxToolCalls/StopBudget, and any other intentional terminal) —
-// merges best-effort, consistent with the salvageEmptyLimitStop philosophy of
-// preserving intentional partial work.
-func mergeableStop(stop session.StopReason) bool {
-	return stop != session.StopError && stop != session.StopCancelled
 }
 
 // finishForegroundRun renders a foreground Subagent run's terminal result: the
-// time-budget error first (a real deadline beats every other label), then — for a
-// mode:"read-write" call that was not client-cancelled — the writable merge-back
-// (D6), else the ordinary stop-reason rendering. Factored out of run() so the loop
-// body stays within the complexity budget.
-func (t *SubagentTool) finishForegroundRun(ctx context.Context, f foregroundFinish) session.ToolResult {
+// time-budget error first (a real deadline beats every other label), then the
+// ordinary stop-reason rendering. For a mode:"read-write" call (direct-write, ADR
+// 0041) the result carries an honest note that the child's edits were applied
+// DIRECTLY to the workspace (review with git diff/status) — there is no merge step.
+// Factored out of run() so the loop body stays within the complexity budget.
+func (*SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish) session.ToolResult {
 	// Time-budget terminal: the per-call deadline fired (timeoutCtx deadline exceeded)
 	// rather than a parent cancellation, so the child stopped because it ran out of its
 	// allotted wall-clock time. Render it as a model-addressable time-budget tool error
 	// so the model learns the call hit its own limit (distinct from a generic failure).
 	if f.timeoutCtx != nil && f.timeoutCtx.Err() == context.DeadlineExceeded {
-		return session.NewToolError(f.call.ID,
-			fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *f.timeoutMs, f.childID))
-	}
-
-	// Writable merge-back (mode:"read-write", D6): merge the force-copy fork's
-	// working-tree diff into the PARENT workspace as a POST-RUN step — after the
-	// time-budget check above (a timed-out child does NOT merge a half-finished
-	// fork). SKIPPED on a client cancel (the user withdrew the delegation — landing
-	// its partial edits would surprise them) AND on a non-mergeable terminal
-	// (mergeableStop): we MUST NOT land a crashed/cancelled child's partial,
-	// internally-inconsistent edits in the parent while renderSubagentResult tells
-	// the model the subagent FAILED. A StopError (provider stream error,
-	// MaxConsecutiveFailures, hook rejection) or a StopCancelled (parent-run cancel,
-	// where clientCancelled is false) means the child's work is incomplete — the
-	// fork is cleaned up normally (nothing intentional is landing). The clean/limit/
-	// budget terminals DO merge (best-effort landing of intentional work, consistent
-	// with salvageEmptyLimitStop). On success the fork is cleaned up as usual (the
-	// deferred cleanup) and the result notes the merge; on a CONFLICT it returns a
-	// model-addressable error naming the PRESERVED fork and SUPPRESSES the deferred
-	// cleanup (via *preserveFork) for manual resolution.
-	if f.writable && !f.clientCancelled && mergeableStop(f.stop) {
-		merged, mergeErrResult, mok := t.mergeWritableChild(ctx, f.call.ID, f.parentWS, f.runWS, f.childID, f.preserveFork)
-		if !mok {
-			return mergeErrResult
+		msg := fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *f.timeoutMs, f.childID)
+		if f.writable {
+			// Direct-write (ADR 0041): a writable child killed MID-TASK by its time
+			// budget edited the real tree in place and may have left PARTIAL work — warn
+			// the model with the same git-recovery thread the StopError/cancel path gets,
+			// so it never assumes the timed-out call landed nothing.
+			msg += "\n\n" + writableSubagentPartialNote
 		}
-		return renderWritableSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.submit, merged)
+		return session.NewToolError(f.call.ID, msg)
 	}
 
 	// Client cancel (CancelChild): distinguished from a parent-run cancel by the
 	// registry flag, read AFTER the timeout check above so a real deadline keeps its
 	// time-budget error.
+	if f.writable {
+		return renderWritableSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.submit, f.clientCancelled)
+	}
 	return renderSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.submit, f.clientCancelled)
-}
-
-// mergeWritableChild merges a mode:"read-write" child's force-copy fork diff back
-// into the parent workspace via the composition-injected (process-wide serialized)
-// merger. It is the Subagent analogue of ParallelTool.autoMergeWinner. forkRoot is
-// the child's run workspace root (runWS.Root()); parentWS is the parent workspace.
-//
-//   - A nil merger or a non-git/empty fork root means there is nothing to merge —
-//     it returns merged=false, ok=true (the child ran but produced no mergeable
-//     diff path; renderWritableSubagentResult notes "no changes merged").
-//   - On a successful merge it returns merged=true, ok=true; the caller cleans up
-//     the fork normally.
-//   - On a CONFLICT (Merge error) it sets *preserveFork=true (so the caller's
-//     deferred cleanup is suppressed and the fork survives) and returns a
-//     model-addressable error ToolResult naming the preserved fork (ok=false); the
-//     caller returns it verbatim. It NEVER forces a partial merge (the merger's own
-//     contract — see forker.Merger).
-func (t *SubagentTool) mergeWritableChild(ctx context.Context, callID session.ToolCallID, parentWS, runWS tool.Workspace, childID session.SessionID, preserveFork *bool) (merged bool, errResult session.ToolResult, ok bool) {
-	forkRoot := ""
-	if runWS != nil {
-		forkRoot = runWS.Root()
-	}
-	if t.autoMerger == nil || forkRoot == "" {
-		return false, session.ToolResult{}, true
-	}
-	if merr := t.autoMerger.Merge(ctx, forkRoot, parentWS); merr != nil {
-		// Conflict: preserve the fork for manual resolution (suppress the deferred
-		// cleanup) and surface a RECOVERABLE, model-actionable error. It is written
-		// for a MODEL to recover from with its OWN tools — not just to name a path:
-		// it states the cause + that nothing was applied, gives the preserved fork
-		// path, prescribes concrete recovery (Read the diff there, apply the parts it
-		// wants with Edit/Write, or re-delegate a narrower task), and warns against a
-		// blind retry (which would conflict again). The merger's own error already
-		// names the path; this is the message the MODEL reads.
-		*preserveFork = true
-		return false, session.NewToolError(callID, fmt.Sprintf(
-			"Subagent: the subagent's changes conflict with the current workspace, so NOTHING was applied. "+
-				"The subagent's full set of changes is preserved at %q. "+
-				"To recover: review that diff with Read, then apply the parts you want yourself with Edit/Write; "+
-				"or re-delegate a narrower task that touches fewer files. "+
-				"Do NOT simply retry the same task — it will conflict again.\n\nagentId: %s",
-			forkRoot, childID)), false
-	}
-	return true, session.ToolResult{}, true
 }
 
 // backgroundStartedBody is the immediate started-result body a background Subagent
@@ -2203,24 +2105,43 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 	return session.NewToolResult(callID, renderSubagentTrailer(childID, body))
 }
 
+// writableSubagentCleanNote / writableSubagentPartialNote are the two direct-write
+// (ADR 0041) advisory bodies a mode:"read-write" child's terminal carries. The clean
+// note covers a clean end (and the limit terminals, which stop between complete edits);
+// the PARTIAL note covers a mid-task kill (StopError, a cancel, or a per-call time-budget
+// timeout) where half-finished work may be sitting in the real tree.
+const (
+	writableSubagentCleanNote   = "[the subagent edited your workspace directly — review the changes with `git diff`/`git status` (and `git checkout`/`git stash` to undo)]"
+	writableSubagentPartialNote = "[the subagent edited your workspace directly but did NOT finish cleanly — its edits may be PARTIAL; review with `git diff`/`git status` and undo with `git checkout`/`git stash` if needed]"
+)
+
 // renderWritableSubagentResult renders a mode:"read-write" child's terminal like
-// renderSubagentResult (the SAME stop-reason taxonomy + agentId trailer) and adds a
-// MERGE NOTE so the model knows whether the writable child's edits actually landed
-// in the parent workspace. It is only reached on the success path of the merge step
-// (a merge CONFLICT short-circuits earlier with a model-addressable error); merged
-// reports whether there was a diff that was applied (false when the child made no
-// changes, or no merger/fork was in play). The note is inserted right after the
-// agentId trailer line so it leads the body the model reads. clientCancelled is
-// always false here (the writable merge is skipped on a client cancel).
-func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, submit *submitResultTool, merged bool) session.ToolResult {
-	res := renderSubagentResult(callID, childID, final, stop, submit, false)
-	note := "[no file changes to merge]"
-	if merged {
-		note = "[the subagent's file changes were merged into your workspace]"
+// renderSubagentResult (the SAME stop-reason taxonomy + agentId trailer) and adds an
+// honest DIRECT-WRITE note so the model knows the writable child edited the workspace
+// IN PLACE (no fork, no merge — ADR 0041): its Edit/Write/Bash changed the real tree
+// directly, so the model should review the result with `git diff`/`git status` and
+// can roll back with `git checkout`/`git stash` if it is not wanted. On a mid-task kill
+// (StopError, a cancel, or — handled in finishForegroundRun — a per-call time-budget
+// timeout) the note also warns that the edits may be PARTIAL: a child killed mid-task can
+// leave half-finished work in the tree, which is the accepted direct-write trade-off (git
+// is the safety net). Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop
+// between complete edits, so they keep the benign clean note. The note is inserted right
+// after the agentId trailer line so it leads the body the model reads.
+func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, submit *submitResultTool, clientCancelled bool) session.ToolResult {
+	res := renderSubagentResult(callID, childID, final, stop, submit, clientCancelled)
+	note := writableSubagentCleanNote
+	// A mid-task kill (the child crashed or was cancelled) may have left PARTIAL edits
+	// in the real tree — there is no fork/quarantine to roll them back, so warn the
+	// model honestly. (A per-call TIME-BUDGET timeout is the same mid-task kill; it is
+	// rendered as a tool error in finishForegroundRun and carries the same PARTIAL note
+	// there.) Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop BETWEEN
+	// complete edits, not mid-edit, so they keep the benign clean note above.
+	if stop == session.StopError || stop == session.StopCancelled {
+		note = writableSubagentPartialNote
 	}
 	// renderSubagentResult always stamps the agentId trailer as the FIRST line
-	// (renderSubagentTrailer: "agentId: <id>\n\n<body>"); insert the merge note as a
-	// leading body line right after it so both the trailer and the note survive.
+	// (renderSubagentTrailer: "agentId: <id>\n\n<body>"); insert the direct-write note
+	// as a leading body line right after it so both the trailer and the note survive.
 	trailer := "agentId: " + string(childID)
 	prefix := trailer + "\n\n"
 	if strings.HasPrefix(res.Content, prefix) {
@@ -2515,15 +2436,16 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 
 // forkChildWorkspace selects the workspace one child run executes against, using the
 // supplied forker (the caller passes t.childForker for a read-only child — a git
-// worktree — or t.writableForker for a mode:"read-write" child — a force-copy fork).
-// When the forker is wired (a read-only child catalog has Bash, or this is a writable
-// child), the child gets its OWN isolated checkout so its writes never touch the shared
-// parent base — what keeps Subagent read-parallel-safe (see ReadOnly). A fork FAILURE is
-// a tool error (ok=false), NOT a silent fallback to the shared ws: the child has Bash/
-// Edit/Write precisely because isolation was available, so running it shared would be the
-// exact hazard. With a nil forker the child runs against the parent ws unchanged. The
-// returned cleanup is ALWAYS non-nil (a no-op when nothing was forked) so the caller can
-// defer it unconditionally.
+// worktree — or nil for a mode:"read-write" child, which runs DIRECTLY against the
+// parent workspace, ADR 0041). When the forker is wired (a read-only child catalog
+// has Bash), the child gets its OWN isolated checkout so its writes never touch the
+// shared parent base — what keeps read-only Subagent read-parallel-safe (see
+// ReadOnly). A fork FAILURE is a tool error (ok=false), NOT a silent fallback to the
+// shared ws: the child has Bash precisely because isolation was available, so running
+// it shared would be the exact hazard. With a nil forker the child runs against the
+// parent ws unchanged (the read-only no-shell path AND the writable direct-write
+// path). The returned cleanup is ALWAYS non-nil (a no-op when nothing was forked) so
+// the caller can defer it unconditionally.
 //
 // advisory is the forker's OPTIONAL degraded-fork note (empty in the normal case): a
 // dirty-overlay forker returns it when the parent had uncommitted work that could not

@@ -11,6 +11,22 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING:** `agent.WithWritableChildForker(f tool.WorkspaceForker) SubagentOption`
+  and `agent.WithSubagentAutoMerge(m tool.ForkMerger) SubagentOption` — removed. The
+  writable Subagent (`mode:"read-write"`) no longer forks the workspace or merges a
+  diff back: it now writes DIRECTLY to the real parent workspace, exactly as the main
+  agent does, and git is the rollback layer (ADR 0041, which supersedes the
+  writable-subagent decision in ADR 0040). `agent.WithWritableChildEngine` is RETAINED
+  (a read-write call still selects a separate Edit/Write-bearing engine); it now runs
+  against the parent workspace with the main session's command runner, no forker, no
+  merger. The dispatcher still runs a read-write call mutate-serial — `SubagentTool.
+  MutatesParent` is now decoupled from any merger (true whenever the writable engine is
+  wired and the call is `mode:"read-write"`). Composition no longer wires a forker or
+  merger into the Subagent tool; the shared `tool.ForkMerger` remains for Parallel's
+  single-branch auto-merge only. See `docs/adr/0041-direct-write-subagent.md`.
+
 ## [0.0.4] - 2026-06-21
 
 ### Added

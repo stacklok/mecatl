@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -15,11 +18,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 )
 
-// recordingMerger is a tool.ForkMerger test double recording every Merge call's
-// fork+parent roots. It is the SAME-instance probe: one recordingMerger placed on
-// catalogAssets.autoMerger must receive calls from BOTH the writable Subagent and
-// the Parallel single-branch paths, proving they share the composition-injected
-// merger.
+// recordingMerger is a tool.ForkMerger test double recording every Merge call. It is
+// used to prove the Parallel single-branch path still consumes the shared
+// catalogAssets.autoMerger — the writable Subagent NO LONGER merges (direct-write,
+// ADR 0041), so it is the Parallel-only consumer now.
 type recordingMerger struct {
 	mu    sync.Mutex
 	calls []struct{ fork, parent string }
@@ -38,13 +40,14 @@ func (m *recordingMerger) count() int {
 	return len(m.calls)
 }
 
-// TestBuildSubagentToolWiresWritableChildAndMerger drives the REAL buildSubagentTool
-// with a writable subagent (mode:"read-write") and proves the composition wiring:
-// the resulting tool runs a WRITABLE child engine (Edit/Write catalog) in a
-// force-copy fork and calls the SHARED catalogAssets.autoMerger post-run with the
-// fork root. The merger is a recording double placed on the assets, so this asserts
-// buildSubagentTool consumes a.autoMerger.
-func TestBuildSubagentToolWiresWritableChildAndMerger(t *testing.T) {
+// TestBuildSubagentToolWritableWritesParentDirectly drives the REAL buildSubagentTool
+// with a writable subagent (mode:"read-write") and proves the direct-write wiring
+// (ADR 0041): the writable child runs Edit/Write/Bash DIRECTLY against the parent repo
+// (no fork, no merge). The probe is a child that writes a real file into the workspace
+// it is handed; the test asserts the file lands in the REAL repo and NO sibling fork
+// directory was created. A recording merger placed on the assets must receive ZERO
+// calls — Subagent does not merge anymore.
+func TestBuildSubagentToolWritableWritesParentDirectly(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -59,10 +62,12 @@ func TestBuildSubagentToolWiresWritableChildAndMerger(t *testing.T) {
 	merger := &recordingMerger{}
 	assets := catalogAssets{autoMerger: merger}
 
-	// The child engine buildWritableSubagentChildEngine builds is opaque; we drive it
-	// with a scripted provider that simply summarizes (the merge fires regardless of
-	// whether the child wrote, so a text-only child still exercises the merge seam).
-	childProvider := mockllm.New(mockllm.TextTurn("did the work"))
+	// A child that uses its real Write tool (wired by buildWritableSubagentChildEngine)
+	// to create a file in the workspace it is handed.
+	childProvider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", []byte(`{"path":"beta.txt","content":"written directly\n"}`))),
+		mockllm.TextTurn("did the work"),
+	)
 	task, closeFn := buildSubagentTool(context.Background(),
 		cfg, regForTest(childProvider, providerMock, cfg.Model), childProvider, providerMock, cfg.Model,
 		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, nil, assets, false)
@@ -80,21 +85,27 @@ func TestBuildSubagentToolWiresWritableChildAndMerger(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("writable subagent returned an error: %q", res.Content)
 	}
-	if merger.count() != 1 {
-		t.Fatalf("shared merger called %d times, want 1 (writable subagent post-run merge)", merger.count())
+	// The edit landed DIRECTLY in the real repo (proving direct-write).
+	if got, rerr := os.ReadFile(filepath.Join(repo, "beta.txt")); rerr != nil {
+		t.Fatalf("the writable subagent's edit did not land in the real repo: %v", rerr)
+	} else if !strings.Contains(string(got), "written directly") {
+		t.Fatalf("beta.txt content unexpected: %q", got)
 	}
-	m := merger.calls[0]
-	if m.parent != repo {
-		t.Errorf("merge parent root = %q, want the parent workspace %q", m.parent, repo)
+	// No merge happened — Subagent writes the parent tree directly (ADR 0041).
+	if merger.count() != 0 {
+		t.Fatalf("a direct-write subagent must NOT merge, but merger was called %d times", merger.count())
 	}
-	if m.fork == repo || m.fork == "" {
-		t.Errorf("merge fork root = %q, want an isolated fork (not the parent repo / empty)", m.fork)
+	// No sibling fork directory was created next to the repo.
+	assertNoSiblingForkDir(t, repo)
+	// The result honestly notes the edits landed directly.
+	if !strings.Contains(res.Content, "edited your workspace directly") {
+		t.Fatalf("result must note the direct edit, got:\n%s", res.Content)
 	}
 }
 
 // TestNoFSSubagentToolRejectsWritable proves the no-FS path wires NO writable child
 // engine, so a mode:"read-write" call there is a model-addressable "not supported"
-// error (D4 — the no-FS gate falls out of the unwired writable engine).
+// error (the no-FS gate falls out of the unwired writable engine).
 func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 	cfg := teamCfg(t)
 	childProvider := mockllm.New(mockllm.TextTurn("x"))
@@ -113,10 +124,11 @@ func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 	}
 }
 
-// TestSharedMergerReachesParallelAndSubagent proves the SAME catalogAssets.autoMerger
-// instance reaches BOTH the Parallel register path and the writable Subagent register
-// path: one recording merger, placed on the assets, receives a Merge call from each.
-func TestSharedMergerReachesParallelAndSubagent(t *testing.T) {
+// TestSharedMergerReachesParallel proves the Parallel single-branch auto-merge still
+// consumes the shared catalogAssets.autoMerger (the writable Subagent no longer does —
+// direct-write, ADR 0041). One recording merger on the assets receives the Parallel
+// branch's merge call.
+func TestSharedMergerReachesParallel(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -131,27 +143,8 @@ func TestSharedMergerReachesParallelAndSubagent(t *testing.T) {
 
 	merger := &recordingMerger{}
 	assets := catalogAssets{autoMerger: merger, forkReaper: agent.NewLRUForkReaper(forkPreservedCap(cfg))}
-
-	// (1) Writable Subagent path.
-	subProvider := mockllm.New(mockllm.TextTurn("subagent did work"))
-	subTask, subClose := buildSubagentTool(context.Background(),
-		cfg, regForTest(subProvider, providerMock, cfg.Model), subProvider, providerMock, cfg.Model,
-		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, nil, assets, false)
-	if subClose != nil {
-		defer func() { _ = subClose() }()
-	}
 	parentWS := osfsWSForTest(t, repo)
-	if r, err := subTask.Execute(context.Background(),
-		session.NewToolCall("s1", "Subagent", []byte(`{"prompt":"implement","mode":"read-write"}`)),
-		parentWS); err != nil || r.IsError {
-		t.Fatalf("writable subagent failed: err=%v res=%q", err, r.Content)
-	}
-	afterSubagent := merger.count()
-	if afterSubagent != 1 {
-		t.Fatalf("after subagent: merger calls = %d, want 1", afterSubagent)
-	}
 
-	// (2) Parallel single-branch path, same assets ⇒ same merger.
 	parProvider := mockllm.New(mockllm.TextTurn("branch did work"))
 	cat := tool.NewCatalog()
 	registerParallelTool(context.Background(), cfg,
@@ -166,8 +159,29 @@ func TestSharedMergerReachesParallelAndSubagent(t *testing.T) {
 		parentWS); err != nil || r.IsError {
 		t.Fatalf("parallel single-branch failed: err=%v res=%q", err, r.Content)
 	}
-	if got := merger.count(); got != 2 {
-		t.Fatalf("after parallel: merger calls = %d, want 2 (the SAME merger received BOTH the subagent and the parallel merge)", got)
+	if got := merger.count(); got != 1 {
+		t.Fatalf("Parallel single-branch must merge via the shared merger, got %d calls", got)
+	}
+}
+
+// assertNoSiblingForkDir asserts no directory whose name suggests a fork/worktree
+// checkout was created alongside the given repo root. Direct-write creates none.
+func assertNoSiblingForkDir(t *testing.T, repo string) {
+	t.Helper()
+	parent := filepath.Dir(repo)
+	base := filepath.Base(repo)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatalf("read parent dir: %v", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == base {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if strings.Contains(name, "fork") || strings.Contains(name, "worktree") || strings.HasPrefix(e.Name(), base+"-") {
+			t.Fatalf("a direct-write subagent must NOT create a fork/worktree dir, but found a sibling %q in %q", e.Name(), parent)
+		}
 	}
 }
 

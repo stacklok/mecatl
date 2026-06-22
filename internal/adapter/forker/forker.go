@@ -823,20 +823,18 @@ var _ tool.ForkMerger = (*Merger)(nil)
 // applied to a parent workspace at a time, process-wide.
 //
 // Why it exists: a merge applies a fork's `git diff HEAD` into a PARENT workspace
-// (a write of arbitrary files). Two delegation paths now drive merges — Parallel's
-// single-branch auto-merge AND the writable Subagent (mode:"read-write") — and a
-// process may run many sessions concurrently. Without serialization, two merges
-// targeting the SAME parent workspace (or two merges sharing any on-disk state the
-// inner merger touches) could interleave their `git apply` / file-copy writes and
-// corrupt the parent tree. The mutex makes merge-back a process-wide critical
-// section: correctness over throughput, which is the right call for a write that is
-// already a post-run, off-the-hot-path step.
+// (a write of arbitrary files). Parallel's single-branch auto-merge drives merges,
+// and a process may run many sessions concurrently. Without serialization, two
+// merges targeting the SAME parent workspace (or two merges sharing any on-disk
+// state the inner merger touches) could interleave their `git apply` / file-copy
+// writes and corrupt the parent tree. The mutex makes merge-back a process-wide
+// critical section: correctness over throughput, which is the right call for a write
+// that is already a post-run, off-the-hot-path step.
 //
 // The decorator is composition-owned: ONE instance is built in Phase A (like the
-// fork reaper / shared MCP manager) and injected — as a tool.ForkMerger — into BOTH
-// the Parallel path (WithAutoMerge) and the writable Subagent path
-// (WithSubagentAutoMerge), so the SAME mutex serializes across every merge in the
-// process. A per-session instance would NOT serialize across sessions, defeating
+// fork reaper / shared MCP manager) and injected — as a tool.ForkMerger — into the
+// Parallel path (WithAutoMerge), so the SAME mutex serializes across every merge in
+// the process. A per-session instance would NOT serialize across sessions, defeating
 // the point. It owns its own sync.Mutex (zero-value-ready) and forwards the inner
 // result/error verbatim.
 type SerializingMerger struct {

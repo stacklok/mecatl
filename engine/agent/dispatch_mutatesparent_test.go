@@ -2,7 +2,6 @@ package agent_test
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,37 +12,33 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// trackingMerger records overlap via a shared overlapTracker so a test can assert
-// the writable-Subagent merge never overlaps a sibling parent Read (FIX C: a
-// merge-completing call is dispatch-serial, excluded from the concurrent read batch).
-type trackingMerger struct {
-	tracker *overlapTracker
-}
-
-func (m *trackingMerger) Merge(_ context.Context, _ string, _ tool.Workspace) error {
-	m.tracker.enter()
-	time.Sleep(5 * time.Millisecond) // widen the overlap window
-	m.tracker.leave()
-	return nil
-}
-
-// TestMutatesParentCallIsDispatchSerial proves a writable-Subagent CALL (which will
-// merge into the parent at run end) does NOT overlap a sibling parent Read in the
-// same turn: the merge and the sibling Read share an overlapTracker whose max
-// concurrency must stay 1. SubagentTool.ReadOnly() is still true, but readBatchable
-// excludes the merge-completing call via MutatesParent, so it flushes alone via
-// runOne — restoring read-parallel/mutate-serial against the torn-read hazard.
+// TestMutatesParentCallIsDispatchSerial proves a writable-Subagent CALL (which writes
+// the parent workspace IN PLACE during its run, ADR 0041) does NOT overlap a sibling
+// parent Read in the same turn: the writable child's Write and the sibling Read share
+// an overlapTracker whose max concurrency must stay 1. SubagentTool.ReadOnly() is still
+// true, but readBatchable excludes the writable call via MutatesParent, so it flushes
+// alone via runOne — read-parallel/mutate-serial against the torn-read hazard.
 func TestMutatesParentCallIsDispatchSerial(t *testing.T) {
 	var tracker overlapTracker
 
-	var rr atomic.Pointer[string]
-	writable := writableChildWriting(t, "did the work", &rr)
-	merger := &trackingMerger{tracker: &tracker}
-	subagent := newWritableSubagent(t, writable, &memForker{}, merger)
+	// The writable child's Write tool enters/leaves the shared tracker while it mutates
+	// the real parent tree. If the writable call ran in the same concurrent batch as
+	// the sibling Read, max concurrency would reach 2.
+	writeTool := &fakeTool{name: "Write", readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			tracker.enter()
+			time.Sleep(5 * time.Millisecond) // widen the overlap window
+			tracker.leave()
+			return session.NewToolResult(in.ID, "wrote"), nil
+		}}
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"x.txt","content":"hi"}`)),
+		mockllm.TextTurn("did the work"),
+	)
+	writable := childEngineWith(childLLM, catalogWith(t, writeTool))
+	subagent := newWritableSubagent(t, writable)
 
-	// A sibling parent Read that also touches the shared tracker. If it ran in the
-	// same concurrent batch as the (merging) Subagent call, max concurrency would
-	// reach 2.
+	// A sibling parent Read that also touches the shared tracker.
 	readTool := &fakeTool{name: "Read", readOnly: true,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			tracker.enter()
@@ -63,16 +58,16 @@ func TestMutatesParentCallIsDispatchSerial(t *testing.T) {
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
 	drain(r)
 
-	if merger.tracker.max() > 1 {
-		t.Fatalf("a merge-completing Subagent call overlapped a sibling Read (max concurrency %d); "+
-			"it must be dispatch-serial (MutatesParent → flushed alone)", merger.tracker.max())
+	if tracker.max() > 1 {
+		t.Fatalf("a writable Subagent call overlapped a sibling Read (max concurrency %d); "+
+			"it must be dispatch-serial (MutatesParent → flushed alone)", tracker.max())
 	}
 }
 
-// TestReadOnlySubagentStaysBatchedWithSiblingRead proves the surgical scope of FIX C:
-// a read-ONLY Subagent call (mode unset) still batches/runs in parallel with a sibling
-// read — only the merge-completing call is excluded. The read-only child's tool and
-// the sibling parent Read share a tracker; they MUST overlap (max >= 2).
+// TestReadOnlySubagentStaysBatchedWithSiblingRead proves the surgical scope: a
+// read-ONLY Subagent call (mode unset) still batches/runs in parallel with a sibling
+// read — only the writable call is excluded. The read-only child's tool and the
+// sibling parent Read share a tracker; they MUST overlap (max >= 2).
 func TestReadOnlySubagentStaysBatchedWithSiblingRead(t *testing.T) {
 	var tracker overlapTracker
 	bodies := make(chan struct{}, 2)
@@ -127,14 +122,14 @@ func TestReadOnlySubagentStaysBatchedWithSiblingRead(t *testing.T) {
 	}
 }
 
-// TestSubagentMutatesParent unit-tests the MutatesParent predicate on SubagentTool:
-// read-write (with writable engine + merger wired) → true; read-only / "" → false; a
-// writable tool with no merger wired → false; malformed args → false.
+// TestSubagentMutatesParent unit-tests the MutatesParent predicate on SubagentTool and
+// proves it is DECOUPLED from any merger (ADR 0041 — direct-write has no merge): with
+// only the writable engine wired, read-write → true; read-only / "" → false; an unwired
+// tool → false; malformed args → false.
 func TestSubagentMutatesParent(t *testing.T) {
-	var rr atomic.Pointer[string]
-	writable := writableChildWriting(t, "x", &rr)
+	writable := childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t))
 
-	wired := newWritableSubagent(t, writable, &memForker{}, &fakeMerger{}).(interface {
+	wired := newWritableSubagent(t, writable).(interface {
 		MutatesParent(session.ToolCall) bool
 	})
 
@@ -143,7 +138,7 @@ func TestSubagentMutatesParent(t *testing.T) {
 		args string
 		want bool
 	}{
-		{"read-write merges", `{"prompt":"go","mode":"read-write"}`, true},
+		{"read-write mutates", `{"prompt":"go","mode":"read-write"}`, true},
 		{"read-only does not", `{"prompt":"go","mode":"read-only"}`, false},
 		{"default mode does not", `{"prompt":"go"}`, false},
 		{"malformed args", `{not json`, false},
@@ -157,14 +152,12 @@ func TestSubagentMutatesParent(t *testing.T) {
 		})
 	}
 
-	// A writable tool with NO merger wired never merges, so MutatesParent is false
-	// even for read-write.
-	noMerger := agent.NewSubagentTool(
+	// A tool with NO writable engine wired never runs writable, so MutatesParent is
+	// false even for read-write (the call errors as unsupported later anyway).
+	unwired := agent.NewSubagentTool(
 		childEngineWith(mockllm.New(mockllm.TextTurn("ro")), catalogWith(t)),
-		agent.WithWritableChildEngine(writable),
-		agent.WithWritableChildForker(&memForker{}),
 	).(interface{ MutatesParent(session.ToolCall) bool })
-	if noMerger.MutatesParent(toolCall("p1", "Subagent", `{"prompt":"go","mode":"read-write"}`)) {
-		t.Fatal("read-write with no merger wired must not report MutatesParent (it cannot merge)")
+	if unwired.MutatesParent(toolCall("p1", "Subagent", `{"prompt":"go","mode":"read-write"}`)) {
+		t.Fatal("read-write with no writable engine wired must not report MutatesParent")
 	}
 }

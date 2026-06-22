@@ -114,7 +114,6 @@ func WithParallelJudge(j BranchJudge) ParallelOption
 func WithParallelStore(store port.SessionStore) ParallelOption
 func WithParallelSubagentStopHook(h port.HookRunner) ParallelOption
 func WithReadOnlyForker(f tool.WorkspaceForker) SupervisorOption
-func WithSubagentAutoMerge(m tool.ForkMerger) SubagentOption
 func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 func WithSubagentNoFSNote() SubagentOption
 func WithSubagentShellDisabledNote(reason string) SubagentOption
@@ -134,7 +133,6 @@ func WithTeamToolTokenBudget(n int) TeamOption
 func WithUntrustedGoal(untrusted bool) SupervisorOption
 func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
-func WithWritableChildForker(f tool.WorkspaceForker) SubagentOption
 func WriteUntrustedBlock(b *strings.Builder, body string)
 type AgentMeta struct{Name string; Description string; Limits session.Limits}
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
