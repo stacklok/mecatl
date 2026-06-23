@@ -596,9 +596,9 @@ de-emphasised (a receding, faint monospace span over the element background) so 
 **Input box.** The prompt textarea is wrapped in a **mode-coloured left rail** over a faint
 panel tint — the same accent the `mode` segment uses (default accent / `plan` info /
 `accept-edits` success), so the input's permission-mode cue reads at a glance. The rail is a
-single-column left border; the rail border stays mode-coloured at full strength as a
-persistent mode cue, while the textarea's inner prompt / line-number dim when the input is
-blurred. The panel carries a tinted top-pad row inside it so the prompt isn't pressed against
+single-column left border and is the SINGLE vertical accent cue (the textarea's own inner
+prompt bar and line-number gutter are suppressed), staying mode-coloured at full strength
+whether the input is focused or blurred. The panel carries a tinted top-pad row inside it so the prompt isn't pressed against
 the top border, and one blank spacer row sits above the panel so it isn't jammed against the
 conversation history.
 

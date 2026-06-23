@@ -515,6 +515,13 @@ func New(deps Deps) Model {
 	th := deps.Theme
 
 	ta := textarea.New()
+	// The mode-coloured rail border (renderInputRail) is the SINGLE vertical accent cue,
+	// so suppress the textarea's own inner prompt bar (U+2503) and line-number gutter to
+	// avoid a redundant second bar (issue #161). Both MUST be set before any SetWidth —
+	// bubbles' textarea computes its inner gutter width in SetWidth from Prompt +
+	// ShowLineNumbers — which covers both New()'s internal SetWidth and the later onResize.
+	ta.Prompt = ""
+	ta.ShowLineNumbers = false
 	ta.Placeholder = "Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)"
 	ta.SetHeight(3)
 	ta.Focus()

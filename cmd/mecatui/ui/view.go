@@ -321,13 +321,10 @@ func (m *Model) applyModeInputStyle() {
 	styles := m.ta.Styles()
 	base := textarea.DefaultDarkStyles()
 	accent := modeAccentStyle(m.deps.Theme, mode)
-	styles.Focused.Prompt = accent
-	styles.Focused.LineNumber = accent
-	styles.Focused.CursorLineNumber = accent
+	// The textarea's inner prompt bar and line-number gutter are suppressed (New() sets
+	// Prompt="" and ShowLineNumbers=false, issue #161), so the rail border is the single
+	// mode cue — no Prompt/LineNumber/CursorLineNumber styling needed here any more.
 	styles.Focused.Placeholder = base.Focused.Placeholder.Foreground(accent.GetForeground())
-	styles.Blurred.Prompt = accent.Faint(true)
-	styles.Blurred.LineNumber = accent.Faint(true)
-	styles.Blurred.CursorLineNumber = accent.Faint(true)
 	styles.Cursor.Color = accent.GetForeground()
 	// Tint the WHOLE textarea body on the faint panel background so the input block
 	// reads as ONE even surface — the same bgPanel the rail pads its margins with — and
@@ -336,7 +333,8 @@ func (m *Model) applyModeInputStyle() {
 	// transparent body), which made the rows tint differently by content; overriding the
 	// body/cursor-line/placeholder/end-of-buffer backgrounds to bgPanel makes the fill
 	// uniform across every row. Applied to BOTH focus states so blur doesn't change the
-	// surface (only the inner prompt/line-number dim — see the rail-blur invariant).
+	// surface (the rail border is the single mode cue and stays at full accent strength
+	// regardless of focus — see the rail-blur invariant).
 	bg := m.deps.Theme.Color("bgPanel")
 	// Typed text gets the theme's full-strength Text colour for contrast: the bubbles
 	// DefaultDarkStyles leave Text with no foreground (terminal default) and tint the
@@ -816,11 +814,12 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 		Padding(inputRailPadTop, inputRailPadX, 0, inputRailPadX)
 }
 
-// inputRailPadX is the horizontal padding inside the input panel (each side), giving
-// the typed text a little breathing room from the rail and the right edge.
+// inputRailPadX is the horizontal padding inside the input panel (each side). With the
+// textarea's own inner prompt bar gone (issue #161), a single column now sits directly
+// between the rail border and the text — enough breathing room without the text floating.
 // renderInputRail derives the content width from the rail's GetHorizontalFrameSize(),
 // so this value flows through automatically.
-const inputRailPadX = 2
+const inputRailPadX = 1
 
 // inputRailPadTop is the TOP inner padding of the input panel: one tinted blank row
 // above the input content so the placeholder/typed text isn't pressed against the top

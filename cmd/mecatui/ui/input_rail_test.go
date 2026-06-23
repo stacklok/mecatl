@@ -108,12 +108,13 @@ func TestInputRailFillsUniformly(t *testing.T) {
 
 // TestInputRailBorderColourIgnoresFocus pins the intended (and documented) behaviour:
 // the rail BORDER stays the mode-accent colour at full strength as a PERSISTENT mode
-// cue whether the input is focused or blurred — only the textarea's INNER prompt /
-// line-number dim on blur (via applyModeInputStyle). The rail border is built by
-// inputRailStyle(theme, mode), which reads no focus state, so the SGR that colours the
-// left-border glyph "│" must appear identically in the focused and blurred renders.
-// This is the guard that keeps the doc and code from silently diverging (the doc
-// previously claimed the rail itself dims on blur — it does not).
+// cue whether the input is focused or blurred. The textarea's own inner prompt bar and
+// line-number gutter are suppressed (issue #161), so the rail border is the single
+// vertical accent cue. The rail border is built by inputRailStyle(theme, mode), which
+// reads no focus state, so the SGR that colours the left-border glyph "│" must appear
+// identically in the focused and blurred renders. This is the guard that keeps the doc
+// and code from silently diverging (the doc previously claimed the rail itself dims on
+// blur — it does not).
 func TestInputRailBorderColourIgnoresFocus(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m, _, _ := newTestModel(t, th)
