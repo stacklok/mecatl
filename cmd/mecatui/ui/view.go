@@ -812,22 +812,57 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 
 // renderInputRail wraps the textarea view in the mode-coloured rail AND fills the faint
 // panel tint UNIFORMLY across the whole input block — full terminal width and every
-// textarea row — so an empty input and a typed one look identical (the bug: lipgloss
-// fills a Background only to each line's content width, leaving empty placeholder rows
-// untinted and the block ragged).
+// textarea row — so an empty input and a typed one look identical.
 //
-// Width arithmetic (verified empirically): the textarea is sized to m.width − railFrame
-// in onResize and renders EVERY row padded out to that width on the faint panel
-// background (applyModeInputStyle tints the textarea body — Base/Text/CursorLine/
-// EndOfBuffer/Placeholder — to bgPanel). The rail then adds its own border + left padding
-// (both bgPanel), so the wrapped block is exactly m.width wide with a UNIFORM tint on
-// every row, identical whether the input is empty or typed (the inconsistent-tint bug).
-// No explicit `.Width()` is set: it would add a final padding column the wrapped,
-// pre-styled multi-line content does NOT re-tint (a trailing plain-space seam at the
-// right edge), whereas letting the already-full-width textarea define the content width
-// keeps the bgPanel fill flush to the edge.
+// Why this is not just a Background on the wrapper: the bubbles textarea renders its
+// content through an INTERNAL viewport (textarea.View → viewport.View) that pads every
+// line out to its width with PLAIN, unstyled spaces — a trailing region the textarea's
+// own Style fields (Base/Text/CursorLine/EndOfBuffer, tinted to bgPanel in
+// applyModeInputStyle) cannot reach. That unstyled run is what made the tint ragged on
+// the right and different empty-vs-typed. The textarea ALWAYS emits its own styled
+// padding (and the reverse-video cursor) BEFORE that viewport padding, so the trailing
+// blank run is genuinely unstyled: stripTrailingBlank removes it and we re-pad each line
+// to the full content width with bgPanel-backed spaces, flush to the edge on every row.
+//
+// Width: contentW = m.width − the rail's own frame (BorderLeft + PaddingLeft), so the
+// re-padded content plus the rail's border+padding is exactly m.width. (onResize sizes
+// the textarea from the same GetHorizontalFrameSize(), so the two never drift.)
 func (m Model) renderInputRail(taView string) string {
-	return inputRailStyle(m.deps.Theme, m.inputMode()).Render(taView)
+	style := inputRailStyle(m.deps.Theme, m.inputMode())
+	contentW := max(1, m.width-style.GetHorizontalFrameSize())
+	fill := lipgloss.NewStyle().Background(m.deps.Theme.Color("bgPanel"))
+	lines := strings.Split(taView, "\n")
+	for i, ln := range lines {
+		ln = stripTrailingBlank(ln)
+		if pad := contentW - ansi.StringWidth(ln); pad > 0 {
+			ln += fill.Render(strings.Repeat(" ", pad))
+		}
+		lines[i] = ln
+	}
+	return style.Render(strings.Join(lines, "\n"))
+}
+
+// stripTrailingBlank removes a line's trailing run of plain spaces and bare SGR resets
+// (\x1b[m / \x1b[0m) — the unstyled padding the textarea's internal viewport appends past
+// the styled content. It stops at the first styled (non-reset) sequence, so the
+// textarea's own bgPanel-backed padding and the reverse-video cursor — which always sit
+// BEFORE the viewport padding — are preserved. Used by renderInputRail to re-pad the
+// input tint flush to the right edge.
+func stripTrailingBlank(s string) string {
+	for {
+		switch {
+		case strings.HasSuffix(s, "\x1b[m"):
+			s = s[:len(s)-3]
+		case strings.HasSuffix(s, "\x1b[0m"):
+			s = s[:len(s)-4]
+		default:
+			if t := strings.TrimRight(s, " "); t != s {
+				s = t
+				continue
+			}
+			return s
+		}
+	}
 }
 
 // renderFatal renders a centred fatal-error panel.

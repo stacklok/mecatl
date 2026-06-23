@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -10,6 +11,14 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
+
+// plainTail matches the inconsistent-tint bug's signature: a bare SGR reset
+// (\x1b[m or \x1b[0m) immediately followed by a run of trailing spaces (optionally
+// closed by further resets) at end of line — i.e. un-tinted padding the textarea's
+// internal viewport appended. A correctly-filled row never has a reset directly
+// before its trailing spaces (they are preceded by a bgPanel SET), so this must not
+// match. Defined here because it is the regression guard for renderInputRail.
+var plainTail = regexp.MustCompile(`\x1b\[0?m {1,}(?:\x1b\[0?m)*$`)
 
 // TestInputRailZeroExtraRows is the load-bearing layout invariant for the input
 // mode-rail (decision 8): a BorderLeft adds exactly ONE column and ZERO rows, so
@@ -79,25 +88,22 @@ func TestInputRailFillsUniformly(t *testing.T) {
 		if got, want := lipgloss.Height(typed), mt.ta.Height(); got != want {
 			t.Errorf("width %d: typed input block height = %d rows, want %d (all textarea rows tinted)", w, got, want)
 		}
-		// EVEN tint: every row's fill runs flush to the right edge on the panel
-		// background — no trailing PLAIN (unstyled) cells after the last bgPanel run.
-		// (The seam the dropped .Width() padding used to leave.)
+		// EVEN tint: every row's fill must run flush to the right edge — NO trailing
+		// PLAIN (unstyled) cells. The bug's signature is a bare reset (\x1b[m / \x1b[0m)
+		// immediately followed by the trailing spaces (the textarea's internal-viewport
+		// padding, which carries no background). The fix re-pads with bgPanel-backed
+		// spaces, so trailing spaces are always preceded by a bg-SET (\x1b[48;…m), never a
+		// bare reset — plainTail must NOT match any row. (The old strings.HasSuffix(" \x1b[m")
+		// check missed it: the real tail was "\x1b[m …spaces… \x1b[m\x1b[m", not " \x1b[m".)
 		for _, in := range []string{empty, typed} {
 			for ri, row := range strings.Split(in, "\n") {
-				if lastReset := strings.LastIndex(row, "\x1b[m"); lastReset > strings.LastIndex(row, bgPanelSGR) {
-					// A reset appears AFTER the last panel-bg SGR ⇒ trailing un-tinted cells.
-					if strings.HasSuffix(row, " \x1b[m") {
-						t.Errorf("width %d row %d: tint not flush to the edge — trailing plain spaces after the last bgPanel run", w, ri)
-					}
+				if plainTail.MatchString(row) {
+					t.Errorf("width %d row %d: tint not flush to the edge — a bare reset precedes the trailing spaces (un-tinted cells): %q", w, ri, row)
 				}
 			}
 		}
 	}
 }
-
-// bgPanelSGR is the Aztec bgPanel background as the RGB SGR lipgloss emits, used to
-// assert the input tint runs flush to the right edge.
-const bgPanelSGR = "48;2;21;32;28"
 
 // TestInputRailBorderColourIgnoresFocus pins the intended (and documented) behaviour:
 // the rail BORDER stays the mode-accent colour at full strength as a PERSISTENT mode
