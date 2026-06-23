@@ -338,10 +338,16 @@ func (m *Model) applyModeInputStyle() {
 	// uniform across every row. Applied to BOTH focus states so blur doesn't change the
 	// surface (only the inner prompt/line-number dim — see the rail-blur invariant).
 	bg := m.deps.Theme.Color("bgPanel")
+	// Typed text gets the theme's full-strength Text colour for contrast: the bubbles
+	// DefaultDarkStyles leave Text with no foreground (terminal default) and tint the
+	// CursorLine grey (color 245), so what you type rendered washed-out on the panel.
+	// Setting both to the bright Text slot makes the input legible without touching the
+	// dim Placeholder (which stays muted as a prompt cue).
+	txt := m.deps.Theme.Color("text")
 	for _, st := range []*textarea.StyleState{&styles.Focused, &styles.Blurred} {
 		st.Base = st.Base.Background(bg)
-		st.Text = st.Text.Background(bg)
-		st.CursorLine = st.CursorLine.Background(bg)
+		st.Text = st.Text.Background(bg).Foreground(txt)
+		st.CursorLine = st.CursorLine.Background(bg).Foreground(txt)
 		st.EndOfBuffer = st.EndOfBuffer.Background(bg)
 		st.Placeholder = st.Placeholder.Background(bg)
 	}
@@ -807,8 +813,15 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 		BorderLeft(true).
 		BorderForeground(modeAccentStyle(th, mode).GetForeground()).
 		Background(th.Color("bgPanel")).
-		PaddingLeft(1)
+		Padding(0, inputRailPadX)
 }
+
+// inputRailPadX is the horizontal padding inside the input panel (each side), giving
+// the typed text a little breathing room from the rail and the right edge. Horizontal
+// only — 0 extra rows — so it never steals a viewport row (the 3-row textarea already
+// provides vertical space). renderInputRail derives the content width from the rail's
+// GetHorizontalFrameSize(), so this value flows through automatically.
+const inputRailPadX = 2
 
 // renderInputRail wraps the textarea view in the mode-coloured rail AND fills the faint
 // panel tint UNIFORMLY across the whole input block — full terminal width and every

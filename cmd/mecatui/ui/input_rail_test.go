@@ -151,6 +151,25 @@ func TestInputRailBorderColourIgnoresFocus(t *testing.T) {
 	}
 }
 
+// TestInputTextHasStrongContrast guards that typed text renders in the theme's
+// full-strength Text colour, not the bubbles default (no foreground / grey CursorLine)
+// that rendered it washed-out on the panel tint. applyModeInputStyle sets the Text and
+// CursorLine foregrounds to the Text slot; a regression that drops it (back to the dim
+// default) fails here.
+func TestInputTextHasStrongContrast(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	m, _, _ := newTestModel(t, th)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001"})
+	m.ta.SetValue("And if I write")
+	m.rend.inputValid = false
+	out := m.renderInput()
+	// The Aztec Text slot (#E7E2D3) as the RGB foreground SGR lipgloss emits.
+	if want := "38;2;231;226;211"; !strings.Contains(out, want) {
+		t.Errorf("typed text missing the strong Text foreground %q — it would render washed-out on the panel tint", want)
+	}
+}
+
 // railBorderPrefix returns the first rendered line's bytes up to and including the
 // border glyph "│" — the rail border segment, whose styling must be focus-invariant.
 func railBorderPrefix(rendered string) string {
