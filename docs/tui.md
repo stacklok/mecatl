@@ -577,10 +577,10 @@ palette, the `@`-mention menu, the queued-follow-ups card), then the input and
 footer.
 
 **Speaker styling.** Each conversation turn leads with a speaker glyph so the back-and-forth
-is scannable: a **user** turn is labelled **`▌ you`** over a gold left rail and a faint panel
-tint that fills the full wrapped column (a distinct surface, not a ragged-right block); an
-**assistant** turn is labelled **`● mecatl`** and renders rail-less (its markdown body carries
-the weight). **Tool cards** are capped at 100 columns on a wide terminal — past that the card
+is scannable: a **user** turn is labelled **`▌ you`** with a gold left rail (no background
+tint — the faint panel tint belongs only to the input box, never the conversation history);
+an **assistant** turn is labelled **`● mecatl`** and renders rail-less (its markdown body
+carries the weight). **Tool cards** are capped at 100 columns on a wide terminal — past that the card
 stops growing with the viewport so a long line stays at a readable measure — while on a narrow
 terminal the card never exceeds the viewport. **Inline `code` spans** in assistant markdown are
 de-emphasised (a receding, faint monospace span over the element background) so prose around an
@@ -613,23 +613,27 @@ it never resolves a default itself.
 **Operator-posture badge.** Right-aligned on the header — distinct from the per-session
 `mode` segment, which is the PermissionMode — the server-wide automation posture surfaces
 as a chrome badge for the allow-all tiers ONLY: **`⚠ auto`** rendered as amber inline
-WARNING text, and a YOLO badge rendered as a filled RED danger PILL (the loudest tier
-reads loudest). `strict`/`trusted` (and an older server that omits the posture) render NO
-badge, so the common frame is unchanged. The grammar is deliberate: the `mode` segment is
-inline coloured text on the LEFT (per-session permission posture), the posture badge is a
-filled pill on the RIGHT (server-wide automation posture). When a scroll/changed-files cue
-is also present the badge sits to its LEFT so the danger cue is never hidden by scrolling.
+WARNING text, and a YOLO badge rendered as a filled **alarm-red `YOLO` pill** (the loudest
+tier reads loudest). `strict`/`trusted` (and an older server that omits the posture) render
+NO badge, so the common frame is unchanged. The grammar is deliberate: the `mode` segment
+is inline coloured text on the LEFT (per-session permission posture), the posture badge is
+a filled pill on the RIGHT (server-wide automation posture). When a scroll/changed-files
+cue is also present the badge sits to its LEFT so the danger cue is never hidden by
+scrolling. The pill's colours are **fixed (theme-independent)** — alarm red with near-white
+text — because danger is a safety affordance, not themed decoration: it must read the same
+in every theme.
 
-The yolo badge uses an **emoji glyph on terminals that support it** — **`⚡️ YOLO`**
-(lightning + the U+FE0F emoji-presentation selector) — and falls back to a **width-stable
-text glyph** — **`⚡ YOLO`** (no selector) — everywhere else. The choice comes from a
-conservative, env-based capability detection (no terminal round-trip), decided ONCE at
-launch: a known modern terminal (`TERM_PROGRAM` of ghostty / WezTerm / iTerm.app /
-Apple_Terminal / vscode, a kitty/Konsole/Ghostty signal, or `COLORTERM=truecolor`) gets
-the emoji; anything unrecognised gets the always-correct text glyph. Two env overrides
-force it either way: **`MECATUI_FORCE_EMOJI=1`** forces the emoji glyph and
-**`MECATUI_NO_EMOJI=1`** forces the text glyph (and wins over force). The pill styling is
-identical either way — only the glyph changes.
+On an emoji-capable terminal a plain **⚡️ lightning bolt rides OUTSIDE the pill** as
+decoration immediately before it (the pill itself stays a clean `YOLO` chip — the bolt is
+never inside it, so a terminal that renders the emoji in its own multicolour glyph can't
+clash with the pill's text). On other terminals the bolt is omitted entirely and just the
+clean pill shows. The choice comes from a conservative, env-based capability detection (no
+terminal round-trip), decided ONCE at launch: a known modern terminal (`TERM_PROGRAM` of
+ghostty / WezTerm / iTerm.app / Apple_Terminal / vscode, a kitty/Konsole/Ghostty signal, or
+`COLORTERM=truecolor`) gets the bolt; anything unrecognised gets the bolt-less pill. Two env
+overrides force it either way: **`MECATUI_FORCE_EMOJI=1`** forces the bolt and
+**`MECATUI_NO_EMOJI=1`** suppresses it (and wins over force). The pill is identical either
+way — only the decorative bolt comes and goes.
 
 The badge announces *that* the posture is loud, not *what it permits*: type **`/posture`**
 for the one-line summary of what the active tier actually allows (e.g. for YOLO: all-tools

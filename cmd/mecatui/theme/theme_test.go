@@ -47,24 +47,30 @@ func TestStylesCompiled(t *testing.T) {
 	}
 }
 
-// TestUserBlockHasPanelTint pins decision 1: the user block carries the BgPanel
-// background (the faint speaker-turn tint) alongside its gold left rail.
-func TestUserBlockHasPanelTint(t *testing.T) {
+// TestUserBlockRailNoTint pins decision 1 (partial-reverted): the conversation user
+// block carries the GOLD LEFT RAIL (BorderLeft, user-coloured) but NO background tint —
+// the faint panel tint belongs ONLY to the input box, never the conversation history.
+func TestUserBlockRailNoTint(t *testing.T) {
 	th := New("aztec", aztecPalette)
 	st := th.Style("userBlock")
-	if got := st.GetBackground(); got != col(aztecPalette.BgPanel) {
-		t.Errorf("userBlock background = %v, want BgPanel %q", got, aztecPalette.BgPanel)
+	// NO background fill (the tint was removed — it read as an off surface in history).
+	if _, plain := st.GetBackground().(lipgloss.NoColor); !plain {
+		t.Errorf("userBlock must carry NO background tint, got %v", st.GetBackground())
 	}
-	// The gold rail must survive (BorderLeft + the user-coloured border).
+	// The gold rail survives: a left border in the user colour.
 	if !st.GetBorderLeft() {
 		t.Error("userBlock must keep its left border (the gold rail)")
 	}
+	if got := st.GetBorderLeftForeground(); got != col(aztecPalette.User) {
+		t.Errorf("userBlock left-border colour = %v, want the gold User %q", got, aztecPalette.User)
+	}
 }
 
-// TestWarningAndDangerPillSlots pins decisions 3+5: the "warning" slot is inline
-// coloured+bold text (warning fg, NO background fill), while "dangerPill" is a
-// filled, padded chip (error background, bg-coloured fg, horizontal padding adding
-// 2 cells). The two must be visually distinct — the pill is the louder cue.
+// TestWarningAndDangerPillSlots pins decisions 3+5 (recut): the "warning" slot is
+// inline coloured+bold text (warning fg, NO background fill), while "dangerPill" is a
+// filled, padded chip with FIXED, theme-INDEPENDENT alarm colours (alarm-red bg,
+// near-white fg) — NOT palette-derived. The two must be visually distinct — the pill is
+// the louder cue, and danger reads identically in every theme.
 func TestWarningAndDangerPillSlots(t *testing.T) {
 	th := New("aztec", aztecPalette)
 
@@ -81,16 +87,42 @@ func TestWarningAndDangerPillSlots(t *testing.T) {
 	}
 
 	pill := th.Style("dangerPill")
-	if got := pill.GetBackground(); got != col(aztecPalette.Error) {
-		t.Errorf("dangerPill background = %v, want Error %q", got, aztecPalette.Error)
+	// FIXED alarm colours — NOT the theme's Error / Bg (a safety affordance, not themed).
+	if got := pill.GetBackground(); got != col(dangerPillBg) {
+		t.Errorf("dangerPill background = %v, want the FIXED alarm red %q", got, dangerPillBg)
 	}
-	if got := pill.GetForeground(); got != col(aztecPalette.Bg) {
-		t.Errorf("dangerPill fg = %v, want Bg %q", got, aztecPalette.Bg)
+	if got := pill.GetForeground(); got != col(dangerPillFg) {
+		t.Errorf("dangerPill fg = %v, want the FIXED near-white %q", got, dangerPillFg)
 	}
 	// The pill's horizontal frame adds the 2 cells the width math in fitHeader
 	// compensates for.
 	if got := pill.GetHorizontalFrameSize(); got != 2 {
 		t.Errorf("dangerPill horizontal frame = %d, want 2 (Padding(0,1))", got)
+	}
+}
+
+// TestDangerPillThemeIndependent proves the dangerPill colours do NOT track the palette:
+// two DIFFERENT themes (different Error / Bg) must render the pill with the SAME fixed
+// alarm-red bg + near-white fg. This is the safety-affordance guarantee — danger reads
+// the same everywhere — and the guard against a regression back to palette-derived
+// Error/Bg.
+func TestDangerPillThemeIndependent(t *testing.T) {
+	a := New("aztec", aztecPalette)
+	// A contrived second palette with a deliberately different Error and Bg.
+	alt := aztecPalette
+	alt.Error = "#00FF00"
+	alt.Bg = "#123456"
+	b := New("other", alt)
+
+	pa, pb := a.Style("dangerPill"), b.Style("dangerPill")
+	if pa.GetBackground() != pb.GetBackground() {
+		t.Errorf("dangerPill bg must be theme-independent: %v vs %v", pa.GetBackground(), pb.GetBackground())
+	}
+	if pa.GetForeground() != pb.GetForeground() {
+		t.Errorf("dangerPill fg must be theme-independent: %v vs %v", pa.GetForeground(), pb.GetForeground())
+	}
+	if pa.GetBackground() != col(dangerPillBg) {
+		t.Errorf("dangerPill bg = %v, want fixed alarm red %q (not the theme Error)", pa.GetBackground(), dangerPillBg)
 	}
 }
 

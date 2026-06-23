@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
-
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 // TestSpeakerLabels pins decisions 1+2: the user block leads with "▌ you" and the
@@ -29,12 +27,11 @@ func TestSpeakerLabels(t *testing.T) {
 	}
 }
 
-// TestUserBlockTintFillsColumn pins decision 1's critical detail: the user block's
-// panel-tint background fills the FULL wrapped column (Width(r.width-frame)), not
-// just the text cells — otherwise the tint is ragged-right. It renders a short
-// prompt at a wide width and asserts the body line reaches the wrapped width
-// (label line excluded — the label is the unfilled "▌ you").
-func TestUserBlockTintFillsColumn(t *testing.T) {
+// TestUserBlockNoBackgroundTint pins decision 1 (partial-reverted): the conversation
+// user block carries NO background tint — the faint panel tint belongs ONLY to the input
+// box, never the conversation history. A short prompt at a wide width must NOT pad its
+// body line out to the full column (no Width fill), and must carry no background SGR.
+func TestUserBlockNoBackgroundTint(t *testing.T) {
 	r := newTestRenderer()
 	const w = 80
 	r.setWidth(w)
@@ -45,19 +42,22 @@ func TestUserBlockTintFillsColumn(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected at least a label + body line, got %q", out)
 	}
-	// The body line (line 1, after the "▌ you" label) must span the full wrapped
-	// width even though "hi" is tiny — the tint Width fills it.
-	frame := theme.New("aztec", theme.AztecPalette()).Style("userBlock").GetHorizontalFrameSize()
+	// The body line is NOT padded to the full column — a short prompt stays short
+	// (no background to fill out). Its visible width is far below the wrapped column.
 	bodyW := lipgloss.Width(stripANSIstr(lines[1]))
-	if bodyW != w-frame {
-		t.Errorf("user body line width = %d, want %d (full wrapped column = width-frame); tint is ragged-right", bodyW, w-frame)
+	if bodyW >= w-2 {
+		t.Errorf("user body line width = %d, want it NOT padded to the full column (no tint to fill)", bodyW)
+	}
+	// No background-setting SGR anywhere in the block (the aztec bgPanel is #15201C →
+	// "48;2;21;32;28"; no background of any kind should appear).
+	if strings.Contains(out, "\x1b[48;") {
+		t.Errorf("user block must carry NO background tint, found a background SGR in %q", out)
 	}
 }
 
-// TestUserBlockTintNarrowDegrades guards the width guard: at a width at/below the
-// style frame the body renders unwrapped (no negative Width panic), mirroring
-// wrapStyled's guard.
-func TestUserBlockTintNarrowDegrades(t *testing.T) {
+// TestUserBlockNarrowDegrades guards that the body still renders (no panic) at a width
+// at/below the style frame, through wrapStyled's own width-guard.
+func TestUserBlockNarrowDegrades(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(2) // ≤ frame+1
 	user := block{kind: blockUser, raw: "hello"}

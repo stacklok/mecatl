@@ -26,6 +26,17 @@ const (
 	selLumThreshold = 0.4
 )
 
+// dangerPillBg / dangerPillFg are the FIXED, theme-INDEPENDENT colours of the
+// "dangerPill" style (the YOLO posture badge). Unlike every other slot they are NOT
+// palette-derived: a danger/safety affordance must read identically in every theme, so
+// it carries its own alarm-red background and near-white foreground rather than the
+// per-theme Error/Bg pair (which also avoided a washed-out Bg-on-Error contrast on a
+// light theme). See the "dangerPill" comment in compile().
+const (
+	dangerPillBg = "#E03131" // alarm red (not the theme's burnt-orange Error)
+	dangerPillFg = "#F5F5F5" // near-white
+)
+
 // Palette is the raw, semantic colour set a theme is defined by. Every field is
 // a hex string ("#rrggbb"). Themes are authored (in Go or JSON) purely as a
 // Palette; the lipgloss styles and the glamour StyleConfig are derived from it
@@ -271,12 +282,12 @@ func (t *Theme) compile() {
 		"viewport": lipgloss.NewStyle().
 			Foreground(col(p.Text)),
 
-		// User prompt block: gold left bar over a faint panel tint, so the
-		// speaker turn reads as a distinct surface (the tint is filled out to the
-		// full wrapped column at render time — see render.go renderBlockFresh).
+		// User prompt block: gold left bar. NO background tint — the faint panel tint
+		// belongs ONLY to the input box we type in, never the conversation history (the
+		// tinted history block read as a distinct, off surface). Conversation user turns
+		// are the gold rail + the "▌ you" label over the plain viewport surface.
 		"userBlock": lipgloss.NewStyle().
 			Foreground(col(p.Text)).
-			Background(col(p.BgPanel)).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderLeft(true).
 			BorderForeground(col(p.User)).
@@ -348,14 +359,18 @@ func (t *Theme) compile() {
 		"warning": lipgloss.NewStyle().
 			Foreground(col(p.Warning)).
 			Bold(true),
-		// Danger pill: a FILLED, padded chip (error background, bg-coloured text) for
-		// the loudest persistent posture cue (yolo). The 1-cell horizontal padding is
-		// part of the grammar (a pill, not inline text) — callers that width-fit a
-		// dangerPill render must account for the +2 visible cells lipgloss.Width on the
-		// PLAIN badge text does not see (see view.go fitHeader).
+		// Danger pill: a FILLED, padded chip for the loudest persistent posture cue
+		// (yolo). Its colours are DELIBERATELY FIXED, NOT palette-derived: an alarm-red
+		// background (dangerPillBg) with near-white text (dangerPillFg). This is a SAFETY
+		// affordance, not themed decoration — "danger is danger" must read the same in
+		// every theme, and fixing the pair also removes the per-theme Bg-on-Error contrast
+		// fragility (a light theme's Bg-on-burnt-orange could wash out). The 1-cell
+		// horizontal padding is part of the grammar (a pill, not inline text) — callers
+		// that width-fit a dangerPill render must account for the +2 visible cells
+		// lipgloss.Width on the PLAIN text does not see (see view.go fitHeader).
 		"dangerPill": lipgloss.NewStyle().
-			Foreground(col(p.Bg)).
-			Background(col(p.Error)).
+			Foreground(col(dangerPillFg)).
+			Background(col(dangerPillBg)).
 			Bold(true).
 			Padding(0, 1),
 

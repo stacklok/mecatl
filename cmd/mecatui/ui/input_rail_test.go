@@ -32,25 +32,72 @@ func TestInputRailZeroExtraRows(t *testing.T) {
 	}
 }
 
-// TestInputRailWidthWithinTerminal guards that the rail-wrapped input never
-// fills the terminal width EXACTLY: the rail adds one column, so the textarea is
-// shrunk by the rail's horizontal frame in onResize and the railed input must be
-// FULL-BLEED — exactly w columns. Asserting equality (not just ≤ w) fails BOTH an
-// overflow (w+1 pushes a column off the edge / wraps the chrome) AND an
-// over-subtraction (w-1 wastes a column), and is non-vacuous even if the frame were
-// 0.
-func TestInputRailWidthWithinTerminal(t *testing.T) {
+// TestInputRailFillsUniformly is the regression guard for the inconsistent-tint bug:
+// the input block's faint panel tint must fill the WHOLE block UNIFORMLY — exactly the
+// full terminal width AND all textarea rows — IDENTICALLY whether the input is empty or
+// typed. Before the fix, lipgloss filled the Background only to each rendered line's
+// content width, so an empty placeholder rendered a narrow tint, a typed value a wider
+// one, and the empty rows of the 3-row textarea showed no tint at all.
+//
+// The PARITY of the two widths (empty vs typed) is the real guard: it fails an overflow
+// (w+1), an over-subtraction (w-1), AND the original ragged-fill bug (empty != typed).
+// It also asserts the tinted block keeps every textarea row (height == ta.Height()), so
+// no row renders zero-width / untinted.
+func TestInputRailFillsUniformly(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	for _, w := range []int{40, 80, 120} {
-		m, _, _ := newTestModel(t, th)
-		m = applyAll(m, tea.WindowSizeMsg{Width: w, Height: 30},
+		// (a) empty input.
+		me, _, _ := newTestModel(t, th)
+		me = applyAll(me, tea.WindowSizeMsg{Width: w, Height: 30},
 			client.SessionReadyMsg{SessionID: "sess-test-0001"})
-		railed := m.renderInput()
-		if got := lipgloss.Width(railed); got != w {
-			t.Errorf("width %d: rail-wrapped input is %d cols wide, want exactly %d (full-bleed: no overflow, no wasted column)", w, got, w)
+		empty := me.renderInput()
+
+		// (b) typed input — same width, same everything else.
+		mt, _, _ := newTestModel(t, th)
+		mt = applyAll(mt, tea.WindowSizeMsg{Width: w, Height: 30},
+			client.SessionReadyMsg{SessionID: "sess-test-0001"})
+		mt.ta.SetValue("Hello")
+		mt.rend.inputValid = false // bust the cache so the typed value re-renders
+		typed := mt.renderInput()
+
+		emptyW, typedW := lipgloss.Width(empty), lipgloss.Width(typed)
+		// Exactly full-bleed: total == terminal width for BOTH states.
+		if emptyW != w {
+			t.Errorf("width %d: empty input is %d cols, want exactly %d (full-bleed tint)", w, emptyW, w)
+		}
+		if typedW != w {
+			t.Errorf("width %d: typed input is %d cols, want exactly %d (full-bleed tint)", w, typedW, w)
+		}
+		// PARITY: empty and typed must be the SAME width (the bug made them differ).
+		if emptyW != typedW {
+			t.Errorf("width %d: empty (%d) and typed (%d) input widths differ — the tint must be uniform regardless of content", w, emptyW, typedW)
+		}
+		// Every textarea row is present and tinted (no zero-width empty rows).
+		if got, want := lipgloss.Height(empty), me.ta.Height(); got != want {
+			t.Errorf("width %d: empty input block height = %d rows, want %d (all textarea rows tinted)", w, got, want)
+		}
+		if got, want := lipgloss.Height(typed), mt.ta.Height(); got != want {
+			t.Errorf("width %d: typed input block height = %d rows, want %d (all textarea rows tinted)", w, got, want)
+		}
+		// EVEN tint: every row's fill runs flush to the right edge on the panel
+		// background — no trailing PLAIN (unstyled) cells after the last bgPanel run.
+		// (The seam the dropped .Width() padding used to leave.)
+		for _, in := range []string{empty, typed} {
+			for ri, row := range strings.Split(in, "\n") {
+				if lastReset := strings.LastIndex(row, "\x1b[m"); lastReset > strings.LastIndex(row, bgPanelSGR) {
+					// A reset appears AFTER the last panel-bg SGR ⇒ trailing un-tinted cells.
+					if strings.HasSuffix(row, " \x1b[m") {
+						t.Errorf("width %d row %d: tint not flush to the edge — trailing plain spaces after the last bgPanel run", w, ri)
+					}
+				}
+			}
 		}
 	}
 }
+
+// bgPanelSGR is the Aztec bgPanel background as the RGB SGR lipgloss emits, used to
+// assert the input tint runs flush to the right edge.
+const bgPanelSGR = "48;2;21;32;28"
 
 // TestInputRailBorderColourIgnoresFocus pins the intended (and documented) behaviour:
 // the rail BORDER stays the mode-accent colour at full strength as a PERSISTENT mode

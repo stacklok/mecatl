@@ -139,14 +139,14 @@ func (m Model) renderHeader() string {
 	// Operator-posture badge: right-aligned CHROME (NOT the per-session `mode`
 	// segment, which is PermissionMode). It surfaces the SERVER-WIDE automation
 	// posture for auto/yolo ONLY — strict/trusted render NO badge, so the steady-state
-	// frame (and the goldens) are byte-identical to before this feature. fitHeader styles
-	// it per tier (auto → inline warning text, yolo → filled danger pill), NOT muted like
-	// the benign scroll/changed-files tail, so the one persistent in-session danger cue
-	// actually reads as danger. When a scroll/changed-files tail is also present the badge
-	// sits to its LEFT so the warning is never hidden by scrolling.
-	badge := m.postureBadge()
-	if badge != "" || tail != "" {
-		line = m.fitHeader(line, badge, tail, m.widthOr())
+	// frame (and the goldens) are byte-identical to before this feature. postureBadgeRender
+	// returns the fully-styled badge (auto → inline warning text; yolo → plain emoji bolt +
+	// clean danger pill) plus its visible width, so fitHeader only does layout. When a
+	// scroll/changed-files tail is also present the badge sits to its LEFT so the warning is
+	// never hidden by scrolling.
+	badge, badgeW, hasBadge := m.postureBadgeRender()
+	if hasBadge || tail != "" {
+		line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
 	}
 	return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
 }
@@ -161,44 +161,61 @@ const (
 	postureYolo    = "yolo"
 )
 
-// yoloBadgeEmoji is the EMOJI-presentation yolo badge: ⚡ + U+FE0F (VS16) so the
-// terminal renders the width-2 emoji glyph. Shown only when m.emojiOK (the
-// process-stable, conservative detection). The VS16 MUST survive to the screen —
-// the header path renders the badge directly via the "dangerPill" style and never
-// routes it through normalizeEmojiWidth/wrapStyled (which strip VS16), so the
-// presentation is preserved.
-const yoloBadgeEmoji = "⚡️ YOLO"
+// autoBadgeText is the auto-posture badge: amber inline WARNING text (no pill).
+const autoBadgeText = "⚠ auto"
 
-// yoloBadgeText is the WIDTH-STABLE fallback yolo badge: a bare ⚡ (no VS16), used
-// when emoji presentation is not detected. Its WcWidth == GraphemeWidth, so it never
-// scrambles regardless of terminal.
-const yoloBadgeText = "⚡ YOLO"
+// yoloPillText is the YOLO pill's CONTENT — just the word, padded by a space each side
+// so the filled dangerPill chip has visual breathing room around "YOLO". The pill never
+// contains the lightning bolt: the emoji (when shown) rides OUTSIDE the pill as plain
+// decoration (see postureBadgeRender) — VTE renders ⚡️ in its own multicolour glyph and
+// IGNORES a foreground, which clashed inside the dark-on-red pill.
+const yoloPillText = " YOLO "
 
-// postureBadge returns the right-aligned operator-posture chrome badge text ("⚠ auto"
-// for auto; for yolo, "⚡️ YOLO" with VS16 on an emoji-capable terminal else the
-// width-stable "⚡ YOLO"), or "" for strict/trusted (and an older server / unset
-// Posture). It is sourced from m.caps.Posture (set on SessionReadyMsg, server-wide) —
-// DISTINct from the per-session `mode` segment. Showing it only for the allow-all tiers
-// keeps the goldens for the common (strict) posture unchanged. The yolo glyph variant is
-// driven by m.emojiOK (seeded ONCE at New — never an os.Environ() on the header path).
-// The TEXT is returned bare; fitHeader styles it per tier (auto → inline warning text,
-// yolo → filled danger pill) and sizes the gap from the ACTUAL glyph it renders.
-func (m Model) postureBadge() string {
+// yoloBoltPrefix is the PLAIN (unstyled) emoji bolt shown immediately BEFORE the YOLO
+// pill on an emoji-capable terminal — ⚡ + U+FE0F (VS16) for the width-2 emoji
+// presentation, plus a trailing space. It is decoration OUTSIDE the pill, so the
+// terminal shows the bolt's natural colour and the pill stays a clean dark-on-red chip.
+// The VS16 MUST survive to the screen — the header path renders via lipgloss styles only
+// and never routes the badge through normalizeEmojiWidth/wrapStyled (which strip VS16).
+const yoloBoltPrefix = "⚡️ "
+
+// postureBadgeRender builds the right-aligned operator-posture chrome badge — the STYLED
+// string ready to drop into the header AND its visible (plain) cell width for the
+// fit/shed math. It surfaces the SERVER-WIDE automation posture (m.caps.Posture) for the
+// allow-all tiers ONLY — strict/trusted/unknown render NO badge (present=false), so the
+// steady-state frame and the goldens stay byte-identical. It is DISTINCT from the
+// per-session `mode` segment.
+//
+// Tiers:
+//   - auto → amber inline WARNING text "⚠ auto".
+//   - yolo → a clean filled DANGER PILL (dangerPill style) of " YOLO ", optionally
+//     PRECEDED by a PLAIN ⚡️ emoji bolt when m.emojiOK (seeded once at New). The bolt is
+//     pure decoration OUTSIDE the pill; the pill is always a clean dark-on-red chip.
+//
+// The plain width is computed to match the ACTUAL rendered glyphs: the dangerPill's
+// Padding(0,1) adds 2 cells lipgloss.Width(yoloPillText) does count (the text already
+// carries its spaces), so the pill's visible width is lipgloss.Width(yoloPillText)+2; the
+// optional bolt prefix adds lipgloss.Width(yoloBoltPrefix) (⚡️ width-2 + space).
+func (m Model) postureBadgeRender() (styled string, plainWidth int, present bool) {
 	switch m.caps.Posture {
 	case postureAuto:
-		return "⚠ auto"
+		return m.deps.Theme.Style("warning").Render(autoBadgeText), lipgloss.Width(autoBadgeText), true
 	case postureYolo:
+		pill := m.deps.Theme.Style("dangerPill").Render(yoloPillText)
+		// The pill's visible width = its text cells + the 2 padding cells the style adds.
+		w := lipgloss.Width(yoloPillText) + 2
 		if m.emojiOK {
-			return yoloBadgeEmoji
+			// PLAIN bolt prefix (no style) so VTE shows its natural emoji colour.
+			return yoloBoltPrefix + pill, lipgloss.Width(yoloBoltPrefix) + w, true
 		}
-		return yoloBadgeText
+		return pill, w, true
 	case postureStrict, postureTrusted:
 		// The non-allow-all tiers carry no badge — the steady-state frame stays
 		// byte-identical (the goldens are captured at strict).
-		return ""
+		return "", 0, false
 	default:
 		// Unknown / older-server posture: no badge.
-		return ""
+		return "", 0, false
 	}
 }
 
@@ -312,6 +329,22 @@ func (m *Model) applyModeInputStyle() {
 	styles.Blurred.LineNumber = accent.Faint(true)
 	styles.Blurred.CursorLineNumber = accent.Faint(true)
 	styles.Cursor.Color = accent.GetForeground()
+	// Tint the WHOLE textarea body on the faint panel background so the input block
+	// reads as ONE even surface — the same bgPanel the rail pads its margins with — and
+	// so an empty input and a typed one look identical (the inconsistent-tint bug). The
+	// DefaultDarkStyles ship their own per-state backgrounds (a black cursor-line, a
+	// transparent body), which made the rows tint differently by content; overriding the
+	// body/cursor-line/placeholder/end-of-buffer backgrounds to bgPanel makes the fill
+	// uniform across every row. Applied to BOTH focus states so blur doesn't change the
+	// surface (only the inner prompt/line-number dim — see the rail-blur invariant).
+	bg := m.deps.Theme.Color("bgPanel")
+	for _, st := range []*textarea.StyleState{&styles.Focused, &styles.Blurred} {
+		st.Base = st.Base.Background(bg)
+		st.Text = st.Text.Background(bg)
+		st.CursorLine = st.CursorLine.Background(bg)
+		st.EndOfBuffer = st.EndOfBuffer.Background(bg)
+		st.Placeholder = st.Placeholder.Background(bg)
+	}
 	m.ta.SetStyles(styles)
 }
 
@@ -379,53 +412,38 @@ func (m Model) changedFilesIndicator() string {
 // footer's footerGapPad but is owned by the header path (naming honesty).
 const headerGapPad = 2
 
-// fitHeader right-aligns the indicator (an optional posture badge plus an optional
-// MUTED scroll/changed-files tail) beside the identity line when there is room
+// fitHeader right-aligns the indicator (an optional ALREADY-STYLED posture badge plus an
+// optional MUTED scroll/changed-files tail) beside the identity line when there is room
 // (accounting for the header's 1-cell horizontal padding on each side), and otherwise
 // returns the identity line unchanged — so the indicator never forces a wrap; a
-// too-narrow terminal simply sheds it. The badge and tail are styled SEPARATELY so the
-// persistent posture cue is visually distinct from the benign scroll/changed-files cues:
-// auto renders as inline WARNING-coloured text; yolo renders as a filled DANGER PILL
-// (dangerPill, error background) whose 1-cell horizontal padding adds 2 visible cells the
-// plain badge text omits — so the fit/shed width math adds them back for the yolo tier,
-// or the pill could overflow the cells the gap reserved. (The identity line itself still
-// wraps when it alone exceeds the width; the header's rendered row count is measured via
-// region.height()/chrome() in layout.go.)
-func (m Model) fitHeader(line, badge, tail string, width int) string {
+// too-narrow terminal simply sheds it. The badge arrives pre-styled with its visible
+// width (badgeW) from postureBadgeRender — fitHeader does NOT re-derive the per-tier
+// styling or the pill padding, it only lays out — so the gap/shed math uses badgeW
+// directly and can never disagree with what was rendered (auto inline text, yolo plain
+// bolt + clean pill all measured at the source). The tail is muted here. (The identity
+// line itself still wraps when it alone exceeds the width; the header's rendered row count
+// is measured via region.height()/chrome() in layout.go.)
+func (m Model) fitHeader(line, badge string, badgeW int, tail string, width int) string {
 	const headerPad = 2 // the "header" style pads 1 cell each side
-	// The badge is styled per posture tier: auto is inline WARNING text (no extra
-	// cells), yolo is a filled DANGER PILL whose 1-cell horizontal padding adds 2
-	// visible cells lipgloss.Width(badge) cannot see. Compute the badge's RENDERED
-	// plain width so the fit/shed decision below matches what is actually drawn.
-	yolo := m.caps.Posture == postureYolo
-	badgePlainW := 0
-	if badge != "" {
-		badgePlainW = lipgloss.Width(badge)
-		if yolo {
-			badgePlainW += 2 // dangerPill Padding(0,1) — 2 cells the plain text omits
-		}
-	}
-	// Plain-text width math (ANSI-free); the rendered segments carry style.
-	plainW := badgePlainW
-	if badge != "" && tail != "" {
+	// Plain (visible-cell) width math; the rendered segments carry style. badgeW is the
+	// badge's true visible width (incl. the pill padding / emoji bolt), measured at render.
+	plainW := badgeW
+	switch {
+	case badge != "" && tail != "":
 		plainW += 2 + lipgloss.Width(tail) // the "  " gap + the tail
-	} else if tail != "" {
+	case tail != "":
 		plainW += lipgloss.Width(tail)
 	}
 	gap := width - headerPad - lipgloss.Width(line) - plainW - headerGapPad
 	if gap < 0 {
 		return line
 	}
-	badgeStyle := "warning"
-	if yolo {
-		badgeStyle = "dangerPill"
-	}
 	var styled string
 	switch {
 	case badge != "" && tail != "":
-		styled = m.deps.Theme.Style(badgeStyle).Render(badge) + "  " + m.deps.Theme.Style("muted").Render(tail)
+		styled = badge + "  " + m.deps.Theme.Style("muted").Render(tail)
 	case badge != "":
-		styled = m.deps.Theme.Style(badgeStyle).Render(badge)
+		styled = badge
 	default:
 		styled = m.deps.Theme.Style("muted").Render(tail)
 	}
@@ -771,17 +789,7 @@ func (m Model) renderInput() string {
 	if m.rend.inputValid && m.rend.inputKey == key {
 		return m.rend.inputView
 	}
-	out := m.ta.View()
-	// Mode-coloured LEFT RAIL + faint panel tint, wrapping the textarea view. It adds
-	// exactly ONE column (BorderLeft) and ZERO rows, so chrome()/regionInput height is
-	// unaffected (asserted by the input height-invariance test). The textarea width was
-	// already shrunk by the rail's horizontal frame in onResize, so the wrapped result
-	// stays within the terminal. CRITICAL cache invariant: the rail colour derives ONLY
-	// from m.inputMode() (already keyed as `mode` above) and the fixed theme — it reads
-	// NO un-keyed style fact, so the cached string can never freeze stale. The wrap
-	// happens on this cache-MISS branch BEFORE the store, so the memoized string includes
-	// the rail.
-	out = inputRailStyle(m.deps.Theme, m.inputMode()).Render(out)
+	out := m.renderInputRail(m.ta.View())
 	m.rend.inputKey, m.rend.inputView, m.rend.inputValid = key, out, true
 	return out
 }
@@ -800,6 +808,26 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 		BorderForeground(modeAccentStyle(th, mode).GetForeground()).
 		Background(th.Color("bgPanel")).
 		PaddingLeft(1)
+}
+
+// renderInputRail wraps the textarea view in the mode-coloured rail AND fills the faint
+// panel tint UNIFORMLY across the whole input block — full terminal width and every
+// textarea row — so an empty input and a typed one look identical (the bug: lipgloss
+// fills a Background only to each line's content width, leaving empty placeholder rows
+// untinted and the block ragged).
+//
+// Width arithmetic (verified empirically): the textarea is sized to m.width − railFrame
+// in onResize and renders EVERY row padded out to that width on the faint panel
+// background (applyModeInputStyle tints the textarea body — Base/Text/CursorLine/
+// EndOfBuffer/Placeholder — to bgPanel). The rail then adds its own border + left padding
+// (both bgPanel), so the wrapped block is exactly m.width wide with a UNIFORM tint on
+// every row, identical whether the input is empty or typed (the inconsistent-tint bug).
+// No explicit `.Width()` is set: it would add a final padding column the wrapped,
+// pre-styled multi-line content does NOT re-tint (a trailing plain-space seam at the
+// right edge), whereas letting the already-full-width textarea define the content width
+// keeps the bgPanel fill flush to the edge.
+func (m Model) renderInputRail(taView string) string {
+	return inputRailStyle(m.deps.Theme, m.inputMode()).Render(taView)
 }
 
 // renderFatal renders a centred fatal-error panel.

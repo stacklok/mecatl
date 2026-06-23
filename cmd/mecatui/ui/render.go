@@ -834,18 +834,13 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	switch b.kind {
 	case blockUser:
+		// The user block is the gold left rail + the "▌ you" label over the plain
+		// viewport surface — NO background tint (the faint panel tint belongs only to the
+		// input box, never the conversation history). The body wraps through the normal
+		// wrapStyled path, which owns the width-guard (no per-call Width needed now that
+		// there is no background to fill out to the column).
 		label := r.th.Style("userLabel").Render("▌ you")
-		// The user block carries a faint panel tint (theme.go userBlock). Fill the
-		// tint out to the full wrapped column — Width(r.width-frame) — so the
-		// background paints the whole line rather than only the text cells (a
-		// ragged-right tint). Guarded the same way wrapStyled guards its wrap budget
-		// (width must clear the style's own horizontal frame), so a width-0 / tiny
-		// renderer renders unwrapped without a negative Width.
-		userStyle := r.th.Style("userBlock")
-		if frame := userStyle.GetHorizontalFrameSize(); r.width > frame+1 {
-			userStyle = userStyle.Width(r.width - frame)
-		}
-		body := r.wrapStyled(sanitizeTerminal(b.raw), userStyle)
+		body := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("userBlock"))
 		out := label + "\n" + body
 		// Render one muted placeholder line per attached media part, so a multimodal
 		// prompt is never silently shown as text-only. Media is attached via the
