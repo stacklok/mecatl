@@ -813,15 +813,22 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 		BorderLeft(true).
 		BorderForeground(modeAccentStyle(th, mode).GetForeground()).
 		Background(th.Color("bgPanel")).
-		Padding(0, inputRailPadX)
+		Padding(inputRailPadTop, inputRailPadX, 0, inputRailPadX)
 }
 
 // inputRailPadX is the horizontal padding inside the input panel (each side), giving
-// the typed text a little breathing room from the rail and the right edge. Horizontal
-// only — 0 extra rows — so it never steals a viewport row (the 3-row textarea already
-// provides vertical space). renderInputRail derives the content width from the rail's
-// GetHorizontalFrameSize(), so this value flows through automatically.
+// the typed text a little breathing room from the rail and the right edge.
+// renderInputRail derives the content width from the rail's GetHorizontalFrameSize(),
+// so this value flows through automatically.
 const inputRailPadX = 2
+
+// inputRailPadTop is the TOP inner padding of the input panel: one tinted blank row
+// above the input content so the placeholder/typed text isn't pressed against the top
+// border. It INTENTIONALLY makes the input region one row taller — the layout measures
+// region heights via lipgloss.Height, so the body shrinks by it automatically (the
+// input height-invariance test expects exactly this +1). lipgloss renders the pad row
+// with the style's Background, so it is bgPanel-tinted full-width like the content rows.
+const inputRailPadTop = 1
 
 // renderInputRail wraps the textarea view in the mode-coloured rail AND fills the faint
 // panel tint UNIFORMLY across the whole input block — full terminal width and every

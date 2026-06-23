@@ -109,40 +109,61 @@ func TestSelectionXMapWithIndent(t *testing.T) {
 	m.conv.addUser("req")
 	m.conv.appendAssistant(strings.Repeat("streamed line of output\n", 60))
 	m.phase = phaseIdle
-	m.stuck = true
 	m.refreshView()
 
+	// Find a screen row over a CONTENT line wide enough to span the probed columns (a
+	// blank inter-turn/label gap would clamp every x to 0 — not an x-mapping bug, just an
+	// empty line, so probe a real content row).
 	top := convTopRow(m)
-	// screen X=0 → content col 0 (a leading indent space).
-	if _, col, ok := screenToContent(m, 0, top); !ok || col != 0 {
-		t.Errorf("screenToContent(x=0) = (%d, ok=%v), want (0, true) — the indent space", col, ok)
+	contentLines := strings.Split(m.vp.GetContent(), "\n")
+	var y int
+	found := false
+	for sy := top; sy < top+m.vp.Height(); sy++ {
+		li := m.vp.YOffset() + (sy - top)
+		if li >= 0 && li < len(contentLines) && len(ansi.Strip(contentLines[li])) >= 16 {
+			y, found = sy, true
+			break
+		}
 	}
-	// screen X=indent → content col == indent (the first real glyph after the margin).
-	if _, col, ok := screenToContent(m, defaultBlockIndent, top); !ok || col != defaultBlockIndent {
-		t.Errorf("screenToContent(x=%d) = (%d, ok=%v), want (%d, true) — first real glyph; selection x-mapping drifted",
-			defaultBlockIndent, col, ok, defaultBlockIndent)
+	if !found {
+		t.Fatal("no content line ≥16 cols visible to probe x-mapping")
+	}
+
+	// The indent + hang are REAL content cells, so screen X k maps to content grapheme
+	// column k (identity) — independent of what glyph sits at column k. Assert that
+	// identity across a span of columns on a content row, the property that keeps
+	// selection from drifting under any left margin.
+	for _, x := range []int{0, 1, 2, 3, 7, 15} {
+		if _, col, ok := screenToContent(m, x, y); !ok || col != x {
+			t.Errorf("screenToContent(x=%d) = (col=%d, ok=%v), want (col=%d, true) — x-mapping must be identity (indent/hang are real content cells)", x, col, ok, x)
+		}
 	}
 }
 
-// firstNonBlankLead returns the leading-space count of the first non-blank line of a
-// rendered block whose first content line matches `contains` (ANSI-stripped). It is the
-// body-alignment probe: the body line's lead = base indent (+ hang for the assistant).
-// bodyTextColumn returns the VISUAL cell column at which the body text begins on the
-// first line AFTER the line containing `label` (ANSI-stripped) — the count of leading
-// cells before the first body letter `firstLetter`. This measures true visual alignment:
-// the user body's leading cells are " │ " (space, rail glyph, space) while the assistant
-// body's are "   " (three spaces); both land the text at the same column even though their
-// leading-SPACE counts differ, so a raw leading-space compare would be wrong.
+// bodyTextColumn returns the VISUAL cell column at which the body text begins — the
+// count of leading cells before the first body letter `firstLetter` on the FIRST
+// non-blank line AFTER the line containing `label` (ANSI-stripped). Skipping blank lines
+// matters because the assistant block now has a blank line between its label and body.
+// This measures true visual alignment: the user body's leading cells are " │ " (space,
+// rail glyph, space) while the assistant body's are "   " (three spaces); both land the
+// text at the same column even though their leading-SPACE counts differ, so a raw
+// leading-space compare would be wrong.
 func bodyTextColumn(t *testing.T, out, label string, firstLetter byte) int {
 	t.Helper()
 	lines := strings.Split(out, "\n")
 	for i, ln := range lines {
-		if strings.Contains(ansi.Strip(ln), label) && i+1 < len(lines) {
-			body := ansi.Strip(lines[i+1])
+		if !strings.Contains(ansi.Strip(ln), label) {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			body := ansi.Strip(lines[j])
+			if strings.TrimSpace(body) == "" {
+				continue // skip the label→body blank line
+			}
 			if idx := strings.IndexByte(body, firstLetter); idx >= 0 {
 				return ansi.StringWidth(body[:idx])
 			}
-			t.Fatalf("body letter %q not found in %q", string(firstLetter), body)
+			t.Fatalf("body letter %q not found in first body line %q", string(firstLetter), body)
 		}
 	}
 	t.Fatalf("label %q not found (or no body line after it) in %q", label, out)

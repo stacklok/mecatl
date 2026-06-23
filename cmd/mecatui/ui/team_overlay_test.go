@@ -340,6 +340,10 @@ func TestAgentsRosterUncapped(t *testing.T) {
 	}
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
+	// Give the overlay enough vertical room for all n lanes: it windows to the body
+	// height (terminal minus chrome — header/footer/input + the input top-pad row), so
+	// size up generously rather than depend on the exact chrome height.
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(ctrlKey('a'))
 	m = mm.(Model)

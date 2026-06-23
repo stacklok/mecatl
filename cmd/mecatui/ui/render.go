@@ -958,12 +958,17 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 		// markdown answer) hangs by assistantBodyHang so it sits under "mecatl" — matching
 		// the user block's body-under-"you" alignment. The markdown was already wrapped at
 		// contentWidth()-hang (see markdown), so hang + base never overflows r.width.
+		// ONE blank line separates the label from the body (a little vertical breathing
+		// room under "● mecatl") — within-block spacing, distinct from the inter-turn
+		// 2-line join gap. The user block is deliberately NOT given this gap: its gold rail
+		// visually connects label→body, and a mid-gap would break the rail.
 		label := r.th.Style("assistantLabel").Render("● mecatl")
-		out := label
+		body := padLines(r.markdownAt(idx, b.raw), assistantBodyHang)
 		if reasoning := r.renderReasoning(b, expand); reasoning != "" {
-			out += "\n" + padLines(reasoning, assistantBodyHang)
+			body = padLines(reasoning, assistantBodyHang) + "\n" + body
 		}
-		return out + "\n" + padLines(r.markdownAt(idx, b.raw), assistantBodyHang)
+		// label + blank line + body. The blank line is unindented (it is empty).
+		return label + "\n\n" + body
 	case blockTool:
 		return r.renderTool(b, expand)
 	case blockNotice:

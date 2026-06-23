@@ -20,13 +20,13 @@ import (
 // match. Defined here because it is the regression guard for renderInputRail.
 var plainTail = regexp.MustCompile(`\x1b\[0?m {1,}(?:\x1b\[0?m)*$`)
 
-// TestInputRailZeroExtraRows is the load-bearing layout invariant for the input
-// mode-rail (decision 8): a BorderLeft adds exactly ONE column and ZERO rows, so
-// chrome()/regionInput height (and thus the viewport sizing) is unaffected. The
-// test compares the rendered height of the bare textarea view against the
-// rail-wrapped view at several widths; any drift means the rail grew the input
-// region and would steal a viewport row.
-func TestInputRailZeroExtraRows(t *testing.T) {
+// TestInputRailAddsOnlyTopPadRow is the load-bearing layout invariant for the input
+// mode-rail: the BorderLeft adds ZERO rows, and the ONLY vertical growth is the
+// intentional inputRailPadTop top-padding row, so the rail-wrapped input is exactly
+// bare + inputRailPadTop rows tall. The layout measures region heights via
+// lipgloss.Height, so a height that matches this keeps regionInput/relayout correct; any
+// OTHER drift would silently steal (or add) a viewport row.
+func TestInputRailAddsOnlyTopPadRow(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	for _, w := range []int{40, 80, 120} {
 		m, _, _ := newTestModel(t, th)
@@ -35,8 +35,8 @@ func TestInputRailZeroExtraRows(t *testing.T) {
 
 		bare := m.ta.View()
 		railed := m.renderInput()
-		if got, want := lipgloss.Height(railed), lipgloss.Height(bare); got != want {
-			t.Errorf("width %d: rail changed input height: got %d rows, want %d (bare)", w, got, want)
+		if got, want := lipgloss.Height(railed), lipgloss.Height(bare)+inputRailPadTop; got != want {
+			t.Errorf("width %d: rail input height = %d rows, want %d (bare %d + top pad %d)", w, got, want, lipgloss.Height(bare), inputRailPadTop)
 		}
 	}
 }
@@ -81,12 +81,13 @@ func TestInputRailFillsUniformly(t *testing.T) {
 		if emptyW != typedW {
 			t.Errorf("width %d: empty (%d) and typed (%d) input widths differ — the tint must be uniform regardless of content", w, emptyW, typedW)
 		}
-		// Every textarea row is present and tinted (no zero-width empty rows).
-		if got, want := lipgloss.Height(empty), me.ta.Height(); got != want {
-			t.Errorf("width %d: empty input block height = %d rows, want %d (all textarea rows tinted)", w, got, want)
+		// Every textarea row is present and tinted, PLUS the one top-padding row
+		// (inputRailPadTop): height == ta.Height() + the pad. No zero-width empty rows.
+		if got, want := lipgloss.Height(empty), me.ta.Height()+inputRailPadTop; got != want {
+			t.Errorf("width %d: empty input block height = %d rows, want %d (textarea rows + %d top pad)", w, got, want, inputRailPadTop)
 		}
-		if got, want := lipgloss.Height(typed), mt.ta.Height(); got != want {
-			t.Errorf("width %d: typed input block height = %d rows, want %d (all textarea rows tinted)", w, got, want)
+		if got, want := lipgloss.Height(typed), mt.ta.Height()+inputRailPadTop; got != want {
+			t.Errorf("width %d: typed input block height = %d rows, want %d (textarea rows + %d top pad)", w, got, want, inputRailPadTop)
 		}
 		// EVEN tint: every row's fill must run flush to the right edge — NO trailing
 		// PLAIN (unstyled) cells. The bug's signature is a bare reset (\x1b[m / \x1b[0m)

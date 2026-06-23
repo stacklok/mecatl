@@ -1,7 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
      ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
      ┃                                                                                       ┃
      ┃  ▸ Subagents    Parallel    Teams                                                     ┃
@@ -22,6 +21,7 @@
 
 
 
+│
 │  ┃   1 Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │  ┃
 │  ┃

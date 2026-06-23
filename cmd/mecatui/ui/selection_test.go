@@ -256,9 +256,11 @@ func TestConvTopRowTracksWrappedHeader(t *testing.T) {
 // both cases and asserts the wrapped vpH is strictly LESS — proving the measured
 // height actually flows into sizing (not a no-op).
 func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
-	// taH=4 (input region), footerH=2, spacerH=1 (the input top-padding row). The body is
-	// total minus header + spacer + input + footer.
-	const taH, footerH, spacerH, totalH = 4, 2, 1, 30
+	// taH=5 (input region: the 3-row textarea + its rail top-pad row, measured at 4 +
+	// historical 1), footerH=2, spacerH=1 (the inter-region spacer above the input). The
+	// body is total minus header + spacer + input + footer. (taH grew by 1 vs the
+	// pre-top-pad layout — the inputRailPadTop row.)
+	const taH, footerH, spacerH, totalH = 5, 2, 1, 30
 
 	// Wrapping case: long deps at a narrow width.
 	m, _ := selModel(t)
