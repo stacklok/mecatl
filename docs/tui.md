@@ -580,7 +580,10 @@ footer.
 is scannable: a **user** turn is labelled **`▌ you`** with a gold left rail (no background
 tint — the faint panel tint belongs only to the input box, never the conversation history);
 an **assistant** turn is labelled **`● mecatl`** and renders rail-less (its markdown body
-carries the weight). **Tool cards** are capped at 100 columns on a wide terminal — past that the card
+carries the weight). The whole conversation history is indented one column so it aligns with
+the 1-col-padded header/footer chrome instead of sitting flush at the terminal's left edge,
+and turns are separated by a clear blank-line gap so user and assistant messages read as
+distinct blocks. **Tool cards** are capped at 100 columns on a wide terminal — past that the card
 stops growing with the viewport so a long line stays at a readable measure — while on a narrow
 terminal the card never exceeds the viewport. **Inline `code` spans** in assistant markdown are
 de-emphasised (a receding, faint monospace span over the element background) so prose around an

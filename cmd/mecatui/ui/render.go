@@ -86,6 +86,17 @@ type renderer struct {
 	th    theme.Theme
 	width int
 
+	// indent is the left margin (in cells) prepended to EVERY conversation block so the
+	// history aligns with the 1-col-padded header/footer instead of sitting flush at
+	// column 0. It is applied in renderBlock (the cache-miss path) by prefixing each
+	// rendered line with `indent` spaces, and SUBTRACTED from the layout budget by
+	// contentWidth() so wrapped lines never overflow. The prefixed spaces are REAL
+	// content cells, so the selection screen↔content x-mapping (selection.go
+	// graphemeColForCellX over the rendered line) stays identity — no viewport XOffset,
+	// no mapping adjustment. Set once at construction (defaultBlockIndent); a width-0
+	// bare renderer (team/fleet focus panes) leaves it 0.
+	indent int
+
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
@@ -292,14 +303,58 @@ type blockEntry struct {
 	out    string
 }
 
+// defaultBlockIndent is the left margin (cells) every conversation block is indented
+// by, so the history aligns with the 1-col-padded header/footer chrome (which use
+// Padding(0,1)) instead of sitting flush at column 0. One column matches the chrome
+// exactly. The width-0 team/fleet focus renderers (bare &renderer{}) keep indent 0.
+const defaultBlockIndent = 1
+
 // newRenderer builds a renderer for a theme.
 func newRenderer(th theme.Theme) *renderer {
 	return &renderer{
 		th:         th,
+		indent:     defaultBlockIndent,
 		cache:      map[int]*glamour.TermRenderer{},
 		blockMD:    map[int]mdEntry{},
 		blockCache: map[int]blockEntry{},
 	}
+}
+
+// contentWidth is the layout budget available to a block's CONTENT: the viewport
+// width minus the left indent. Every per-block width consumer (wrapStyled,
+// wrapPrefixed, markdown, the tool card) lays out against this so that, once each
+// rendered line is prefixed with `indent` spaces in renderBlock, the total never
+// exceeds r.width. A width-0/tiny renderer (indent 0) collapses to r.width unchanged.
+func (r *renderer) contentWidth() int {
+	if r.width <= r.indent {
+		return r.width // unknown/tiny: don't go non-positive; the helpers guard further.
+	}
+	return r.width - r.indent
+}
+
+// indentLines prefixes every line of a rendered block with `indent` spaces — the
+// uniform left margin that aligns the conversation history with the 1-col-padded
+// header/footer. It is called ONCE per block on the cache-miss path (renderBlock), so
+// the indented string is what blockCache stores and every steady-state frame joins the
+// already-indented line straight from cache (no per-frame indent cost). The prefixed
+// spaces are REAL content cells, so the selection x-mapping stays identity (see the
+// `indent` field doc). indent 0 (a bare/width-0 renderer) returns s unchanged with no
+// allocation. Blank lines are indented too, so a multi-row block's left edge is straight.
+func (r *renderer) indentLines(s string) string {
+	if r.indent <= 0 {
+		return s
+	}
+	pad := strings.Repeat(" ", r.indent)
+	var b strings.Builder
+	b.Grow(len(s) + r.indent*(strings.Count(s, "\n")+1))
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(pad)
+		b.WriteString(line)
+	}
+	return b.String()
 }
 
 // resetBlockCaches drops BOTH per-block memo layers (blockCache and blockMD).
@@ -384,7 +439,9 @@ func (r *renderer) markdown(src string) string {
 	// below the markdownAt memo (which keys on the original src), so the memo stays
 	// consistent.
 	src = normalizeEmojiWidth(src)
-	w := r.width
+	// Lay out against the CONTENT width (viewport minus the left indent), so the glamour
+	// body still fits after renderBlock prefixes each line with `indent` spaces.
+	w := r.contentWidth()
 	if w <= 0 {
 		w = 80
 	}
@@ -638,7 +695,7 @@ func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	var b strings.Builder
 	for i, s := range r.joinScratch {
 		if i > 0 {
-			b.WriteString("\n")
+			b.WriteString(interBlockSep)
 		}
 		b.WriteString(s)
 		b.WriteString("\n")
@@ -755,17 +812,34 @@ func (r *renderer) rebuildPrefix(prefixN int) {
 	}
 }
 
-// appendSegmentLines appends block i's content lines to dst, modelling the
-// canonical segment sep(i) + scratch + "\n" (sep(0)="", sep(i>0)="\n") MINUS its
-// trailing "\n" — that terminal "\n"'s split tail is handled once, at the absolute
-// end of the frame, by renderConversationLines. The leading "\n" of block i>0 (the
-// inter-block separator) becomes one blank "" line BEFORE the block's content; the
-// content itself is scratch split on "\n". Concatenated across all blocks this
-// yields strings.Split(fullJoin, "\n") exactly, modulo that single terminal "".
+// interBlockSep is the separator the string-path join (renderConversation) writes
+// BEFORE every block after the first. Each block already ends with a trailing "\n", so
+// the on-screen gap between two turns is (trailing "\n") + interBlockSep. With
+// interBlockSep = "\n\n" that is three newlines = TWO blank lines between turns — the
+// CC-style breathing room that makes user vs assistant turns read as distinct blocks
+// (one blank line read as too cramped once the messages carry no background). The
+// lines-path (appendSegmentLines) MUST mirror this exactly (interBlockBlankLines blank
+// "" lines before each block i>0) or the cache-equivalence oracle (render_cache_test.go)
+// trips. Two is the deliberate ceiling — more wastes scrollback.
+const (
+	interBlockSep        = "\n\n"
+	interBlockBlankLines = 2 // == strings.Count(trailing-"\n" + interBlockSep, "\n") - 1
+)
+
+// appendSegmentLines appends block i's content lines to dst, modelling the canonical
+// segment sep(i) + scratch + "\n" (sep(0)="", sep(i>0)=interBlockSep) MINUS its trailing
+// "\n" — that terminal "\n"'s split tail is handled once, at the absolute end of the
+// frame, by renderConversationLines. The leading inter-block separator of block i>0
+// becomes interBlockBlankLines blank "" lines BEFORE the block's content; the content
+// itself is scratch split on "\n". Concatenated across all blocks this yields
+// strings.Split(fullJoin, "\n") exactly, modulo that single terminal "".
 func appendSegmentLines(dst *[]string, i int, scratch string) {
 	if i > 0 {
-		// The inter-block separator "\n" produces one blank line before this block.
-		*dst = append(*dst, "")
+		// The inter-block separator produces interBlockBlankLines blank lines before
+		// this block (must match interBlockSep in the string-path join byte-for-byte).
+		for n := 0; n < interBlockBlankLines; n++ {
+			*dst = append(*dst, "")
+		}
 	}
 	// scratch may be empty (an empty block render); SplitSeq still yields one ""
 	// element for it, matching strings.Split over the full join.
@@ -787,7 +861,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	if e, ok := r.blockCache[idx]; ok && e.rev == b.rev && e.width == r.width && e.expand == expand {
 		return e.out
 	}
-	out := r.renderBlockFresh(idx, b, expand)
+	out := r.indentLines(r.renderBlockFresh(idx, b, expand))
 	if r.blockCache == nil {
 		// Zero-value safety: a bare &renderer{th: th} never calls newRenderer. Two
 		// production sites construct one — the width-0 team focus renderer
@@ -910,15 +984,18 @@ func (r *renderer) renderReasoning(b *block, expand bool) string {
 	return header + "\n" + r.wrapStyled(reasoningCaveat, style) + "\n" + r.wrapStyled(text, style)
 }
 
-// wrapStyled word-wraps s to the live terminal width MINUS the style's own
-// horizontal frame (border+padding+margin, via GetHorizontalFrameSize — the
-// single source of truth, so the wrap budget tracks theme.go edits automatically
-// and never drifts behind a hardcoded inset) and renders it through st. A width
-// at or below the frame (e.g. the width-0 team focus renderer, team.go) means
-// "unknown/tiny: do not wrap" and the body renders unwrapped.
+// wrapStyled word-wraps s to the CONTENT width (viewport minus the left indent)
+// MINUS the style's own horizontal frame (border+padding+margin, via
+// GetHorizontalFrameSize — the single source of truth, so the wrap budget tracks
+// theme.go edits automatically and never drifts behind a hardcoded inset) and renders
+// it through st. A content width at or below the frame (e.g. the width-0 team focus
+// renderer, team.go) means "unknown/tiny: do not wrap" and the body renders unwrapped.
+// Wrapping against contentWidth (not r.width) keeps the body within budget once
+// renderBlock prefixes each line with `indent` spaces.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	frame := st.GetHorizontalFrameSize()
-	if r.width <= frame+1 {
+	cw := r.contentWidth()
+	if cw <= frame+1 {
 		return st.Render(s)
 	}
 	// Normalise emoji presentation BEFORE ansi.Wrap, for the same reason the
@@ -926,7 +1003,7 @@ func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	// on GraphemeWidth while the viewport paints on WcWidth, so a divergent
 	// cluster (e.g. a VS16 emoji) would wrap to a line that then overflows under
 	// the paint width — the exact overflow this wrapping exists to prevent.
-	return st.Render(ansi.Wrap(normalizeEmojiWidth(s), r.width-frame, ""))
+	return st.Render(ansi.Wrap(normalizeEmojiWidth(s), cw-frame, ""))
 }
 
 // wrapPrefixed word-wraps body to the live width while reserving columns for a
@@ -936,12 +1013,14 @@ func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 // the marker width means no wrap. Renders through st.
 func (r *renderer) wrapPrefixed(prefix, body string, st lipgloss.Style) string {
 	pw := lipgloss.Width(prefix)
-	if r.width <= pw+1 {
+	cw := r.contentWidth()
+	if cw <= pw+1 {
 		return st.Render(prefix + body)
 	}
 	// Normalise the body's emoji presentation before ansi.Wrap (see wrapStyled);
-	// the marker prefix is a fixed literal, so its width is taken as-is.
-	wrapped := ansi.Wrap(normalizeEmojiWidth(body), r.width-pw, "")
+	// the marker prefix is a fixed literal, so its width is taken as-is. Wrap against
+	// the content width so the bullet+body fits after the renderBlock indent.
+	wrapped := ansi.Wrap(normalizeEmojiWidth(body), cw-pw, "")
 	lines := strings.Split(wrapped, "\n")
 	for i, ln := range lines {
 		if i == 0 {
@@ -1084,8 +1163,11 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 	}
 
 	card := r.th.Style("toolCard")
-	if r.width > 4 {
-		card = card.Width(min(r.width-2, toolCardMaxWidth))
+	if cw := r.contentWidth(); cw > 4 {
+		// Lay the card out within the CONTENT width (viewport minus the left indent)
+		// minus its own 2-cell border, capped at toolCardMaxWidth, so card + indent
+		// never exceeds the viewport.
+		card = card.Width(min(cw-2, toolCardMaxWidth))
 	}
 	return card.Render(head)
 }
@@ -1281,10 +1363,11 @@ func (r *renderer) renderSubagentChips(b *block) string {
 // at a small positive value so a single chip per line is always attempted rather
 // than degenerating when the width is unknown/tiny (r.width 0 → no wrap).
 func (r *renderer) chipContentWidth() int {
-	if r.width <= 4 {
+	cw := r.contentWidth()
+	if cw <= 4 {
 		return 0 // width unknown/tiny: no wrapping (single row, as before)
 	}
-	w := r.width - 2 - 4 // card.Width(r.width-2) minus border(2)+padding(2)
+	w := cw - 2 - 4 // card.Width(contentWidth-2) minus border(2)+padding(2)
 	if w < 1 {
 		w = 1
 	}

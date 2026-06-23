@@ -8,9 +8,14 @@ import (
 
 // TestToolCardWidthCap pins decision 7: a tool card never grows past
 // toolCardMaxWidth columns on a wide terminal, but on a narrow terminal the
-// existing r.width-2 inset wins (the card never exceeds the viewport). The card's
-// rendered width is measured per-line via lipgloss.Width on the widest line.
+// contentWidth-2 inset wins (the card never exceeds the viewport content). The card is
+// laid out against contentWidth() = r.width - the left-margin indent, so the cap binds at
+// width ≥ toolCardMaxWidth + 2 + indent and the narrow card is (width - indent - 2). The
+// card's rendered width is measured per-line via lipgloss.Width on the widest line
+// (renderToolBlock calls renderTool directly, so the per-block indent prefix is NOT
+// applied here — this measures the raw card).
 func TestToolCardWidthCap(t *testing.T) {
+	const capBindsAt = toolCardMaxWidth + 2 + defaultBlockIndent
 	cases := []struct {
 		name     string
 		width    int
@@ -18,8 +23,8 @@ func TestToolCardWidthCap(t *testing.T) {
 		wantWide bool
 	}{
 		{"wide terminal caps at the max", 200, toolCardMaxWidth, true},
-		{"exactly the cap+2 caps at the max", toolCardMaxWidth + 2, toolCardMaxWidth, true},
-		{"narrow terminal uses width-2", 60, 60 - 2, false},
+		{"exactly the cap-binding width caps at the max", capBindsAt, toolCardMaxWidth, true},
+		{"narrow terminal uses contentWidth-2", 60, 60 - defaultBlockIndent - 2, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,12 +45,13 @@ func TestToolCardWidthCap(t *testing.T) {
 }
 
 // TestToolCardWidthUnchangedAtCap proves the cap is a no-op exactly at the cap
-// boundary: at width == toolCardMaxWidth+2 the card is identical to a card at the
-// minimum width where the cap binds — i.e. the cap only ever clamps, it never
-// changes a card that already fits.
+// boundary: at the cap-binding width the card is identical to a card at a far wider
+// width — i.e. the cap only ever clamps, it never changes a card that already fits.
 func TestToolCardWidthUnchangedAtCap(t *testing.T) {
+	const capBindsAt = toolCardMaxWidth + 2 + defaultBlockIndent
+
 	r1 := newTestRenderer()
-	r1.setWidth(toolCardMaxWidth + 2) // r.width-2 == cap, min(cap, cap) == cap
+	r1.setWidth(capBindsAt) // contentWidth-2 == cap, min(cap, cap) == cap
 	a := r1.renderToolBlock("Read", `{"path":"x"}`, false)
 
 	r2 := newTestRenderer()
@@ -53,6 +59,6 @@ func TestToolCardWidthUnchangedAtCap(t *testing.T) {
 	b := r2.renderToolBlock("Read", `{"path":"x"}`, false)
 
 	if a != b {
-		t.Errorf("card at cap+2 and card at 400 must be byte-identical (both clamp to the cap):\nlen(a)=%d len(b)=%d", lipgloss.Width(a), lipgloss.Width(b))
+		t.Errorf("card at the cap-binding width and at 400 must be byte-identical (both clamp to the cap):\nlen(a)=%d len(b)=%d", lipgloss.Width(a), lipgloss.Width(b))
 	}
 }

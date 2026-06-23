@@ -442,17 +442,22 @@ func (m Model) wordSelect(line, col int) Model {
 	return m
 }
 
-// lineSelect sets the selection to the WHOLE logical line (column 0 to the line's
-// grapheme count), then snapshots its identity + re-renders the highlight. An empty line
-// yields an empty selection (anchor==head) so the caller copies nothing. An
-// out-of-bounds line index is a no-op.
+// lineSelect sets the selection to the WHOLE logical line's CONTENT — from the first
+// column past the conversation left-margin indent (so triple-click grabs the text, not
+// the margin whitespace the renderer prepends) to the line's grapheme count — then
+// snapshots its identity + re-renders the highlight. The leading-indent skip is clamped
+// to the line length so a short/blank line (shorter than the indent) yields an empty
+// selection (anchor==head) and the caller copies nothing. An out-of-bounds line index is
+// a no-op.
 func (m Model) lineSelect(line int) Model {
 	lines := strings.Split(m.vp.GetContent(), "\n")
 	if line < 0 || line >= len(lines) {
 		return m
 	}
 	stripped := ansi.Strip(lines[line])
-	m.sel = selection{active: true, anchorL: line, anchorC: 0, headL: line, headC: graphemeCount(stripped)}
+	n := graphemeCount(stripped)
+	start := min(m.rend.indent, n) // skip the left-margin indent; clamp to line end
+	m.sel = selection{active: true, anchorL: line, anchorC: start, headL: line, headC: n}
 	snapshotSelection(&m)
 	return m
 }

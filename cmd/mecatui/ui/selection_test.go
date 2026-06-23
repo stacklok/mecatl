@@ -599,8 +599,10 @@ func TestDragReSplicesAfterDeltaUsesFreshBase(t *testing.T) {
 		t.Fatalf("answer line %d not on screen (YOffset=%d top=%d h=%d)", answerIdx, m.vp.YOffset(), top, m.vp.Height())
 	}
 
-	// Anchor on the answer line.
-	m, _ = pressMouse(m, tea.MouseLeft, 0, y)
+	// Anchor on the answer line, at the first real glyph past the left-margin indent
+	// (so the selection open SGR sits immediately before the marker text, not before
+	// the indent space).
+	m, _ = pressMouse(m, tea.MouseLeft, defaultBlockIndent, y)
 	if !m.sel.active {
 		t.Fatal("press should activate a selection on the answer line")
 	}
@@ -837,9 +839,10 @@ func TestRightClickDoesNotAdvanceClickCount(t *testing.T) {
 
 	// Build a REAL (non-empty) selection via press+drag so the right-click has
 	// something to copy. The drag invalidates the multi-click sequence (clickCount→0)
-	// while leaving an active span.
-	m, _ = pressMouse(m, tea.MouseLeft, 0, y)
-	m, _ = motionMouse(m, 5, y) // select "hello"
+	// while leaving an active span. The press/motion X are offset by the left-margin
+	// indent so the span covers "hello" (the real text), not the margin space.
+	m, _ = pressMouse(m, tea.MouseLeft, defaultBlockIndent, y)
+	m, _ = motionMouse(m, 5+defaultBlockIndent, y) // select "hello"
 	if !m.sel.active || m.sel.empty() {
 		t.Fatal("precondition: press+drag should leave a non-empty selection")
 	}
@@ -2158,14 +2161,16 @@ func TestTripleClickSelectsLine(t *testing.T) {
 	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
 	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
 
-	if m.sel.anchorC != 0 {
-		t.Errorf("triple-click anchorC = %d, want 0", m.sel.anchorC)
+	// Triple-click selects the line's CONTENT past the left-margin indent — so the
+	// anchor is at the indent column, not 0, and the selected text excludes the margin.
+	if m.sel.anchorC != defaultBlockIndent {
+		t.Errorf("triple-click anchorC = %d, want %d (past the left-margin indent)", m.sel.anchorC, defaultBlockIndent)
 	}
 	if want := graphemeCount(stripped); m.sel.headC != want {
 		t.Errorf("triple-click headC = %d, want graphemeCount %d", m.sel.headC, want)
 	}
 	if got := selectedText(m.vp.GetContent(), m.sel); got != "hello world here" {
-		t.Errorf("triple-click selectedText = %q, want %q (whole line, trailing trimmed)", got, "hello world here")
+		t.Errorf("triple-click selectedText = %q, want %q (whole line, margin + trailing trimmed)", got, "hello world here")
 	}
 	if !strings.Contains(stripANSIstr(m.statusMsg), "copied") {
 		t.Errorf("triple-click status = %q, want a 'copied N chars' confirmation (copy fired)", stripANSIstr(m.statusMsg))
@@ -2264,23 +2269,26 @@ func TestClickDisarmResetsCount(t *testing.T) {
 
 // TestDoubleClickOnWhitespaceSelectsSpaceRun: a double-click on whitespace selects
 // the whitespace run (assert on the column span width, since selectedText trims
-// trailing spaces).
+// trailing spaces). The conversation left-margin indent (defaultBlockIndent) shifts the
+// content right, so the four-space run's ABSOLUTE columns are offset by the indent — the
+// run WIDTH is what matters and is indent-independent.
 func TestDoubleClickOnWhitespaceSelectsSpaceRun(t *testing.T) {
-	// "ab    cd": four spaces at cols 2..5 (a whitespace payload trims to "" so the
-	// click copies nothing and does NOT refreshView — the selection geometry persists).
+	// "ab    cd": four spaces; with the 1-col indent the run sits at content cols 3..6
+	// (2..5 + indent). A whitespace payload trims to "" so the click copies nothing and
+	// does NOT refreshView — the selection geometry persists.
 	m, _, y := convModel(t, "ab    cd")
 
-	m, _ = pressMouse(m, tea.MouseLeft, 3, y) // inside the space run
-	m, _ = pressMouse(m, tea.MouseLeft, 3, y)
+	m, _ = pressMouse(m, tea.MouseLeft, 3+defaultBlockIndent, y) // inside the space run
+	m, _ = pressMouse(m, tea.MouseLeft, 3+defaultBlockIndent, y)
 
 	if !m.sel.active {
 		t.Fatal("double-click on whitespace should leave an active selection")
 	}
 	if w := m.sel.headC - m.sel.anchorC; w != 4 {
-		t.Errorf("whitespace run width = %d, want 4 (cols 2..5)", w)
+		t.Errorf("whitespace run width = %d, want 4", w)
 	}
-	if m.sel.anchorC != 2 || m.sel.headC != 6 {
-		t.Errorf("whitespace span = [%d,%d), want [2,6)", m.sel.anchorC, m.sel.headC)
+	if want := 2 + defaultBlockIndent; m.sel.anchorC != want || m.sel.headC != want+4 {
+		t.Errorf("whitespace span = [%d,%d), want [%d,%d)", m.sel.anchorC, m.sel.headC, want, want+4)
 	}
 }
 
