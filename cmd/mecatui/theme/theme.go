@@ -170,8 +170,8 @@ func (t Theme) Color(slot string) color.Color {
 // Style returns the derived lipgloss.Style for a named UI element. Known names:
 // header, footer, viewport, userBlock, userLabel, assistantLabel, toolCard,
 // toolName, toolArgs, toolOk, toolErr, askCard, askTitle, askButton,
-// askButtonActive, spinner, muted, errorText. Unknown names return an empty
-// style so callers degrade gracefully rather than panic.
+// askButtonActive, spinner, muted, warning, dangerPill, errorText. Unknown names
+// return an empty style so callers degrade gracefully rather than panic.
 func (t Theme) Style(name string) lipgloss.Style {
 	if s, ok := t.styles[name]; ok {
 		return s
@@ -271,9 +271,12 @@ func (t *Theme) compile() {
 		"viewport": lipgloss.NewStyle().
 			Foreground(col(p.Text)),
 
-		// User prompt block: gold left bar.
+		// User prompt block: gold left bar over a faint panel tint, so the
+		// speaker turn reads as a distinct surface (the tint is filled out to the
+		// full wrapped column at render time — see render.go renderBlockFresh).
 		"userBlock": lipgloss.NewStyle().
 			Foreground(col(p.Text)).
+			Background(col(p.BgPanel)).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderLeft(true).
 			BorderForeground(col(p.User)).
@@ -338,6 +341,23 @@ func (t *Theme) compile() {
 		"errorText": lipgloss.NewStyle().
 			Foreground(col(p.Error)).
 			Bold(true),
+
+		// Warning: inline warning-coloured text (e.g. the auto-posture header badge)
+		// — coloured + bold but NOT a filled pill, so it reads as an alert without
+		// claiming the visual weight a danger pill does.
+		"warning": lipgloss.NewStyle().
+			Foreground(col(p.Warning)).
+			Bold(true),
+		// Danger pill: a FILLED, padded chip (error background, bg-coloured text) for
+		// the loudest persistent posture cue (yolo). The 1-cell horizontal padding is
+		// part of the grammar (a pill, not inline text) — callers that width-fit a
+		// dangerPill render must account for the +2 visible cells lipgloss.Width on the
+		// PLAIN badge text does not see (see view.go fitHeader).
+		"dangerPill": lipgloss.NewStyle().
+			Foreground(col(p.Bg)).
+			Background(col(p.Error)).
+			Bold(true).
+			Padding(0, 1),
 
 		// Hook notice — "modified" outcome: info-coloured (an action was
 		// rewritten by a hook — notable but benign, distinct from the muted info

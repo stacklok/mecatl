@@ -376,6 +376,15 @@ type Model struct {
 	// until the first ColorProfileMsg.
 	fullColor bool
 
+	// emojiOK is the PROCESS-STABLE emoji-presentation capability, seeded ONCE at New
+	// from emojiCapable() (conservative, env-based — see emoji.go). It is read on the
+	// header hot path by postureBadge to pick the yolo badge's glyph variant (emoji
+	// "⚡️" with VS16 vs width-stable text "⚡"), so it must NOT call os.Environ() per
+	// render — seeding it here keeps the detection off the hot path. A bool field (not a
+	// sync.Once over a process global) so a test can override it on the Model after New
+	// and so t.Setenv-driven tests still drive the pure detectEmoji directly.
+	emojiOK bool
+
 	// kittyActive is true once the terminal is detected Kitty-graphics-capable AND the
 	// mascot image has been transmitted (the transmit tea.Cmd has fired): the welcome
 	// splash then emits the Kitty Unicode-placeholder grid for the mascot instead of the
@@ -544,6 +553,9 @@ func New(deps Deps) Model {
 		activeMode:      client.ModeString(client.ModeFromString(deps.Mode)),
 		models:          modelsState{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
 		activeWorkspace: deps.Workspace,
+		// Detect emoji-presentation capability ONCE at construction (conservative,
+		// env-based) so the header hot path reads a bool, never os.Environ().
+		emojiOK: emojiCapable(),
 	}
 }
 

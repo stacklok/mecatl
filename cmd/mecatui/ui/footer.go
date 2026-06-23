@@ -215,17 +215,28 @@ func ctxBar(frac float64) string {
 // keeping a long multi-turn run scannable.
 const trivialTurnTokens = 50
 
+// turnStatCacheFloor is the cache-hit-rate floor below which the per-turn stat
+// line omits the "N% cached" facet: a negligible hit rate is noise, while a
+// material one is the signal that prompt caching is actually paying off this turn.
+const turnStatCacheFloor = 0.10
+
 // turnStatLine formats the inline per-turn stat line shown after a turn's model
 // exchange closes. It leads with cost — the turn's input/output tokens
 // (humanised) — then the elapsed model-call time, e.g. "↑1.2K ↓340 · 4.1s". The
 // duration segment is omitted when the server reported 0ms (no clock), giving
-// just "↑1.2K ↓340". Users think in cost, not turn numbers, so no index is shown.
+// just "↑1.2K ↓340". A material cache-hit rate (≥ turnStatCacheFloor) appends a
+// "· N% cached" facet — the per-turn signal that prompt caching is paying off —
+// and is omitted below the floor to keep the line scannable. Users think in cost,
+// not turn numbers, so no index is shown.
 func turnStatLine(msg client.TurnEndMsg) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "↑%s ↓%s",
 		humanizeTokens(msg.Usage.InputTokens), humanizeTokens(msg.Usage.OutputTokens))
 	if msg.DurationMs > 0 {
 		b.WriteString(" · " + formatDuration(msg.DurationMs))
+	}
+	if rate := cacheHitRate(msg.Usage); rate >= turnStatCacheFloor {
+		b.WriteString(" · " + pctString(rate) + " cached")
 	}
 	return b.String()
 }

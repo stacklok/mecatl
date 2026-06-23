@@ -130,6 +130,17 @@ are written to `$XDG_STATE_HOME/mecatl/mecatui.log` (fallback
 alt-screen. `--quiet` discards them instead. A client-only run (`--server`, or
 reusing an already-running `mecated`) logs nothing of its own.
 
+**Environment variables.** A handful of envs tune the client beyond the flags above
+(most have a flag equivalent in the table; the rendering-capability pairs are env-only):
+
+| Env | Effect |
+|---|---|
+| `MECATUI_THEME` | theme name (same as `--theme`) |
+| `MECATUI_NO_MOUSE` | don't capture the mouse (same as `--no-mouse`) — native terminal selection over in-app wheel/drag |
+| `MECATUI_DEBUG_MOUSE` | overlay raw mouse coords / click-mapping in the footer during a press/drag (troubleshooting) |
+| `MECATUI_FORCE_EMOJI` / `MECATUI_NO_EMOJI` | force / suppress the emoji glyph for the YOLO posture badge (force-on, no-wins-over-force); default is conservative env-based detection (see the posture badge) |
+| `MECATUI_FORCE_KITTY` / `MECATUI_NO_KITTY` | force / suppress the Kitty-graphics mascot on the welcome splash (force-on, no-wins-over-force); default is conservative env-based detection, falling back to the always-correct half-block mascot |
+
 **Skill discovery is ON by default**, via conventional discovery (the read-only
 `Skill` tool activates progressive-disclosure `<name>/SKILL.md` units from the
 conventional dirs, e.g. `.claude/skills`, when present) — consistent with
@@ -565,6 +576,23 @@ conversation body, zero or more **transient inline regions** (the slash-command
 palette, the `@`-mention menu, the queued-follow-ups card), then the input and
 footer.
 
+**Speaker styling.** Each conversation turn leads with a speaker glyph so the back-and-forth
+is scannable: a **user** turn is labelled **`▌ you`** over a gold left rail and a faint panel
+tint that fills the full wrapped column (a distinct surface, not a ragged-right block); an
+**assistant** turn is labelled **`● mecatl`** and renders rail-less (its markdown body carries
+the weight). **Tool cards** are capped at 100 columns on a wide terminal — past that the card
+stops growing with the viewport so a long line stays at a readable measure — while on a narrow
+terminal the card never exceeds the viewport. **Inline `code` spans** in assistant markdown are
+de-emphasised (a receding, faint monospace span over the element background) so prose around an
+`identifier` no longer fights it for attention.
+
+**Input box.** The prompt textarea is wrapped in a **mode-coloured left rail** over a faint
+panel tint — the same accent the `mode` segment uses (default accent / `plan` info /
+`accept-edits` success), so the input's permission-mode cue reads at a glance. The rail is a
+single-column left border (it adds NO rows, so the viewport sizing is unaffected); the rail
+border stays mode-coloured at full strength as a persistent mode cue, while the textarea's
+inner prompt / line-number dim when the input is blurred.
+
 **Header bar.** `mecatui · session <id> · <model> · [next: <model>] · mode <mode> · <server>`.
 The **mode segment** shows the server-confirmed permission posture for the current session;
 when a mid-turn switch has been deferred it shows `mode <target> pending` until the retry
@@ -581,6 +609,32 @@ launch-time `--model`). The optional **`next:` badge** previews the pending-next
 or when no effective model is known yet); it is the FIRST segment shed under width
 pressure (before the socket). The header only CHOOSES which KNOWN string to display;
 it never resolves a default itself.
+
+**Operator-posture badge.** Right-aligned on the header — distinct from the per-session
+`mode` segment, which is the PermissionMode — the server-wide automation posture surfaces
+as a chrome badge for the allow-all tiers ONLY: **`⚠ auto`** rendered as amber inline
+WARNING text, and a YOLO badge rendered as a filled RED danger PILL (the loudest tier
+reads loudest). `strict`/`trusted` (and an older server that omits the posture) render NO
+badge, so the common frame is unchanged. The grammar is deliberate: the `mode` segment is
+inline coloured text on the LEFT (per-session permission posture), the posture badge is a
+filled pill on the RIGHT (server-wide automation posture). When a scroll/changed-files cue
+is also present the badge sits to its LEFT so the danger cue is never hidden by scrolling.
+
+The yolo badge uses an **emoji glyph on terminals that support it** — **`⚡️ YOLO`**
+(lightning + the U+FE0F emoji-presentation selector) — and falls back to a **width-stable
+text glyph** — **`⚡ YOLO`** (no selector) — everywhere else. The choice comes from a
+conservative, env-based capability detection (no terminal round-trip), decided ONCE at
+launch: a known modern terminal (`TERM_PROGRAM` of ghostty / WezTerm / iTerm.app /
+Apple_Terminal / vscode, a kitty/Konsole/Ghostty signal, or `COLORTERM=truecolor`) gets
+the emoji; anything unrecognised gets the always-correct text glyph. Two env overrides
+force it either way: **`MECATUI_FORCE_EMOJI=1`** forces the emoji glyph and
+**`MECATUI_NO_EMOJI=1`** forces the text glyph (and wins over force). The pill styling is
+identical either way — only the glyph changes.
+
+The badge announces *that* the posture is loud, not *what it permits*: type **`/posture`**
+for the one-line summary of what the active tier actually allows (e.g. for YOLO: all-tools
+auto-approve and the child prompt-injection defense off) — the badge is the at-a-glance
+cue, `/posture` is its consequence.
 
 A single layout model (`layout.go`) is the source of truth: `View()` renders
 it, the per-message relayout step sizes the viewport from it, and the mouse
@@ -617,6 +671,12 @@ turn is a conversation-size **estimate** (a heuristic token count over the live 
 not a provider-reported count, so the ctx meter stays meaningful instead of snapping to
 zero. The estimate is display-only: it never feeds the session-cumulative facets or any
 token budget, which stay on the provider's actual reported usage.
+
+**Per-turn cache cue.** When a model exchange closes, an inline scrollback stat line records
+its cost — `↑<in> ↓<out>` tokens, the elapsed model-call time, and (when the turn's cache-hit
+rate is material, ≥10%) a `· N% cached` facet so the per-turn caching payoff is visible at the
+turn it lands. The `?` keys-&-features overlay carries a usage **legend** decoding the arrows
+(`↑ input · ↓ output · ⊕ cache write`) so the footer/turn-stat token glyphs are self-explanatory.
 
 ### Watching subagents, parallel runs, and teams — the fleet footer + the unified `ctrl+a` overlay
 

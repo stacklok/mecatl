@@ -781,7 +781,13 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// height-equality guard (relayout calls refreshView, which also invalidates, but
 	// onResize must invalidate here too in case relayout short-circuits on height match).
 	m.rend.invalidateVPView()
-	m.ta.SetWidth(m.width)
+	// The input textarea is wrapped in the mode-coloured left rail (renderInput),
+	// which adds its horizontal frame (border + padding). Shrink the textarea width by
+	// that frame so the railed input stays within the terminal width instead of
+	// overflowing by the rail's columns. inputRailStyle is the single source of the
+	// rail geometry, so this can never drift from the rendered rail.
+	railFrame := inputRailStyle(m.deps.Theme, m.inputMode()).GetHorizontalFrameSize()
+	m.ta.SetWidth(max(1, m.width-railFrame))
 	m.rend.setWidth(m.width)
 	// relayout sizes the viewport height from the measured layout (header + transients
 	// + input + footer) and, when the height changed, re-renders + re-derives

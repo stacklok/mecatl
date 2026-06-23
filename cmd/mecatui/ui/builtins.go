@@ -242,9 +242,9 @@ func (m Model) runPosture() (tea.Model, tea.Cmd) {
 // auto+yolo; the CHILD substitution (prompt-injection defense OFF) is yolo-only;
 // project-trust is on at trusted+. An empty/unknown token degrades to a bare label.
 func postureSummary(p string) string {
-	allowAll := p == "auto" || p == "yolo"
-	childDefenseOff := p == "yolo"
-	trust := p == "trusted" || p == "auto" || p == "yolo"
+	allowAll := p == postureAuto || p == postureYolo
+	childDefenseOff := p == postureYolo
+	trust := p == postureTrusted || p == postureAuto || p == postureYolo
 	onoff := func(b bool) string {
 		if b {
 			return "on"

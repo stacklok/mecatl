@@ -39,12 +39,15 @@
 ┃  Cross-session memory is on — context carries across runs.                                                                                                 ┃
 ┃  Type @ to attach a file — this model takes text only, so files inline as text.                                                                            ┃
 ┃                                                                                                                                                            ┃
+┃  ↑ input · ↓ output · ⊕ cache write                                                                                                                        ┃
+┃  cache N% — share of input tokens served from cache                                                                                                        ┃
+┃                                                                                                                                                            ┃
 ┃  esc or ? to close                                                                                                                                         ┃
 ┃                                                                                                                                                            ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-┃   1 Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
-┃
-┃
+│ ┃   1 Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│ ┃
+│ ┃
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

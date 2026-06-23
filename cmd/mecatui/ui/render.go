@@ -27,6 +27,12 @@ const maxToolResultLines = 12
 // content) show inline when collapsed; ctrl+t expands to the full diff.
 const maxDiffLines = 12
 
+// toolCardMaxWidth caps a tool card's column width on a wide terminal: past this
+// the card stops growing with the viewport so a long line stays at a readable
+// measure instead of stretching edge to edge. On a narrow terminal the existing
+// r.width-2 inset wins (the card never exceeds the viewport).
+const toolCardMaxWidth = 100
+
 // Compact-card tuning (issue #24): a collapsed tool card summarizes its JSON
 // args (and large JSON results) into a few scannable key:value rows instead of
 // dumping the full pretty-printed JSON inline — so an MCP call with a huge body
@@ -828,8 +834,18 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	switch b.kind {
 	case blockUser:
-		label := r.th.Style("userLabel").Render("you")
-		body := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("userBlock"))
+		label := r.th.Style("userLabel").Render("▌ you")
+		// The user block carries a faint panel tint (theme.go userBlock). Fill the
+		// tint out to the full wrapped column — Width(r.width-frame) — so the
+		// background paints the whole line rather than only the text cells (a
+		// ragged-right tint). Guarded the same way wrapStyled guards its wrap budget
+		// (width must clear the style's own horizontal frame), so a width-0 / tiny
+		// renderer renders unwrapped without a negative Width.
+		userStyle := r.th.Style("userBlock")
+		if frame := userStyle.GetHorizontalFrameSize(); r.width > frame+1 {
+			userStyle = userStyle.Width(r.width - frame)
+		}
+		body := r.wrapStyled(sanitizeTerminal(b.raw), userStyle)
 		out := label + "\n" + body
 		// Render one muted placeholder line per attached media part, so a multimodal
 		// prompt is never silently shown as text-only. Media is attached via the
@@ -844,7 +860,7 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 		// Assistant text is rendered through glamour, which neutralises escape
 		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
 		// reasoning summary (if any) renders dim and collapsed ABOVE the answer.
-		label := r.th.Style("assistantLabel").Render("mecatl")
+		label := r.th.Style("assistantLabel").Render("● mecatl")
 		out := label
 		if reasoning := r.renderReasoning(b, expand); reasoning != "" {
 			out += "\n" + reasoning
@@ -1074,7 +1090,7 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 
 	card := r.th.Style("toolCard")
 	if r.width > 4 {
-		card = card.Width(r.width - 2)
+		card = card.Width(min(r.width-2, toolCardMaxWidth))
 	}
 	return card.Render(head)
 }

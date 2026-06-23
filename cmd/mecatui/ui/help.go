@@ -122,6 +122,13 @@ func helpBody(th theme.Theme, caps client.Capabilities) string {
 		b.WriteString(muted.Render("Type @ to attach a file — this model takes text only, so files inline as text.") + "\n")
 	}
 
+	// Usage legend: decode the footer/turn-stat token arrows AND the cache percentage,
+	// so "↑1.2K ↓340 ⊕1.2K · cache 88%" is self-explanatory — the input/output/cache-write
+	// glyphs, plus the share of input tokens served from cache (the number behind a
+	// surprisingly large prompt).
+	b.WriteString("\n" + muted.Render("↑ input · ↓ output · ⊕ cache write") + "\n")
+	b.WriteString(muted.Render("cache N% — share of input tokens served from cache") + "\n")
+
 	b.WriteString("\n" + muted.Render("esc or ? to close"))
 	return b.String()
 }

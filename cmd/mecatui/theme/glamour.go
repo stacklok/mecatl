@@ -88,9 +88,14 @@ func (t Theme) GlamourStyle() ansi.StyleConfig {
 		},
 		LinkText: ansi.StylePrimitive{Color: strptr(p.MdLink), Bold: boolptr(true)},
 		Code: ansi.StyleBlock{
+			// Inline code is DE-EMPHASISED: a receding foreground (the quote slot,
+			// palette-derived so it stays theme-safe) plus Faint, over the element
+			// background. It reads as a quiet monospace span rather than an accent,
+			// so prose around an `identifier` no longer fights it for attention.
 			StylePrimitive: ansi.StylePrimitive{
-				Color:           strptr(p.MdCode),
+				Color:           strptr(p.MdQuote),
 				BackgroundColor: strptr(p.BgElement),
+				Faint:           boolptr(true),
 				Prefix:          " ",
 				Suffix:          " ",
 			},

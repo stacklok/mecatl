@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 )
 
 // TestBuiltinsSlotCompleteness asserts every built-in theme populates every
@@ -35,13 +37,77 @@ func TestStylesCompiled(t *testing.T) {
 		"header", "footer", "viewport", "userBlock", "userLabel",
 		"assistantLabel", "toolCard", "toolName", "toolArgs", "toolOk",
 		"toolErr", "askCard", "askTitle", "askButton", "askButtonActive",
-		"spinner", "muted", "errorText", "selection",
+		"spinner", "muted", "warning", "dangerPill", "errorText", "selection",
 	}
 	th := New("aztec", aztecPalette)
 	for _, slot := range want {
 		if _, ok := th.styles[slot]; !ok {
 			t.Errorf("style slot %q not compiled", slot)
 		}
+	}
+}
+
+// TestUserBlockHasPanelTint pins decision 1: the user block carries the BgPanel
+// background (the faint speaker-turn tint) alongside its gold left rail.
+func TestUserBlockHasPanelTint(t *testing.T) {
+	th := New("aztec", aztecPalette)
+	st := th.Style("userBlock")
+	if got := st.GetBackground(); got != col(aztecPalette.BgPanel) {
+		t.Errorf("userBlock background = %v, want BgPanel %q", got, aztecPalette.BgPanel)
+	}
+	// The gold rail must survive (BorderLeft + the user-coloured border).
+	if !st.GetBorderLeft() {
+		t.Error("userBlock must keep its left border (the gold rail)")
+	}
+}
+
+// TestWarningAndDangerPillSlots pins decisions 3+5: the "warning" slot is inline
+// coloured+bold text (warning fg, NO background fill), while "dangerPill" is a
+// filled, padded chip (error background, bg-coloured fg, horizontal padding adding
+// 2 cells). The two must be visually distinct — the pill is the louder cue.
+func TestWarningAndDangerPillSlots(t *testing.T) {
+	th := New("aztec", aztecPalette)
+
+	warn := th.Style("warning")
+	if got := warn.GetForeground(); got != col(aztecPalette.Warning) {
+		t.Errorf("warning fg = %v, want Warning %q", got, aztecPalette.Warning)
+	}
+	// Inline text: no filled background and no padding frame (distinct from the pill).
+	if _, filled := warn.GetBackground().(lipgloss.NoColor); !filled {
+		t.Errorf("warning must be inline text (no background fill), got %v", warn.GetBackground())
+	}
+	if got := warn.GetHorizontalFrameSize(); got != 0 {
+		t.Errorf("warning horizontal frame = %d, want 0 (inline, not a pill)", got)
+	}
+
+	pill := th.Style("dangerPill")
+	if got := pill.GetBackground(); got != col(aztecPalette.Error) {
+		t.Errorf("dangerPill background = %v, want Error %q", got, aztecPalette.Error)
+	}
+	if got := pill.GetForeground(); got != col(aztecPalette.Bg) {
+		t.Errorf("dangerPill fg = %v, want Bg %q", got, aztecPalette.Bg)
+	}
+	// The pill's horizontal frame adds the 2 cells the width math in fitHeader
+	// compensates for.
+	if got := pill.GetHorizontalFrameSize(); got != 2 {
+		t.Errorf("dangerPill horizontal frame = %d, want 2 (Padding(0,1))", got)
+	}
+}
+
+// TestGlamourCodeDeEmphasised pins decision 6: inline code recedes — its
+// foreground is the (palette-derived) quote slot and Faint is set, over the
+// element background. No hardcoded hex.
+func TestGlamourCodeDeEmphasised(t *testing.T) {
+	th := New("aztec", aztecPalette)
+	code := th.GlamourStyle().Code.StylePrimitive
+	if code.Color == nil || *code.Color != aztecPalette.MdQuote {
+		t.Errorf("inline code colour = %v, want the recede MdQuote slot %q", code.Color, aztecPalette.MdQuote)
+	}
+	if code.Faint == nil || !*code.Faint {
+		t.Error("inline code must be Faint (de-emphasised)")
+	}
+	if code.BackgroundColor == nil || *code.BackgroundColor != aztecPalette.BgElement {
+		t.Errorf("inline code background = %v, want BgElement %q (unchanged)", code.BackgroundColor, aztecPalette.BgElement)
 	}
 }
 

@@ -188,6 +188,84 @@ func TestRenderUsageFacetsOmitsZeroCacheWrite(t *testing.T) {
 // stripANSIstr is a string convenience over stripANSI for assertions.
 func stripANSIstr(s string) string { return string(stripANSI([]byte(s))) }
 
+// TestTurnStatLine pins the per-turn stat line: it always leads with the
+// input/output token arrows, appends the duration when the server reported one,
+// and appends "N% cached" ONLY when the turn's cache-hit rate is at or above
+// turnStatCacheFloor (decision 4). A negligible cache rate is omitted to keep the
+// line scannable.
+func TestTurnStatLine(t *testing.T) {
+	cases := []struct {
+		name       string
+		usage      client.Usage
+		durationMs int64
+		wantSubs   []string
+		absentSubs []string
+	}{
+		{
+			name:       "no cache facet below floor",
+			usage:      client.Usage{InputTokens: 1200, OutputTokens: 340}, // 0% cache
+			durationMs: 4100,
+			wantSubs:   []string{"↑1.2K", "↓340", "4.1s"},
+			absentSubs: []string{"cached"},
+		},
+		{
+			name:       "cache facet when material",
+			usage:      client.Usage{InputTokens: 1500, OutputTokens: 30, CacheReadTokens: 1320}, // 88%
+			durationMs: 0,
+			wantSubs:   []string{"↑1.5K", "↓30", "88% cached"},
+			absentSubs: []string{" · 4"}, // no duration segment when 0ms
+		},
+		{
+			name:       "just under the floor is omitted",
+			usage:      client.Usage{InputTokens: 1000, OutputTokens: 10, CacheReadTokens: 90}, // 9% < 10%
+			durationMs: 0,
+			wantSubs:   []string{"↑1K", "↓10"},
+			absentSubs: []string{"cached"},
+		},
+		{
+			name:       "exactly at the floor is shown",
+			usage:      client.Usage{InputTokens: 1000, OutputTokens: 10, CacheReadTokens: 100}, // 10%
+			durationMs: 0,
+			wantSubs:   []string{"10% cached"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := turnStatLine(client.TurnEndMsg{Usage: c.usage, DurationMs: c.durationMs})
+			for _, sub := range c.wantSubs {
+				if !strings.Contains(got, sub) {
+					t.Errorf("turnStatLine = %q, want it to contain %q", got, sub)
+				}
+			}
+			for _, sub := range c.absentSubs {
+				if strings.Contains(got, sub) {
+					t.Errorf("turnStatLine = %q, must NOT contain %q", got, sub)
+				}
+			}
+		})
+	}
+}
+
+// TestTurnStatCacheReachesScrollback is the integration guard for the per-turn cache
+// facet: a TurnEndMsg carrying a material cache rate, driven through the REAL update
+// path (TurnEndMsg → addTurnStat(turnStatLine) → blockTurnStat → renderBlockFresh),
+// must surface "% cached" in the rendered conversation scrollback. TestTurnStatLine
+// tests the formatter in isolation; this proves the string actually reaches a rendered
+// block (the trivialTurn gate, the conversation append, and the block render all wired).
+func TestTurnStatCacheReachesScrollback(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+		// Non-trivial tokens (so the stat line is not suppressed) with an 88% cache rate.
+		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1500, OutputTokens: 300, CacheReadTokens: 1320}, DurationMs: 4100},
+	)
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	if !strings.Contains(got, "88% cached") {
+		t.Errorf("rendered scrollback missing the per-turn cache facet %q; got %q", "88% cached", got)
+	}
+}
+
 // TestFooterSelectionCount: an idle model with a known multi-line, non-empty
 // selection shows the live "N chars · M lines" count in the footer-left.
 func TestFooterSelectionCount(t *testing.T) {

@@ -101,6 +101,14 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 	if !strings.Contains(embedded, "Skills run automatically") {
 		t.Errorf("help should always carry the skills clarification:\n%s", embedded)
 	}
+	// The usage legend decoding BOTH the token arrows AND the cache percentage is
+	// always present (decision 4 + UX-1: the percentage is the number behind a
+	// surprisingly large prompt).
+	for _, sub := range []string{"↑ input", "↓ output", "⊕ cache write", "cache N%", "served from cache"} {
+		if !strings.Contains(embedded, sub) {
+			t.Errorf("help should carry the usage legend %q:\n%s", sub, embedded)
+		}
+	}
 }
 
 // m_helpBody renders just the help body for caps (no centering), for content
