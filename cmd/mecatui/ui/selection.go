@@ -443,12 +443,14 @@ func (m Model) wordSelect(line, col int) Model {
 }
 
 // lineSelect sets the selection to the WHOLE logical line's CONTENT — from the first
-// column past the conversation left-margin indent (so triple-click grabs the text, not
-// the margin whitespace the renderer prepends) to the line's grapheme count — then
-// snapshots its identity + re-renders the highlight. The leading-indent skip is clamped
-// to the line length so a short/blank line (shorter than the indent) yields an empty
-// selection (anchor==head) and the caller copies nothing. An out-of-bounds line index is
-// a no-op.
+// non-whitespace grapheme to the line's grapheme count — then snapshots its identity +
+// re-renders the highlight. Skipping the LEADING WHITESPACE means triple-click grabs the
+// line's text regardless of how much left margin the renderer prepended: the base block
+// indent, plus the assistant body hang, plus the user block's rail+padding all leave
+// leading spaces (the rail glyph is the only non-space, and it precedes the body text, so
+// for an assistant/notice/tool line this lands on the first real character). A blank line
+// (all whitespace) yields an empty selection (anchor==head) so the caller copies nothing.
+// An out-of-bounds line index is a no-op.
 func (m Model) lineSelect(line int) Model {
 	lines := strings.Split(m.vp.GetContent(), "\n")
 	if line < 0 || line >= len(lines) {
@@ -456,7 +458,18 @@ func (m Model) lineSelect(line int) Model {
 	}
 	stripped := ansi.Strip(lines[line])
 	n := graphemeCount(stripped)
-	start := min(m.rend.indent, n) // skip the left-margin indent; clamp to line end
+	// Skip leading whitespace (the conversation left margin / hang) so the selection
+	// starts at the first real glyph. Counted in GRAPHEME columns to match anchorC/headC.
+	start := 0
+	for _, rn := range stripped {
+		if rn != ' ' {
+			break
+		}
+		start++
+	}
+	if start > n {
+		start = n
+	}
 	m.sel = selection{active: true, anchorL: line, anchorC: start, headL: line, headC: n}
 	snapshotSelection(&m)
 	return m

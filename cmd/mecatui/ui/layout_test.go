@@ -179,8 +179,9 @@ func TestTransientRegionShrinksViewportKeepsFooter(t *testing.T) {
 
 // TestNoTransientBodyHeightMatchesMeasuredChrome is the magic-number-gone guard: in
 // the NO-transient case the body height equals m.height minus the MEASURED header +
-// input + footer heights (lipgloss.Height of the rendered regions). A reintroduced
-// taH=4/footerH=2 constant — or a header-height assumption — would diverge here.
+// input-top-spacer + input + footer heights (lipgloss.Height of the rendered regions).
+// A reintroduced taH=4/footerH=2 constant — or a header-height assumption, or a forgotten
+// input spacer — would diverge here.
 func TestNoTransientBodyHeightMatchesMeasuredChrome(t *testing.T) {
 	m, _ := selModel(t)
 	// Precondition: no transient is present.
@@ -188,9 +189,10 @@ func TestNoTransientBodyHeightMatchesMeasuredChrome(t *testing.T) {
 		renderMention(m.deps.Theme, m.mention, m.width) != "" {
 		t.Fatal("precondition: no transient should be present in selModel")
 	}
-	want := m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(m.renderInput()) - lipgloss.Height(m.renderFooter())
+	want := m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(inputSpacerRow) -
+		lipgloss.Height(m.renderInput()) - lipgloss.Height(m.renderFooter())
 	if got := m.vp.Height(); got != want {
-		t.Errorf("no-transient bodyHeight = %d, want %d (height - measured header - input - footer)", got, want)
+		t.Errorf("no-transient bodyHeight = %d, want %d (height - measured header - input spacer - input - footer)", got, want)
 	}
 }
 
@@ -305,6 +307,7 @@ func TestLayoutJoinIdenticalToManualForNoTransient(t *testing.T) {
 	manual := strings.Join([]string{
 		m.renderHeader(),
 		body,
+		inputSpacerRow, // one blank row of top padding above the input
 		m.renderInput(),
 		m.renderFooter(),
 	}, "\n")

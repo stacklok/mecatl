@@ -123,3 +123,132 @@ func TestSelectionXMapWithIndent(t *testing.T) {
 			defaultBlockIndent, col, ok, defaultBlockIndent)
 	}
 }
+
+// firstNonBlankLead returns the leading-space count of the first non-blank line of a
+// rendered block whose first content line matches `contains` (ANSI-stripped). It is the
+// body-alignment probe: the body line's lead = base indent (+ hang for the assistant).
+// bodyTextColumn returns the VISUAL cell column at which the body text begins on the
+// first line AFTER the line containing `label` (ANSI-stripped) — the count of leading
+// cells before the first body letter `firstLetter`. This measures true visual alignment:
+// the user body's leading cells are " │ " (space, rail glyph, space) while the assistant
+// body's are "   " (three spaces); both land the text at the same column even though their
+// leading-SPACE counts differ, so a raw leading-space compare would be wrong.
+func bodyTextColumn(t *testing.T, out, label string, firstLetter byte) int {
+	t.Helper()
+	lines := strings.Split(out, "\n")
+	for i, ln := range lines {
+		if strings.Contains(ansi.Strip(ln), label) && i+1 < len(lines) {
+			body := ansi.Strip(lines[i+1])
+			if idx := strings.IndexByte(body, firstLetter); idx >= 0 {
+				return ansi.StringWidth(body[:idx])
+			}
+			t.Fatalf("body letter %q not found in %q", string(firstLetter), body)
+		}
+	}
+	t.Fatalf("label %q not found (or no body line after it) in %q", label, out)
+	return -1
+}
+
+// TestAssistantBodyHangsUnderLabel pins CHANGE A: the assistant MESSAGE body hangs by
+// assistantBodyHang so its TEXT sits under "mecatl" (base indent + the "● " marker
+// width), matching the user body, which the gold rail + PaddingLeft(1) already lands
+// under "you". Both bodies begin at the SAME visual column == base + 2 (the marker width);
+// the labels stay at the base indent. (The two bodies' leading-cell makeup differs — the
+// user's is " │ ", the assistant's is "   " — so this asserts the VISUAL text column, not
+// a raw leading-space count.)
+func TestAssistantBodyHangsUnderLabel(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(70)
+	c := &conversation{}
+	c.addUser("user body text")
+	c.appendAssistant("assistant body text")
+	out := r.renderConversation(c, false)
+
+	wantCol := r.indent + assistantBodyHang // base + marker width
+	asstCol := bodyTextColumn(t, out, "● mecatl", 'a')
+	if asstCol != wantCol {
+		t.Errorf("assistant body text column = %d, want %d (base %d + hang %d, under \"mecatl\")", asstCol, wantCol, r.indent, assistantBodyHang)
+	}
+	userCol := bodyTextColumn(t, out, "▌ you", 'u')
+	if userCol != asstCol {
+		t.Errorf("user body text column = %d, assistant = %d — the two message bodies must align under their labels", userCol, asstCol)
+	}
+	if userCol != wantCol {
+		t.Errorf("user body text column = %d, want %d (base + marker width, under \"you\")", userCol, wantCol)
+	}
+}
+
+// TestAssistantBodyNoOverflow guards the wrap budget: the assistant body, wrapped at
+// contentWidth()-hang and then hang-indented, must never exceed the viewport width.
+func TestAssistantBodyNoOverflow(t *testing.T) {
+	r := newTestRenderer()
+	const w = 60
+	r.setWidth(w)
+	c := &conversation{}
+	c.appendAssistant(strings.Repeat("a long assistant answer that keeps going and going to force wrapping ", 6))
+	out := r.renderConversation(c, false)
+	for i, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if width := ansi.StringWidth(ansi.Strip(ln)); width > w {
+			t.Errorf("assistant body line %d width %d overflows viewport %d (wrap budget must subtract base+hang): %q", i, width, w, ansi.Strip(ln))
+		}
+	}
+}
+
+// TestToolCardNotHangIndented confirms only MESSAGE blocks (user/assistant) get the body
+// hang — a tool card stays at the base indent (its border box is not a label+body
+// message), so its first line leads with exactly the base indent, not base+hang.
+func TestToolCardNotHangIndented(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(70)
+	c := &conversation{}
+	c.addTool("call-1", "Read", `{"path":"x"}`)
+	out := r.renderConversation(c, false)
+	first := ansi.Strip(strings.Split(out, "\n")[0])
+	lead := len(first) - len(strings.TrimLeft(first, " "))
+	if lead != r.indent {
+		t.Errorf("tool card lead = %d, want %d (base indent only — NOT hang-indented)", lead, r.indent)
+	}
+}
+
+// TestInputTopSpacer pins CHANGE B: the layout carries exactly one blank spacer row
+// directly above the input region (top padding), and the body height shrinks by that one
+// row (so the spacer is accounted for, the input height-invariance holds, and convTopRow —
+// summing only the regions ABOVE the body — is unchanged).
+func TestInputTopSpacer(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-spacer-0001"})
+
+	above, below := m.chrome()
+
+	// Exactly one spacer region, height 1, sitting immediately before the input.
+	spacerIdx, inputIdx := -1, -1
+	for i, reg := range below {
+		switch reg.role {
+		case regionInputSpacer:
+			spacerIdx = i
+			if reg.height() != 1 {
+				t.Errorf("input spacer height = %d, want 1 (a single blank row)", reg.height())
+			}
+		case regionInput:
+			inputIdx = i
+		}
+	}
+	if spacerIdx < 0 {
+		t.Fatal("no regionInputSpacer in the layout below-body regions")
+	}
+	if inputIdx != spacerIdx+1 {
+		t.Errorf("input spacer at %d, input at %d — the spacer must sit DIRECTLY above the input", spacerIdx, inputIdx)
+	}
+
+	// Body height = total - above - below; the spacer is in `below`, so the body shrank
+	// by its one row. Confirm the sums are self-consistent and the body is positive.
+	bodyH := m.height - sumHeight(above) - sumHeight(below)
+	if bodyH != m.vp.Height() {
+		t.Errorf("vp height %d != computed body height %d (relayout must subtract the spacer)", m.vp.Height(), bodyH)
+	}
+	// convTopRow (regions above the body) is unaffected by a below-body spacer.
+	if got, want := convTopRow(m), sumHeight(above); got != want {
+		t.Errorf("convTopRow = %d, want %d (above-body height; the spacer is below and must not shift it)", got, want)
+	}
+}

@@ -256,7 +256,9 @@ func TestConvTopRowTracksWrappedHeader(t *testing.T) {
 // both cases and asserts the wrapped vpH is strictly LESS — proving the measured
 // height actually flows into sizing (not a no-op).
 func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
-	const taH, footerH, totalH = 4, 2, 30
+	// taH=4 (input region), footerH=2, spacerH=1 (the input top-padding row). The body is
+	// total minus header + spacer + input + footer.
+	const taH, footerH, spacerH, totalH = 4, 2, 1, 30
 
 	// Wrapping case: long deps at a narrow width.
 	m, _ := selModel(t)
@@ -269,15 +271,15 @@ func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
 	if wrappedHeader <= 2 {
 		t.Fatalf("PRECONDITION: header did not wrap (%d rows); sizing test would be vacuous", wrappedHeader)
 	}
-	if got, want := m.vp.Height(), m.height-taH-footerH-wrappedHeader; got != want {
-		t.Errorf("wrapped vpH = %d, want %d (height - %d - %d - measured header)", got, want, taH, footerH)
+	if got, want := m.vp.Height(), m.height-taH-footerH-spacerH-wrappedHeader; got != want {
+		t.Errorf("wrapped vpH = %d, want %d (height - %d - %d - %d - measured header)", got, want, taH, footerH, spacerH)
 	}
 
 	// Non-wrapping steady state: same total height at width 100, header is 2 rows.
 	m2, _ := selModel(t)
 	mm2, _ := m2.onResize(tea.WindowSizeMsg{Width: 100, Height: totalH})
 	m2 = mm2.(Model)
-	if got, want := m2.vp.Height(), m2.height-taH-footerH-2; got != want {
+	if got, want := m2.vp.Height(), m2.height-taH-footerH-spacerH-2; got != want {
 		t.Errorf("steady-state vpH = %d, want %d (header == 2 rows)", got, want)
 	}
 
@@ -599,10 +601,10 @@ func TestDragReSplicesAfterDeltaUsesFreshBase(t *testing.T) {
 		t.Fatalf("answer line %d not on screen (YOffset=%d top=%d h=%d)", answerIdx, m.vp.YOffset(), top, m.vp.Height())
 	}
 
-	// Anchor on the answer line, at the first real glyph past the left-margin indent
-	// (so the selection open SGR sits immediately before the marker text, not before
-	// the indent space).
-	m, _ = pressMouse(m, tea.MouseLeft, defaultBlockIndent, y)
+	// Anchor on the answer line, at the first real glyph past the assistant body margin
+	// (base indent + body hang) so the selection open SGR sits immediately before the
+	// marker text, not before the leading margin spaces.
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset, y)
 	if !m.sel.active {
 		t.Fatal("press should activate a selection on the answer line")
 	}
@@ -839,10 +841,10 @@ func TestRightClickDoesNotAdvanceClickCount(t *testing.T) {
 
 	// Build a REAL (non-empty) selection via press+drag so the right-click has
 	// something to copy. The drag invalidates the multi-click sequence (clickCount→0)
-	// while leaving an active span. The press/motion X are offset by the left-margin
-	// indent so the span covers "hello" (the real text), not the margin space.
-	m, _ = pressMouse(m, tea.MouseLeft, defaultBlockIndent, y)
-	m, _ = motionMouse(m, 5+defaultBlockIndent, y) // select "hello"
+	// while leaving an active span. The press/motion X are offset by the assistant body
+	// margin so the span covers "hello" (the real text), not the leading margin.
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset, y)
+	m, _ = motionMouse(m, convBodyXOffset+5, y) // select "hello"
 	if !m.sel.active || m.sel.empty() {
 		t.Fatal("precondition: press+drag should leave a non-empty selection")
 	}
@@ -2074,6 +2076,12 @@ func convModel(t *testing.T, line string) (Model, int, int) {
 	return m, idx, y
 }
 
+// convBodyXOffset is the screen-X offset of the ASSISTANT body text in a convModel
+// render: the base block indent plus the assistant body hang (the body hangs under
+// "mecatl"). For an ASCII assistant line, screen x == convBodyXOffset + grapheme column
+// in the raw line — so a click on raw-column k is at screen x convBodyXOffset+k.
+const convBodyXOffset = defaultBlockIndent + assistantBodyHang
+
 // setColContent sets raw viewport content for the cases that do NOT trigger a
 // copy-driven refreshView (empty/no-copy selections): a successful copy calls
 // refreshView, which rebuilds the viewport from the CONVERSATION and would clobber
@@ -2134,9 +2142,10 @@ func TestWordAtWordChars(t *testing.T) {
 // dependence; this is why the test is ~0.00s).
 func TestDoubleClickSelectsWord(t *testing.T) {
 	m, _, y := convModel(t, "hello world after")
-	// "world" starts at grapheme col 6; click mid-word at col 7 (== screen x for ASCII).
-	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
-	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
+	// "world" starts at raw grapheme col 6; click mid-word at raw col 7, i.e. screen x
+	// convBodyXOffset+7 (the assistant body hangs under "mecatl").
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+7, y)
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+7, y)
 
 	if !m.sel.active {
 		t.Fatal("double-click should leave an active selection")
@@ -2157,14 +2166,15 @@ func TestTripleClickSelectsLine(t *testing.T) {
 	m, idx, y := convModel(t, "hello world here")
 	stripped := ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[idx])
 
-	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
-	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
-	m, _ = pressMouse(m, tea.MouseLeft, 7, y)
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+7, y)
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+7, y)
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+7, y)
 
-	// Triple-click selects the line's CONTENT past the left-margin indent — so the
-	// anchor is at the indent column, not 0, and the selected text excludes the margin.
-	if m.sel.anchorC != defaultBlockIndent {
-		t.Errorf("triple-click anchorC = %d, want %d (past the left-margin indent)", m.sel.anchorC, defaultBlockIndent)
+	// Triple-click selects the line's CONTENT past the leading whitespace margin (base
+	// indent + the assistant body hang) — so the anchor is at the first real glyph, not
+	// 0, and the selected text excludes the margin.
+	if m.sel.anchorC != convBodyXOffset {
+		t.Errorf("triple-click anchorC = %d, want %d (past the left margin + body hang)", m.sel.anchorC, convBodyXOffset)
 	}
 	if want := graphemeCount(stripped); m.sel.headC != want {
 		t.Errorf("triple-click headC = %d, want graphemeCount %d", m.sel.headC, want)
@@ -2269,17 +2279,18 @@ func TestClickDisarmResetsCount(t *testing.T) {
 
 // TestDoubleClickOnWhitespaceSelectsSpaceRun: a double-click on whitespace selects
 // the whitespace run (assert on the column span width, since selectedText trims
-// trailing spaces). The conversation left-margin indent (defaultBlockIndent) shifts the
-// content right, so the four-space run's ABSOLUTE columns are offset by the indent — the
-// run WIDTH is what matters and is indent-independent.
+// trailing spaces). The assistant body margin (convBodyXOffset = base indent + body hang)
+// shifts the content right, so the four-space run's ABSOLUTE columns are offset by it —
+// the run WIDTH is what matters and is margin-independent.
 func TestDoubleClickOnWhitespaceSelectsSpaceRun(t *testing.T) {
-	// "ab    cd": four spaces; with the 1-col indent the run sits at content cols 3..6
-	// (2..5 + indent). A whitespace payload trims to "" so the click copies nothing and
-	// does NOT refreshView — the selection geometry persists.
+	// "ab    cd": four spaces at raw cols 2..5; with the assistant body margin the run
+	// sits at content cols (2+convBodyXOffset)..(5+convBodyXOffset). A whitespace payload
+	// trims to "" so the click copies nothing and does NOT refreshView — the geometry
+	// persists.
 	m, _, y := convModel(t, "ab    cd")
 
-	m, _ = pressMouse(m, tea.MouseLeft, 3+defaultBlockIndent, y) // inside the space run
-	m, _ = pressMouse(m, tea.MouseLeft, 3+defaultBlockIndent, y)
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+3, y) // inside the space run
+	m, _ = pressMouse(m, tea.MouseLeft, convBodyXOffset+3, y)
 
 	if !m.sel.active {
 		t.Fatal("double-click on whitespace should leave an active selection")
@@ -2287,7 +2298,7 @@ func TestDoubleClickOnWhitespaceSelectsSpaceRun(t *testing.T) {
 	if w := m.sel.headC - m.sel.anchorC; w != 4 {
 		t.Errorf("whitespace run width = %d, want 4", w)
 	}
-	if want := 2 + defaultBlockIndent; m.sel.anchorC != want || m.sel.headC != want+4 {
+	if want := 2 + convBodyXOffset; m.sel.anchorC != want || m.sel.headC != want+4 {
 		t.Errorf("whitespace span = [%d,%d), want [%d,%d)", m.sel.anchorC, m.sel.headC, want, want+4)
 	}
 }

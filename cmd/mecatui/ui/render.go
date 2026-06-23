@@ -309,6 +309,17 @@ type blockEntry struct {
 // exactly. The width-0 team/fleet focus renderers (bare &renderer{}) keep indent 0.
 const defaultBlockIndent = 1
 
+// assistantBodyHang is the extra left indent (cells) the assistant MESSAGE body hangs
+// under its "● mecatl" label, so the body text sits under "mecatl" rather than flush
+// under the "●" bullet — matching the user block, whose gold rail + PaddingLeft(1)
+// already lands its body under "you". It equals the label marker width
+// lipgloss.Width("● ") = 2. Applied ON TOP of the base block indent (renderBlock), to
+// the body ONLY (reasoning summary + markdown answer) — never the label, and never the
+// non-message blocks (tool cards / notices / turn-stats / errors). The assistant
+// markdown wrap budget subtracts it (see markdown) so a wrapped body line + base +
+// hang never exceeds r.width.
+const assistantBodyHang = 2
+
 // newRenderer builds a renderer for a theme.
 func newRenderer(th theme.Theme) *renderer {
 	return &renderer{
@@ -341,12 +352,21 @@ func (r *renderer) contentWidth() int {
 // `indent` field doc). indent 0 (a bare/width-0 renderer) returns s unchanged with no
 // allocation. Blank lines are indented too, so a multi-row block's left edge is straight.
 func (r *renderer) indentLines(s string) string {
-	if r.indent <= 0 {
+	return padLines(s, r.indent)
+}
+
+// padLines prefixes every line of s (including blank lines, so a multi-row block's left
+// edge stays straight) with n spaces. n <= 0 returns s unchanged with no allocation. It
+// is the shared core of the base indent (indentLines) and the assistant body hang (the
+// assistantBodyHang applied in the blockAssistant arm). The prefixed spaces are real
+// content cells, so the selection x-mapping stays identity.
+func padLines(s string, n int) string {
+	if n <= 0 {
 		return s
 	}
-	pad := strings.Repeat(" ", r.indent)
+	pad := strings.Repeat(" ", n)
 	var b strings.Builder
-	b.Grow(len(s) + r.indent*(strings.Count(s, "\n")+1))
+	b.Grow(len(s) + n*(strings.Count(s, "\n")+1))
 	for i, line := range strings.Split(s, "\n") {
 		if i > 0 {
 			b.WriteByte('\n')
@@ -439,9 +459,14 @@ func (r *renderer) markdown(src string) string {
 	// below the markdownAt memo (which keys on the original src), so the memo stays
 	// consistent.
 	src = normalizeEmojiWidth(src)
-	// Lay out against the CONTENT width (viewport minus the left indent), so the glamour
-	// body still fits after renderBlock prefixes each line with `indent` spaces.
-	w := r.contentWidth()
+	// Lay out against the CONTENT width (viewport minus the left indent) MINUS the
+	// assistant body hang, so the glamour body still fits after renderBlock prefixes each
+	// line with `indent` spaces AND the blockAssistant arm hang-indents it by
+	// assistantBodyHang to sit under "mecatl". markdown/markdownAt are the assistant
+	// body's render path only (no other caller), so baking the hang in here keeps it the
+	// single budget source. A width-0 bare renderer (no indent, contentWidth==r.width)
+	// still floors at 80 below.
+	w := r.contentWidth() - assistantBodyHang
 	if w <= 0 {
 		w = 80
 	}
@@ -929,12 +954,16 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 		// Assistant text is rendered through glamour, which neutralises escape
 		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
 		// reasoning summary (if any) renders dim and collapsed ABOVE the answer.
+		// The label "● mecatl" stays at the base indent; the BODY (reasoning summary +
+		// markdown answer) hangs by assistantBodyHang so it sits under "mecatl" — matching
+		// the user block's body-under-"you" alignment. The markdown was already wrapped at
+		// contentWidth()-hang (see markdown), so hang + base never overflows r.width.
 		label := r.th.Style("assistantLabel").Render("● mecatl")
 		out := label
 		if reasoning := r.renderReasoning(b, expand); reasoning != "" {
-			out += "\n" + reasoning
+			out += "\n" + padLines(reasoning, assistantBodyHang)
 		}
-		return out + "\n" + r.markdownAt(idx, b.raw)
+		return out + "\n" + padLines(r.markdownAt(idx, b.raw), assistantBodyHang)
 	case blockTool:
 		return r.renderTool(b, expand)
 	case blockNotice:

@@ -580,10 +580,12 @@ footer.
 is scannable: a **user** turn is labelled **`▌ you`** with a gold left rail (no background
 tint — the faint panel tint belongs only to the input box, never the conversation history);
 an **assistant** turn is labelled **`● mecatl`** and renders rail-less (its markdown body
-carries the weight). The whole conversation history is indented one column so it aligns with
-the 1-col-padded header/footer chrome instead of sitting flush at the terminal's left edge,
-and turns are separated by a clear blank-line gap so user and assistant messages read as
-distinct blocks. **Tool cards** are capped at 100 columns on a wide terminal — past that the card
+carries the weight). Each turn's body **hangs under its label** — the message text aligns
+under "you" / "mecatl", not under the bullet — so a turn reads as a labelled block. The whole
+conversation history is indented one column so it aligns with the 1-col-padded header/footer
+chrome instead of sitting flush at the terminal's left edge, and turns are separated by a
+clear blank-line gap so user and assistant messages read as distinct blocks. **Tool cards**
+are capped at 100 columns on a wide terminal — past that the card
 stops growing with the viewport so a long line stays at a readable measure — while on a narrow
 terminal the card never exceeds the viewport. **Inline `code` spans** in assistant markdown are
 de-emphasised (a receding, faint monospace span over the element background) so prose around an
@@ -594,7 +596,8 @@ panel tint — the same accent the `mode` segment uses (default accent / `plan` 
 `accept-edits` success), so the input's permission-mode cue reads at a glance. The rail is a
 single-column left border (it adds NO rows, so the viewport sizing is unaffected); the rail
 border stays mode-coloured at full strength as a persistent mode cue, while the textarea's
-inner prompt / line-number dim when the input is blurred.
+inner prompt / line-number dim when the input is blurred. One blank row of top padding sits
+directly above the input so it isn't jammed against the conversation history.
 
 **Header bar.** `mecatui · session <id> · <model> · [next: <model>] · mode <mode> · <server>`.
 The **mode segment** shows the server-confirmed permission posture for the current session;

@@ -44,9 +44,18 @@ const (
 	regionPalette
 	regionMention
 	regionQueue
+	// regionInputSpacer is a single blank row directly ABOVE the input box, so the input
+	// isn't jammed against the conversation/transient area. It sits in the `below` slice
+	// (consumed by relayout's body-height subtraction), so the body shrinks by its one
+	// row; convTopRow (which sums only the regions ABOVE the body) is unaffected.
+	regionInputSpacer
 	regionInput
 	regionFooter
 )
+
+// inputSpacerRow is the content of regionInputSpacer: a single blank row
+// (lipgloss.Height("") == 1) giving the input box one row of top padding.
+const inputSpacerRow = ""
 
 // region is one rendered vertical slice of the frame: its role and the exact styled
 // string View() will place at that slot. height() is its on-screen row count.
@@ -111,6 +120,8 @@ func (m Model) chrome() (above, below []region) {
 		below = append(below, region{role: regionQueue, content: q})
 	}
 	below = append(below,
+		// One blank row of top padding so the input box isn't jammed against the history.
+		region{role: regionInputSpacer, content: inputSpacerRow},
 		region{role: regionInput, content: m.renderInput()},
 		region{role: regionFooter, content: m.renderFooter()},
 	)
