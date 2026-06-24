@@ -1,0 +1,299 @@
+## 6. Configuration
+
+### Scaffolding a settings file (`config init`)
+
+The operator-tier config lives at `<XDG_CONFIG_HOME>/mecatl/settings.yaml`
+(default `~/.config/mecatl/settings.yaml`). To scaffold a fully-commented
+skeleton with every subtree and its exact enable semantics:
+
+```console
+$ mecated config init            # writes ~/.config/mecatl/settings.yaml (refuses if it exists)
+$ mecated config init --print    # print the skeleton to stdout, write nothing
+$ mecated config init --force    # overwrite an existing file
+```
+
+For the exhaustive, auto-generated key/type/default/tier table, see the
+[configuration reference](../configuration-reference.md). The inline examples in
+this guide are illustrative; the reference page is the complete source of truth
+(generated from the schema, so it never drifts).
+
+### Workspace
+
+`--workspace` (server-wide default) and the per-session `workspace` field set
+the root all file/command tools operate against. The server builds an `osfs`
+workspace rooted there. A root that cannot be opened yields a nil workspace;
+tool calls then return readable errors the model can act on.
+
+### Model
+
+`--model` (empty by default — the selected provider's own default is used:
+`gpt-5` for OpenAI, `openai/gpt-5` for OpenRouter, `claude-sonnet-4-6` for
+Anthropic) is the identifier sent to the provider and stamped into the
+system-prompt env. Pass **strings** for forward-compatibility and for
+compatible endpoints.
+
+### Session store
+
+| `--store-dir` | Store | Behaviour |
+| --- | --- | --- |
+| empty (default) | in-memory (`memstore`) | nothing persists across restarts |
+| set to a dir | JSONL replay (`jsonlstore`) | snapshots + tool-call log on disk |
+
+The JSONL store writes three files per session under `--store-dir`:
+
+```
+<dir>/<id>.session.jsonl   # one snapshot per Save (latest line wins)
+<dir>/<id>.tools.jsonl     # one record per tool call (call, result, duration)
+<dir>/<id>.events.jsonl    # the relayed event timeline (reasoning, ask/verdict, delegation)
+```
+
+> **Privacy:** the durable store holds the **raw conversation** — prompts, model
+> output, and tool arguments/results — in **plaintext** on disk. The store
+> directory is created mode `0700` (owner-only). `mecated` keeps the store **off**
+> by default (empty `--store-dir` → in-memory); `mecatui` defaults it **on** at a
+> per-workspace directory under `$XDG_STATE_HOME/mecatui/sessions` (see
+> [the TUI guide](../tui.md)), so a session survives restart and can be inspected
+> after the fact.
+
+Persisted sessions are garbage-collected by a background sweep so the durable
+store does not grow without bound. **Child** sessions (`subagent-*`/`parallel-*`/
+`team-*` ids, written by the delegation paths so `InspectSubagent`/`InspectMember`/
+`resume:` work) are bounded by `--child-retention` /
+`--child-retention-max-per-family` (defaults 168h / 500). **Main** (top-level)
+sessions are bounded by `--main-retention` / `--main-retention-max-total` — **both
+off by default for `mecated`** (main sessions are then never swept), and on for
+`mecatui` (30 days / 200 store-wide). The sweep re-runs every `--child-gc-interval`
+(default 1h) and always skips an in-flight run; deleting a session removes all of
+its files.
+
+### Remote store drivers
+
+A third option points the session store (and/or the memory store) at a
+**remote driver process** speaking the `mecatl.driver.v1` gRPC protocol:
+
+```sh
+mecated --session-store-url 127.0.0.1:7443 --memory-store-url 127.0.0.1:7443
+```
+
+`--session-store-url` is mutually exclusive with `--store-dir` (and
+`--memory-store-url` with `--memory-dir`) — a fatal startup error, never a
+silent precedence. Equal URLs share one connection. The driver only ever sees
+**opaque snapshots** (the `sessnap` encoding under a `"sessnap-json/1"` format
+tag); it sits at the same trust tier as the on-disk store directory. A
+conforming driver must accept snapshot payloads up to **64 MiB** (mount the
+gRPC server with a matching receive limit; the harness client is already
+configured for it).
+
+Transport posture: **only LOCAL targets may ride plaintext** — loopback hosts
+and unix sockets (the single-user default). Any other driver target
+**requires `--driver-tls`, token or not**: the client refuses cleartext
+pre-dial, because a driver delivers session payloads, memories,
+model-steering skill bodies, and executable skill assets — an on-path
+attacker over a cleartext remote link would gain driver-equivalent
+capability regardless of auth. `--driver-auth-token` adds per-RPC bearer
+auth on top; `--driver-tls-ca` pins a custom CA;
+`--driver-tls-cert`/`--driver-tls-key` add a client certificate for mTLS.
+Setting any `--driver-tls-*` file **without** `--driver-tls` is a fatal
+startup error (it would otherwise be silently ignored). There are **no
+retries and no default deadline** on driver RPCs — a driver failure surfaces
+as the same unit failure a disk error would.
+
+### Cross-process session leasing (multi-replica single-writer)
+
+By default mecatl assumes **session affinity**: route every session to exactly
+one mecated process and never run two processes against the same session id
+concurrently. The in-process run registry enforces single-writer WITHIN a
+process, but two replicas over one shared store have no cross-process exclusion —
+last-write-wins on the JSONL store. For a deployment that cannot guarantee
+affinity (e.g. a load balancer that may reroute a session), wire a **session
+lease** so the harness enforces single-writer itself (cloud-native Phase 4):
+
+```sh
+# Single host, several mecated processes sharing one --store-dir:
+mecated --store-dir /var/lib/mecatl/store --session-lease-dir /var/lib/mecatl/leases
+
+# In-cluster multi-replica (coordination.k8s.io Lease per session):
+mecated --session-store-url store-driver:7443 --session-lease-k8s-namespace mecatl
+
+# Or a dedicated lease driver, independent of the store:
+mecated --session-store-url store-driver:7443 --session-lease-url lease-driver:7443
+```
+
+When a lease is wired, the run-entry path acquires a per-session lease before
+driving the engine. A second replica's run-start (or approve-resume) for a
+session another replica holds is **refused with HTTP 409 Conflict** (gRPC
+`FAILED_PRECONDITION`); the lease is held for the session's life, renewed in the
+background (`--session-lease-renew-interval`, default `--session-lease-ttl`/3),
+and released on session end / shutdown. A crashed holder's lease lapses after
+`--session-lease-ttl` (or, for the flock backend, releases immediately on process
+death), after which a survivor takes over. Losing the lease mid-run cancels the
+run cleanly (recoverable). The three backends are **mutually exclusive**; empty =
+no leasing (the byte-identical default).
+
+- **`--session-lease-dir` (flock):** SINGLE-HOST only. Several mecated processes
+  on ONE machine sharing the dir contend via `flock(2)`, with free crash recovery
+  (the OS releases a dead process's lock). NOT safe across hosts (flock semantics
+  over NFS/EFS are unreliable) — use k8s or the driver for multi-host.
+- **`--session-lease-k8s-namespace` (Kubernetes):** the in-cluster multi-replica
+  path. Each session is a `coordination.k8s.io/v1` Lease object named
+  `mecatl-lease-<hash>` (the raw id is in the `mecatl.stacklok.com/session-id`
+  annotation). Uses in-cluster config, or the default kubeconfig out-of-cluster.
+  The pod's ServiceAccount needs this **namespace-scoped RBAC**:
+
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: mecatl-session-lease
+    namespace: mecatl
+  rules:
+    - apiGroups: ["coordination.k8s.io"]
+      resources: ["leases"]
+      verbs: ["get", "create", "update", "delete"]
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: mecatl-session-lease
+    namespace: mecatl
+  subjects:
+    - kind: ServiceAccount
+      name: mecatl            # the mecated pod's ServiceAccount
+      namespace: mecatl
+  roleRef:
+    kind: Role
+    name: mecatl-session-lease
+    apiGroup: rbac.authorization.k8s.io
+  ```
+
+  A missing RBAC verb surfaces as a hard error (a Forbidden, never a silent
+  no-lease run).
+- **`--session-lease-url` (driver):** a remote `mecatl.driver.v1.SessionLeaseService`
+  (multi-host, store-independent), sharing the same `--driver-tls`/auth posture and
+  connection cache as the store drivers above.
+
+Without an explicit backend, mecatl can also discover a lease from a session
+store that happens to implement the lease seam (type-assertion, like the
+retention seam); today's jsonlstore does not, so the no-flag default is no
+leasing. See `docs/adr/0027-cloud-native.md` Phase 4 for the full design.
+
+### Remote content-source drivers (skills + soul)
+
+The same protocol carries two **content sources**:
+
+```sh
+mecated --skill-source-url 127.0.0.1:7443 --soul-source-url 127.0.0.1:7443
+```
+
+`--skill-source-url` replaces local skills discovery entirely (mutually
+exclusive with `--skills-dir`/`--skills-conventional`). The driver's skill
+set is **snapshotted once at startup** (fatal if the driver cannot answer —
+an explicitly configured source that is down is a misconfiguration, never a
+silent no-skills run). Skills cross the wire as **logical bundles** — name,
+description, body, and payloads addressed by slash-relative logical names
+(`references/api.md`, `scripts/run.sh`) — no paths. On a skill's **first
+activation** its payloads materialize into a temporary, build-scoped **asset
+cache** (the `Base directory` the activation header advertises); a
+never-activated skill transfers zero bytes. Materialization is capped
+(16 MiB per file, 64 MiB per bundle), name-validated and containment-checked
+(an invalid bundle fails that activation with a model-addressable error,
+never a partial bundle), honors the executable bit, and the whole cache is
+removed on shutdown. **Trust:** a driver-served `SKILL.md` steers the model
+like AGENTS.md/CLAUDE.md — point this only at a driver you trust (the same
+tier as `--skills-dir`).
+
+`--soul-source-url` serves the persona from the driver instead of the local
+user soul file, occupying the **user slot** of the selection precedence (it
+shadows a project soul exactly like a present user soul; `--no-soul` and the
+`soul:apply` permission gate still apply). The driver is **probed at
+startup** (fatal if unreachable); a fault at run time degrades fail-soft to
+no fragment with a logged warning. The body is **re-validated locally**
+(byte cap, injection scan, data-fence integrity — a driver is never trusted
+to sanitize). The **drift baseline is skipped** for driver souls — the
+baseline is sidecar-file machinery for a local file you edit, while a driver
+sits behind the operator's own auth — so `--soul-strict` and
+`--approve-soul` are no-ops for this provenance (one INFO line records the
+skip).
+
+Both share the `--driver-auth-token`/`--driver-tls*` posture, and equal URLs
+share one connection with the store drivers.
+
+### Remote content-source drivers (agent definitions + slash commands)
+
+Phase C2 completes the family with two more sources on the same protocol:
+
+```sh
+mecated --agent-source-url 127.0.0.1:7443 --command-source-url 127.0.0.1:7443
+```
+
+`--agent-source-url` serves the **agent definitions** (the Subagent
+specialists / team-member roles) from the driver. Like skills, the set is
+**snapshotted once at startup** (fatal if the driver cannot answer — per-def
+child engines are built once at build time, so there is no re-fetch). It is
+mutually exclusive with explicit `--agents-dir`; the default-on
+`--agents-conventional` discovery is simply **superseded** (an INFO line
+narrates it — failing every default deployment over an ON-by-default,
+usually-inert flag would be wrong; this asymmetry vs the opt-in skills
+conventional discovery is deliberate). Defs cross the wire whole — tools,
+limits, model/provider hints, skills, hooks, scoped MCP servers — with **no
+path**: diagnostics identify a driver def as `driver: <target>`. (The
+`memory:` field — per-agent persistent memory, issue #33 — is **not** carried
+over the driver wire in v1; a driver-served def stays cold-start.) Inline MCP
+server **headers are secret-shaped** (e.g. `Authorization`): the harness
+never logs or projects them; they ride this wire only because driver dials
+refuse all non-local cleartext. The driver's claimed origin tier is ignored —
+every driver-served def is stamped `driver`. **Trust:** this is STRONGER than
+model steering — a def's `hooks:` map executes as **ungated shell on the
+harness host** (`hookexec`, every scoped lifecycle phase, no permission ask),
+strictly more capability than the skill driver, whose payloads still ride the
+permission-gated Bash path. **A compromised agent-source driver executes
+arbitrary shell on the harness host via def hooks; treat it as
+harness-equivalent infrastructure.** The build narrates every driver def that
+carries hooks (`agent def carries lifecycle hooks (harness-side shell)` —
+names only, never hook values) so the capability is visible at startup.
+
+`--command-source-url` serves **slash-command templates**. Unlike every
+other source driver it **composes instead of replacing**: the expansion
+order is file-backed commands → driver commands → MCP prompts
+(first-match-wins), so a local `<name>.md` shadows a same-named driver
+command, and the palette merges all three. It is also **live**, not a
+snapshot — the driver is consulted on every expansion and palette listing,
+matching the file expander's reads-current-files behaviour, so the command
+set may change while the server runs. The driver returns the RAW template
+(frontmatter allowed); the harness strips frontmatter and substitutes
+`$ARGUMENTS`/`$1`/`$2`… exactly as for a file command, so templates are
+portable between the two backends byte-for-byte. The driver is probed once
+at startup (fatal if unreachable); a fault at run time **fails soft** — the
+raw input passes through unchanged and the palette omits the source (a
+transient blip never aborts a run and never latches a command "missing").
+
+All four content-source drivers share the `--driver-auth-token`/
+`--driver-tls*` posture, and equal URLs share one connection.
+
+### Permission modes
+
+Set per session via `CreateSession` `mode` (HTTP `mode` string / proto
+`PermissionMode`):
+
+| Mode | Proto enum | Posture |
+| --- | --- | --- |
+| `default` | `PERMISSION_MODE_DEFAULT` | standard deny → ask → allow |
+| `plan` | `PERMISSION_MODE_PLAN` | read-only toolset; mutations hard-denied |
+| `acceptedits` | `PERMISSION_MODE_ACCEPT_EDITS` | auto-accept edits |
+
+`PERMISSION_MODE_UNSPECIFIED` (and any unknown string) defaults to `default`.
+
+### Default limits
+
+A **zero** `Limits` value disables every stop condition, so the composition root
+injects non-zero defaults for any session created without explicit limits, so a
+default session is always bounded:
+
+| Limit | Default | Disables when 0 |
+| --- | --- | --- |
+| `max_turns` | `2000` | yes |
+| `max_tool_calls` | `8000` | yes |
+| `max_consecutive_failures` | `5` | yes |
+
+Supplying **any** non-zero limit field is taken as explicit and used as-is.
+
