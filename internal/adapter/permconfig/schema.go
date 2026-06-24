@@ -239,6 +239,11 @@ type GuardrailsSection struct {
 	MinContentBytes int `yaml:"minContentBytes"`
 	// Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it).
 	Disabled bool `yaml:"disabled"`
+	// OnCheckerDown sets the global posture when the checker model is unavailable
+	// (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all
+	// rules). Per-rule failClosed overrides: failClosed:true tightens even under
+	// warn; failClosed:false (explicit) loosens even under fail. Empty = warn.
+	OnCheckerDown string `yaml:"onCheckerDown"`
 	// Rules is the guardrail rule list.
 	Rules []GuardrailRuleSpec `yaml:"rules"`
 }
@@ -256,6 +261,11 @@ type GuardrailRuleSpec struct {
 	Prompt string `yaml:"prompt"`
 	// FailClosed flips the fail-open default for enforcing modes.
 	FailClosed bool `yaml:"failClosed"`
+	// FailClosedPresent reports whether the failClosed key was explicitly set in
+	// the YAML — a bool can't distinguish "false" from "not set", so this lets the
+	// global onCheckerDown toggle distinguish a per-rule explicit opt-out from an
+	// unset rule that should inherit the global.
+	FailClosedPresent bool `yaml:"-"`
 }
 
 // UnmarshalYAML decodes the guardrails: mapping STRICTLY (issue #27): an unknown key
@@ -270,6 +280,7 @@ func (g *GuardrailsSection) strictFields() map[string]any {
 		"model":           &g.Model,
 		"minContentBytes": &g.MinContentBytes,
 		"disabled":        &g.Disabled,
+		"onCheckerDown":   &g.OnCheckerDown,
 		"rules":           &g.Rules,
 	}
 }
@@ -286,7 +297,18 @@ func (r *GuardrailRuleSpec) strictFields() map[string]any {
 
 // UnmarshalYAML decodes a guardrails rule mapping STRICTLY.
 func (r *GuardrailRuleSpec) UnmarshalYAML(node *yaml.Node) error {
-	return decodeStrictMapping(node, "guardrails.rules[]", r.strictFields())
+	if err := decodeStrictMapping(node, "guardrails.rules[]", r.strictFields()); err != nil {
+		return err
+	}
+	// Track whether failClosed was explicitly present so the global onCheckerDown
+	// toggle can distinguish a per-rule opt-out from an unset rule.
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "failClosed" {
+			r.FailClosedPresent = true
+			break
+		}
+	}
+	return nil
 }
 
 // Permissions is the three-bucket rule-spec set plus the child-scoped

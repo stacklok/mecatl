@@ -290,7 +290,7 @@ func TestCheckerErrorFailOpenByDefault(t *testing.T) {
 
 func TestCheckerErrorFailClosedWhenOptedIn(t *testing.T) {
 	chk := &fakeChecker{err: errors.New("timeout")}
-	rule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true})
+	rule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk})
 	out, _ := r.Run(context.Background(), preEvent("Bash", `{"command":"ls"}`))
 	if !out.Block {
@@ -298,7 +298,7 @@ func TestCheckerErrorFailClosedWhenOptedIn(t *testing.T) {
 	}
 
 	// And on Post, fail-closed rewrites to error (Post-Block is inert).
-	postRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock), FailClosed: true})
+	postRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	rp := New(&passInner{}, Options{Rules: []CompiledRule{postRule}, Checker: &fakeChecker{err: errors.New("x")}})
 	outp, _ := rp.Run(context.Background(), postEvent("WebFetch", "some result", false))
 	if outp.Block || len(outp.Mutated) == 0 {
@@ -306,7 +306,49 @@ func TestCheckerErrorFailClosedWhenOptedIn(t *testing.T) {
 	}
 }
 
-// sanitize with a NIL payload on an unsafe verdict → BLOCK fallback (Pre veto, Post
+// TestGlobalFailOnCheckerDown tests the global onCheckerDown:fail posture (#169):
+// ALL rules treat a checker error as unsafe (block), even without per-rule failClosed.
+func TestGlobalFailOnCheckerDown(t *testing.T) {
+	chk := &fakeChecker{err: errors.New("timeout")}
+	// Rule has NO per-rule failClosed — the global posture fills in.
+	rule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock)})
+	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, FailOnCheckerDown: true})
+	out, _ := r.Run(context.Background(), preEvent("Bash", `{"command":"ls"}`))
+	if !out.Block {
+		t.Fatalf("global onCheckerDown:fail must block on a checker error, even without per-rule failClosed; got %+v", out)
+	}
+}
+
+// TestGlobalFailOverriddenByExplicitPerRuleWarn tests that an explicit per-rule
+// failClosed:false overrides the global onCheckerDown:fail posture (#169).
+func TestGlobalFailOverriddenByExplicitPerRuleWarn(t *testing.T) {
+	diag := &capDiag{}
+	chk := &fakeChecker{err: errors.New("timeout")}
+	// Rule explicitly sets failClosed:false — it should WARN even under global fail.
+	rule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: false, FailClosedSet: true})
+	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, FailOnCheckerDown: true, Diagnostics: diag})
+	out, _ := r.Run(context.Background(), preEvent("Bash", `{"command":"ls"}`))
+	if out.Block {
+		t.Fatalf("explicit per-rule failClosed:false must override global fail and WARN (not block); got %+v", out)
+	}
+	if diag.count("checker error; content NOT inspected (fail-open)") == 0 {
+		t.Fatalf("explicit per-rule warn must produce the fail-open WARN; lines=%v", diag.lines)
+	}
+}
+
+// TestGlobalWarnWithPerRuleFailClosed tests that per-rule failClosed:true tightens
+// even under the global warn posture (the default) — the existing behaviour, now
+// pinned alongside the new global.
+func TestGlobalWarnWithPerRuleFailClosed(t *testing.T) {
+	chk := &fakeChecker{err: errors.New("timeout")}
+	rule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
+	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, FailOnCheckerDown: false})
+	out, _ := r.Run(context.Background(), preEvent("Bash", `{"command":"ls"}`))
+	if !out.Block {
+		t.Fatalf("per-rule failClosed:true must block even under global warn (the default); got %+v", out)
+	}
+}
+
 // rewrite-to-error), never letting the unsafe content through (finding 2b).
 func TestSanitizeNilPayloadFallsBackToBlock(t *testing.T) {
 	// Pre: nil sanitized → real veto.
@@ -391,7 +433,7 @@ func TestOversizedContentCheckerTimeoutFailClosed(t *testing.T) {
 	diag := &capDiag{}
 
 	// fail-closed: a checker timeout on huge content BLOCKS (Pre veto).
-	closedRule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true})
+	closedRule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	rClosed := New(&passInner{}, Options{Rules: []CompiledRule{closedRule}, Checker: &fakeChecker{err: errors.New("context deadline exceeded on huge input")}})
 	out, _ := rClosed.Run(context.Background(), preEvent("Bash", `{"command":"`+huge+`"}`))
 	if !out.Block {

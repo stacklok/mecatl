@@ -46,6 +46,10 @@ type RuleSpec struct {
 	Prompt string
 	// FailClosed flips the fail-open default for enforcing modes.
 	FailClosed bool
+	// FailClosedSet reports whether the operator explicitly set failClosed on
+	// this rule (vs the YAML default false). When false, the global onCheckerDown
+	// posture fills in; when true, the per-rule value wins over the global.
+	FailClosedSet bool
 	// Order is the rule's index in the configured list (the equal-specificity tiebreak).
 	Order int
 }
@@ -68,13 +72,14 @@ func CompileRule(spec RuleSpec) (CompiledRule, bool) {
 		return CompiledRule{}, false
 	}
 	return CompiledRule{
-		match:      match,
-		pre:        pre,
-		post:       post,
-		mode:       mode,
-		prompt:     spec.Prompt,
-		failClosed: spec.FailClosed,
-		order:      spec.Order,
+		match:         match,
+		pre:           pre,
+		post:          post,
+		mode:          mode,
+		prompt:        spec.Prompt,
+		failClosed:    spec.FailClosed,
+		failClosedSet: spec.FailClosedSet,
+		order:         spec.Order,
 	}, true
 }
 
@@ -134,6 +139,10 @@ type CompiledRule struct {
 	// on Post) instead of degrading to "no checker". A checker SAYING safe always
 	// passes regardless.
 	failClosed bool
+	// failClosedSet reports whether the operator explicitly set failClosed on this
+	// rule. When false, the global onCheckerDown posture fills in; when true, the
+	// per-rule value wins over the global.
+	failClosedSet bool
 	// order is the rule's index in the configured list, the deterministic tiebreak
 	// when two rules match with equal specificity.
 	order int

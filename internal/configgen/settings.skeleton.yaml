@@ -69,6 +69,11 @@
 #   minContentBytes: 0
 #   # Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it).
 #   disabled: false
+#   # OnCheckerDown sets the global posture when the checker model is unavailable
+#   # (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all rules).
+#   # Per-rule failClosed overrides: failClosed:true tightens even under warn;
+#   # failClosed:false (explicit) loosens even under fail. Empty = warn.
+#   onCheckerDown: ""
 #   # Rules is the guardrail rule list.
 #   rules:
 #     - match: ""

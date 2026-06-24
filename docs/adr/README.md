@@ -67,6 +67,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0049 — Remove the guardrails per-session checker call-count cap](./0049-guardrails-remove-maxchecks.md)
 - [0050 — Remove the guardrails oversized-content inspection skip](./0050-guardrails-remove-maxcontentbytes.md)
 - [0051 — Surface advisory guardrail findings to the TUI](./0051-guardrails-advisory-tui-visibility.md)
+- [0052 — Global guardrails checker-down posture toggle](./0052-guardrails-checker-down-toggle.md)
 - [0022 — Allow-all posture](./0022-allow-all-posture.md)
 - [0023 — Workspace trust](./0023-workspace-trust.md)
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*

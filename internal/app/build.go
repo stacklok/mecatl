@@ -485,6 +485,10 @@ type Config struct {
 	// GuardrailsDisabled is the master kill-switch (--guardrails=off): when true,
 	// guardrails are forced OFF regardless of model/rules config.
 	GuardrailsDisabled bool
+	// GuardrailsOnCheckerDown is the global posture when the checker model is
+	// unavailable (error/timeout): "fail" = block all rules (fail-closed); "warn"
+	// (empty/default) = fail-open. Per-rule failClosed overrides when explicitly set.
+	GuardrailsOnCheckerDown string
 
 	// ModelAliases maps a short alias (e.g. "sonnet"/"opus"/"haiku"/"fast") to a
 	// concrete provider model id. Resolved only here; the domain/agent always
@@ -798,6 +802,10 @@ type GuardrailRule struct {
 	// mode then treats the content as UNSAFE (block) instead of degrading to "no
 	// checker". A checker SAYING safe always passes regardless.
 	FailClosed bool
+	// FailClosedSet reports whether the operator explicitly set FailClosed on this
+	// rule. When false, the global GuardrailsOnCheckerDown posture fills in; when
+	// true, the per-rule value wins over the global.
+	FailClosedSet bool
 }
 
 // providerConstructor builds the port.LLMProvider for an available provider id,

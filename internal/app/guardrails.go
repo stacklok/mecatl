@@ -40,16 +40,21 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if cfg.GuardrailsMinContentBytes == 0 {
 		cfg.GuardrailsMinContentBytes = g.MinContentBytes
 	}
+	// OnCheckerDown: YAML supplies it (no flag); empty = warn (the default).
+	if cfg.GuardrailsOnCheckerDown == "" {
+		cfg.GuardrailsOnCheckerDown = strings.TrimSpace(g.OnCheckerDown)
+	}
 	// Rules: YAML is the sole source. Map the on-disk specs to app.GuardrailRule.
 	if len(cfg.GuardrailsRules) == 0 && len(g.Rules) > 0 {
 		rules := make([]GuardrailRule, 0, len(g.Rules))
 		for _, r := range g.Rules {
 			rules = append(rules, GuardrailRule{
-				Match:      r.Match,
-				Phases:     r.Phases,
-				Mode:       r.Mode,
-				Prompt:     r.Prompt,
-				FailClosed: r.FailClosed,
+				Match:         r.Match,
+				Phases:        r.Phases,
+				Mode:          r.Mode,
+				Prompt:        r.Prompt,
+				FailClosed:    r.FailClosed,
+				FailClosedSet: r.FailClosedPresent,
 			})
 		}
 		cfg.GuardrailsRules = rules
@@ -134,10 +139,11 @@ func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.L
 		return inner
 	}
 	return modelhook.New(inner, modelhook.Options{
-		Rules:           rules,
-		Checker:         checker,
-		Diagnostics:     cfg.diag(),
-		MinContentBytes: cfg.GuardrailsMinContentBytes,
+		Rules:             rules,
+		Checker:           checker,
+		Diagnostics:       cfg.diag(),
+		MinContentBytes:   cfg.GuardrailsMinContentBytes,
+		FailOnCheckerDown: strings.EqualFold(strings.TrimSpace(cfg.GuardrailsOnCheckerDown), "fail"),
 	})
 }
 
@@ -170,12 +176,13 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 		out := make([]modelhook.RuleSpec, 0, len(cfg.GuardrailsRules))
 		for i, gr := range cfg.GuardrailsRules {
 			out = append(out, modelhook.RuleSpec{
-				Match:      gr.Match,
-				Phases:     gr.Phases,
-				Mode:       gr.Mode,
-				Prompt:     gr.Prompt,
-				FailClosed: gr.FailClosed,
-				Order:      i,
+				Match:         gr.Match,
+				Phases:        gr.Phases,
+				Mode:          gr.Mode,
+				Prompt:        gr.Prompt,
+				FailClosed:    gr.FailClosed,
+				FailClosedSet: gr.FailClosedSet,
+				Order:         i,
 			})
 		}
 		return out, false

@@ -52,6 +52,7 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 | `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES guardrails (the guardrails-parity enable model). A configured model with no rules runs the default advisory set. Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
 | `guardrails.minContentBytes` | `int` | `0` | MinContentBytes skips the checker for content shorter than this. 0 = check all. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
+| `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all rules). Per-rule failClosed overrides: failClosed:true tightens even under warn; failClosed:false (explicit) loosens even under fail. Empty = warn. |
 | `guardrails.rules` | `[]guardrailrulespec` | `(absent)` | Rules is the guardrail rule list. |
 | `guardrails.rules[].match` | `string` | `(empty)` | Match is the tool-name matcher (exact / "prefix*" / "*"). |
 | `guardrails.rules[].phases` | `[]string` | `(absent)` | Phases lists "pre"/"post"; empty = both. |

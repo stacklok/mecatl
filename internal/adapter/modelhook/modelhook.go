@@ -126,6 +126,12 @@ type Runner struct {
 	// regardless of size, because secrets are short and a tiny exfiltration arg is
 	// exactly what the Pre check exists to catch. 0 checks every Post result.
 	minContentBytes int
+	// failOnCheckerDown is the global posture for checker errors/timeouts: when true,
+	// ALL rules treat a checker error as UNSAFE (block) — the operator opted into
+	// "halt rather than run unguarded". Per-rule failClosed overrides: an explicitly-
+	// set failClosed wins over the global (true tightens under warn; false loosens
+	// under fail). Default false (warn — the current behaviour).
+	failOnCheckerDown bool
 }
 
 // Options configures a Runner.
@@ -143,6 +149,10 @@ type Options struct {
 	// inspected, since a short exfiltration arg is the point of the Pre check. 0 checks
 	// every Post result.
 	MinContentBytes int
+	// FailOnCheckerDown is the global posture when the checker model is unavailable
+	// (error/timeout): true = block all rules (fail-closed); false = warn (fail-open,
+	// the default). Per-rule failClosed overrides this when explicitly set.
+	FailOnCheckerDown bool
 }
 
 // New constructs a guardrails Runner wrapping inner. When opts.Checker is nil OR no
@@ -155,12 +165,13 @@ func New(inner port.HookRunner, opts Options) *Runner {
 		diag = port.NopDiagnostics{}
 	}
 	return &Runner{
-		inner:           inner,
-		rules:           opts.Rules,
-		checker:         opts.Checker,
-		diag:            diag,
-		failures:        &failureStreak{threshold: guardrailDownThreshold},
-		minContentBytes: opts.MinContentBytes,
+		inner:             inner,
+		rules:             opts.Rules,
+		checker:           opts.Checker,
+		diag:              diag,
+		failures:          &failureStreak{threshold: guardrailDownThreshold},
+		minContentBytes:   opts.MinContentBytes,
+		failOnCheckerDown: opts.FailOnCheckerDown,
 	}
 }
 
@@ -235,13 +246,25 @@ func findingFields(ev governance.HookEvent, phase Phase, extra ...any) []any {
 // WARN so a persistently-broken checker (a continuously-unguarded surface, under
 // fail-open) cannot be lost in a per-call WARN flood. A later completed verdict
 // resets the streak (the reset lives in check()).
+//
+// The global failOnCheckerDown posture (issue #169) is a DEFAULT FLOOR: when true,
+// ALL rules fail-closed on a checker error, UNLESS the rule explicitly set
+// failClosed (failClosedSet) — an explicit per-rule value wins over the global
+// (failClosed:true tightens even under the warn default; failClosed:false loosens
+// even under the fail global). Advisory rules always fail-open regardless — an
+// advisory finding is observe-only by definition.
 func (r *Runner) onCheckerError(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent, err error) governance.HookOutcome {
 	if down, n := r.failures.fail(); down {
 		r.diag.Log(ctx, port.LevelWarn,
 			"guardrails: checker DOWN — "+itoa(n)+" consecutive checker failures; tool I/O is currently UNGUARDED on fail-open rules until the checker recovers",
 			findingFields(ev, phase, "consecutive_failures", n, "err", err.Error())...)
 	}
-	if rule.mode == ModeAdvisory || !rule.failClosed {
+	// Resolve the effective fail-closed posture: per-rule explicit wins over global.
+	effectiveFailClosed := r.failOnCheckerDown // global default
+	if rule.failClosedSet {
+		effectiveFailClosed = rule.failClosed // per-rule override
+	}
+	if rule.mode == ModeAdvisory || !effectiveFailClosed {
 		r.diag.Log(ctx, port.LevelWarn,
 			"guardrails: checker error; content NOT inspected (fail-open)",
 			findingFields(ev, phase, "mode", string(rule.mode), "err", err.Error())...)

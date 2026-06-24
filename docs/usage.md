@@ -1112,6 +1112,10 @@ guardrails:
 - **Fail-open by default** (a checker error/timeout degrades to "no checker"
   with a WARN; a sustained outage escalates to a one-time **"checker DOWN"** sticky WARN);
   **`failClosed: true`** treats a checker error as unsafe. A checker **saying safe always passes**.
+  The global **`onCheckerDown`** key (`warn` default / `fail`) sets the posture for ALL rules at
+  once — `fail` blocks every rule on a checker error; an explicit per-rule `failClosed` overrides
+  the global (`true` tightens under `warn`, `false` loosens under `fail`). See
+  [ADR 0052](adr/0052-guardrails-checker-down-toggle.md).
 - Guardrails fire on the **main loop** regardless of `--headless` (unlike the
   `--subagent-ask-reviewer`, which is headless-only). The checker engine runs
   tool-less with inert hooks and no nested reviewer — it can never re-trigger a
