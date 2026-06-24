@@ -635,6 +635,10 @@ enum HookDecision {
   HOOK_DECISION_BLOCKED = 2;
   // HOOK_DECISION_MODIFIED means the hook rewrote the action's payload.
   HOOK_DECISION_MODIFIED = 3;
+  // HOOK_DECISION_ADVISORY means the hook flagged content as a finding but did
+  // not alter the call/result (advisory guardrail). Client-visible warning,
+  // model-invisible.
+  HOOK_DECISION_ADVISORY = 4;
 }
 
 // Hook is the structured payload carried by a hook event, in addition to the

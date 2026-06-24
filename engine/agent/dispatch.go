@@ -650,6 +650,12 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PreToolUse hook returned a malformed argument mutation (ignored)",
 			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID}})
 	}
+	if outcome.Message != "" && !outcome.Block && len(outcome.Mutated) == 0 {
+		// An advisory (message-only) outcome: the call proceeds unchanged, but the
+		// hook flagged content — surface a client-visible EvHook (model-invisible).
+		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
+			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID}})
+	}
 	return c, false, "", nil
 }
 
@@ -1064,6 +1070,12 @@ func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, tu
 		}
 		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook returned a malformed result mutation (ignored)",
 			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID}})
+	}
+	if outcome.Message != "" && !outcome.Block && len(outcome.Mutated) == 0 {
+		// An advisory (message-only) outcome: the result is unchanged, but the hook
+		// flagged content — surface a client-visible EvHook (model-invisible).
+		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
+			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID}})
 	}
 	return res
 }

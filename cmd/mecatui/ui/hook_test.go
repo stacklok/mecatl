@@ -103,6 +103,39 @@ func TestRenderHookModified(t *testing.T) {
 	}
 }
 
+// TestRenderHookAdvisory asserts an advisory hook uses the "⚠" glyph and the
+// warning style — distinct from blocked (error "✗") and modified (info "✎").
+// An advisory guardrail finding flagged content but altered nothing; it is a
+// client-visible, model-invisible notice.
+func TestRenderHookAdvisory(t *testing.T) {
+	r := newTestRenderer()
+	out := stripANSIstr(renderHookBlock(r, "guardrail advisory: possible exfil in args", "PreToolUse", "mcp__github__*", string(client.HookAdvisory)))
+	if !strings.Contains(out, "⚠") {
+		t.Errorf("advisory hook should carry the ⚠ glyph, got %q", out)
+	}
+	if strings.Contains(out, "✗") {
+		t.Errorf("advisory hook must not use the error glyph, got %q", out)
+	}
+	if !strings.Contains(out, ": advisory") {
+		t.Errorf("advisory hook should render the client-owned verb, got %q", out)
+	}
+	if !strings.Contains(out, "PreToolUse") || !strings.Contains(out, "mcp__github__*") {
+		t.Errorf("advisory hook should label phase + tool, got %q", out)
+	}
+}
+
+// TestAdvisoryVsBlockedDifferStyling asserts an advisory and a blocked hook with
+// the same prose render to DIFFERENT styled output (advisory is a warning, not
+// an error).
+func TestAdvisoryVsBlockedDifferStyling(t *testing.T) {
+	r := newTestRenderer()
+	advisory := renderHookBlock(r, "same text", "PreToolUse", "Bash", string(client.HookAdvisory))
+	blocked := renderHookBlock(r, "same text", "PreToolUse", "Bash", string(client.HookBlocked))
+	if advisory == blocked {
+		t.Error("advisory and blocked hooks must render distinctly (warning vs error)")
+	}
+}
+
 // TestBlockedVsInfoHookDifferStyling asserts a blocked and an info hook with the
 // same prose render to DIFFERENT styled output (the whole point of the feature).
 func TestBlockedVsInfoHookDifferStyling(t *testing.T) {

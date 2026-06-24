@@ -299,6 +299,28 @@ func TestProjectHookModifiedWithCallID(t *testing.T) {
 	}
 }
 
+// TestProjectHookAdvisoryWithCallID asserts an advisory guardrail finding (a
+// non-blocked, non-modified hook) projects to a thought chunk — it is client-visible
+// but model-invisible, so it must NOT fail the originating tool card.
+func TestProjectHookAdvisoryWithCallID(t *testing.T) {
+	ev := session.Event{
+		Type: session.EvHook,
+		Text: "guardrail advisory: borderline content",
+		Hook: &session.HookPayload{Phase: "PostToolUse", Tool: "WebFetch", Decision: session.HookAdvisory, CallID: "call-9"},
+	}
+	got, ok := projectUpdate(ev)
+	if !ok {
+		t.Fatal("expected a projection")
+	}
+	cu, isChunk := got.(chunkUpdate)
+	if !isChunk {
+		t.Fatalf("want chunkUpdate (an advisory hook must not fail the card), got %T", got)
+	}
+	if cu.SessionUpdate != updateAgentThoughtChunk {
+		t.Errorf("sessionUpdate = %q, want thought chunk", cu.SessionUpdate)
+	}
+}
+
 // TestProjectHookPostToolUseBlockedWithCallID asserts a blocked PostToolUse hook —
 // even carrying a call id — projects to a thought chunk, NOT a failed
 // tool_call_update. PostToolUse is annotate-only (the tool already ran and its

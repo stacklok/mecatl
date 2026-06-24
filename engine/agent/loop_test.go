@@ -1231,6 +1231,74 @@ func TestPostToolUseHookNoMutationKeepsResult(t *testing.T) {
 	}
 }
 
+// advisoryHooks is a test hook runner that returns an advisory outcome
+// (Message set, no Block, no Mutated) on PreToolUse/PostToolUse — simulating
+// a modelhook advisory finding.
+type advisoryHooks struct {
+	msg string
+}
+
+func (h *advisoryHooks) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+	if ev.Phase == governance.PhasePreToolUse || ev.Phase == governance.PhasePostToolUse {
+		return governance.HookOutcome{Message: h.msg}, nil
+	}
+	return governance.HookOutcome{}, nil
+}
+
+// TestAdvisoryHookEmitsEvHookAndLeavesResultUnchanged asserts that an advisory
+// hook outcome (Message set, no Block, no Mutated) emits an EvHook with
+// HookAdvisory decision AND leaves the tool result byte-unchanged
+// (model-invisible). This is the core invariant of #170: client-visible,
+// model-invisible.
+func TestAdvisoryHookEmitsEvHookAndLeavesResultUnchanged(t *testing.T) {
+	tl := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "original output"), nil
+		}}
+	hooks := &advisoryHooks{msg: "guardrail advisory: possible injection"}
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("c1", "Read", `{"path":"a"}`)),
+		mockllm.TextTurn("done"),
+	)
+	sess := newSession(t, session.Limits{})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	evs := drain(r)
+
+	// 1. An EvHook with HookAdvisory was emitted.
+	var advisoryEv *session.Event
+	for i, ev := range evs {
+		if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Decision == session.HookAdvisory {
+			advisoryEv = &evs[i]
+			break
+		}
+	}
+	if advisoryEv == nil {
+		t.Fatalf("expected an EvHook with HookAdvisory decision; events: %v", eventTypes(evs))
+	}
+	if !strings.Contains(advisoryEv.Text, "advisory") {
+		t.Errorf("advisory EvHook text = %q, want to contain 'advisory'", advisoryEv.Text)
+	}
+
+	// 2. The tool result is byte-unchanged (model-invisible).
+	recRes := recordedToolResult(sess)
+	if recRes == nil || recRes.Content != "original output" || recRes.IsError {
+		t.Fatalf("recorded result = %+v, want unchanged 'original output' (model-invisible)", recRes)
+	}
+	evRes := toolResultEvent(evs)
+	if evRes == nil || evRes.Content != "original output" || evRes.IsError {
+		t.Fatalf("event result = %+v, want unchanged 'original output' (client sees the same)", evRes)
+	}
+}
+
+func eventTypes(evs []session.Event) []string {
+	out := make([]string, len(evs))
+	for i, ev := range evs {
+		out[i] = string(ev.Type)
+	}
+	return out
+}
+
 // TestUnknownToolError confirms an unknown tool yields an error result, not a
 // crash, and the loop keeps going.
 func TestUnknownToolError(t *testing.T) {

@@ -1,6 +1,7 @@
 # ADR 0021 — Guardrails: LLM-backed tool-content inspection
 
 - Status: Accepted
+- Superseded by: [ADR 0049](./0049-guardrails-remove-maxchecks.md) (the maxChecks cost-cap clause) and [ADR 0051](./0051-guardrails-advisory-tui-visibility.md) (the advisory-visibility clause)
 - Date: 2026-06-03
 - Scope: operator-tier content inspection of tool arguments (outbound) and tool results (inbound) via a separate checker model; enforcement modes, cost controls, and recursion guard
 

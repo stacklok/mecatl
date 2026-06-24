@@ -376,6 +376,8 @@ func hookDecisionToProto(d session.HookDecision) mecatlv1.HookDecision {
 		return mecatlv1.HookDecision_HOOK_DECISION_BLOCKED
 	case session.HookModified:
 		return mecatlv1.HookDecision_HOOK_DECISION_MODIFIED
+	case session.HookAdvisory:
+		return mecatlv1.HookDecision_HOOK_DECISION_ADVISORY
 	case session.HookInfo:
 		return mecatlv1.HookDecision_HOOK_DECISION_INFO
 	default:

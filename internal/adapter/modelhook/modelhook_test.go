@@ -154,8 +154,10 @@ func TestEnforceSanitizePostRewritesResult(t *testing.T) {
 	}
 }
 
-// (5) ADVISORY → result byte-unchanged (no Block, no Mutated). The diagnostic side
-// effect is asserted by the integration test; here we assert non-alteration.
+// (5) ADVISORY → result byte-unchanged (no Block, no Mutated), BUT the outcome now
+// carries a client-visible Message (the loop surfaces a HookAdvisory EvHook from
+// it). The diagnostic side effect is asserted by the integration test; here we
+// assert non-alteration + the message.
 func TestAdvisoryDoesNotAlter(t *testing.T) {
 	chk := &fakeChecker{verdict: unsafe("suspicious but advisory")}
 	rule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeAdvisory)})
@@ -168,8 +170,37 @@ func TestAdvisoryDoesNotAlter(t *testing.T) {
 	if out.Block || len(out.Mutated) != 0 {
 		t.Fatalf("advisory must not alter the result, got %+v", out)
 	}
+	if out.Message == "" {
+		t.Fatalf("advisory must carry a client-visible Message (the loop emits a HookAdvisory EvHook from it), got empty")
+	}
+	if !strings.Contains(out.Message, "guardrail advisory") {
+		t.Fatalf("advisory message should be the guardrail-advisory notice, got %q", out.Message)
+	}
+	if !strings.Contains(out.Message, "suspicious but advisory") {
+		t.Fatalf("advisory message should carry the (clamped) reason, got %q", out.Message)
+	}
 	if chk.calls != 1 {
 		t.Fatalf("advisory still runs the checker; calls=%d", chk.calls)
+	}
+}
+
+// TestAdvisoryOutcomeSurvivesMerge asserts an advisory (message-only) outcome
+// survives the multi-runner merge with a zero inner: the merged outcome keeps the
+// advisory Message, stays non-blocking, and carries no mutation (model-invisible).
+func TestAdvisoryOutcomeSurvivesMerge(t *testing.T) {
+	chk := &fakeChecker{verdict: unsafe("borderline")}
+	rule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeAdvisory)})
+	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk})
+
+	out, _ := r.Run(context.Background(), postEvent("WebFetch", "borderline content", false))
+	if out.Block {
+		t.Fatalf("advisory merge must not block, got %+v", out)
+	}
+	if len(out.Mutated) != 0 {
+		t.Fatalf("advisory merge must not mutate (model-invisible), got %s", out.Mutated)
+	}
+	if out.Message == "" || !strings.Contains(out.Message, "guardrail advisory") {
+		t.Fatalf("advisory merge must keep the client-visible Message, got %q", out.Message)
 	}
 }
 

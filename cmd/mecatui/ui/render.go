@@ -1105,6 +1105,11 @@ func (r *renderer) renderHook(b *block) string {
 	case string(client.HookModified):
 		// Modified: info-coloured "✎" — an action was rewritten, notable but benign.
 		return r.wrapPrefixed("✎ ", label+": modified"+hookReason(b.raw, b.hookPhase), r.th.Style("hookModified"))
+	case string(client.HookAdvisory):
+		// Advisory: warning-coloured "⚠" — a guardrail flagged content but did not
+		// alter the call/result (client-visible, model-invisible). Reads as a
+		// warning notice, distinct from the benign info/modified and the error block.
+		return r.wrapPrefixed("⚠ ", label+": advisory"+hookReason(b.raw, b.hookPhase), r.th.Style("hookAdvisory"))
 	default:
 		// Info (the baseline): dim "•" hook notice — the server Text is the body.
 		line := label

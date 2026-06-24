@@ -259,11 +259,13 @@ func (r *Runner) enforce(ctx context.Context, phase Phase, rule CompiledRule, ev
 	reason := strings.TrimSpace(v.Reason)
 	switch rule.mode {
 	case ModeAdvisory:
-		// Observe only: an operator diagnostic, the call/result byte-unchanged.
+		// Observe only: an operator diagnostic + a client-visible EvHook (the
+		// loop surfaces a HookAdvisory notice from outcome.Message), but the
+		// call/result is byte-unchanged (model-invisible).
 		r.diag.Log(ctx, port.LevelInfo,
 			"guardrails: advisory finding (content NOT altered)",
 			findingFields(ev, phase, "reason", clamp(reason))...)
-		return governance.HookOutcome{}
+		return governance.HookOutcome{Message: advisoryMessage(reason)}
 	case ModeSanitize:
 		return r.sanitizeOutcome(ctx, phase, ev, reason, v)
 	default: // ModeBlock
@@ -320,6 +322,17 @@ func (r *Runner) sanitizeOutcome(ctx context.Context, phase Phase, ev governance
 	// Post: prepend a visible redaction marker so the model adapts (it may otherwise
 	// cite a removed hole as if present).
 	return mutateOutcome(phase, ev.Tool, guardrailRedactionMarker+"\n"+sanitized, false)
+}
+
+// advisoryMessage builds the client-visible EvHook text for an advisory finding:
+// a stable "guardrail advisory" prefix plus the (clamped) checker reason. The
+// loop emits the EvHook from outcome.Message; the call/result itself is unchanged.
+func advisoryMessage(reason string) string {
+	msg := "guardrail advisory"
+	if r := strings.TrimSpace(reason); r != "" {
+		msg += ": " + clamp(r)
+	}
+	return msg
 }
 
 // blockOutcome produces the enforcing-BLOCK outcome for a phase. On Pre it is a real

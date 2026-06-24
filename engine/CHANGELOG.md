@@ -13,6 +13,16 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`session.HookAdvisory`.** A new `HookDecision` value (`"advisory"`) for an
+  `EvHook` carrying an advisory guardrail finding — client-visible (rendered as
+  a warning notice), model-invisible (the tool result is byte-unchanged). The
+  advisory arm of `modelhook.enforce` now returns a `HookOutcome{Message:...}`
+  (instead of an empty outcome), and dispatch recognises the
+  `Message!="" && !Block && len(Mutated)==0` shape as an advisory outcome,
+  emitting an `EvHook` with `HookAdvisory`. Classified Added per
+  COMPATIBILITY.md (a new exported const + a new wire `HookDecision` enum
+  value). (#170)
+
 - **`agent.WithAgentModelEngineFactory`.** A new `SubagentOption` injecting a
   composition-supplied factory `func(agentName, model string) (*Engine, bool)`
   that rebuilds a named specialist's scoped engine on a per-call override model,

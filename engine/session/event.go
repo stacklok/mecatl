@@ -234,6 +234,12 @@ const (
 	// HookModified means the hook rewrote the action's payload (prompt rewrite,
 	// tool-arg or tool-result mutation) without blocking it.
 	HookModified HookDecision = "modified"
+	// HookAdvisory means the hook flagged the content as a finding but did NOT
+	// alter the call/result (advisory-mode guardrail). It is client-visible
+	// (rendered as a warning notice on the tool card) and model-invisible: the
+	// tool result is byte-unchanged. Distinct from HookInfo (a generic benign
+	// notice) and HookBlocked/HookModified (which change the outcome).
+	HookAdvisory HookDecision = "advisory"
 )
 
 // HookPayload is the structured detail carried by an EvHook Event, in addition

@@ -98,12 +98,15 @@ const (
 	HookBlocked HookDecision = "blocked"
 	// HookModified means the hook rewrote the action's payload without blocking.
 	HookModified HookDecision = "modified"
+	// HookAdvisory means the hook flagged content as a finding but did NOT alter
+	// the call/result (advisory guardrail). Client-visible warning, model-invisible.
+	HookAdvisory HookDecision = "advisory"
 )
 
 // HookMsg is an inline hook notice. Beyond the human-readable Text it carries the
 // structured Phase (lifecycle point, e.g. "PreToolUse"), the related Tool (for
-// per-tool phases), and the Decision (info/blocked/modified) so the ui can render
-// it distinctly from a compaction notice and colour a blocked hook.
+// per-tool phases), and the Decision (info/blocked/modified/advisory) so the ui can
+// render it distinctly from a compaction notice and colour a blocked or advisory hook.
 type HookMsg struct {
 	Text     string
 	Phase    string
@@ -409,6 +412,8 @@ func hookDecisionFrom(d mecatlv1.HookDecision) HookDecision {
 		return HookBlocked
 	case mecatlv1.HookDecision_HOOK_DECISION_MODIFIED:
 		return HookModified
+	case mecatlv1.HookDecision_HOOK_DECISION_ADVISORY:
+		return HookAdvisory
 	default:
 		return HookInfo
 	}

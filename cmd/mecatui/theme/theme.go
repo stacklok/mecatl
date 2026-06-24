@@ -381,6 +381,14 @@ func (t *Theme) compile() {
 		"hookModified": lipgloss.NewStyle().
 			Foreground(col(p.Info)),
 
+		// Hook notice — "advisory" outcome: warning-coloured + bold (an advisory
+		// guardrail finding — client-visible, model-invisible; distinct from the
+		// muted info notice, the info-coloured modified notice, and the error-
+		// coloured blocked notice). Reuses the palette Warning slot.
+		"hookAdvisory": lipgloss.NewStyle().
+			Foreground(col(p.Warning)).
+			Bold(true),
+
 		// Unified-diff slots for Edit/Write tool cards: added lines green,
 		// removed lines red, meta (path / "replace all") muted. Reuses the
 		// status palette so a new theme restyles diffs for free.

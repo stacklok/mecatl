@@ -1108,7 +1108,7 @@ guardrails:
   marker so the model knows it was edited. **Sanitize trusts the checker's output**
   (a compromised checker could rewrite content): use it only with a trusted checker
   model; an unsafe verdict with no/oversized/invalid rewrite falls back to a block.
-- **`advisory`** only logs an operator diagnostic (correlatable; client/model see nothing).
+- **`advisory`** logs an operator diagnostic AND emits a client-visible `EvHook` advisory notice (⚠, warning-coloured, on the tool card); the model still sees nothing (the call/result is byte-unchanged). See [ADR 0051](adr/0051-guardrails-advisory-tui-visibility.md).
 - **Fail-open by default** (a checker error/timeout degrades to "no checker"
   with a WARN; a sustained outage escalates to a one-time **"checker DOWN"** sticky WARN);
   **`failClosed: true`** treats a checker error as unsafe. A checker **saying safe always passes**.

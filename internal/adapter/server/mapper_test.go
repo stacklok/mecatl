@@ -149,6 +149,18 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
+			name: "hook advisory",
+			in: session.Event{Type: session.EvHook, Seq: 8, Turn: 1, Text: "guardrail advisory: borderline",
+				Hook: &session.HookPayload{Phase: "PostToolUse", Tool: "WebFetch", Decision: session.HookAdvisory, CallID: "call-8"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				h := got.GetHook()
+				if h == nil || h.GetDecision() != mecatlv1.HookDecision_HOOK_DECISION_ADVISORY ||
+					h.GetPhase() != "PostToolUse" || h.GetTool() != "WebFetch" || h.GetCallId() != "call-8" {
+					t.Fatalf("advisory hook payload mismatch: %+v", h)
+				}
+			},
+		},
+		{
 			name: "subagent.start",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 20, Turn: 1,
 				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go"}},
