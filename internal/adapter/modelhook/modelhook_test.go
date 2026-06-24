@@ -331,26 +331,51 @@ func TestSanitizeOversizedPayloadFallsBackToBlock(t *testing.T) {
 	}
 }
 
-// (2c) oversized CONTENT in an enforcing mode does NOT silently fail-open: it routes
-// through fail-open/closed (fail-closed blocks; fail-open WARNs).
-func TestOversizedContentEnforceDoesNotSilentlyPass(t *testing.T) {
-	huge := strings.Repeat("y", maxContentBytes+1)
+// (2c) oversized CONTENT is now INSPECTED (ADR 0050 removed maxContentBytes). A huge
+// tool result drives one checker call; a safe verdict passes, an UNSAFE verdict enforces.
+func TestOversizedContentIsInspected(t *testing.T) {
+	huge := strings.Repeat("y", 300*1024) // well over the former 256 KiB bound
+	chk := &fakeChecker{verdict: safe()}
+	rule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock)})
+	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk})
+	out, _ := r.Run(context.Background(), postEvent("WebFetch", huge, false))
+	if chk.calls != 1 {
+		t.Fatalf("oversized content must be INSPECTED (checker called once), not skipped; calls=%d", chk.calls)
+	}
+	if !strings.Contains(chk.lastReq.Content, "yyyy") {
+		t.Fatalf("the checker must receive the full oversized payload; got %d bytes in Content", len(chk.lastReq.Content))
+	}
+	// A safe verdict passes: no Block, no Mutated (the bound no longer induces a fail-open).
+	if out.Block || len(out.Mutated) != 0 {
+		t.Fatalf("a safe verdict on oversized content must pass; got %+v", out)
+	}
+}
+
+// (2c-err) a checker ERROR/TIMEOUT on oversized content flows through the existing
+// fail-open/closed path (onCheckerError): fail-closed blocks, fail-open WARNs-but-passes.
+// Replaces the deleted skip-behavior test's fail-open/closed coverage, now via a real
+// checker error on huge input.
+func TestOversizedContentCheckerTimeoutFailClosed(t *testing.T) {
+	huge := strings.Repeat("z", 300*1024)
 	diag := &capDiag{}
-	// fail-open block rule: oversized content WARNs but passes (degraded).
-	openRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock)})
-	rOpen := New(&passInner{}, Options{Rules: []CompiledRule{openRule}, Checker: &fakeChecker{verdict: safe()}, Diagnostics: diag})
-	_, _ = rOpen.Run(context.Background(), postEvent("WebFetch", huge, false))
-	if diag.count("checker error; content NOT inspected (fail-open)") == 0 {
-		t.Fatalf("oversized content in an enforcing fail-open rule must WARN, not silently pass; lines=%v", diag.lines)
+
+	// fail-closed: a checker timeout on huge content BLOCKS (Pre veto).
+	closedRule, _ := CompileRule(RuleSpec{Match: "Bash", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true})
+	rClosed := New(&passInner{}, Options{Rules: []CompiledRule{closedRule}, Checker: &fakeChecker{err: errors.New("context deadline exceeded on huge input")}})
+	out, _ := rClosed.Run(context.Background(), preEvent("Bash", `{"command":"`+huge+`"}`))
+	if !out.Block {
+		t.Fatalf("a checker timeout on huge content in a fail-closed rule must block; got %+v", out)
 	}
 
-	// fail-closed: oversized content BLOCKS (rewrite-to-error on post).
-	closedRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock), FailClosed: true})
-	rClosed := New(&passInner{}, Options{Rules: []CompiledRule{closedRule}, Checker: &fakeChecker{verdict: safe()}})
-	out, _ := rClosed.Run(context.Background(), postEvent("WebFetch", huge, false))
-	var p resultPayload
-	if err := json.Unmarshal(out.Mutated, &p); err != nil || !p.IsError {
-		t.Fatalf("oversized content in a fail-closed rule must block; got %+v err %v", p, err)
+	// fail-open: a checker timeout on huge content WARNs but passes (degraded to no checker).
+	openRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock)})
+	rOpen := New(&passInner{}, Options{Rules: []CompiledRule{openRule}, Checker: &fakeChecker{err: errors.New("context deadline exceeded on huge input")}, Diagnostics: diag})
+	outp, _ := rOpen.Run(context.Background(), postEvent("WebFetch", huge, false))
+	if outp.Block || len(outp.Mutated) != 0 {
+		t.Fatalf("fail-open on a checker timeout must pass (degraded), not alter; got %+v", outp)
+	}
+	if diag.count("checker error; content NOT inspected (fail-open)") == 0 {
+		t.Fatalf("fail-open must WARN that content was not inspected; lines=%v", diag.lines)
 	}
 }
 

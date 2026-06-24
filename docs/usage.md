@@ -1109,7 +1109,7 @@ guardrails:
   (a compromised checker could rewrite content): use it only with a trusted checker
   model; an unsafe verdict with no/oversized/invalid rewrite falls back to a block.
 - **`advisory`** only logs an operator diagnostic (correlatable; client/model see nothing).
-- **Fail-open by default** (a checker error/oversized content degrades to "no checker"
+- **Fail-open by default** (a checker error/timeout degrades to "no checker"
   with a WARN; a sustained outage escalates to a one-time **"checker DOWN"** sticky WARN);
   **`failClosed: true`** treats a checker error as unsafe. A checker **saying safe always passes**.
 - Guardrails fire on the **main loop** regardless of `--headless` (unlike the

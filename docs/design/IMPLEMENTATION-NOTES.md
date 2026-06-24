@@ -2318,9 +2318,10 @@ stable `guardrail-finding` marker. **Merge (decision 5):** inner FIRST, checker
 SECOND, Block-dominant, messages concat inner-first, mutation conflict → checker wins.
 **Cost/abuse:** a `minContentBytes` skip **(Post/inbound ONLY — Pre/outbound args are always
 inspected regardless of size, since a short exfiltration arg is exactly what the Pre
-check catches)** + a `maxContentBytes` (256 KiB) bound — oversized content in an
-**enforce** mode is NOT silently passed (it routes through fail-open/closed: the
-induced-fail-open defense). **Fail-open by default** (checker error / oversized content
+check catches)**. The former `maxContentBytes` (256 KiB) bound was REMOVED
+([ADR 0050](../adr/0050-guardrails-remove-maxcontentbytes.md)) — the checker now inspects
+content regardless of size, and a checker error / timeout on huge input flows through the
+existing fail-open/closed path. **Fail-open by default** (checker error / timeout
 → "no checker" + WARN); `failClosed: true` treats it as unsafe. A sustained checker
 outage escalates to a **one-time "checker DOWN" sticky WARN** (a `failureStreak`
 per Runner; a completed verdict resets it) so a persistently-unguarded surface is not

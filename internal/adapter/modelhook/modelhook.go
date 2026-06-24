@@ -58,11 +58,6 @@ import (
 
 // Bounds and markers for the guardrail enforcement paths.
 const (
-	// maxContentBytes bounds the tool content the checker will inspect. Content over
-	// this is NOT silently passed: in an enforcing mode it routes through the
-	// fail-open/closed policy (the induced-fail-open defense — an attacker cannot emit
-	// a huge result to slip past). A real injection/exfil payload is far under this.
-	maxContentBytes = 256 * 1024
 	// maxSanitizedBytes bounds a sanitize verdict's sanitized_content. A compromised
 	// checker could pad/launder content back into the trusted stream; an oversized
 	// rewrite is rejected (→ block). It is comfortably larger than any legitimate
@@ -192,8 +187,8 @@ func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.H
 }
 
 // check runs the guardrail checker for one matched rule and maps its verdict to a
-// HookOutcome per the rule's mode. It applies the min-content skip, the max-content
-// bound, and the fail-open/closed policy on a checker error.
+// HookOutcome per the rule's mode. It applies the min-content skip and the
+// fail-open/closed policy on a checker error/timeout.
 func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent) governance.HookOutcome {
 	content := contentUnderReview(phase, ev)
 	// The min-content skip is a cost gate for the INBOUND (Post) direction only: a tiny
@@ -203,15 +198,6 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 	// exfiltration the Pre check exists to catch. Always inspect outbound args.
 	if phase == PhasePost && len(content) < r.minContentBytes {
 		return governance.HookOutcome{}
-	}
-
-	// Oversized content (induced fail-open): an attacker can emit a huge tool result
-	// to error/time-out the checker and slip through unchecked. Bound it BEFORE the
-	// checker call. In an ENFORCE mode, over-bound content does NOT silently pass:
-	// treat it as a checker failure (which fail-open WARNs, fail-closed blocks) so it
-	// can never be silently unguarded. Advisory passes but logs.
-	if len(content) > maxContentBytes {
-		return r.onContentTooLarge(ctx, phase, rule, ev, len(content))
 	}
 
 	prompt := buildCheckPrompt(phase, rule, ev.Tool, content)
@@ -239,21 +225,6 @@ func findingFields(ev governance.HookEvent, phase Phase, extra ...any) []any {
 		"finding", guardrailFindingMarker,
 	}
 	return append(base, extra...)
-}
-
-// onContentTooLarge handles content that exceeds maxContentBytes: in advisory mode it
-// passes (but logs), in an enforcing mode it routes through the same fail-open/closed
-// policy as a checker error — so oversized content can never silently slip past an
-// enforcing guardrail unchecked (the induced-fail-open defense).
-func (r *Runner) onContentTooLarge(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent, n int) governance.HookOutcome {
-	if rule.mode == ModeAdvisory {
-		r.diag.Log(ctx, port.LevelWarn,
-			"guardrails: content exceeds the inspection size bound; NOT inspected (advisory)",
-			findingFields(ev, phase, "bytes", n, "bound", maxContentBytes)...)
-		return governance.HookOutcome{}
-	}
-	return r.onCheckerError(ctx, phase, rule, ev,
-		fmt.Errorf("content too large to inspect (%d bytes exceeds the %d-byte bound)", n, maxContentBytes))
 }
 
 // onCheckerError applies the fail-open/closed policy. The DEFAULT is fail-OPEN:
