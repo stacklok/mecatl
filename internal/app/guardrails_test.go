@@ -189,22 +189,37 @@ func TestGuardrailsOffReturnsInnerUnchanged(t *testing.T) {
 
 // A model with NO explicit rules WRAPS inner with the DEFAULT advisory rule set (the
 // headline default: ON advisory for WebSearch/WebFetch/mcp__*).
-func TestGuardrailsModelOnlyShipsDefaultAdvisory(t *testing.T) {
+func TestGuardrailsModelOnlyShipsDefaultBlock(t *testing.T) {
 	inner := hookexec.New(nil)
 	llm := mockllm.New()
 	cfg := Config{UseMock: true, GuardrailsModel: "checker-model"}
 	got := buildGuardrailsHooks(cfg, nil, llm, "mock", "m", inner)
 	if got == port.HookRunner(inner) {
-		t.Fatal("a guardrails model with no explicit rules must ship the DEFAULT advisory rules, not stay inert")
+		t.Fatal("a guardrails model with no explicit rules must ship the DEFAULT block rules, not stay inert")
 	}
 	// The default set is exactly WebSearch/WebFetch/mcp__*; assert it compiles to 3.
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
 	if !usedDefaults || len(specs) != 3 {
-		t.Fatalf("model-only must use the 3-rule default advisory set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+		t.Fatalf("model-only must use the 3-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	}
+	for _, s := range specs {
+		if s.Mode != string(modelhook.ModeBlock) {
+			t.Fatalf("default rules must be block (enforcement); got %q for %q", s.Mode, s.Match)
+		}
+	}
+}
+
+// TestGuardrailsDefaultModeAdvisory tests the defaultMode override: setting
+// defaultMode:advisory downgrades the built-in defaults to observe-only.
+func TestGuardrailsDefaultModeAdvisory(t *testing.T) {
+	cfg := Config{UseMock: true, GuardrailsModel: "checker-model", GuardrailsDefaultMode: "advisory"}
+	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
+	if !usedDefaults || len(specs) != 3 {
+		t.Fatalf("model-only with defaultMode must still use the 3-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeAdvisory) {
-			t.Fatalf("default rules must be advisory (observe-only); got %q for %q", s.Mode, s.Match)
+			t.Fatalf("defaultMode:advisory must downgrade defaults to advisory; got %q for %q", s.Mode, s.Match)
 		}
 	}
 }

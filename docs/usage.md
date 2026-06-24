@@ -356,7 +356,7 @@ mailbox). See the delegation-capabilities note below.
 | `--agents-conventional` | `true` | also discover agent defs from the conventional locations (`<workspace>/.mecatl/agents`, `<workspace>/.claude/agents`, `$XDG_CONFIG_HOME/mecatl/agents`, `~/.claude/agents`; lower precedence than `--agents-dir`). ON and **inert** until such a dir exists. Project-tier defs are **trust-gated** (`--trust-project`). |
 | `--model-alias` | `""` | model alias mapping `name=model-id` (repeatable), resolved only in composition — an agent def's `model: <alias>`, a `--model-slot` selector, and `--subagent-model` all resolve through this map (then the built-in sonnet/opus/haiku aliases). |
 | `--model-slot` | `""` | **PER-SLOT MODELS** ([ADR 0030](adr/0030-model-selection-heuristics.md)): bind an internal lightweight LLM call to its own model as `slot=selector` (**repeatable**), e.g. `--model-slot compaction=cheap --model-alias cheap=gpt-4o-mini`. The routed slots are `compaction` (the compaction summary call), `ask-reviewer` (the headless child-ask reviewer), `guardrail` (the content checker), `plan` (plan-mode → model re-resolution, the opusplan pattern, [ADR 0030](adr/0030-model-selection-heuristics.md) Layer 3), and `router` (the subagent model-router classifier, [ADR 0031](adr/0031-subagent-model-router.md)); a **tier** key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (the four internal-call slots — including `router` — default to `cheap`, but **`plan` defaults to `reasoning`**). The selector is a `--model-alias` or a concrete id, resolved on the **session's provider**. Empty (no `--model-slot`) keeps every call on the **session model** (**byte-identical default**). **Fail-soft**: a typo'd slot or an alias meaning *inherit* WARNs and keeps the session model — it never wedges the call. For `ask-reviewer` the slot **supersedes the model** of `--subagent-ask-reviewer` but does **not** enable it (that flag stays the on/off gate); for `guardrail` the slot **supersedes the model** of `--guardrails-model` AND **enables** guardrails (ADR 0046 — configure = enable). The YAML twin is the `settings.yaml` `models.slots:` subtree: operator-tier by default, and project-overridable **within an operator `models.allowlist`** on a trusted repo (ADR 0030 Phase 4 — see the per-slot models section); with no allowlist a project `models:` block is ignored with a WARN. `mecatui` accepts the same flag (and `--model-alias`) for its embedded server. |
-| `--guardrails-model` | `""` | **GUARDRAILS** (issue #27): model id / `--model-alias` of a tool-less checker that inspects **outbound** tool-call args (`PreToolUse`, exfil) and **inbound** tool results (`PostToolUse`, prompt injection) and enforces a verdict. Configuring a model here OR via a bound **`guardrail` model slot** (`--model-slot guardrail=…` / `models.slots.guardrail`) **ENABLES** guardrails (configure = enable, [ADR 0046](adr/0046-guardrails-slot-enable.md) — the [ADR 0042](adr/0042-taxonomy-gated-model-router.md) router-parity model); empty + no slot **disables** them. An unusable model id **fails startup**. Configuring a model is the **opt-in to spend** — with **no rule list** it takes the **default advisory rule set** (WebSearch/WebFetch/mcp__\*, observe-only). A bound `guardrail` **model slot supersedes** the checker model (this flag then supplies only the enable gate). The optional **rule list** + cost knobs live in the **user-global** `settings.yaml` `guardrails:` subtree (operator-tier **only** — a project repo cannot configure or weaken a checker; a project-tier block is ignored with a WARN); an explicit rule list replaces the defaults. `--guardrails-model` overrides the YAML model. Fires on the main loop regardless of `--headless`. Build prints one `guardrails: ON\|OFF …` posture line (resolved model + provenance). **See the guardrails section below + `docs/adr/0021-guardrails.md` + `docs/adr/0046-guardrails-slot-enable.md`.** |
+| `--guardrails-model` | `""` | **GUARDRAILS** (issue #27): model id / `--model-alias` of a tool-less checker that inspects **outbound** tool-call args (`PreToolUse`, exfil) and **inbound** tool results (`PostToolUse`, prompt injection) and enforces a verdict. Configuring a model here OR via a bound **`guardrail` model slot** (`--model-slot guardrail=…` / `models.slots.guardrail`) **ENABLES** guardrails (configure = enable, [ADR 0046](adr/0046-guardrails-slot-enable.md) — the [ADR 0042](adr/0042-taxonomy-gated-model-router.md) router-parity model); empty + no slot **disables** them. An unusable model id **fails startup**. Configuring a model is the **opt-in to spend** — with **no rule list** it takes the **default block rule set** (WebSearch/WebFetch/mcp__\*, observe-only). A bound `guardrail` **model slot supersedes** the checker model (this flag then supplies only the enable gate). The optional **rule list** + cost knobs live in the **user-global** `settings.yaml` `guardrails:` subtree (operator-tier **only** — a project repo cannot configure or weaken a checker; a project-tier block is ignored with a WARN); an explicit rule list replaces the defaults. `--guardrails-model` overrides the YAML model. Fires on the main loop regardless of `--headless`. Build prints one `guardrails: ON\|OFF …` posture line (resolved model + provenance). **See the guardrails section below + `docs/adr/0021-guardrails.md` + `docs/adr/0046-guardrails-slot-enable.md`.** |
 | `--guardrails` | `""` | guardrails **kill-switch only**: pass `--guardrails=off` to force the checker **off** regardless of `--guardrails-model` / the `guardrail` slot / the `guardrails:` YAML. The **positive enable path** is configuring a checker model (`--guardrails-model` OR the `guardrail` slot), NOT this flag. **Only `off` is accepted** — any other value (e.g. `--guardrails=on`, which does NOT enable) **fails startup** rather than silently doing nothing. |
 
 > **Delegation capabilities (Subagent / Parallel / Team).** Beyond the shared
@@ -1042,16 +1042,17 @@ rationale + threat model: `docs/adr/0021-guardrails.md`; the slot-enables wideni
 enable, the router-parity model of [ADR 0042](adr/0042-taxonomy-gated-model-router.md),
 extended to the guardrail slot by [ADR 0046](adr/0046-guardrails-slot-enable.md)): a
 `guardrail` slot no longer merely routes an already-enabled checker, it turns it ON.
-With a model and no rule list, guardrails are ON with the **default advisory rule set**
-— observe-only for the network/MCP surfaces, off for local tools:
+With a model and no rule list, guardrails are ON with the **default block rule set**
+— block (enforcement) for the network/MCP surfaces, off for local tools:
 
 | Tool matcher | Phases | Mode |
 | --- | --- | --- |
-| `WebSearch` | pre + post | advisory |
-| `WebFetch` | post | advisory |
-| `mcp__*` | pre + post | advisory |
+| `WebSearch` | pre + post | block |
+| `WebFetch` | post | block |
+| `mcp__*` | pre + post | block |
 
-Advisory = observe-only: a finding is an **operator-log diagnostic** (carrying the
+Set `defaultMode: advisory` to downgrade to observe-only (see [ADR 0053](adr/0053-guardrails-default-block.md)).
+Advisory = observe-only: a finding is an **operator-log diagnostic** + a client-visible
 session id + tool-call id + a `guardrail-finding` marker so you can correlate it back
 to the conversation); the call/result is byte-unchanged and the client/model see
 nothing. Measure the false-positive rate, then promote a rule to `block`/`sanitize`.
@@ -1080,13 +1081,13 @@ active …)` or `OFF (no checker model configured; …)` with the enable hint.
 # ~/.config/mecatl/settings.yaml  (user-global only — NOT a checked-in project file)
 guardrails:
   model: gpt-5-mini          # the checker model (or a --model-alias). With NO rules below,
-                             # the default advisory set applies (the model is the opt-in).
+                             # the default block set applies (the model is the opt-in).
                              # A bound `guardrail` model slot (--model-slot guardrail=… /
                              # models.slots.guardrail) SUPERSEDES this model AND enables
                              # guardrails on its own (ADR 0046 — configure = enable).
   minContentBytes: 16        # skip a short INBOUND (post) result (cost guard; omit = check every post).
                              # Outbound (pre) args are ALWAYS inspected — a short exfil arg is the point.
-  rules:                     # an explicit list REPLACES the default advisory set
+  rules:                     # an explicit list REPLACES the default block set
     - match: "WebFetch"      # inbound injection on fetched pages
       phases: ["post"]       # "pre" = outbound args, "post" = inbound result; omit = BOTH
       mode: block            # block | sanitize | advisory

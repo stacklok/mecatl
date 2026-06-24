@@ -74,6 +74,10 @@
 #   # Per-rule failClosed overrides: failClosed:true tightens even under warn;
 #   # failClosed:false (explicit) loosens even under fail. Empty = warn.
 #   onCheckerDown: ""
+#   # DefaultMode sets the enforcement mode for the built-in default rules when no
+#   # explicit rules are configured: "block" (default), "advisory", or "sanitize". An
+#   # explicit rules list replaces the defaults entirely (this key is ignored).
+#   defaultMode: ""
 #   # Rules is the guardrail rule list.
 #   rules:
 #     - match: ""

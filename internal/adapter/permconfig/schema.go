@@ -244,6 +244,10 @@ type GuardrailsSection struct {
 	// rules). Per-rule failClosed overrides: failClosed:true tightens even under
 	// warn; failClosed:false (explicit) loosens even under fail. Empty = warn.
 	OnCheckerDown string `yaml:"onCheckerDown"`
+	// DefaultMode sets the enforcement mode for the built-in default rules when no
+	// explicit rules are configured: "block" (default), "advisory", or "sanitize".
+	// An explicit rules list replaces the defaults entirely (this key is ignored).
+	DefaultMode string `yaml:"defaultMode"`
 	// Rules is the guardrail rule list.
 	Rules []GuardrailRuleSpec `yaml:"rules"`
 }
@@ -281,6 +285,7 @@ func (g *GuardrailsSection) strictFields() map[string]any {
 		"minContentBytes": &g.MinContentBytes,
 		"disabled":        &g.Disabled,
 		"onCheckerDown":   &g.OnCheckerDown,
+		"defaultMode":     &g.DefaultMode,
 		"rules":           &g.Rules,
 	}
 }

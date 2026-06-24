@@ -489,6 +489,10 @@ type Config struct {
 	// unavailable (error/timeout): "fail" = block all rules (fail-closed); "warn"
 	// (empty/default) = fail-open. Per-rule failClosed overrides when explicitly set.
 	GuardrailsOnCheckerDown string
+	// GuardrailsDefaultMode sets the enforcement mode for the built-in default
+	// rules when no explicit rules are configured: "block" (default), "advisory",
+	// or "sanitize". An explicit rules list replaces the defaults entirely.
+	GuardrailsDefaultMode string
 
 	// ModelAliases maps a short alias (e.g. "sonnet"/"opus"/"haiku"/"fast") to a
 	// concrete provider model id. Resolved only here; the domain/agent always

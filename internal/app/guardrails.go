@@ -44,6 +44,9 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if cfg.GuardrailsOnCheckerDown == "" {
 		cfg.GuardrailsOnCheckerDown = strings.TrimSpace(g.OnCheckerDown)
 	}
+	if cfg.GuardrailsDefaultMode == "" {
+		cfg.GuardrailsDefaultMode = strings.TrimSpace(g.DefaultMode)
+	}
 	// Rules: YAML is the sole source. Map the on-disk specs to app.GuardrailRule.
 	if len(cfg.GuardrailsRules) == 0 && len(g.Rules) > 0 {
 		rules := make([]GuardrailRule, 0, len(g.Rules))
@@ -147,24 +150,22 @@ func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.L
 	})
 }
 
-// defaultGuardrailSpecs is the built-in ADVISORY rule set applied when a guardrails
-// model is configured but the operator authored no explicit rules. It honours the
-// issue's headline default — ON (advisory) for the network/MCP surfaces, OFF for
-// local tools — without spending tokens until a model is configured (the model IS
-// the opt-in-to-spend). Advisory means observe-only: a finding is an operator
-// diagnostic, the call/result is byte-unchanged, so the operator measures the
-// false-positive rate before promoting a rule to block/sanitize. Local tools
-// (Read/Edit/Write/Bash/Grep/Glob) are deliberately NOT matched.
+// defaultGuardrailSpecs is the built-in BLOCK rule set applied when a guardrails
+// model is configured but the operator authored no explicit rules. Enabling
+// guardrails is the opt-in to spend — the default posture is enforcement (block),
+// not observe-only. Advisory is available via the defaultMode key or an explicit
+// rule list. Local tools (Read/Edit/Write/Bash/Grep/Glob) are deliberately NOT
+// matched.
 var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	// Outbound search/fetch args (a query/URL carrying a secret) AND inbound results
 	// (a fetched page / search snippet carrying an injection).
-	{Match: "WebSearch", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeAdvisory)},
+	{Match: "WebSearch", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeBlock)},
 	// WebFetch's risk is overwhelmingly the INBOUND page (injection); its outbound arg
-	// is just a URL. Post only, matching the issue's default.
-	{Match: "WebFetch", Phases: []string{"post"}, Mode: string(modelhook.ModeAdvisory)},
+	// is just a URL. Post only.
+	{Match: "WebFetch", Phases: []string{"post"}, Mode: string(modelhook.ModeBlock)},
 	// All MCP tools, both directions: outbound args (exfil into an MCP call body) and
 	// inbound results (injection in an MCP server's response).
-	{Match: "mcp__*", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeAdvisory)},
+	{Match: "mcp__*", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeBlock)},
 }
 
 // effectiveGuardrailSpecs returns the rule specs to compile: the operator's explicit
@@ -187,11 +188,16 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 		}
 		return out, false
 	}
-	// No explicit rules: ship the default advisory set (the model being configured is
-	// the opt-in). Copy with Order stamped so the matcher tiebreak is deterministic.
+	// No explicit rules: ship the default rule set (the model being configured is
+	// the opt-in). Apply the operator's defaultMode override if set; else the
+	// built-in block default. Copy with Order stamped so the matcher tiebreak is
+	// deterministic.
 	out := make([]modelhook.RuleSpec, len(defaultGuardrailSpecs))
 	for i, s := range defaultGuardrailSpecs {
 		s.Order = i
+		if dm := strings.TrimSpace(cfg.GuardrailsDefaultMode); dm != "" {
+			s.Mode = dm
+		}
 		out[i] = s
 	}
 	return out, true
