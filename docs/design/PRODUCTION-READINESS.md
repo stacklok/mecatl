@@ -54,7 +54,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | **API authentication + rate limiting** | ✅ | bearer (`--auth-token`/`MECATL_AUTH_TOKEN`, constant-time) + optional TLS/mTLS (`--tls-cert`/`--tls-key`/`--client-ca`) gRPC interceptors + HTTP middleware; per-client + global token-bucket rate limit (`--rate-limit`/`--rate-burst`, bounded/idle-evicting); off-loopback-no-auth WARNING (`internal/adapter/server/authn.go`) |
 | OS-level sandbox (process trust) | ⏸️ Deferred | Explicitly deferred (2026-05-29). The `CommandRunner` port is the seam; a Landlock(+seccomp) wrapper drops in later without touching the loop. Bash is also fully optional (shell-less deploys avoid the surface entirely), so this is not a blocker for those. |
 | Secrets handling (no key logging) | ✅ | key via env, never logged |
-| MCP transport restriction (no stdio) | ✅ | streaming-HTTP only |
+| MCP transport restriction (no stdio) | ✅ | streaming-HTTP only; standalone SSE GET enabled for server-initiated notifications (ADR 0057) |
 | Supply-chain hygiene (per-module vuln scan, dependabot, SHA-pinned actions) | ✅ | per-module `govulncheck` (engine STRICT, no allowlist / root fail-closed reachable-vuln gate via `.github/scripts/govulncheck-gate.go` + a documented 2-CVE docker allowlist reachable only through `internal/` ToolHive); `.github/dependabot.yml` for both modules + github-actions; every action SHA-pinned. Issue #118 |
 
 ## Reliability
@@ -66,7 +66,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | Provider error surfaced to client | ✅ | `ResultPayload.Error` |
 | **Auto-resume persisted sessions after restart** | ✅ | `GetSession`/`Approve`/`Cancel` fall back to `SessionStore.Load`; persist at create, on entering `awaiting`, and at run end (engine `Store` + `Service.Persist`). With `--store-dir` (jsonlstore) a session survives restart and is loadable — `mecatui` defaults this on at a per-workspace dir under `$XDG_STATE_HOME/mecatui/sessions` (issue #79), `mecated` leaves it off by default. Boundary: an in-flight *stream* is NOT resumed across restart (the `*agent.Run` is in-memory). Since cloud-native Phase 2, an `Approve` against a runless-but-stored session that died while `awaiting` **re-enters the loop at the ask** (`Service.resumeFromAwaiting`); `ErrNoActiveRun` (HTTP 409 / gRPC FailedPrecondition) is returned only for `Approve` against a non-awaiting state and for `Cancel` against any runless session. See `CLOUD-NATIVE.md` Phase 2 |
 | Graceful shutdown | ✅ | gRPC GracefulStop + HTTP Shutdown |
-| MCP client reconnect on connection drop | ✅ | client-side; 1 bounded reconnect attempt per call; serialized under mutex; breaker deferred (ADR 0056) |
+| MCP client reconnect on connection drop | ✅ | client-side; 1 bounded reconnect attempt per call; serialized under mutex; breaker deferred (ADR 0056); consumes `notifications/*` over the standalone SSE stream (ADR 0057) |
 
 ## Observability
 

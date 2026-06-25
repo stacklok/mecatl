@@ -564,8 +564,7 @@ func TestHalfBSelectedSessionUnknownProviderFallsBack(t *testing.T) {
 // the per-session engine catalog), and res.Close() runs the folded close cleanly —
 // so CloseSession/Service.Close tear the def's inline manager down with the session.
 func TestHalfBSelectedSessionTeardownFoldsSubagentClose(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 
 	defs := agents.NewRegistry([]agents.AgentDef{{
 		Name:        "inline-task",

@@ -48,8 +48,7 @@ func globalMCPFactory(t *testing.T, globalMgr *mcp.Manager) (server.SessionEngin
 // manager exposes mcp__globe__echo; the test asserts the selector engine both HAS the
 // namespaced tool (catalog accessor) AND can actually DISPATCH it to the echo result.
 func TestSessionEngineFactoryMountsGlobalMCPToolsForSelector(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 	globalMgr := connectMainManager(t, "globe", url)
 
 	const toolName = "mcp__globe__echo"
@@ -139,8 +138,7 @@ func TestSessionEngineFactorySelectorNilGlobalMCP(t *testing.T) {
 // terminates its session; after a selector Close the counter must still be 0, and a
 // SECOND selector session must still mount the global tool.
 func TestSessionEngineFactorySelectorCloseKeepsGlobalMCP(t *testing.T) {
-	url, stop, deletes := newMCPTestServerCounting(t)
-	defer stop()
+	url, _, deletes := newMCPTestServerCounting(t)
 	globalMgr := connectMainManager(t, "globe", url)
 
 	const toolName = "mcp__globe__echo"
@@ -252,8 +250,7 @@ func runSelectorSubagentRefAndCheckEcho(t *testing.T, globalMgr *mcp.Manager, sp
 // reference-resolution mainMgr (refMgr). Driven end to end; reverting refMgr→mgr
 // makes this case RED (the global ref would no longer resolve).
 func TestSelectorSubagentRefResolvesGlobalMCP(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 	globalMgr := connectMainManager(t, "globe", url)
 
 	if !runSelectorSubagentRefAndCheckEcho(t, globalMgr, nil) {
@@ -268,8 +265,7 @@ func TestSelectorSubagentRefResolvesGlobalMCP(t *testing.T) {
 // This is the branch that goes RED if `refMgr := globalMgr; if refMgr==nil {
 // refMgr=mgr }` is reduced to just `refMgr := globalMgr`.
 func TestSelectorSubagentRefResolvesClientMCPWhenNoGlobal(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 
 	// No global manager; the "globe" server arrives as a CLIENT spec, so the factory
 	// connects a per-session client mgr and refMgr falls back to it.
@@ -289,17 +285,14 @@ func TestSelectorSubagentRefResolvesClientMCPWhenNoGlobal(t *testing.T) {
 // [globe (collides), other (distinct, ordered AFTER the collider)], so the test also
 // still proves the collision does not abort the rest of the client batch.
 func TestSelectorClientToolCollisionGlobalWins(t *testing.T) {
-	gURL, gStop := newMCPTestServerPrefixed(t, "global:")
-	defer gStop()
+	gURL, _ := newMCPTestServerPrefixed(t, "global:")
 	globalMgr := connectMainManager(t, "globe", gURL)
 
 	// Two client servers: "globe" (same namespace → mcp__globe__echo collides,
 	// behaviorally distinct) FIRST, then a distinct "other" (→ mcp__other__echo)
 	// ordered after the collider.
-	cURL, cStop := newMCPTestServerPrefixed(t, "client:")
-	defer cStop()
-	oURL, oStop := newMCPTestServer(t)
-	defer oStop()
+	cURL, _ := newMCPTestServerPrefixed(t, "client:")
+	oURL, _ := newMCPTestServer(t)
 
 	// A provider scripted to CALL the surviving mcp__globe__echo so the test
 	// observes WHICH server's tool executes, not merely that a name registered.

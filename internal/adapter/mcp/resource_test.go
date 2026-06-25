@@ -8,10 +8,9 @@ import (
 )
 
 func TestListResourcesPerServerAndAll(t *testing.T) {
-	url, stop := newTestServer(t, nil)
-	defer stop()
-	url2, stop2 := newTestServer(t, nil)
-	defer stop2()
+	url, _ := newTestServer(t, nil)
+
+	url2, _ := newTestServer(t, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -57,8 +56,8 @@ func TestListResourcesPerServerAndAll(t *testing.T) {
 }
 
 func TestReadResourceText(t *testing.T) {
-	url, stop := newTestServer(t, nil)
-	defer stop()
+	url, _ := newTestServer(t, nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	m, err := NewManager(ctx, []ServerConfig{{Name: "a", URL: url}}, nil, nil)
@@ -77,8 +76,8 @@ func TestReadResourceText(t *testing.T) {
 }
 
 func TestReadResourceBinarySummarized(t *testing.T) {
-	url, stop := newTestServer(t, nil)
-	defer stop()
+	url, _ := newTestServer(t, nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	m, err := NewManager(ctx, []ServerConfig{{Name: "a", URL: url}}, nil, nil)
@@ -104,8 +103,8 @@ func TestReadResourceBinarySummarized(t *testing.T) {
 }
 
 func TestReadResourceUnknownURIErrors(t *testing.T) {
-	url, stop := newTestServer(t, nil)
-	defer stop()
+	url, _ := newTestServer(t, nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	m, err := NewManager(ctx, []ServerConfig{{Name: "a", URL: url}}, nil, nil)
@@ -122,8 +121,8 @@ func TestReadResourceUnknownURIErrors(t *testing.T) {
 }
 
 func TestCapabilityAbsentServerSkipped(t *testing.T) {
-	url, stop := newToolsOnlyServer(t)
-	defer stop()
+	url, _ := newToolsOnlyServer(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	m, err := NewManager(ctx, []ServerConfig{{Name: "t", URL: url}}, nil, nil)

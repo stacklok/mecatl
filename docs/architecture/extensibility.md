@@ -13,7 +13,11 @@ tools are registered into the catalog **namespaced** `mcp__<server>__<tool>` so 
 remote tool can never collide with or shadow a built-in. A dropped session (server
 restart / 404 / closed transport) is re-established transparently with a single
 bounded reconnect attempt per call, serialized under a mutex — see
-[ADR 0056](../adr/0056-mcp-client-reconnect.md).
+[ADR 0056](../adr/0056-mcp-client-reconnect.md). The client also holds the
+**standalone SSE GET stream** open per connected server, so server-initiated
+`notifications/{tools,prompts,resources}/list_changed` invalidate the cached
+snapshots (lazily re-listed on the next read); live catalog refresh is
+deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
 
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
 `tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,

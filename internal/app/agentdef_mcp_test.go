@@ -34,8 +34,8 @@ type mcpEchoArgs struct {
 // tests can connect a genuine, offline MCP server. Returns the URL and a stop func.
 func newMCPTestServer(t *testing.T) (string, func()) {
 	t.Helper()
-	url, stop, _ := newMCPTestServerCounting(t)
-	return url, stop
+	url, cleanup, _ := newMCPTestServerCounting(t)
+	return url, cleanup
 }
 
 // newMCPTestServerCounting is newMCPTestServer that also returns a pointer to the
@@ -57,6 +57,7 @@ func newMCPTestServerCounting(t *testing.T) (string, func(), *int32) {
 		}
 		handler.ServeHTTP(w, r)
 	}))
+	t.Cleanup(httpSrv.Close)
 	return httpSrv.URL, httpSrv.Close, &deletes
 }
 
@@ -75,6 +76,7 @@ func newMCPTestServerPrefixed(t *testing.T, prefix string) (string, func()) {
 		})
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
 	httpSrv := httptest.NewServer(handler)
+	t.Cleanup(httpSrv.Close)
 	return httpSrv.URL, httpSrv.Close
 }
 
@@ -103,6 +105,7 @@ func newMCPTestServerWithResource(t *testing.T) (string, func()) {
 	})
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
 	httpSrv := httptest.NewServer(handler)
+	t.Cleanup(httpSrv.Close)
 	return httpSrv.URL, httpSrv.Close
 }
 
@@ -130,8 +133,8 @@ func toolNameSet(in []tool.Tool) map[string]struct{} {
 // TestDefMCPToolsReferencePullsFromMainManager asserts a REFERENCE entry adds the
 // named main server's tools to the def's set and opens NO new connection (nil close).
 func TestDefMCPToolsReferencePullsFromMainManager(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
+
 	main := connectMainManager(t, "main", url)
 
 	def := agents.AgentDef{
@@ -152,8 +155,7 @@ func TestDefMCPToolsReferencePullsFromMainManager(t *testing.T) {
 // server (tool present), and that the returned close actually tears the session down
 // (a captured tool's Execute fails after close — proving no leak).
 func TestDefMCPToolsInlineConnectsAndTearsDown(t *testing.T) {
-	url, stop, deletes := newMCPTestServerCounting(t)
-	defer stop()
+	url, _, deletes := newMCPTestServerCounting(t)
 
 	def := agents.AgentDef{
 		Name:        "inline-agent",
@@ -195,8 +197,8 @@ func TestDefMCPToolsInlineConnectsAndTearsDown(t *testing.T) {
 // TestDefMCPToolsUnknownReferenceSkipped asserts an unknown reference yields no tools
 // and no connection (forgiving diagnostic) — the def is still usable without it.
 func TestDefMCPToolsUnknownReferenceSkipped(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
+
 	main := connectMainManager(t, "main", url)
 
 	def := agents.AgentDef{
@@ -214,8 +216,7 @@ func TestDefMCPToolsUnknownReferenceSkipped(t *testing.T) {
 // inline server (tools enter the def engine) and that the aggregated close returned by
 // buildAgentSubagentEngines tears the inline session down (Built.Close lifetime model).
 func TestSubagentDefInlineMCPCloseAggregated(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 
 	reg := agents.NewRegistry([]agents.AgentDef{{
 		Name:        "inline-task",
@@ -242,8 +243,7 @@ func TestSubagentDefInlineMCPCloseAggregated(t *testing.T) {
 // exempts MCP tool names from the workspace-mutating-tool backstop. It also dispatches
 // the MCP tool, proving it is in the catalog and the def's Close runs on teardown.
 func TestMemberReadOnlyDefWithMCPAccepted(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 
 	cfg := Config{Workspace: t.TempDir(), Model: "m"}
 	def := agents.AgentDef{
@@ -283,8 +283,7 @@ func TestMemberReadOnlyDefWithMCPAccepted(t *testing.T) {
 // a genuine workspace-mutating tool (Edit) on a read-only member is STILL rejected, so
 // the MCP exemption did not weaken the backstop.
 func TestMemberReadOnlyDefWithEditStillRejected(t *testing.T) {
-	url, stop := newMCPTestServer(t)
-	defer stop()
+	url, _ := newMCPTestServer(t)
 
 	cfg := Config{Workspace: t.TempDir(), Model: "m"}
 	// Def scopes BOTH an MCP server AND Edit; for a read-only member Edit must still be

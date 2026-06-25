@@ -179,8 +179,16 @@ func requestOrigin(u *url.URL) string {
 
 // Server is a live connection to one remote MCP server. It owns the SDK client
 // session and the tool.Tool wrappers derived from the server's tool list, plus
-// the static snapshots of the server's resources and prompts captured once at
-// connect (v1 does NOT subscribe to list-changed notifications).
+// the snapshots of the server's resources and prompts captured once at connect.
+//
+// As of ADR 0057 the adapter holds the standalone SSE GET stream open per
+// connected server and subscribes to server-initiated
+// notifications/{tools,prompts,resources}/list_changed: a notification sets the
+// matching *Dirty flag, and the next read of Tools()/Resources()/Prompts()
+// lazily re-lists under a bounded context.Background() and swaps in the fresh
+// snapshot. Catalog mutation (live tool.Catalog refresh) is deliberately Phase 2
+// — it gets its own ADR; in Phase 1 a tool the server dropped surfaces a
+// tool-call error on use (the registered remoteTool specs are untouched).
 //
 // A dropped session (the SDK's ErrConnectionClosed / errSessionMissing, surfacing
 // as "session not found" / "connection closed") is re-established transparently
@@ -198,6 +206,14 @@ type Server struct {
 	tools      []tool.Tool
 	resources  []Resource
 	prompts    []Prompt
+	// Phase 1 (ADR 0057): dirty flags set by the list-changed notification
+	// handlers and cleared on the next lazy re-list. They are read-and-cleared
+	// under s.mu by the accessors; the re-list itself runs WITHOUT s.mu held
+	// (see refreshTools/refreshResources/refreshPrompts) to avoid deadlocking
+	// against reconnect, which re-acquires s.mu.
+	toolsDirty     bool // set by ToolListChangedHandler; cleared on next Tools() re-list
+	resourcesDirty bool // set by ResourceListChangedHandler; cleared on next Resources() re-list
+	promptsDirty   bool // set by PromptListChangedHandler; cleared on next Prompts() re-list
 }
 
 // Connect establishes a Streamable HTTP session to the configured MCP server,
@@ -325,16 +341,29 @@ func (s *Server) dial(ctx context.Context) (*mcpsdk.ClientSession, error) {
 	transport := &mcpsdk.StreamableClientTransport{
 		Endpoint:   s.cfg.URL,
 		HTTPClient: s.httpClient,
-		// This adapter only issues request/response tool calls; it does not
-		// consume server-initiated notifications (e.g. tool-list-changed).
-		// Disabling the standalone SSE GET stream avoids holding a persistent
-		// connection open, which lets sessions (and test servers) close cleanly.
-		DisableStandaloneSSE: true,
+		// The standalone SSE GET stream is ENABLED (ADR 0057) so the server can
+		// push notifications/* (tools|prompts|resources/list_changed). The SDK
+		// opens it after initialize and drains it on session.Close(), so a
+		// persistent goroutine per connected server is owned by the session and
+		// unwinds on Close (inventoried in ADR 0027 List 1).
+	}
+
+	// The three list-changed handlers are wired here — dial is the SINGLE
+	// construction site reused by Connect (initial) and reconnect (after a
+	// drop), so a reconnect re-attaches them automatically. Each handler only
+	// sets a dirty flag + logs a WARN; it does NOT re-list eagerly (it runs on
+	// the SDK's SSE goroutine, where a network call would stall notification
+	// processing and could deadlock against s.mu). The lazy re-list runs on
+	// the next read of the matching accessor.
+	opts := &mcpsdk.ClientOptions{
+		ToolListChangedHandler:     func(ctx context.Context, _ *mcpsdk.ToolListChangedRequest) { s.handleListChanged(ctx, "tools") },
+		PromptListChangedHandler:   func(ctx context.Context, _ *mcpsdk.PromptListChangedRequest) { s.handleListChanged(ctx, "prompts") },
+		ResourceListChangedHandler: func(ctx context.Context, _ *mcpsdk.ResourceListChangedRequest) { s.handleListChanged(ctx, "resources") },
 	}
 
 	client := mcpsdk.NewClient(
 		&mcpsdk.Implementation{Name: clientName, Version: clientVersion},
-		nil,
+		opts,
 	)
 
 	sess, err := client.Connect(dialCtx, transport, nil)
@@ -377,16 +406,175 @@ func listTools(ctx context.Context, serverName string, srv *Server, sess *mcpsdk
 // Name returns the server's configured name.
 func (s *Server) Name() string { return s.name }
 
-// Tools returns the wrapped remote tools exposed by this server.
-func (s *Server) Tools() []tool.Tool { return s.tools }
+// Tools returns the wrapped remote tools exposed by this server. If a
+// notifications/tools/list_changed has fired since the last read (ADR 0057), the
+// snapshot is lazily re-listed under a bounded context.Background() before
+// returning, so a post-notification caller sees the server's current tool set.
+// The re-list runs WITHOUT s.mu held (it may reconnect, which re-acquires
+// s.mu); only the dirty-check and the final swap hold the lock.
+func (s *Server) Tools() []tool.Tool {
+	s.mu.Lock()
+	dirty := s.toolsDirty
+	tools := s.tools
+	s.mu.Unlock()
+	if dirty {
+		s.refreshTools()
+		s.mu.Lock()
+		tools = s.tools
+		s.mu.Unlock()
+	}
+	return tools
+}
 
-// Resources returns the static snapshot of the server's resources captured at
-// connect (empty if the server advertised no resources capability).
-func (s *Server) Resources() []Resource { return s.resources }
+// Resources returns the server's resource snapshot. Lazily re-listed on a
+// notifications/resources/list_changed (ADR 0057). See Tools() for the lock
+// discipline.
+func (s *Server) Resources() []Resource {
+	s.mu.Lock()
+	dirty := s.resourcesDirty
+	res := s.resources
+	s.mu.Unlock()
+	if dirty {
+		s.refreshResources()
+		s.mu.Lock()
+		res = s.resources
+		s.mu.Unlock()
+	}
+	return res
+}
 
-// Prompts returns the static snapshot of the server's prompts captured at
-// connect (empty if the server advertised no prompts capability).
-func (s *Server) Prompts() []Prompt { return s.prompts }
+// Prompts returns the server's prompt snapshot. Lazily re-listed on a
+// notifications/prompts/list_changed (ADR 0057). See Tools() for the lock
+// discipline.
+func (s *Server) Prompts() []Prompt {
+	s.mu.Lock()
+	dirty := s.promptsDirty
+	pr := s.prompts
+	s.mu.Unlock()
+	if dirty {
+		s.refreshPrompts()
+		s.mu.Lock()
+		pr = s.prompts
+		s.mu.Unlock()
+	}
+	return pr
+}
+
+// handleListChanged is the single entry point for the three SDK
+// list-changed notification handlers wired in dial. It runs on the SDK's SSE
+// goroutine, so it MUST NOT re-list eagerly (a network call there would stall
+// notification processing and could deadlock against s.mu, which reconnect
+// holds across dial). It only sets the matching dirty flag and logs a WARN; the
+// re-list runs lazily on the next read of the accessor.
+func (s *Server) handleListChanged(ctx context.Context, list string) {
+	s.diag.Log(ctx, port.LevelWarn, "mcp server list changed", "server", s.name, "list", list)
+	s.mu.Lock()
+	switch list {
+	case "tools":
+		s.toolsDirty = true
+	case "resources":
+		s.resourcesDirty = true
+	case "prompts":
+		s.promptsDirty = true
+	}
+	s.mu.Unlock()
+}
+
+// refreshCtx returns a bounded context for a lazy re-list. It is detached from
+// any caller request context (a notification can fire with no live request)
+// and bounded by the server's configured connect timeout so a stuck server
+// cannot wedge an accessor.
+func (s *Server) refreshCtx() (context.Context, context.CancelFunc) {
+	timeout := s.cfg.Timeout
+	if timeout <= 0 {
+		timeout = defaultConnectTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+// logRefreshErr is the single WARN path for a lazy re-list failure. It never
+// aborts the accessor — the caller falls back to the prior snapshot, so a
+// transient refresh failure surfaces as a stale (not missing) list.
+func (s *Server) logRefreshErr(ctx context.Context, list string, err error) {
+	s.diag.Log(ctx, port.LevelWarn, "mcp server list refresh failed",
+		"server", s.name, "list", list, "err", clampErr(err))
+}
+
+// refreshTools re-lists the server's tools and swaps in the fresh snapshot.
+// It runs WITHOUT s.mu held across the network (liveSession/reconnect
+// re-acquire s.mu); only the final check-and-swap holds the lock. On any
+// failure it leaves the prior snapshot and the dirty flag alone (the next read
+// retries), after logging a WARN.
+func (s *Server) refreshTools() {
+	ctx, cancel := s.refreshCtx()
+	defer cancel()
+	sess, err := s.liveSession(ctx) // reconnects if dropped; does NOT run under s.mu held by caller
+	if err != nil {
+		s.logRefreshErr(ctx, "tools", err)
+		return
+	}
+	tools, err := listTools(ctx, s.name, s, sess)
+	if err != nil {
+		s.logRefreshErr(ctx, "tools", err)
+		return
+	}
+	s.mu.Lock()
+	s.tools = tools
+	s.toolsDirty = false
+	s.mu.Unlock()
+}
+
+// refreshResources re-lists the server's resources and swaps in the fresh
+// snapshot. See refreshTools for the lock discipline. It inlines the iterator
+// over the LIVE sess fetched from liveSession (NOT s.listResources, which reads
+// the possibly-stale s.session) so the refresh always runs against the session
+// it just (re)established.
+func (s *Server) refreshResources() {
+	ctx, cancel := s.refreshCtx()
+	defer cancel()
+	sess, err := s.liveSession(ctx)
+	if err != nil {
+		s.logRefreshErr(ctx, "resources", err)
+		return
+	}
+	var out []Resource
+	for r, err := range sess.Resources(ctx, nil) {
+		if err != nil {
+			s.logRefreshErr(ctx, "resources", err)
+			return
+		}
+		out = append(out, resourceFromSDK(s.name, r))
+	}
+	s.mu.Lock()
+	s.resources = out
+	s.resourcesDirty = false
+	s.mu.Unlock()
+}
+
+// refreshPrompts re-lists the server's prompts and swaps in the fresh snapshot.
+// See refreshTools for the lock discipline and refreshResources for the
+// inline-over-live-sess rationale.
+func (s *Server) refreshPrompts() {
+	ctx, cancel := s.refreshCtx()
+	defer cancel()
+	sess, err := s.liveSession(ctx)
+	if err != nil {
+		s.logRefreshErr(ctx, "prompts", err)
+		return
+	}
+	var out []Prompt
+	for p, err := range sess.Prompts(ctx, nil) {
+		if err != nil {
+			s.logRefreshErr(ctx, "prompts", err)
+			return
+		}
+		out = append(out, promptFromSDK(s.name, p))
+	}
+	s.mu.Lock()
+	s.prompts = out
+	s.promptsDirty = false
+	s.mu.Unlock()
+}
 
 // Close terminates the MCP session. It is safe to call once; subsequent calls
 // return the SDK's session-close result. It takes s.mu and sets closed (the
