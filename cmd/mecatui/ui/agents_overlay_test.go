@@ -527,6 +527,7 @@ func TestSubagentBudgetStopThroughWire(t *testing.T) {
 	ln := findFleetLane(m.conv.subagentFleet, "c1")
 	if ln == nil {
 		t.Fatal("fleet lane c1 missing after the wire end event")
+		return
 	}
 	if ln.stop != "budget" {
 		t.Fatalf("fleetEnd did not thread the stop reason: lane.stop = %q, want \"budget\"", ln.stop)

@@ -174,6 +174,7 @@ func TestHookMsgRoutesToHookBlock(t *testing.T) {
 	}
 	if found == nil {
 		t.Fatal("HookMsg did not produce a blockHook")
+		return
 	}
 	if found.hookPhase != "PreToolUse" || found.hookTool != "Bash" || found.hookDecision != "blocked" {
 		t.Errorf("hook block fields = %+v", found)

@@ -722,6 +722,7 @@ func TestInitNoListerFiresCreateDirectly(t *testing.T) {
 	}
 	if ready == nil {
 		t.Fatal("no-lister Init must fire CreateSession directly (a SessionReadyMsg), not stall awaiting ListModels")
+		return
 	}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, *ready)
 	if m.phase != phaseIdle {
