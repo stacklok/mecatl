@@ -37,3 +37,12 @@ e2e/fixtures/
 # CLAUDE.md is a symlink to AGENTS.md (the canonical contract) for Claude Code
 # compatibility. It is not a separate corpus document.
 CLAUDE.md
+
+# user-docs/ is the mecatl.dev Docusaurus site content — user-facing docs
+# derived from the internal architecture and usage docs. Excluded until the
+# content is reviewed and stable; links use Docusaurus content-root-relative
+# paths that matlatl doesn't understand anyway (no content-root aliasing).
+user-docs/
+
+# website/CLAUDE.md is agent guidance for the Docusaurus site, not product docs.
+website/CLAUDE.md

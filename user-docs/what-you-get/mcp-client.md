@@ -1,0 +1,112 @@
+---
+sidebar_position: 6
+title: MCP client
+---
+
+# MCP client
+
+mecatl includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) client. Point it at one or more MCP servers; every tool those servers expose lands in the agent's tool catalog automatically, namespaced as `mcp__<server>__<tool>`. From the model's perspective those tools are identical to the built-ins — same dispatch rules, same permission system, same audit trail.
+
+---
+
+## Streaming-HTTP only
+
+mecatl speaks the **streaming-HTTP (streamable-HTTP JSON-RPC) MCP transport only**. The stdio/subprocess transport is never used — the harness does not spawn external processes for MCP servers. This is a deliberate security constraint: running an MCP server as a child process would put arbitrary subprocess execution on the agent's critical path. If your MCP server currently speaks stdio, front it with an HTTP proxy (e.g. ToolHive's HTTP proxying layer, which mecatl already integrates with).
+
+---
+
+## Configuration
+
+Wire a server with `--mcp-server name=URL` (repeatable, one flag per server):
+
+```sh
+mecated \
+  --mcp-server github=https://mcp.example.com/github \
+  --mcp-server linear=https://mcp.example.com/linear \
+  --workspace /path/to/workspace
+```
+
+The flag value is `<name>=<URL>` where `name` is the identifier that becomes the namespace prefix and `URL` is the streaming-HTTP endpoint.
+
+**Auth token.** If the server requires a bearer token, set the environment variable `MCP_<NAME>_TOKEN` (uppercased name). mecatl sends it in the `Authorization: Bearer …` header and never logs it:
+
+```sh
+export MCP_GITHUB_TOKEN=ghp_…
+mecated --mcp-server github=https://mcp.example.com/github …
+```
+
+**ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
+
+---
+
+## Tool namespacing
+
+Every tool discovered from an MCP server is registered under `mcp__<server>__<tool>`. The double-underscore delimiter is part of the name — it prevents any remote tool from colliding with or shadowing a built-in.
+
+Examples:
+
+| Server name | MCP tool name | Catalog name |
+|---|---|---|
+| `github` | `create_issue` | `mcp__github__create_issue` |
+| `linear` | `search_issues` | `mcp__linear__search_issues` |
+| `exa` | `web_search_exa` | `mcp__exa__web_search_exa` |
+
+The catalog name is what appears in permission rules. To allow or deny a specific MCP tool, use its full namespaced name:
+
+```yaml
+# settings.yaml
+permissions:
+  allow:
+    - mcp__github__create_issue
+  deny:
+    - mcp__linear__delete_issue
+```
+
+A glob prefix like `mcp__github__*` matches all tools from the `github` server.
+
+---
+
+## Reconnect behavior
+
+A connection drop — the MCP server restarts, returns HTTP 404 "session not found", or closes the transport — does not take the server out for the rest of the run. The client reconnects automatically.
+
+The reconnect logic sits on the server object (not on individual tool wrappers), so all tool calls, resource reads, and prompt expansions share one retry path:
+
+1. Run the call against the live session.
+2. On success, return.
+3. On a connection drop, reconnect **once** and retry the call.
+4. If the reconnect also fails, surface a clear terminal error to the model (`MCP server "<name>" unavailable after reconnect`) — never the raw transport string.
+
+Concurrent calls that hit the same drop coalesce: the first one dials (holding a mutex), the rest wait and then receive the fresh session without dialing again. The dial is bounded by the server's configured timeout (default 30 s), so the mutex is never held indefinitely.
+
+**Tool list is not re-fetched on reconnect.** The catalog snapshot taken at startup is preserved across a reconnect. If the server re-advertises a different tool set after restarting, the agent keeps the original specs until the next mecatl process start. This is the expected v1 behavior.
+
+Reconnect activity is logged through the standard diagnostics channel:
+
+- `INFO mcp server reconnecting` — a drop was detected, dialing.
+- `INFO mcp server reconnected` — the reconnect succeeded.
+- `WARN mcp server reconnect failed` — the retry also failed; the call returns an error.
+
+---
+
+## Resources and prompts
+
+Two optional behaviors are on by default:
+
+**Resource meta-tools** (`--mcp-resource-tools`, default `true`). When a connected MCP server exposes resources, mecatl registers `ListMcpResources` and `ReadMcpResource` meta-tools so the model can browse and read them. Disable with `--mcp-resource-tools=false`.
+
+**Prompt expansion** (`--mcp-prompts`, default `true`). An MCP server's named prompts become expandable slash commands: `/mcp__<server>__<prompt> key=value`. The prompt spec is a static snapshot taken at connect time. An MCP prompt steers the model the same way a local slash command does — enable only for servers you trust.
+
+---
+
+## Global vs per-session MCP servers
+
+**Global servers** (`--mcp-server` / ToolHive discovery) are registered once at startup and shared across all sessions. Their tools are part of every session's catalog, including no-filesystem sessions. The global MCP manager is owned by the server process — it is never closed or reconnected per-session.
+
+**Client (per-session) MCP servers** are wired by the API caller at session creation time, through the `CreateSession` request fields. They are set up for that session only and torn down when the session closes. A server caps the total number of live per-session engines; close sessions you are done with (`DELETE /v1/sessions/{id}` / `CloseSession` gRPC) to free slots. These are distinct from the globally-configured servers and are added on top of them, not instead.
+
+---
+
+## What's next
+
+- [Extension points: tool catalog](/extension-points/tool-catalog.md) — add custom tools, configure skills, and control what the model can see.
