@@ -161,7 +161,7 @@ When the budget is crossed, the run ends cleanly with stop reason `budget`. That
 
 ## Cancellation & terminal states
 
-Every run ends in exactly one of four terminal states:
+Every run ends in exactly one of three terminal states:
 
 | State | Meaning |
 |---|---|
