@@ -1,0 +1,325 @@
+.colophon {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 3rem 2rem 6rem;
+}
+
+.section {
+  margin-bottom: 4rem;
+}
+
+.section h2 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--mec-text);
+  border-bottom: 1px solid var(--mec-border);
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.section h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mec-copper);
+  margin: 2rem 0 0.75rem;
+}
+
+.pageTitle {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--mec-text);
+  border-bottom: none !important;
+  margin-bottom: 0.5rem;
+}
+
+.pageSubtitle {
+  color: var(--mec-text-muted);
+  font-size: 1rem;
+  line-height: 1.65;
+  max-width: 680px;
+}
+
+.sectionNote {
+  color: var(--mec-text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+/* ─── Mascot ─────────────────────────────────────────────────────────────── */
+
+.mascotSection {
+  display: flex;
+  gap: 2.5rem;
+  align-items: flex-start;
+}
+
+.mascotImg {
+  width: 180px;
+  flex-shrink: 0;
+  border-radius: 16px;
+}
+
+.mascotNote p {
+  font-size: 0.93rem;
+  line-height: 1.7;
+  color: var(--mec-text-muted);
+  margin-bottom: 0.75rem;
+}
+
+/* ─── Swatches ───────────────────────────────────────────────────────────── */
+
+.swatchGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+
+.swatch {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+  background: var(--mec-surface);
+  border: 1px solid var(--mec-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.swatchColor {
+  width: 72px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  padding: 0.5rem;
+  text-align: center;
+}
+
+.swatchMeta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem 0.6rem 0;
+}
+
+.swatchLabel {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--mec-text);
+}
+
+.swatchVar {
+  font-size: 0.72rem;
+  color: var(--mec-teal-bright);
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.swatchRole {
+  font-size: 0.75rem;
+  color: var(--mec-text-muted);
+}
+
+/* ─── Type specimens ─────────────────────────────────────────────────────── */
+
+.typeGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.typeCard {
+  background: var(--mec-surface);
+  border: 1px solid var(--mec-border);
+  border-radius: 10px;
+  padding: 1.5rem;
+}
+
+.typeHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.typeFamily {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--mec-text);
+}
+
+.typeMeta {
+  font-size: 0.78rem;
+  color: var(--mec-text-muted);
+}
+
+.typeSpecimen {
+  font-size: 1.6rem;
+  line-height: 1.3;
+  color: var(--mec-text);
+  margin-bottom: 1rem;
+}
+
+.typeWeights {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.typeWeight {
+  font-size: 0.85rem;
+  color: var(--mec-text-muted);
+}
+
+.typeCss {
+  font-size: 0.75rem;
+  color: var(--mec-rope);
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* ─── Type scale table ───────────────────────────────────────────────────── */
+
+.scaleTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--mec-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.scaleRow {
+  display: grid;
+  grid-template-columns: 140px 220px 200px 1fr;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--mec-border);
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.scaleRow:last-child {
+  border-bottom: none;
+}
+
+.scaleRow:nth-child(even) {
+  background: var(--mec-surface);
+}
+
+.scaleEl {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--mec-teal-bright);
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+.scaleSize {
+  color: var(--mec-rope);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+}
+
+.scaleFont {
+  color: var(--mec-text-muted);
+  font-size: 0.8rem;
+}
+
+.scaleUsage {
+  color: var(--mec-text-muted);
+  font-size: 0.8rem;
+}
+
+/* ─── Specimens ──────────────────────────────────────────────────────────── */
+
+.specimenRow {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.ctaSecondarySpec {
+  display: inline-block;
+  background: transparent;
+  color: var(--mec-text-muted);
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 500;
+  font-size: 0.95rem;
+  padding: 0.7rem 1.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--mec-border);
+  text-decoration: none;
+  cursor: default;
+}
+
+/* ─── Design decisions ───────────────────────────────────────────────────── */
+
+.decisions {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 0;
+  border: 1px solid var(--mec-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.decisions dt {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--mec-copper);
+  padding: 1rem;
+  border-bottom: 1px solid var(--mec-border);
+  background: var(--mec-surface);
+}
+
+.decisions dd {
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--mec-text-muted);
+  padding: 1rem;
+  margin: 0;
+  border-bottom: 1px solid var(--mec-border);
+  border-left: 1px solid var(--mec-border);
+}
+
+.decisions dt:last-of-type,
+.decisions dd:last-of-type {
+  border-bottom: none;
+}
+
+@media (max-width: 640px) {
+  .scaleRow {
+    grid-template-columns: 1fr 1fr;
+  }
+  .scaleFont, .scaleUsage { display: none; }
+  .decisions {
+    grid-template-columns: 1fr;
+  }
+  .decisions dd {
+    border-left: none;
+    border-top: none;
+  }
+  .mascotSection {
+    flex-direction: column;
+  }
+}

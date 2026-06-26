@@ -1,0 +1,187 @@
+/* ─── Google Fonts ───────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ─── Brand tokens (from Mecatito the Xolo — charcoal body, teal collar,   */
+/*     copper ears, warm rope)                                               */
+
+:root {
+  --mec-bg:           #141210;   /* charcoal body */
+  --mec-surface:      #1e1b18;   /* slightly lifted surface */
+  --mec-surface-2:    #272320;   /* card / code block */
+  --mec-teal:         #2a9d8f;   /* collar — primary accent */
+  --mec-teal-bright:  #3dbdad;   /* hover / active */
+  --mec-teal-dim:     #1d7068;   /* subtle teal */
+  --mec-copper:       #c87941;   /* ears / tail — secondary accent */
+  --mec-copper-bright:#e08f52;
+  --mec-rope:         #d4a76a;   /* rope neutral */
+  --mec-text:         #f0ece8;   /* warm off-white */
+  --mec-text-muted:   #9e9690;   /* secondary text */
+  --mec-border:       #332f2b;   /* subtle border */
+}
+
+/* ─── Docusaurus overrides — dark only ───────────────────────────────────── */
+
+:root,
+[data-theme='dark'] {
+  /* Primary = teal */
+  --ifm-color-primary:          var(--mec-teal);
+  --ifm-color-primary-dark:     #24887b;
+  --ifm-color-primary-darker:   #1f7369;
+  --ifm-color-primary-darkest:  #165550;
+  --ifm-color-primary-light:    var(--mec-teal-bright);
+  --ifm-color-primary-lighter:  #5acfbf;
+  --ifm-color-primary-lightest: #80ddd0;
+
+  /* Typography */
+  --ifm-font-family-base:       'Inter', system-ui, -apple-system, sans-serif;
+  --ifm-heading-font-family:    'Space Grotesk', system-ui, sans-serif;
+  --ifm-font-family-monospace:  'JetBrains Mono', 'SFMono-Regular', Menlo, monospace;
+  --ifm-font-weight-base:       400;
+  --ifm-heading-font-weight:    600;
+  --ifm-code-font-size:         88%;
+
+  /* Backgrounds */
+  --ifm-background-color:         var(--mec-bg);
+  --ifm-background-surface-color: var(--mec-surface);
+  --ifm-navbar-background-color:  var(--mec-bg);
+  --ifm-navbar-shadow:            0 1px 0 0 var(--mec-border);
+  --ifm-footer-background-color:  var(--mec-surface);
+
+  /* Text */
+  --ifm-font-color-base:          var(--mec-text);
+  --ifm-font-color-secondary:     var(--mec-text-muted);
+  --ifm-heading-color:            var(--mec-text);
+
+  /* Borders / dividers */
+  --ifm-toc-border-color:         var(--mec-border);
+  --ifm-hr-border-color:          var(--mec-border);
+  --ifm-color-emphasis-300:       var(--mec-border);
+  --ifm-color-emphasis-600:       #4a4540;
+
+  /* Code blocks */
+  --ifm-code-background:                   var(--mec-surface-2);
+  --docusaurus-highlighted-code-line-bg:   rgba(42, 157, 143, 0.12);
+
+  /* Links */
+  --ifm-link-color:               var(--mec-teal-bright);
+  --ifm-link-hover-color:         var(--mec-rope);
+
+  /* Sidebar */
+  --ifm-sidebar-width:            272px;
+
+  /* Menu */
+  --ifm-menu-color:               var(--mec-text-muted);
+  --ifm-menu-color-active:        var(--mec-teal-bright);
+  --ifm-menu-color-background-active: rgba(42, 157, 143, 0.12);
+  --ifm-menu-color-background-hover:  rgba(255, 255, 255, 0.05);
+}
+
+/* ─── Navbar ─────────────────────────────────────────────────────────────── */
+
+.navbar {
+  --ifm-navbar-link-color:        var(--mec-text-muted);
+  --ifm-navbar-link-hover-color:  var(--mec-text);
+  --ifm-navbar-link-active-color: var(--mec-teal-bright);
+  border-bottom: 1px solid var(--mec-border);
+}
+
+.navbar__title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  color: var(--mec-text);
+}
+
+.navbar__logo {
+  height: 32px;
+  width: auto;
+}
+
+/* ─── Sidebar category labels ─────────────────────────────────────────────── */
+
+.theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mec-copper);
+  opacity: 0.9;
+}
+
+/* ─── Headings ───────────────────────────────────────────────────────────── */
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: -0.02em;
+}
+
+h1 { font-weight: 700; }
+h2 { font-weight: 600; color: var(--mec-text); border-bottom: 1px solid var(--mec-border); padding-bottom: 0.4rem; }
+h3 { font-weight: 600; color: var(--mec-teal-bright); }
+
+/* ─── Code ───────────────────────────────────────────────────────────────── */
+
+code {
+  background: var(--mec-surface-2);
+  border: 1px solid var(--mec-border);
+  color: var(--mec-rope);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.theme-code-block {
+  border: 1px solid var(--mec-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th {
+  background: var(--mec-surface-2);
+  color: var(--mec-teal-bright);
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--mec-teal-dim);
+}
+
+td, th {
+  border: 1px solid var(--mec-border);
+  padding: 0.6rem 0.85rem;
+}
+
+tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* ─── Admonitions ────────────────────────────────────────────────────────── */
+
+.alert--info    { --ifm-alert-background-color: rgba(42, 157, 143, 0.1); border-color: var(--mec-teal-dim); }
+.alert--warning { --ifm-alert-background-color: rgba(200, 121, 65, 0.1); border-color: var(--mec-copper); }
+.alert--success { --ifm-alert-background-color: rgba(42, 157, 143, 0.08); }
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+
+.footer {
+  border-top: 1px solid var(--mec-border);
+}
+
+.footer__title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mec-copper);
+}

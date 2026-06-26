@@ -11,6 +11,12 @@ coverage.*
 # Local scratch
 /.scratch/
 
+# Task cache
+/.task/
+
+# Tunnel log
+/cloudflared.log
+
 # Per-session agent memory (local only)
 /.claude/agent-memory/
 

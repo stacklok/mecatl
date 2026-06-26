@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Outer dark stroke -->
+  <circle cx="16" cy="16" r="15.5" fill="#1a0f05"/>
+  <!-- Gold ring body -->
+  <circle cx="16" cy="16" r="14.5" fill="#c8882e"/>
+  <!-- Gold ring inner bevel -->
+  <circle cx="16" cy="16" r="12.5" fill="#d4943a"/>
+  <!-- Teal face -->
+  <circle cx="16" cy="16" r="11" fill="#2a9d8f"/>
+  <!-- Highlight -->
+  <ellipse cx="14" cy="12" rx="5" ry="3.5" fill="#3dbdad" opacity="0.35"/>
+  <!-- Diamond glyph -->
+  <polygon
+    points="16,7 23.5,16 16,25 8.5,16"
+    fill="none"
+    stroke="#d4943a"
+    stroke-width="2.2"
+    stroke-linejoin="miter"
+  />
+  <!-- Center dot -->
+  <circle cx="16" cy="16" r="1.6" fill="#d4943a"/>
+</svg>
