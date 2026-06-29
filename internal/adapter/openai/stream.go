@@ -176,7 +176,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		st.done = true
 		return nil, &responseStreamError{
 			msg:    "response failed: " + responseErrorString(event.Response.Error),
-			status: providerCodeToHTTPStatus(string(event.Response.Error.Code)),
+			status: providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
 		}
 
 	case "error":
@@ -188,7 +188,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		st.done = true
 		return nil, &responseStreamError{
 			msg:    "stream error: " + streamErrorString(event),
-			status: providerCodeToHTTPStatus(event.Code),
+			status: providerErrorStatus(event.Code, event.Message),
 		}
 
 	default:
@@ -277,6 +277,50 @@ func (e *responseStreamError) Error() string { return e.msg }
 // llmresilience DefaultClassifier recognises this interface and routes retryable
 // statuses (408, 429, 5xx) through its retry logic.
 func (e *responseStreamError) StatusCode() int { return e.status }
+
+// isContextOverflowMessage reports whether a provider error message indicates
+// the request was rejected because it exceeded the model's context window. This
+// is a PERMANENT client error: replaying the identical over-context prompt
+// cannot succeed, so it must NOT be retried and must NOT count toward the
+// circuit breaker. OpenRouter (and the OpenAI Responses API) reuse the
+// `server_error` code for both genuine transient server faults AND these
+// input-too-large rejections, and provide no structured field to tell them
+// apart, so the message is the only discriminator. The signatures are matched
+// case-insensitively as substrings. There are five: three anchored to the
+// context-window domain ("context window", "context length", "maximum
+// context") and two anchored to a token-limit overflow phrasing
+// ("exceeds the token limit", "exceeded the token limit"). Each is specific
+// enough that a genuine transient rate-limit / capacity / overload message
+// cannot false-positive and strip retry + breaker protection.
+func isContextOverflowMessage(msg string) bool {
+	m := strings.ToLower(msg)
+	// Each signature is anchored to the context-window domain so a genuine
+	// transient rate-limit / capacity message cannot false-positive and strip
+	// retry + breaker protection. OpenRouter reuses `server_error` for both
+	// transient faults and input-too-large rejections, and provides no
+	// structured field to tell them apart; the message is the only
+	// discriminator, so the signatures must be specific.
+	return strings.Contains(m, "context window") ||
+		strings.Contains(m, "context length") ||
+		strings.Contains(m, "maximum context") ||
+		strings.Contains(m, "exceeds the token limit") ||
+		strings.Contains(m, "exceeded the token limit")
+}
+
+// providerErrorStatus maps a provider error code + message to an HTTP-status
+// equivalent for retry/breaker classification. It is a thin refinement layer
+// over the code-only providerCodeToHTTPStatus: a context-window-overflow
+// message is a permanent client error regardless of which code the provider
+// glued onto it (OpenRouter reuses `server_error` for both transient faults and
+// input-too-large rejections), so it demotes to 0 (non-retryable,
+// breaker-neutral) before the code mapping runs. Everything else falls through
+// to the code-only mapping unchanged.
+func providerErrorStatus(code, msg string) int {
+	if isContextOverflowMessage(msg) {
+		return 0
+	}
+	return providerCodeToHTTPStatus(code)
+}
 
 // providerCodeToHTTPStatus maps a provider error-code string to an HTTP-status
 // equivalent for retry classification. The mapping is a conservative allowlist:

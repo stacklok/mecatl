@@ -1054,6 +1054,7 @@ func TestBreakerCountsTransientNotPermanent(t *testing.T) {
 		{"context canceled neutral", context.Canceled, false},
 		{"unknown neutral", errors.New("mystery"), false},
 		{"nil neutral", nil, false},
+		{"context-overflow status 0 breaker-neutral", &statusErr{status: 0, msg: "response failed: server_error: Your input exceeds the context window of this model"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1182,6 +1183,78 @@ func TestBreakerDoesNotOpenOnPermanentErrors(t *testing.T) {
 	}
 }
 
+// TestContextOverflowNotRetriedAndBreakerStaysClosed is the end-to-end
+// regression guard for issue #207: a context-window-overflow error (now mapped
+// to HTTP status 0 by the openai adapter) must be surfaced after a SINGLE
+// attempt — NOT retried — and must NOT count toward the circuit breaker, so a
+// subsequent working request still flows. This mirrors the live failure: under
+// the old 503 mapping, the over-context prompt was replayed MaxAttempts times
+// (identically failing each time) AND each failure fed the breaker until it
+// wedged open. With status 0, DefaultClassifier returns false (no retry) and
+// isTransientForBreaker returns false (breaker-neutral) — both pinned here.
+func TestContextOverflowNotRetriedAndBreakerStaysClosed(t *testing.T) {
+	clk := &manualClock{t: time.Unix(1000, 0)}
+	overflowErr := &statusErr{
+		status: 0,
+		msg:    "response failed: server_error: Your input exceeds the context window of this model. Please adjust your input and try again.",
+	}
+	f := &fakeProvider{steps: []step{{outerErr: overflowErr}}}
+	cfg := Config{
+		MaxAttempts:      5, // a retry WOULD happen if misclassified as retryable
+		BaseBackoff:      time.Nanosecond,
+		MaxBackoff:       time.Nanosecond,
+		BreakerThreshold: 3,
+		BreakerCooldown:  30 * time.Second,
+		Clock:            clk.Now,
+	}
+	p := Wrap(f, cfg)
+
+	// A burst beyond the breaker threshold: each Stream must surface the
+	// overflow error after a SINGLE attempt (no retry), and none may count
+	// toward the breaker.
+	for i := 0; i < 5; i++ {
+		_, err := p.Stream(context.Background(), port.LLMRequest{})
+		if err == nil {
+			t.Fatalf("attempt %d: want the overflow error, got nil", i)
+		}
+		if !strings.Contains(err.Error(), "context window") {
+			t.Fatalf("attempt %d: error %q does not carry the overflow message", i, err.Error())
+		}
+		if errorsAsBreaker(err) {
+			t.Fatalf("attempt %d: overflow error surfaced as *BreakerError (breaker opened — it must be breaker-neutral): %v", i, err)
+		}
+	}
+	// Exactly one inner call per Stream (5 bursts × 1 attempt each = 5). If the
+	// error were misclassified retryable (status 5xx), each Stream would burn
+	// MaxAttempts=5 attempts → 25 inner calls.
+	if got := f.Calls(); got != 5 {
+		t.Fatalf("inner called %d times across 5 overflow Streams, want 5 (no retry per Stream)", got)
+	}
+
+	// Flip to a working model; it must succeed — the breaker stayed closed.
+	f.mu.Lock()
+	f.steps = []step{{chunks: textTurn("works")}}
+	f.mu.Unlock()
+
+	seq, err := p.Stream(context.Background(), port.LLMRequest{})
+	if errorsAsBreaker(err) {
+		t.Fatalf("working model blocked by breaker after overflow burst: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("working model Stream error: %v", err)
+	}
+	got, derr := drain(t, seq)
+	if derr != nil {
+		t.Fatalf("drain error: %v", derr)
+	}
+	if len(got) == 0 || got[0].Text != "works" {
+		t.Fatalf("got %+v, want textTurn(works)", got)
+	}
+	if f.Calls() != 6 {
+		t.Fatalf("working model: inner called %d times, want 6 (one more for the working Stream)", f.Calls())
+	}
+}
+
 // TestBreakerNeutralOnCallerCancel asserts caller cancellations are
 // breaker-neutral: even more cancels than the threshold never open the breaker,
 // and a subsequent working step succeeds.
@@ -1247,6 +1320,21 @@ func apiErr(code int) *oai.Error {
 	}
 }
 
+// statusErr is a test stub for any error that carries an HTTP-status equivalent
+// via the interface{ StatusCode() int } contract — the same contract the real
+// *openai.responseStreamError (unexported, cross-package) satisfies and the one
+// DefaultClassifier/isTransientForBreaker consume via errors.As. Using a local
+// stub avoids importing the openai package into llmresilience tests while
+// faithfully exercising the classifier's interface path. status 0 models the
+// context-overflow classification from issue #207.
+type statusErr struct {
+	status int
+	msg    string
+}
+
+func (e *statusErr) Error() string   { return e.msg }
+func (e *statusErr) StatusCode() int { return e.status }
+
 func TestDefaultClassifier(t *testing.T) {
 	mk := func(code int) error { return apiErr(code) }
 	cases := []struct {
@@ -1268,6 +1356,7 @@ func TestDefaultClassifier(t *testing.T) {
 		{"wrapped canceled not", fmt.Errorf("x: %w", context.Canceled), false},
 		{"unknown not", errors.New("mystery"), false},
 		{"nil not", nil, false},
+		{"context-overflow status 0 not retryable", &statusErr{status: 0, msg: "response failed: server_error: Your input exceeds the context window of this model"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

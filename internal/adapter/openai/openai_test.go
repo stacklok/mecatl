@@ -522,6 +522,109 @@ func TestResponseStreamErrorMessageUnchanged(t *testing.T) {
 	})
 }
 
+// TestResponseFailedContextOverflowNotRetryable verifies that a response.failed
+// event whose `server_error` code is reused for a context-window-overflow
+// rejection (OpenRouter / OpenAI Responses) is demoted to status 0 — permanent,
+// non-retryable, breaker-neutral — despite the otherwise-retryable code. The
+// human-readable message is preserved verbatim.
+func TestResponseFailedContextOverflowNotRetryable(t *testing.T) {
+	event := responses.ResponseStreamEventUnion{
+		Type: "response.failed",
+		Response: responses.Response{
+			Status: responses.ResponseStatusFailed,
+			Error: responses.ResponseError{
+				Code:    "server_error",
+				Message: "Your input exceeds the context window of this model. Please adjust your input and try again.",
+			},
+		},
+	}
+	_, err := translate(event, &streamState{})
+	if err == nil {
+		t.Fatal("expected error for context-overflow response.failed")
+	}
+	type statusCoder interface{ StatusCode() int }
+	sc, ok := err.(statusCoder)
+	if !ok {
+		t.Fatalf("error %T does not implement StatusCode()", err)
+	}
+	if got := sc.StatusCode(); got != 0 {
+		t.Errorf("StatusCode() = %d, want 0 (context overflow is non-retryable despite server_error code)", got)
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "response failed: ") {
+		t.Errorf("error %q does not start with 'response failed: '", msg)
+	}
+	for _, want := range []string{"server_error", "context window"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not contain %q", msg, want)
+		}
+	}
+}
+
+// TestErrorEventContextOverflowNotRetryable verifies the same demotion on the
+// top-level "error" event path, exercising a different message signature
+// ("context length") than the response.failed test.
+func TestErrorEventContextOverflowNotRetryable(t *testing.T) {
+	event := responses.ResponseStreamEventUnion{
+		Type:    "error",
+		Code:    "server_error",
+		Message: "input exceeds the context length",
+	}
+	_, err := translate(event, &streamState{})
+	if err == nil {
+		t.Fatal("expected error for context-overflow error event")
+	}
+	type statusCoder interface{ StatusCode() int }
+	sc, ok := err.(statusCoder)
+	if !ok {
+		t.Fatalf("error %T does not implement StatusCode()", err)
+	}
+	if got := sc.StatusCode(); got != 0 {
+		t.Errorf("StatusCode() = %d, want 0 (context overflow is non-retryable despite server_error code)", got)
+	}
+	if !strings.HasPrefix(err.Error(), "stream error:") {
+		t.Errorf("error %q does not start with 'stream error:'", err.Error())
+	}
+}
+
+// TestIsContextOverflowMessage exercises the message discriminator directly:
+// each of the five signatures positively, plus realistic transient-fault and
+// empty/garbage messages that must NOT match, plus case-insensitivity. The
+// negative cases are the core of the security review finding: transient
+// rate-limit / capacity / overload messages that mention tokens or input
+// exceeding something must NOT be demoted to status 0, or retry + breaker
+// protection is silently stripped.
+func TestIsContextOverflowMessage(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		// One positive per signature.
+		{"Your input exceeds the context window of this model.", true}, // context window
+		{"input exceeds the context length", true},                     // context length
+		{"maximum context length exceeded", true},                      // maximum context
+		{"prompt exceeds the token limit", true},                       // exceeds the token limit
+		{"request exceeded the token limit for this model", true},      // exceeded the token limit
+		{"YOUR INPUT EXCEEDS THE CONTEXT WINDOW.", true},               // case-insensitivity
+		// Negatives: genuine transient / capacity / unrelated messages must not match.
+		{"token limit reached for this minute, retry in 5s", false},       // transient rate-limit
+		{"per-minute token limit exceeded, retry shortly", false},         // transient rate-limit
+		{"input exceeds the current queue capacity, please retry", false}, // transient capacity
+		{"The model produced an internal error", false},
+		{"engine overloaded", false},
+		{"service unavailable", false},
+		{"", false},
+		{"rate limit reached", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.msg, func(t *testing.T) {
+			if got := isContextOverflowMessage(tc.msg); got != tc.want {
+				t.Errorf("isContextOverflowMessage(%q) = %v, want %v", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestProviderCodeToHTTPStatus exercises the mapping helper directly.
 func TestProviderCodeToHTTPStatus(t *testing.T) {
 	cases := []struct {
