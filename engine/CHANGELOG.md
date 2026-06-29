@@ -22,6 +22,27 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   budget brake is not affected, and the field is additive observability only.
   Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
   (#213)
+- **`port.ScheduleStore` + value objects** (`Schedule`, `ScheduleSpec`, `TriggerSpec`,
+  `ScheduleState`, `ScheduleFire`, `ScheduleProviderSelector`, `ErrScheduleNotFound`,
+  `ErrScheduleUnsupported`, `SchedulerLeaderLeaseID`, `TriggerKind`/`TriggerCron`/
+  `TriggerOneShot`/`TriggerNone`, `MisfirePolicy`/`MisfireFireOnceNow`/`MisfireSkip`,
+  `PendingFireSessionID`).
+  A new OPTIONAL durable schedule registry port — a peer of `port.SessionLease` /
+  `port.EventLog` — defining the durable registry for the scheduled-tasks feature
+  (issue #189, Phase 1a: contract + value objects, no implementation yet). The port
+  carries the FULL at-most-once claim-before-fire contract in its doc-comments:
+  `Claim` is the atomic advance (NextFireAt + LastFireAt + FireCount + a
+  sentinel-pending LastFireSessionID) that gives exactly-once firing across
+  replicas; the store is parser-free (the caller computes the next cron fire);
+  `engine/agent` NEVER imports this port — the tick loop, cron parsing, misfire
+  policy, and leader-lease acquisition all live in composition. `TriggerSpec`
+  carries an XOR (Cron | OneShot) with a `Validate()` + `Kind()`; `MisfirePolicy`
+  is the fire-once-now (default) / skip enum; `SchedulerLeaderLeaseID` is the
+  well-known leader-lease id; `PendingFireSessionID` is the single-source sentinel
+  string a `Claim` stamps onto `LastFireSessionID` and the scheduler reads back.
+  No implementation ships yet — adapters are a later
+  phase. Classified Added per COMPATIBILITY.md (new exported identifiers in
+  `engine/port`). (#189)
 
 ## [Unreleased]
 

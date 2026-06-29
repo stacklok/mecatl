@@ -15,7 +15,7 @@ The contract covers the exported identifiers of these **seven core packages**:
 | `engine/governance` | permission `Effect`/`Scope`/`Rule` + `Evaluator`, hooks  |
 | `engine/tool`       | `Tool`/`Catalog`, the `FileSystem`/`Workspace` + source ports |
 | `engine/prompt`     | prompt assembly + discovery ports                        |
-| `engine/port`       | the port interfaces the loop consumes                    |
+| `engine/port`       | the port interfaces the loop consumes (incl. `SessionStore`, `PrunableStore`, `SessionLease`, `EventLog`, `ScheduleStore`)                    |
 | `engine/team`       | the agent-team domain                                    |
 | `engine/agent`      | the loop, dispatch, delegation tools, the team Supervisor |
 
