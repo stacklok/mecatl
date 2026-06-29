@@ -355,6 +355,17 @@ linters:
           deny:
             - pkg: os
               desc: 'the search reference adapter (fakesearch) is the scripted OFFLINE SearchProvider; it must not touch the OS or the network'
+        engine-adapter-cronparse:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/cronparse/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/robfig/cron/v3
+          deny:
+            - pkg: os
+              desc: 'cronparse is the parser-only cron helper (robfig/cron/v3 parser, NOT the daemon); it must not touch the OS or pull engine/port'
         # agent: the APPLICATION loop; imports domain + port + team + stdlib +
         # golang.org/x/sync/errgroup. Adapters are INJECTED, never imported.
         core-agent:

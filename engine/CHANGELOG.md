@@ -46,6 +46,25 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ## [Unreleased]
 
+### Notes
+
+- **`robfig/cron/v3` added to the engine dep closure (parser-only).** The
+  scheduled-tasks feature (issue #189, Phase 1c) needs a cron → next-fire
+  helper at the composition layer: `TriggerSpec.Cron` (Phase 1a) is the raw
+  expression the durable `ScheduleStore` stores verbatim and never interprets,
+  and the caller computes the next fire to hand to `Claim`. Per decision #6 the
+  durable store is ground truth and the in-memory timer is a derived lookahead,
+  so mecatl uses `robfig/cron/v3`'s PARSER only (`cron.ParseStandard` +
+  `Schedule.Next`) — NOT the `cron.New()` daemon. The dependency is a single
+  module with a zero-dependency `go.mod`, mirroring how `doublestar` and
+  `x/sync` already travel with the importable core (ADR 0036); the
+  `task test:engine-standalone` hygiene proof confirms the standalone closure
+  stays self-contained. The helper itself (`engine/adapter/cronparse.NextFire`)
+  lives under `engine/adapter/*`, which COMPATIBILITY.md EXCLUDES from the
+  stability surface (like `memlease.New` / `eventsource.Fold`), so it is NOT in
+  `engine/api/*.txt` and is NOT an api-compat-gated addition. No new exported
+  core symbol; no public-API change. (#189)
+
 ## [0.3.0] - 2026-06-30
 
 ### Added
