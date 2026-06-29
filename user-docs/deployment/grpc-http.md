@@ -252,12 +252,21 @@ Pass `-N` to disable curl buffering so events stream as they arrive.
 When the stream emits a `permission.ask` event, resolve it on a **second connection** while the SSE stream is still open:
 
 ```console
+# Allow once (does not persist a rule):
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/approve \
-       -d '{"ask_id":"<ask_id-from-the-event>","allow":true}'
+       -d '{"ask_id":"<ask_id-from-the-event>","verdict":"allow_once"}'
 # 204 No Content
+
+# Allow always (persists a session-scoped rule — this pattern won't ask again):
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/approve \
+       -d '{"ask_id":"<ask_id-from-the-event>","verdict":"allow_always"}'
+
+# Deny:
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/approve \
+       -d '{"ask_id":"<ask_id-from-the-event>","verdict":"deny"}'
 ```
 
-`"allow":false` denies. An `ask_id` that does not match an in-flight ask returns `404`.
+The `verdict` field is three-way: `allow_once`, `allow_always`, or `deny`. The legacy `"allow":true/false` boolean is still accepted when `verdict` is absent, but only expresses two of the three outcomes. An `ask_id` that does not match an in-flight ask returns `404`.
 
 Disconnecting the client cancels the run. Closing the `DELETE /v1/sessions/{id}` endpoint releases the session's per-session resources (learned rules, engine); it is idempotent.
 
@@ -393,7 +402,7 @@ A request with a missing or wrong token is rejected with `401` (HTTP) or `Unauth
 |---|---|
 | `--tls-cert` | Path to the server TLS certificate (PEM) |
 | `--tls-key` | Path to the server TLS private key (PEM) |
-| `--tls-ca` | Path to a CA certificate for mTLS client verification (PEM) |
+| `--client-ca` | Path to a CA certificate for mTLS client verification (PEM) |
 
 Without `--tls-cert`/`--tls-key`, both listeners start in plaintext. `mecatui` enforces a rule: it refuses to send `--auth-token` to a non-loopback server over plaintext — use TLS for any off-loopback deployment that carries a token.
 

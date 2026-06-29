@@ -244,11 +244,11 @@ Both decorators are transparent to `Capabilities()` — the resilience wrapper f
 ```go
 import "github.com/stacklok/mecatl/internal/adapter/llmresilience"
 
-decorated := llmresilience.New(myProvider,
-    llmresilience.WithStreamIdleTimeout(3*time.Minute),
-    llmresilience.WithPerAttemptTimeout(5*time.Minute),
-)
-engine := agent.NewEngine(agent.Config{...}, agent.Deps{LLM: decorated, ...})
+decorated := llmresilience.Wrap(myProvider, llmresilience.Config{
+    StreamIdleTimeout: 3 * time.Minute,
+    PerAttemptTimeout: 5 * time.Minute,
+})
+engine := agent.NewEngine(agent.Deps{LLM: decorated, ...})
 ```
 
 ---

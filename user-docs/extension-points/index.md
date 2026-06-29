@@ -107,12 +107,13 @@ func Build(cfg Config) (*server.Service, error) {
 
     // 2. Build the LLM provider (satisfies LLMProvider)
     //    The llmresilience decorator wraps the raw provider with retry + stream watchdog.
-    raw, err := openai.New(cfg.OpenAIKey, openai.WithBaseURL(cfg.BaseURL))
-    provider := llmresilience.Wrap(raw, llmresilience.WithStreamIdleTimeout(180*time.Second))
+    raw, err := openai.New(openai.WithAPIKey(cfg.OpenAIKey), openai.WithBaseURL(cfg.BaseURL))
+    provider := llmresilience.Wrap(raw, llmresilience.Config{StreamIdleTimeout: 180 * time.Second})
 
     // 3. Permission policy + store (satisfies PermissionPolicy, PermissionStore)
     permStore := permstore.New()
-    policy := permpolicy.New(evaluator, permStore)
+    rules := []governance.Rule{ /* your rules */ }
+    policy := permpolicy.NewPolicy(rules, permStore)
 
     // 4. Diagnostics (satisfies Diagnostics)
     diag := slogdiag.New(slog.Default())
@@ -124,15 +125,16 @@ func Build(cfg Config) (*server.Service, error) {
     hooks, err := hookexec.New(cfg.HookConfig)
 
     // 7. Inject into the engine
-    eng, err := agent.NewEngine(agent.Config{
-        LLM:        provider,
-        Store:      store,
-        Policy:     policy,
-        Hooks:      hooks,
-        EventLog:   store,   // same object satisfies multiple ports
-        Recorder:   store,
-        Diag:       diag,
-        Clock:      clk,
+    // Note: EventLog is NOT an engine.Deps field — the service layer (not the engine)
+    // appends to the log. Pass store to the service constructor instead.
+    eng := agent.NewEngine(agent.Deps{
+        LLM:              provider,
+        Store:            store,
+        Policy:           policy,
+        Hooks:            hooks,
+        ToolCallRecorder: store,
+        Diagnostics:      diag,
+        Clock:            clk,
     })
 
     return server.New(eng, store, ...), nil
@@ -141,8 +143,8 @@ func Build(cfg Config) (*server.Service, error) {
 
 A few things to notice:
 
-- **One object can satisfy multiple ports.** `jsonlstore.Store` implements `SessionStore`, `PrunableStore`, `EventLog`, and `ToolCallRecorder`. Nothing in `engine/agent` knows or cares — it sees distinct interface values.
-- **Adapters are never imported by the engine.** `agent.Config` carries interface values only. A new LLM adapter never requires an engine change.
+- **One object can satisfy multiple ports.** `jsonlstore.Store` implements `SessionStore`, `PrunableStore`, `EventLog`, and `ToolCallRecorder`. Nothing in `engine/agent` knows or cares — it sees distinct interface values. (The engine itself does not hold the `EventLog`; the service layer appends to it. The same store object is passed to both.)
+- **Adapters are never imported by the engine.** `agent.Deps` carries interface values only. A new LLM adapter never requires an engine change.
 - **Composition is the only place adapters meet.** Domain packages and `engine/agent` have no adapter imports, which the depguard allowlist and the DAG test verify on every build.
 
 ### Replacing a single adapter
@@ -157,7 +159,7 @@ To validate your implementation against the conformance suite:
 
 ```go
 // Run the standard store conformance tests against your adapter.
-storeconformance.RunSuite(t, func() port.SessionStore { return yourstore.New() })
+storeconformance.Run(t, func(t *testing.T) port.SessionStore { return yourstore.New() })
 ```
 
 Conformance suites ship in `engine/adapter/storeconformance`, `leaseconformance`, `fsconformance`, `sourceconformance`, and `memconformance`. An adapter that passes its suite is compatible with mecatl's expectations.

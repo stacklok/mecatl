@@ -82,7 +82,7 @@ sequenceDiagram
     S->>S: register heldLeases[id]
     S->>S: start renewer goroutine
     S->>E: Run(ctx, sess, ...)
-    Note over S,E: renewer calls Lease.Renew every ~TTL/2
+    Note over S,E: renewer calls Lease.Renew every ~TTL/3
     E-->>S: run complete
     S->>L: Release(cancelDetachedCtx, lease)
     S->>S: deregister heldLeases[id]
