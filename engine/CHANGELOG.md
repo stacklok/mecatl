@@ -46,6 +46,18 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ## [Unreleased]
 
+### Added
+
+- **`port.ScheduleSpec.Trigger` field added** (`port.TriggerSpec`). Phase 1a
+  landed `TriggerSpec` (the Cron XOR OneShot sum type) but did not wire it onto
+  `ScheduleSpec`; Phase 1b's conformance suite + reference adapter need the
+  field to save/load schedules with a trigger. The field is the sole carrier of
+  the firing trigger on a spec (there is no top-level Cron/OneShot). Classified
+  Added per COMPATIBILITY.md (a new struct field in a pre-v1 port value object
+  is a minor addition; the zero `TriggerSpec` is `TriggerNone`, which the
+  create-seam's `Validate` rejects fail-closed — no schedule can be saved with
+  an unset trigger). (#189)
+
 ### Notes
 
 - **`robfig/cron/v3` added to the engine dep closure (parser-only).** The

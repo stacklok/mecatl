@@ -1,0 +1,650 @@
+// Package scheduleconformance provides a shared conformance test suite for the
+// port.ScheduleStore interface (scheduled-tasks issue #189, Phase 1b). Adapters
+// (the in-memory reference memschedulestore, a future JSONL store, the gRPC
+// driver client over bufconn, the k8s-backed store) call Run with a factory
+// that constructs a fresh store plus an advance callback that moves the store's
+// notion of time forward, and the suite exercises only the port.ScheduleStore
+// interface through the port's value types.
+//
+// Importing "testing" in a non-_test.go file is intentional here: this is a
+// test-helper package whose sole purpose is to be imported by adapter tests,
+// the conventional Go pattern for shared conformance suites (cf. the sibling
+// leaseconformance/storeconformance/eventlogconformance packages).
+//
+// The suite pins the CONTRACT, not the implementation: how the store persists
+// its records (a map, a JSONL sidecar, a CRD, a remote table) is
+// adapter-internal and deliberately NOT asserted here. It is the SAME suite the
+// reference memschedulestore and a future gRPC driver client (over bufconn)
+// both pass — the dual-path contract-unification: the Go port is the contract,
+// the wire is one adapter. This is the SECOND adapter-validation pattern after
+// leases (leaseconformance), and mirrors its discipline byte-for-byte.
+//
+// TIME: the suite never sleeps. It expresses "the schedule is now due" / "the
+// slot was missed" by calling the factory-supplied advance(d) callback, which
+// pushes the store's injected clock (or, for a real-clock adapter, the real
+// wall clock) forward by d. A fake-clock adapter advances instantly; a
+// real-clock adapter may implement advance as a short real sleep.
+//
+// CRON: the store is parser-free (Claim's nextFire is caller-computed), but the
+// suite is a test-helper package and IS allowed to import engine/adapter/cronparse
+// to compute the next-fire values it hands to Claim. The memschedulestore
+// reference adapter does NOT import cronparse — the suite's use of it here does
+// not bind the adapter.
+//
+// MISFIRE: the store does NOT implement misfire policy — MisfireSkip /
+// MisfireFireOnceNow are read by COMPOSITION at tick time from ScheduleSpec.Misfire,
+// not by the store. The store's Due returns any schedule whose NextFireAt <= now
+// regardless of Misfire; the policy decides whether composition calls Claim. The
+// suite therefore does NOT test MisfireSkip at the store level (it is not a
+// store concern). It DOES test the MisfireFireOnceNow STORE-level consequence:
+// a past-due slot, when Claimed, advances NextFireAt to the NEXT future fire
+// (computed from `now`, not the stale past NextFireAt) — the catch-up semantics.
+package scheduleconformance
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stacklok/mecatl/engine/adapter/cronparse"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+// sampleCron is a cron expression the suite uses for recurring-schedule cases:
+// every minute, on the minute. It is parse-safe and gives short, predictable
+// next-fire intervals the suite asserts against.
+const sampleCron = "* * * * *"
+
+// Run executes the shared ScheduleStore conformance table against the store
+// produced by newStore. newStore returns a fresh, isolated store plus an
+// advance callback that moves THAT store's clock forward by the given duration.
+// Both must be wired to the same time source (the store reads `now` via its
+// injected port.Clock; advance moves that same clock).
+func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(time.Duration))) {
+	t.Helper()
+	ctx := context.Background()
+
+	// now returns the store's current time by advancing a fresh store's clock
+	// to a known epoch and reading it back; the factory's advance is the only
+	// way to move time, so the suite seeds each subtest with a fresh store and
+	// computes `now` off the factory's clock via a sentinel advance of zero.
+	// Simpler: the suite passes time.Time values explicitly to Due/Claim and
+	// uses advance only to express "the clock moved past NextFireAt". The
+	// store's own clock is read internally by adapters that need it; the port
+	// passes `now` as an argument, so the suite controls time directly.
+
+	t.Run("save/load round-trips spec and state", func(t *testing.T) {
+		s, _ := newStore(t)
+		in := port.Schedule{
+			Spec: port.ScheduleSpec{
+				Name:      "conf-sched-rt",
+				Prompt:    "rotate the keys",
+				Profile:   "no-fs",
+				Workspace: "/srv",
+				MaxFires:  3,
+				Mutating:  true,
+				CreatedAt: time.Unix(1_700_000_000, 0),
+			},
+			State: port.ScheduleState{
+				NextFireAt: time.Unix(1_700_000_060, 0),
+				Enabled:    true,
+			},
+		}
+		if err := s.Save(ctx, in); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := s.Load(ctx, in.Spec.Name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		assertScheduleEqual(t, "round-trip", got, in)
+	})
+
+	t.Run("save preserves existing firing state on overwrite", func(t *testing.T) {
+		// The port doc: "the State half is preserved on overwrite (a Save with
+		// a fresh State does not reset firing progress — call Delete + Save to
+		// reset)." A re-Save with a zero State MUST NOT clobber prior progress.
+		s, _ := newStore(t)
+		const name = "conf-sched-preserve"
+		first := port.Schedule{
+			Spec: port.ScheduleSpec{Name: name, Prompt: "v1", Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_060, 0)}},
+			State: port.ScheduleState{
+				NextFireAt:        time.Unix(1_700_000_060, 0),
+				LastFireAt:        time.Unix(1_700_000_000, 0),
+				FireCount:         2,
+				Enabled:           true,
+				LastFireSessionID: "sess-1",
+			},
+		}
+		if err := s.Save(ctx, first); err != nil {
+			t.Fatalf("Save #1: %v", err)
+		}
+		// Overwrite with a fresh (zero) State — only the Spec changes.
+		overwrite := port.Schedule{
+			Spec: port.ScheduleSpec{
+				Name:     name,
+				Prompt:   "v2",
+				Trigger:  port.TriggerSpec{OneShot: time.Unix(1_700_000_120, 0)},
+				Mutating: true,
+			},
+			State: port.ScheduleState{}, // deliberately zero — must NOT reset.
+		}
+		if err := s.Save(ctx, overwrite); err != nil {
+			t.Fatalf("Save #2 (overwrite): %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.Spec.Prompt != "v2" {
+			t.Errorf("Spec.Prompt = %q, want %q (Spec overwritten)", got.Spec.Prompt, "v2")
+		}
+		if got.State.FireCount != 2 {
+			t.Errorf("State.FireCount = %d, want 2 (State preserved on overwrite)", got.State.FireCount)
+		}
+		if got.State.LastFireSessionID != "sess-1" {
+			t.Errorf("State.LastFireSessionID = %q, want %q (preserved)", got.State.LastFireSessionID, "sess-1")
+		}
+		if !got.State.NextFireAt.Equal(time.Unix(1_700_000_060, 0)) {
+			t.Errorf("State.NextFireAt = %v, want preserved %v", got.State.NextFireAt, time.Unix(1_700_000_060, 0))
+		}
+		if !got.State.Enabled {
+			t.Errorf("State.Enabled = false, want true (preserved)")
+		}
+	})
+
+	t.Run("load not-found wraps ErrScheduleNotFound", func(t *testing.T) {
+		s, _ := newStore(t)
+		_, err := s.Load(ctx, "conf-sched-missing")
+		if !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("Load(unknown) = %v, want ErrScheduleNotFound", err)
+		}
+	})
+
+	t.Run("delete is idempotent", func(t *testing.T) {
+		s, _ := newStore(t)
+		const name = "conf-sched-del"
+		if err := s.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: name, Prompt: "x", Trigger: port.TriggerSpec{OneShot: time.Unix(1, 0)}}}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if err := s.Delete(ctx, name); err != nil {
+			t.Fatalf("Delete #1: %v", err)
+		}
+		// Deleting an already-removed (or never-existed) name is success.
+		if err := s.Delete(ctx, name); err != nil {
+			t.Fatalf("Delete #2 (idempotent): %v", err)
+		}
+		if err := s.Delete(ctx, "conf-sched-never"); err != nil {
+			t.Fatalf("Delete(unknown): %v", err)
+		}
+	})
+
+	t.Run("list returns all saved schedules", func(t *testing.T) {
+		s, _ := newStore(t)
+		names := []string{"conf-sched-list-a", "conf-sched-list-b", "conf-sched-list-c"}
+		for i, n := range names {
+			if err := s.Save(ctx, port.Schedule{
+				Spec: port.ScheduleSpec{Name: n, Prompt: "p", Trigger: port.TriggerSpec{OneShot: time.Unix(int64(i+1), 0)}},
+			}); err != nil {
+				t.Fatalf("Save %q: %v", n, err)
+			}
+		}
+		got, err := s.List(ctx)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(got) != len(names) {
+			t.Fatalf("List returned %d schedules, want %d", len(got), len(names))
+		}
+		gotNames := make(map[string]struct{}, len(got))
+		for _, sc := range got {
+			gotNames[sc.Spec.Name] = struct{}{}
+		}
+		for _, n := range names {
+			if _, ok := gotNames[n]; !ok {
+				t.Errorf("List missing %q", n)
+			}
+		}
+	})
+
+	t.Run("due filters on NextFireAt and Enabled and MaxFires", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		// due: NextFireAt in the past, enabled, no MaxFires cap.
+		due := port.Schedule{Spec: port.ScheduleSpec{Name: "conf-sched-due", Prompt: "p", Trigger: port.TriggerSpec{OneShot: now.Add(-time.Second)}}}
+		due.State.NextFireAt = now.Add(-time.Second)
+		due.State.Enabled = true
+		if err := s.Save(ctx, due); err != nil {
+			t.Fatalf("Save due: %v", err)
+		}
+		// not-due-future: NextFireAt in the future.
+		future := port.Schedule{Spec: port.ScheduleSpec{Name: "conf-sched-future", Prompt: "p", Trigger: port.TriggerSpec{OneShot: now.Add(time.Hour)}}}
+		future.State.NextFireAt = now.Add(time.Hour)
+		future.State.Enabled = true
+		if err := s.Save(ctx, future); err != nil {
+			t.Fatalf("Save future: %v", err)
+		}
+		// disabled: NextFireAt past but Enabled=false (must be excluded).
+		disabled := port.Schedule{Spec: port.ScheduleSpec{Name: "conf-sched-disabled", Prompt: "p", Trigger: port.TriggerSpec{OneShot: now.Add(-time.Second)}}}
+		disabled.State.NextFireAt = now.Add(-time.Second)
+		disabled.State.Enabled = false
+		if err := s.Save(ctx, disabled); err != nil {
+			t.Fatalf("Save disabled: %v", err)
+		}
+		// exhausted: NextFireAt past, Enabled=true, but FireCount >= MaxFires.
+		exhausted := port.Schedule{Spec: port.ScheduleSpec{Name: "conf-sched-exhausted", Prompt: "p", Trigger: port.TriggerSpec{OneShot: now.Add(-time.Second)}, MaxFires: 2}}
+		exhausted.State.NextFireAt = now.Add(-time.Second)
+		exhausted.State.Enabled = true
+		exhausted.State.FireCount = 2
+		if err := s.Save(ctx, exhausted); err != nil {
+			t.Fatalf("Save exhausted: %v", err)
+		}
+
+		got, err := s.Due(ctx, now)
+		if err != nil {
+			t.Fatalf("Due: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Due returned %d schedules, want 1 (only the past+enabled+under-cap one)", len(got))
+		}
+		if got[0].Spec.Name != "conf-sched-due" {
+			t.Errorf("Due returned %q, want %q", got[0].Spec.Name, "conf-sched-due")
+		}
+	})
+
+	t.Run("claim is the at-most-once atomic advance", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-claim"
+		// A recurring cron: next fire after `now` is one minute on.
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		sc := port.Schedule{
+			Spec: port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{
+				NextFireAt: now, // due now
+				Enabled:    true,
+			},
+		}
+		if err := s.Save(ctx, sc); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+
+		claimed, err := s.Claim(ctx, name, now, next)
+		if err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if !claimed.State.LastFireAt.Equal(now) {
+			t.Errorf("LastFireAt = %v, want %v", claimed.State.LastFireAt, now)
+		}
+		if !claimed.State.NextFireAt.Equal(next) {
+			t.Errorf("NextFireAt = %v, want %v (advanced to next cron fire)", claimed.State.NextFireAt, next)
+		}
+		if claimed.State.FireCount != 1 {
+			t.Errorf("FireCount = %d, want 1 (incremented)", claimed.State.FireCount)
+		}
+		if claimed.State.LastFireSessionID == "" {
+			t.Errorf("LastFireSessionID = empty, want a non-empty sentinel-pending value Claim set")
+		}
+		if !claimed.State.Enabled {
+			t.Errorf("Enabled = false, want true (recurring cron stays enabled)")
+		}
+
+		// The persisted state reflects the claim (Claim is durable, not a
+		// transient return value).
+		persisted, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after Claim: %v", err)
+		}
+		if !persisted.State.NextFireAt.Equal(next) {
+			t.Errorf("persisted NextFireAt = %v, want %v", persisted.State.NextFireAt, next)
+		}
+		if persisted.State.FireCount != 1 {
+			t.Errorf("persisted FireCount = %d, want 1", persisted.State.FireCount)
+		}
+	})
+
+	t.Run("claim excludes the slot from due", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-claim-due"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		sc := port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}
+		if err := s.Save(ctx, sc); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		got, err := s.Due(ctx, now)
+		if err != nil {
+			t.Fatalf("Due after Claim: %v", err)
+		}
+		for _, d := range got {
+			if d.Spec.Name == name {
+				t.Errorf("Due still returns %q after Claim (NextFireAt must have advanced past now)", name)
+			}
+		}
+	})
+
+	t.Run("claim is at-most-once: second claim at same now errors not-found", func(t *testing.T) {
+		// THE AT-MOST-ONCE PROOF. Two callers Claim the same name
+		// "simultaneously" (the suite serializes them but both pass the SAME
+		// now/nextFire). The SECOND Claim must observe the FIRST's advance and
+		// NOT re-claim: the slot's NextFireAt is now past `now`, so the slot is
+		// no longer due, so a second Claim returns ErrScheduleNotFound (the
+		// fail-safe interpretation — the slot is gone). This is the at-most-once
+		// guarantee at the store level: there is no owner/claim-holder field,
+		// the durable NextFireAt advance IS the fence.
+		//
+		// The port doc is silent on a second Claim's return value (it says a
+		// peer's Due won't re-return the slot, not what a second Claim does).
+		// The suite picks the fail-safe interpretation: second claim errors
+		// (wrapping ErrScheduleNotFound). An adapter that returned the
+		// already-advanced state without erroring would be a re-claim bug (it
+		// would let a peer believe it won the slot). Documented here so all
+		// adapters agree.
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-atmostonce"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim #1: %v", err)
+		}
+		_, err = s.Claim(ctx, name, now, next) // same now/next — the slot is gone
+		if !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("Claim #2 at same now = %v, want ErrScheduleNotFound (the slot is no longer due — at-most-once)", err)
+		}
+	})
+
+	t.Run("claim not-found wraps ErrScheduleNotFound", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		_, err := s.Claim(ctx, "conf-sched-claim-missing", now, now.Add(time.Minute))
+		if !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("Claim(unknown) = %v, want ErrScheduleNotFound", err)
+		}
+	})
+
+	t.Run("record fire updates last session and is idempotent", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-record"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		claimed, err := s.Claim(ctx, name, now, next)
+		if err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if claimed.State.LastFireSessionID == "" {
+			t.Fatalf("Claim set LastFireSessionID to empty, want a non-empty sentinel-pending value")
+		}
+		fire := port.ScheduleFire{
+			ID:           "fire-1",
+			ScheduleName: name,
+			SessionID:    "real-session-1",
+			FiredAt:      now,
+			Stop:         session.StopEndTurn,
+		}
+		if err := s.RecordFire(ctx, fire); err != nil {
+			t.Fatalf("RecordFire: %v", err)
+		}
+		// LastFireSessionID must be the REAL session id now, not the sentinel.
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.State.LastFireSessionID != "real-session-1" {
+			t.Errorf("LastFireSessionID = %q, want %q (RecordFire overwrote the sentinel)", got.State.LastFireSessionID, "real-session-1")
+		}
+		// Idempotent per fire id: a second RecordFire with the same f.ID is a no-op.
+		fire2 := fire
+		fire2.Stop = session.StopError // would-be mutation if not idempotent
+		fire2.Err = "transient"
+		if err := s.RecordFire(ctx, fire2); err != nil {
+			t.Fatalf("RecordFire #2 (idempotent): %v", err)
+		}
+		got2, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after idempotent record: %v", err)
+		}
+		if got2.State.LastFireSessionID != "real-session-1" {
+			t.Errorf("LastFireSessionID after re-record = %q, want unchanged %q", got2.State.LastFireSessionID, "real-session-1")
+		}
+		// The fire record itself is retrievable.
+		loaded, err := s.LoadFire(ctx, fire.ID)
+		if err != nil {
+			t.Fatalf("LoadFire: %v", err)
+		}
+		if loaded.ID != fire.ID || loaded.SessionID != fire.SessionID || loaded.Stop != session.StopEndTurn {
+			t.Errorf("LoadFire = %+v, want the original fire (StopCompleted, not the idempotent re-record's StopError)", loaded)
+		}
+	})
+
+	t.Run("record fire not-found wraps ErrScheduleNotFound", func(t *testing.T) {
+		s, _ := newStore(t)
+		fire := port.ScheduleFire{
+			ID:           "fire-orphan",
+			ScheduleName: "conf-sched-deleted-before-record",
+			SessionID:    "sess",
+		}
+		if err := s.RecordFire(ctx, fire); err != nil {
+			// A fire against a schedule that was never saved: the schedule is
+			// not-found. The suite asserts the wrap regardless of whether the
+			// adapter checks the schedule up front or lazily.
+			if !errors.Is(err, port.ErrScheduleNotFound) {
+				t.Fatalf("RecordFire(unknown schedule) = %v, want ErrScheduleNotFound", err)
+			}
+		}
+		// LoadFire on an unknown fire id wraps ErrScheduleNotFound.
+		if _, err := s.LoadFire(ctx, "conf-sched-fire-missing"); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("LoadFire(unknown) = %v, want ErrScheduleNotFound", err)
+		}
+	})
+
+	t.Run("max fires exhaustion disables on the final claim", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-maxfires"
+		next1, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire #1: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}, MaxFires: 2},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		// Fire #1.
+		c1, err := s.Claim(ctx, name, now, next1)
+		if err != nil {
+			t.Fatalf("Claim #1: %v", err)
+		}
+		if c1.State.FireCount != 1 || !c1.State.Enabled {
+			t.Fatalf("Claim #1 state = %+v, want FireCount=1 Enabled=true", c1.State)
+		}
+		// Advance the clock to next1 (the new NextFireAt) so the slot is due again.
+		now2 := next1
+		// Fire #2 — the FINAL fire (MaxFires=2). A cron whose FireCount reaches
+		// MaxFires is DONE: Claim sets Enabled=false and zeroes NextFireAt. The
+		// caller passes nextFire=zero for the terminal claim (the store is
+		// parser-free; composition computes "no further fire" and passes zero).
+		c2, err := s.Claim(ctx, name, now2, time.Time{})
+		if err != nil {
+			t.Fatalf("Claim #2 (final): %v", err)
+		}
+		if c2.State.FireCount != 2 {
+			t.Errorf("FireCount = %d, want 2", c2.State.FireCount)
+		}
+		if c2.State.Enabled {
+			t.Errorf("Enabled = true, want false (MaxFires exhausted)")
+		}
+		if !c2.State.NextFireAt.IsZero() {
+			t.Errorf("NextFireAt = %v, want zero (no further fire)", c2.State.NextFireAt)
+		}
+		// Due at any later time must NOT return the exhausted schedule.
+		got, err := s.Due(ctx, now2.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("Due after exhaustion: %v", err)
+		}
+		for _, d := range got {
+			if d.Spec.Name == name {
+				t.Errorf("Due returned exhausted schedule %q (Enabled=false, must be excluded)", name)
+			}
+		}
+	})
+
+	t.Run("one-shot fires once then disables", func(t *testing.T) {
+		s, _ := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-oneshot"
+		// A one-shot: the caller passes nextFire=zero (no further fire). Claim
+		// sets Enabled=false and zeroes NextFireAt.
+		if err := s.Save(ctx, port.Schedule{
+			Spec: port.ScheduleSpec{
+				Name:     name,
+				Prompt:   "once",
+				Trigger:  port.TriggerSpec{OneShot: now},
+				Mutating: true,
+			},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		claimed, err := s.Claim(ctx, name, now, time.Time{})
+		if err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if claimed.State.FireCount != 1 {
+			t.Errorf("FireCount = %d, want 1", claimed.State.FireCount)
+		}
+		if claimed.State.Enabled {
+			t.Errorf("Enabled = true, want false (one-shot fired)")
+		}
+		if !claimed.State.NextFireAt.IsZero() {
+			t.Errorf("NextFireAt = %v, want zero (one-shot done)", claimed.State.NextFireAt)
+		}
+		// A later Due does not return it.
+		got, err := s.Due(ctx, now.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("Due: %v", err)
+		}
+		for _, d := range got {
+			if d.Spec.Name == name {
+				t.Errorf("Due returned fired one-shot %q (must be excluded)", name)
+			}
+		}
+	})
+
+	t.Run("misfire fire-once-now advances to a future next fire", func(t *testing.T) {
+		// The MisfireFireOnceNow STORE-level consequence: a past-due slot, when
+		// Claimed, advances NextFireAt to the NEXT future fire computed from
+		// `now` (NOT from the stale past NextFireAt). The caller hands the
+		// cronparse-from-now nextFire to Claim; the suite asserts the new
+		// NextFireAt is strictly after `now`.
+		s, _ := newStore(t)
+		stale := time.Unix(1_700_000_000, 0)
+		// The clock has moved an hour past the stale NextFireAt — the slot was
+		// missed. advance is the suite's time-mover; we save with a past
+		// NextFireAt directly and Claim at the post-gap `now`.
+		now := stale.Add(time.Hour)
+		const name = "conf-sched-misfire"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: stale, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		// Due at the post-gap now still returns it (the store does not read
+		// Misfire — MisfireSkip is a composition concern, not a store concern).
+		due, err := s.Due(ctx, now)
+		if err != nil {
+			t.Fatalf("Due: %v", err)
+		}
+		var found bool
+		for _, d := range due {
+			if d.Spec.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Due did not return the past-due slot (the store does not implement MisfireSkip)")
+		}
+		claimed, err := s.Claim(ctx, name, now, next)
+		if err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if !claimed.State.NextFireAt.After(now) {
+			t.Errorf("NextFireAt after misfire-claim = %v, want strictly after now %v (advanced from `now`, not the stale past NextFireAt)", claimed.State.NextFireAt, now)
+		}
+		if !claimed.State.LastFireAt.Equal(now) {
+			t.Errorf("LastFireAt = %v, want now %v", claimed.State.LastFireAt, now)
+		}
+	})
+}
+
+// assertScheduleEqual compares the spec + state fields the suite cares about
+// (it does NOT reach into adapter-internal layout — only the port value object).
+func assertScheduleEqual(t *testing.T, label string, got, want port.Schedule) {
+	t.Helper()
+	if got.Spec.Name != want.Spec.Name {
+		t.Errorf("%s: Spec.Name = %q, want %q", label, got.Spec.Name, want.Spec.Name)
+	}
+	if got.Spec.Prompt != want.Spec.Prompt {
+		t.Errorf("%s: Spec.Prompt = %q, want %q", label, got.Spec.Prompt, want.Spec.Prompt)
+	}
+	if got.Spec.Profile != want.Spec.Profile {
+		t.Errorf("%s: Spec.Profile = %q, want %q", label, got.Spec.Profile, want.Spec.Profile)
+	}
+	if got.Spec.Workspace != want.Spec.Workspace {
+		t.Errorf("%s: Spec.Workspace = %q, want %q", label, got.Spec.Workspace, want.Spec.Workspace)
+	}
+	if got.Spec.MaxFires != want.Spec.MaxFires {
+		t.Errorf("%s: Spec.MaxFires = %d, want %d", label, got.Spec.MaxFires, want.Spec.MaxFires)
+	}
+	if got.Spec.Mutating != want.Spec.Mutating {
+		t.Errorf("%s: Spec.Mutating = %v, want %v", label, got.Spec.Mutating, want.Spec.Mutating)
+	}
+	if !got.Spec.CreatedAt.Equal(want.Spec.CreatedAt) {
+		t.Errorf("%s: Spec.CreatedAt = %v, want %v", label, got.Spec.CreatedAt, want.Spec.CreatedAt)
+	}
+	if !got.State.NextFireAt.Equal(want.State.NextFireAt) {
+		t.Errorf("%s: State.NextFireAt = %v, want %v", label, got.State.NextFireAt, want.State.NextFireAt)
+	}
+	if got.State.Enabled != want.State.Enabled {
+		t.Errorf("%s: State.Enabled = %v, want %v", label, got.State.Enabled, want.State.Enabled)
+	}
+}

@@ -167,6 +167,11 @@ const (
 //     session.ValidateMediaParts the wire path uses — there is no second validation
 //     path. Either or both may be set; a schedule with neither is invalid (caught at
 //     composition's create-seam, not here — the store is structure-blind).
+//   - Trigger is the firing trigger (a TriggerSpec: Cron XOR OneShot). The store is
+//     parser-free — it stores the raw expression verbatim and never interprets it;
+//     the CALLER (composition) computes the next fire and hands it to Claim. Validate
+//     enforces the exactly-one-of(Cron, OneShot) invariant; the store does not
+//     re-Validate on Save (the create-seam does, fail-closed).
 //   - Selector selects the provider+model the fires run on. A zero value means the
 //     deployment default (the same opaque-string discipline as
 //     port.LLMRequest.Model).
@@ -204,6 +209,7 @@ type ScheduleSpec struct {
 	Name      string
 	Prompt    string
 	Parts     []session.Content
+	Trigger   TriggerSpec
 	Selector  ScheduleProviderSelector
 	Profile   string
 	Workspace string

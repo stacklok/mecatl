@@ -366,6 +366,31 @@ linters:
           deny:
             - pkg: os
               desc: 'cronparse is the parser-only cron helper (robfig/cron/v3 parser, NOT the daemon); it must not touch the OS or pull engine/port'
+        engine-adapter-memschedulestore:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memschedulestore/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/session
+          deny:
+            - pkg: os
+              desc: 'memschedulestore is the in-memory reference port.ScheduleStore; it must not touch the real OS (the store is parser-free and clock-injected)'
+        engine-adapter-scheduleconformance:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/scheduleconformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/adapter/cronparse
+          deny:
+            - pkg: os
+              desc: 'scheduleconformance drives the abstract ScheduleStore contract (a test-helper, it may use cronparse to compute expected next fires); it must not touch the real OS'
         # agent: the APPLICATION loop; imports domain + port + team + stdlib +
         # golang.org/x/sync/errgroup. Adapters are INJECTED, never imported.
         core-agent:
@@ -515,6 +540,13 @@ linters:
           - goconst
           - unparam
         path: engine/adapter/leaseconformance/
+      - linters:
+          - gocyclo
+          - errcheck
+          - gosec
+          - goconst
+          - unparam
+        path: engine/adapter/scheduleconformance/
       - linters:
           - revive
         path: .golangci.yml
