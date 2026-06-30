@@ -22,6 +22,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
+	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
@@ -478,6 +479,15 @@ type Config struct {
 	// LeaseRenewInterval is how often the renewer refreshes a held lease. A
 	// non-positive value defaults to LeaseTTL/3. Ignored when SessionLease is nil.
 	LeaseRenewInterval time.Duration
+
+	// Scheduler is the OPTIONAL in-process scheduled-tasks tick loop (issue #189,
+	// Phase 1f). When wired, NewService stores it on the Service so Close drains it
+	// (Stop cancels the tick loop + joins in-flight fires) and Drain arms its drain
+	// gate (no new fires mid-tick during shutdown). The scheduler is STARTED by
+	// composition (app.Build) AFTER NewService — its FireFunc closes over the
+	// Service, so Build calls SetFire then Start; NewService does NOT start it.
+	// nil = no scheduling (the byte-identical default).
+	Scheduler *scheduler.Scheduler
 }
 
 // defaultMaxTeams is the live-team registry cap applied when Config.MaxTeams is
@@ -633,6 +643,13 @@ type Service struct {
 	// mecated and an undrained mecak8s are unaffected. Read with atomic.Load in
 	// the run-entry hot path (no s.mu).
 	draining atomic.Bool
+
+	// scheduler is the OPTIONAL in-process scheduled-tasks tick loop (issue #189,
+	// Phase 1f), set from cfg.Scheduler. NewService does NOT start it — composition
+	// (app.Build) calls SetFire then Start after NewService (the FireFunc closes
+	// over the Service). Close stops it (drains in-flight fires + releases the
+	// leader lease); Drain arms its drain gate. nil when no scheduler is wired.
+	scheduler *scheduler.Scheduler
 }
 
 // heldLease is one process-held session lease plus the cancel that stops its
@@ -783,6 +800,7 @@ func NewService(cfg Config) (*Service, error) {
 		sessionWorkspaces: make(map[session.SessionID]tool.Workspace),
 		replayedApprovals: make(map[session.SessionID]struct{}),
 		heldLeases:        make(map[session.SessionID]*heldLease),
+		scheduler:         cfg.Scheduler,
 	}
 	// Seed the model inventory from the static snapshot. ListModels and the
 	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
@@ -1164,6 +1182,13 @@ func (s *Service) EndSession(ctx context.Context, id session.SessionID) error {
 // shutdown hook so a process exit does not leak any per-session MCP connection.
 // It is safe to call multiple times.
 func (s *Service) Close() {
+	// Stop the scheduler FIRST so in-flight fires drain while the service is
+	// still alive to serve them (the FireFunc drives StartRunContent on this
+	// Service). Stop cancels the tick loop, joins in-flight fires (with a grace),
+	// and releases the leader lease. nil-safe (no scheduler wired).
+	if s.scheduler != nil {
+		_ = s.scheduler.Stop()
+	}
 	s.mu.Lock()
 	engines := s.sessionEngines
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
@@ -1200,7 +1225,32 @@ func (s *Service) Close() {
 // binary; Drain only gates new entries. The gate is one-way: there is no
 // un-drain (a draining replica is retiring).
 func (s *Service) Drain() {
+	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
+	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
+	if s.scheduler != nil {
+		s.scheduler.Drain()
+	}
 	s.draining.Store(true)
+}
+
+// SetScheduler wires a scheduler onto an already-constructed Service. It is the
+// late-bind seam for the scheduled-tasks tick loop (issue #189, Phase 1f):
+// buildScheduler needs the Service for the FireFunc, so the scheduler is built
+// AFTER NewService and attached here. NewService does NOT start it; composition
+// calls SetFire then Start on the returned *scheduler.Scheduler. Nil-safe.
+func (s *Service) SetScheduler(sch *scheduler.Scheduler) {
+	s.mu.Lock()
+	s.scheduler = sch
+	s.mu.Unlock()
+}
+
+// HasScheduler reports whether a scheduler was wired into this Service. It is
+// the read-side companion to SetScheduler: nil-safe (the byte-identical default
+// wires no scheduler).
+func (s *Service) HasScheduler() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scheduler != nil
 }
 
 // IsDraining reports whether the drain gate is armed. It is the read-side

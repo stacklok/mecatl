@@ -193,6 +193,13 @@ type config struct {
 	sessionLeaseTTL           time.Duration
 	sessionLeaseRenewInterval time.Duration
 
+	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler ticks the
+	// durable ScheduleStore and fires due schedules. OFF by default.
+	schedulerEnabled            bool
+	schedulerTickInterval       time.Duration
+	schedulerMinInterval        time.Duration
+	schedulerMaxConcurrentFires int
+
 	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona fragment.
 	// ON by default reading the conventional ~/.config/mecatl/soul.md (fail-soft if
 	// absent). soulFile overrides the path; noSoul disables it entirely.
@@ -882,6 +889,10 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SessionLeaseK8sNamespace:     cfg.sessionLeaseK8sNamespace,
 		SessionLeaseTTL:              cfg.sessionLeaseTTL,
 		SessionLeaseRenewInterval:    cfg.sessionLeaseRenewInterval,
+		SchedulerEnabled:             cfg.schedulerEnabled,
+		SchedulerTickInterval:        cfg.schedulerTickInterval,
+		SchedulerMinInterval:         cfg.schedulerMinInterval,
+		SchedulerMaxConcurrentFires:  cfg.schedulerMaxConcurrentFires,
 		SkillSourceURL:               cfg.skillSourceURL,
 		SoulSourceURL:                cfg.soulSourceURL,
 		AgentSourceURL:               cfg.agentSourceURL,
@@ -1142,6 +1153,11 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see docs/usage.md). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
+	// Scheduled tasks (issue #189, Phase 1f).
+	fs.BoolVar(&cfg.schedulerEnabled, "scheduler", false, "SCHEDULED TASKS: enable the in-process scheduler that ticks the durable ScheduleStore (the jsonlstore --store-dir or redisstore --redis-url backend) and fires due schedules. A fire mints a fresh \"sched--\" top-level session and drives it to completion with subagent-grade defaults. OFF by default (byte-identical no-scheduling). Fails startup if the configured store exposes no ScheduleStore (use --store-dir or --redis-url). The leader-lease reuses the session-lease backend on a distinct id; with no lease backend it runs single-replica by affinity. See ADR 0059")
+	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default. Only meaningful when --scheduler is enabled")
+	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a schedule whose cadence is tighter than this is rejected, fail-closed). 0 = no floor. Only meaningful when --scheduler is enabled")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick. Only meaningful when --scheduler is enabled")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on the store-driver connections (--session-store-url/--memory-store-url)")
 	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")

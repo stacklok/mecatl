@@ -180,6 +180,14 @@ type config struct {
 	// enableParallel / enableTeams: the fan-out / agent-teams toggles.
 	enableParallel bool
 	enableTeams    bool
+
+	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler. mecak8s
+	// is the multi-replica home — the leader-lease (the k8s session-lease backend)
+	// elects one ticker. OFF by default.
+	schedulerEnabled            bool
+	schedulerTickInterval       time.Duration
+	schedulerMinInterval        time.Duration
+	schedulerMaxConcurrentFires int
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -232,6 +240,12 @@ func parseFlags(argv []string) (config, error) {
 		"Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica single-writer path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace. Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3")
+
+	// Scheduled tasks (issue #189, Phase 1f): mecak8s is the multi-replica home.
+	fs.BoolVar(&cfg.schedulerEnabled, "scheduler", false, "SCHEDULED TASKS: enable the in-process scheduler that ticks the durable ScheduleStore (the --redis-url backend) and fires due schedules. A fire mints a fresh \"sched--\" top-level session driven to completion with subagent-grade defaults. OFF by default. The leader-lease reuses the k8s session-lease backend on a distinct id, electing one ticker across replicas. See ADR 0059")
+	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default")
+	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a tighter cadence is rejected); 0 = no floor")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
 	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "max LLM stream-establish attempts (initial call plus retries)")
@@ -356,6 +370,10 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		SessionLeaseK8sNamespace:     cfg.sessionLeaseK8sNamespace,
 		SessionLeaseTTL:              cfg.sessionLeaseTTL,
 		SessionLeaseRenewInterval:    cfg.sessionLeaseRenewInterval,
+		SchedulerEnabled:             cfg.schedulerEnabled,
+		SchedulerTickInterval:        cfg.schedulerTickInterval,
+		SchedulerMinInterval:         cfg.schedulerMinInterval,
+		SchedulerMaxConcurrentFires:  cfg.schedulerMaxConcurrentFires,
 		LLMMaxAttempts:               cfg.llmMaxAttempts,
 		LLMPerAttemptTimeout:         cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:         cfg.llmStreamIdleTimeout,

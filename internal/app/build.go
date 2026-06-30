@@ -63,6 +63,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
+	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	httpsearch "github.com/stacklok/mecatl/internal/adapter/search"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -798,6 +799,26 @@ type Config struct {
 	// proxy that does. INVARIANT: 0 = disabled = byte-identical production resolution
 	// (the live/catalogued/128k path stands untouched).
 	ContextWindowOverride int
+
+	// --- Scheduled tasks (issue #189, Phase 1f): the in-process scheduler
+	// (internal/adapter/scheduler) owns the tick loop that polls the durable
+	// ScheduleStore, applies the misfire policy, claim-before-fire advances
+	// NextFireAt (the at-most-once atomic), fires each claimed schedule via a
+	// composition-supplied FireFunc (mints a fresh "sched--" top-level session
+	// via Service.CreateSessionWithProfile + StartRunContent with subagent-grade
+	// defaults + fail-closed model pinning), and records the outcome. The loop is
+	// storage-agnostic; engine/agent never imports it. OFF by default — a
+	// byte-identical no-scheduler path when SchedulerEnabled is false. The
+	// ScheduleStore is discovered by type-asserting the configured store for the
+	// ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one); a store
+	// that does not expose one FAILS LOUD when --scheduler is enabled. The
+	// leader-lease reuses the SAME backend as the run-entry session lease (a
+	// different id — port.SchedulerLeaderLeaseID — so the two never contend); nil
+	// Lease = single-replica by affinity. See ADR 0059.
+	SchedulerEnabled            bool
+	SchedulerTickInterval       time.Duration // 0 → default 30s (the scheduler's own default)
+	SchedulerMinInterval        time.Duration // 0 → no floor enforced at the create-seam
+	SchedulerMaxConcurrentFires int           // 0 → default 4
 }
 
 // GuardrailRule is one operator-tier guardrail rule (issue #27): a tool-NAME matcher,
@@ -876,6 +897,8 @@ type Built struct {
 // The returned Built.Close must be deferred by the caller to release the MCP
 // manager on shutdown. Build itself starts no listeners — serving is the caller's
 // responsibility (see cmd/mecated/serve and cmd/mecatui/embed).
+//
+//nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// Remote store drivers (Phase B): a local dir and a driver URL for the same
 	// store are mutually exclusive — fatal here, before anything is constructed
@@ -1338,6 +1361,22 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// has a lister (e.g. mock/openai-only), so the goroutine + ctx are skipped.
 	refreshClose := startLiveModelRefresh(cfg.diag(), reg, svc, cfg.liveModelRefreshSync, liveRefreshDelay(cfg))
 
+	// Scheduled tasks (issue #189, Phase 1f): build + wire + start the in-process
+	// scheduler over the SAME store + session-lease backend. The FireFunc is
+	// LATE-BOUND (closes over svc). nil when SchedulerEnabled is false (the
+	// byte-identical default). Extracted to startScheduler so Build's cyclomatic
+	// complexity stays under the lint cap.
+	schedClose, err := startScheduler(ctx, cfg, store, sessionLease, leaseOwner, svc)
+	if err != nil {
+		refreshClose()
+		svc.Close()
+		mcpClose()
+		agentClose()
+		storeClose()
+		commandConnClose()
+		return nil, err
+	}
+
 	// Child-session retention GC (issue #38): wired AFTER the Service exists
 	// because the sweep's liveness predicate is the Service's in-flight run
 	// registry. No-op (one INFO) when the policy is disabled or the store is
@@ -1351,6 +1390,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
 	closeAll := func() {
+		schedClose()
 		refreshClose()
 		svc.Close()
 		mcpClose()
@@ -1864,6 +1904,72 @@ func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, 
 		return lease, owner, noop, nil
 	}
 	return nil, "", noop, nil
+}
+
+// buildScheduler resolves the OPTIONAL in-process scheduled-tasks tick loop
+// (issue #189, Phase 1f). It mirrors buildSessionLease: when SchedulerEnabled is
+// false it returns (nil, noop, nil) so the default path is byte-identical. When
+// enabled it discovers the port.ScheduleStore by type-asserting the configured
+// store for the ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose
+// one); a store that does not expose one FAILS LOUD — the operator asked for
+// scheduling, a store that can't store schedules is a misconfiguration. The
+// leader-lease reuses the SAME backend as the run-entry session lease (owner
+// leaseOwner, id port.SchedulerLeaderLeaseID) so the two never contend. The
+// FireFunc is LATE-BOUND: buildScheduler returns the *scheduler.Scheduler with
+// Fire nil; Build calls SetFire(makeFireFunc(svc)) after NewService, then
+// Start. The returned close calls sched.Stop (which drains in-flight fires,
+// releases the leader lease).
+func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string) (*scheduler.Scheduler, func(), error) {
+	noop := func() {}
+	if !cfg.SchedulerEnabled {
+		return nil, noop, nil
+	}
+	schedStore, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
+	if !ok || schedStore.ScheduleStore() == nil {
+		return nil, nil, fmt.Errorf("scheduler: --scheduler enabled but the configured store does not expose a ScheduleStore (configure a jsonlstore (--store-dir) or redisstore (--redis-url) backend)")
+	}
+	scfg := scheduler.Config{
+		Store:              schedStore.ScheduleStore(),
+		Lease:              sessionLease, // same backend, different id — no contention
+		LeaseOwner:         leaseOwner,
+		LeaseTTL:           cfg.SessionLeaseTTL,
+		LeaseRenewInterval: cfg.SessionLeaseRenewInterval,
+		Clock:              wallclock.Clock{},
+		Diagnostics:        cfg.diag(),
+		TickInterval:       cfg.SchedulerTickInterval,
+		MinInterval:        cfg.SchedulerMinInterval,
+		MaxConcurrentFires: cfg.SchedulerMaxConcurrentFires,
+	}
+	// Fire is nil here — Build calls SetFire after NewService (the FireFunc closes
+	// over the *server.Service, which does not exist yet at this point).
+	sched := scheduler.New(scfg)
+	cfg.diag().Log(context.Background(), port.LevelInfo, "scheduler: enabled",
+		"tick", scfg.TickInterval, "maxConcurrentFires", scfg.MaxConcurrentFires, "owner", leaseOwner)
+	return sched, func() { _ = sched.Stop() }, nil
+}
+
+// startScheduler builds, wires (SetScheduler + SetFire), and starts the
+// scheduler. It is the composition step that runs AFTER NewService (the FireFunc
+// closes over svc) and BEFORE closeAll is assembled (the scheduler close chains
+// onto closeAll so in-flight fires drain while the service is still alive). A
+// no-op when SchedulerEnabled is false. Extracted from Build to keep Build's
+// cyclomatic complexity under the lint cap.
+func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string, svc *server.Service) (func(), error) {
+	noop := func() {}
+	sched, schedClose, err := buildScheduler(cfg, store, sessionLease, leaseOwner)
+	if err != nil {
+		return noop, err
+	}
+	if sched == nil {
+		return noop, nil // byte-identical default
+	}
+	svc.SetScheduler(sched)
+	sched.SetFire(makeFireFunc(svc))
+	if err := sched.Start(ctx); err != nil {
+		schedClose()
+		return noop, fmt.Errorf("start scheduler: %w", err)
+	}
+	return schedClose, nil
 }
 
 // leaseOwnerIdentity builds this Build's lease owner string: hostname-pid-nonce.

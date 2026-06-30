@@ -152,17 +152,33 @@ type Scheduler struct {
 	stopped atomic.Bool
 }
 
+// SetFire sets the composition-supplied FireFunc. It MUST be called before
+// Start (Start panics if Fire is nil — composition wires the run-entry funnel
+// here). It is the late-bind seam: buildScheduler constructs the Scheduler with
+// the store/lease/clock but no Fire (the Service does not exist yet), Build
+// calls SetFire after NewService, then Start.
+func (s *Scheduler) SetFire(f FireFunc) {
+	if f == nil {
+		panic("scheduler: nil Fire")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started.Load() {
+		panic("scheduler: SetFire after Start")
+	}
+	s.cfg.Fire = f
+}
+
 // New constructs a Scheduler. It applies Config defaults (TTLs, intervals,
 // fan-out, a NopDiagnostics sink) but does NOT acquire the lease or start any
 // goroutine — call Start. A nil Clock or Store is a programming error at the
 // only construction site (composition); New panics so it surfaces loudly there
-// rather than as a nil-deref in the tick loop.
+// rather than as a nil-deref in the tick loop. Fire MAY be nil at New (the
+// late-bind seam: composition calls SetFire after NewService, before Start); a
+// nil Fire at Start panics.
 func New(cfg Config) *Scheduler {
 	if cfg.Store == nil {
 		panic("scheduler: nil Store")
-	}
-	if cfg.Fire == nil {
-		panic("scheduler: nil Fire")
 	}
 	if cfg.Clock == nil {
 		panic("scheduler: nil Clock")
@@ -207,6 +223,10 @@ func New(cfg Config) *Scheduler {
 func (s *Scheduler) Start(ctx context.Context) error {
 	if !s.started.CompareAndSwap(false, true) {
 		return nil
+	}
+	if s.cfg.Fire == nil {
+		s.started.Store(false)
+		panic("scheduler: Start called before SetFire (Fire is nil)")
 	}
 
 	if s.cfg.Lease != nil {

@@ -40,3 +40,33 @@ an editor that spawned it.
 | 15. Running mecatequi from GitHub Actions | [mecatequi-ci.md](usage/mecatequi-ci.md) |
 | 16. Live e2e suite | [e2e.md](usage/e2e.md) |
 | 17. Troubleshooting / FAQ | [troubleshooting.md](usage/troubleshooting.md) |
+
+## Scheduled tasks
+
+`mecated` and `mecak8s` can run scheduled agent fires autonomously (issue #189,
+[ADR 0059](adr/0059-scheduled-tasks.md)) behind `--scheduler`:
+
+```sh
+mecated --store-dir ./state --scheduler --scheduler-tick-interval 30s
+mecak8s --redis-url redis://... --scheduler   # multi-replica
+```
+
+Flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--scheduler` | false | Enable the in-process scheduler tick loop. Requires a store that exposes a `ScheduleStore` (jsonlstore via `--store-dir`, or redisstore via `--redis-url`). |
+| `--scheduler-tick-interval` | 30s | How often the tick loop polls `ScheduleStore.Due`. |
+| `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-save time (a schedule tighter than this is rejected). |
+| `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
+
+Schedules are saved via the `ScheduleService` gRPC/HTTP API (Phase 2). A YAML
+`schedules:` block in `settings.yaml` (Phase 2b) and a `mecatui /schedule`
+command (Phase 3) are planned. For now, schedules are seeded programmatically
+(e.g. by a test or an operator script writing to the store).
+
+A scheduled fire mints a fresh `sched--` top-level session per fire with
+subagent-grade defaults (bounded turn/token budgets, read-leaning posture unless
+`mutating: true` is set on the schedule, headless ask model). The at-most-once
+firing semantics mean a crash mid-fire skips the slot — a recurring schedule
+self-heals via the fire-once-now misfire policy; a one-shot can be lost.

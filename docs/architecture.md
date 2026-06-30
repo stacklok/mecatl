@@ -256,3 +256,40 @@ Two deliberate cycle-breaks worth noting, documented in code:
 - [mecatui terminal UI](tui.md) — the gRPC client that renders the event stream described above.
 - [ADR 0001 — the ACP adapter](adr/0001-acp-adapter.md) — the decisions behind the third (editor) wire surface.
 - [Go performance measurement & observability survey](perf-measurement-survey.md) — the technique reference behind [observability & persistence](architecture/observability.md).
+
+## Scheduled tasks
+
+A scheduler subsystem (issue #189, [ADR 0059](adr/0059-scheduled-tasks.md)) lets an
+operator register a saved prompt to run on a 5-field cron schedule (`0 9 * * *`,
+`@every 30m`, `@daily` macros) or once at a future time, and have mecatl drive
+that run **autonomously, durably, and exactly-once** across a multi-replica
+deployment — with no human present at fire time.
+
+It is a **composition-layer** subsystem (no `engine/agent` changes) that reuses
+the existing run-entry funnel. The pieces:
+
+- **`port.ScheduleStore`** (`engine/port/schedule.go`) — the durable registry,
+  a peer of `port.SessionLease`/`port.EventLog`. The store is ground truth; an
+  in-memory timer is a derived lookahead. `Claim` is the at-most-once atomic
+  advance (NextFireAt + LastFireAt + FireCount) that gives exactly-once across
+  replicas — a crash mid-fire skips the slot (recurring self-heals via
+  fire-once-now; a one-shot can be lost).
+- **Adapters** — `memschedulestore` (reference), `jsonlstore` (single-host),
+  `redisstore` (multi-replica, via a Lua CAS for the atomic Claim). All pass
+  the shared `scheduleconformance` suite.
+- **`internal/adapter/scheduler`** — the tick loop, gated by a leader-lease on
+  the well-known `__scheduler__` id (only the leader ticks). On each tick:
+  `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`.
+  The `FireFunc` seam is how composition injects the run-entry funnel.
+- **Composition** (`internal/app/build.go` `buildScheduler`/`startScheduler`)
+  wires the scheduler behind `--scheduler`, reusing the configured store (by
+  type-assertion on a `ScheduleStore()` accessor) and the session-lease backend
+  (same backend, different id). The `FireFunc` mints a fresh `sched--`
+  top-level session per fire via `Service.CreateSessionWithProfile` +
+  `StartRunContent` with subagent-grade defaults (bounded budgets, read-leaning
+  posture unless `mutating: true`, headless ask model, fail-closed model
+  pinning).
+
+See [ADR 0059](adr/0059-scheduled-tasks.md) for the frozen rationale (the 10
+resolved decisions + the leader-lease decision) and the consequences (one-shot
+loss on mid-fire crash; fresh-context-per-fire v1; carried-context deferred).
