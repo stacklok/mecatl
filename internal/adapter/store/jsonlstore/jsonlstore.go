@@ -368,6 +368,19 @@ func (st *Store) toolsPath(id session.SessionID) string {
 	return filepath.Join(st.dir, safeName(id)+toolsFileSuffix)
 }
 
+// ScheduleStore returns a port.ScheduleStore backed by the SAME directory as
+// the session store (a sibling struct sharing the dir + the single-process
+// mutex). Composition discovers it via type-assertion on this accessor — NOT
+// by asserting the *Store itself implements port.ScheduleStore (the schedule
+// store is a separate concern; the accessor keeps session-store and
+// schedule-store methods from bloating one struct, the way PrunableStore is
+// discovered on the store itself but here the schedule store is a sibling
+// struct, not the session store). A caller that does not need schedules never
+// calls this; the byte-identical default is no schedules.
+func (st *Store) ScheduleStore() port.ScheduleStore {
+	return &scheduleStore{dir: st.dir, mu: &st.mu}
+}
+
 func (st *Store) eventsPath(id session.SessionID) string {
 	return filepath.Join(st.dir, safeName(id)+eventsFileSuffix)
 }

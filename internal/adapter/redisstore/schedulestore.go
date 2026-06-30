@@ -1,0 +1,546 @@
+package redisstore
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+// Schedule key layout under the SAME Redis keyspace as the session store. The
+// schedule name is the raw string after the prefix (Redis keys are arbitrary
+// byte strings, so — unlike jsonlstore's filename-safe safeFilePart — no
+// sanitization is needed, the same discipline the session store applies).
+const (
+	scheduleKeyPrefix     = "mecatl:schedule:"
+	scheduleFireKeyPrefix = "mecatl:schedulefire:"
+
+	// scheduleFormat is the per-record format tag written on every schedule and
+	// fire record. It versions the encoding so a future incompatible format fails
+	// loud on load (the EventLogFormat precedent): an unknown tag is an infra
+	// error, never a silent skip.
+	scheduleFormat = "redisstore-schedule/1"
+)
+
+// Hash fields on a schedule key. The spec is stored as JSON so List/Load return
+// the FULL spec; the state fields are separate HASH fields so the Claim Lua
+// script can read+advance them atomically in one EVAL (a plain HGETALL + HSET
+// would race between replicas; the script is the at-most-once fence).
+const (
+	fieldSpec              = "spec"
+	fieldNextFireAt        = "next_fire_at"
+	fieldLastFireAt        = "last_fire_at"
+	fieldFireCount         = "fire_count"
+	fieldEnabled           = "enabled"
+	fieldLastFireSessionID = "last_fire_session_id"
+	fieldCreatedAt         = "created_at"
+)
+
+// ErrScheduleNotFound is returned by Load/Delete/Claim/RecordFire/LoadFire when
+// no schedule (or fire) exists under the requested name/id. It wraps
+// port.ErrScheduleNotFound so a consumer that may not import this adapter can
+// distinguish not-found from an infra failure via errors.Is, the same discipline
+// the session store applies for ErrNotFound (and the jsonl/mem schedule stores
+// apply for their ErrNotFound/ErrScheduleNotFound). It is a SEPARATE sentinel
+// from the session-store ErrNotFound so a reader can tell which seam missed.
+var ErrScheduleNotFound = fmt.Errorf("redisstore: schedule not found: %w", port.ErrScheduleNotFound)
+
+// pendingSessionID is the sentinel-pending value Claim stamps on
+// ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
+// RecordFire with the real fire's session id. It mirrors
+// memschedulestore.pendingSessionID / jsonlstore.pendingSessionID byte-for-byte
+// so the singleton check's lease-acquire path sees the same key across backends.
+const pendingSessionID session.SessionID = "pending"
+
+// claimScript is the AT-MOST-ONCE atomic advance, expressed as a Lua script so
+// Redis executes it single-threaded (no client mutex needed — the redisstore.Store
+// precedent). A plain HGETALL + HSET would race between replicas: two Claim
+// calls could both observe the slot still-due and both advance it. The script
+// does the read-check-advance in ONE atomic EVAL, so exactly one Claim wins.
+//
+// KEYS[1] = mecatl:schedule:<name>
+// ARGV[1] = now          (unix nano, string; the LastFireAt to stamp)
+// ARGV[2] = nextFire     (unix nano, string; "0" means zero time = no further fire)
+// ARGV[3] = pendingSID   (the sentinel-pending LastFireSessionID)
+// ARGV[4] = maxFires     (int, string; "0" = forever — passed as an ARG so the
+//
+//	script checks exhaustion WITHOUT decoding the spec JSON)
+//
+// Returns:
+//   - the bulk string "NOT_FOUND"      if the schedule key does not exist;
+//   - the bulk string "NOT_CLAIMABLE"  if the slot is no longer due (a peer
+//     already claimed it, it was disabled, or it exhausted MaxFires);
+//   - an array {next_fire_at, last_fire_at, fire_count, enabled,
+//     last_fire_session_id} describing the ADVANCED state on success.
+//
+// Both sentinel cases map to ErrScheduleNotFound in Go (the fail-safe
+// interpretation the conformance suite pins: a second Claim at the same now does
+// NOT re-claim — the slot is gone). redis.NewScript loads the script once and
+// reuses EVALSHA on subsequent calls.
+var claimScript = redis.NewScript(`
+local exists = redis.call('EXISTS', KEYS[1])
+if exists == 0 then
+  return 'NOT_FOUND'
+end
+local enabled = redis.call('HGET', KEYS[1], 'enabled')
+local nfa = redis.call('HGET', KEYS[1], 'next_fire_at')
+local fc = redis.call('HGET', KEYS[1], 'fire_count')
+local now = tonumber(ARGV[1])
+local nextFire = ARGV[2]
+local pending = ARGV[3]
+local maxFires = tonumber(ARGV[4])
+if enabled == false or enabled == '0' then
+  return 'NOT_CLAIMABLE'
+end
+if nfa == false or nfa == '' or nfa == '0' then
+  return 'NOT_CLAIMABLE'
+end
+if tonumber(nfa) > now then
+  return 'NOT_CLAIMABLE'
+end
+if maxFires > 0 and tonumber(fc) >= maxFires then
+  return 'NOT_CLAIMABLE'
+end
+local newFC = tostring(tonumber(fc) + 1)
+local newEnabled = enabled
+if nextFire == '0' then
+  newEnabled = '0'
+end
+redis.call('HSET', KEYS[1],
+  'last_fire_at', ARGV[1],
+  'next_fire_at', nextFire,
+  'fire_count', newFC,
+  'last_fire_session_id', pending,
+  'enabled', newEnabled)
+return {nextFire, ARGV[1], newFC, newEnabled, pending}
+`)
+
+// scheduleStore is a Redis-backed port.ScheduleStore sharing the parent *Store's
+// *redis.Client. It is the MULTI-REPLICA production schedule backend
+// (scheduled-tasks issue #189, Phase 1d): the SAME logic as
+// memschedulestore/jsonlstore.scheduleStore with Redis persistence + a Lua-script
+// atomic Claim. No client-side mutex is needed — Redis serializes commands
+// single-threaded, and the Claim script is the cross-replica at-most-once fence
+// (where the jsonl mutex was single-process only).
+//
+// It is parser-free (Claim's nextFire is caller-computed) and misfire-free (Due
+// does not read ScheduleSpec.Misfire) — the same discipline as the in-memory and
+// jsonl references.
+type scheduleStore struct {
+	client *redis.Client
+}
+
+// compile-time assertion that scheduleStore satisfies the port.
+var _ port.ScheduleStore = (*scheduleStore)(nil)
+
+// Save upserts the schedule by Spec.Name. A schedule with the same name is
+// overwritten on the Spec half; the State half is PRESERVED on overwrite (a
+// Save with a fresh zero State does not reset firing progress — call Delete +
+// Save to reset, the port doc says so). A NEW schedule is initialised with
+// Enabled=true (a new schedule is active by default; pause it by overwriting
+// State.Enabled=false, which Save preserves on re-save). The semantics mirror
+// memschedulestore.Save / jsonlstore.scheduleStore.Save byte-for-byte.
+//
+// On overwrite only the spec + created_at fields are HSET; the state fields
+// (next_fire_at, last_fire_at, fire_count, enabled, last_fire_session_id) are
+// left untouched so firing progress survives a re-save. On a NEW schedule the
+// state fields are seeded from in.State (with the zero-State-defaults-enabled
+// rule). Redis serializes the HSET, so no client mutex is required.
+func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
+	specJSON, err := json.Marshal(cloneSpec(in.Spec))
+	if err != nil {
+		return fmt.Errorf("redisstore: marshal schedule spec: %w", err)
+	}
+	key := scheduleKey(in.Spec.Name)
+	// EXISTS is atomic w.r.t. other commands; a concurrent Save of the same name
+	// is an upsert either way (both HSET the spec), so the existed/not-existed
+	// branch only decides whether to seed state fields. A race between two Saves
+	// of a NEW schedule could seed state twice — harmless (both write the same
+	// in.State-derived fields, and Save is caller-serialised per name per the
+	// port concurrency contract).
+	exists, err := s.client.Exists(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: save schedule %q (exists): %w", in.Spec.Name, err)
+	}
+	if exists == 0 {
+		// New schedule: honour an explicit State, but default a zero State to
+		// enabled (a freshly-created schedule is active). A caller that wants a
+		// new schedule disabled passes a non-zero State with Enabled=false.
+		enabled := in.State.Enabled
+		if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
+			enabled = true
+		}
+		if err := s.client.HSet(ctx, key,
+			fieldSpec, specJSON,
+			fieldNextFireAt, nanoStr(in.State.NextFireAt),
+			fieldLastFireAt, nanoStr(in.State.LastFireAt),
+			fieldFireCount, strconv.Itoa(in.State.FireCount),
+			fieldEnabled, boolStr(enabled),
+			fieldLastFireSessionID, string(in.State.LastFireSessionID),
+			fieldCreatedAt, nanoStr(in.Spec.CreatedAt),
+		).Err(); err != nil {
+			return fmt.Errorf("redisstore: save schedule %q (new): %w", in.Spec.Name, err)
+		}
+		return nil
+	}
+	// Overwrite: replace only the spec + created_at, PRESERVE the state fields.
+	if err := s.client.HSet(ctx, key,
+		fieldSpec, specJSON,
+		fieldCreatedAt, nanoStr(in.Spec.CreatedAt),
+	).Err(); err != nil {
+		return fmt.Errorf("redisstore: save schedule %q (overwrite): %w", in.Spec.Name, err)
+	}
+	return nil
+}
+
+// Load returns the schedule stored under name. The not-found case (key missing,
+// redis.Nil on HGETALL of a non-existent key returns an empty map rather than
+// Nil, so an empty map is treated as not-found) wraps port.ErrScheduleNotFound.
+func (s *scheduleStore) Load(ctx context.Context, name string) (port.Schedule, error) {
+	fields, err := s.client.HGetAll(ctx, scheduleKey(name)).Result()
+	if err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: load schedule %q: %w", name, err)
+	}
+	if len(fields) == 0 {
+		return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	}
+	return scheduleFromHash(fields)
+}
+
+// Delete removes the schedule stored under name. It is IDEMPOTENT: DEL on a
+// missing key succeeds (the PrunableStore.Delete discipline). It does NOT delete
+// the schedule's fire records (retention is the caller's concern via the
+// existing PrunableStore) — matching memschedulestore / jsonlstore.
+func (s *scheduleStore) Delete(ctx context.Context, name string) error {
+	if err := s.client.Del(ctx, scheduleKey(name)).Err(); err != nil {
+		return fmt.Errorf("redisstore: delete schedule %q: %w", name, err)
+	}
+	return nil
+}
+
+// List returns ALL stored schedules, in no guaranteed order. It SCANs the
+// keyspace for schedule keys (MATCH mecatl:schedule:*, the production-safe
+// cursor-based pattern — never KEYS), then HGETALLs each. The
+// mecatl:schedulefire: prefix does NOT collide with mecatl:schedule: (the
+// character after "schedule" is "f" vs ":", so the glob excludes fire keys). A
+// corrupt entry (missing spec, unparseable JSON) is skipped best-effort rather
+// than failing the whole inventory.
+func (s *scheduleStore) List(ctx context.Context) ([]port.Schedule, error) {
+	var out []port.Schedule
+	scan := s.client.Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
+	for scan.Next(ctx) {
+		fields, err := s.client.HGetAll(ctx, scan.Val()).Result()
+		if err != nil {
+			continue
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		sc, err := scheduleFromHash(fields)
+		if err != nil {
+			continue
+		}
+		out = append(out, sc)
+	}
+	if err := scan.Err(); err != nil {
+		return nil, fmt.Errorf("redisstore: list schedules: %w", err)
+	}
+	return out, nil
+}
+
+// Due returns the schedules whose NextFireAt <= now AND Enabled AND (when
+// MaxFires > 0) FireCount < MaxFires. It is idempotent and side-effect-free; it
+// does not advance state. The store does NOT read ScheduleSpec.Misfire — the
+// misfire policy is a composition concern. It SCANs + filters, the same shape as
+// List.
+func (s *scheduleStore) Due(ctx context.Context, now time.Time) ([]port.Schedule, error) {
+	nowNano := now.UnixNano()
+	out := make([]port.Schedule, 0)
+	scan := s.client.Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
+	for scan.Next(ctx) {
+		fields, err := s.client.HGetAll(ctx, scan.Val()).Result()
+		if err != nil {
+			continue
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		sc, err := scheduleFromHash(fields)
+		if err != nil {
+			continue
+		}
+		if !sc.State.Enabled {
+			continue
+		}
+		if sc.State.NextFireAt.IsZero() || sc.State.NextFireAt.UnixNano() > nowNano {
+			continue
+		}
+		if sc.Spec.MaxFires > 0 && sc.State.FireCount >= sc.Spec.MaxFires {
+			continue
+		}
+		out = append(out, sc)
+	}
+	if err := scan.Err(); err != nil {
+		return nil, fmt.Errorf("redisstore: due schedules: %w", err)
+	}
+	return out, nil
+}
+
+// Claim is the AT-MOST-ONCE atomic advance. It EVALs claimScript, which — under
+// Redis's single-threaded execution — re-checks the slot is still due
+// (Enabled && next_fire_at <= now && under MaxFires) and, only if so, atomically
+// advances LastFireAt=now, NextFireAt=nextFire, FireCount++, LastFireSessionID=
+// pending, and (for a zero nextFire: a one-shot or an exhausted cron) Enabled=
+// false. If the slot is NOT due (a peer's Claim already advanced it, it was
+// disabled, or it exhausted) the script returns the NOT_CLAIMABLE sentinel,
+// which maps to ErrScheduleNotFound — the fail-safe interpretation the
+// conformance suite pins (a second Claim at the same now does NOT re-claim).
+// The not-found case (key missing → NOT_FOUND sentinel) likewise wraps
+// ErrScheduleNotFound.
+//
+// MULTI-REPLICA: the Lua CAS is the cross-replica fence — no client mutex, no
+// leader lease required for at-most-once (the jsonl mutex gave only
+// single-process). This is the property the dedicated concurrent-claim test
+// (-race) proves.
+//
+// The Spec is HGET'd separately to obtain MaxFires (passed as an ARG so the
+// script checks exhaustion without decoding the spec JSON) and to construct the
+// returned Schedule. The state advance itself is atomic in the script; the
+// returned Spec is the pre-Claim HGET (a concurrent Save changing the Spec
+// between HGET and EVAL preserves state by contract, so only the Spec half could
+// be stale — an operator race, not an at-most-once correctness issue).
+func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
+	key := scheduleKey(name)
+	specJSON, err := s.client.HGet(ctx, key, fieldSpec).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+		}
+		return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q (spec): %w", name, err)
+	}
+	var spec port.ScheduleSpec
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q (decode spec): %w", name, err)
+	}
+	// nextFire is passed as "0" for the zero time (the sentinel the script treats
+	// as "no further fire" → disable), NOT nextFire.UnixNano() — a zero time.Time
+	// has a large NEGATIVE UnixNano, which would not match the "0" branch.
+	res, err := claimScript.Run(ctx, s.client,
+		[]string{key},
+		now.UnixNano(), nanoStr(nextFire), string(pendingSessionID), spec.MaxFires,
+	).Result()
+	if err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q: %w", name, err)
+	}
+	switch v := res.(type) {
+	case string:
+		// NOT_FOUND or NOT_CLAIMABLE — both map to ErrScheduleNotFound (the slot
+		// is gone: never existed, or a peer already claimed it).
+		return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	case []interface{}:
+		state, err := stateFromClaimResult(v)
+		if err != nil {
+			return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q (result): %w", name, err)
+		}
+		return port.Schedule{Spec: cloneSpec(spec), State: state}, nil
+	default:
+		return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q: unexpected script result type %T", name, res)
+	}
+}
+
+// RecordFire records the outcome of a fire (f) and updates the schedule's
+// LastFireSessionID to f.SessionID (overwriting the sentinel-pending value Claim
+// set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a no-op
+// (SETNX refuses to overwrite an existing fire key, so the second call returns
+// nil without mutating state). The not-found case (the schedule was deleted
+// between Claim and RecordFire) wraps port.ErrScheduleNotFound.
+func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) error {
+	fireJSON, err := json.Marshal(scheduleFireRecord{V: scheduleFormat, Fire: f})
+	if err != nil {
+		return fmt.Errorf("redisstore: marshal schedule fire: %w", err)
+	}
+	fireKey := scheduleFireKey(f.ID)
+	// Idempotent per fire id: a re-record of an already-stored fire is a no-op.
+	// GET first (the memschedulestore / jsonlstore precedent — check idempotency
+	// before touching the schedule) so a re-record never mutates state.
+	if exists, err := s.client.Exists(ctx, fireKey).Result(); err != nil {
+		return fmt.Errorf("redisstore: record fire %q (exists): %w", f.ID, err)
+	} else if exists == 1 {
+		return nil
+	}
+	// The schedule must still exist (it may have been deleted between Claim and
+	// RecordFire). HGET the spec as a liveness probe.
+	if specRaw, err := s.client.HGet(ctx, scheduleKey(f.ScheduleName), fieldSpec).Result(); err != nil {
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
+		}
+		return fmt.Errorf("redisstore: record fire %q (schedule): %w", f.ID, err)
+	} else if specRaw == "" {
+		return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
+	}
+	// SETNX makes the write idempotent under concurrency: two concurrent
+	// RecordFire of the same fire race past the GET, but only one SETNX wins.
+	set, err := s.client.SetNX(ctx, fireKey, fireJSON, 0).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: record fire %q (setnx): %w", f.ID, err)
+	}
+	if !set {
+		// A peer won the SETNX between our GET and SETNX — idempotent no-op.
+		return nil
+	}
+	// Stamp the real session id over the sentinel-pending value Claim set.
+	if err := s.client.HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
+		return fmt.Errorf("redisstore: record fire %q (update session): %w", f.ID, err)
+	}
+	return nil
+}
+
+// LoadFire returns the fire record stored under fireID. The not-found case
+// (redis.Nil on GET) wraps port.ErrScheduleNotFound.
+func (s *scheduleStore) LoadFire(ctx context.Context, fireID string) (port.ScheduleFire, error) {
+	raw, err := s.client.Get(ctx, scheduleFireKey(fireID)).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return port.ScheduleFire{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, fireID)
+		}
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: load fire %q: %w", fireID, err)
+	}
+	var rec scheduleFireRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: decode fire %q: %w", fireID, err)
+	}
+	if rec.V != scheduleFormat {
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: unknown schedule-fire format %q (want %q)", rec.V, scheduleFormat)
+	}
+	return rec.Fire, nil
+}
+
+// scheduleFireRecord is the envelope stored at a fire key: a format tag plus the
+// verbatim port.ScheduleFire JSON. It mirrors the jsonlstore envelope shape so
+// the two stores are codec-siblings (and a forward-incompatible record fails
+// loud on load, not silently decodes).
+type scheduleFireRecord struct {
+	V    string            `json:"v"`
+	Fire port.ScheduleFire `json:"fire"`
+}
+
+// scheduleFromHash reconstructs a port.Schedule from a HGETALL result map. A
+// missing/empty spec field is an error (a corrupt/partial entry).
+func scheduleFromHash(fields map[string]string) (port.Schedule, error) {
+	specJSON, ok := fields[fieldSpec]
+	if !ok || specJSON == "" {
+		return port.Schedule{}, fmt.Errorf("redisstore: schedule hash missing spec field")
+	}
+	var spec port.ScheduleSpec
+	if err := json.Unmarshal([]byte(specJSON), &spec); err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: decode schedule spec: %w", err)
+	}
+	return port.Schedule{
+		Spec: cloneSpec(spec),
+		State: port.ScheduleState{
+			NextFireAt:        parseNano(fields[fieldNextFireAt]),
+			LastFireAt:        parseNano(fields[fieldLastFireAt]),
+			FireCount:         parseIntOr(fields[fieldFireCount], 0),
+			Enabled:           fields[fieldEnabled] == "1",
+			LastFireSessionID: session.SessionID(fields[fieldLastFireSessionID]),
+		},
+	}, nil
+}
+
+// stateFromClaimResult parses the array returned by claimScript on success:
+// {next_fire_at, last_fire_at, fire_count, enabled, last_fire_session_id}, each
+// a bulk string.
+func stateFromClaimResult(v []interface{}) (port.ScheduleState, error) {
+	if len(v) != 5 {
+		return port.ScheduleState{}, fmt.Errorf("expected 5 fields, got %d", len(v))
+	}
+	return port.ScheduleState{
+		NextFireAt:        parseNano(toString(v[0])),
+		LastFireAt:        parseNano(toString(v[1])),
+		FireCount:         parseIntOr(toString(v[2]), 0),
+		Enabled:           toString(v[3]) == "1",
+		LastFireSessionID: session.SessionID(toString(v[4])),
+	}, nil
+}
+
+// scheduleKey / scheduleFireKey map a schedule name / fire id to its Redis key.
+// Redis keys are opaque byte strings, so — unlike jsonlstore's filename-safe
+// safeFilePart — no sanitization is needed (the session-store precedent).
+func scheduleKey(name string) string       { return scheduleKeyPrefix + name }
+func scheduleFireKey(fireID string) string { return scheduleFireKeyPrefix + fireID }
+
+// nanoStr renders a time as a unix-nano string, using "0" for the zero time
+// (the sentinel the Claim script treats as "no further fire"). It is the
+// inverse of parseNano.
+func nanoStr(t time.Time) string {
+	if t.IsZero() {
+		return "0"
+	}
+	return strconv.FormatInt(t.UnixNano(), 10)
+}
+
+// parseNano parses a unix-nano string back to a time, treating "" and "0" as the
+// zero time (the sentinel nanoStr writes for a zero time).
+func parseNano(s string) time.Time {
+	if s == "" || s == "0" {
+		return time.Time{}
+	}
+	ns, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
+// parseIntOr parses a base-10 int, returning fallback on any error.
+func parseIntOr(s string, fallback int) int {
+	if s == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+// boolStr renders a bool as the "0"/"1" the Claim script checks.
+func boolStr(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}
+
+// toString coerces a go-redis script-result element (a bulk string) to a Go
+// string. A nil element (e.g. a missing HASH field the script read as false)
+// becomes "".
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
+// cloneSpec returns a copy of spec whose Parts slice is independent of the
+// stored one (so a caller cannot mutate the store's record through the returned
+// Schedule). ScheduleSpec is otherwise a struct of values. Mirrors
+// memschedulestore.cloneSpec / jsonlstore.cloneSpec.
+func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
+	out := spec
+	if spec.Parts != nil {
+		out.Parts = make([]session.Content, len(spec.Parts))
+		copy(out.Parts, spec.Parts)
+	}
+	return out
+}

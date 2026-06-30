@@ -304,6 +304,24 @@ func (st *Store) Close() error {
 	return st.client.Close()
 }
 
+// ScheduleStore returns a port.ScheduleStore backed by the SAME Redis client as
+// the session store (a sibling struct sharing the connection). Composition
+// discovers it via type-assertion on this accessor — NOT by asserting the
+// *Store itself implements port.ScheduleStore (the schedule store is a separate
+// concern; the accessor keeps session-store and schedule-store methods from
+// bloating one struct, the jsonlstore.ScheduleStore precedent — and the way
+// PrunableStore is discovered on the store itself but here the schedule store is
+// a sibling struct, not the session store). A caller that does not need
+// schedules never calls this; the byte-identical default is no schedules.
+//
+// The schedule store carries NO client-side mutex: Redis serializes commands
+// single-threaded, and the Claim path is a Lua CAS (EVAL) that is the
+// cross-replica at-most-once fence — the multi-host counterpart of the
+// single-process mutex the jsonl schedule store carries. See schedulestore.go.
+func (st *Store) ScheduleStore() port.ScheduleStore {
+	return &scheduleStore{client: st.client}
+}
+
 func sessionKey(id session.SessionID) string { return sessionKeyPrefix + string(id) }
 func eventsKey(id session.SessionID) string  { return eventsKeyPrefix + string(id) }
 func toolsKey(id session.SessionID) string   { return toolsKeyPrefix + string(id) }
