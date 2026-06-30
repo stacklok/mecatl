@@ -1,0 +1,598 @@
+// Package scheduler is the in-process tick loop for the scheduled-tasks
+// feature (issue #189, Phase 1e). It is the composition-layer owner of:
+//
+//   - the leader-lease on the well-known `port.SchedulerLeaderLeaseID`
+//     ("__scheduler__") so that, in a multi-replica deployment, at most one
+//     replica ticks the schedule store at a time;
+//   - the tick loop that polls `port.ScheduleStore.Due`, applies the misfire
+//     policy, claims each due slot via `port.ScheduleStore.Claim` (the
+//     at-most-once atomic advance), fires the claimed schedule through the
+//     composition-supplied FireFunc seam, and records the outcome via
+//     `port.ScheduleStore.RecordFire`.
+//
+// It is STORAGE-AGNOSTIC: like the run-entry lease renewer on
+// `internal/adapter/server.Service`, the loop NEVER imports `engine/agent` or
+// `internal/adapter/server`. The FireFunc seam is how composition injects the
+// run-entry funnel (Service.CreateSessionWithProfile + Service.StartRunContent
+// with subagent-grade RunOptions) in Phase 1f. A unit test supplies a stub
+// FireFunc that records fires.
+//
+// The loop reads `now` from an injected `port.Clock` (deterministic tests) and
+// logs through an injected `port.Diagnostics` (NEVER slog — the global-slog
+// ban in engine/ and internal/ applies here too; see ADR 0020).
+package scheduler
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+
+	"github.com/stacklok/mecatl/engine/adapter/cronparse"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+// FireFunc is the composition-supplied callback a scheduler invokes for each
+// claimed fire. It mints a fresh session (the "sched--" top-level session per
+// fire, via Service.CreateSessionWithProfile + Service.StartRunContent with
+// subagent-grade RunOptions), drives it to terminal, and returns the fire
+// record (stop reason + err). The scheduler records the fire outcome via
+// ScheduleStore.RecordFire. A non-nil error from FireFunc is recorded as a
+// failed fire (StopError); the at-most-once Claim already advanced
+// NextFireAt, so a failed fire is NOT retried (the slot is gone — decision
+// #1).
+type FireFunc func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error)
+
+// Config wires the scheduler. All fields are set by composition (Phase 1f);
+// the unit tests construct one directly with a stub Fire.
+type Config struct {
+	// Store is the durable schedule registry. Required.
+	Store port.ScheduleStore
+	// Lease is the cross-process leader-lease backend for the
+	// `port.SchedulerLeaderLeaseID` ("__scheduler__") leader lease. nil means
+	// single-replica by affinity: the scheduler runs standalone (no
+	// cross-process leader gate) — the byte-identical default when no lease
+	// backend is wired, exactly as the run-entry lease defaults off.
+	Lease port.SessionLease
+	// LeaseOwner is the per-process owner string composition builds once per
+	// Build (the same "<hostname>-<pid>-<nonce>" shape the run-entry seam
+	// uses). Required when Lease != nil; ignored otherwise.
+	LeaseOwner string
+	// LeaseTTL is the leader-lease lifetime requested at Acquire. A non-positive
+	// value defaults to defaultLeaderLeaseTTL. Ignored when Lease == nil.
+	LeaseTTL time.Duration
+	// LeaseRenewInterval is how often the leader-lease renewer refreshes the
+	// held lease. A non-positive value defaults to LeaseTTL/3. Ignored when
+	// Lease == nil.
+	LeaseRenewInterval time.Duration
+	// Fire is the composition-supplied run-entry callback. Composition wires
+	// this in Phase 1f; for Phase 1e's unit tests a stub records fires. Required.
+	Fire FireFunc
+	// Clock supplies `now` for the tick loop and Claim. Required.
+	Clock port.Clock
+	// Diagnostics is the operational logging seam. A nil value is treated as
+	// port.NopDiagnostics so the scheduler is nil-safe by construction.
+	Diagnostics port.Diagnostics
+	// TickInterval is how often the tick loop polls ScheduleStore.Due. A
+	// non-positive value defaults to defaultTickInterval.
+	TickInterval time.Duration
+	// MinInterval is the frequency floor the composition create-seam enforces at
+	// Save time (a schedule whose cadence is tighter than this is rejected,
+	// fail-closed). It is NOT read by the tick loop — it lives on Config so a
+	// future self-pushing lookahead can consult it without widening the
+	// constructor. Documented here to keep it honest.
+	MinInterval time.Duration
+	// MaxConcurrentFires bounds the per-tick fire fan-out via an errgroup with
+	// SetLimit. A non-positive value defaults to defaultMaxConcurrentFires.
+	MaxConcurrentFires int
+	// StopFireGrace is how long Stop waits for in-flight fires to drain before
+	// abandoning them. A non-positive value defaults to stopFireGrace. It is a
+	// Config field (not a flag) so a test can shrink it.
+	StopFireGrace time.Duration
+}
+
+// Defaults. The leader-lease defaults mirror the run-entry lease defaults
+// (defaultLeaseTTL = 30s, renewer at TTL/3, Acquire bounded by
+// leaseAcquireTimeout = 5s) so the two lease owners in the process share one
+// posture; the tick interval is a conservative 30s poll (the in-memory
+// lookahead a future phase may add is DERIVED, the store is ground truth).
+const (
+	defaultLeaderLeaseTTL     = 30 * time.Second
+	defaultTickInterval       = 30 * time.Second
+	defaultMaxConcurrentFires = 4
+	// leaderLeaseAcquireTimeout bounds a SessionLease.Acquire call for the
+	// leader lease so a wedged backend cannot stall Start indefinitely. It
+	// mirrors the run-entry seam's leaseAcquireTimeout.
+	leaderLeaseAcquireTimeout = 5 * time.Second
+	// leaderLeaseRenewFraction bounds a Renew call to a fraction of the renew
+	// interval (mirrors the run-entry seam's leaseRenewFraction).
+	leaderLeaseRenewFraction = 2
+	// stopFireGrace is how long Stop waits for in-flight fires to drain before
+	// cancelling them. A fire mid-run when Stop is called gets this much headroom
+	// to complete cleanly; after it, Stop cancels and joins.
+	stopFireGrace = 10 * time.Second
+)
+
+// Scheduler is the composition-layer owner of the scheduled-tasks tick loop.
+// Construct one via New, then Start (which acquires the leader lease if a
+// backend is wired and launches the tick + renewer goroutines), and Stop it at
+// shutdown / drain.
+type Scheduler struct {
+	cfg  Config
+	diag port.Diagnostics
+
+	mu          sync.Mutex // protects the leader-lease state below
+	leaderLease *port.Lease
+
+	// tickCtx is the tick loop's ctx; cancelling it stops ticking. It is also
+	// cancelled by the renewer on a definitive leader-lease loss (a peer took
+	// over — don't double-fire).
+	tickCtx       context.Context
+	tickCancel    context.CancelFunc
+	tickDone      chan struct{} // closed when the tick goroutine exits
+	renewerCancel context.CancelFunc
+	renewerDone   chan struct{} // closed when the renewer goroutine exits (nil if none started)
+
+	draining atomic.Bool
+
+	// firesWG tracks in-flight fire goroutines so Stop can join them.
+	firesWG sync.WaitGroup
+
+	// done is closed when Stop completes (all goroutines joined, lease
+	// released). Tests may wait on it to assert clean shutdown.
+	done chan struct{}
+
+	// started prevents double-Start / double-Stop.
+	started atomic.Bool
+	stopped atomic.Bool
+}
+
+// New constructs a Scheduler. It applies Config defaults (TTLs, intervals,
+// fan-out, a NopDiagnostics sink) but does NOT acquire the lease or start any
+// goroutine — call Start. A nil Clock or Store is a programming error at the
+// only construction site (composition); New panics so it surfaces loudly there
+// rather than as a nil-deref in the tick loop.
+func New(cfg Config) *Scheduler {
+	if cfg.Store == nil {
+		panic("scheduler: nil Store")
+	}
+	if cfg.Fire == nil {
+		panic("scheduler: nil Fire")
+	}
+	if cfg.Clock == nil {
+		panic("scheduler: nil Clock")
+	}
+	if cfg.LeaseTTL <= 0 {
+		cfg.LeaseTTL = defaultLeaderLeaseTTL
+	}
+	if cfg.LeaseRenewInterval <= 0 {
+		cfg.LeaseRenewInterval = cfg.LeaseTTL / 3
+	}
+	if cfg.TickInterval <= 0 {
+		cfg.TickInterval = defaultTickInterval
+	}
+	if cfg.MaxConcurrentFires <= 0 {
+		cfg.MaxConcurrentFires = defaultMaxConcurrentFires
+	}
+	if cfg.StopFireGrace <= 0 {
+		cfg.StopFireGrace = stopFireGrace
+	}
+	if cfg.Diagnostics == nil {
+		cfg.Diagnostics = port.NopDiagnostics{}
+	}
+	return &Scheduler{
+		cfg:  cfg,
+		diag: cfg.Diagnostics.With("component", "scheduler"),
+		done: make(chan struct{}),
+	}
+}
+
+// Start acquires the leader lease (if a backend is wired) and launches the
+// tick loop (and, on a successful acquire, the renewer). It returns nil on:
+//   - success (lease acquired or standalone — ticking either way);
+//   - ErrLeaseHeld (a peer is the leader — this replica stands down, NOT
+//     ticking; logged INFO);
+//   - ErrLeaseUnsupported (the backend can never lease — sticky-disable the
+//     leader gate and CONTINUE ticking standalone, single-replica by affinity;
+//     logged INFO, the honest posture).
+//
+// On any other Acquire error it returns the error WITHOUT ticking (a genuine
+// infrastructure failure — fail loud rather than silently run two tickers).
+// Start is idempotent: a second call is a no-op returning nil.
+func (s *Scheduler) Start(ctx context.Context) error {
+	if !s.started.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	if s.cfg.Lease != nil {
+		lease, standalone, err := s.acquireLeader(ctx)
+		if err != nil {
+			// ErrLeaseHeld: a peer is the leader. Stand down cleanly — do NOT
+			// tick. The peer's Due/Claim fence still gives at-most-once, but
+			// running a second ticker would only waste cycles.
+			s.started.Store(false) // allow a later retry
+			return err
+		}
+		if standalone {
+			// ErrLeaseUnsupported: the backend can never lease. Tick standalone
+			// (single-replica by affinity). The at-most-once Claim fence still
+			// holds within this process. No leader-lease state to record.
+		} else {
+			// Acquired: store the lease and start the renewer.
+			s.mu.Lock()
+			s.leaderLease = &lease
+			s.mu.Unlock()
+			renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+			s.renewerCancel = cancel
+			s.renewerDone = make(chan struct{})
+			go func() {
+				defer close(s.renewerDone)
+				s.renewLeader(renewCtx)
+			}()
+		}
+	}
+
+	// Launch the tick loop regardless (standalone or leader). The tick ctx is
+	// detached from the caller's ctx so a request-scope cancel does not stop
+	// the loop — only Stop or a lost leader does.
+	s.tickCtx, s.tickCancel = context.WithCancel(context.WithoutCancel(ctx))
+	s.tickDone = make(chan struct{})
+	go func() {
+		defer close(s.tickDone)
+		s.tick(s.tickCtx)
+	}()
+	return nil
+}
+
+// acquireLeader acquires the __scheduler__ leader lease. It returns:
+//   - (lease, false, nil) on a successful Acquire;
+//   - (zero, true, nil) on ErrLeaseUnsupported — sticky-disable, tick standalone;
+//   - (zero, false, err) on ErrLeaseHeld (stand down) or any other error (fail).
+func (s *Scheduler) acquireLeader(ctx context.Context) (port.Lease, bool, error) {
+	acqCtx, acqCancel := context.WithTimeout(ctx, leaderLeaseAcquireTimeout)
+	defer acqCancel()
+	lease, err := s.cfg.Lease.Acquire(acqCtx, port.SchedulerLeaderLeaseID, s.cfg.LeaseOwner)
+	switch {
+	case errors.Is(err, port.ErrLeaseUnsupported):
+		s.diag.Log(ctx, port.LevelInfo, "leader lease unsupported by backend; running standalone (no cross-replica leader gate)",
+			"owner", s.cfg.LeaseOwner)
+		return port.Lease{}, true, nil
+	case errors.Is(err, port.ErrLeaseHeld):
+		s.diag.Log(ctx, port.LevelInfo, "another replica is the scheduler leader; standing down",
+			"owner", s.cfg.LeaseOwner)
+		return port.Lease{}, false, err
+	case err != nil:
+		return port.Lease{}, false, fmt.Errorf("scheduler: acquire leader lease: %w", err)
+	}
+	return lease, false, nil
+}
+
+// renewLeader refreshes the __scheduler__ leader lease on a ticker until
+// renewCtx is cancelled (Stop) or the lease is definitively lost. It mirrors
+// service.renewLoop: ErrLeaseHeld is definitive loss (a peer took over → stop
+// ticking); a transient fault gets grace until near-expiry; a ctx-cancelled
+// error is just shutdown racing a tick.
+func (s *Scheduler) renewLeader(renewCtx context.Context) {
+	ticker := time.NewTicker(s.cfg.LeaseRenewInterval)
+	defer ticker.Stop()
+	renewTimeout := s.cfg.LeaseRenewInterval / leaderLeaseRenewFraction
+	if renewTimeout <= 0 {
+		renewTimeout = s.cfg.LeaseRenewInterval
+	}
+	for {
+		select {
+		case <-renewCtx.Done():
+			return
+		case <-ticker.C:
+			// Read the current lease under the lock (single source of truth).
+			s.mu.Lock()
+			lease := s.leaderLease
+			s.mu.Unlock()
+			if lease == nil {
+				return // released concurrently
+			}
+			rCtx, rCancel := context.WithTimeout(renewCtx, renewTimeout)
+			refreshed, err := s.cfg.Lease.Renew(rCtx, *lease)
+			rCancel()
+			switch {
+			case errors.Is(err, context.Canceled):
+				return // shutdown raced the tick
+			case errors.Is(err, port.ErrLeaseHeld):
+				// Definitive loss: a competitor holds it now. Stop ticking so we
+				// do not double-fire against the new leader.
+				s.declareLeaderLost(renewCtx, err)
+				return
+			case err != nil:
+				// Transient/infra fault: keep the lease unless we are within one
+				// renew interval of expiry (the next tick would land past it).
+				if s.cfg.Clock.Now().Add(s.cfg.LeaseRenewInterval).Before(lease.Expiry) {
+					continue // still have headroom; retry next tick.
+				}
+				s.declareLeaderLost(renewCtx, err)
+				return
+			}
+			s.mu.Lock()
+			s.leaderLease = &refreshed
+			s.mu.Unlock()
+		}
+	}
+}
+
+// declareLeaderLost records the definitive leader-lease loss and cancels the
+// tick ctx so the tick loop stops. A peer replica is now the leader; its
+// tick loop takes over. In-flight fires are NOT cancelled (a fire mid-run
+// completes; the at-most-once Claim already advanced NextFireAt, so the peer
+// will not re-fire this slot).
+func (s *Scheduler) declareLeaderLost(ctx context.Context, cause error) {
+	s.diag.Log(ctx, port.LevelWarn, "lost scheduler leader lease; stopping tick loop",
+		"owner", s.cfg.LeaseOwner, "err", cause.Error())
+	// The tick-ctx cancel is the actual loss mechanism; no leader-state flag
+	// needs bookkeeping (leaderLease is cleared on Stop's release path).
+	if s.tickCancel != nil {
+		s.tickCancel()
+	}
+}
+
+// tick is the poll loop. Each tick: read `now` from the clock, poll
+// ScheduleStore.Due, and for each due schedule (bounded by
+// MaxConcurrentFires via an errgroup) apply the misfire policy, Claim the
+// slot (the at-most-once advance), Fire it, and RecordFire the outcome.
+func (s *Scheduler) tick(ctx context.Context) {
+	ticker := time.NewTicker(s.cfg.TickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.tickOnce(ctx)
+		}
+	}
+}
+
+// tickOnce runs one tick iteration. It is the unit a test can drive directly
+// (via runOnce) to avoid real ticker sleeps.
+func (s *Scheduler) tickOnce(ctx context.Context) {
+	if s.draining.Load() {
+		return // drain gate: no new fires mid-tick
+	}
+	now := s.cfg.Clock.Now()
+	due, err := s.cfg.Store.Due(ctx, now)
+	if err != nil {
+		if errors.Is(err, port.ErrScheduleUnsupported) {
+			// The backend can never store schedules — stop ticking (the seam
+			// will never work here). This is sticky: we do not retry.
+			s.diag.Log(ctx, port.LevelInfo, "schedule store unsupported by backend; stopping tick loop",
+				"err", err.Error())
+			if s.tickCancel != nil {
+				s.tickCancel()
+			}
+			return
+		}
+		s.diag.Log(ctx, port.LevelWarn, "schedule store Due failed", "err", err.Error())
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+	// Bound the fire fan-out. The errgroup's ctx cancels remaining fires on the
+	// first non-nil error, but a fire error is recorded (not propagated to abort
+	// siblings) — each fire is independent (one failed fire does not block the
+	// others). So we swallow per-fire errors inside fireOne and never return a
+	// non-nil error from the errgroup.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(s.cfg.MaxConcurrentFires)
+	for _, sched := range due {
+		sched := sched
+		g.Go(func() error {
+			s.fireOne(gctx, sched, now)
+			return nil
+		})
+	}
+	_ = g.Wait()
+}
+
+// fireOne applies the misfire policy, Claims the slot, Fires (unless skip),
+// and RecordFires the outcome. It is the per-schedule claim-before-fire cycle.
+func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.Time) {
+	// Compute the next fire instant. A cron trigger computes it via cronparse
+	// (the store is parser-free); a one-shot fires once (zero nextFire → Claim
+	// disables the schedule). A MaxFires-exhausted cron also yields zero (the
+	// store enforces the exhaustion in Claim).
+	nextFire, err := s.computeNextFire(sched, now)
+	if err != nil {
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: compute next fire failed; skipping",
+			"schedule", sched.Spec.Name, "err", err.Error())
+		return
+	}
+
+	// Misfire policy: MisfireSkip + a past slot advances NextFireAt WITHOUT
+	// firing. The Claim is still the advance (so the slot is not re-returned by
+	// a peer's Due); we just skip the Fire.
+	skipFire := sched.Spec.Misfire == port.MisfireSkip && sched.State.NextFireAt.Before(now)
+
+	// Claim is the at-most-once atomic advance. A peer's Claim between our Due
+	// and Claim advanced NextFireAt past `now`; ErrScheduleNotFound is the
+	// fail-safe "the slot is gone" — skip (the fence worked).
+	claimed, err := s.cfg.Store.Claim(ctx, sched.Spec.Name, now, nextFire)
+	if err != nil {
+		if errors.Is(err, port.ErrScheduleNotFound) {
+			// A peer claimed it between Due and Claim, or it was
+			// disabled/deleted. The at-most-once fence worked; not an error.
+			return
+		}
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: Claim failed",
+			"schedule", sched.Spec.Name, "err", err.Error())
+		return
+	}
+
+	if skipFire {
+		s.diag.Log(ctx, port.LevelInfo, "skipped misfire (MisfireSkip)",
+			"schedule", sched.Spec.Name)
+		return
+	}
+
+	// Fire. Track the goroutine for Stop-join only on the standalone path; the
+	// errgroup already bounds concurrency, but Stop may run between ticks, so we
+	// also count the in-flight fire so Stop's grace drain sees it.
+	s.firesWG.Add(1)
+	defer s.firesWG.Done()
+
+	fire, fireErr := s.cfg.Fire(ctx, claimed, now)
+	if fireErr != nil {
+		// A failed fire is recorded as StopError; the at-most-once Claim
+		// already advanced NextFireAt, so it is NOT retried (the slot is gone —
+		// decision #1).
+		fire = port.ScheduleFire{
+			ID:           fire.ID,
+			ScheduleName: claimed.Spec.Name,
+			SessionID:    fire.SessionID,
+			FiredAt:      now,
+			Stop:         session.StopError,
+			Err:          fireErr.Error(),
+		}
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: fire failed",
+			"schedule", claimed.Spec.Name, "err", fireErr.Error())
+	}
+	// RecordFire is idempotent per fire id; a transient failure is best-effort
+	// (the fire already ran — we lose the outcome record, not the at-most-once
+	// guarantee).
+	if err := s.cfg.Store.RecordFire(ctx, fire); err != nil && !errors.Is(err, port.ErrScheduleNotFound) {
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: RecordFire failed",
+			"schedule", claimed.Spec.Name, "fire", fire.ID, "err", err.Error())
+	}
+}
+
+// computeNextFire returns the next fire instant strictly after `now` for the
+// schedule's trigger, or the zero time if there is no further fire (a one-shot,
+// or a cron whose MaxFires is exhausted after this Claim). It is parser-bearing
+// (the store is parser-free): a cron trigger uses cronparse.NextFire; a
+// one-shot yields zero (Claim disables it).
+func (*Scheduler) computeNextFire(sched port.Schedule, now time.Time) (time.Time, error) {
+	switch sched.Spec.Trigger.Kind() {
+	case port.TriggerOneShot:
+		// A one-shot fires once; the next fire is zero (Claim disables it).
+		return time.Time{}, nil
+	case port.TriggerCron:
+		// If this Claim exhausts MaxFires, there is no next fire.
+		if sched.Spec.MaxFires > 0 && sched.State.FireCount+1 >= sched.Spec.MaxFires {
+			return time.Time{}, nil
+		}
+		next, err := cronparse.NextFire(sched.Spec.Trigger.Cron, now, time.UTC)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return next, nil
+	default:
+		// TriggerNone or ambiguous: treat as no further fire (Claim will disable
+		// it via the zero nextFire). A valid schedule never reaches here — the
+		// create-seam Validates the trigger — but fail safe.
+		return time.Time{}, nil
+	}
+}
+
+// Drain arms the drain gate: in-flight fires complete, but no NEW fires start
+// mid-tick. It mirrors Service.Drain: a shutting-down replica steers its
+// tick-loop work to a survivor. It does NOT cancel in-flight fires (they
+// complete or are cancelled by Stop's grace). It returns immediately.
+func (s *Scheduler) Drain() {
+	s.draining.Store(true)
+}
+
+// IsDraining reports whether the drain gate is armed.
+func (s *Scheduler) IsDraining() bool {
+	return s.draining.Load()
+}
+
+// Stop cancels the tick loop, waits for in-flight fires to drain (with a grace
+// period), releases the leader lease (if held), and closes done. It is
+// idempotent: a second call is a no-op that returns nil. It does NOT return
+// until the tick goroutine and any in-flight fire goroutines have joined (or
+// the grace elapses).
+func (s *Scheduler) Stop() error {
+	if !s.stopped.CompareAndSwap(false, true) {
+		return nil
+	}
+	// Cancel the tick loop first so no new fires start.
+	if s.tickCancel != nil {
+		s.tickCancel()
+	}
+	// Stop the renewer so it does not race the release.
+	if s.renewerCancel != nil {
+		s.renewerCancel()
+	}
+	// Wait for the tick + renewer goroutines to fully exit so goleak / a
+	// NumGoroutine check sees a clean shutdown. Both unwind on their ctx cancel
+	// (the tick loop's select returns on ctx.Done(); the renewer likewise). A
+	// nil channel (Start not called, or no renewer) skips the wait.
+	if s.tickDone != nil {
+		<-s.tickDone
+	}
+	if s.renewerDone != nil {
+		<-s.renewerDone
+	}
+	// Join in-flight fires with a grace. After the grace, the tickCtx cancel
+	// has already propagated to any fire whose ctx derives from it; the
+	// firesWG.Wait completes once they unwind.
+	waitDone := make(chan struct{})
+	go func() {
+		s.firesWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(s.cfg.StopFireGrace):
+		// Grace elapsed; in-flight fires whose ctx derives from the tick ctx
+		// have been cancelled by tickCancel. Any fire that ignores ctx is
+		// abandoned (it will wind down on its own; the at-most-once Claim
+		// already advanced NextFireAt, so no double-fire).
+		s.diag.Log(context.Background(), port.LevelWarn, "scheduler: Stop grace elapsed; abandoning in-flight fires")
+	}
+	// Release the leader lease (if held). Best-effort, cancel-detached
+	// short-timeout ctx (the appendEvent / releaseLease precedent) so a
+	// shutdown-cancelled ctx cannot abort the release.
+	s.mu.Lock()
+	lease := s.leaderLease
+	s.leaderLease = nil
+	s.mu.Unlock()
+	if s.cfg.Lease != nil && lease != nil {
+		relCtx, relCancel := context.WithTimeout(context.Background(), leaderLeaseAcquireTimeout)
+		if err := s.cfg.Lease.Release(relCtx, *lease); err != nil {
+			s.diag.Log(context.Background(), port.LevelWarn, "scheduler: leader lease release failed",
+				"err", err.Error())
+		}
+		relCancel()
+	}
+	close(s.done)
+	return nil
+}
+
+// Done returns a channel closed when Stop completes. Tests may wait on it to
+// assert clean shutdown.
+func (s *Scheduler) Done() <-chan struct{} {
+	return s.done
+}
+
+// RunOnceForTest runs a single tick iteration synchronously (no ticker). It is
+// the test seam for driving the loop deterministically: a test advances the
+// fake clock and calls RunOnceForTest to express "one tick elapsed" without a
+// real sleep. Production drives the loop via Start/Stop (the real ticker).
+//
+// If Start has been called, the iteration runs under the scheduler's OWN tick
+// ctx (so a Stop cancels in-flight fires exactly as the real ticker would); if
+// Start has NOT been called, it runs under the passed ctx (the deterministic
+// at-most-once / misfire tests do not need Start).
+func (s *Scheduler) RunOnceForTest(ctx context.Context) {
+	eff := ctx
+	s.mu.Lock()
+	if s.tickCtx != nil {
+		eff = s.tickCtx
+	}
+	s.mu.Unlock()
+	s.tickOnce(eff)
+}
