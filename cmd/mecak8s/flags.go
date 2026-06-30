@@ -244,7 +244,7 @@ func parseFlags(argv []string) (config, error) {
 	// Scheduled tasks (issue #189, Phase 1f): mecak8s is the multi-replica home.
 	fs.BoolVar(&cfg.schedulerEnabled, "scheduler", false, "SCHEDULED TASKS: enable the in-process scheduler that ticks the durable ScheduleStore (the --redis-url backend) and fires due schedules. A fire mints a fresh \"sched--\" top-level session driven to completion with subagent-grade defaults. OFF by default. The leader-lease reuses the k8s session-lease backend on a distinct id, electing one ticker across replicas. See ADR 0059")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default")
-	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a tighter cadence is rejected); 0 = no floor")
+	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a tighter cadence is rejected); 0 = no floor. Currently inert — Phase 1 has no create API; enforced at the create-seam (Phase 2)")
 	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).

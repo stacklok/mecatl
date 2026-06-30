@@ -43,15 +43,6 @@ import (
 // the same discipline memstore applies for ErrSessionNotFound.
 var ErrNotFound = fmt.Errorf("memschedulestore: schedule not found: %w", port.ErrScheduleNotFound)
 
-// pendingSessionID is the sentinel-pending value Claim stamps on
-// ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
-// RecordFire with the real fire's session id (the port doc says "a
-// sentinel-pending value the caller overwrites via RecordFire"). It is
-// non-empty so the singleton check's lease-acquire path has a key to
-// trial-acquire; it is recognisable as a placeholder so an operator reading a
-// snapshot can tell a fire is in-flight (Claimed but not yet recorded).
-const pendingSessionID session.SessionID = "pending"
-
 // record is a stored schedule's full state: the immutable Spec plus the
 // durable firing State. The two halves are separate so a Save can overwrite
 // the Spec while preserving the State (the port doc's "State preserved on
@@ -65,7 +56,7 @@ type record struct {
 // at-most-once atomic advance: under the mutex it re-checks the slot is still
 // due (a peer's Claim may have advanced it between this caller's Due and
 // Claim) and, only if still due, advances NextFireAt + LastFireAt, bumps
-// FireCount, and stamps the sentinel-pending LastFireSessionID — all before
+// FireCount, and stamps port.PendingFireSessionID on LastFireSessionID — all before
 // the fire runs (claim-before-fire).
 type Store struct {
 	mu     sync.Mutex
@@ -181,7 +172,7 @@ func (s *Store) Due(_ context.Context, now time.Time) ([]port.Schedule, error) {
 // interpretation the conformance suite pins (a second Claim at the same now
 // does NOT re-claim). If still due, it atomically: sets LastFireAt=now,
 // advances NextFireAt to nextFire, increments FireCount, stamps
-// LastFireSessionID=pendingSessionID, and (for a zero nextFire: a one-shot or
+// LastFireSessionID=port.PendingFireSessionID, and (for a zero nextFire: a one-shot or
 // an exhausted cron) sets Enabled=false. It returns the claimed Schedule (with
 // the advanced State).
 func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
@@ -207,7 +198,7 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 	rec.state.LastFireAt = now
 	rec.state.NextFireAt = nextFire
 	rec.state.FireCount++
-	rec.state.LastFireSessionID = pendingSessionID
+	rec.state.LastFireSessionID = port.PendingFireSessionID
 	if nextFire.IsZero() {
 		// A one-shot fired, or a cron whose MaxFires is exhausted: no further
 		// fire. The schedule is DONE.
@@ -218,7 +209,7 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 }
 
 // RecordFire records the outcome of a fire (f) and updates the schedule's
-// LastFireSessionID to f.SessionID (overwriting the sentinel-pending value
+// LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID value
 // Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a
 // no-op (the second call returns nil without mutating state). The not-found
 // case (the schedule was deleted between Claim and RecordFire) wraps

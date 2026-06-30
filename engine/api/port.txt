@@ -45,6 +45,7 @@ const LevelInfo Level = 1
 const LevelWarn Level = 2
 const MisfireFireOnceNow MisfirePolicy = 0
 const MisfireSkip MisfirePolicy = 1
+const PendingFireSessionID session.SessionID = "pending"
 const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0

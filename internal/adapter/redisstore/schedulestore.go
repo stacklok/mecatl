@@ -52,13 +52,6 @@ const (
 // from the session-store ErrNotFound so a reader can tell which seam missed.
 var ErrScheduleNotFound = fmt.Errorf("redisstore: schedule not found: %w", port.ErrScheduleNotFound)
 
-// pendingSessionID is the sentinel-pending value Claim stamps on
-// ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
-// RecordFire with the real fire's session id. It mirrors
-// memschedulestore.pendingSessionID / jsonlstore.pendingSessionID byte-for-byte
-// so the singleton check's lease-acquire path sees the same key across backends.
-const pendingSessionID session.SessionID = "pending"
-
 // claimScript is the AT-MOST-ONCE atomic advance, expressed as a Lua script so
 // Redis executes it single-threaded (no client mutex needed — the redisstore.Store
 // precedent). A plain HGETALL + HSET would race between replicas: two Claim
@@ -68,7 +61,7 @@ const pendingSessionID session.SessionID = "pending"
 // KEYS[1] = mecatl:schedule:<name>
 // ARGV[1] = now          (unix nano, string; the LastFireAt to stamp)
 // ARGV[2] = nextFire     (unix nano, string; "0" means zero time = no further fire)
-// ARGV[3] = pendingSID   (the sentinel-pending LastFireSessionID)
+// ARGV[3] = pendingSID   (the port.PendingFireSessionID sentinel)
 // ARGV[4] = maxFires     (int, string; "0" = forever — passed as an ARG so the
 //
 //	script checks exhaustion WITHOUT decoding the spec JSON)
@@ -84,6 +77,13 @@ const pendingSessionID session.SessionID = "pending"
 // interpretation the conformance suite pins: a second Claim at the same now does
 // NOT re-claim — the slot is gone). redis.NewScript loads the script once and
 // reuses EVALSHA on subsequent calls.
+//
+// PRECISION NOTE: the nfa/now comparison `tonumber(nfa) > now` operates on
+// unix-nano values (~1.7e18), which exceed Lua 5.1's 53-bit double mantissa,
+// giving ~256ns quantization. This is harmless for cron-grade scheduling (the
+// smallest cron granularity is 1s; the tick interval is 30s), but a future
+// sub-millisecond schedule would need a string-compare or split high/low
+// representation.
 var claimScript = redis.NewScript(`
 local exists = redis.call('EXISTS', KEYS[1])
 if exists == 0 then
@@ -334,7 +334,7 @@ func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire ti
 	// has a large NEGATIVE UnixNano, which would not match the "0" branch.
 	res, err := claimScript.Run(ctx, s.client,
 		[]string{key},
-		now.UnixNano(), nanoStr(nextFire), string(pendingSessionID), spec.MaxFires,
+		now.UnixNano(), nanoStr(nextFire), string(port.PendingFireSessionID), spec.MaxFires,
 	).Result()
 	if err != nil {
 		return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q: %w", name, err)
@@ -356,8 +356,8 @@ func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire ti
 }
 
 // RecordFire records the outcome of a fire (f) and updates the schedule's
-// LastFireSessionID to f.SessionID (overwriting the sentinel-pending value Claim
-// set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a no-op
+// LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID
+// value Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a no-op
 // (SETNX refuses to overwrite an existing fire key, so the second call returns
 // nil without mutating state). The not-found case (the schedule was deleted
 // between Claim and RecordFire) wraps port.ErrScheduleNotFound.
@@ -395,7 +395,7 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 		// A peer won the SETNX between our GET and SETNX — idempotent no-op.
 		return nil
 	}
-	// Stamp the real session id over the sentinel-pending value Claim set.
+	// Stamp the real session id over the port.PendingFireSessionID value Claim set.
 	if err := s.client.HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
 		return fmt.Errorf("redisstore: record fire %q (update session): %w", f.ID, err)
 	}

@@ -27,16 +27,6 @@ const scheduleFormat = "jsonlstore-schedule/1"
 // discipline the session store applies for ErrNotFound.
 var ErrScheduleNotFound = fmt.Errorf("jsonlstore: schedule not found: %w", port.ErrScheduleNotFound)
 
-// pendingSessionID is the sentinel-pending value Claim stamps on
-// ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
-// RecordFire with the real fire's session id (the port doc says "a
-// sentinel-pending value the caller overwrites via RecordFire"). It is
-// non-empty so the singleton check's lease-acquire path has a key to
-// trial-acquire; it is recognisable as a placeholder so an operator reading a
-// snapshot can tell a fire is in-flight (Claimed but not yet recorded). It
-// mirrors memschedulestore.pendingSessionID byte-for-byte.
-const pendingSessionID session.SessionID = "pending"
-
 // schedulePrefix / scheduleFirePrefix are the filename prefixes the schedule
 // store writes under the SAME dir as the session store:
 //
@@ -212,7 +202,7 @@ func (s *scheduleStore) Due(_ context.Context, now time.Time) ([]port.Schedule, 
 // interpretation the conformance suite pins (a second Claim at the same now
 // does NOT re-claim). If still due, it atomically: sets LastFireAt=now,
 // advances NextFireAt to nextFire, increments FireCount, stamps
-// LastFireSessionID=pendingSessionID, and (for a zero nextFire: a one-shot or
+// LastFireSessionID=port.PendingFireSessionID, and (for a zero nextFire: a one-shot or
 // an exhausted cron) sets Enabled=false. It returns the claimed Schedule (with
 // the advanced State), and the durable file reflects the advance (Claim is
 // durable, not a transient return value).
@@ -243,7 +233,7 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 	st.LastFireAt = now
 	st.NextFireAt = nextFire
 	st.FireCount++
-	st.LastFireSessionID = pendingSessionID
+	st.LastFireSessionID = port.PendingFireSessionID
 	if nextFire.IsZero() {
 		// A one-shot fired, or a cron whose MaxFires is exhausted: no further
 		// fire. The schedule is DONE.
@@ -257,7 +247,7 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 }
 
 // RecordFire records the outcome of a fire (f) and updates the schedule's
-// LastFireSessionID to f.SessionID (overwriting the sentinel-pending value
+// LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID value
 // Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a
 // no-op (the second call returns nil without mutating state). The not-found
 // case (the schedule was deleted between Claim and RecordFire) wraps

@@ -28,6 +28,18 @@ var ErrScheduleNotFound = errors.New("port: schedule not found")
 // ErrLeaseUnsupported / ErrPruneUnsupported's sticky-disable contract.
 var ErrScheduleUnsupported = errors.New("port: scheduled tasks not supported by this backend")
 
+// PendingFireSessionID is the single-source sentinel Claim stamps on
+// ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
+// RecordFire with the real fire's session id. It is non-empty so the singleton
+// check's lease-acquire path has a recognisable "in-flight" marker (a Claim has
+// happened but RecordFire has not); the scheduler treats a pending LastFireSessionID
+// as "a fire is in its Claim→RecordFire window" and SKIPS (singleton: do not
+// overlap an in-flight fire). Promoting it to one port constant (the same
+// single-source discipline as SchedulerLeaderLeaseID / MemberSessionID) means the
+// three store adapters and the scheduler agree on the exact string by importing
+// it, not by independently declaring a byte-for-byte mirror.
+const PendingFireSessionID session.SessionID = "pending"
+
 // SchedulerLeaderLeaseID is the well-known session id the scheduler acquires a
 // leader lease on (a SessionLease keyed by this id) so that, in a multi-replica
 // deployment, at most one replica ticks the schedule store at a time (decision
@@ -197,13 +209,15 @@ const (
 //   - Misfire is the misfire policy (see MisfirePolicy). Default
 //     MisfireFireOnceNow.
 //   - Singleton is whether to skip the next fire if a prior fire is still running
-//     (the singleton / skip-overlap guard). The DEFAULT is true: overlapping fires
-//     of the same schedule are suppressed by default, so a slow run does not pile up
-//     concurrent fires. The authoritative cross-replica liveness oracle for the
-//     "prior still running" check is the per-session LEASE on
-//     ScheduleState.LastFireSessionID: a stale pointer to a finished fire (lease
-//     released/expired) yields a free trial-acquire, so the next fire is NOT
-//     skipped — a crashed fire self-heals by being treated as done.
+//     (the singleton / skip-overlap guard). The intended default is true (overlapping
+//     fires of the same schedule are suppressed, so a slow run does not pile up
+//     concurrent fires); it is a bare `bool` whose zero value is false, and the
+//     Phase-2 create-seam is what sets it to true by default (Phase 1 has no create
+//     API, so a schedule's Singleton is whatever its Save carried). The authoritative
+//     cross-replica liveness oracle for the "prior still running" check is the
+//     per-session LEASE on ScheduleState.LastFireSessionID: a stale pointer to a
+//     finished fire (lease released/expired) yields a free trial-acquire, so the
+//     next fire is NOT skipped — a crashed fire self-heals by being treated as done.
 //   - CreatedAt is the schedule's creation timestamp.
 type ScheduleSpec struct {
 	Name      string
@@ -263,8 +277,8 @@ type ScheduleState struct {
 	// on it is the authoritative cross-replica liveness oracle for the singleton
 	// check: a still-held lease means the prior fire is running (skip the next
 	// fire); a released/expired lease means it finished or crashed (fire freely).
-	// Claim sets this to a sentinel-pending value the caller overwrites via
-	// RecordFire with the real fire's session id.
+	// Claim sets this to port.PendingFireSessionID; RecordFire overwrites it with
+	// the real fire's session id.
 	LastFireSessionID session.SessionID
 }
 
@@ -321,7 +335,7 @@ type ScheduleFire struct {
 //
 // AT-MOST-ONCE (the core contract): Claim is the atomic advance that gives
 // exactly-once firing across replicas. It advances NextFireAt and LastFireAt,
-// increments FireCount, and sets LastFireSessionID to a sentinel-pending value —
+// increments FireCount, and sets LastFireSessionID to port.PendingFireSessionID —
 // all BEFORE the fire runs (claim-before-fire). A peer replica's Due MUST NOT
 // re-return a slot after Claim has advanced it. A crash mid-fire SKIPS the slot
 // (the advance already happened); a recurring schedule self-heals via the
@@ -376,9 +390,10 @@ type ScheduleStore interface {
 	// Claim is the AT-MOST-ONCE atomic advance. It atomically: sets LastFireAt=now,
 	// advances NextFireAt to nextFire (the caller-computed next cron fire, or the
 	// zero time for a one-shot / a MaxFires-exhausted cron), increments FireCount,
-	// sets LastFireSessionID to a sentinel-pending value the caller overwrites via
-	// RecordFire, and (for a one-shot or an exhausted cron) sets Enabled=false and
-	// zeroes NextFireAt. It returns the claimed schedule (with the advanced State).
+	// sets LastFireSessionID to port.PendingFireSessionID (the caller overwrites it
+	// via RecordFire with the real fire's session id), and (for a one-shot or an
+	// exhausted cron) sets Enabled=false and zeroes NextFireAt. It returns the
+	// claimed schedule (with the advanced State).
 	//
 	// nextFire is computed by the CALLER (composition, which has the cronparse
 	// dependency) — the store is parser-free and never interprets the cron
@@ -400,8 +415,8 @@ type ScheduleStore interface {
 	Claim(ctx context.Context, name string, now, nextFire time.Time) (Schedule, error)
 
 	// RecordFire records the outcome of a fire (f) and updates the schedule's
-	// LastFireSessionID to f.SessionID (overwriting the sentinel-pending value
-	// Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is
+	// LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID
+	// value Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is
 	// a no-op (the second call returns nil without mutating state), so a caller
 	// may safely retry after a transient infrastructure failure. The not-found
 	// case (the schedule was deleted between Claim and RecordFire) wraps

@@ -453,7 +453,7 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	// skipped) — the lease, not the field, is authoritative. The trial lease is
 	// released immediately (we don't hold it; the fire's own run-entry acquires
 	// its own session lease).
-	if !skipFire && sched.Spec.Singleton && s.cfg.Lease != nil && sched.State.LastFireSessionID != "" && sched.State.LastFireSessionID != "pending" {
+	if !skipFire && sched.Spec.Singleton && s.cfg.Lease != nil && sched.State.LastFireSessionID != "" && sched.State.LastFireSessionID != port.PendingFireSessionID {
 		overlap, rel := s.isPriorFireLive(ctx, sched.State.LastFireSessionID)
 		if rel != nil {
 			defer rel() // release the trial lease when fireOne returns
@@ -461,12 +461,21 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 		if overlap {
 			s.diag.Log(ctx, port.LevelInfo, "scheduler: skipping fire (prior fire still running)",
 				"schedule", sched.Spec.Name, "prior_session", sched.State.LastFireSessionID)
-			// Still advance NextFireAt via Claim so the slot isn't re-returned;
-			// the prior fire's completion will RecordFire its own outcome.
-			if _, err := s.cfg.Store.Claim(ctx, sched.Spec.Name, now, nextFire); err != nil && !errors.Is(err, port.ErrScheduleNotFound) {
-				s.diag.Log(ctx, port.LevelWarn, "scheduler: Claim failed during singleton skip",
-					"schedule", sched.Spec.Name, "err", err.Error())
-			}
+			// Do NOT Claim here. A Claim would advance NextFireAt (so the slot
+			// isn't re-returned) but would ALSO overwrite LastFireSessionID with
+			// port.PendingFireSessionID — destroying the pointer to the
+			// still-running prior fire. On the next tick the singleton check is
+			// gated on LastFireSessionID != pending, so it would be SKIPPED, and a
+			// second fire would launch concurrently with the still-running prior
+			// fire, defeating the singleton guarantee (review finding #1).
+			//
+			// Instead: leave the slot due. The next tick's Due returns it again;
+			// the singleton check re-acquires the trial lease (the authoritative
+			// liveness oracle) and skips again while the prior fire holds it. When
+			// the prior fire finishes (RecordFire + lease release), the next tick's
+			// singleton check passes and Claims+fires normally. The repeated
+			// trial-lease acquires while the prior fire runs are bounded
+			// (singletonTrialTimeout each, every TickInterval) and acceptable.
 			return
 		}
 	}

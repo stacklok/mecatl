@@ -1185,9 +1185,14 @@ func (s *Service) Close() {
 	// Stop the scheduler FIRST so in-flight fires drain while the service is
 	// still alive to serve them (the FireFunc drives StartRunContent on this
 	// Service). Stop cancels the tick loop, joins in-flight fires (with a grace),
-	// and releases the leader lease. nil-safe (no scheduler wired).
-	if s.scheduler != nil {
-		_ = s.scheduler.Stop()
+	// and releases the leader lease. nil-safe (no scheduler wired). Read under
+	// s.mu for consistency with SetScheduler/HasScheduler (set-once-before-serving
+	// so practically safe, but -race won't catch a future caller that re-orders).
+	s.mu.Lock()
+	sched := s.scheduler
+	s.mu.Unlock()
+	if sched != nil {
+		_ = sched.Stop()
 	}
 	s.mu.Lock()
 	engines := s.sessionEngines
@@ -1227,8 +1232,11 @@ func (s *Service) Close() {
 func (s *Service) Drain() {
 	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
 	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
-	if s.scheduler != nil {
-		s.scheduler.Drain()
+	s.mu.Lock()
+	sched := s.scheduler
+	s.mu.Unlock()
+	if sched != nil {
+		sched.Drain()
 	}
 	s.draining.Store(true)
 }

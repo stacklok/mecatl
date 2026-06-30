@@ -659,6 +659,102 @@ func TestFailedFireRecordedAsStopError(t *testing.T) {
 	}
 }
 
+// TestSingletonOverlapPreservesLivePointer is the regression test for review
+// finding #1: when a singleton schedule's prior fire is still running (its session
+// lease is held by any replica), the skip path MUST NOT Claim — a Claim would
+// overwrite LastFireSessionID with port.PendingFireSessionID, destroying the
+// pointer to the still-running prior fire. On the next tick the singleton check
+// (gated on LastFireSessionID != pending) would then be SKIPPED, and a second
+// fire would launch concurrently with the still-running prior fire, defeating the
+// singleton guarantee.
+//
+// The fix: the skip path leaves the slot due; the next tick re-checks the
+// singleton via the trial-lease and skips again while the prior fire holds it.
+// This test pins that the pointer survives a skip and a second tick still skips.
+func TestSingletonOverlapPreservesLivePointer(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New(clk)
+	fire := &fireStub{}
+
+	// A lease backend that holds a specific session id ("sched--prior") — any
+	// Acquire on that id from a different owner returns ErrLeaseHeld. Releasing
+	// it (via Release) clears the hold so a later Acquire succeeds.
+	leaseBE := &heldSessionLease{held: map[session.SessionID]string{"sched--prior": "owner-prior"}, clk: clk}
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Lease:              leaseBE,
+		LeaseOwner:         "owner-this",
+		Fire:               fire.fire,
+		Clock:              clk,
+		TickInterval:       1 * time.Hour,
+		MaxConcurrentFires: 4,
+	})
+
+	due := clk.Now()
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      "singleton",
+			Prompt:    "x",
+			Trigger:   port.TriggerSpec{Cron: "* * * * *"},
+			Singleton: true,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        due,
+			Enabled:           true,
+			LastFireSessionID: "sched--prior", // a prior fire ran and is still running
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Tick 1: the prior fire's lease is held → singleton skip. The skip MUST NOT
+	// Claim, so LastFireSessionID stays "sched--prior" (not port.PendingFireSessionID)
+	// and FireCount stays 0.
+	s.RunOnceForTest(context.Background())
+	if got := fire.count(); got != 0 {
+		t.Fatalf("tick 1: fires = %d, want 0 (singleton overlap skip)", got)
+	}
+	loaded, _ := store.Load(context.Background(), "singleton")
+	if loaded.State.LastFireSessionID != "sched--prior" {
+		t.Fatalf("tick 1: LastFireSessionID = %q, want %q (skip must not clobber the live pointer)",
+			loaded.State.LastFireSessionID, "sched--prior")
+	}
+	if loaded.State.FireCount != 0 {
+		t.Fatalf("tick 1: FireCount = %d, want 0 (skip must not Claim)", loaded.State.FireCount)
+	}
+
+	// Tick 2: the prior fire is STILL running. This is the crux of finding #1 —
+	// if the skip-path had Claimed, LastFireSessionID would now be "pending", the
+	// singleton check would be skipped, and a second fire would launch. It MUST
+	// skip again.
+	s.RunOnceForTest(context.Background())
+	if got := fire.count(); got != 0 {
+		t.Fatalf("tick 2: fires = %d, want 0 (singleton still overlapping)", got)
+	}
+	loaded, _ = store.Load(context.Background(), "singleton")
+	if loaded.State.LastFireSessionID != "sched--prior" {
+		t.Fatalf("tick 2: LastFireSessionID = %q, want %q (pointer clobbered by skip-Claim bug)",
+			loaded.State.LastFireSessionID, "sched--prior")
+	}
+
+	// Now the prior fire finishes: release its lease. The next tick's singleton
+	// check acquires freely → Claims + fires.
+	leaseBE.release("sched--prior")
+	s.RunOnceForTest(context.Background())
+	if got := fire.count(); got != 1 {
+		t.Fatalf("tick 3: fires = %d, want 1 (prior fire finished; singleton fires)", got)
+	}
+	loaded, _ = store.Load(context.Background(), "singleton")
+	if loaded.State.FireCount != 1 {
+		t.Fatalf("tick 3: FireCount = %d, want 1", loaded.State.FireCount)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // runtimeYield yields the goroutine to let the fan-out reach steady state.
@@ -697,3 +793,36 @@ func (*heldLease) Renew(_ context.Context, _ port.Lease) (port.Lease, error) {
 	return port.Lease{}, port.ErrLeaseHeld
 }
 func (*heldLease) Release(_ context.Context, _ port.Lease) error { return nil }
+
+// heldSessionLease is a port.SessionLease that tracks per-session-id holds. A
+// held id returns ErrLeaseHeld to any Acquire from a different owner; release(id)
+// clears the hold so a later Acquire succeeds. It is the singleton-overlap
+// test's liveness oracle: a held "sched--prior" simulates a still-running prior
+// fire; release simulates its completion.
+type heldSessionLease struct {
+	mu   sync.Mutex
+	held map[session.SessionID]string // id -> owner
+	clk  port.Clock
+}
+
+func (h *heldSessionLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if cur, ok := h.held[id]; ok && cur != owner {
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	h.held[id] = owner
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: h.clk.Now().Add(30 * time.Second)}, nil
+}
+func (*heldSessionLease) Renew(_ context.Context, l port.Lease) (port.Lease, error) { return l, nil }
+func (h *heldSessionLease) Release(_ context.Context, l port.Lease) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.held, l.SessionID)
+	return nil
+}
+func (h *heldSessionLease) release(id session.SessionID) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.held, id)
+}
