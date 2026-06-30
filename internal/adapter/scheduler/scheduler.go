@@ -116,6 +116,12 @@ const (
 	// cancelling them. A fire mid-run when Stop is called gets this much headroom
 	// to complete cleanly; after it, Stop cancels and joins.
 	stopFireGrace = 10 * time.Second
+	// singletonTrialTimeout bounds the trial-lease acquire in isPriorFireLive.
+	// It must be SHORT: the check is a best-effort liveness probe, not a hard
+	// gate (the Claim fence is the backstop). A slow backend must not consume an
+	// errgroup slot for longer than this. Mirrors the leader-lease acquire
+	// timeout's "bounded so a wedged backend cannot stall" discipline.
+	singletonTrialTimeout = 5 * time.Second
 )
 
 // Scheduler is the composition-layer owner of the scheduled-tasks tick loop.
@@ -669,11 +675,22 @@ func scheduleLocation(tz string) *time.Location {
 // lease is released immediately; the fire's own run-entry acquires its own
 // session lease. Returns (overlap, releaseFunc) where releaseFunc is nil when
 // no trial lease was acquired.
+//
+// The acquire is BOUNDED by singletonTrialTimeout (not the tick ctx) so a slow
+// or unresponsive lease backend cannot block the fire path or starve the
+// MaxConcurrentFires errgroup. A timeout is treated as a transient infra fault
+// → fail-safe (fire; the Claim fence is the backstop).
 func (s *Scheduler) isPriorFireLive(ctx context.Context, sessID session.SessionID) (bool, func()) {
 	if s.cfg.Lease == nil {
 		return false, nil // no lease backend — can't check cross-replica; fire (single-replica by affinity)
 	}
-	lease, err := s.cfg.Lease.Acquire(ctx, sessID, s.cfg.LeaseOwner+"-singleton-trial")
+	// Bounded ctx: a trial-lease acquire must not block the fire path
+	// indefinitely. The tick ctx may be long-lived (only cancelled on Stop);
+	// a slow backend would consume an errgroup slot for the whole duration.
+	// Cut it short — this is a best-effort liveness check, not a hard gate.
+	trialCtx, trialCancel := context.WithTimeout(ctx, singletonTrialTimeout)
+	lease, err := s.cfg.Lease.Acquire(trialCtx, sessID, s.cfg.LeaseOwner+"-singleton-trial")
+	trialCancel()
 	if err != nil {
 		if errors.Is(err, port.ErrLeaseHeld) {
 			return true, nil // prior fire still running
@@ -681,8 +698,9 @@ func (s *Scheduler) isPriorFireLive(ctx context.Context, sessID session.SessionI
 		if errors.Is(err, port.ErrLeaseUnsupported) {
 			return false, nil // backend can't lease; fire (the Claim fence still holds within-process)
 		}
-		// Infra error — fail safe: don't skip (a transient fault shouldn't
-		// suppress a fire). The at-most-once Claim fence is the backstop.
+		// Infra error or timeout — fail safe: don't skip (a transient fault
+		// shouldn't suppress a fire). The at-most-once Claim fence is the
+		// backstop.
 		s.diag.Log(ctx, port.LevelWarn, "scheduler: singleton trial-lease acquire failed; firing (fail-safe)",
 			"session", sessID, "err", err.Error())
 		return false, nil
