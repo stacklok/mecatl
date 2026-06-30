@@ -47,9 +47,18 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 		if sched.Spec.Profile == string(server.ProfileNoFS) {
 			profile = server.ProfileNoFS
 		}
+		// Read-leaning default (decision #3): a schedule that does NOT opt into
+		// mutating (Mutating=false) runs in plan mode (read-only toolset) — the
+		// conservative posture for unattended runs. A schedule that opts into
+		// mutating (Mutating=true) honors its explicit Mode (or default if unset).
+		// This is the fire-time enforcement; the create-seam (Phase 2) will
+		// additionally reject Mutating=false with a write-capable Mode at save time.
 		mode := sched.Spec.Mode
 		if mode == "" {
 			mode = session.ModeDefault
+		}
+		if !sched.Spec.Mutating {
+			mode = session.ModePlan
 		}
 		limits := sched.Spec.Limits
 		if limits.MaxTurns == 0 {

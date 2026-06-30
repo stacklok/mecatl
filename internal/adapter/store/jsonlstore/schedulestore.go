@@ -402,28 +402,12 @@ func writeFileAtomic(path string, b []byte) error {
 
 // safeFilePart maps a caller-chosen string (a schedule name or fire id) to a
 // filename-safe token so it cannot traverse out of the store dir. It is the
-// string-typed sibling of safeName (which takes a session.SessionID); the two
-// share the same rune allowlist + leading-dot neutralisation.
+// safeFilePart sanitizes a string-typed key (a schedule name or fire id) for use
+// as a filename. It delegates to the existing safeName (which takes a
+// session.SessionID — a typed string — so this is a one-line wrapper) to avoid
+// duplicating the rune allowlist + leading-dot neutralisation.
 func safeFilePart(s string) string {
-	if s == "" {
-		return "_empty_"
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	out := b.String()
-	if strings.HasPrefix(out, ".") {
-		out = "_" + out[1:]
-	}
-	return out
+	return safeName(session.SessionID(s))
 }
 
 // cloneSpec returns a copy of spec whose Parts slice is independent of the

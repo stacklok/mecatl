@@ -219,6 +219,14 @@ type ScheduleSpec struct {
 	MaxFires  int
 	Misfire   MisfirePolicy
 	Singleton bool
+	// Timezone is the IANA timezone name (e.g. "America/New_York") the cron
+	// expression fires in. Empty means UTC (the recommended default for infra
+	// schedules — avoids the 1–3am DST danger zone). The store stores it
+	// verbatim (it never interprets it); composition's cronparse call loads
+	// it and passes it to NextFire. A one-shot trigger ignores it (a
+	// one-shot is an absolute wall-clock instant, already tz-aware via
+	// time.Time).
+	Timezone  string
 	CreatedAt time.Time
 }
 

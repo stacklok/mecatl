@@ -417,8 +417,9 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	_ = g.Wait()
 }
 
-// fireOne applies the misfire policy, Claims the slot, Fires (unless skip),
-// and RecordFires the outcome. It is the per-schedule claim-before-fire cycle.
+// fireOne applies the misfire policy, the singleton overlap check, Claims the
+// slot, Fires (unless skip), and RecordFires the outcome. It is the per-schedule
+// claim-before-fire cycle.
 func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.Time) {
 	// Compute the next fire instant. A cron trigger computes it via cronparse
 	// (the store is parser-free); a one-shot fires once (zero nextFire → Claim
@@ -435,6 +436,34 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	// firing. The Claim is still the advance (so the slot is not re-returned by
 	// a peer's Due); we just skip the Fire.
 	skipFire := sched.Spec.Misfire == port.MisfireSkip && sched.State.NextFireAt.Before(now)
+
+	// Singleton overlap check (decision: cross-replica singleton via trial-lease).
+	// Before claiming, if Singleton is true and the prior fire's session is still
+	// live (its session lease is held by ANY replica), skip this fire. The check
+	// is a TRIAL lease acquire on LastFireSessionID: ErrLeaseHeld means the prior
+	// fire is still running on some replica → skip (the singleton guard); success
+	// means the prior fire finished or crashed (lease released/expired) → fire
+	// freely. A stale pointer to a finished fire yields a free acquire (not
+	// skipped) — the lease, not the field, is authoritative. The trial lease is
+	// released immediately (we don't hold it; the fire's own run-entry acquires
+	// its own session lease).
+	if !skipFire && sched.Spec.Singleton && s.cfg.Lease != nil && sched.State.LastFireSessionID != "" && sched.State.LastFireSessionID != "pending" {
+		overlap, rel := s.isPriorFireLive(ctx, sched.State.LastFireSessionID)
+		if rel != nil {
+			defer rel() // release the trial lease when fireOne returns
+		}
+		if overlap {
+			s.diag.Log(ctx, port.LevelInfo, "scheduler: skipping fire (prior fire still running)",
+				"schedule", sched.Spec.Name, "prior_session", sched.State.LastFireSessionID)
+			// Still advance NextFireAt via Claim so the slot isn't re-returned;
+			// the prior fire's completion will RecordFire its own outcome.
+			if _, err := s.cfg.Store.Claim(ctx, sched.Spec.Name, now, nextFire); err != nil && !errors.Is(err, port.ErrScheduleNotFound) {
+				s.diag.Log(ctx, port.LevelWarn, "scheduler: Claim failed during singleton skip",
+					"schedule", sched.Spec.Name, "err", err.Error())
+			}
+			return
+		}
+	}
 
 	// Claim is the at-most-once atomic advance. A peer's Claim between our Due
 	// and Claim advanced NextFireAt past `now`; ErrScheduleNotFound is the
@@ -503,7 +532,8 @@ func (*Scheduler) computeNextFire(sched port.Schedule, now time.Time) (time.Time
 		if sched.Spec.MaxFires > 0 && sched.State.FireCount+1 >= sched.Spec.MaxFires {
 			return time.Time{}, nil
 		}
-		next, err := cronparse.NextFire(sched.Spec.Trigger.Cron, now, time.UTC)
+		loc := scheduleLocation(sched.Spec.Timezone)
+		next, err := cronparse.NextFire(sched.Spec.Trigger.Cron, now, loc)
 		if err != nil {
 			return time.Time{}, err
 		}
@@ -615,4 +645,53 @@ func (s *Scheduler) RunOnceForTest(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	s.tickOnce(eff)
+}
+
+// scheduleLocation loads the IANA timezone for a schedule's cron expression. An
+// empty or invalid timezone falls back to UTC (fail-safe — UTC is the
+// recommended default for infra schedules, avoiding the 1–3am DST danger zone).
+// An invalid name is logged once (INFO) and the schedule fires in UTC.
+func scheduleLocation(tz string) *time.Location {
+	if tz == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// isPriorFireLive does a TRIAL lease acquire on the prior fire's session id.
+// ErrLeaseHeld means the prior fire is still running on some replica → the
+// singleton guard skips this fire. Success (or ErrLeaseUnsupported / no lease
+// backend) means the prior fire finished or crashed → fire freely. The trial
+// lease is released immediately; the fire's own run-entry acquires its own
+// session lease. Returns (overlap, releaseFunc) where releaseFunc is nil when
+// no trial lease was acquired.
+func (s *Scheduler) isPriorFireLive(ctx context.Context, sessID session.SessionID) (bool, func()) {
+	if s.cfg.Lease == nil {
+		return false, nil // no lease backend — can't check cross-replica; fire (single-replica by affinity)
+	}
+	lease, err := s.cfg.Lease.Acquire(ctx, sessID, s.cfg.LeaseOwner+"-singleton-trial")
+	if err != nil {
+		if errors.Is(err, port.ErrLeaseHeld) {
+			return true, nil // prior fire still running
+		}
+		if errors.Is(err, port.ErrLeaseUnsupported) {
+			return false, nil // backend can't lease; fire (the Claim fence still holds within-process)
+		}
+		// Infra error — fail safe: don't skip (a transient fault shouldn't
+		// suppress a fire). The at-most-once Claim fence is the backstop.
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: singleton trial-lease acquire failed; firing (fail-safe)",
+			"session", sessID, "err", err.Error())
+		return false, nil
+	}
+	// Acquired — the prior fire is NOT live. Release immediately; the fire's
+	// own run-entry will acquire its own session lease on the new session id.
+	return false, func() {
+		relCtx, relCancel := context.WithTimeout(context.Background(), leaderLeaseAcquireTimeout)
+		defer relCancel()
+		_ = s.cfg.Lease.Release(relCtx, lease)
+	}
 }
