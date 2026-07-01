@@ -43,7 +43,7 @@ func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
-	messages, err := buildMessages(req.Messages)
+	messages, err := buildMessages(req.Messages, p.sessionCaps())
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
@@ -341,7 +341,7 @@ func toStringSlice(v any) []string {
 // assistant turn places its thinking blocks BEFORE its tool_use blocks. A
 // RoleSystem message (the harness puts the system prompt in LLMRequest.System,
 // so this is belt-and-suspenders) is folded into a user text block.
-func buildMessages(msgs []session.Message) ([]sdk.MessageParam, error) {
+func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sdk.MessageParam, error) {
 	out := make([]sdk.MessageParam, 0, len(msgs))
 	for _, m := range msgs {
 		switch m.Role {
@@ -358,14 +358,105 @@ func buildMessages(msgs []session.Message) ([]sdk.MessageParam, error) {
 			out = append(out, sdk.NewAssistantMessage(assistantBlocks(m)...))
 		case session.RoleTool:
 			if m.ToolResult != nil {
-				out = append(out, sdk.NewUserMessage(sdk.NewToolResultBlock(
-					string(m.ToolResult.CallID), m.ToolResult.Content, false)))
+				out = append(out, sdk.NewUserMessage(toolResultBlock(*m.ToolResult, caps)))
 			}
 		default:
 			return nil, fmt.Errorf("anthropic: unsupported message role %q", m.Role)
 		}
 	}
 	return out, nil
+}
+
+// toolResultBlock builds the tool_result content block for a tool result.
+//
+// When the result carries typed Parts AND at least one block survives the per-
+// session capability projection (port.RouteToolResultParts), the tool_result
+// carries a CONTENT-BLOCK LIST — the Anthropic Messages API's ToolResultBlockParam
+// accepts text + image blocks (sdk.NewTextBlock / sdk.NewImageBlockBase64). Text
+// / resource-link / embedded-resource-text / structured-content blocks become
+// text blocks (the model sees the reference/summary/JSON as text); an image
+// block becomes a base64 image block (inline bytes) or a URL image block. An
+// audio block never reaches here: the Anthropic adapter declares Audio:false, so
+// RouteToolResultParts drops it upstream.
+//
+// Otherwise (no Parts, or routing returns nil — every block filtered out by the
+// capability intersection) it falls back to the single-string
+// NewToolResultBlock(callID, Content, isError) — BYTE-IDENTICAL to the pre-T7
+// path, so the legacy/mock/mecademo path is unchanged.
+func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.ContentBlockParamUnion {
+	blocks := port.RouteToolResultParts(tr, caps)
+	if len(blocks) == 0 {
+		// Legacy single-string form — byte-identical to the pre-T7 path, which
+		// hard-coded is_error=false (it did not project tr.IsError). Preserved
+		// verbatim so the legacy/mock/mecademo path is unchanged.
+		return sdk.NewToolResultBlock(string(tr.CallID), tr.Content, false)
+	}
+	content := make([]sdk.ToolResultBlockParamContentUnion, 0, len(blocks))
+	for _, b := range blocks {
+		switch b.BlockKind {
+		case session.BlockImage:
+			switch {
+			case len(b.Data) > 0:
+				content = append(content, sdk.ToolResultBlockParamContentUnion{
+					OfImage: &sdk.ImageBlockParam{
+						Source: sdk.ImageBlockParamSourceUnion{
+							OfBase64: &sdk.Base64ImageSourceParam{
+								Data:      encodeBase64(b.Data),
+								MediaType: sdk.Base64ImageSourceMediaType(b.MIMEType),
+							},
+						},
+					},
+				})
+			case b.URL != "":
+				content = append(content, sdk.ToolResultBlockParamContentUnion{
+					OfImage: &sdk.ImageBlockParam{
+						Source: sdk.ImageBlockParamSourceUnion{
+							OfURL: &sdk.URLImageSourceParam{URL: b.URL},
+						},
+					},
+				})
+			default:
+				// An image block with neither bytes nor a URL is malformed; render an
+				// honest empty-text marker rather than drop the block silently.
+				content = append(content, sdk.ToolResultBlockParamContentUnion{
+					OfText: &sdk.TextBlockParam{Text: toolBlockText(b)},
+				})
+			}
+		default:
+			content = append(content, sdk.ToolResultBlockParamContentUnion{
+				OfText: &sdk.TextBlockParam{Text: toolBlockText(b)},
+			})
+		}
+	}
+	blk := sdk.ToolResultBlockParam{
+		ToolUseID: string(tr.CallID),
+		Content:   content,
+	}
+	return sdk.ContentBlockParamUnion{OfToolResult: &blk}
+}
+
+// blockText renders a non-image tool-result block as its model-facing text form.
+// BlockText / BlockStructuredContent carry their text in Text; a resource link
+// renders its URI + name/title; an embedded-resource blob (no Text) renders a
+// pointer (URI + mime) rather than a base64 dump.
+func toolBlockText(b session.Content) string {
+	switch b.BlockKind {
+	case session.BlockResourceLink:
+		if b.Title != "" {
+			return b.Title + " (" + b.URL + ")"
+		}
+		if b.Name != "" {
+			return b.Name + " (" + b.URL + ")"
+		}
+		return b.URL
+	case session.BlockEmbeddedResource:
+		if b.Text != "" {
+			return b.Text
+		}
+		return b.URL + " (" + b.MIMEType + ")"
+	default: // BlockText, BlockStructuredContent, and any text-bearing block.
+		return b.Text
+	}
 }
 
 // userBlocks builds a user message's content blocks: a text block (when Text is

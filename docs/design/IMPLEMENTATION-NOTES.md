@@ -2728,6 +2728,95 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   backend-switching secrets are read from `SEARXNG_URL`/`BRAVE_API_KEY`/`EXA_API_KEY`
   (and `WEBSEARCH_API_KEY` for `--websearch-url`) — env only, never flag values.
 
+### MCP typed tool results (issue #223, ADR 0059)
+
+The MCP adapter's `flattenContent` choke point collapsed an MCP
+`CallToolResult` — a typed, audience-aware content array (`text`/`image`/
+`audio`/`resource`/`EmbeddedResource`/`resource_link`) plus an optional
+`structuredContent` JSON object and `outputSchema` — to a single model-facing
+string, discarding every non-text block. The architectural root cause was that
+the domain value object `session.ToolResult` was `{Content string, IsError
+bool}` (string-only, no structured channel), mirrored by the gRPC `ToolResult`
+proto. By the time a result reached the loop, the relay, or any client,
+everything was already a flat string — so a user-audience `resource_link` the
+mcpperf server deliberately emitted for a human-facing client lost its metadata
+and handed the model a bare URI it could not resolve.
+
+The fix (ADR 0059) carries MCP typed content as **the domain's own neutral
+type**, with every untrusted-server defense in composition and the adapter:
+
+- **`session.ToolResult.Parts []Content`** (`engine/session/toolcall.go`)
+  (`ToolResult`) — additive; a zero-value `Parts` (string-only) is byte-identical
+  to the pre-#223 shape, so legacy snapshots/events load unchanged. The 2-arg
+  `NewToolResult`/`NewToolError` constructors are preserved (~200 call sites); the
+  new path uses `NewToolResultWithParts`.
+- **`session.Content` generalization** (`engine/session/content.go`) — the
+  existing `Content` gains a `BlockKind` discriminator plus block variants:
+  `BlockText`/`BlockImage`/`BlockAudio`/`BlockResourceLink`/
+  `BlockEmbeddedResource`/`BlockStructuredContent`, built by the validating
+  constructors (`NewContent`/`ValidateMediaParts`, the SINGLE choke point the ACP
+  adapter already uses for prompt media — no second validation path). A legacy
+  media part (`BlockKind == ""`, the user-message media shape) is distinct from a
+  tool-result block.
+- **MCP adapter mapping layer** (`internal/adapter/mcp/tool.go`) (`mapContent`)
+  replaces `flattenContent`: a per-type switch over `mcpsdk.Content` producing
+  `session.Content` parts (image/audio/resource) and string references (for
+  `resource_link`), plus a default model-facing string. The per-part validation is
+  shared; the size bound (issue #178, `toolkit.Truncate` at `MaxOutputBytes`) is
+  applied FIRST, before the typed-block widening, so the durable log's implicit
+  size ceiling is not punched through.
+- **`port.RouteToolResultParts`** (`engine/port/toolresult_route.go`) — the
+  composition-driven, **capability-gated READ-ONLY projection** the provider
+  adapters (openai/anthropic) call from their `RoleTool` case. It returns the
+  subset of `tr.Parts` the (provider, model) — described by `caps`, the SINGLE
+  composition-computed capability intersection (`modelCapability` = catalog ∩
+  adapter) — may receive as typed blocks: image iff `caps.Image`, audio iff
+  `caps.Audio`, text/resource-link/embedded-resource/structured-content always
+  survive. It builds a FRESH slice and never mutates the recorded
+  `*session.ToolResult` (recorded-history == client-stream == model-view). It lives
+  in `engine/port` (not `internal/app`) so the provider adapters may call it
+  without importing composition. Nil/empty `Parts` (or a projection that drops
+  every block) returns nil so the caller degrades to the recorded model-facing
+  `Content` string.
+- **`audience` is advisory display routing ONLY — it NEVER suppresses
+  model-facing content** (CWE-345). The MCP server is an untrusted supply-chain
+  surface; trusting `audience:["user"]` to *suppress* the model copy inverts the
+  trust model (a server hides an injection payload, or routes a secret into model
+  context). `RouteToolResultParts` does not read `Content.Audience` at all — a
+  `["user"]`-audience block passes to the model exactly as a `[]` block does. A
+  `["user"]` block may render an *additional* human-facing copy; the model copy is
+  always present (TextContent parity). Untrusted-fencing/redaction runs regardless
+  of audience.
+- **NEVER auto-dereference server-returned `resource_link` URIs** (SSRF,
+  CWE-918). A server pointing at an internal/metadata host is the threat actor.
+  v1 surfaces a `resource_link` as a typed block the model can SEE (URI + name +
+  description + MIME), not as auto-fetched bytes. Only `https://` may ever be
+  client-fetched, and only through `session.ValidateMediaURL` (absolute https,
+  IP-deny, redirect re-validation, no cross-origin credential attachment).
+- **`FetchMcpResource` tool** (`internal/adapter/tools/fetchmcpresource.go`)
+  (Phase 2) is the model-facing affordance to ACT on an `https://` `resource_link`:
+  it fetches the URI via `ValidateMediaURL`, re-validates on every redirect, caps
+  the body at `toolkit.MaxOutputBytes`, and summarizes binary content. Non-`https`
+  schemes (`perf://`, `file://`, custom) stay SERVER-readonly via
+  `ReadMcpResource` (the model knows the owning server from the `resource_link`
+  metadata or a `ListMcpResources` listing). Binary `EmbeddedResource` blocks are
+  summarized (the model sees a reference, never the raw blob bytes).
+
+**Content-vs-Parts precedence:** both `Content` and `Parts` may be present.
+`Content` is the default model-facing string (always set by the legacy
+constructors); `Parts` carries typed blocks. Consumers prefer `Parts` when
+non-empty, falling back to `Content` — a legacy/empty-`Parts` result is
+byte-identical to the pre-#223 shape. This is the SAME precedence the providers
+apply via `RouteToolResultParts` (nil projection → degrade to `Content`).
+
+Typed content rides `EvToolResult.ToolResult`, not a relay sidecar, so
+`engine/adapter/eventsource` (`Fold`) reconstructs it from the durable log with
+no re-coupling (the loop stays storage-agnostic). `StructuredContent` is NOT
+validated with `session.ValidateJSON` (a deliberate fail-open *subset* validator
+for model-authored structured output; MCP `outputSchema` is arbitrary
+server-provided full JSON Schema and `ValidateJSON` would silently under-enforce
+— a second, weaker path).
+
 ## Composition — `internal/app/` (multi-provider — see `MULTI-PROVIDER.md`)
 
 The single shared assembly of provider + catalog + policy + engine into a `server.Service`

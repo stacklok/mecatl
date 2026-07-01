@@ -48,12 +48,13 @@ func TestReadOnlyFlags(t *testing.T) {
 	// Bash is excluded from All() (it requires a CommandRunner); these are the
 	// always-available tools. Bash's ReadOnly is asserted separately.
 	want := map[string]bool{
-		"Read":     true,
-		"Edit":     false,
-		"Write":    false,
-		"Grep":     true,
-		"Glob":     true,
-		"WebFetch": true,
+		"Read":             true,
+		"Edit":             false,
+		"Write":            false,
+		"Grep":             true,
+		"Glob":             true,
+		"WebFetch":         true,
+		"FetchMcpResource": true,
 	}
 	got := map[string]bool{}
 	for _, tl := range All() {
@@ -84,16 +85,24 @@ func TestAllExcludesBash(t *testing.T) {
 }
 
 // TestNoFSExcludesFileTools pins the no-FS core surface: NoFS() is exactly
-// {WebFetch} — no file-touching tool (Read/Edit/Write/Grep/Glob) and no Bash may
-// ever appear in it. It is the anti-drift pin for the "no-fs" session profile's
-// core tier: a tool added to All() does NOT automatically reach NoFS().
+// {WebFetch, FetchMcpResource} — no file-touching tool (Read/Edit/Write/Grep/
+// Glob) and no Bash may ever appear in it. FetchMcpResource (issue #223 Phase
+// 2) is an outbound read that needs no filesystem, so it rides alongside
+// WebFetch. This is the anti-drift pin for the "no-fs" session profile's core
+// tier: a tool added to All() does NOT automatically reach NoFS().
 func TestNoFSExcludesFileTools(t *testing.T) {
 	got := NoFS()
-	if len(got) != 1 {
-		t.Fatalf("NoFS() = %d tools, want exactly 1 (WebFetch)", len(got))
+	if len(got) != 2 {
+		t.Fatalf("NoFS() = %d tools, want exactly 2 (WebFetch, FetchMcpResource)", len(got))
 	}
-	if name := got[0].Spec().Name; name != "WebFetch" {
-		t.Fatalf("NoFS()[0] = %q, want WebFetch", name)
+	names := map[string]bool{}
+	for _, tl := range got {
+		names[tl.Spec().Name] = true
+	}
+	for _, want := range []string{"WebFetch", "FetchMcpResource"} {
+		if !names[want] {
+			t.Errorf("NoFS() missing %q", want)
+		}
 	}
 	banned := map[string]bool{"Read": true, "Edit": true, "Write": true, "Grep": true, "Glob": true, BashToolName: true}
 	for _, tl := range got {
@@ -104,14 +113,14 @@ func TestNoFSExcludesFileTools(t *testing.T) {
 }
 
 func TestAllAndRegister(t *testing.T) {
-	if len(All()) != 6 {
-		t.Fatalf("All() = %d tools, want 6", len(All()))
+	if len(All()) != 7 {
+		t.Fatalf("All() = %d tools, want 7", len(All()))
 	}
 	cat := tool.NewCatalog()
 	if err := Register(cat); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	for _, name := range []string{"Read", "Edit", "Write", "Grep", "Glob", "WebFetch"} {
+	for _, name := range []string{"Read", "Edit", "Write", "Grep", "Glob", "WebFetch", "FetchMcpResource"} {
 		if _, ok := cat.Lookup(name); !ok {
 			t.Errorf("catalog missing %q after Register", name)
 		}

@@ -52,12 +52,64 @@ type ToolCallMsg struct {
 	Args string // raw JSON
 }
 
-// ToolResultMsg resolves the matching ToolCallMsg by CallID.
+// ToolResultMsg resolves the matching ToolCallMsg by CallID. Content is the legacy
+// model-facing string result body; Blocks carries the typed content blocks (when the
+// server relayed them — resource links, images, etc.) so the ui can render user-
+// audience artifacts distinctly from/below the model-facing text. Both may be set:
+// the blocks are rendered IN ADDITION to Content (the model-facing text body), not as
+// a replacement. StructuredContent is the JSON-stringified structured payload mirror.
 type ToolResultMsg struct {
-	CallID  string
-	Content string
-	IsError bool
+	CallID            string
+	Content           string
+	IsError           bool
+	Blocks            []ContentBlock
+	StructuredContent string
 }
+
+// ContentBlock is the plain-data mirror of mecatlv1.ContentBlock, duplicated here so
+// the ui stays proto-free (the same discipline as Usage). Only the fields the ui
+// renders are carried: the kind discriminant plus the per-kind payload (mime/data/url
+// for media, text for text/embedded/structured, and the resource-link name/uri).
+type ContentBlock struct {
+	// Kind is the block kind (text/image/audio/resource-link/embedded-resource/
+	// structured-content). UNSPECIFIED is treated as absent by the renderer.
+	Kind ContentBlockKind
+	// MimeType is the IANA media type of inline bytes (image/audio/blob).
+	MimeType string
+	// Data is the inline content bytes (image/audio/blob).
+	Data []byte
+	// URL is the remote reference (resource-link URI, or URL-sourced media).
+	URL string
+	// Text is the text payload (text, embedded-resource text, or structured-content JSON).
+	Text string
+	// Name is the resource-link name.
+	Name string
+	// Title is the resource-link title.
+	Title string
+	// Description is the resource-link description.
+	Description string
+}
+
+// ContentBlockKind discriminates a ContentBlock, mirroring the proto ContentBlock.Kind
+// enum as a plain string so the ui keys off it without importing proto.
+type ContentBlockKind string
+
+const (
+	// ContentBlockUnspecified is the zero value; consumers treat it as absent.
+	ContentBlockUnspecified ContentBlockKind = ""
+	// ContentBlockText is a text block (already represented in the model-facing body).
+	ContentBlockText ContentBlockKind = "text"
+	// ContentBlockImage is an inline image block.
+	ContentBlockImage ContentBlockKind = "image"
+	// ContentBlockAudio is an inline audio block.
+	ContentBlockAudio ContentBlockKind = "audio"
+	// ContentBlockResourceLink is a reference to an MCP resource by URI.
+	ContentBlockResourceLink ContentBlockKind = "resource_link"
+	// ContentBlockEmbeddedResource is an embedded MCP resource (text or blob).
+	ContentBlockEmbeddedResource ContentBlockKind = "embedded_resource"
+	// ContentBlockStructuredContent is a JSON structured-content block.
+	ContentBlockStructuredContent ContentBlockKind = "structured_content"
+)
 
 // ToolProgressMsg is a transient, human-readable progress line from a
 // long-running tool (proto type "tool.progress"). It carries no call id and no
@@ -597,7 +649,13 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return ToolCallMsg{ID: tc.GetId(), Name: tc.GetName(), Args: tc.GetArgs()}
 	case "tool.result":
 		tr := ev.GetToolResult()
-		return ToolResultMsg{CallID: tr.GetCallId(), Content: tr.GetContent(), IsError: tr.GetIsError()}
+		return ToolResultMsg{
+			CallID:            tr.GetCallId(),
+			Content:           tr.GetContent(),
+			IsError:           tr.GetIsError(),
+			Blocks:            contentBlocksFromProto(tr.GetBlocks()),
+			StructuredContent: tr.GetStructuredContent(),
+		}
 	case "tool.progress":
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
@@ -669,5 +727,53 @@ func delegationEventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return parallelMsg(ParallelEnd, ev.GetParallel())
 	default:
 		return nil
+	}
+}
+
+// contentBlocksFromProto converts the proto ContentBlock slice to plain-data
+// ContentBlock values (nil-safe). It is the single translation point for the typed
+// tool-result blocks, mirroring usageFrom — keeping the ui proto-free. A nil/empty
+// slice returns nil so a text-only result (the common case, no blocks relayed) takes
+// the unchanged existing render path.
+func contentBlocksFromProto(pb []*mecatlv1.ContentBlock) []ContentBlock {
+	if len(pb) == 0 {
+		return nil
+	}
+	out := make([]ContentBlock, 0, len(pb))
+	for _, b := range pb {
+		out = append(out, ContentBlock{
+			Kind:        contentBlockKindFromProto(b.GetKind()),
+			MimeType:    b.GetMimeType(),
+			Data:        b.GetData(),
+			URL:         b.GetUrl(),
+			Text:        b.GetText(),
+			Name:        b.GetName(),
+			Title:       b.GetTitle(),
+			Description: b.GetDescription(),
+		})
+	}
+	return out
+}
+
+// contentBlockKindFromProto maps a proto ContentBlock_Kind to the plain
+// ContentBlockKind string the ui keys off. UNSPECIFIED (and any unknown future
+// value) maps to the empty string so the renderer treats it as absent — never a
+// crash on a forward-compatible kind.
+func contentBlockKindFromProto(k mecatlv1.ContentBlock_Kind) ContentBlockKind {
+	switch k {
+	case mecatlv1.ContentBlock_KIND_TEXT:
+		return ContentBlockText
+	case mecatlv1.ContentBlock_KIND_IMAGE:
+		return ContentBlockImage
+	case mecatlv1.ContentBlock_KIND_AUDIO:
+		return ContentBlockAudio
+	case mecatlv1.ContentBlock_KIND_RESOURCE_LINK:
+		return ContentBlockResourceLink
+	case mecatlv1.ContentBlock_KIND_EMBEDDED_RESOURCE:
+		return ContentBlockEmbeddedResource
+	case mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT:
+		return ContentBlockStructuredContent
+	default:
+		return ContentBlockUnspecified
 	}
 }

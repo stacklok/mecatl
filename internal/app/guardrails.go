@@ -180,6 +180,11 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	// WebFetch's risk is overwhelmingly the INBOUND page (injection); its outbound arg
 	// is just a URL. Post only.
 	{Match: "WebFetch", Phases: []string{"post"}, Mode: string(modelhook.ModeBlock)},
+	// FetchMcpResource (issue #223 Phase 2): the same class as WebFetch — a client
+	// fetch of an https:// resource URI an MCP tool surfaced as a resource_link. The
+	// risk is the INBOUND fetched content (injection); its outbound arg is just a URI.
+	// Post only, mirroring WebFetch.
+	{Match: "FetchMcpResource", Phases: []string{"post"}, Mode: string(modelhook.ModeBlock)},
 	// All MCP tools, both directions: outbound args (exfil into an MCP call body) and
 	// inbound results (injection in an MCP server's response).
 	{Match: "mcp__*", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeBlock)},

@@ -524,6 +524,53 @@ message Content {
   string url = 4;
 }
 
+// ContentBlock is a typed content block on a tool result (mirrors
+// session.Content for tool-result Parts). A sum-type over Kind.
+message ContentBlock {
+  // Kind discriminates the block kind.
+  enum Kind {
+    // KIND_UNSPECIFIED is the zero value; consumers treat it as absent.
+    KIND_UNSPECIFIED = 0;
+    // KIND_TEXT is a text block.
+    KIND_TEXT = 1;
+    // KIND_IMAGE is an inline image block.
+    KIND_IMAGE = 2;
+    // KIND_AUDIO is an inline audio block.
+    KIND_AUDIO = 3;
+    // KIND_RESOURCE_LINK is a reference to an MCP resource by URI.
+    KIND_RESOURCE_LINK = 4;
+    // KIND_EMBEDDED_RESOURCE is an embedded MCP resource (text or blob).
+    KIND_EMBEDDED_RESOURCE = 5;
+    // KIND_STRUCTURED_CONTENT is a JSON structured-content block.
+    KIND_STRUCTURED_CONTENT = 6;
+  }
+  // kind is the block kind.
+  Kind kind = 1;
+  // mime_type is the IANA media type of inline bytes (image/audio/blob).
+  string mime_type = 2;
+  // data is the inline content bytes (image/audio/blob).
+  bytes data = 3;
+  // url is the remote reference (resource-link URI, or URL-sourced media).
+  string url = 4;
+  // text is the text payload (BlockText, BlockEmbeddedResource text, or
+  // BlockStructuredContent JSON).
+  string text = 5;
+  // name is the resource-link name.
+  string name = 6;
+  // title is the resource-link title.
+  string title = 7;
+  // description is the resource-link description.
+  string description = 8;
+  // size is the resource-link size in bytes.
+  int64 size = 9;
+  // audience is advisory display routing only (CWE-345: untrusted).
+  repeated string audience = 10;
+  // priority is the advisory display priority.
+  double priority = 11;
+  // last_modified is the resource-link last-modified timestamp (RFC 3339).
+  string last_modified = 12;
+}
+
 // Prompt is the mandatory first Converse frame. It names the session the run
 // executes against and the user prompt to process. The prompt is text and/or
 // media: at least one of text/parts must be non-empty. The "text or parts
@@ -964,10 +1011,19 @@ message ToolCall {
 message ToolResult {
   // call_id is the id of the ToolCall this result answers.
   string call_id = 1;
-  // content is the result body, already token-shaped by the tool.
+  // content is the legacy/default model-facing string result body, already
+  // token-shaped by the tool.
   string content = 2;
   // is_error reports whether the tool failed.
   bool is_error = 3;
+  // blocks are the typed content blocks (text/image/audio/resource-link/
+  // embedded-resource/structured-content) mirroring session.ToolResult.Parts.
+  // Both content and blocks may be present; consumers prefer blocks when
+  // non-empty, falling back to content.
+  repeated ContentBlock blocks = 4;
+  // structured_content is the JSON-stringified structured payload (the
+  // TextContent mirror of a structured-content block).
+  string structured_content = 5;
 }
 
 // PermissionAsk describes a permission prompt the loop is blocked on. The

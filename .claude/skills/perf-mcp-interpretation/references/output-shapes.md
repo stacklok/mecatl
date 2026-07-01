@@ -119,7 +119,10 @@ Values are **nanoseconds** (the CPU profile's unit). Ranked by `flat` desc.
 
 ### `capture_cpu_profile{duration_seconds?, limit?, include_raw_link?}` — PERTURBS, rate-limited
 Same output as `top_cpu_functions`. With `include_raw_link:true` ALSO returns a
-user-audience `resource_link` to the loopback raw-pprof endpoint (human download).
+user-audience `resource_link` typed block (URI + name + description) to the
+loopback raw-pprof endpoint. The model sees the REFERENCE (not the raw blob
+bytes); a human downloads it, or the model may fetch it via `FetchMcpResource`
+only if the link is `https://`.
 
 ### `top_allocations{limit?}` — cheap
 ```jsonc
@@ -156,9 +159,11 @@ closed enum, not an identifier. `role` filters to one family (unknown roles →
 ```jsonc
 { "captured_bytes": 0, "window_summary": "execution-trace window of N bytes ..." }
 ```
-Plus a user-audience `resource_link` to `/debug/flightrecorder` (human downloads,
-analyzes with `go tool trace`). Returns `isError` "flight recorder not armed" if
-the recorder is off.
+Plus a user-audience `resource_link` typed block (URI + name + description) to
+`/debug/flightrecorder` (a human downloads it, analyzes with `go tool trace`; if
+the link is `https://` the model may fetch it via `FetchMcpResource`). The model
+sees the reference, not the raw trace bytes. Returns `isError` "flight recorder
+not armed" if the recorder is off.
 
 ---
 

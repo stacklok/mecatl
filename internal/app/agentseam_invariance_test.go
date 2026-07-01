@@ -61,7 +61,7 @@ func TestAgentSnapshotLiteralPin(t *testing.T) {
 	if second.GetPermissionMode() != "" || second.GetColor() != "" {
 		t.Errorf("agent[1] optional fields must stay empty: %+v", second)
 	}
-	if want := []string{"Glob", "Grep", "Read", "WebFetch"}; !equalStrings(second.GetTools(), want) {
+	if want := []string{"FetchMcpResource", "Glob", "Grep", "Read", "WebFetch"}; !equalStrings(second.GetTools(), want) {
 		t.Errorf("agent[1] tools = %v, want the full read-only base %v", second.GetTools(), want)
 	}
 }

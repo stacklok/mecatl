@@ -1,6 +1,8 @@
 package session
 
 import (
+	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -149,6 +151,42 @@ func TestValidateMediaURL(t *testing.T) {
 	}
 }
 
+func TestValidateResolvedIP(t *testing.T) {
+	// The dial-layer predicate must reject every internal/non-routable IP shape
+	// ValidateMediaURL screens for literal IPs, so a DNS-rebinding fetch (hostname
+	// resolves to an internal IP after the URL-string check passed) is caught at
+	// the dial layer. Public routable IPs pass.
+	cases := []struct {
+		name string
+		ip   string
+		ok   bool
+	}{
+		{"public ipv4", "93.184.216.34", true},
+		{"public ipv6", "2606:2800:220:1::", true},
+		{"loopback rejected", "127.0.0.1", false},
+		{"ipv6 loopback rejected", "::1", false},
+		{"metadata rejected", "169.254.169.254", false},
+		{"link-local rejected", "169.254.0.5", false},
+		{"rfc1918 10 rejected", "10.0.0.5", false},
+		{"rfc1918 192.168 rejected", "192.168.1.10", false},
+		{"rfc1918 172.16 rejected", "172.16.0.9", false},
+		{"unspecified rejected", "0.0.0.0", false},
+		{"cgnat rejected", "100.64.0.1", false},
+		{"multicast rejected", "224.0.0.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateResolvedIP(net.ParseIP(tc.ip))
+			if tc.ok && err != nil {
+				t.Fatalf("ValidateResolvedIP(%s) = %v, want nil", tc.ip, err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("ValidateResolvedIP(%s) = nil, want error", tc.ip)
+			}
+		})
+	}
+}
+
 func TestNewContentEnforcesInvariants(t *testing.T) {
 	// Valid inline image.
 	if _, err := NewImageContent("image/png", []byte{1, 2}); err != nil {
@@ -184,6 +222,144 @@ func TestNewContentEnforcesInvariants(t *testing.T) {
 				t.Fatalf("%s: expected error, got nil", tc.name)
 			}
 		})
+	}
+}
+
+func TestNewTextBlock(t *testing.T) {
+	c := NewTextBlock("hello")
+	if c.BlockKind != BlockText {
+		t.Fatalf("kind = %q, want %q", c.BlockKind, BlockText)
+	}
+	if c.Text != "hello" {
+		t.Fatalf("text = %q", c.Text)
+	}
+	if c.Data != nil {
+		t.Fatalf("data = %v, want nil", c.Data)
+	}
+}
+
+func TestNewResourceLinkBlock(t *testing.T) {
+	aud := []string{"user"}
+	c := NewResourceLinkBlock("https://example.com/r.json", "r", "Title", "desc", "application/json", 42, aud)
+	if c.BlockKind != BlockResourceLink {
+		t.Fatalf("kind = %q", c.BlockKind)
+	}
+	if c.URL != "https://example.com/r.json" {
+		t.Fatalf("url = %q", c.URL)
+	}
+	if c.Name != "r" || c.Title != "Title" || c.Description != "desc" {
+		t.Fatalf("metadata = name=%q title=%q desc=%q", c.Name, c.Title, c.Description)
+	}
+	if c.MIMEType != "application/json" {
+		t.Fatalf("mime = %q", c.MIMEType)
+	}
+	if c.Size != 42 {
+		t.Fatalf("size = %d", c.Size)
+	}
+	if len(c.Audience) != 1 || c.Audience[0] != "user" {
+		t.Fatalf("audience = %v", c.Audience)
+	}
+	// A resource link is a reference; it must NOT carry inline bytes.
+	if c.Data != nil {
+		t.Fatalf("data = %v, want nil (resource link is a reference)", c.Data)
+	}
+}
+
+func TestNewEmbeddedResourceBlock(t *testing.T) {
+	aud := []string{"admin"}
+	t.Run("text form", func(t *testing.T) {
+		c, err := NewEmbeddedResourceBlock("https://example.com/r.txt", "text/plain", "body", nil, aud)
+		if err != nil {
+			t.Fatalf("text form: %v", err)
+		}
+		if c.BlockKind != BlockEmbeddedResource {
+			t.Fatalf("kind = %q", c.BlockKind)
+		}
+		if c.Text != "body" {
+			t.Fatalf("text = %q", c.Text)
+		}
+		if c.Data != nil {
+			t.Fatalf("data = %v, want nil (text form)", c.Data)
+		}
+		if len(c.Audience) != 1 || c.Audience[0] != "admin" {
+			t.Fatalf("audience = %v", c.Audience)
+		}
+	})
+	t.Run("blob form", func(t *testing.T) {
+		c, err := NewEmbeddedResourceBlock("https://example.com/r.bin", "application/octet-stream", "", []byte{1, 2, 3}, nil)
+		if err != nil {
+			t.Fatalf("blob form: %v", err)
+		}
+		if c.Text != "" {
+			t.Fatalf("text = %q, want empty (blob form)", c.Text)
+		}
+		if len(c.Data) != 3 {
+			t.Fatalf("data len = %d", len(c.Data))
+		}
+	})
+	t.Run("both rejected", func(t *testing.T) {
+		if _, err := NewEmbeddedResourceBlock("u", "m", "t", []byte{1}, nil); err == nil {
+			t.Fatal("expected error when both text and blob set")
+		}
+	})
+	t.Run("neither rejected", func(t *testing.T) {
+		if _, err := NewEmbeddedResourceBlock("u", "m", "", nil, nil); err == nil {
+			t.Fatal("expected error when neither text nor blob set")
+		}
+	})
+}
+
+func TestNewStructuredContentBlock(t *testing.T) {
+	c := NewStructuredContentBlock(`{"k":"v"}`)
+	if c.BlockKind != BlockStructuredContent {
+		t.Fatalf("kind = %q", c.BlockKind)
+	}
+	if c.Text != `{"k":"v"}` {
+		t.Fatalf("text = %q", c.Text)
+	}
+}
+
+func TestValidateToolResultParts(t *testing.T) {
+	// Empty passes.
+	if err := ValidateToolResultParts(nil); err != nil {
+		t.Fatalf("nil parts: %v", err)
+	}
+	// A valid text block passes.
+	if err := ValidateToolResultParts([]Content{NewTextBlock("ok")}); err != nil {
+		t.Fatalf("valid text block: %v", err)
+	}
+	// Text block over the cap rejected.
+	big := strings.Repeat("x", MaxToolResultTextBytes+1)
+	if err := ValidateToolResultParts([]Content{NewTextBlock(big)}); err == nil {
+		t.Fatal("expected reject for oversized text block")
+	}
+	// Blob over MaxMediaBytes rejected.
+	hugeBlob := make([]byte, MaxMediaBytes+1)
+	er, err := NewEmbeddedResourceBlock("u", "application/octet-stream", "", hugeBlob, nil)
+	if err != nil {
+		t.Fatalf("build oversized embedded: %v", err)
+	}
+	if err := ValidateToolResultParts([]Content{er}); err == nil {
+		t.Fatal("expected reject for oversized blob block")
+	}
+	// Total over cap rejected: many text blocks each under the per-block cap but
+	// summing over MaxToolResultBytes.
+	per := MaxToolResultTextBytes
+	n := (MaxToolResultBytes / per) + 1
+	parts := make([]Content, n)
+	for i := range parts {
+		parts[i] = NewTextBlock(strings.Repeat("x", per))
+	}
+	if err := ValidateToolResultParts(parts); err == nil {
+		t.Fatal("expected reject for total tool-result bytes over the cap")
+	}
+	// A resource link contributes no bytes — many pass.
+	links := make([]Content, 100)
+	for i := range links {
+		links[i] = NewResourceLinkBlock("https://example.com/r", "n", "t", "d", "text/plain", 1, nil)
+	}
+	if err := ValidateToolResultParts(links); err != nil {
+		t.Fatalf("resource links: %v", err)
 	}
 }
 

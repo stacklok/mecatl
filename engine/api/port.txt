@@ -50,6 +50,7 @@ const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
+func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
 type Chunk struct{Kind ChunkKind; Text string; ToolCall *session.ToolCall; Usage *session.Usage; Stop session.StopReason}
 type ChunkKind int
 type Clock interface{Now() time.Time}

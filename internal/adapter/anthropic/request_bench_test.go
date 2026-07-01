@@ -155,7 +155,7 @@ func BenchmarkBuildMessages(b *testing.B) {
 			b.ReportAllocs()
 			var params sdkParamsSink
 			for b.Loop() {
-				out, err := buildMessages(msgs)
+				out, err := buildMessages(msgs, port.ProviderCapabilities{Image: true, EmbeddedContext: true})
 				if err != nil {
 					b.Fatalf("buildMessages: %v", err)
 				}

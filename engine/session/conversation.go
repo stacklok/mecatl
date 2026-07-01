@@ -91,6 +91,10 @@ func NewAssistantMessage(text, reasoning string, calls []ToolCall) Message {
 }
 
 // NewToolMessage constructs a tool-role message carrying a single tool result.
+// Tool-role messages now have Parts parity with user-role messages, but the
+// typed blocks live on ToolResult.Parts (not Message.Parts): Message.Parts
+// stays media-only for user messages (decision #1 / Risk #4 mitigation (a)),
+// and providers read ToolResult.Parts for tool results.
 func NewToolMessage(result ToolResult) Message {
 	r := result
 	return Message{Role: RoleTool, ToolResult: &r}

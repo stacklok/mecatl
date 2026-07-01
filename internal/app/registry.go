@@ -50,6 +50,18 @@ var builtinDefaultModel = map[string]string{
 // API) with this base URL substituted — there is NO separate wire adapter in P0.
 const openRouterDefaultBaseURL = "https://openrouter.ai/api/v1"
 
+// openaiStaticCaps / anthropicStaticCaps are the adapters' STATIC transmit
+// capabilities — the authority modelCapability ANDs with the catalog. The shared
+// .provider is initially built with these (before the registry is assembled and
+// the default-model intersection can be computed); buildProviderRegistry's
+// post-assembly fixup re-mints the default entry with the real
+// modelCapability(default) caps and stamps entry.defaultCaps, so the live
+// shared .provider carries the honest default-model intersection.
+var (
+	openaiStaticCaps    = (&openai.Provider{}).Capabilities()
+	anthropicStaticCaps = (&anthropic.Provider{}).Capabilities()
+)
+
 // envDetector resolves an environment variable to its value. It is the injectable
 // seam (defaults to os.Getenv, set in Build) that keeps the registry's
 // credential-availability detection OFFLINE-testable, mirroring xdgconfig.OSEnv's
@@ -103,18 +115,29 @@ type providerEntry struct {
 	// kept on the entry, NOT type-asserted from .provider, because openrouter and
 	// openai share the SAME openai.Provider adapter and only openrouter opts in.
 	lister modelLister
-	// remintEffort RE-MINTS this entry's provider adapter with a different
-	// reasoning-effort token (ADR 0055), returning a fresh resilience-wrapped
-	// port.LLMProvider. It captures the construction inputs (key/baseURL/resolvers/
-	// resilience config) so the per-session engine factory can build a same-provider
-	// adapter that carries the SESSION's effort when it differs from the operator
-	// default the entry's .provider was built with — the SAME factory discipline as
-	// the per-call model override (the factory owns adapter construction; effort is
-	// never a port.LLMRequest field). The DEFAULT path never calls it (the shared
-	// .provider is reused byte-for-byte). It takes an ALREADY-CLAMPED neutral effort
-	// token; "" means unset (the provider default). nil for the mock entry (it
-	// ignores effort) and for a providerConstructor test seam that did not wire one.
-	remintEffort func(effort string) port.LLMProvider
+	// remint RE-MINTS this entry's provider adapter with a different reasoning-
+	// effort token (ADR 0055) AND/OR a different per-session capability
+	// intersection (T7), returning a fresh resilience-wrapped port.LLMProvider.
+	// It captures the construction inputs (key/baseURL/resolvers/resilience
+	// config) so the per-session engine factory can build a same-provider adapter
+	// that carries the SESSION's effort + caps when EITHER differs from the
+	// operator-default model the entry's .provider was built with — the SAME
+	// factory discipline as the per-call model override (the factory owns adapter
+	// construction; effort and caps are never port.LLMRequest fields). The DEFAULT
+	// path never calls it (the shared .provider is reused byte-for-byte). effort is
+	// an ALREADY-CLAMPED neutral token ("" = unset, the provider default); caps is
+	// the composition-computed catalog ∩ adapter intersection for the session's
+	// resolved (provider, model). nil for the mock entry (it ignores effort/caps)
+	// and for a providerConstructor test seam that did not wire one.
+	remint func(effort string, caps port.ProviderCapabilities) port.LLMProvider
+	// defaultCaps is the capability intersection the entry's shared .provider was
+	// built with (modelCapability over the operator-default provider+model), so the
+	// per-session factory can compare against the session's resolved intersection
+	// and re-mint ONLY when they differ (the byte-identical default path). The
+	// zero value for a hand-built/test registry that did not set it — the factory
+	// treats zero as "match anything" (no caps-driven re-mint) so a test registry
+	// without defaultCaps behaves as before.
+	defaultCaps port.ProviderCapabilities
 }
 
 // providerRegistry holds the N configured providers. It is built once in Build
@@ -282,6 +305,33 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	// Seed the live-metadata store from the embedded catalog for every available
 	// provider — the t=0 floor every resolver reads before the background live swap.
 	meta.seedFromCatalog(reg.Available())
+	// T7 post-assembly fixup: stamp each real adapter entry's shared .provider
+	// with the DEFAULT model's capability intersection (catalog ∩ adapter) and
+	// record it as defaultCaps so the per-session factory can re-mint ONLY when a
+	// session's resolved intersection differs (the byte-identical default path).
+	// The entries were initially built with the adapter's STATIC transmit caps
+	// (the registry wasn't assembled yet, so modelCapability couldn't run); this
+	// re-mint replaces that placeholder with the honest default-model intersection.
+	// Mock / providerConstructor-seam entries have no remint closure and are
+	// skipped (they ignore caps; defaultCaps stays zero = "match anything").
+	for id, entry := range entries {
+		if entry.remint == nil {
+			continue
+		}
+		// The shared .provider serves the operator-default model for the DEFAULT
+		// provider (reg.defaultModel — the resolved cfg.Model), and the provider's
+		// builtin default for a non-default provider (its .provider is only ever a
+		// re-mint base for a session that selects it, so the placeholder model's
+		// caps are immediately replaced by the session's).
+		model := reg.DefaultModelFor(id)
+		if id == reg.defaultID {
+			model = reg.defaultModel
+		}
+		defCaps := modelCapability(reg, id, model)
+		entry.provider = entry.remint(operatorDefaultEffortFor(cfg, id), defCaps)
+		entry.defaultCaps = defCaps
+		entries[id] = entry
+	}
 	return reg, nil
 }
 
@@ -316,10 +366,12 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 		return providerEntry{id: id, provider: cfg.providerConstructor(cfg, id, key, baseURL), available: true, baseURL: baseURL}
 	}
 	// construct mints a resilience-wrapped openai adapter carrying the given
-	// reasoning-effort token (ADR 0055). It is the SINGLE construction path: the
-	// default .provider is construct(defaultEffort) and the per-session re-mint is
-	// construct(sessionEffort), so the two cannot drift on resilience wrapping.
-	construct := func(effort string) port.LLMProvider {
+	// reasoning-effort token (ADR 0055) and per-session capability intersection
+	// (T7). It is the SINGLE construction path: the default .provider is
+	// construct(defaultEffort, defaultCaps) and the per-session re-mint is
+	// construct(sessionEffort, sessionCaps), so the two cannot drift on resilience
+	// wrapping.
+	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
 		opts := []openai.Option{openai.WithAPIKey(key)}
 		if baseURL != "" {
 			opts = append(opts, openai.WithBaseURL(baseURL))
@@ -327,6 +379,7 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 		if effort != "" {
 			opts = append(opts, openai.WithReasoningEffort(effort))
 		}
+		opts = append(opts, openai.WithProviderCapabilities(caps))
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -345,9 +398,13 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 	// The OPERATOR-DEFAULT effort baked into the shared .provider: normalise +
 	// per-provider clamp (xhigh/max→high for openai), narrating a clamp at startup so
 	// an operator who set --reasoning-effort max against OpenAI sees the promised WARN.
-	// A per-session selector that resolves to a DIFFERENT effort re-mints via
-	// remintEffort; the default path reuses .provider byte-for-byte.
-	llm := construct(operatorDefaultEffortFor(cfg, id))
+	// A per-session selector that resolves to a DIFFERENT effort OR capability
+	// intersection re-mints via remint; the default path reuses .provider byte-for-byte.
+	// defaultCaps is computed AFTER the registry is assembled (it needs the live-meta
+	// store + catalog) — see buildProviderRegistry's post-assembly fixup. Until then
+	// the shared .provider is built with the adapter's static transmit caps (no Parts
+	// path fires pre-fixup since no tool produces Parts at build time).
+	llm := construct(operatorDefaultEffortFor(cfg, id), openaiStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", id,
 		"max_attempts", cfg.LLMMaxAttempts,
@@ -355,7 +412,7 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 		"stream_idle_timeout", cfg.LLMStreamIdleTimeout,
 		"breaker_threshold", cfg.LLMBreakerThreshold,
 		"breaker_cooldown", cfg.LLMBreakerCooldown)
-	return providerEntry{id: id, provider: llm, available: true, baseURL: baseURL, remintEffort: construct}
+	return providerEntry{id: id, provider: llm, available: true, baseURL: baseURL, remint: construct}
 }
 
 // newAnthropicEntry constructs a resilience-wrapped native-Anthropic provider
@@ -380,11 +437,12 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 		return entry
 	}
 	// construct mints a resilience-wrapped anthropic adapter carrying the given
-	// reasoning-effort token (ADR 0055), over the SAME max-tokens + thinking
-	// resolvers. It is the SINGLE construction path: the default .provider is
-	// construct(defaultEffort) and the per-session re-mint is construct(sessionEffort),
-	// so the two cannot drift on resolvers or resilience wrapping.
-	construct := func(effort string) port.LLMProvider {
+	// reasoning-effort token (ADR 0055) and per-session capability intersection
+	// (T7), over the SAME max-tokens + thinking resolvers. It is the SINGLE
+	// construction path: the default .provider is construct(defaultEffort,
+	// defaultCaps) and the per-session re-mint is construct(sessionEffort,
+	// sessionCaps), so the two cannot drift on resolvers or resilience wrapping.
+	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
 		opts := []anthropic.Option{
 			anthropic.WithAPIKey(key),
 			// PER-MODEL max_tokens: each request's max_tokens is resolved LIVE-FIRST from
@@ -405,6 +463,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 			anthropic.WithThinkingResolver(func(model string) (adaptive, enabled, known bool) {
 				return meta.thinkingFor(providerAnthropic, model)
 			}),
+			anthropic.WithProviderCapabilities(caps),
 		}
 		// Reasoning effort (ADR 0055) is INDEPENDENT of the thinking config above; both
 		// coexist on the request. Anthropic identity-maps the neutral vocabulary.
@@ -429,8 +488,11 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 	}
 	// The OPERATOR-DEFAULT effort baked into the shared .provider (anthropic
 	// identity-maps all five tiers, so this never clamps — but it shares the one
-	// startup-clamp-narration helper for uniformity with the openai entry).
-	llm := construct(operatorDefaultEffortFor(cfg, providerAnthropic))
+	// startup-clamp-narration helper for uniformity with the openai entry). The
+	// default-model capability intersection is stamped by buildProviderRegistry's
+	// post-assembly fixup (it needs the assembled registry + meta); until then the
+	// shared .provider carries the adapter's static transmit caps.
+	llm := construct(operatorDefaultEffortFor(cfg, providerAnthropic), anthropicStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", providerAnthropic,
 		"max_attempts", cfg.LLMMaxAttempts,
@@ -438,7 +500,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 		"stream_idle_timeout", cfg.LLMStreamIdleTimeout,
 		"breaker_threshold", cfg.LLMBreakerThreshold,
 		"breaker_cooldown", cfg.LLMBreakerCooldown)
-	entry := providerEntry{id: providerAnthropic, provider: llm, available: true, baseURL: baseURL, remintEffort: construct}
+	entry := providerEntry{id: providerAnthropic, provider: llm, available: true, baseURL: baseURL, remint: construct}
 	// Anthropic opts into LIVE model listing: its keyed /v1/models endpoint
 	// self-describes the rich per-model metadata (output ceiling, context window,
 	// image, thinking types). The lister rides on the entry (so only anthropic

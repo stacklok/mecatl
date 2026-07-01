@@ -36,27 +36,110 @@ const (
 	MaxPromptMediaParts = 16
 )
 
-// Content is an immutable value object: one non-text part of a user Message.
-// The source is EITHER inline bytes (Data, already base64-decoded) OR a remote
-// reference (URL) — never both. MIMEType is the IANA media type (e.g.
-// "image/png", "audio/wav"). Construct it via the validating constructors
-// (NewImageContent / NewImageURLContent / NewAudioContent / NewAudioURLContent,
-// or NewContent for the dynamic case) so the exactly-one-of(Data,URL),
-// kind-set, and mime-consistency invariants hold structurally rather than by
-// prose. It carries no mutating methods; treat it as immutable.
+// MaxToolResultTextBytes caps the byte length of a single TEXT tool-result block.
+// It mirrors internal/adapter/toolkit.MaxOutputBytes (25 KiB) — the single
+// adapter-layer output cap — so a tool-result text block carries no more than a
+// textual tool's own result would. Defined locally (not imported) because
+// engine/ is its own module and toolkit lives under internal/adapter.
+const MaxToolResultTextBytes = 25 << 10 // 25 KiB
+
+// MaxToolResultBytes is the cap on the SUM of all block bytes in one tool
+// result, mirroring MaxPromptMediaBytes so a tool result cannot collectively
+// blow memory even when each block is under its per-block cap. It counts inline
+// text + blob bytes (URL-sourced resource links contribute none — the provider
+// fetches those).
+const MaxToolResultBytes = 20 << 20 // 20 MiB
+
+// BlockKind discriminates a Content block variant. The zero value ("")
+// designates a LEGACY media part on Message.Parts (image/audio via Kind), so the
+// existing ACP / provider-request media path stays byte-identical. Tool-result
+// blocks live on ToolResult.Parts and always set BlockKind.
+type BlockKind string
+
+const (
+	// BlockText is a plain-text tool-result block (e.g. an MCP text content).
+	BlockText BlockKind = "text"
+	// BlockImage reuses the existing media-image fields (Kind=MediaImage,
+	// MIMEType, Data/URL) for an image tool-result block.
+	BlockImage BlockKind = "image"
+	// BlockAudio reuses the existing media-audio fields (Kind=MediaAudio,
+	// MIMEType, Data/URL) for an audio tool-result block.
+	BlockAudio BlockKind = "audio"
+	// BlockResourceLink is a REFERENCE to a resource (URI + metadata); it is
+	// NOT fetched here, so its URL is NOT validated by ValidateMediaURL.
+	BlockResourceLink BlockKind = "resource_link"
+	// BlockEmbeddedResource carries a resource inline as either a text form (Text)
+	// or a binary blob (Data), exactly one of which is populated.
+	BlockEmbeddedResource BlockKind = "embedded_resource"
+	// BlockStructuredContent carries a JSON-stringified structured payload as a
+	// text block — the backward-compat mirror of the legacy TextContent path.
+	BlockStructuredContent BlockKind = "structured"
+)
+
+// Content is an immutable value object. It serves TWO roles, distinguished by
+// BlockKind:
 //
-// Data []byte is technically mutable; by convention callers MUST NOT mutate
-// Data after construction — the same treatment ToolCall.Args (json.RawMessage)
-// already receives.
+//   - LEGACY media part (BlockKind == ""): a non-text part of a USER Message
+//     (Message.Parts). The source is EITHER inline bytes (Data, already
+//     base64-decoded) OR a remote reference (URL) — never both. MIMEType is the
+//     IANA media type (e.g. "image/png", "audio/wav"). Construct via the
+//     validating constructors (NewImageContent / NewImageURLContent /
+//     NewAudioContent / NewAudioURLContent, or NewContent for the dynamic case)
+//     so the exactly-one-of(Data,URL), kind-set, and mime-consistency
+//     invariants hold structurally rather than by prose. This path stays
+//     MEDIA-ONLY: a tool-result block must never ride on Message.Parts — it
+//     lives on ToolResult.Parts (decision #1 / Risk #4 mitigation (a)).
+//
+//   - TOOL-RESULT block (BlockKind != ""): a typed block variant on a
+//     ToolResult.Parts. Construct via NewTextBlock / NewResourceLinkBlock /
+//     NewEmbeddedResourceBlock / NewStructuredContentBlock. Image/audio blocks
+//     reuse the existing Kind/MIMEType/Data/URL fields (no new fields).
+//
+// It carries no mutating methods; treat it as immutable. Data []byte is
+// technically mutable; by convention callers MUST NOT mutate Data after
+// construction — the same treatment ToolCall.Args (json.RawMessage) already
+// receives.
 type Content struct {
-	// Kind discriminates the media kind (image / audio).
+	// BlockKind discriminates the block variant; "" = legacy media part. Set
+	// for tool-result blocks (BlockText/BlockImage/BlockAudio/BlockResourceLink/
+	// BlockEmbeddedResource/BlockStructuredContent).
+	BlockKind BlockKind `json:"block_kind,omitempty"`
+	// Kind discriminates the media kind (image / audio) for legacy media parts
+	// and the BlockImage/BlockAudio block variants.
 	Kind MediaKind
-	// MIMEType is the IANA media type of the part.
+	// MIMEType is the IANA media type of the part (image, audio, resource).
 	MIMEType string
-	// Data is the inline content bytes; nil when the part is URL-sourced.
+	// Data is the inline content bytes; nil when the part is URL-sourced. For
+	// BlockEmbeddedResource it is the binary blob form (exactly one of Text/Data
+	// populated); the provider summarizes it, this does NOT base64-dump.
 	Data []byte
-	// URL is the remote reference; "" when the part is inline.
+	// URL is the remote reference; "" when the part is inline. For
+	// BlockResourceLink it is the resource URI (a reference, NOT fetched here).
 	URL string
+	// Text carries the text form for BlockText and BlockStructuredContent, and
+	// the text form of a BlockEmbeddedResource (exactly one of Text/Data set).
+	Text string `json:"Text,omitempty"`
+	// Name is the resource name for a BlockResourceLink.
+	Name string `json:"Name,omitempty"`
+	// Title is the resource title for a BlockResourceLink.
+	Title string `json:"Title,omitempty"`
+	// Description is the resource description for a BlockResourceLink.
+	Description string `json:"Description,omitempty"`
+	// Size is the resource byte size for a BlockResourceLink (advisory).
+	Size int64 `json:"Size,omitempty"`
+	// Audience is the advisory intended-audience list for a resource block.
+	//
+	// SECURITY: this is UNTRUSTED SERVER SELF-ATTESTATION (CWE-345). An MCP
+	// server (or any tool-result producer) asserts who may view a resource; the
+	// harness MUST NOT treat this as authoritative. It is carried through for
+	// operator/model visibility ONLY — it NEVER suppresses model-visible
+	// content and NEVER gates access control. Enforcement lives in the
+	// permission layer, not here.
+	Audience []string `json:"Audience,omitempty"`
+	// Priority is carried through for a resource block; not consumed in v1.
+	Priority float64 `json:"Priority,omitempty"`
+	// LastModified is carried through for a resource block; not consumed in v1.
+	LastModified string `json:"LastModified,omitempty"`
 }
 
 // Errors returned by the Content constructors / validators.
@@ -142,6 +225,114 @@ func ValidateMediaParts(parts []Content) error {
 		total += n
 		if total > MaxPromptMediaBytes {
 			return fmt.Errorf("%w: total inline media exceeds the %d-byte cap", ErrInvalidContent, MaxPromptMediaBytes)
+		}
+	}
+	return nil
+}
+
+// NewTextBlock builds a plain-text tool-result block.
+func NewTextBlock(text string) Content {
+	return Content{BlockKind: BlockText, Text: text}
+}
+
+// NewResourceLinkBlock builds a resource-link block: a REFERENCE to a resource
+// (uri + metadata). It is NOT fetched here, so uri is NOT validated by
+// ValidateMediaURL — the producer is trusted to hand a dereferenceable URI and
+// any fetch is the provider's responsibility. mimeType/size are advisory
+// metadata. audience is untrusted self-attestation (see the Audience field doc).
+func NewResourceLinkBlock(uri, name, title, description, mimeType string, size int64, audience []string) Content {
+	return Content{
+		BlockKind:   BlockResourceLink,
+		URL:         uri,
+		Name:        name,
+		Title:       title,
+		Description: description,
+		MIMEType:    mimeType,
+		Size:        size,
+		Audience:    audience,
+	}
+}
+
+// NewEmbeddedResourceBlock builds an embedded-resource block carrying a resource
+// inline. Exactly one of text (text form) or blob (binary form) must be
+// populated; the blob path does NOT base64-dump — the provider summarizes it.
+// uri/mimeType identify the resource; audience is untrusted self-attestation.
+func NewEmbeddedResourceBlock(uri, mimeType, text string, blob []byte, audience []string) (Content, error) {
+	hasText := text != ""
+	hasBlob := len(blob) > 0
+	switch {
+	case hasText && hasBlob:
+		return Content{}, fmt.Errorf("%w: embedded resource: exactly one of text/blob must be set, not both", ErrInvalidContent)
+	case !hasText && !hasBlob:
+		return Content{}, fmt.Errorf("%w: embedded resource: exactly one of text/blob must be set, got neither", ErrInvalidContent)
+	}
+	c := Content{
+		BlockKind: BlockEmbeddedResource,
+		URL:       uri,
+		MIMEType:  mimeType,
+		Audience:  audience,
+	}
+	if hasText {
+		c.Text = text
+	} else {
+		c.Data = blob
+	}
+	return c, nil
+}
+
+// NewStructuredContentBlock carries a JSON-stringified structured payload as a
+// text block — the backward-compat mirror of the legacy TextContent path. The
+// caller is responsible for JSON-stringifying structuredJSON; this does not
+// re-validate it.
+func NewStructuredContentBlock(structuredJSON string) Content {
+	return Content{BlockKind: BlockStructuredContent, Text: structuredJSON}
+}
+
+// ValidateToolResultParts enforces the per-result byte caps (CWE-770) on an
+// already-constructed slice of tool-result blocks: each text block at most
+// MaxToolResultTextBytes, each blob block at most MaxMediaBytes, and the SUM of
+// inline text+blob bytes at most MaxToolResultBytes. URL-sourced resource links
+// contribute no bytes. It is called at the wire→domain choke point after the
+// blocks are built via the constructors. A nil/empty slice passes. It is
+// DISTINCT from ValidateMediaParts (which caps user-message media) — the two
+// paths are read separately by providers and must not be collapsed.
+func ValidateToolResultParts(parts []Content) error {
+	total := 0
+	for i, p := range parts {
+		switch p.BlockKind {
+		case BlockText, BlockStructuredContent:
+			n := len(p.Text)
+			if n > MaxToolResultTextBytes {
+				return fmt.Errorf("%w: block[%d] text %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxToolResultTextBytes)
+			}
+			total += n
+		case BlockEmbeddedResource:
+			n := len(p.Data)
+			if n > MaxMediaBytes {
+				return fmt.Errorf("%w: block[%d] blob %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
+			}
+			total += n + len(p.Text)
+		case BlockImage, BlockAudio:
+			n := len(p.Data)
+			if n > MaxMediaBytes {
+				return fmt.Errorf("%w: block[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
+			}
+			total += n
+		case BlockResourceLink:
+			// Reference only — no inline bytes.
+		case "":
+			// A legacy media part on a tool result is unexpected but harmless
+			// to size-account; treat its inline bytes as a blob.
+			n := len(p.Data)
+			if n > MaxMediaBytes {
+				return fmt.Errorf("%w: block[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
+			}
+			total += n
+		default:
+			return fmt.Errorf("%w: block[%d] unknown block kind %q", ErrInvalidContent, i, p.BlockKind)
+		}
+		if total > MaxToolResultBytes {
+			return fmt.Errorf("%w: total tool-result bytes exceeds the %d-byte cap", ErrInvalidContent, MaxToolResultBytes)
 		}
 	}
 	return nil
@@ -257,6 +448,26 @@ func isGlobalUnicast(ip net.IP) bool {
 		return false
 	}
 	return ip.IsGlobalUnicast()
+}
+
+// ValidateResolvedIP is the dial-layer SSRF backstop (CWE-918) for a fetch the
+// HARNESS itself performs (not a remote provider). ValidateMediaURL screens the
+// hostname string but deliberately does NOT resolve DNS (a TOCTOU resolve-then-
+// fetch would be racy against a remote provider's egress). When the harness
+// itself dials, however, that DNS-rebinding window is live: an attacker-controlled
+// resolver can answer ValidateMediaURL's hostname check with a public IP, then
+// return 169.254.169.254 (or RFC1918) when the dialer connects. A fetch tool that
+// dials directly MUST install a custom DialContext that resolves the hostname and
+// calls this on each resolved IP, rejecting any that is not a routable public
+// address (the same isGlobalUnicast predicate ValidateMediaURL uses for literal
+// IPs). It returns nil for a permitted IP and a non-nil error naming the rejection
+// otherwise. Re-exported as the single dial-layer IP predicate so the fetch path
+// and the URL-string path share ONE screening definition.
+func ValidateResolvedIP(ip net.IP) error {
+	if !isGlobalUnicast(ip) {
+		return fmt.Errorf("%w: resolved IP %s is not a routable public address", ErrInvalidMediaURL, ip)
+	}
+	return nil
 }
 
 // isNumericish reports whether host is composed ONLY of dot-separated labels

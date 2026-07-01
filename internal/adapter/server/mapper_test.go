@@ -870,3 +870,122 @@ func TestVerdictFromResumeApproval(t *testing.T) {
 		})
 	}
 }
+
+// TestToProtoToolResultWithBlocks maps a session.ToolResult carrying one of each
+// block kind to its proto form and back, asserting every ContentBlock field
+// round-trips and the structured_content field is derived from the structured
+// block. It also confirms a legacy nil-Parts result maps to empty blocks
+// (backward compat — a string-only ToolResult stays byte-identical).
+func TestToProtoToolResultWithBlocks(t *testing.T) {
+	parts := []session.Content{
+		session.NewTextBlock("hello"),
+		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{1, 2, 3}},
+		{BlockKind: session.BlockAudio, Kind: session.MediaAudio, MIMEType: "audio/wav", URL: "https://ex.com/a.wav"},
+		session.NewResourceLinkBlock("res://x", "name", "title", "desc", "text/plain", 42, []string{"admin"}),
+		mustEmbedded(t, "res://y", "text/plain", "blob-text", nil, []string{"user"}),
+		session.NewStructuredContentBlock(`{"k":"v"}`),
+	}
+	r := session.NewToolResultWithParts("c1", "summary", parts)
+
+	pb := toProtoToolResult(r)
+
+	if pb.GetCallId() != "c1" || pb.GetContent() != "summary" || pb.GetIsError() {
+		t.Fatalf("legacy fields mismatch: %+v", pb)
+	}
+	// structured_content is derived from the BlockStructuredContent block's Text.
+	if pb.GetStructuredContent() != `{"k":"v"}` {
+		t.Fatalf("structured_content = %q, want {\"k\":\"v\"}", pb.GetStructuredContent())
+	}
+	blocks := pb.GetBlocks()
+	if len(blocks) != len(parts) {
+		t.Fatalf("blocks len = %d, want %d", len(blocks), len(parts))
+	}
+
+	// Per-block kind + field checks.
+	wantKinds := []mecatlv1.ContentBlock_Kind{
+		mecatlv1.ContentBlock_KIND_TEXT,
+		mecatlv1.ContentBlock_KIND_IMAGE,
+		mecatlv1.ContentBlock_KIND_AUDIO,
+		mecatlv1.ContentBlock_KIND_RESOURCE_LINK,
+		mecatlv1.ContentBlock_KIND_EMBEDDED_RESOURCE,
+		mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT,
+	}
+	for i, want := range wantKinds {
+		if blocks[i].GetKind() != want {
+			t.Errorf("block[%d] kind = %v, want %v", i, blocks[i].GetKind(), want)
+		}
+	}
+	if blocks[0].GetText() != "hello" {
+		t.Errorf("text block Text = %q, want hello", blocks[0].GetText())
+	}
+	if blocks[1].GetMimeType() != "image/png" || string(blocks[1].GetData()) != string([]byte{1, 2, 3}) {
+		t.Errorf("image block mismatch: %+v", blocks[1])
+	}
+	if blocks[2].GetMimeType() != "audio/wav" || blocks[2].GetUrl() != "https://ex.com/a.wav" {
+		t.Errorf("audio block mismatch: %+v", blocks[2])
+	}
+	if blocks[3].GetUrl() != "res://x" || blocks[3].GetName() != "name" ||
+		blocks[3].GetTitle() != "title" || blocks[3].GetDescription() != "desc" ||
+		blocks[3].GetMimeType() != "text/plain" || blocks[3].GetSize() != 42 ||
+		len(blocks[3].GetAudience()) != 1 || blocks[3].GetAudience()[0] != "admin" {
+		t.Errorf("resource-link block mismatch: %+v", blocks[3])
+	}
+	if blocks[4].GetUrl() != "res://y" || blocks[4].GetMimeType() != "text/plain" ||
+		blocks[4].GetText() != "blob-text" || len(blocks[4].GetAudience()) != 1 ||
+		blocks[4].GetAudience()[0] != "user" {
+		t.Errorf("embedded-resource block mismatch: %+v", blocks[4])
+	}
+	if blocks[5].GetText() != `{"k":"v"}` {
+		t.Errorf("structured-content block Text = %q", blocks[5].GetText())
+	}
+
+	// Round-trip back through the symmetric reverse mapper.
+	back := blocksFromProto(blocks)
+	if len(back) != len(parts) {
+		t.Fatalf("round-trip len = %d, want %d", len(back), len(parts))
+	}
+	for i, want := range parts {
+		got := back[i]
+		if got.BlockKind != want.BlockKind {
+			t.Errorf("round-trip[%d] BlockKind = %q, want %q", i, got.BlockKind, want.BlockKind)
+		}
+		if got.Kind != want.Kind {
+			t.Errorf("round-trip[%d] Kind = %q, want %q", i, got.Kind, want.Kind)
+		}
+		if got.MIMEType != want.MIMEType || got.URL != want.URL ||
+			got.Text != want.Text || got.Name != want.Name ||
+			got.Title != want.Title || got.Description != want.Description ||
+			got.Size != want.Size || got.LastModified != want.LastModified {
+			t.Errorf("round-trip[%d] scalar mismatch:\n got=%+v\nwant=%+v", i, got, want)
+		}
+		if string(got.Data) != string(want.Data) {
+			t.Errorf("round-trip[%d] Data mismatch: %v vs %v", i, got.Data, want.Data)
+		}
+		if len(got.Audience) != len(want.Audience) {
+			t.Errorf("round-trip[%d] Audience len mismatch", i)
+		}
+		for j := range want.Audience {
+			if j >= len(got.Audience) || got.Audience[j] != want.Audience[j] {
+				t.Errorf("round-trip[%d] Audience[%d] mismatch", i, j)
+			}
+		}
+	}
+
+	// Legacy nil-Parts result: backward compat — empty blocks (nil), no structured_content.
+	legacy := toProtoToolResult(session.NewToolResult("c2", "body"))
+	if legacy.GetBlocks() != nil {
+		t.Fatalf("legacy nil-Parts result should map to nil blocks, got %+v", legacy.GetBlocks())
+	}
+	if legacy.GetStructuredContent() != "" {
+		t.Fatalf("legacy nil-Parts result should have empty structured_content, got %q", legacy.GetStructuredContent())
+	}
+}
+
+func mustEmbedded(t *testing.T, uri, mime, text string, blob []byte, audience []string) session.Content {
+	t.Helper()
+	c, err := session.NewEmbeddedResourceBlock(uri, mime, text, blob, audience)
+	if err != nil {
+		t.Fatalf("NewEmbeddedResourceBlock: %v", err)
+	}
+	return c
+}

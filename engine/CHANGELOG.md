@@ -27,6 +27,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+<<<<<<< HEAD
 - **`port.ScheduleStore` + value objects** (`Schedule`, `ScheduleSpec`, `TriggerSpec`,
   `ScheduleState`, `ScheduleFire`, `ScheduleProviderSelector`, `ErrScheduleNotFound`,
   `ErrScheduleUnsupported`, `SchedulerLeaderLeaseID`, `TriggerKind`/`TriggerCron`/
@@ -57,6 +58,79 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   is a minor addition; the zero `TriggerSpec` is `TriggerNone`, which the
   create-seam's `Validate` rejects fail-closed — no schedule can be saved with
   an unset trigger). (#189)
+
+- **`session.ToolResult.Parts`** — a new `[]Content` field (additive; zero-value
+  = string-only, byte-identical to the pre-#223 shape) carrying typed tool-result
+  blocks (text/image/audio/resource-link/embedded-resource/structured-content)
+  alongside the legacy model-facing `Content` string. The 2-arg
+  `NewToolResult`/`NewToolError` constructors are preserved (~200 call sites); the
+  new path uses `NewToolResultWithParts`. Consumers prefer `Parts` when non-empty,
+  falling back to `Content`. Typed content rides `EvToolResult.ToolResult`, so
+  `engine/adapter/eventsource` (`Fold`) reconstructs it from the durable log with
+  no relay sidecar. Classified Added per COMPATIBILITY.md (a new struct field is a
+  minor bump). (#223, [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+
+- **`session.Content` block-kind generalization** — the existing `Content` gains a
+  `BlockKind` discriminator plus block variants (`BlockText`/`BlockImage`/
+  `BlockAudio`/`BlockResourceLink`/`BlockEmbeddedResource`/`BlockStructuredContent`)
+  and validating constructors (`NewContent`/`ValidateMediaParts`, the SINGLE choke
+  point the ACP adapter already uses for prompt media — no second validation path).
+  A legacy media part (`BlockKind == ""`, the user-message media shape) is distinct
+  from a tool-result block. Classified Added per COMPATIBILITY.md (additive fields
+  + consts + constructors). (#223,
+  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+
+- **`port.RouteToolResultParts`** — a pure composition-driven projection that
+  returns the capability-gated subset of a recorded `session.ToolResult.Parts`
+  for the model-facing request: image blocks survive iff `caps.Image`, audio
+  blocks iff `caps.Audio`, and text / resource-link / embedded-resource /
+  structured-content blocks always survive. It lives in `engine/port` so the
+  provider adapters (T7) can call it from their `RoleTool` case without importing
+  composition, and so composition can pass the SINGLE computed
+  `port.ProviderCapabilities` intersection (catalog ∩ adapter). It is a
+  READ-ONLY PROJECTION: it builds a fresh slice and never mutates the recorded
+  `*session.ToolResult`, preserving the recorded-history == client-stream ==
+  model-view guarantee. `Content.Audience` (untrusted server self-attestation,
+  CWE-345) is advisory display routing ONLY and is NOT consulted — a
+  `["user"]`-audience block still passes to the model. Nil/empty `Parts` (or a
+  projection that drops every block) returns nil so the caller degrades to the
+  recorded model-facing `Content` string. Classified Added per COMPATIBILITY.md
+  (a new exported function is a minor bump). (#223,
+  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+
+- **`FetchMcpResource` tool** (registered in `internal/adapter/tools`, NOT an
+  `engine/` exported API — recorded here for completeness) — the model-facing
+  affordance to fetch the contents of an `https://` `resource_link` URI an MCP
+  tool result surfaced as a typed block. Only `https://` is client-fetched,
+  re-validated for SSRF on every redirect via `session.ValidateMediaURL` (no
+  internal/private/metadata IPs, no cross-origin credentials); non-`https` schemes
+  stay server-readonly via `ReadMcpResource`. Output is capped at
+  `toolkit.MaxOutputBytes`; binary content is summarized. The model sees the
+  `resource_link` REFERENCE, never auto-fetched raw bytes. No `engine/` exported
+  surface change. (#223,
+  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+
+- **Wire: `ContentBlock` proto message + `ToolResult.blocks`/`structured_content`
+  fields.** The gRPC `ToolResult` proto mirrors the additive domain `Parts` field
+  as `blocks` (`repeated ContentBlock`) plus a `structured_content` scalar; the
+  `ContentBlock` message carries the block-kind discriminator and variant fields.
+  Additive — legacy clients/sessions round-trip with empty `blocks`. (This is a
+  `contracts/gen` wire change, not an `engine/` exported-API change; recorded
+  here as the wire half of #223.) (#223,
+  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+
+- **`session.ValidateResolvedIP`** — a new exported func
+  (`func ValidateResolvedIP(ip net.IP) error`) re-exporting the dial-layer SSRF
+  IP predicate (`isGlobalUnicast`, the same one `ValidateMediaURL` uses for
+  literal-IP hosts) as the single screening definition shared between the
+  URL-string path and the dial-IP path. It returns nil for a routable public IP
+  and a non-nil error naming the rejection for internal IPs (loopback/private/
+  link-local/CGNAT/metadata/unspecified/multicast). It is the dial-layer backstop
+  a harness fetch tool (`FetchMcpResource`) installs as its `http.Transport`'s
+  `DialContext` to close the DNS-rebinding window `ValidateMediaURL`'s hostname
+  check cannot (an attacker-controlled resolver answers the hostname check with a
+  public IP, then returns 169.254.169.254 at dial time). Classified Added per
+  COMPATIBILITY.md (a new exported function is a minor bump). (#223)
 
 ### Notes
 

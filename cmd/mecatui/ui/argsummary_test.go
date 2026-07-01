@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
 // mustJSON marshals v to a compact JSON args string for a tool block.
@@ -457,6 +459,57 @@ func TestMCPCardExpandedGolden(t *testing.T) {
 	r := newTestRenderer()
 	got := stripANSIstr(r.renderToolBlock("mcp__github__issue_write", mcpCardArgs(t), true))
 	compareGolden(t, "tool_mcp_card_expanded.golden", []byte(got))
+}
+
+// renderResolvedToolBlock builds a RESOLVED tool block (with a result body and typed
+// content blocks) and renders it through renderTool — the real card path, so the
+// result + blocks wiring is exercised end to end. A peer of renderToolBlock (which
+// builds an unresolved call-only block for the args goldens).
+func (r *renderer) renderResolvedToolBlock(name, args, body string, blocks []client.ContentBlock, expand bool) string {
+	b := &block{
+		kind:         blockTool,
+		toolID:       "call-1",
+		toolName:     name,
+		toolArgs:     args,
+		resolved:     true,
+		resultBody:   body,
+		resultBlocks: blocks,
+	}
+	return r.renderTool(b, expand)
+}
+
+// TestMCPCardBlocksGolden pins a resolved MCP card whose result carries typed
+// content blocks (a resource link + image) alongside the model-facing text body.
+// The blocks surface as distinct muted artifact lines (↗ resource-link, [image])
+// IN ADDITION to the text body — not buried in/below it. The two existing tool-card
+// goldens (collapsed/expanded, no blocks) are untouched: nil resultBlocks leaves the
+// text path byte-unchanged.
+func TestMCPCardBlocksGolden(t *testing.T) {
+	r := newTestRenderer()
+	args := mustJSON(t, map[string]any{"owner": "stacklok", "repo": "mecatl"})
+	blocks := []client.ContentBlock{
+		{Kind: client.ContentBlockResourceLink, Name: "issue-24", URL: "https://github.com/stacklok/mecatl/issues/24"},
+		{Kind: client.ContentBlockImage, MimeType: "image/png"},
+		{Kind: client.ContentBlockText, Text: "already in the body — must NOT double-render"},
+	}
+	got := stripANSIstr(r.renderResolvedToolBlock(
+		"mcp__github__issue_write", args, "Created issue #24", blocks, false))
+	compareGolden(t, "tool_mcp_card_blocks.golden", []byte(got))
+	// Direct assertions: the resource-link + image lines surface distinctly; the
+	// text block does NOT double-render.
+	if !strings.Contains(got, "↗ issue-24 · https://github.com/stacklok/mecatl/issues/24") {
+		t.Errorf("expected the resource-link artifact line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[image: image/png]") {
+		t.Errorf("expected the image artifact line, got:\n%s", got)
+	}
+	if strings.Contains(got, "already in the body") {
+		t.Errorf("a text block must NOT double-render, got:\n%s", got)
+	}
+	// The model-facing body still renders (not replaced).
+	if !strings.Contains(got, "Created issue #24") {
+		t.Errorf("expected the model-facing text body, got:\n%s", got)
+	}
 }
 
 // TestGenericLongJSONCardGolden pins a non-MCP tool whose args are a generic long

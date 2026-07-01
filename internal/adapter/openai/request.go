@@ -25,12 +25,18 @@ import (
 //   - Model -> Model (a plain string for compatible-endpoint friendliness).
 //   - Store:false + Include reasoning.encrypted_content so reasoning survives
 //     across turns statelessly.
+//
+// This free form projects tool results with the adapter's STATIC transmit caps
+// (text+image; the byte-identical pre-T7 default for tests and any caller that
+// does not hold a per-session intersection). The method form below threads the
+// per-session intersection (WithProviderCapabilities) so a text-only model on an
+// image-capable adapter drops image blocks from a tool result's Parts.
 func buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
 	tools, err := buildTools(req.Tools)
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
-	items, err := buildInput(req.Messages)
+	items, err := buildInput(req.Messages, port.ProviderCapabilities{Image: true, EmbeddedContext: true})
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
@@ -60,9 +66,32 @@ func buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
 // returns ok=false (omit) for empty/"auto"/unknown (fail-soft — a stray token
 // never 400s the request).
 func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
-	params, err := buildParams(req)
+	tools, err := buildTools(req.Tools)
 	if err != nil {
 		return responses.ResponseNewParams{}, err
+	}
+	// Thread the per-SESSION capability intersection (WithProviderCapabilities)
+	// into the input build so a tool result's typed Parts are projected honestly
+	// — a text-only model on this image-capable adapter drops image blocks. The
+	// free buildParams above uses the static transmit caps (the byte-identical
+	// pre-T7 default); only the method (the live Stream path) carries the session
+	// intersection.
+	items, err := buildInput(req.Messages, p.sessionCaps())
+	if err != nil {
+		return responses.ResponseNewParams{}, err
+	}
+
+	params := responses.ResponseNewParams{
+		Model: req.Model,
+		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: items},
+		Tools: tools,
+		Store: oai.Bool(false),
+		Include: []responses.ResponseIncludable{
+			responses.ResponseIncludableReasoningEncryptedContent,
+		},
+	}
+	if instr := req.System.Render(); instr != "" {
+		params.Instructions = oai.String(instr)
 	}
 	if mapped, ok := reasoningEffortFor(p.effort); ok {
 		params.Reasoning = shared.ReasoningParam{Effort: mapped}
@@ -149,7 +178,7 @@ func buildTools(specs []tool.ToolSpec) ([]responses.ToolUnionParam, error) {
 // function_call_output items in subsequent tool messages). User/system text
 // become message items; tool messages become function_call_output items keyed by
 // call_id.
-func buildInput(msgs []session.Message) (responses.ResponseInputParam, error) {
+func buildInput(msgs []session.Message, caps port.ProviderCapabilities) (responses.ResponseInputParam, error) {
 	items := make(responses.ResponseInputParam, 0, len(msgs))
 	for _, m := range msgs {
 		switch m.Role {
@@ -175,14 +204,85 @@ func buildInput(msgs []session.Message) (responses.ResponseInputParam, error) {
 			items = append(items, assistantItems(m)...)
 		case session.RoleTool:
 			if m.ToolResult != nil {
-				items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(
-					string(m.ToolResult.CallID), m.ToolResult.Content))
+				items = append(items, toolOutputItem(*m.ToolResult, caps))
 			}
 		default:
 			return nil, fmt.Errorf("unsupported message role %q", m.Role)
 		}
 	}
 	return items, nil
+}
+
+// toolOutputItem builds the function_call_output input item for a tool result.
+//
+// When the result carries typed Parts AND at least one block survives the
+// per-session capability projection (port.RouteToolResultParts), the output is a
+// MULTIMODAL content list — the Responses API accepts input_text + input_image
+// parts for a function_call_output (openai-go v3.37.0,
+// ResponseFunctionCallOutputItemListParam). Text / resource-link / embedded-
+// resource-text / structured-content blocks become input_text parts (the model
+// sees the reference/summary/JSON as text); an image block becomes an input_image
+// part (inline bytes as a base64 data URL, or a passthrough URL) — reusing the
+// same dataURL rendering as the user-message image path. An audio block never
+// reaches here: the OpenAI adapter declares Audio:false, so RouteToolResultParts
+// drops it upstream.
+//
+// Otherwise (no Parts, or routing returns nil — every block filtered out by the
+// capability intersection) it falls back to the single-string
+// function_call_output(callID, Content) — BYTE-IDENTICAL to the pre-T7 path, so
+// the legacy/mock/mecademo path is unchanged.
+func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) responses.ResponseInputItemUnionParam {
+	blocks := port.RouteToolResultParts(tr, caps)
+	if len(blocks) == 0 {
+		return responses.ResponseInputItemParamOfFunctionCallOutput(
+			string(tr.CallID), tr.Content)
+	}
+	list := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(blocks))
+	for _, b := range blocks {
+		switch b.BlockKind {
+		case session.BlockImage:
+			url := b.URL
+			if url == "" {
+				url = dataURL(b.MIMEType, b.Data)
+			}
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputImage: &responses.ResponseInputImageContentParam{ImageURL: oai.String(url)},
+			})
+		default:
+			// BlockText / BlockResourceLink / BlockEmbeddedResource (text form) /
+			// BlockStructuredContent all render as text — the model sees the
+			// reference/summary/JSON as text. An embedded-resource BLOB (Data, no
+			// Text) has no Responses input member; render its MIME/URI as a text
+			// pointer rather than base64-dumping (mirrors the user-message path's
+			// honest "summarize, don't dump" stance).
+			list = append(list, responses.ResponseFunctionCallOutputItemParamOfInputText(toolBlockText(b)))
+		}
+	}
+	return responses.ResponseInputItemParamOfFunctionCallOutput(string(tr.CallID), list)
+}
+
+// blockText renders a non-image tool-result block as its model-facing text form.
+// BlockText / BlockStructuredContent carry their text in Text; a resource link
+// renders its URI + name/title; an embedded-resource blob (no Text) renders a
+// pointer (URI + mime) rather than a base64 dump.
+func toolBlockText(b session.Content) string {
+	switch b.BlockKind {
+	case session.BlockResourceLink:
+		if b.Title != "" {
+			return b.Title + " (" + b.URL + ")"
+		}
+		if b.Name != "" {
+			return b.Name + " (" + b.URL + ")"
+		}
+		return b.URL
+	case session.BlockEmbeddedResource:
+		if b.Text != "" {
+			return b.Text
+		}
+		return b.URL + " (" + b.MIMEType + ")"
+	default: // BlockText, BlockStructuredContent, and any text-bearing block.
+		return b.Text
+	}
 }
 
 // userContentList builds the Responses input-message content list for a

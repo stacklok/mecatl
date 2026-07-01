@@ -250,6 +250,19 @@ Two deliberate cycle-breaks worth noting, documented in code:
   `governance` without a cycle); the `Evaluator` works on primitive args, and
   the `permpolicy` adapter bridges `session` types into it.
 
+**Typed tool results.** A `session.ToolResult` may carry typed content blocks on
+`ToolResult.Parts` (`[]session.Content`, additive — a zero-value `Parts` is the
+legacy string-only shape). Composition projects them to the model via
+`port.RouteToolResultParts`, which gates image/audio blocks by the per-session
+capability intersection (the single `modelCapability` = catalog ∩ adapter) and
+passes text / resource-link / embedded-resource / structured-content blocks
+through unconditionally. `Content.Audience` is advisory display routing ONLY and
+is never consulted to suppress model-facing content (CWE-345 — an untrusted MCP
+server's `audience:["user"]` is not a suppression control). Server-returned
+`resource_link` URIs are never auto-dereferenced; an `https://` link may be
+fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
+backstop, CWE-918). See `docs/adr/0059-mcp-typed-tool-results.md`.
+
 ## See also
 
 - [Usage & operator guide](usage.md) — building, running `mecated`, every flag, and the gRPC + HTTP/SSE APIs that drive this design.

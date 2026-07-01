@@ -517,7 +517,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.afterEvent()
 	case client.ToolResultMsg:
-		if !m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError) {
+		if !m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
 			m.conv.addNotice("orphan tool result for " + msg.CallID)
 		}
 		m.activeTool = ""

@@ -84,7 +84,7 @@ func promptResultFromSDK(res *mcpsdk.GetPromptResult) PromptResult {
 		}
 		msgs = append(msgs, PromptMessage{
 			Role: string(m.Role),
-			Text: flattenContent([]mcpsdk.Content{m.Content}),
+			Text: flattenContentModel([]mcpsdk.Content{m.Content}),
 		})
 	}
 	return PromptResult{Description: res.Description, Messages: msgs}

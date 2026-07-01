@@ -587,6 +587,31 @@ Two ledger observations worth stating in prose:
   in the operator docs is part of this arc's v1 posture; pretending otherwise is
   not.
 
+### Re-audit: MCP typed tool results (#223)
+
+Per the inventory discipline ("Added an outlives-a-call resource? Inventory it
+in `docs/adr/0027-cloud-native.md`"), the typed-tool-results widening
+([ADR 0059](./0059-mcp-typed-tool-results.md)) was re-audited. Expected outcome,
+confirmed:
+
+- **No new List 1 row.** The change is a value-object widening on the existing
+  session aggregate / event log — an additive `Parts []session.Content` field on
+  `session.ToolResult` (`engine/session/toolcall.go`) (`ToolResult`), carried on
+  `EvToolResult` and reconstructed by `engine/adapter/eventsource`
+  (`eventsource.go`) (`Fold`). It introduces no new goroutine, LRU, map, breaker,
+  `*http.Client`, or semaphore whose lifetime outlives a tool call.
+- **No new List 2 row.** A zero-value `Parts` is the legacy string-only shape, so
+  `engine/adapter/sessnap` and `Fold` load old snapshots/events unchanged; there
+  is no restart-losable state beyond what snapshots already carry (the typed
+  blocks are part of the persisted `ToolResult`, same as `Content` today).
+
+- **The one resource this feature CAN introduce is Phase 2.** The
+  `FetchMcpResource` model-facing affordance (fetching an `https://`
+  `resource_link`, ADR 0059 decision 5) introduces an `http.Client`. It MUST be
+  **per-call** (bounded, no cross-origin credential attachment) — and if Phase 2
+  instead caches/reuses it, that client earns a List 1 row at that time. Not
+  inventoried now because Phase 2 has not landed.
+
 ## List 3: decisions
 
 Three decisions this arc must record now. Each carries a recommendation; all three

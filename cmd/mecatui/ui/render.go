@@ -1300,7 +1300,30 @@ func (r *renderer) renderToolArgs(b *block, expand bool) string {
 // self-styled). An error result, a non-JSON/line-shaped result, or the expanded
 // view fall through to the existing styled, line-capped (or full) body — Read
 // results are unchanged. Returns "" when there is no body.
+//
+// Typed content blocks (b.resultBlocks) are rendered distinctly IN ADDITION to the
+// model-facing text body when present: a resource link shows as "↗ <name> · <uri>"
+// and an image as "[image: <mime>]" so a user-audience artifact is not buried
+// in/below the text. Text/embedded-resource/structured-content blocks are already
+// represented in the model-facing resultBody, so they are not double-rendered. A nil
+// resultBlocks (the common text-only case) leaves the existing render path
+// byte-unchanged.
 func (r *renderer) renderToolResult(b *block, expand bool) string {
+	body := r.renderToolResultBody(b, expand)
+	artifacts := r.renderResultBlocks(b.resultBlocks)
+	if artifacts == "" {
+		return body
+	}
+	if body == "" {
+		return artifacts
+	}
+	return body + "\n" + artifacts
+}
+
+// renderToolResultBody renders the model-facing text result body (the legacy path),
+// unchanged: summarizeResolvedResult for a collapsed large JSON result, else the
+// styled, line-capped/full body. Returns "" when there is no body.
+func (r *renderer) renderToolResultBody(b *block, expand bool) string {
 	if summary, ok := r.summarizeResolvedResult(b, expand); ok {
 		return summary
 	}
@@ -1313,6 +1336,67 @@ func (r *renderer) renderToolResult(b *block, expand bool) string {
 		style = r.th.Style("errorText")
 	}
 	return style.Render(body)
+}
+
+// renderResultBlocks surfaces user-audience typed content blocks distinctly from the
+// model-facing text body. Only resource-link and image blocks render here: text,
+// embedded-resource, and structured-content blocks are already represented in the
+// model-facing resultBody, so rendering them again would double up. Returns "" when
+// there is nothing distinct to surface (no blocks, or only text-bearing blocks).
+// All server-derived strings are terminal-sanitized before they reach lipgloss
+// (CWE-150), the same guard the rest of the card uses.
+func (r *renderer) renderResultBlocks(blocks []client.ContentBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	muted := r.th.Style("muted")
+	var out strings.Builder
+	for _, blk := range blocks {
+		line, ok := renderResultBlockLine(blk)
+		if !ok {
+			continue
+		}
+		if out.Len() > 0 {
+			out.WriteString("\n")
+		}
+		out.WriteString(muted.Render(line))
+	}
+	return out.String()
+}
+
+// renderResultBlockLine renders ONE typed content block as a single distinct line,
+// returning ok=false for blocks already represented in the model-facing text body
+// (text / embedded-resource / structured-content) so they are not double-rendered, and
+// for an unspecified/unknown kind (forward-compatible: never a crash). resource-link
+// renders "↗ <name> · <uri>" (or "<uri>" when the name is empty); image renders
+// "[image: <mime>]" (or "[image]" when the mime is empty). All server-derived
+// strings are sanitized.
+func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
+	switch blk.Kind {
+	case client.ContentBlockResourceLink:
+		name := sanitizeTerminal(blk.Name)
+		uri := sanitizeTerminal(blk.URL)
+		if name == "" {
+			if uri == "" {
+				return "", false
+			}
+			return "↗ " + uri, true
+		}
+		if uri == "" {
+			return "↗ " + name, true
+		}
+		return "↗ " + name + " · " + uri, true
+	case client.ContentBlockImage:
+		mime := sanitizeTerminal(blk.MimeType)
+		if mime == "" {
+			return "[image]", true
+		}
+		return "[image: " + mime + "]", true
+	default:
+		// text / embedded-resource / structured-content / unspecified: already in the
+		// model-facing body (or absent) — do not double-render.
+		return "", false
+	}
 }
 
 // renderSubagent renders a Subagent card's REDACTED subagent region. It has three

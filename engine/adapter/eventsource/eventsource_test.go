@@ -350,3 +350,66 @@ func TestFoldRoundTripsThroughSnapshot(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// TestFoldReconstructsTypedToolResult verifies that Fold reconstructs typed
+// tool-result blocks (ToolResult.Parts) for free — the EvToolResult case feeds the
+// *ToolResult (now carrying Parts) straight into session.NewToolMessage, so the
+// blocks survive verbatim with no Fold-side change. This is the T5 "rides for
+// free" verification: a typed ToolResult round-trips through the event log into a
+// RoleTool message whose ToolResult.Parts is non-empty and matches.
+func TestFoldReconstructsTypedToolResult(t *testing.T) {
+	parts := []session.Content{
+		session.NewTextBlock("file contents"),
+		session.NewResourceLinkBlock("res://x", "name", "title", "desc", "text/plain", 42, []string{"admin"}),
+		session.NewStructuredContentBlock(`{"k":"v"}`),
+	}
+	call := toolCall("c1", "Read", `{"path":"a.go"}`)
+	evs := []session.Event{
+		{Type: session.EvSessionInit},
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvToolCall, Turn: 0, ToolCall: &call},
+		{Type: session.EvToolResult, Turn: 0, ToolResult: ptr(session.NewToolResultWithParts("c1", "summary", parts))},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn, Text: "done"}},
+	}
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	msgs := s.Conversation.Messages
+	// assistant([c1]) → tool(c1, parts) → no further assistant turn (result text only).
+	if len(msgs) != 2 {
+		t.Fatalf("got %d messages, want 2: %+v", len(msgs), msgs)
+	}
+	if msgs[1].Role != session.RoleTool || msgs[1].ToolResult == nil {
+		t.Fatalf("msg1 = %+v, want a tool message", msgs[1])
+	}
+	tr := msgs[1].ToolResult
+	if tr.CallID != "c1" {
+		t.Fatalf("CallID = %q, want c1", tr.CallID)
+	}
+	if tr.Content != "summary" {
+		t.Fatalf("Content = %q, want summary", tr.Content)
+	}
+	if len(tr.Parts) != len(parts) {
+		t.Fatalf("Parts len = %d, want %d", len(tr.Parts), len(parts))
+	}
+	for i, want := range parts {
+		got := tr.Parts[i]
+		if got.BlockKind != want.BlockKind {
+			t.Errorf("Parts[%d] BlockKind = %q, want %q", i, got.BlockKind, want.BlockKind)
+		}
+		if got.Text != want.Text {
+			t.Errorf("Parts[%d] Text = %q, want %q", i, got.Text, want.Text)
+		}
+		if got.URL != want.URL {
+			t.Errorf("Parts[%d] URL = %q, want %q", i, got.URL, want.URL)
+		}
+		if got.Name != want.Name {
+			t.Errorf("Parts[%d] Name = %q, want %q", i, got.Name, want.Name)
+		}
+	}
+	// The reconstructed history must still be provider-replayable.
+	if err := session.ValidateToolPairing(msgs); err != nil {
+		t.Fatalf("reconstructed history is not tool-pairing-valid: %v", err)
+	}
+}

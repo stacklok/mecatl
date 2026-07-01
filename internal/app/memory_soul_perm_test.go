@@ -69,6 +69,38 @@ func TestWebSearchDefaultIsFloorAllow(t *testing.T) {
 	}
 }
 
+// TestFetchMcpResourceDefaultIsFloorAllow proves FetchMcpResource (issue #223
+// Phase 2) resolves to Allow via the built-in floor, both directly and via the
+// production mainRules assembly — matching the WebFetch/WebSearch posture
+// (config-overridable; the SSRF gate is session.ValidateMediaURL, not an Ask).
+func TestFetchMcpResourceDefaultIsFloorAllow(t *testing.T) {
+	if got := evalDefault(t, "FetchMcpResource"); got != governance.Allow {
+		t.Fatalf("FetchMcpResource should default to Allow (defaultRules), got %v", got)
+	}
+	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
+	got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
+		session.NewToolCall("id", "FetchMcpResource", json.RawMessage(`{}`)), nil).Effect
+	if got != governance.Allow {
+		t.Fatalf("FetchMcpResource should default to Allow (mainRules production assembly), got %v", got)
+	}
+}
+
+// TestConfiguredAskAndDenyOverrideFetchMcpResourceAllow proves a configured
+// Ask or Deny in a higher scope beats the FetchMcpResource floor-Allow (the
+// floor is config-overridable; deny-dominant). Mirrors the WebSearch override.
+func TestConfiguredAskAndDenyOverrideFetchMcpResourceAllow(t *testing.T) {
+	for _, eff := range []governance.Effect{governance.Ask, governance.Deny} {
+		rules := append(defaultRules(),
+			governance.Rule{Scope: governance.ScopeUser, Tool: "FetchMcpResource", Effect: eff})
+		policy := permpolicy.NewPolicy(rules, nil)
+		got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
+			session.NewToolCall("id", "FetchMcpResource", json.RawMessage(`{}`)), nil)
+		if got.Effect != eff {
+			t.Fatalf("a configured (ScopeUser) %v on FetchMcpResource must beat the floor Allow; got %v", eff, got.Effect)
+		}
+	}
+}
+
 // TestConfiguredAskAndDenyOverrideWebSearchAllow proves a configured Ask or Deny in
 // a higher scope beats the WebSearch floor-Allow (the floor is config-overridable;
 // deny-dominant). Mirrors the memory-allow override invariant.

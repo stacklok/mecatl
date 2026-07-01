@@ -45,6 +45,26 @@ func TestEventToMsg(t *testing.T) {
 			ToolResultMsg{CallID: "c1", Content: "ok", IsError: true},
 		},
 		{
+			"tool.result blocks",
+			&mecatlv1.Event{Type: "tool.result", ToolResult: &mecatlv1.ToolResult{
+				CallId: "c2", Content: "Created issue #24",
+				Blocks: []*mecatlv1.ContentBlock{
+					{Kind: mecatlv1.ContentBlock_KIND_RESOURCE_LINK, Name: "issue-24", Url: "https://github.com/stacklok/mecatl/issues/24"},
+					{Kind: mecatlv1.ContentBlock_KIND_IMAGE, MimeType: "image/png"},
+				},
+				StructuredContent: `{"id":24}`,
+			}},
+			ToolResultMsg{
+				CallID:  "c2",
+				Content: "Created issue #24",
+				Blocks: []ContentBlock{
+					{Kind: ContentBlockResourceLink, Name: "issue-24", URL: "https://github.com/stacklok/mecatl/issues/24"},
+					{Kind: ContentBlockImage, MimeType: "image/png"},
+				},
+				StructuredContent: `{"id":24}`,
+			},
+		},
+		{
 			"tool.progress",
 			&mecatlv1.Event{Type: "tool.progress", Text: "scanned 64/512 files"},
 			ToolProgressMsg{Text: "scanned 64/512 files"},
@@ -151,7 +171,9 @@ func TestEventToMsg(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := EventToMsg(tc.ev)
-			if got != tc.want {
+			// reflect.DeepEqual, not !=: ToolResultMsg carries a []ContentBlock slice
+			// (the typed tool-result blocks), which is not comparable with ==.
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("EventToMsg(%s) = %#v, want %#v", tc.name, got, tc.want)
 			}
 		})

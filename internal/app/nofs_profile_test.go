@@ -119,7 +119,7 @@ func TestNoFSParallelAbsent(t *testing.T) {
 		t.Fatal("no-FS catalog carries Parallel — branch forks are filesystem acts and must be absent")
 	}
 	// Delegation stays available: Subagent and Team survive the profile.
-	for _, name := range []string{"Subagent", "Team", "Skill", "WebFetch"} {
+	for _, name := range []string{"Subagent", "Team", "Skill", "WebFetch", "FetchMcpResource"} {
 		if _, ok := toolNameSet(noFSCat.Tools())[name]; !ok {
 			t.Errorf("no-FS catalog is missing %q — only file tools/Bash/Parallel/SkillDraft may be excluded", name)
 		}
@@ -159,8 +159,8 @@ func TestApplyNoFSPosture(t *testing.T) {
 // shell, proving the no-FS gate beats the shell wiring, and without a Bash
 // child no forker is ever wired: the two move together) while its Remember call
 // AND its global-MCP call succeed against the shared store/manager. The tool
-// specs OFFERED to the child model carry WebFetch + the global MCP tool and no
-// file tool. The Spec is the honest no-FS one.
+// specs OFFERED to the child model carry WebFetch + FetchMcpResource + the
+// global MCP tool and no file tool. The Spec is the honest no-FS one.
 func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 	ctx := context.Background()
 	memStore, err := memory.New(t.TempDir())
@@ -255,15 +255,15 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 		}
 	}
 
-	// The catalog the child MODEL is offered: WebFetch + the global MCP tool are
-	// present, no file tool / shell is.
+	// The catalog the child MODEL is offered: WebFetch + FetchMcpResource + the
+	// global MCP tool are present, no file tool / shell is.
 	toolsMu.Lock()
 	offered := map[string]bool{}
 	for _, name := range offeredTools {
 		offered[name] = true
 	}
 	toolsMu.Unlock()
-	for _, want := range []string{"WebFetch", "mcp__globe__echo"} {
+	for _, want := range []string{"WebFetch", "FetchMcpResource", "mcp__globe__echo"} {
 		if !offered[want] {
 			t.Errorf("child request tool specs are missing %q (got %v)", want, offeredTools)
 		}
@@ -611,10 +611,11 @@ func TestOsfsWorkspaceFactoryEmptyRootIntercepted(t *testing.T) {
 
 // TestNoFSChildCatalogExactDelta is the drift kill-switch for the no-fs CHILD
 // surface (the TestNoFSCatalogProfile idiom one level down): noFSChildCatalog
-// must be EXACTLY {the memory six} ∪ {WebFetch, WebSearch} ∪ {the global MCP
-// tools} — nothing more (a file tool or shell leaking into delegation children)
-// and nothing less (a family silently dropped from the children). Mutation-verified
-// (removing a family from noFSChildCatalog fails the equality).
+// must be EXACTLY {the memory six} ∪ {WebFetch, FetchMcpResource, WebSearch}
+// ∪ {the global MCP tools} — nothing more (a file tool or shell leaking into
+// delegation children) and nothing less (a family silently dropped from the
+// children). Mutation-verified (removing a family from noFSChildCatalog fails
+// the equality).
 func TestNoFSChildCatalogExactDelta(t *testing.T) {
 	url := newMCPTestServerWithResource(t)
 	mgr := connectMainManager(t, "globe", url)
@@ -632,8 +633,10 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 		// The memory six (the same flocked shared stores the parent uses).
 		memory.RememberToolName, memory.RecallToolName, memory.SearchMemoryToolName,
 		memory.RememberUserToolName, memory.RecallUserToolName, memory.SearchUserModelToolName,
-		// The no-fs core tier: WebFetch + WebSearch (search-then-fetch discovery).
-		"WebFetch", "WebSearch",
+		// The no-fs core tier: WebFetch + FetchMcpResource (outbound reads) + WebSearch
+		// (search-then-fetch discovery). FetchMcpResource is an outbound read with no
+		// filesystem need (issue #223 Phase 2).
+		"WebFetch", "FetchMcpResource", "WebSearch",
 	}
 	for _, mt := range mgr.Tools() {
 		want = append(want, mt.Spec().Name)
@@ -642,7 +645,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 
 	cat := noFSChildCatalog(context.Background(), Config{Diagnostics: port.NopDiagnostics{}}, a)
 	if onlyWant, onlyGot := diffNameSets(want, sortedNames(cat)); len(onlyWant) > 0 || len(onlyGot) > 0 {
-		t.Fatalf("no-fs CHILD catalog is NOT exactly {memory six} ∪ {WebFetch, WebSearch} ∪ {global MCP}:\n  missing: %v\n  unexpected: %v",
+		t.Fatalf("no-fs CHILD catalog is NOT exactly {memory six} ∪ {WebFetch, FetchMcpResource, WebSearch} ∪ {global MCP}:\n  missing: %v\n  unexpected: %v",
 			onlyWant, onlyGot)
 	}
 }

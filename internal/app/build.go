@@ -1583,8 +1583,8 @@ func sessionEngineFactory(
 		// thinking-path posture). resolvedEffort is the EFFECTIVE token echoed on
 		// resolved_model. The DEFAULT PATH stays BYTE-IDENTICAL: when the resolved effort
 		// equals the operator default the entry was built with, the shared entry.provider
-		// is reused (no re-mint); a re-mint happens ONLY when they differ and the entry
-		// exposes a remintEffort closure.
+		// is reused (no re-mint); a re-mint happens ONLY when effort OR the per-session
+		// capability intersection differs and the entry exposes a remint closure.
 		resolvedEffort := resolveSessionEffort(ctx, cfg, sel.ReasoningEffort)
 		resolvedEffort, clamped := clampEffortForProvider(resolvedProviderID, resolvedEffort)
 		if clamped {
@@ -1609,15 +1609,27 @@ func sessionEngineFactory(
 		// dials reasoning_effort:max must not silently raise the spend of those
 		// cost-sensitive internal calls (ADR 0055).
 		utilityProvider := resolvedProvider
-		// Re-mint ONLY when the resolved session effort differs from the OPERATOR-DEFAULT
-		// effort the entry's shared .provider was built with (the SAME normalise+clamp the
-		// registry applied at build). When they match, the shared provider is reused
-		// byte-for-byte (the byte-identical default path).
-		if entry, ok := reg.Lookup(resolvedProviderID); ok && entry.remintEffort != nil {
+		// The per-session input capability is the catalog ∩ adapter INTERSECTION for
+		// the resolved (provider, model), computed HERE in composition — the single
+		// source the server echoes verbatim on session_capabilities. It is a NEUTRAL
+		// port.ProviderCapabilities; neither the catalog nor the registry crosses into
+		// the server adapter. It is ALSO the intersection the provider adapter's
+		// request builder consults to project a tool result's typed Parts (T7) —
+		// threaded into the adapter via the re-mint below.
+		sessionCaps := modelCapability(reg, resolvedProviderID, resolvedModel)
+		// Re-mint ONLY when the resolved session effort OR capability intersection
+		// differs from the OPERATOR-DEFAULT the entry's shared .provider was built
+		// with (the SAME normalise+clamp the registry applied at build, and the
+		// default-model caps the post-assembly fixup stamped). When both match, the
+		// shared provider is reused byte-for-byte (the byte-identical default path).
+		// A hand-built/test registry entry with no defaultCaps (zero value) is treated
+		// as "match anything" so a test without defaultCaps never re-mints on caps.
+		if entry, ok := reg.Lookup(resolvedProviderID); ok && entry.remint != nil {
 			entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
 			entryEffort, _ = clampEffortForProvider(resolvedProviderID, entryEffort)
-			if resolvedEffort != entryEffort {
-				resolvedProvider = entry.remintEffort(resolvedEffort)
+			capsDiff := entry.defaultCaps != sessionCaps && entry.defaultCaps != (port.ProviderCapabilities{})
+			if resolvedEffort != entryEffort || capsDiff {
+				resolvedProvider = entry.remint(resolvedEffort, sessionCaps)
 			}
 		}
 		// The compaction window is the LIVE-FIRST resolver over the resolved
@@ -1628,12 +1640,6 @@ func sessionEngineFactory(
 		// next turn without rebuilding this engine. A passthrough/uncatalogued model
 		// resolves to the 128k floor (inside the resolver). Override still wins.
 		windowFn := reg.windowResolver(cfg, resolvedProviderID, resolvedModel)
-		// The per-session input capability is the catalog ∩ adapter INTERSECTION for
-		// the resolved (provider, model), computed HERE in composition — the single
-		// source the server echoes verbatim on session_capabilities. It is a NEUTRAL
-		// port.ProviderCapabilities; neither the catalog nor the registry crosses into
-		// the server adapter.
-		sessionCaps := modelCapability(reg, resolvedProviderID, resolvedModel)
 
 		onError := func(sc mcp.ServerConfig, err error) {
 			cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
@@ -2883,7 +2889,7 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	mode := highestSeverityGuardrailMode(specs)
 	out := fmt.Sprintf("guardrails: ON, checker=%s (%s), mode=%s, rules=%d", model, provenance, mode, len(specs))
 	if usedDefaults {
-		out += " (default set: WebSearch, WebFetch, mcp__*)"
+		out += " (default set: WebSearch, WebFetch, FetchMcpResource, mcp__*)"
 	}
 	// Posture coupling (ADR 0062): under yolo every rule was demoted to advisory at
 	// compile time (demoteForPosture). Surface that SECURITY DOWNGRADE at startup so an
@@ -5741,6 +5747,14 @@ func defaultRules() []governance.Rule {
 		// an interactive Ask: its outbound payload is a query string, lower-risk than
 		// WebFetch's arbitrary-URL fetch.
 		{Scope: governance.ScopeBuiltinDefault, Tool: "WebSearch", Effect: governance.Allow},
+		// FetchMcpResource (issue #223 Phase 2): floor-Allow, same posture as
+		// WebFetch — config-overridable to ask/deny in any scope. It is an outbound
+		// read-only fetch of an https:// resource URI an MCP tool surfaced as a
+		// resource_link; the SSRF gate is session.ValidateMediaURL (re-run on every
+		// redirect target), not an interactive Ask. Non-https URIs are never
+		// client-fetched (they guide to ReadMcpResource), so the floor-Allow only
+		// covers the validated-https path.
+		{Scope: governance.ScopeBuiltinDefault, Tool: "FetchMcpResource", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Subagent", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Edit", Effect: governance.Ask},

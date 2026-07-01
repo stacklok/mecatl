@@ -29,6 +29,12 @@
     method func (Usage).Add(other Usage) Usage
     method func (Usage).CacheHitRate() float64
     method func (Usage).TotalTokens() int
+const BlockAudio BlockKind = "audio"
+const BlockEmbeddedResource BlockKind = "embedded_resource"
+const BlockImage BlockKind = "image"
+const BlockResourceLink BlockKind = "resource_link"
+const BlockStructuredContent BlockKind = "structured"
+const BlockText BlockKind = "text"
 const EvApproval EventType = "approval"
 const EvCompaction EventType = "compaction"
 const EvCompactionArchive EventType = "compaction.archive"
@@ -64,6 +70,8 @@ const HookModified HookDecision = "modified"
 const MaxMediaBytes untyped int = 10485760
 const MaxPromptMediaBytes untyped int = 20971520
 const MaxPromptMediaParts untyped int = 16
+const MaxToolResultBytes untyped int = 20971520
+const MaxToolResultTextBytes untyped int = 25600
 const MediaAudio MediaKind = "audio"
 const MediaImage MediaKind = "image"
 const ModeAccept PermissionMode = "acceptEdits"
@@ -105,25 +113,33 @@ func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Messag
 func NewAudioContent(mime string, data []byte) (Content, error)
 func NewAudioURLContent(mime string, rawURL string) (Content, error)
 func NewContent(kind MediaKind, mime string, data []byte, rawURL string) (Content, error)
+func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []byte, audience []string) (Content, error)
 func NewImageContent(mime string, data []byte) (Content, error)
 func NewImageURLContent(mime string, rawURL string) (Content, error)
+func NewResourceLinkBlock(uri string, name string, title string, description string, mimeType string, size int64, audience []string) Content
+func NewStructuredContentBlock(structuredJSON string) Content
 func NewSystemMessage(text string) Message
+func NewTextBlock(text string) Content
 func NewToolCall(id ToolCallID, name string, args json.RawMessage) ToolCall
 func NewToolError(callID ToolCallID, content string) ToolResult
 func NewToolMessage(result ToolResult) Message
 func NewToolResult(callID ToolCallID, content string) ToolResult
+func NewToolResultWithParts(callID ToolCallID, content string, parts []Content) ToolResult
 func NewUserMessage(text string) Message
 func NewUserMessageWithParts(text string, parts []Content) Message
 func ParseArgs(call ToolCall, dst any) (msg string, ok bool)
 func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
 func ValidateMediaParts(parts []Content) error
 func ValidateMediaURL(raw string) error
+func ValidateResolvedIP(ip net.IP) error
 func ValidateToolPairing(msgs []Message) error
+func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
+type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
-type Content struct{Kind MediaKind; MIMEType string; Data []byte; URL string}
+type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload}
@@ -151,7 +167,7 @@ type TeamPayload struct{ParentCallID string; TeamID string; Roster []TeamMemberS
 type TeamTaskSnapshot struct{ID string; Description string; State string; Assignee string; Deps []string}
 type ToolCall struct{ID ToolCallID "json:\"ID\""; Name string "json:\"Name\""; Args json.RawMessage "json:\"Args\""; ItemID string "json:\"item_id,omitempty\""}
 type ToolCallID string
-type ToolResult struct{CallID ToolCallID; Content string; IsError bool}
+type ToolResult struct{CallID ToolCallID; Content string; IsError bool; Parts []Content "json:\"Parts,omitempty\""}
 type Turn struct{Index int; Assistant Message; Results []ToolResult; Usage Usage}
 type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64}
 type Usage struct{InputTokens int; OutputTokens int; CacheReadTokens int; CacheWriteTokens int; ReasoningTokens int}

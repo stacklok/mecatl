@@ -179,6 +179,13 @@ type block struct {
 	resolved    bool
 	resultBody  string
 	resultError bool
+	// resultBlocks carries the typed content blocks relayed from the server for a tool
+	// result (when the result carried structured Parts — resource links, images, …).
+	// The renderer surfaces user-audience artifacts (resource links, images) IN
+	// ADDITION to the model-facing resultBody text, so e.g. a github MCP resource_link
+	// shows as a distinct artifact line rather than buried in/below the text body.
+	// nil (the common text-only case) leaves the existing render path byte-unchanged.
+	resultBlocks []client.ContentBlock
 
 	// Subagent fields (attached to a Subagent tool block): the REDACTED,
 	// metadata-only projection of the Subagent's child run. They never carry child
@@ -413,8 +420,12 @@ func (c *conversation) addTool(id, name, args string) {
 // resolveTool marks the tool block matching callID (its toolID) as resolved with
 // its result. Matching is by id only — never by tool name — mirroring the
 // tool_call.id ⇄ tool_result.call_id contract. Returns false if no match (the
-// caller can then render an orphan result notice).
-func (c *conversation) resolveTool(callID, body string, isErr bool) bool {
+// caller can then render an orphan result notice). blocks carries the typed content
+// blocks relayed from the server (resource links, images, …) so the renderer can
+// surface user-audience artifacts distinctly; omitted/nil leaves the existing text
+// path byte-unchanged. The variadic shape keeps the common text-only call sites
+// (no blocks relayed) unchanged.
+func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
 	for i := len(c.blocks) - 1; i >= 0; i-- {
 		b := &c.blocks[i]
 		if b.kind == blockTool && b.toolID == callID && !b.resolved {
@@ -422,6 +433,9 @@ func (c *conversation) resolveTool(callID, body string, isErr bool) bool {
 			b.resolved = true
 			b.resultBody = body
 			b.resultError = isErr
+			if len(blocks) > 0 {
+				b.resultBlocks = blocks
+			}
 			return true
 		}
 	}

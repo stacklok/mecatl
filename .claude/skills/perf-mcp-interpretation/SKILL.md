@@ -37,10 +37,16 @@ for the perturbing CPU tools only with a hypothesis to confirm.
    `isError` result saying to retry — wait, do not retry-spam.
 4. **Never ingest raw blobs.** `capture_cpu_profile` (with `include_raw_link`) and
    `capture_flight_recorder` return a **user-audience `resource_link`** to a
-   loopback `/debug/...` endpoint. That link is for a **human to download** (with
-   `go tool pprof` / `go tool trace`) — the model receives only the reduced
-   summary. Do NOT try to fetch or read the linked raw artifact; report the
-   summary and tell the user the raw blob is available at the link.
+   loopback `/debug/...` endpoint. That link now surfaces as a **TYPED BLOCK the
+   model can see** (URI + name + description) rather than a bare URI — but the
+   model still receives only the reduced summary, never the raw blob bytes. A human
+   downloads the linked artifact (with `go tool pprof` / `go tool trace`); if the
+   link is `https://` the model MAY fetch it via the `FetchMcpResource` tool
+   (SSRF-validated through `ValidateMediaURL`). The `perf://` resources on this
+   server are NOT https and stay server-readonly via `ReadMcpResource`. Do NOT
+   try to read a linked raw artifact into model context; report the summary and
+   point the user at the link (or fetch an https link only if you genuinely need
+   its contents).
 
 ## The MCP surface (what is actually there)
 

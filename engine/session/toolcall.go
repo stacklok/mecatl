@@ -68,6 +68,12 @@ func ParseArgs(call ToolCall, dst any) (msg string, ok bool) {
 // ToolResult is an immutable value object: the outcome of executing a ToolCall,
 // paired to it by CallID. Construct it with NewToolResult or NewToolError; it
 // carries no mutating methods.
+//
+// Content-vs-Parts precedence: both Content and Parts may be present. Content
+// is the default model-facing string (always set by the legacy constructors);
+// Parts carries typed tool-result blocks (text/image/audio/resource). Consumers
+// prefer Parts when non-empty, falling back to Content. A legacy/empty-Parts
+// result is byte-identical to the pre-Parts shape.
 type ToolResult struct {
 	// CallID is the ID of the ToolCall this result answers.
 	CallID ToolCallID
@@ -76,6 +82,12 @@ type ToolResult struct {
 	// IsError reports whether the tool failed; an error result is still fed
 	// back to the model so it can recover.
 	IsError bool
+	// Parts carries typed tool-result blocks (text/image/audio/resource). Empty
+	// for the legacy string-only path; when non-empty, consumers prefer Parts
+	// over Content. Distinct from Message.Parts (which is media-only for user
+	// messages) — providers read ToolResult.Parts, not Message.Parts, for tool
+	// results.
+	Parts []Content `json:"Parts,omitempty"`
 }
 
 // NewToolResult constructs a successful ToolResult for the given call.
@@ -86,4 +98,12 @@ func NewToolResult(callID ToolCallID, content string) ToolResult {
 // NewToolError constructs an error ToolResult for the given call.
 func NewToolError(callID ToolCallID, content string) ToolResult {
 	return ToolResult{CallID: callID, Content: content, IsError: true}
+}
+
+// NewToolResultWithParts constructs a successful ToolResult carrying typed blocks
+// alongside the default model-facing Content string. content is the plain
+// model-facing summary; parts are the typed tool-result blocks. Consumers prefer
+// Parts when non-empty.
+func NewToolResultWithParts(callID ToolCallID, content string, parts []Content) ToolResult {
+	return ToolResult{CallID: callID, Content: content, Parts: parts}
 }

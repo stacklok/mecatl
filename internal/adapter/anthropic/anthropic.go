@@ -59,6 +59,17 @@ type Provider struct {
 	// port.LLMRequest field; the per-session engine factory re-mints the adapter
 	// when a session's effort differs from the operator default.
 	effort string
+	// caps is the per-SESSION input-capability intersection (catalog ∩ adapter)
+	// the request builder consults when projecting a tool result's typed Parts
+	// (T7): port.RouteToolResultParts drops image/audio blocks the (provider, model)
+	// cannot receive. nil (the Option unset) DEGRADES to the adapter's own static
+	// Capabilities() — so a provider constructed without the Option (tests, the
+	// byte-identical default path) behaves exactly as before. It is DISTINCT from
+	// the static Capabilities() port method (the adapter transmit authority
+	// modelCapability ANDs with the catalog): a pointer so a deliberately text-only
+	// (zero-value) intersection is distinguishable from "unset". A tool result with
+	// no Parts always takes the legacy single-string path regardless.
+	caps *port.ProviderCapabilities
 }
 
 // Option configures a Provider.
@@ -72,6 +83,7 @@ type config struct {
 	thinkingFor    thinkingResolver
 	thinkingBudget int64
 	effort         string
+	caps           *port.ProviderCapabilities
 	extra          []option.RequestOption
 }
 
@@ -138,6 +150,25 @@ func WithReasoningEffort(effort string) Option {
 	return func(c *config) { c.effort = effort }
 }
 
+// WithProviderCapabilities sets the per-SESSION input-capability intersection
+// (the catalog ∩ adapter value composition computes via modelCapability) the
+// request builder consults when projecting a tool result's typed Parts (T7). It
+// is an adapter-CONSTRUCTION Option, not a port.LLMRequest field — the per-
+// session engine factory re-mints the adapter (alongside reasoning effort) when
+// the session's resolved (provider, model) carries a DIFFERENT intersection than
+// the operator-default model the shared provider was built with; the default
+// path (same model) reuses the shared provider byte-for-byte. When unset, the
+// builder degrades to the adapter's own static Capabilities() — byte-identical
+// to the pre-T7 path, and a tool result with no Parts always takes the legacy
+// single-string tool_result block regardless. A deliberately text-only
+// (zero-value) caps is distinct from unset (nil).
+func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
+	return func(c *config) {
+		cc := caps
+		c.caps = &cc
+	}
+}
+
 // WithRequestOption threads an arbitrary anthropic-sdk-go request option through
 // to the client (e.g. option.WithHeader, option.WithMaxRetries,
 // option.WithHTTPClient for a mock transport in tests). Multiple are applied in
@@ -185,6 +216,7 @@ func New(opts ...Option) *Provider {
 		thinkingFor:    c.thinkingFor,
 		thinkingBudget: budget,
 		effort:         c.effort,
+		caps:           c.caps,
 	}
 }
 
@@ -247,14 +279,30 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	}, nil
 }
 
-// Capabilities reports the provider's multimodal input support. Anthropic vision
-// is base64/url image blocks, so Image is true; the Messages content union has
-// NO audio member, so Audio is false (audio is wired through the harness but
-// gated off here). EmbeddedContext is true because inline text flattens into a
-// text block. The composition-layer capability intersection (catalog ∩ adapter)
-// then yields Image:false for any text-only Claude model with no adapter change.
+// Capabilities reports the provider's multimodal input support — the ADAPTER
+// TRANSMIT authority composition's modelCapability intersects with the catalog
+// (catalog ∩ adapter). It is STATIC (Anthropic vision is base64/url image
+// blocks, so Image is true; the Messages content union has NO audio member, so
+// Audio is false; EmbeddedContext is true because inline text flattens into a
+// text block). It does NOT reflect the per-session intersection — that lives on
+// p.caps (set via WithProviderCapabilities) and is consulted ONLY by the request
+// builder's tool-result projection; the port method stays the static transmit
+// authority so modelCapability's AND stays honest (the composition-layer
+// intersection then yields Image:false for any text-only Claude model with no
+// adapter change).
 func (*Provider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{Image: true, Audio: false, EmbeddedContext: true}
+}
+
+// sessionCaps returns the per-session capability intersection the request
+// builder consults for tool-result Part projection: the composition-set value
+// (WithProviderCapabilities) when present, else the adapter's static transmit
+// Capabilities() (the byte-identical pre-T7 default).
+func (p *Provider) sessionCaps() port.ProviderCapabilities {
+	if p.caps != nil {
+		return *p.caps
+	}
+	return p.Capabilities()
 }
 
 // Compile-time assertion that Provider satisfies the port.

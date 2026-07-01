@@ -159,8 +159,8 @@ func TestScopedToolNamesDefaultSetIsReadOnly(t *testing.T) {
 	def := agents.AgentDef{Name: "x"}
 	names, _ := scopedToolNames(def, base, bashScopeMissReason(cfg))
 	sort.Strings(names)
-	// Read-only core tools: Glob, Grep, Read, WebFetch. Edit/Write/Bash dropped.
-	if strings.Join(names, ",") != "Glob,Grep,Read,WebFetch" {
+	// Read-only core tools: FetchMcpResource, Glob, Grep, Read, WebFetch. Edit/Write/Bash dropped.
+	if strings.Join(names, ",") != "FetchMcpResource,Glob,Grep,Read,WebFetch" {
 		t.Fatalf("default set should be the read-only core tools, got %v", names)
 	}
 }

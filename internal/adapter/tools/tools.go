@@ -46,6 +46,9 @@ const (
 // registration in the composition root. The order is the canonical catalog
 // order. Bash is NOT included: it requires a tool.CommandRunner and is optional
 // — add it separately via NewBashTool when a runner is configured.
+//
+// FetchMcpResource (issue #223 Phase 2) is an outbound read like WebFetch, so
+// it rides in BOTH profiles via All() and NoFS().
 func All() []tool.Tool {
 	return []tool.Tool{
 		ReadTool{},
@@ -54,19 +57,23 @@ func All() []tool.Tool {
 		GrepTool{},
 		GlobTool{},
 		WebFetchTool{},
+		FetchMcpResourceTool{},
 	}
 }
 
 // NoFS returns the core tools available in a NO-filesystem session (the "no-fs"
-// session profile): WebFetch only. Every file-touching core tool — Read, Edit,
-// Write, Grep, Glob (and the separately-constructed Bash) — is deliberately
-// absent: a no-FS session has no workspace, so offering them would only generate
-// honest-but-useless not-exist errors and burn turns. The composition root
-// (internal/app registerCoreTools) selects NoFS() vs All() per the session's
-// catalog profile; this is the single definition of the no-FS core surface.
+// session profile): WebFetch + FetchMcpResource. Every file-touching core tool
+// — Read, Edit, Write, Grep, Glob (and the separately-constructed Bash) — is
+// deliberately absent: a no-FS session has no workspace, so offering them
+// would only generate honest-but-useless not-exist errors and burn turns. The
+// composition root (internal/app registerCoreTools) selects NoFS() vs All() per
+// the session's catalog profile; this is the single definition of the no-FS
+// core surface. FetchMcpResource (issue #223 Phase 2) is an outbound read that
+// needs no filesystem, so it stays in the no-FS profile alongside WebFetch.
 func NoFS() []tool.Tool {
 	return []tool.Tool{
 		WebFetchTool{},
+		FetchMcpResourceTool{},
 	}
 }
 

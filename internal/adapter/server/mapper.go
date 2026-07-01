@@ -321,12 +321,156 @@ func toProtoToolCall(c session.ToolCall) *mecatlv1.ToolCall {
 	}
 }
 
-// toProtoToolResult maps a session.ToolResult to its proto form.
+// toProtoToolResult maps a session.ToolResult to its proto form. The typed
+// tool-result blocks on r.Parts (text/image/audio/resource-link/embedded-resource/
+// structured-content) map 1:1 to the proto ToolResult.blocks field via
+// blocksToProto; the legacy Content string is carried verbatim alongside (both may
+// be present — consumers prefer blocks when non-empty, falling back to content).
+// structured_content is DERIVED from a BlockStructuredContent block's Text if one
+// is present (T3 stores structured content as such a block in Parts), so the
+// dedicated proto field stays populated even for consumers that read only it.
+// A nil/empty Parts yields nil blocks — a legacy string-only result is
+// byte-identical to the pre-Parts shape.
 func toProtoToolResult(r session.ToolResult) *mecatlv1.ToolResult {
-	return &mecatlv1.ToolResult{
+	out := &mecatlv1.ToolResult{
 		CallId:  string(r.CallID),
 		Content: r.Content,
 		IsError: r.IsError,
+		Blocks:  blocksToProto(r.Parts),
+	}
+	if sc := structuredContentText(r.Parts); sc != "" {
+		out.StructuredContent = sc
+	}
+	return out
+}
+
+// structuredContentText returns the Text of the FIRST BlockStructuredContent part
+// in parts, or "" if none. It derives the proto ToolResult.structured_content field
+// from the structured block T3 stores in Parts (there is no separate field on
+// session.ToolResult for it).
+func structuredContentText(parts []session.Content) string {
+	for _, p := range parts {
+		if p.BlockKind == session.BlockStructuredContent {
+			return p.Text
+		}
+	}
+	return ""
+}
+
+// blocksToProto maps domain []session.Content tool-result blocks to proto
+// ContentBlock. Each block kind maps to its ContentBlock_Kind enum; all fields
+// (MIMEType/Data/URL/Text/Name/Title/Description/Size/Audience/Priority/
+// LastModified) are copied verbatim. A nil/empty input yields nil.
+func blocksToProto(parts []session.Content) []*mecatlv1.ContentBlock {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]*mecatlv1.ContentBlock, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, &mecatlv1.ContentBlock{
+			Kind:         blockKindToProto(p.BlockKind),
+			MimeType:     p.MIMEType,
+			Data:         p.Data,
+			Url:          p.URL,
+			Text:         p.Text,
+			Name:         p.Name,
+			Title:        p.Title,
+			Description:  p.Description,
+			Size:         p.Size,
+			Audience:     p.Audience,
+			Priority:     p.Priority,
+			LastModified: p.LastModified,
+		})
+	}
+	return out
+}
+
+// blocksFromProto is the symmetric inverse of blocksToProto, mapping proto
+// ContentBlock back to domain []session.Content. Tool results flow server→client
+// only (the loop emits, the relay sends), so there is no inbound tool-result
+// path today; the reverse mapper exists for symmetry and is exercised by the
+// round-trip test. A nil/empty input yields nil.
+func blocksFromProto(pb []*mecatlv1.ContentBlock) []session.Content {
+	if len(pb) == 0 {
+		return nil
+	}
+	out := make([]session.Content, 0, len(pb))
+	for _, b := range pb {
+		if b == nil {
+			continue
+		}
+		out = append(out, session.Content{
+			BlockKind:    blockKindFromProto(b.GetKind()),
+			Kind:         mediaKindFromBlock(b.GetKind()),
+			MIMEType:     b.GetMimeType(),
+			Data:         b.GetData(),
+			URL:          b.GetUrl(),
+			Text:         b.GetText(),
+			Name:         b.GetName(),
+			Title:        b.GetTitle(),
+			Description:  b.GetDescription(),
+			Size:         b.GetSize(),
+			Audience:     b.GetAudience(),
+			Priority:     b.GetPriority(),
+			LastModified: b.GetLastModified(),
+		})
+	}
+	return out
+}
+
+// blockKindToProto maps a session.BlockKind to its proto ContentBlock_Kind enum.
+// An empty/unknown kind maps to KIND_UNSPECIFIED (a legacy media part on a tool
+// result is unexpected but harmless; it round-trips without loss).
+func blockKindToProto(k session.BlockKind) mecatlv1.ContentBlock_Kind {
+	switch k {
+	case session.BlockText:
+		return mecatlv1.ContentBlock_KIND_TEXT
+	case session.BlockImage:
+		return mecatlv1.ContentBlock_KIND_IMAGE
+	case session.BlockAudio:
+		return mecatlv1.ContentBlock_KIND_AUDIO
+	case session.BlockResourceLink:
+		return mecatlv1.ContentBlock_KIND_RESOURCE_LINK
+	case session.BlockEmbeddedResource:
+		return mecatlv1.ContentBlock_KIND_EMBEDDED_RESOURCE
+	case session.BlockStructuredContent:
+		return mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT
+	default:
+		return mecatlv1.ContentBlock_KIND_UNSPECIFIED
+	}
+}
+
+// blockKindFromProto is the inverse of blockKindToProto.
+func blockKindFromProto(k mecatlv1.ContentBlock_Kind) session.BlockKind {
+	switch k {
+	case mecatlv1.ContentBlock_KIND_TEXT:
+		return session.BlockText
+	case mecatlv1.ContentBlock_KIND_IMAGE:
+		return session.BlockImage
+	case mecatlv1.ContentBlock_KIND_AUDIO:
+		return session.BlockAudio
+	case mecatlv1.ContentBlock_KIND_RESOURCE_LINK:
+		return session.BlockResourceLink
+	case mecatlv1.ContentBlock_KIND_EMBEDDED_RESOURCE:
+		return session.BlockEmbeddedResource
+	case mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT:
+		return session.BlockStructuredContent
+	default:
+		return ""
+	}
+}
+
+// mediaKindFromBlock derives the session.MediaKind for an image/audio block kind;
+// returns "" for non-media kinds (the legacy media-part discriminator stays empty
+// for typed tool-result blocks that are not image/audio).
+func mediaKindFromBlock(k mecatlv1.ContentBlock_Kind) session.MediaKind {
+	switch k {
+	case mecatlv1.ContentBlock_KIND_IMAGE:
+		return session.MediaImage
+	case mecatlv1.ContentBlock_KIND_AUDIO:
+		return session.MediaAudio
+	default:
+		return ""
 	}
 }
 
