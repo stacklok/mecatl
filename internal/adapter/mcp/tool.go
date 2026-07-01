@@ -188,6 +188,20 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Wo
 		// unmarshaled it); leave it inert rather than inventing a noisy note.
 	}
 
+	// Fail-closed on an OVER-CAP STRUCTURED (JSON) result. Truncating a JSON
+	// blob would leave the model with a partial, unparseable fragment it can't
+	// reason over, so we surface an actionable tool ERROR pointing at the two
+	// escape hatches (narrow/paginate the remote call, or run it through
+	// CallMcpWithQuery with a jq filter) instead. This runs AFTER the
+	// StructuredContent mirror is appended to modelStr (so a structured result
+	// that includes a JSON-shaped TextContent is also caught) and BEFORE the
+	// truncate call. Error results (res.IsError) are deliberately NOT
+	// fail-closed: an error payload stays string-only and is truncated as today,
+	// so the model still reads the error text and self-corrects.
+	if !res.IsError && len(modelStr) > toolkit.MaxOutputBytes && isStructuredResult(t.outputSchema, res, res.Content) {
+		return session.NewToolError(in.ID, structuredTooLargeError(t.spec.Name, t.server.Name())), nil
+	}
+
 	content := toolkit.Truncate(modelStr, toolkit.MaxOutputBytes)
 
 	// Enforce the per-result block caps (CWE-770). On a violation, drop the
@@ -475,4 +489,94 @@ func largestBlockIndex(parts []session.Content) int {
 		}
 	}
 	return best
+}
+
+// isStructuredResult reports whether the MCP result is structured (JSON-shaped)
+// and therefore must NOT be truncated (truncation would make it unparseable).
+// Three signals, OR'd (any one ⇒ structured):
+//  1. the remote tool advertised an outputSchema (outputSchema non-nil), OR
+//  2. the remote result carried StructuredContent (res.StructuredContent != nil), OR
+//  3. a content block is an EmbeddedResource whose MIME is application/json or
+//     +json, or an EmbeddedResource/TextContent whose trimmed text starts with
+//     '{' or '[' and parses as JSON.
+//
+// (mcpsdk.TextContent carries no MIME type, so for text blocks only the
+// content-based parse applies.) Signal 3's JSON parse only runs when the result
+// is already over-cap (the caller gates it), so the parse cost is justified only
+// when needed.
+func isStructuredResult(outputSchema json.RawMessage, res *mcpsdk.CallToolResult, parts []mcpsdk.Content) bool {
+	// Signal 1: the remote tool advertised an output schema.
+	if len(outputSchema) > 0 {
+		return true
+	}
+	// Signal 2: the result carried StructuredContent.
+	if res != nil && res.StructuredContent != nil {
+		return true
+	}
+	// Signal 3: a content block is JSON by MIME or by content.
+	for _, p := range parts {
+		switch c := p.(type) {
+		case *mcpsdk.TextContent:
+			if textParsesAsJSON(c.Text) {
+				return true
+			}
+		case *mcpsdk.EmbeddedResource:
+			if c.Resource == nil {
+				continue
+			}
+			if isJSONMIME(c.Resource.MIMEType) {
+				return true
+			}
+			if c.Resource.Text != "" && textParsesAsJSON(c.Resource.Text) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isJSONMIME reports whether mime is a JSON media type: "application/json" or
+// any "application/…+json" (or "text/json" — a common variant). An empty mime
+// is not JSON.
+func isJSONMIME(mime string) bool {
+	if mime == "" {
+		return false
+	}
+	switch m := strings.ToLower(strings.TrimSpace(mime)); {
+	case m == "application/json":
+		return true
+	case m == "text/json":
+		return true
+	case strings.HasPrefix(m, "application/") && strings.HasSuffix(m, "+json"):
+		return true
+	}
+	return false
+}
+
+// textParsesAsJSON reports whether the trimmed text starts with '{' or '[' and
+// unmarshals as JSON. It is the content-based fallback for a JSON result that
+// arrives as a bare TextContent with no MIME and no outputSchema.
+func textParsesAsJSON(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	if t[0] != '{' && t[0] != '[' {
+		return false
+	}
+	var v any
+	return json.Unmarshal([]byte(t), &v) == nil
+}
+
+// structuredTooLargeError is the fail-closed message a structured (JSON) result
+// over the output cap surfaces to the model. It names the two escape hatches
+// (narrow/paginate the remote call, or run it through CallMcpWithQuery with a
+// jq filter) so the model has an actionable recovery path.
+func structuredTooLargeError(toolName, serverName string) string {
+	return fmt.Sprintf(
+		"mcp tool %q (server %q) result exceeded the %d-byte output cap and is structured (JSON). "+
+			"Truncating it would make it unparseable, so it was NOT returned. "+
+			"To get the data, either (1) narrow/paginate the call using the remote tool's own filter/pagination parameters, "+
+			"or (2) call it through CallMcpWithQuery with a jq filter to extract only the fields you need (no disk required).",
+		toolName, serverName, toolkit.MaxOutputBytes)
 }

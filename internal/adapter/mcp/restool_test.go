@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -66,6 +67,13 @@ func (f *fakeProvider) GetPrompt(_ context.Context, server, name string, _ map[s
 		return PromptResult{}, errors.New("unknown prompt")
 	}
 	return r, nil
+}
+
+// CallTool is unused by the resource/prompt tool tests; it returns a sentinel
+// error so an accidental call surfaces clearly rather than reporting a phantom
+// result. The production *Manager implements it against a live session.
+func (fakeProvider) CallTool(_ context.Context, server, toolName string, _ json.RawMessage) (CallResult, error) {
+	return CallResult{}, fmt.Errorf("%w: %q.%q", ErrUnknownServer, server, toolName)
 }
 
 var _ Provider = (*fakeProvider)(nil)

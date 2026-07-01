@@ -79,7 +79,7 @@ func TestNoFSTeamMemberSurface(t *testing.T) {
 			t.Errorf("no-fs member catalog carries %q — a file/shell tool leaked into the file-less member surface", name)
 		}
 	}
-	for _, name := range []string{"WebFetch", "FetchMcpResource", "Remember", "Recall", "SearchMemory", "RememberUser", "RecallUser", "SearchUserModel", "mcp__globe__echo"} {
+	for _, name := range []string{"WebFetch", "FetchMcpResource", "Remember", "Recall", "SearchMemory", "RememberUser", "RecallUser", "SearchUserModel", "mcp__globe__echo", "CallMcpWithQuery"} {
 		if !build.Engine.HasTool(name) {
 			t.Errorf("no-fs member catalog is missing %q — the file-less member surface lost a non-FS family", name)
 		}

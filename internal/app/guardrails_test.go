@@ -321,10 +321,10 @@ func TestGuardrailsModelOnlyShipsDefaultBlock(t *testing.T) {
 	if got == port.HookRunner(inner) {
 		t.Fatal("a guardrails model with no explicit rules must ship the DEFAULT block rules, not stay inert")
 	}
-	// The default set is WebSearch/WebFetch/FetchMcpResource/mcp__* + Bash; assert it compiles to 5.
+	// The default set is WebSearch/WebFetch/FetchMcpResource/CallMcpWithQuery/mcp__* + Bash; assert it compiles to 6.
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
-	if !usedDefaults || len(specs) != 5 {
-		t.Fatalf("model-only must use the 5-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	if !usedDefaults || len(specs) != 6 {
+		t.Fatalf("model-only must use the 6-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeBlock) {
@@ -433,8 +433,8 @@ func TestGuardrailsPostureCouplingDemotesDefaults(t *testing.T) {
 func TestGuardrailsDefaultModeAdvisory(t *testing.T) {
 	cfg := Config{UseMock: true, GuardrailsModel: "checker-model", GuardrailsDefaultMode: "advisory"}
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
-	if !usedDefaults || len(specs) != 5 {
-		t.Fatalf("model-only with defaultMode must still use the 5-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
+	if !usedDefaults || len(specs) != 6 {
+		t.Fatalf("model-only with defaultMode must still use the 6-rule default set; usedDefaults=%v n=%d", usedDefaults, len(specs))
 	}
 	for _, s := range specs {
 		if s.Mode != string(modelhook.ModeAdvisory) {

@@ -95,6 +95,7 @@ var requiredFamilyTools = []string{
 	skills.DraftToolName, // "SkillDraft"
 	"ListMcpResources",
 	"ReadMcpResource",
+	"CallMcpWithQuery",
 	"mcp__globe__echo", // the server-global MCP mount itself
 }
 

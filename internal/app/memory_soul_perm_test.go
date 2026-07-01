@@ -101,6 +101,38 @@ func TestConfiguredAskAndDenyOverrideFetchMcpResourceAllow(t *testing.T) {
 	}
 }
 
+// TestCallMcpWithQueryDefaultIsFloorAllow proves CallMcpWithQuery (issue #223)
+// resolves to Allow via the built-in floor, both directly and via the production
+// mainRules assembly — matching the WebSearch/WebFetch posture (config-overridable;
+// the guardrail default block set covers the exfil/injection risk, not an Ask).
+func TestCallMcpWithQueryDefaultIsFloorAllow(t *testing.T) {
+	if got := evalDefault(t, "CallMcpWithQuery"); got != governance.Allow {
+		t.Fatalf("CallMcpWithQuery should default to Allow (defaultRules), got %v", got)
+	}
+	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
+	got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
+		session.NewToolCall("id", "CallMcpWithQuery", json.RawMessage(`{}`)), nil).Effect
+	if got != governance.Allow {
+		t.Fatalf("CallMcpWithQuery should default to Allow (mainRules production assembly), got %v", got)
+	}
+}
+
+// TestConfiguredAskAndDenyOverrideCallMcpWithQueryAllow proves a configured
+// Ask or Deny in a higher scope beats the CallMcpWithQuery floor-Allow (the
+// floor is config-overridable; deny-dominant). Mirrors the FetchMcpResource override.
+func TestConfiguredAskAndDenyOverrideCallMcpWithQueryAllow(t *testing.T) {
+	for _, eff := range []governance.Effect{governance.Ask, governance.Deny} {
+		rules := append(defaultRules(),
+			governance.Rule{Scope: governance.ScopeUser, Tool: "CallMcpWithQuery", Effect: eff})
+		policy := permpolicy.NewPolicy(rules, nil)
+		got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
+			session.NewToolCall("id", "CallMcpWithQuery", json.RawMessage(`{}`)), nil)
+		if got.Effect != eff {
+			t.Fatalf("a configured (ScopeUser) %v on CallMcpWithQuery must beat the floor Allow; got %v", eff, got.Effect)
+		}
+	}
+}
+
 // TestConfiguredAskAndDenyOverrideWebSearchAllow proves a configured Ask or Deny in
 // a higher scope beats the WebSearch floor-Allow (the floor is config-overridable;
 // deny-dominant). Mirrors the memory-allow override invariant.

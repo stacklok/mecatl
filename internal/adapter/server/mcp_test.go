@@ -51,6 +51,12 @@ func (f *fakeProvider) GetPrompt(_ context.Context, srv, name string, args map[s
 	return f.getFn(srv, name, args)
 }
 
+// CallTool is unused by the inspection RPC tests; it returns a sentinel error
+// so an accidental call surfaces clearly rather than reporting a phantom result.
+func (fakeProvider) CallTool(_ context.Context, srv, name string, _ json.RawMessage) (mcp.CallResult, error) {
+	return mcp.CallResult{}, fmt.Errorf("%w: %q.%q", mcp.ErrUnknownServer, srv, name)
+}
+
 // cannedProvider returns a fakeProvider with two servers, per-server and union
 // resource/prompt snapshots, and read/get funcs covering happy + error cases.
 func cannedProvider() *fakeProvider {

@@ -2817,6 +2817,59 @@ for model-authored structured output; MCP `outputSchema` is arbitrary
 server-provided full JSON Schema and `ValidateJSON` would silently under-enforce
 — a second, weaker path).
 
+### MCP structured results: fail-closed + CallMcpWithQuery (ADR 0063)
+
+The size bound above is honest for **unstructured text** (a truncated string with a
+marker is still a string) but dishonest for a **structured (JSON)** result: truncating
+a JSON blob mid-token leaves the model with an unparseable fragment it cannot reason
+over. ADR 0063 closes that gap with two environment-agnostic tiers (no local-disk
+dependency — `mecak8s` is storage-free, ADR 0048; the no-FS profile, issue #55, has no
+filesystem to spill to):
+
+- **Fail-closed on a structured result that exceeds `MaxOutputBytes`.**
+  `internal/adapter/mcp/tool.go` (`remoteTool.Execute`) returns an actionable tool
+  ERROR (not a truncated blob) when a structured result is over-cap, naming the two
+  escape hatches (narrow/paginate the remote call; or `CallMcpWithQuery` with a jq
+  filter). A result is "structured" if **any** of three signals fire (OR'd):
+  (1) the remote tool advertised an `outputSchema`; (2) the result carried
+  `StructuredContent`; (3) a content block is JSON by MIME (`application/json`,
+  `text/json`, any `+json`) or by text-parse (trimmed text starts with `{`/`[` and
+  `json.Unmarshal`s). Signal 3's text-parse only runs when the result is already
+  over-cap, so the cost is paid only when needed. **Unstructured text still truncates
+  with a marker** (the existing behaviour is unchanged), and **error results
+  (`res.IsError`) are NOT fail-closed** — an error payload stays string-only and
+  truncates so the model still reads the error text and self-corrects.
+- **`CallMcpWithQuery` meta-tool** (`internal/adapter/mcp/callmcpwithquery.go`): calls
+  a remote MCP tool and filters its JSON result through a **jq expression in memory
+  (no disk)** before it enters context. Read-only (slots into read-parallel dispatch,
+  survives the plan-mode catalog filter), registered in BOTH profiles
+  (`internal/app/catalog.go` `mountGlobalMCP`, gated on the manager exposing ≥1 tool),
+  floor-`Allow` (`ScopeBuiltinDefault`, config-overridable) in `internal/app/build.go`,
+  and in the guardrail default block set (pre+post, mirroring `mcp__*`) in
+  `internal/app/guardrails.go`. jq is a sandboxed `github.com/itchyny/gojq` (pure Go,
+  MIT) wrapper at `internal/adapter/mcp/jq/jq.go`: `gojq.Parse` + `gojq.RunWithContext`
+  WITHOUT `WithModuleLoader`/`WithInputIter`/`WithEnvironLoader` (no file/stdin/env
+  access), ctx-deadline-bounded (default 5s), input ≤ 20 MiB (`MaxInputBytes`), output
+  ≤ ~100 KiB (`MaxOutputBytes`) so a too-broad filter doesn't move the context-budget
+  problem from input to output. The JSON input fed to jq is chosen by **precedence**:
+  `StructuredContent` (the typed, schema-validated view) → the first JSON-parseable
+  `Text` content block → a **loud error** (a non-JSON result is never silently
+  filtered). A remote tool-level error (`IsError`) is surfaced verbatim (truncated)
+  **pre-filter** — the model asked to filter a failed call; it is told the call failed.
+  The filtered output still runs through `toolkit.Truncate`, so the size bound holds.
+
+`Provider.CallTool` + `CallResult` (`internal/adapter/mcp/calltool.go`) widen the MCP
+adapter so `CallMcpWithQuery` can fetch the **untruncated** raw result (a jq filter
+needs the full JSON to narrow). `CallResult` carries no `mcpsdk` types (so
+`internal/app` consumes it without the SDK), and it is an **internal adapter** widening
+— no `engine/` API, no `port.LLMRequest` field, no proto change. `gojq` is a new
+root-module dep (the engine module's dep closure, ADR 0036, is untouched — the `jq`
+package is host-repo only). The model should prefer narrowing the remote call with its
+own pagination/filter params when possible; `CallMcpWithQuery` is the escape hatch when
+the remote tool offers none (it saves the context budget, not the remote-hop
+bandwidth). See ADR 0063 for the rejected alternatives (persist-to-scratch + `jq(1)`,
+hand-rolled JSON-path, shell-out to `jq(1)`, a general `QueryJson` tool).
+
 ## Composition — `internal/app/` (multi-provider — see `MULTI-PROVIDER.md`)
 
 The single shared assembly of provider + catalog + policy + engine into a `server.Service`

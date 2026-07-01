@@ -263,7 +263,7 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 		offered[name] = true
 	}
 	toolsMu.Unlock()
-	for _, want := range []string{"WebFetch", "FetchMcpResource", "mcp__globe__echo"} {
+	for _, want := range []string{"WebFetch", "FetchMcpResource", "mcp__globe__echo", "CallMcpWithQuery"} {
 		if !offered[want] {
 			t.Errorf("child request tool specs are missing %q (got %v)", want, offeredTools)
 		}
@@ -637,6 +637,10 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 		// (search-then-fetch discovery). FetchMcpResource is an outbound read with no
 		// filesystem need (issue #223 Phase 2).
 		"WebFetch", "FetchMcpResource", "WebSearch",
+		// CallMcpWithQuery (issue #223): the fail-closed escape hatch for an over-cap
+		// structured MCP result. Cloud-native portable (no disk), so a no-FS child that
+		// hits the fail-closed error has the tool to recover — no dead end.
+		"CallMcpWithQuery",
 	}
 	for _, mt := range mgr.Tools() {
 		want = append(want, mt.Spec().Name)

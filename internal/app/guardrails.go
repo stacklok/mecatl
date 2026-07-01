@@ -176,18 +176,22 @@ func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.L
 var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	// Outbound search/fetch args (a query/URL carrying a secret) AND inbound results
 	// (a fetched page / search snippet carrying an injection).
-	{Match: "WebSearch", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeBlock)},
+	{Match: "WebSearch", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	// WebFetch's risk is overwhelmingly the INBOUND page (injection); its outbound arg
 	// is just a URL. Post only.
-	{Match: "WebFetch", Phases: []string{"post"}, Mode: string(modelhook.ModeBlock)},
+	{Match: "WebFetch", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	// FetchMcpResource (issue #223 Phase 2): the same class as WebFetch — a client
 	// fetch of an https:// resource URI an MCP tool surfaced as a resource_link. The
 	// risk is the INBOUND fetched content (injection); its outbound arg is just a URI.
 	// Post only, mirroring WebFetch.
-	{Match: "FetchMcpResource", Phases: []string{"post"}, Mode: string(modelhook.ModeBlock)},
+	{Match: "FetchMcpResource", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
+	// CallMcpWithQuery (issue #223): the same class as mcp__* — it calls a remote
+	// MCP tool. Outbound args (exfil into the remote call body) AND inbound results
+	// (injection in the server's filtered response), so pre+post, mirroring mcp__*.
+	{Match: "CallMcpWithQuery", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	// All MCP tools, both directions: outbound args (exfil into an MCP call body) and
 	// inbound results (injection in an MCP server's response).
-	{Match: "mcp__*", Phases: []string{"pre", "post"}, Mode: string(modelhook.ModeBlock)},
+	{Match: "mcp__*", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	// Local shell (the #1 blast radius). Pre only — inspect the OUTBOUND command for a
 	// mutating/outward action (e.g. `gh pr merge`, a push, a destructive write). The
 	// read-only pre-filter (SkipReadOnlyBash) skips the checker for a confidently
@@ -197,7 +201,7 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	// rubric (defaultPrePrompt) false-positives on ordinary local writes (a local write
 	// is data STAYING on the machine, not exfiltration), so Bash gets a concrete-trigger,
 	// fail-toward-safe rubric instead. ADR 0060.
-	{Match: "Bash", Phases: []string{"pre"}, Mode: string(modelhook.ModeBlock), SkipReadOnlyBash: true, Prompt: modelhook.DefaultBashPrePrompt},
+	{Match: "Bash", Phases: []string{string(modelhook.PhasePre)}, Mode: string(modelhook.ModeBlock), SkipReadOnlyBash: true, Prompt: modelhook.DefaultBashPrePrompt},
 }
 
 // effectiveGuardrailSpecs returns the rule specs to compile: the operator's explicit

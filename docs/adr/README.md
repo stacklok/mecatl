@@ -58,6 +58,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
 
+### MCP
+- [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
+- [0057 — MCP server notifications](./0057-mcp-server-notifications.md)
+- [0059 — MCP typed tool results](./0059-mcp-typed-tool-results.md)
+- [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
+
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)
 - [0019 — Perf tracking](./0019-perf-tracking.md)

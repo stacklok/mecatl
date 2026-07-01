@@ -185,6 +185,15 @@ func mountGlobalMCP(ctx context.Context, cfg Config, cat *tool.Catalog, a catalo
 			"server-global MCP: skipped duplicate tool name(s) (a server advertised a name already registered): "+strings.Join(skipped, ", "),
 			"tools", strings.Join(skipped, ", "), "err", rerr)
 	}
+	// CallMcpWithQuery (issue #223): a meta-tool that calls a remote MCP tool and
+	// filters its JSON result through jq before it enters context. It is gated on
+	// the manager exposing ≥1 tool (meaningless otherwise), NOT on MCPResourceTools
+	// — it is about tools, not resources. Registered in BOTH profiles (no disk).
+	if registered, rerr := mcp.RegisterCallWithQuery(cat, a.globalMgr); rerr != nil {
+		cfg.diag().Log(ctx, port.LevelWarn, "registering CallMcpWithQuery failed", "err", rerr)
+	} else if registered && s.narrate {
+		cfg.diag().Log(ctx, port.LevelInfo, "MCP CallMcpWithQuery ENABLED")
+	}
 	// The MCP resource meta-tools (ListMcpResources/ReadMcpResource) ride the
 	// GLOBAL manager — issue #42 family (6): a selector session must carry them
 	// too when enabled.
@@ -422,6 +431,15 @@ func noFSChildCatalog(ctx context.Context, cfg Config, a catalogAssets) *tool.Ca
 			cfg.diag().Log(ctx, port.LevelWarn,
 				"no-FS child catalog: skipped duplicate MCP tool name(s): "+strings.Join(skipped, ", "),
 				"tools", strings.Join(skipped, ", "), "err", rerr)
+		}
+		// CallMcpWithQuery (issue #223): the fail-closed error an over-cap
+		// structured MCP result surfaces names CallMcpWithQuery as the escape
+		// hatch — a no-FS child that hits it MUST have the tool to recover, or
+		// the error is a dead end. Cloud-native portable (no disk), so it
+		// belongs in the file-less child surface alongside the mcp__* tools,
+		// mirroring mountGlobalMCP's registration.
+		if _, rerr := mcp.RegisterCallWithQuery(cat, a.globalMgr); rerr != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "no-FS child catalog: registering CallMcpWithQuery failed", "err", rerr)
 		}
 	}
 	registerMemoryFamilies(ctx, cfg, cat, a)

@@ -46,7 +46,10 @@ for the perturbing CPU tools only with a hypothesis to confirm.
    server are NOT https and stay server-readonly via `ReadMcpResource`. Do NOT
    try to read a linked raw artifact into model context; report the summary and
    point the user at the link (or fetch an https link only if you genuinely need
-   its contents).
+   its contents). If a perf tool's JSON result is large and you only need a subset
+   of fields, filter it **in memory** with `CallMcpWithQuery` (server + tool +
+   `jq_filter`) rather than narrowing the call — it runs the remote tool and
+   applies a jq filter before the result enters context (ADR 0063).
 
 ## The MCP surface (what is actually there)
 

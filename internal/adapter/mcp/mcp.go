@@ -27,6 +27,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -812,6 +813,15 @@ type Provider interface {
 	ListPrompts(ctx context.Context, server string) ([]Prompt, error)
 	// GetPrompt expands a named prompt with args on the named server.
 	GetPrompt(ctx context.Context, server, name string, args map[string]string) (PromptResult, error)
+	// CallTool invokes a remote tool by name and returns the raw typed result
+	// (content blocks + structured content), BEFORE any model-facing truncation.
+	// Used by CallMcpWithQuery to filter the full result through jq before it
+	// enters model context (remoteTool.Execute truncates/fail-closes, so it
+	// cannot serve that path). Returns ErrUnknownServer (wrapped) for an
+	// unknown server name; transport faults surface verbatim. args (a
+	// json.RawMessage of the remote tool's input) are passed verbatim to the
+	// remote tool.
+	CallTool(ctx context.Context, server, toolName string, args json.RawMessage) (CallResult, error)
 }
 
 // Compile-time assertion that *Manager satisfies Provider.
@@ -890,6 +900,17 @@ func (m *Manager) GetPrompt(ctx context.Context, server, name string, args map[s
 		return PromptResult{}, err
 	}
 	return s.getPrompt(ctx, name, args)
+}
+
+// CallTool implements Provider by routing the raw tool call to the named server.
+// Unlike remoteTool.Execute it returns the UNTRUNCATED raw result so a caller
+// (CallMcpWithQuery) can filter it through jq before it enters model context.
+func (m *Manager) CallTool(ctx context.Context, server, toolName string, args json.RawMessage) (CallResult, error) {
+	s, err := m.byName(server)
+	if err != nil {
+		return CallResult{}, err
+	}
+	return s.callTool(ctx, toolName, args)
 }
 
 // Close closes every connected server, returning the first error encountered

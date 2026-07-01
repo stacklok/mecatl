@@ -2889,7 +2889,7 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	mode := highestSeverityGuardrailMode(specs)
 	out := fmt.Sprintf("guardrails: ON, checker=%s (%s), mode=%s, rules=%d", model, provenance, mode, len(specs))
 	if usedDefaults {
-		out += " (default set: WebSearch, WebFetch, FetchMcpResource, mcp__*)"
+		out += " (default set: WebSearch, WebFetch, FetchMcpResource, CallMcpWithQuery, mcp__*)"
 	}
 	// Posture coupling (ADR 0062): under yolo every rule was demoted to advisory at
 	// compile time (demoteForPosture). Surface that SECURITY DOWNGRADE at startup so an
@@ -5755,6 +5755,12 @@ func defaultRules() []governance.Rule {
 		// client-fetched (they guide to ReadMcpResource), so the floor-Allow only
 		// covers the validated-https path.
 		{Scope: governance.ScopeBuiltinDefault, Tool: "FetchMcpResource", Effect: governance.Allow},
+		// CallMcpWithQuery (issue #223): floor-Allow, same posture as WebSearch —
+		// an outbound read that calls a remote MCP tool and filters the result in
+		// memory (no disk). The guardrail default block set (mcp__*-class) covers
+		// the exfil/injection risk; the floor-Allow is config-overridable to
+		// ask/deny in any scope.
+		{Scope: governance.ScopeBuiltinDefault, Tool: "CallMcpWithQuery", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Subagent", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Bash", Effect: governance.Ask},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Edit", Effect: governance.Ask},
