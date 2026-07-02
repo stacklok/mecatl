@@ -205,3 +205,24 @@ func TestNextFireErrorIsWrapped(t *testing.T) {
 		t.Errorf("error message must mention the offending expression; got: %v", err)
 	}
 }
+
+func TestNextFireImpossibleButParseable(t *testing.T) {
+	// A cron expression that PARSES but can never fire — "0 0 30 2 *" (Feb 30
+	// never exists). robfig's Schedule.Next caps its forward search and returns
+	// the ZERO time with NO error. NextFire must NOT pass that through as
+	// (zeroTime, nil): a zero next-fire is interpreted downstream as "no further
+	// fire → disable the schedule", silently turning an impossible cron into a
+	// completed one. It must fail-closed with an error so the create-seam rejects
+	// it (review #189).
+	from := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
+	got, err := NextFire("0 0 30 2 *", from, time.UTC)
+	if err == nil {
+		t.Fatalf("NextFire(impossible) = %v, want error (never fires)", got)
+	}
+	if !got.IsZero() {
+		t.Errorf("NextFire(impossible) error case must return zero time, got %v", got)
+	}
+	if !strings.Contains(err.Error(), "0 0 30 2 *") {
+		t.Errorf("error must mention the offending expression; got: %v", err)
+	}
+}

@@ -22,6 +22,11 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   budget brake is not affected, and the field is additive observability only.
   Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
   (#213)
+
+## [Unreleased]
+
+### Added
+
 - **`port.ScheduleStore` + value objects** (`Schedule`, `ScheduleSpec`, `TriggerSpec`,
   `ScheduleState`, `ScheduleFire`, `ScheduleProviderSelector`, `ErrScheduleNotFound`,
   `ErrScheduleUnsupported`, `SchedulerLeaderLeaseID`, `TriggerKind`/`TriggerCron`/
@@ -43,11 +48,6 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   No implementation ships yet — adapters are a later
   phase. Classified Added per COMPATIBILITY.md (new exported identifiers in
   `engine/port`). (#189)
-
-## [Unreleased]
-
-### Added
-
 - **`port.ScheduleSpec.Trigger` field added** (`port.TriggerSpec`). Phase 1a
   landed `TriggerSpec` (the Cron XOR OneShot sum type) but did not wire it onto
   `ScheduleSpec`; Phase 1b's conformance suite + reference adapter need the

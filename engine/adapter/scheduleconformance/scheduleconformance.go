@@ -2,9 +2,8 @@
 // port.ScheduleStore interface (scheduled-tasks issue #189, Phase 1b). Adapters
 // (the in-memory reference memschedulestore, a future JSONL store, the gRPC
 // driver client over bufconn, the k8s-backed store) call Run with a factory
-// that constructs a fresh store plus an advance callback that moves the store's
-// notion of time forward, and the suite exercises only the port.ScheduleStore
-// interface through the port's value types.
+// that constructs a fresh store, and the suite exercises only the
+// port.ScheduleStore interface through the port's value types.
 //
 // Importing "testing" in a non-_test.go file is intentional here: this is a
 // test-helper package whose sole purpose is to be imported by adapter tests,
@@ -19,11 +18,10 @@
 // the wire is one adapter. This is the SECOND adapter-validation pattern after
 // leases (leaseconformance), and mirrors its discipline byte-for-byte.
 //
-// TIME: the suite never sleeps. It expresses "the schedule is now due" / "the
-// slot was missed" by calling the factory-supplied advance(d) callback, which
-// pushes the store's injected clock (or, for a real-clock adapter, the real
-// wall clock) forward by d. A fake-clock adapter advances instantly; a
-// real-clock adapter may implement advance as a short real sleep.
+// TIME: the suite never sleeps. Every port.ScheduleStore method takes `now` as
+// an explicit argument, so the suite expresses "the schedule is now due" / "the
+// slot was missed" by passing explicit time.Time values to Due/Claim — no clock,
+// no advance callback.
 //
 // CRON: the store is parser-free (Claim's nextFire is caller-computed), but the
 // suite is a test-helper package and IS allowed to import engine/adapter/cronparse
@@ -58,25 +56,16 @@ import (
 const sampleCron = "* * * * *"
 
 // Run executes the shared ScheduleStore conformance table against the store
-// produced by newStore. newStore returns a fresh, isolated store plus an
-// advance callback that moves THAT store's clock forward by the given duration.
-// Both must be wired to the same time source (the store reads `now` via its
-// injected port.Clock; advance moves that same clock).
-func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(time.Duration))) {
+// produced by newStore. newStore returns a fresh, isolated store. Every
+// port.ScheduleStore method takes `now` as an explicit argument, so the suite
+// controls time DIRECTLY by passing time.Time values to Due/Claim — there is no
+// clock to advance, and the factory needs no advance callback.
+func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 	t.Helper()
 	ctx := context.Background()
 
-	// now returns the store's current time by advancing a fresh store's clock
-	// to a known epoch and reading it back; the factory's advance is the only
-	// way to move time, so the suite seeds each subtest with a fresh store and
-	// computes `now` off the factory's clock via a sentinel advance of zero.
-	// Simpler: the suite passes time.Time values explicitly to Due/Claim and
-	// uses advance only to express "the clock moved past NextFireAt". The
-	// store's own clock is read internally by adapters that need it; the port
-	// passes `now` as an argument, so the suite controls time directly.
-
 	t.Run("save/load round-trips spec and state", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		in := port.Schedule{
 			Spec: port.ScheduleSpec{
 				Name:      "conf-sched-rt",
@@ -106,7 +95,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 		// The port doc: "the State half is preserved on overwrite (a Save with
 		// a fresh State does not reset firing progress — call Delete + Save to
 		// reset)." A re-Save with a zero State MUST NOT clobber prior progress.
-		s, _ := newStore(t)
+		s := newStore(t)
 		const name = "conf-sched-preserve"
 		first := port.Schedule{
 			Spec: port.ScheduleSpec{Name: name, Prompt: "v1", Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_060, 0)}},
@@ -155,8 +144,50 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 		}
 	})
 
+	t.Run("new schedule defaults to enabled; explicit disabled honored", func(t *testing.T) {
+		// The port contract: a NEW schedule saved with a zero State is active by
+		// default (State.Enabled defaulted true), but an explicit disabled State
+		// (Enabled=false with any non-zero State field) is honored verbatim. All
+		// backends must agree on this create-time default — it is the behavior most
+		// likely to diverge, so pin it here rather than only in each adapter's own
+		// tests.
+		s := newStore(t)
+
+		// (a) zero State on a new schedule → enabled by default.
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: "conf-new-default", Prompt: "p", Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_060, 0)}},
+			State: port.ScheduleState{}, // zero — the create-seam default applies.
+		}); err != nil {
+			t.Fatalf("Save (default): %v", err)
+		}
+		got, err := s.Load(ctx, "conf-new-default")
+		if err != nil {
+			t.Fatalf("Load (default): %v", err)
+		}
+		if !got.State.Enabled {
+			t.Errorf("new schedule with zero State: Enabled = false, want true (create default)")
+		}
+
+		// (b) explicit disabled State on a new schedule → honored (not flipped to
+		// enabled). A non-zero NextFireAt disambiguates "caller set the State" from
+		// "zero State".
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: "conf-new-disabled", Prompt: "p", Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_060, 0)}},
+			State: port.ScheduleState{NextFireAt: time.Unix(1_700_000_060, 0), Enabled: false},
+		}); err != nil {
+			t.Fatalf("Save (disabled): %v", err)
+		}
+		got, err = s.Load(ctx, "conf-new-disabled")
+		if err != nil {
+			t.Fatalf("Load (disabled): %v", err)
+		}
+		if got.State.Enabled {
+			t.Errorf("new schedule with explicit disabled State: Enabled = true, want false (honored)")
+		}
+	})
+
 	t.Run("load not-found wraps ErrScheduleNotFound", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		_, err := s.Load(ctx, "conf-sched-missing")
 		if !errors.Is(err, port.ErrScheduleNotFound) {
 			t.Fatalf("Load(unknown) = %v, want ErrScheduleNotFound", err)
@@ -164,7 +195,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("delete is idempotent", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		const name = "conf-sched-del"
 		if err := s.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: name, Prompt: "x", Trigger: port.TriggerSpec{OneShot: time.Unix(1, 0)}}}); err != nil {
 			t.Fatalf("Save: %v", err)
@@ -182,7 +213,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("list returns all saved schedules", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		names := []string{"conf-sched-list-a", "conf-sched-list-b", "conf-sched-list-c"}
 		for i, n := range names {
 			if err := s.Save(ctx, port.Schedule{
@@ -210,7 +241,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("due filters on NextFireAt and Enabled and MaxFires", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		// due: NextFireAt in the past, enabled, no MaxFires cap.
 		due := port.Schedule{Spec: port.ScheduleSpec{Name: "conf-sched-due", Prompt: "p", Trigger: port.TriggerSpec{OneShot: now.Add(-time.Second)}}}
@@ -255,7 +286,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("claim is the at-most-once atomic advance", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		const name = "conf-sched-claim"
 		// A recurring cron: next fire after `now` is one minute on.
@@ -309,7 +340,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("claim excludes the slot from due", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		const name = "conf-sched-claim-due"
 		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
@@ -354,7 +385,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 		// already-advanced state without erroring would be a re-claim bug (it
 		// would let a peer believe it won the slot). Documented here so all
 		// adapters agree.
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		const name = "conf-sched-atmostonce"
 		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
@@ -377,7 +408,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("claim not-found wraps ErrScheduleNotFound", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		_, err := s.Claim(ctx, "conf-sched-claim-missing", now, now.Add(time.Minute))
 		if !errors.Is(err, port.ErrScheduleNotFound) {
@@ -386,7 +417,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("record fire updates last session and is idempotent", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		const name = "conf-sched-record"
 		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
@@ -449,7 +480,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("record fire not-found wraps ErrScheduleNotFound", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		fire := port.ScheduleFire{
 			ID:           "fire-orphan",
 			ScheduleName: "conf-sched-deleted-before-record",
@@ -470,7 +501,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("max fires exhaustion disables on the final claim", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		const name = "conf-sched-maxfires"
 		next1, err := cronparse.NextFire(sampleCron, now, time.UTC)
@@ -523,7 +554,7 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 	})
 
 	t.Run("one-shot fires once then disables", func(t *testing.T) {
-		s, _ := newStore(t)
+		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)
 		const name = "conf-sched-oneshot"
 		// A one-shot: the caller passes nextFire=zero (no further fire). Claim
@@ -570,11 +601,11 @@ func Run(t *testing.T, newStore func(t *testing.T) (port.ScheduleStore, func(tim
 		// `now` (NOT from the stale past NextFireAt). The caller hands the
 		// cronparse-from-now nextFire to Claim; the suite asserts the new
 		// NextFireAt is strictly after `now`.
-		s, _ := newStore(t)
+		s := newStore(t)
 		stale := time.Unix(1_700_000_000, 0)
-		// The clock has moved an hour past the stale NextFireAt — the slot was
-		// missed. advance is the suite's time-mover; we save with a past
-		// NextFireAt directly and Claim at the post-gap `now`.
+		// `now` is an hour past the stale NextFireAt — the slot was missed. The
+		// suite passes explicit time.Time values: we save with a past NextFireAt
+		// directly and Claim at the post-gap `now`.
 		now := stale.Add(time.Hour)
 		const name = "conf-sched-misfire"
 		next, err := cronparse.NextFire(sampleCron, now, time.UTC)

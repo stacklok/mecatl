@@ -2,7 +2,6 @@ package redisstore_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
@@ -15,11 +14,10 @@ import (
 // table against the Redis-backed schedule store over an in-process miniredis
 // (fully offline). The store shares the session store's *redis.Client; the
 // factory wires a fresh miniredis per subtest so the at-most-once proof is
-// isolated. The advance callback is a no-op — the port methods take `now` as an
-// explicit argument, so the suite controls time directly (no injected clock to
-// move), the same shape as the jsonlstore schedule conformance factory.
+// isolated. The port methods take `now` as an explicit argument, so the suite
+// controls time directly (no injected clock to move).
 func TestRedisScheduleStoreConformance(t *testing.T) {
-	scheduleconformance.Run(t, func(*testing.T) (port.ScheduleStore, func(time.Duration)) {
+	scheduleconformance.Run(t, func(*testing.T) port.ScheduleStore {
 		mr, err := miniredis.Run()
 		if err != nil {
 			t.Fatalf("miniredis: %v", err)
@@ -30,6 +28,6 @@ func TestRedisScheduleStoreConformance(t *testing.T) {
 			t.Fatalf("redisstore.New: %v", err)
 		}
 		t.Cleanup(func() { _ = st.Close() })
-		return st.ScheduleStore(), func(time.Duration) {}
+		return st.ScheduleStore()
 	})
 }

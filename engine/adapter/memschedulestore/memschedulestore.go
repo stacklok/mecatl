@@ -62,23 +62,21 @@ type Store struct {
 	mu     sync.Mutex
 	scheds map[string]record
 	fires  map[string]port.ScheduleFire
-	clock  port.Clock
 }
 
 // compile-time assertion that Store satisfies the port.
 var _ port.ScheduleStore = (*Store)(nil)
 
-// New constructs an in-memory ScheduleStore with the given clock. The clock is
-// read by adapters that need an internal `now` (none of the port methods take
-// a clock; they take `now` as an explicit argument, so the clock is reserved
-// for a future self-pushing tick helper and is otherwise inert here). A nil
-// clock is a programming error at the only construction sites (composition,
-// tests), so it is not defended here.
-func New(clock port.Clock) *Store {
+// New constructs an in-memory ScheduleStore. Every port.ScheduleStore method
+// takes `now` as an explicit argument, so the store needs no injected clock of
+// its own — time is caller-supplied. (An earlier draft injected a port.Clock
+// reserved for a future self-pushing tick helper, but it was never read; it was
+// dropped rather than carried as dead constructor surface. If a lookahead phase
+// ever needs an internal `now`, re-add the clock then — YAGNI until it exists.)
+func New() *Store {
 	return &Store{
 		scheds: make(map[string]record),
 		fires:  make(map[string]port.ScheduleFire),
-		clock:  clock,
 	}
 }
 

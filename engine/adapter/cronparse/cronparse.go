@@ -42,5 +42,18 @@ func NextFire(expr string, from time.Time, loc *time.Location) (time.Time, error
 	if err != nil {
 		return time.Time{}, fmt.Errorf("cronparse: invalid cron expression %q: %w", expr, err)
 	}
-	return sched.Next(from.In(loc)), nil
+	next := sched.Next(from.In(loc))
+	if next.IsZero() {
+		// robfig's Schedule.Next caps its forward search at ~5 years and returns
+		// the ZERO time (with no error) for a parseable-but-impossible expression
+		// that can never fire — e.g. "0 0 30 2 *" (Feb 30). ParseStandard accepts
+		// these, so without this guard NextFire would return (zeroTime, nil), which
+		// the claim-before-fire contract interprets as "no further fire → disable
+		// the schedule" — silently turning an impossible cron into a completed one
+		// and defeating this package's fail-closed Save-time promise (a schedule
+		// with a bad cron is rejected, never silently never-fires). Surface it as
+		// an error so composition rejects it at Save time.
+		return time.Time{}, fmt.Errorf("cronparse: cron expression %q never fires (impossible schedule)", expr)
+	}
+	return next, nil
 }

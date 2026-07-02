@@ -411,6 +411,17 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	// siblings) — each fire is independent (one failed fire does not block the
 	// others). So we swallow per-fire errors inside fireOne and never return a
 	// non-nil error from the errgroup.
+	//
+	// KNOWN PHASE-1 LIMITATION (issue #189): fireOne drives each fire to a
+	// TERMINAL EvResult (a full agent session — potentially minutes), and this
+	// g.Wait() blocks the tick goroutine until the whole due batch completes.
+	// While blocked the loop cannot re-poll Due (time.Ticker drops intervening
+	// ticks), so a long-running fire delays every OTHER schedule by up to its
+	// duration. This does NOT affect at-most-once (Claim advances NextFireAt
+	// before Fire, so no slot double-fires) — only fire LATENCY under a slow
+	// co-scheduled run. Acceptable for Phase 1's small schedule counts; a later
+	// phase decouples Claim/advance from the drive (hand fires to a background
+	// pool, don't await terminal in the tick). Tracked as a Phase-2 follow-up.
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(s.cfg.MaxConcurrentFires)
 	for _, sched := range due {
@@ -438,10 +449,19 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 		return
 	}
 
-	// Misfire policy: MisfireSkip + a past slot advances NextFireAt WITHOUT
-	// firing. The Claim is still the advance (so the slot is not re-returned by
-	// a peer's Due); we just skip the Fire.
-	skipFire := sched.Spec.Misfire == port.MisfireSkip && sched.State.NextFireAt.Before(now)
+	// Misfire policy: MisfireSkip + a slot missed by MORE THAN the grace window
+	// advances NextFireAt WITHOUT firing. The Claim is still the advance (so the
+	// slot is not re-returned by a peer's Due); we just skip the Fire.
+	//
+	// The grace window matters: Due returns any slot with NextFireAt <= now, and
+	// with a polling tick a genuinely-due slot's NextFireAt is essentially ALWAYS
+	// strictly before `now` (nanosecond equality never happens). Gating skip on a
+	// bare `NextFireAt.Before(now)` would therefore skip EVERY fire — a MisfireSkip
+	// schedule would never fire at all (review #189). The intended semantics is
+	// "skip a slot we missed by a lot (the process was down)", NOT "skip normal
+	// poll jitter". So skip only when the slot is late beyond one tick interval;
+	// a freshly-due slot (missed by < one tick — ordinary poll cadence) still fires.
+	skipFire := sched.Spec.Misfire == port.MisfireSkip && now.Sub(sched.State.NextFireAt) > s.misfireGraceWindow()
 
 	// Singleton overlap check (decision: cross-replica singleton via trial-lease).
 	// Before claiming, if Singleton is true and the prior fire's session is still
@@ -660,6 +680,17 @@ func (s *Scheduler) RunOnceForTest(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	s.tickOnce(eff)
+}
+
+// misfireGraceWindow is the lateness threshold beyond which a MisfireSkip slot
+// is skipped rather than fired. A slot missed by less than this (ordinary poll
+// jitter — Due returns a slot the first tick after NextFireAt, so a fresh slot
+// is always at least slightly late) still fires; a slot missed by more (the
+// process was down across one or more ticks) is the genuine misfire the skip
+// policy targets. It is one tick interval — the coarsest grain at which the loop
+// can distinguish "just became due" from "missed a scheduled window".
+func (s *Scheduler) misfireGraceWindow() time.Duration {
+	return s.cfg.TickInterval
 }
 
 // scheduleLocation loads the IANA timezone for a schedule's cron expression. An

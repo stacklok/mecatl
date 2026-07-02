@@ -31,13 +31,27 @@ var ErrScheduleUnsupported = errors.New("port: scheduled tasks not supported by 
 // PendingFireSessionID is the single-source sentinel Claim stamps on
 // ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
 // RecordFire with the real fire's session id. It is non-empty so the singleton
-// check's lease-acquire path has a recognisable "in-flight" marker (a Claim has
-// happened but RecordFire has not); the scheduler treats a pending LastFireSessionID
-// as "a fire is in its Claim→RecordFire window" and SKIPS (singleton: do not
-// overlap an in-flight fire). Promoting it to one port constant (the same
-// single-source discipline as SchedulerLeaderLeaseID / MemberSessionID) means the
-// three store adapters and the scheduler agree on the exact string by importing
-// it, not by independently declaring a byte-for-byte mirror.
+// check has a recognisable "in-flight" marker (a Claim has happened but
+// RecordFire has not).
+//
+// Singleton interaction: the singleton overlap check is a TRIAL lease acquire on
+// LastFireSessionID (the authoritative cross-replica liveness oracle). The
+// pending sentinel is NOT a real session id, so it cannot be probed by the trial
+// lease. The scheduler therefore does NOT perform the overlap check when
+// LastFireSessionID == PendingFireSessionID: it PROCEEDS with the fire. This is
+// deliberate. The alternative — treat pending as "in-flight, so SKIP the fire" —
+// would wedge a schedule FOREVER after a hard crash between Claim and RecordFire:
+// the sentinel would never clear (a skip does not Claim, so it never advances),
+// and the schedule would be skipped on every subsequent tick. Proceeding instead
+// accepts a NARROW double-fire window (a fire genuinely still inside its short
+// Claim→RecordFire window when the slot next becomes due — normally impossible,
+// since Claim advances NextFireAt past `now`) in exchange for crash-recoverability.
+// A real (non-pending) LastFireSessionID IS probed and the overlap check applies.
+//
+// Promoting it to one port constant (the same single-source discipline as
+// SchedulerLeaderLeaseID / MemberSessionID) means the three store adapters and
+// the scheduler agree on the exact string by importing it, not by independently
+// declaring a byte-for-byte mirror.
 const PendingFireSessionID session.SessionID = "pending"
 
 // SchedulerLeaderLeaseID is the well-known session id the scheduler acquires a

@@ -30,16 +30,27 @@ var ErrScheduleNotFound = fmt.Errorf("jsonlstore: schedule not found: %w", port.
 // schedulePrefix / scheduleFirePrefix are the filename prefixes the schedule
 // store writes under the SAME dir as the session store:
 //
-//	<dir>/schedule-<safeName>.json       — one schedule (Spec+State), latest wins
-//	<dir>/schedule-fire-<safeFireID>.json — one fire record
+//	<dir>/schedule--<safeName>.json      — one schedule (Spec+State), latest wins
+//	<dir>/schedulefire--<safeFireID>.json — one fire record
+//
+// The two prefixes are deliberately NON-OVERLAPPING: neither is a prefix of the
+// other (after "schedule", one continues with "--" and the other with "fire--").
+// An earlier scheme used "schedule-" and "schedule-fire-", where the fire prefix
+// was a SUB-prefix of the schedule prefix plus a name beginning "fire-": a
+// schedule named "fire-foo" produced "schedule-fire-foo.json", COLLIDING with
+// fire id "foo"'s "schedule-fire-foo.json" (one silently overwrote the other),
+// and the List/Due filters skipped it as a fire record — so a schedule named
+// "fire-*" never fired and never listed (review #189). The distinct "schedule--"
+// / "schedulefire--" prefixes remove the overlap entirely. This is unreleased, so
+// there is no on-disk migration.
 //
 // A schedule is a single UPSERTED record (NOT append-only like the session
 // snapshots): a Save overwrites the file in place, because a schedule is one
 // upserted spec+state, not a replayable audit trail. A fire record is write-once
 // (RecordFire is idempotent per fire id, so a second write is a no-op).
 const (
-	schedulePrefix     = "schedule-"
-	scheduleFirePrefix = "schedule-fire-"
+	schedulePrefix     = "schedule--"
+	scheduleFirePrefix = "schedulefire--"
 	scheduleSuffix     = ".json"
 )
 
@@ -139,11 +150,9 @@ func (s *scheduleStore) List(_ context.Context) ([]port.Schedule, error) {
 	}
 	var out []port.Schedule
 	for _, e := range entries {
+		// The "schedule--" and "schedulefire--" prefixes are non-overlapping, so a
+		// fire record never matches the schedule prefix — no fire-skip needed.
 		if e.IsDir() || !strings.HasPrefix(e.Name(), schedulePrefix) || !strings.HasSuffix(e.Name(), scheduleSuffix) {
-			continue
-		}
-		// Skip fire records (they share the schedule- prefix via schedule-fire-).
-		if strings.HasPrefix(e.Name(), scheduleFirePrefix) {
 			continue
 		}
 		rec, err := readScheduleFile(filepath.Join(s.dir, e.Name()))
@@ -169,10 +178,8 @@ func (s *scheduleStore) Due(_ context.Context, now time.Time) ([]port.Schedule, 
 	}
 	out := make([]port.Schedule, 0)
 	for _, e := range entries {
+		// Non-overlapping prefixes (see List) — no fire-skip needed.
 		if e.IsDir() || !strings.HasPrefix(e.Name(), schedulePrefix) || !strings.HasSuffix(e.Name(), scheduleSuffix) {
-			continue
-		}
-		if strings.HasPrefix(e.Name(), scheduleFirePrefix) {
 			continue
 		}
 		rec, err := readScheduleFile(filepath.Join(s.dir, e.Name()))

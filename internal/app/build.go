@@ -1943,8 +1943,19 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 	// Fire is nil here — Build calls SetFire after NewService (the FireFunc closes
 	// over the *server.Service, which does not exist yet at this point).
 	sched := scheduler.New(scfg)
+	if sessionLease == nil {
+		// No lease backend: the scheduler ticks standalone and the store's Claim
+		// mutex is per-PROCESS only. On a single replica that is correct (the
+		// Claim fence gives at-most-once within the process); with MULTIPLE
+		// replicas on a shared store (e.g. jsonlstore on a shared --store-dir) each
+		// replica runs its own ticker with no cross-process leader gate, so every
+		// slot fires once PER replica (double-fire). Warn honestly, mirroring the
+		// stand-down / standalone posture the lease paths already log at Start.
+		cfg.diag().Log(context.Background(), port.LevelWarn, "scheduler: enabled with no lease backend — single-replica by affinity; UNSAFE with multiple replicas on a shared store (no cross-process fence → double-fire). Configure a lease backend (e.g. redis) for multi-replica scheduling.",
+			"owner", leaseOwner)
+	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, "scheduler: enabled",
-		"tick", scfg.TickInterval, "maxConcurrentFires", scfg.MaxConcurrentFires, "owner", leaseOwner)
+		"tick", scfg.TickInterval, "maxConcurrentFires", scfg.MaxConcurrentFires, "owner", leaseOwner, "lease", sessionLease != nil)
 	return sched, func() { _ = sched.Stop() }, nil
 }
 

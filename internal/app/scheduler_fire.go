@@ -75,6 +75,18 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
 		}
+		// Release the fire session's process-scoped resources — its cross-process
+		// session lease + renewer goroutine and its per-session engine — once the
+		// fire returns, while KEEPING the durable snapshot for pull-only result
+		// delivery (decision #8; CloseSession does NOT delete the persisted session,
+		// so ScheduleStore.LoadFire + SessionStore.Load still serve the outcome).
+		//
+		// Without this, run-entry leases are held for the whole process lifetime
+		// (released ONLY by CloseSession/shutdown, never per-run — service.go), so on
+		// a lease-backed deployment every fire would leak a held lease + renewer AND
+		// break Singleton: the next fire's trial-acquire on this still-renewed lease
+		// would return ErrLeaseHeld and skip forever (review #189).
+		defer svc.CloseSession(sess.ID)
 
 		run, err := svc.StartRunContent(ctx, sess.ID, sched.Spec.Prompt, sched.Spec.Parts)
 		if err != nil {
@@ -109,10 +121,13 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 }
 
 // newFireID mints a per-fire identifier: "sched--<name>-<UTC compact>-<randhex>".
-// It doubles as the session id (decision #7: a schedule fire's session id IS its
-// fire id, prefixed "sched--" so it is distinguishable from operator/child
-// sessions). The random suffix keeps two fires of the same schedule in the same
-// second distinct.
+// It is used ONLY on the create-FAILURE fallback path (fireFailed), so a fire
+// that never minted a session still has a non-empty, unique RecordFire key. On
+// the SUCCESS path the fire id IS the session id minted by
+// CreateSessionWithProfile (decision #7), which in Phase 1 is an ordinary random
+// id — the "sched--" session-id prefix awaits a session-id override on
+// CreateSessionWithProfile (Phase 2). The random suffix keeps two failed fires of
+// the same schedule in the same second distinct.
 func newFireID(name string, now time.Time) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])

@@ -95,13 +95,21 @@ records them as a frozen point-in-time record; current behaviour lives in
    it stores the raw expression verbatim and never interprets it; the CALLER
    (composition) computes the next fire and hands it to `Claim`.
 
-7. **`sched--` per-fire ids.** Each fire mints a fresh top-level session
-   (`sched--<schedule>-<fire>`) via `Service.CreateSessionWithProfile` +
+7. **Per-fire session ids (fire id IS the session id).** Each fire mints a fresh
+   top-level session via `Service.CreateSessionWithProfile` +
    `Service.StartRunContent` with subagent-grade `RunOptions`. There is no
    "schedule session" reused across fires — each fire is a fresh, bounded,
    fully-recoverable run. The fire's full conversation/state lives in the
    `SessionStore` under that id; the `ScheduleFire` record is the
    schedule-indexed pointer to it plus the terminal stop reason.
+   **Phase-1 caveat:** on the SUCCESS path the id is whatever
+   `CreateSessionWithProfile` mints (an ordinary random session id), NOT a
+   `sched--<schedule>-<fire>` id. Minting a `sched--`-prefixed id (for the GC
+   retention family + at-a-glance provenance) needs a session-id OVERRIDE on
+   `CreateSessionWithProfile` — a server-API change deferred to Phase 2. The
+   `sched--…` helper (`newFireID`) is used ONLY on the create-failure fallback
+   path today, so a fire has a non-empty, unique record key even when no session
+   was minted.
 
 8. **Pull-only delivery v1.** A caller polls `LoadFire` (or `List`, future) to
    discover what a fire produced, rather than the store pushing results. The
@@ -161,6 +169,27 @@ misfire".
   double-tick). The lease is DERIVED state: a restarted process re-acquires on the
   next `Start`; a crashed holder's lease lapses after the TTL and a survivor
   takes over.
+
+- **A long-running fire delays other schedules' fire latency (Phase-1 limitation).**
+  The tick loop drives each due fire to a terminal `EvResult` and awaits the whole
+  due batch before re-polling `Due`, so a fire that runs for minutes delays every
+  other schedule's fire by up to its duration. This never affects at-most-once
+  (the `Claim` advances `NextFireAt` before the fire runs), only fire LATENCY.
+  Acceptable for Phase 1's small schedule counts; a later phase decouples the
+  `Claim`/advance from the drive (a background fire pool) so the tick keeps polling.
+
+- **`MisfireSkip` skips only slots missed beyond a grace window.** Because `Due`
+  returns any slot with `NextFireAt <= now`, a freshly-due slot is essentially
+  always slightly late under a polling tick. The skip therefore fires only when a
+  slot is late by more than one tick interval (a genuine missed window — the
+  process was down), not on ordinary poll jitter; otherwise a `MisfireSkip`
+  schedule would never fire at all.
+
+- **The scheduler warns when enabled with no lease backend.** With no lease wired
+  the tick loop runs standalone and the store's `Claim` mutex is per-process only,
+  so multiple replicas on a shared store double-fire. This is safe on a single
+  replica (single-replica by affinity) but a composition-time WARN names the
+  multi-replica hazard rather than failing silently.
 
 - **Fresh-context-per-fire v1.** Each fire is a fresh session — no carried
   conversation, no carried memory of the prior fire. A schedule that needs

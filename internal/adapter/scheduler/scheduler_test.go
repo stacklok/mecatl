@@ -121,7 +121,7 @@ func newTestScheduler(t *testing.T, store port.ScheduleStore, clk port.Clock, fi
 func TestFireOnceAndAdvances(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 	s := newTestScheduler(t, store, clk, fire)
 
@@ -177,7 +177,7 @@ func TestFireOnceAndAdvances(t *testing.T) {
 func TestAtMostOnceStandalone(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fireA := &fireStub{}
 	fireB := &fireStub{}
 	sA := newTestScheduler(t, store, clk, fireA)
@@ -232,7 +232,7 @@ func TestAtMostOnceStandalone(t *testing.T) {
 func TestStandDownOnLeaseHeld(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 
 	// A leader lease backend already held by "owner-A".
@@ -274,7 +274,7 @@ func TestStandDownOnLeaseHeld(t *testing.T) {
 func TestMisfireFireOnceNow(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 	s := newTestScheduler(t, store, clk, fire)
 
@@ -311,15 +311,18 @@ func TestMisfireFireOnceNow(t *testing.T) {
 	}
 }
 
-// TestMisfireSkip: MisfireSkip + past NextFireAt → Claim advances, NO fire.
+// TestMisfireSkip: MisfireSkip + a slot missed beyond the grace window (the
+// process was down) → Claim advances, NO fire.
 func TestMisfireSkip(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 	s := newTestScheduler(t, store, clk, fire)
 
-	past := clk.Now().Add(-time.Hour)
+	// The test scheduler's TickInterval is 1h, so the misfire grace window is 1h.
+	// A slot missed by 2h is clearly beyond it — a genuine missed window, skipped.
+	past := clk.Now().Add(-2 * time.Hour)
 	if err := store.Save(context.Background(), port.Schedule{
 		Spec: port.ScheduleSpec{
 			Name:    "skip",
@@ -335,7 +338,7 @@ func TestMisfireSkip(t *testing.T) {
 	s.RunOnceForTest(context.Background())
 
 	if got := fire.count(); got != 0 {
-		t.Fatalf("fires = %d, want 0 (MisfireSkip)", got)
+		t.Fatalf("fires = %d, want 0 (MisfireSkip beyond grace)", got)
 	}
 	loaded, err := store.Load(context.Background(), "skip")
 	if err != nil {
@@ -354,12 +357,50 @@ func TestMisfireSkip(t *testing.T) {
 	}
 }
 
+// TestMisfireSkipFreshSlotStillFires: a MisfireSkip schedule whose slot just
+// became due (missed by LESS than the grace window — ordinary poll jitter) still
+// FIRES. This is the regression guard for the bug where a bare
+// `NextFireAt.Before(now)` skipped every fire, so a MisfireSkip schedule never
+// fired at all (review #189).
+func TestMisfireSkipFreshSlotStillFires(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	// Missed by one minute — far inside the 1h grace window: a freshly-due slot,
+	// which MisfireSkip must still fire (not treat as a missed window).
+	fresh := clk.Now().Add(-time.Minute)
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:    "skip-fresh",
+			Prompt:  "x",
+			Trigger: port.TriggerSpec{Cron: "* * * * *"},
+			Misfire: port.MisfireSkip,
+		},
+		State: port.ScheduleState{NextFireAt: fresh, Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s.RunOnceForTest(context.Background())
+
+	if got := fire.count(); got != 1 {
+		t.Fatalf("fires = %d, want 1 (fresh MisfireSkip slot must still fire)", got)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // TestMaxFiresExhaustion: after N fires, the schedule is disabled (Claim
 // returns not-found / Due no longer returns it).
 func TestMaxFiresExhaustion(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 	s := newTestScheduler(t, store, clk, fire)
 
@@ -415,7 +456,7 @@ func TestMaxFiresExhaustion(t *testing.T) {
 func TestOneShotFiresOnceThenDisabled(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 	s := newTestScheduler(t, store, clk, fire)
 
@@ -458,7 +499,7 @@ func TestOneShotFiresOnceThenDisabled(t *testing.T) {
 func TestMaxConcurrentFiresBoundsFanout(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	block := make(chan struct{})
 	fire := &fireStub{blockCh: block}
 	s := scheduler.New(scheduler.Config{
@@ -524,7 +565,7 @@ func TestMaxConcurrentFiresBoundsFanout(t *testing.T) {
 func TestStopJoinsInflightFires(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	release := make(chan struct{})
 	entered := make(chan struct{})
 	fire := &fireStub{blockCh: release, entered: entered}
@@ -584,7 +625,7 @@ func TestStopJoinsInflightFires(t *testing.T) {
 func TestDrainStopsNewFires(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 	s := newTestScheduler(t, store, clk, fire)
 
@@ -615,7 +656,7 @@ func TestDrainStopsNewFires(t *testing.T) {
 func TestFailedFireRecordedAsStopError(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{err: errors.New("boom")}
 	s := newTestScheduler(t, store, clk, fire)
 
@@ -674,7 +715,7 @@ func TestFailedFireRecordedAsStopError(t *testing.T) {
 func TestSingletonOverlapPreservesLivePointer(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	store := memschedulestore.New(clk)
+	store := memschedulestore.New()
 	fire := &fireStub{}
 
 	// A lease backend that holds a specific session id ("sched--prior") — any

@@ -385,19 +385,27 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	} else if specRaw == "" {
 		return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
 	}
-	// SETNX makes the write idempotent under concurrency: two concurrent
-	// RecordFire of the same fire race past the GET, but only one SETNX wins.
-	set, err := s.client.SetNX(ctx, fireKey, fireJSON, 0).Result()
-	if err != nil {
-		return fmt.Errorf("redisstore: record fire %q (setnx): %w", f.ID, err)
-	}
-	if !set {
-		// A peer won the SETNX between our GET and SETNX — idempotent no-op.
-		return nil
-	}
-	// Stamp the real session id over the port.PendingFireSessionID value Claim set.
+	// Stamp the real session id over the port.PendingFireSessionID value Claim
+	// set — BEFORE latching the fire key. Ordering matters: the fire key (SETNX
+	// below) is the idempotency latch, so it MUST be the last write. If the stamp
+	// ran AFTER the latch (the original order) and then failed transiently, a
+	// retry would short-circuit at the Exists check above (the latch is set) and
+	// never re-run the stamp — wedging LastFireSessionID at PendingFireSessionID
+	// permanently, which then makes the singleton overlap check treat the fire as
+	// "in its Claim→RecordFire window" forever (review #189). With the stamp
+	// first, a failed stamp leaves the latch unset so a retry re-runs it; a failed
+	// latch after a successful stamp simply re-stamps the same value (idempotent)
+	// and re-latches. The HGET liveness probe above still guards against
+	// resurrecting a schedule deleted between Claim and RecordFire.
 	if err := s.client.HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
 		return fmt.Errorf("redisstore: record fire %q (update session): %w", f.ID, err)
+	}
+	// SETNX latches the fire record idempotently: two concurrent RecordFire of
+	// the same fire race past the GET, but only one SETNX wins. Both outcomes are
+	// success — won = we latched it; lost = a peer already latched the identical
+	// record — so the result is not consulted.
+	if _, err := s.client.SetNX(ctx, fireKey, fireJSON, 0).Result(); err != nil {
+		return fmt.Errorf("redisstore: record fire %q (setnx): %w", f.ID, err)
 	}
 	return nil
 }
