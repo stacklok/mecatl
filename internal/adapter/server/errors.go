@@ -85,7 +85,12 @@ var (
 	ErrScheduleDisabled = errors.New("server: schedule is disabled")
 	// ErrFireNowOverlap is returned by FireNow when the singleton overlap check
 	// found a prior fire still running. It wraps scheduler.ErrFireNowOverlap.
-	// Adapters map it to FailedPrecondition / HTTP 409 (the schedule exists and
-	// is well-formed, it is just running).
+	// Adapters map it to FailedPrecondition / HTTP 412 (the schedule exists and
+	// is well-formed, it is just running — the same precondition-failed class as
+	// ErrScheduleDisabled; the two surfaces agree).
 	ErrFireNowOverlap = errors.New("server: fire-now skipped (prior fire still running)")
+	// ErrScheduleExhausted is returned by FireNow when a one-shot schedule has
+	// already fired (FireCount > 0). It wraps scheduler.ErrFireNowExhausted.
+	// Adapters map it to FailedPrecondition / HTTP 412.
+	ErrScheduleExhausted = errors.New("server: one-shot schedule already fired")
 )

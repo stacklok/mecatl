@@ -186,6 +186,29 @@ type Scheduler struct {
 	// started prevents double-Start / double-Stop.
 	started atomic.Bool
 	stopped atomic.Bool
+
+	// fireMu is the per-schedule-name serialization gate for FireNow (the
+	// TOCTOU close: Load → singleton trial-lease → ClaimNow had no per-name
+	// serialization, so two concurrent FireNow RPCs with different `now` values
+	// could both pass the singleton fence and both fire — the very overlap the
+	// singleton guard prevents). It is shared with the tick loop's fireOne so a
+	// tick-driven fire and a manual FireNow on the SAME schedule serialize per
+	// name (different schedules stay parallel — the errgroup's SetLimit still
+	// bounds fan-out). A sync.Map holds one *sync.Mutex per name, created lazily.
+	fireMu sync.Map
+}
+
+// lockFireName acquires the per-schedule-name mutex that serializes concurrent
+// FireNow calls AND a tick-loop fireOne on the SAME schedule (the TOCTOU close
+// for the Load→singleton→Claim fence). Different schedule names stay parallel.
+// The caller MUST defer the returned release func. It is safe to call from the
+// tick loop (fireOne runs under the errgroup) and from the caller-driven
+// FireNow path.
+func (s *Scheduler) lockFireName(name string) func() {
+	v, _ := s.fireMu.LoadOrStore(name, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // SetFire sets the composition-supplied FireFunc. It MUST be called before
@@ -483,6 +506,11 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 // slot, Fires (unless skip), and RecordFires the outcome. It is the per-schedule
 // claim-before-fire cycle.
 func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.Time) {
+	// Per-schedule-name serialization: a concurrent FireNow (or a peer tick on
+	// the same schedule) must not race the Load→singleton→Claim fence (the
+	// TOCTOU the singleton guard closes). Different schedule names stay
+	// parallel — the errgroup's SetLimit still bounds fan-out.
+	defer s.lockFireName(sched.Spec.Name)()
 	// Compute the next fire instant. A cron trigger computes it via cronparse
 	// (the store is parser-free); a one-shot fires once (zero nextFire → Claim
 	// disables the schedule). A MaxFires-exhausted cron also yields zero (the
@@ -587,10 +615,12 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 // It is shared by the tick loop (fireOne) and the manual FireNow path. It does
 // NOT do the singleton check or misfire policy — those are the caller's prelude.
 // It emits the EvScheduleFired/Failed event via the configured emit callback (if
-// any): EvScheduleFired on a completed fire (stop non-empty or no error), and
-// EvScheduleFailed when FireFunc errored. A fire whose FireFunc returned a
-// non-nil error is recorded as StopError and emits "failed"; a fire that
-// completed (even with a non-Error stop) emits "fired".
+// any): EvScheduleFailed when the FireFunc errored OR the run ended with
+// StopError (a run that drained to a terminal EvResult carrying StopError but
+// no Go error — makeFireFunc returns (fire, nil) in that case, so keying the
+// failed emit off fireErr alone would misclassify it as "fired"); EvScheduleFired
+// on a completed fire (any non-Error stop). By the time fireClaimed returns,
+// fire.Stop is populated (the FireFunc drives the run to terminal).
 func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now time.Time) (port.ScheduleFire, error) {
 	fire, fireErr := s.cfg.Fire(ctx, claimed, now)
 	if fireErr != nil {
@@ -607,6 +637,12 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 		}
 		s.diag.Log(ctx, port.LevelWarn, "scheduler: fire failed",
 			"schedule", claimed.Spec.Name, "err", fireErr.Error())
+	}
+	// Emit the lifecycle event: "failed" when the FireFunc errored OR the run
+	// ended with StopError (even when fireErr is nil — makeFireFunc returns
+	// (fire, nil) for a run that drained to terminal EvResult{stop=StopError});
+	// "fired" otherwise (a completed fire, any non-Error stop).
+	if fireErr != nil || fire.Stop == session.StopError {
 		s.emitSchedule(session.SchedulePayload{
 			ScheduleName: claimed.Spec.Name,
 			FireID:       fire.ID,
@@ -665,6 +701,12 @@ func (s *Scheduler) emitSchedule(payload session.SchedulePayload) {
 // for polling cadence). The nextFire handed to ClaimNow is computed via
 // computeNextFire (the same helper the tick loop uses).
 func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (port.ScheduleFire, error) {
+	// Per-schedule-name serialization: a concurrent FireNow (or a tick-loop
+	// fireOne) on the SAME schedule must not race the Load→singleton→ClaimNow
+	// fence (the TOCTOU the singleton guard closes — two concurrent FireNow RPCs
+	// with different `now` values would both pass the singleton trial-lease and
+	// both fire). Different schedule names stay parallel.
+	defer s.lockFireName(name)()
 	sched, err := s.cfg.Store.Load(ctx, name)
 	if err != nil {
 		return port.ScheduleFire{}, err

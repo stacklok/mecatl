@@ -733,3 +733,122 @@ func TestHTTPRunTeamEmptyTeamOutcomeOnly(t *testing.T) {
 		t.Errorf("outcome.rounds = %d, want 0", out.GetRounds())
 	}
 }
+
+// TestHTTPScheduleLifecycle (S7): the schedule REST surface over
+// httptest.NewServer(NewHTTPHandler(svc)) — create+get+fire+pause over a
+// jsonlstore-backed Service, plus the no-store→501 path on a memstore-backed
+// Service. Mirrors the repo's http_test.go convention.
+func TestHTTPScheduleLifecycle(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc, schedStore := newScheduleService(t, now)
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+
+	// POST /v1/schedules → 201.
+	createBody := `{"name":"http-cron","prompt":"hello","workspace":"/ws",` +
+		`"mode":2,"trigger":{"cron":"@every 1m"}}`
+	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json", strings.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("POST /v1/schedules: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp.StatusCode)
+	}
+	var created mecatlv1.CreateScheduleResponse
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created.GetSchedule().GetSpec().GetName() != "http-cron" {
+		t.Errorf("name = %q, want http-cron", created.GetSchedule().GetSpec().GetName())
+	}
+	if !created.GetSchedule().GetState().GetEnabled() {
+		t.Error("Enabled = false, want true")
+	}
+	// Singleton defaulted to true (S3: the create-seam applies the default).
+	if !created.GetSchedule().GetSpec().GetSingleton() {
+		t.Error("Singleton = false, want true (the create-seam default)")
+	}
+
+	// GET /v1/schedules/http-cron → 200.
+	gresp, err := http.Get(srv.URL + "/v1/schedules/http-cron")
+	if err != nil {
+		t.Fatalf("GET /v1/schedules/http-cron: %v", err)
+	}
+	defer gresp.Body.Close()
+	if gresp.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", gresp.StatusCode)
+	}
+	var got mecatlv1.GetScheduleResponse
+	if err := json.NewDecoder(gresp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.GetSchedule().GetSpec().GetName() != "http-cron" {
+		t.Errorf("get name = %q, want http-cron", got.GetSchedule().GetSpec().GetName())
+	}
+
+	// POST /v1/schedules/http-cron/pause → 204.
+	presp, err := http.Post(srv.URL+"/v1/schedules/http-cron/pause", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST pause: %v", err)
+	}
+	presp.Body.Close()
+	if presp.StatusCode != http.StatusNoContent {
+		t.Fatalf("pause status = %d, want 204", presp.StatusCode)
+	}
+	// Verify Enabled=false after pause.
+	if paused, _ := schedStore.Load(context.Background(), "http-cron"); paused.State.Enabled {
+		t.Errorf("after pause: Enabled = true, want false")
+	}
+
+	// POST /v1/schedules/http-cron/resume → 204.
+	rresp, err := http.Post(srv.URL+"/v1/schedules/http-cron/resume", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST resume: %v", err)
+	}
+	rresp.Body.Close()
+	if rresp.StatusCode != http.StatusNoContent {
+		t.Fatalf("resume status = %d, want 204", rresp.StatusCode)
+	}
+
+	// POST /v1/schedules/http-cron/fire → 200 (no scheduler wired here, but the
+	// HTTP handler delegates to svc.FireNow; the svc has no scheduler, so it
+	// returns ErrNoScheduleStore → 501). This is the no-store→501 path.
+	fresp, err := http.Post(srv.URL+"/v1/schedules/http-cron/fire", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST fire: %v", err)
+	}
+	defer fresp.Body.Close()
+	if fresp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("fire status = %d, want 501 (no scheduler wired)", fresp.StatusCode)
+	}
+}
+
+// TestHTTPScheduleNoStore501 (S7): a Service with no ScheduleStore (memstore)
+// reports schedule RPCs as 501.
+func TestHTTPScheduleNoStore501(t *testing.T) {
+	svc := newService(t, mockllm.New(), allowRules())
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+
+	// POST /v1/schedules → 501.
+	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json",
+		strings.NewReader(`{"name":"x","prompt":"y","workspace":"/ws","mode":2,"trigger":{"cron":"@every 1m"}}`))
+	if err != nil {
+		t.Fatalf("POST /v1/schedules: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("create status = %d, want 501", resp.StatusCode)
+	}
+
+	// GET /v1/schedules → 501.
+	gresp, err := http.Get(srv.URL + "/v1/schedules")
+	if err != nil {
+		t.Fatalf("GET /v1/schedules: %v", err)
+	}
+	defer gresp.Body.Close()
+	if gresp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("list status = %d, want 501", gresp.StatusCode)
+	}
+}

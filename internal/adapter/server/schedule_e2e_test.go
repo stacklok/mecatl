@@ -232,6 +232,120 @@ func TestScheduleE2E(t *testing.T) {
 	_ = filepath.Separator
 }
 
+// TestScheduleFireNowOneShotExhaustedWireMapping (M1): a FireNow on an
+// already-fired one-shot returns codes.FailedPrecondition (the wire mapping of
+// ErrScheduleExhausted), NOT codes.Internal/500. The scheduler-level test
+// (TestFireNowOneShotExhausted) only asserts the scheduler sentinel; this test
+// pins the gRPC handler-level mapping the toStatus chokepoint applies.
+func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	workspace := t.TempDir()
+
+	llm := mockllm.New(mockllm.TextTurn("scheduled fire result"))
+	svc, _, store, cleanup := buildScheduleService(t, storeDir, llm)
+	defer cleanup()
+	srv := server.NewScheduleServer(svc)
+
+	// Create a one-shot schedule and fire it once (FireNow succeeds → the
+	// one-shot is now exhausted).
+	oneShotAt := time.Now().Add(1 * time.Hour)
+	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
+		Spec: &mecatlv1.ScheduleSpec{
+			Name:      "exhausted-oneshot",
+			Prompt:    "oneshot hello",
+			Workspace: workspace,
+			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger:   &mecatlv1.TriggerSpec{OneShot: timestamppb.New(oneShotAt)},
+		},
+	}); err != nil {
+		t.Fatalf("CreateSchedule one-shot: %v", err)
+	}
+	if _, err := srv.FireNow(ctx, &mecatlv1.FireNowRequest{Name: "exhausted-oneshot"}); err != nil {
+		t.Fatalf("FireNow #1 (the first fire): %v", err)
+	}
+	// Poll the fire's session to terminal so the first fire completes before
+	// the second FireNow attempt (otherwise the singleton check would reject it
+	// as an overlap, not exhaustion).
+	if !eventually(10*time.Second, func() bool {
+		fires, _ := store.ScheduleStore().ListFires(ctx, "exhausted-oneshot")
+		for _, f := range fires {
+			if f.Stop != "" { // terminal
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("first fire did not reach terminal within 10s")
+	}
+	// A second FireNow on the exhausted one-shot → FailedPrecondition (412), NOT
+	// Internal/500 (the M1 fix: ErrScheduleExhausted is mapped, not defaulted).
+	_, err := srv.FireNow(ctx, &mecatlv1.FireNowRequest{Name: "exhausted-oneshot"})
+	if err == nil || status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("FireNow on exhausted one-shot: err=%v, want FailedPrecondition", err)
+	}
+}
+
+// TestScheduleEventLogContainsEvScheduleFired (S7): after a FireNow completes,
+// the fire session's durable EventLog contains an EvScheduleFired event. This
+// pins the S1 v1 delivery contract: the schedule.* lifecycle is durable-log-only
+// (pull-only via GetFire/ListFires), emitted from composition via the
+// EmitScheduleEvent callback.
+func TestScheduleEventLogContainsEvScheduleFired(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	workspace := t.TempDir()
+
+	llm := mockllm.New(mockllm.TextTurn("scheduled fire result"))
+	svc, _, store, cleanup := buildScheduleService(t, storeDir, llm)
+	defer cleanup()
+	srv := server.NewScheduleServer(svc)
+
+	if _, err := srv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{
+		Spec: &mecatlv1.ScheduleSpec{
+			Name:      "eventlog-cron",
+			Prompt:    "cron hello",
+			Workspace: workspace,
+			Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+			Trigger:   &mecatlv1.TriggerSpec{Cron: "@every 1m"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	fireResp, err := srv.FireNow(ctx, &mecatlv1.FireNowRequest{Name: "eventlog-cron"})
+	if err != nil {
+		t.Fatalf("FireNow: %v", err)
+	}
+	sessID := session.SessionID(fireResp.GetSessionId())
+
+	// Poll the session to terminal so the fire's EvScheduleFired has been
+	// appended to the durable log (the emit runs after the FireFunc returns).
+	if !eventually(10*time.Second, func() bool {
+		sess, err := svc.GetSession(ctx, sessID)
+		if err != nil {
+			return false
+		}
+		return sess.State == session.StateCompleted
+	}) {
+		t.Fatalf("fire session %q did not reach completed within 10s", sessID)
+	}
+
+	// Read the durable EventLog and assert an EvScheduleFired event is present.
+	var sawFired bool
+	for ev, err := range store.Read(ctx, sessID) {
+		if err != nil {
+			t.Fatalf("EventLog.Read: %v", err)
+		}
+		if ev.Type == session.EvScheduleFired && ev.Schedule != nil &&
+			ev.Schedule.ScheduleName == "eventlog-cron" {
+			sawFired = true
+		}
+	}
+	if !sawFired {
+		t.Fatalf("EventLog.Read(%q) did not contain an EvScheduleFired event", sessID)
+	}
+}
+
 // TestScheduleNoSchedulerVariants covers the no-scheduler-wired case: a Service
 // whose store does NOT expose a ScheduleStore (memstore) honestly reports the
 // schedule RPCs as Unimplemented (CreateSchedule) / Unimplemented (FireNow with

@@ -168,6 +168,22 @@ redis.call('HSET', KEYS[1],
 return {nextFire, now, newFC, newEnabled, pending}
 `)
 
+// setEnabledScript atomically checks existence and sets the enabled field in
+// ONE EVAL, so a concurrent Delete between the EXISTS and HSET of the old
+// two-command path cannot leave a zombie key, and a concurrent Save cannot have
+// its enabled field clobbered. Mirrors the claimScript/claimNowScript pattern.
+//
+// KEYS[1] = mecatl:schedule:<name>
+// ARGV[1] = "1" or "0" (the enabled bool as a string)
+// Returns "NOT_FOUND" if the key does not exist, "OK" on success.
+var setEnabledScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'NOT_FOUND'
+end
+redis.call('HSET', KEYS[1], 'enabled', ARGV[1])
+return 'OK'
+`)
+
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent *Store's
 // *redis.Client. It is the MULTI-REPLICA production schedule backend
 // (scheduled-tasks issue #189, Phase 1d): the SAME logic as
@@ -249,22 +265,18 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 // SetEnabled atomically sets the schedule's Enabled flag WITHOUT touching any
 // other State field (unlike Save, which preserves the State half on a Spec
 // overwrite and so cannot mutate Enabled). It is the pause/resume primitive.
-// The not-found case (key missing, redis.Nil) wraps ErrScheduleNotFound. Redis
-// serializes the HSET single-threaded, so no client mutex is required.
+// The not-found case (key missing) wraps ErrScheduleNotFound. The
+// existence-check + HSET run atomically in ONE Lua EVAL (setEnabledScript) so a
+// concurrent Delete cannot leave a zombie key and a concurrent Save cannot have
+// its enabled clobbered — the same atomic-discipline the Claim scripts uphold.
 func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled bool) error {
 	key := scheduleKey(name)
-	// HSET on a non-existent key creates it with just the enabled field — we
-	// must guard against that. EXISTS is the liveness probe (a missing key is
-	// not-found, not a new schedule to create).
-	exists, err := s.client.Exists(ctx, key).Result()
+	res, err := setEnabledScript.Run(ctx, s.client, []string{key}, boolStr(enabled)).Result()
 	if err != nil {
-		return fmt.Errorf("redisstore: set enabled %q (exists): %w", name, err)
-	}
-	if exists == 0 {
-		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
-	}
-	if err := s.client.HSet(ctx, key, fieldEnabled, boolStr(enabled)).Err(); err != nil {
 		return fmt.Errorf("redisstore: set enabled %q: %w", name, err)
+	}
+	if s, ok := res.(string); ok && s == "NOT_FOUND" {
+		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
 	}
 	return nil
 }

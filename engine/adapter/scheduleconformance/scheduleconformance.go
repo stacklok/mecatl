@@ -925,6 +925,49 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Fatalf("ClaimNow on exhausted = %v, want ErrScheduleNotFound (MaxFires check still applies)", err)
 		}
 	})
+
+	// Cross-primitive at-most-once: Claim then ClaimNow at the same now (and
+	// ClaimNow then Claim) must BOTH reject the second as ErrScheduleNotFound —
+	// the two primitives share the same atomic fence so a slot claimed by one
+	// is gone for the other (no TOCTOU between the tick loop's Claim and a
+	// manual FireNow's ClaimNow).
+	t.Run("cross-primitive claim/claimnow at-most-once", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		now := time.Unix(1_700_000_000, 0).UTC()
+		future := now.Add(time.Hour)
+		next := future.Add(time.Minute)
+
+		// (a) Claim then ClaimNow at the same now → ErrScheduleNotFound.
+		const a = "conf-sched-cross-claim-then-claimnow"
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: a, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save a: %v", err)
+		}
+		if _, err := s.Claim(ctx, a, now, next); err != nil {
+			t.Fatalf("Claim a: %v", err)
+		}
+		if _, err := s.ClaimNow(ctx, a, now, next); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ClaimNow after Claim at same now = %v, want ErrScheduleNotFound (cross-primitive at-most-once)", err)
+		}
+
+		// (b) ClaimNow then Claim at the same now → ErrScheduleNotFound.
+		const b = "conf-sched-cross-claimnow-then-claim"
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: b, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save b: %v", err)
+		}
+		if _, err := s.ClaimNow(ctx, b, now, next); err != nil {
+			t.Fatalf("ClaimNow b: %v", err)
+		}
+		if _, err := s.Claim(ctx, b, now, next); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("Claim after ClaimNow at same now = %v, want ErrScheduleNotFound (cross-primitive at-most-once)", err)
+		}
+	})
 }
 
 // assertScheduleEqual compares the spec + state fields the suite cares about

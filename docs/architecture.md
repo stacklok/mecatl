@@ -353,15 +353,16 @@ GET    /v1/schedules/{name}/fires/{id} -> GetFire
 not expose the accessor) honestly reports `Unimplemented` (gRPC) / 501 (HTTP)
 from every schedule RPC; `FireNow` on a paused/done schedule is
 `FailedPrecondition` / 412; a singleton-overlap skip is `FailedPrecondition` /
-409; an unknown schedule/fire is `NotFound` / 404.
+412; an unknown schedule/fire is `NotFound` / 404.
 
 **`schedule.*` events** (`EvScheduleFired` / `EvScheduleSkipped` /
 `EvScheduleFailed`, `session.SchedulePayload`) — the scheduler emits a
 lifecycle event for each fired/skipped/failed fire via the composition-injected
 `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`), which appends it to
 the fire session's durable `EventLog` (so schedule lifecycle rides the same
-durable log as the fire's own events). The events are client-visible on the
-`Event.schedule` field (proto field 15); a skipped fire with no session is
-dropped from the durable log (the log is session-keyed) and surfaces only on the
-live client wire.
+durable log as the fire's own events). For v1 the delivery is durable-log-only
+(pull-only via GetFire/ListFires); a live broadcast stream is a future phase.
+The events project onto the `Event.schedule` field (proto field 15); a skipped
+fire with no session is dropped from the durable log (the log is session-keyed)
+and surfaces only via the operator diagnostic.
 

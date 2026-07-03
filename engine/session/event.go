@@ -202,22 +202,24 @@ const (
 	// EvScheduleFired is emitted when a schedule fires — a Claim→run→RecordFire
 	// cycle started for a named schedule. It is emitted from COMPOSITION (the
 	// scheduler) at fire time, NOT the agent loop (engine/agent never imports
-	// port.ScheduleStore). It is CLIENT-VISIBLE (unlike the log-only EvApproval /
-	// EvCompactionArchive / EvUserPrompt): the schedule.* lifecycle rides the live
-	// client wire so an operator watching a session stream sees scheduled fires
-	// attributed to their schedule. It carries the SchedulePayload; kind/stop/err
-	// are STRING passthroughs (the EvNoProgress/StopBudget discipline — no proto
-	// enum). Maps to the proto event-type string verbatim.
+	// port.ScheduleStore). For v1 it is delivered to the fire session's durable
+	// EventLog ONLY (pull-only via GetFire/ListFires); a live broadcast stream is
+	// a future phase. It carries the SchedulePayload; kind/stop/err are STRING
+	// passthroughs (the EvNoProgress/StopBudget discipline — no proto enum).
+	// Maps to the proto event-type string verbatim.
 	EvScheduleFired EventType = "schedule.fired"
 	// EvScheduleSkipped is emitted when a schedule's fire was SKIPPED — the
 	// singleton overlap check found a prior fire still running, or the misfire
 	// policy was MisfireSkip for a missed slot. Emitted from composition, not the
-	// loop; client-visible; carries SchedulePayload (kind="skipped").
+	// loop; carries SchedulePayload (kind="skipped"). A skipped fire has no
+	// session id, so it is dropped from the durable log (session-keyed) and
+	// surfaces only via the operator diagnostic for v1.
 	EvScheduleSkipped EventType = "schedule.skipped"
 	// EvScheduleFailed is emitted when a schedule's fire FAILED — the fire's run
-	// ended with StopError, or the fire could not be claimed/driven at all. Emitted
-	// from composition, not the loop; client-visible; carries SchedulePayload
-	// (kind="failed", stop/err populated).
+	// ended with StopError, or the fire could not be claimed/driven at all.
+	// Emitted from composition, not the loop; for v1 delivered to the fire
+	// session's durable EventLog ONLY (pull-only via GetFire/ListFires); carries
+	// SchedulePayload (kind="failed", stop/err populated).
 	EvScheduleFailed EventType = "schedule.failed"
 )
 
@@ -674,10 +676,11 @@ type ParallelPayload struct {
 // schedule.proto SchedulePayload one-for-one. It is emitted from COMPOSITION
 // (the scheduler) at fire time, NOT the agent loop (engine/agent never imports
 // port.ScheduleStore — the tick loop, cron parsing, misfire policy, and
-// leader-lease acquisition all live in composition). It is CLIENT-VISIBLE
-// (unlike the log-only EvApproval / EvCompactionArchive / EvUserPrompt): the
-// schedule.* lifecycle rides the live client wire so an operator watching a
-// session stream sees scheduled fires attributed to their schedule.
+// leader-lease acquisition all live in composition). For v1 it is delivered to
+// the fire session's durable EventLog ONLY (pull-only via GetFire/ListFires);
+// a live broadcast stream is a future phase. Skipped fires (no session id) are
+// dropped from the durable log (session-keyed) and surface only via the
+// operator diagnostic.
 //
 // STRING-PASSTHROUGH DISCIPLINE: Kind / Stop / Err are plain strings (the
 // EvNoProgress / StopBudget precedent — no proto enum, no closed set a later

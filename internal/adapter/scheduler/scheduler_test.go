@@ -47,13 +47,14 @@ type recordedFire struct {
 // MaxConcurrentFires fan-out test) or returns an error (for the failed-fire
 // test).
 type fireStub struct {
-	mu       sync.Mutex
-	fires    []recordedFire
-	err      error         // returned for every fire if non-nil
-	blockCh  chan struct{} // if non-nil, a fire blocks until this is closed
-	entered  chan struct{} // if non-nil, closed the first time a fire starts
-	inflight atomic.Int32  // current in-flight count (for the fan-out test)
-	maxSeen  atomic.Int32  // high-water in-flight count
+	mu           sync.Mutex
+	fires        []recordedFire
+	err          error              // returned for every fire if non-nil
+	stopOverride session.StopReason // if non-empty, overrides the default StopEndTurn return
+	blockCh      chan struct{}      // if non-nil, a fire blocks until this is closed
+	entered      chan struct{}      // if non-nil, closed the first time a fire starts
+	inflight     atomic.Int32       // current in-flight count (for the fan-out test)
+	maxSeen      atomic.Int32       // high-water in-flight count
 }
 
 func (f *fireStub) fire(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
@@ -87,12 +88,16 @@ func (f *fireStub) fire(ctx context.Context, sched port.Schedule, now time.Time)
 	if f.err != nil {
 		return port.ScheduleFire{}, f.err
 	}
+	stop := session.StopEndTurn
+	if f.stopOverride != "" {
+		stop = f.stopOverride
+	}
 	return port.ScheduleFire{
 		ID:           fmt.Sprintf("fire-%s-%d", sched.Spec.Name, sched.State.FireCount),
 		ScheduleName: sched.Spec.Name,
 		SessionID:    session.SessionID("sched--" + sched.Spec.Name),
 		FiredAt:      now,
-		Stop:         session.StopEndTurn,
+		Stop:         stop,
 	}, nil
 }
 
@@ -1010,6 +1015,59 @@ func TestFireNowEmitCallback(t *testing.T) {
 	gotMu.Lock()
 	if len(got) != 2 || got[1].Kind != "failed" || got[1].ScheduleName != "emit-fail" {
 		t.Fatalf("emit on failure = %+v, want a failed payload for emit-fail as the 2nd", got)
+	}
+	gotMu.Unlock()
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestFireNowStopErrorEmitsFailed: a FireFunc that returns (fire, nil) with
+// fire.Stop == StopError (a run that drained to a terminal EvResult carrying
+// StopError but NO Go error — the makeFireFunc shape) is emitted as
+// EvScheduleFailed (kind="failed"), NOT EvScheduleFired. This is the S4 fix:
+// keying the failed emit off fireErr alone would misclassify this as "fired".
+func TestFireNowStopErrorEmitsFailed(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	// A fire stub that returns a nil error but a StopError stop (the
+	// makeFireFunc shape for a run that failed without a Go error).
+	fire := &fireStub{stopOverride: session.StopError}
+
+	var gotMu sync.Mutex
+	var got []session.SchedulePayload
+	emit := func(p session.SchedulePayload) {
+		gotMu.Lock()
+		got = append(got, p)
+		gotMu.Unlock()
+	}
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Fire:               fire.fire,
+		Clock:              clk,
+		TickInterval:       1 * time.Hour,
+		MaxConcurrentFires: 4,
+		EmitScheduleEvent:  emit,
+	})
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "stop-err", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fr, err := s.FireNow(context.Background(), "stop-err", clk.Now())
+	if err != nil {
+		t.Fatalf("FireNow: %v (a nil fireErr with StopError is NOT a scheduler error)", err)
+	}
+	if fr.Stop != session.StopError {
+		t.Fatalf("Stop = %q, want %q", fr.Stop, session.StopError)
+	}
+	gotMu.Lock()
+	if len(got) != 1 || got[0].Kind != "failed" || got[0].ScheduleName != "stop-err" {
+		t.Fatalf("emit = %+v, want one failed payload for stop-err (StopError with nil fireErr)", got)
 	}
 	gotMu.Unlock()
 

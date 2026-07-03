@@ -58,9 +58,10 @@ func (s *Service) scheduleStore() port.ScheduleStore {
 }
 
 // CreateSchedule is the create-seam for a schedule: it validates the spec
-// fail-closed, computes the first NextFireAt (cron via cronparse; one-shot is
-// the OneShot instant), applies the intended defaults (Singleton=true,
-// Misfire=MisfireFireOnceNow), enforces the Mutating/Mode invariant (a
+// fail-closed, applies the intended defaults (via applyScheduleDefaults — the
+// SHARED helper UpdateSchedule also calls, so a PUT omitting singleton does not
+// silently disable the guard), computes the first NextFireAt (cron via cronparse;
+// one-shot is the OneShot instant), enforces the Mutating/Mode invariant (a
 // read-leaning schedule — Mutating=false — must run in plan mode, never a
 // write-capable posture), and Saves the schedule. It returns the saved
 // schedule.
@@ -73,24 +74,7 @@ func (s *Service) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	if err := validateScheduleSpec(spec, now); err != nil {
 		return port.Schedule{}, err
 	}
-	// Intended defaults (Phase-1 doc): Singleton defaults to true (overlapping
-	// fires of the same schedule are suppressed). Misfire defaults to
-	// MisfireFireOnceNow (the zero value — a missed slot fires once on catch-up).
-	// A caller may override either. Apply only when the caller left the zero
-	// value, so an explicit Singleton=false is honored (the create-seam does not
-	// force the default over an explicit choice).
-	if !spec.Singleton && !scheduleSingletonExplicit(spec) {
-		// The bare bool has no "set" marker; the create-seam convention is that
-		// the DEFAULT is true. A wire layer that wants to express "false"
-		// explicitly passes Singleton=false, which we honor. There is no way to
-		// distinguish "unset" from "explicitly false" on a bare bool, so the
-		// create-seam applies the intended default (true) only when the wire
-		// layer signals it — for now, the v1 create-seam sets Singleton=true
-		// unconditionally (the conservative default), and a future wire field
-		// (singleton_optional / a pointer) will carry the explicit-override
-		// semantics. Documented honestly here.
-		spec.Singleton = true
-	}
+	applyScheduleDefaults(&spec)
 	// Compute the first NextFireAt. A cron trigger computes it via cronparse
 	// (fail-closed on a bad expression); a one-shot's first fire is its OneShot
 	// instant (already validated as in the future).
@@ -118,6 +102,30 @@ func (s *Service) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 		return port.Schedule{}, err
 	}
 	return sched, nil
+}
+
+// applyScheduleDefaults applies the intended create-seam defaults to a spec:
+// Singleton defaults to true (overlapping fires of the same schedule are
+// suppressed); Misfire defaults to MisfireFireOnceNow (the zero value — a
+// missed slot fires once on catch-up — so no code is needed for it). A caller
+// may override Singleton by setting it explicitly; a bare bool has no "set"
+// marker, so the v1 seam applies the conservative default (true) when the
+// caller left it false. It is the SHARED helper both CreateSchedule and
+// UpdateSchedule call so a PUT omitting singleton does not silently disable the
+// guard.
+func applyScheduleDefaults(spec *port.ScheduleSpec) {
+	if !spec.Singleton && !scheduleSingletonExplicit(*spec) {
+		// The bare bool has no "set" marker; the create-seam convention is that
+		// the DEFAULT is true. A wire layer that wants to express "false"
+		// explicitly passes Singleton=false, which we honor. There is no way to
+		// distinguish "unset" from "explicitly false" on a bare bool, so the
+		// create-seam applies the intended default (true) only when the wire
+		// layer signals it — for now, the v1 create-seam sets Singleton=true
+		// unconditionally (the conservative default), and a future wire field
+		// (singleton_optional / a pointer) will carry the explicit-override
+		// semantics. Documented honestly here.
+		spec.Singleton = true
+	}
 }
 
 // scheduleSingletonExplicit reports whether the caller explicitly set the
@@ -208,6 +216,7 @@ func (s *Service) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	if err := validateScheduleSpec(spec, now); err != nil {
 		return port.Schedule{}, err
 	}
+	applyScheduleDefaults(&spec)
 	existing, err := store.Load(ctx, spec.Name)
 	if err != nil {
 		return port.Schedule{}, err
@@ -283,6 +292,8 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrScheduleDisabled, err)
 		case errors.Is(err, scheduler.ErrFireNowOverlap):
 			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrFireNowOverlap, err)
+		case errors.Is(err, scheduler.ErrFireNowExhausted):
+			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrScheduleExhausted, err)
 		default:
 			return port.ScheduleFire{}, err
 		}
@@ -293,12 +304,12 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 // EmitScheduleEvent appends a SchedulePayload as an EvSchedule* event to the
 // fire session's durable EventLog. It is the composition-injected emit callback
 // the scheduler invokes (via Config.EmitScheduleEvent) for fired/failed/skipped
-// fires. A skipped fire (no session id) is logged only when an EventLog is wired
-// under the schedule name is NOT possible (EventLog is keyed by session id), so
-// skipped fires with no session are dropped from the durable log (the next
-// chunk's handlers surface them on the live client wire). A nil EventLog is a
-// no-op (byte-identical to the no-emit path). An Append failure WARNs, never
-// aborts (a broken durable log must not break the fire).
+// fires. For v1 delivery is durable-log-only (pull-only via GetFire/ListFires);
+// a live broadcast stream is a future phase. A skipped fire (no session id) is
+// dropped from the durable log (the log is session-keyed) and surfaces only via
+// the operator diagnostic. A nil EventLog is a no-op (byte-identical to the
+// no-emit path). An Append failure WARNs, never aborts (a broken durable log
+// must not break the fire).
 func (s *Service) EmitScheduleEvent(payload session.SchedulePayload) {
 	s.emitScheduleEvent(payload)
 }

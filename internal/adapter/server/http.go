@@ -1247,10 +1247,13 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrScheduleDisabled):
 		// FireNow on a paused/done schedule. 412 (gRPC FailedPrecondition).
 		writeError(w, http.StatusPreconditionFailed, err.Error())
+	case errors.Is(err, ErrScheduleExhausted):
+		// FireNow on an already-fired one-shot. 412 (gRPC FailedPrecondition).
+		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, ErrFireNowOverlap):
-		// FireNow singleton-overlap skip. 409 — the schedule exists and is
-		// well-formed, it is just running.
-		writeError(w, http.StatusConflict, err.Error())
+		// FireNow singleton-overlap skip. 412 (gRPC FailedPrecondition) — the
+		// schedule exists and is well-formed, it is just running.
+		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, port.ErrScheduleNotFound):
 		// A schedule/fire not found from the store. 404.
 		writeError(w, http.StatusNotFound, err.Error())
