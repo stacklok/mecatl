@@ -479,6 +479,21 @@ func (l *stringList) Set(v string) error {
 }
 
 func main() {
+	if handled := dispatchSubcommand(); handled {
+		return
+	}
+	if err := run(); err != nil {
+		slog.Error("mecated exited with error", "err", err)
+		os.Exit(1)
+	}
+}
+
+// dispatchSubcommand inspects os.Args for an offline CLI subcommand (skills
+// promote / perf-mcp print-config / config / schedules) and runs it, returning
+// true when it handled the invocation (so main skips booting the daemon). A
+// subcommand parse error or a usage error exits the process directly from here.
+// It is split out of main so main's cyclomatic complexity stays bounded.
+func dispatchSubcommand() bool {
 	// Subcommand dispatch: `mecated skills promote ...` is the OPERATOR gate that
 	// moves a model-authored candidate skill out of quarantine into an active
 	// skills dir. It is a one-shot offline CLI action (no daemon), kept here so it
@@ -488,7 +503,7 @@ func main() {
 			slog.Error("skills promote failed", "err", err)
 			os.Exit(1)
 		}
-		return
+		return true
 	}
 	// `mecated perf-mcp print-config` prints a paste-ready client .mcp.json snippet
 	// for the loopback perf MCP server. Loopback + no auth (decision 6), so the
@@ -498,7 +513,7 @@ func main() {
 			slog.Error("perf-mcp print-config failed", "err", err)
 			os.Exit(1)
 		}
-		return
+		return true
 	}
 	// `mecated config ...` is the config-management subcommand group. The ONLY
 	// subcommand is `config init` (issue #140), which writes/prints a fully-commented
@@ -510,12 +525,12 @@ func main() {
 		if len(os.Args) >= 3 && os.Args[2] == "init" {
 			if err := runConfigInit(os.Args[3:], os.Stdout); err != nil {
 				if errors.Is(err, flag.ErrHelp) {
-					return // --help is a successful action: usage already printed, exit 0
+					return true // --help is a successful action: usage already printed, exit 0
 				}
 				slog.Error("config init failed", "err", err)
 				os.Exit(1)
 			}
-			return
+			return true
 		}
 		sub := ""
 		if len(os.Args) >= 3 {
@@ -530,10 +545,29 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  config init    write/print the operator settings.yaml skeleton (--print, --force)")
 		os.Exit(2)
 	}
-	if err := run(); err != nil {
-		slog.Error("mecated exited with error", "err", err)
+	if len(os.Args) >= 2 && os.Args[1] == "schedules" {
+		return runSchedulesDispatch()
+	}
+	return false
+}
+
+// runSchedulesDispatch runs the `mecated schedules <verb>` subcommand group: a
+// thin HTTP client over the running server's /v1/schedules REST surface. It
+// dials --server-addr and never boots the daemon, so a bare `schedules` or an
+// UNKNOWN verb prints the available verbs and exits non-zero (the
+// config-subcommand discipline — a typo must not start a server).
+func runSchedulesDispatch() bool {
+	if err := runSchedules(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+		if errors.Is(err, errSchedulesUsage) {
+			os.Exit(2)
+		}
+		if errors.Is(err, flag.ErrHelp) {
+			return true
+		}
+		slog.Error("schedules failed", "err", err)
 		os.Exit(1)
 	}
+	return true
 }
 
 // runConfigInit implements `mecated config init [--print] [--force]`: it writes the
@@ -1251,7 +1285,8 @@ func parseFlags(argv []string) (config, error) {
 		_, _ = fmt.Fprintf(out, "Commands:\n")
 		_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 		_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
-		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n\n")
+		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
+		_, _ = fmt.Fprintf(out, "  schedules <verb>        manage scheduled tasks (create/list/inspect/pause/resume/delete/fire)\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
 		fs.PrintDefaults()
 	}
