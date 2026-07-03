@@ -241,3 +241,53 @@ func TestPauseResumeSchedule(t *testing.T) {
 		t.Fatalf("PauseSchedule(unknown) = %v, want ErrScheduleNotFound", err)
 	}
 }
+
+// TestUpdateSchedulePreservesCreatedAt: UpdateSchedule overwrites the Spec half
+// while preserving the State half (firing progress) AND the creation timestamp.
+// CreatedAt is a store-side timestamp, never operator-authored, so an Update must
+// not clobber it to the zero value — the reconcile update path (reconcileSchedules)
+// would otherwise destroy the audit trail on every restart.
+func TestUpdateSchedulePreservesCreatedAt(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc, schedStore := newScheduleService(t, now)
+	ctx := context.Background()
+
+	spec := port.ScheduleSpec{
+		Name:     "updatable",
+		Prompt:   "v1",
+		Trigger:  port.TriggerSpec{Cron: "0 9 * * *"},
+		Mutating: true,
+	}
+	created, err := svc.CreateSchedule(ctx, spec)
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if created.Spec.CreatedAt.IsZero() {
+		t.Fatalf("CreatedAt is zero after create")
+	}
+
+	// Update with a changed prompt — everything else identical.
+	spec.Prompt = "v2"
+	updated, err := svc.UpdateSchedule(ctx, spec)
+	if err != nil {
+		t.Fatalf("UpdateSchedule: %v", err)
+	}
+	if updated.Spec.Prompt != "v2" {
+		t.Fatalf("Update did not apply new Prompt; got %q", updated.Spec.Prompt)
+	}
+	if !updated.Spec.CreatedAt.Equal(created.Spec.CreatedAt) {
+		t.Fatalf("CreatedAt not preserved: create=%v update=%v",
+			created.Spec.CreatedAt, updated.Spec.CreatedAt)
+	}
+
+	// Persisted form must also keep the original CreatedAt (the bug was in the
+	// Save path, not just the returned value).
+	loaded, err := schedStore.Load(ctx, "updatable")
+	if err != nil {
+		t.Fatalf("Load after Update: %v", err)
+	}
+	if !loaded.Spec.CreatedAt.Equal(created.Spec.CreatedAt) {
+		t.Fatalf("persisted CreatedAt not preserved: create=%v loaded=%v",
+			created.Spec.CreatedAt, loaded.Spec.CreatedAt)
+	}
+}

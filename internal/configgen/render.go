@@ -85,6 +85,20 @@ func writeSubtreeSkeleton(b *strings.Builder, st *Subtree) {
 	if st.Scalar {
 		f := st.Fields[0]
 		fmt.Fprintf(&body, "%s: %s\n", st.Key, placeholder(f))
+	} else if st.ListBody {
+		// A sequence subtree: render one illustrative list element showing the fields
+		// (the first field gets the "- " list marker). The body is a sequence, not a
+		// mapping, so the round-trip parse matches the SchedulesSection sequence decoder.
+		fmt.Fprintf(&body, "%s:\n", st.Key)
+		first := true
+		for _, f := range st.Fields {
+			if first {
+				fmt.Fprintf(&body, "  - %s: %s\n", f.Key, placeholder(f))
+				first = false
+				continue
+			}
+			fmt.Fprintf(&body, "    %s: %s\n", f.Key, placeholder(f))
+		}
 	} else {
 		fmt.Fprintf(&body, "%s:\n", st.Key)
 		for _, f := range st.Fields {
@@ -257,8 +271,12 @@ func writeSubtreeReference(b *strings.Builder, st *Subtree) {
 	}
 	b.WriteString("| Key | Type | Default | Description |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
+	path := st.Key
+	if st.ListBody {
+		path = st.Key + "[]"
+	}
 	for _, f := range st.Fields {
-		writeFieldReference(b, st.Key, f)
+		writeFieldReference(b, path, f)
 	}
 }
 

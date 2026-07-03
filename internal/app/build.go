@@ -819,6 +819,13 @@ type Config struct {
 	SchedulerTickInterval       time.Duration // 0 → default 30s (the scheduler's own default)
 	SchedulerMinInterval        time.Duration // 0 → no floor enforced at the create-seam
 	SchedulerMaxConcurrentFires int           // 0 → default 4
+	// DeclaredSchedules are the operator-tier schedule declarations parsed from the
+	// `schedules:` YAML subtree (issue #233, Phase 2b), folded onto cfg by
+	// foldOperatorSchedules. They are reconciled into the durable ScheduleStore by
+	// reconcileSchedules after the scheduler starts (idempotent: missing → Create,
+	// differing → Update, unchanged → no-op). Empty when no operator-tier schedules:
+	// block was configured — the byte-identical default.
+	DeclaredSchedules []port.ScheduleSpec
 }
 
 // GuardrailRule is one operator-tier guardrail rule (issue #27): a tool-NAME matcher,
@@ -984,6 +991,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// list comes from YAML (flags cannot express it). This runs after the resolver is
 	// built and before the provider/model fail-fast normalization below.
 	cfg = foldOperatorGuardrails(cfg)
+
+	// Schedules operator-tier config (issue #233, Phase 2b): fold the user-global +
+	// CLI `schedules:` YAML subtree (the resolver collected it from the OPERATOR
+	// tiers ONLY — a project file's block is ignored with a WARN) onto cfg as parsed
+	// []port.ScheduleSpec. The reconcile into the durable store runs AFTER the
+	// scheduler starts (reconcileSchedules, below). Runs after the resolver is built.
+	cfg = foldOperatorSchedules(cfg)
 
 	// Per-slot models (ADR 0030, Phase 1+2): fold the operator-tier `models:` YAML
 	// subtree (user-global + CLI only — a project file's models: block is handled by
@@ -1375,6 +1389,16 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		storeClose()
 		commandConnClose()
 		return nil, err
+	}
+
+	// Declared schedules reconcile (issue #233, Phase 2b): make the durable
+	// ScheduleStore match the operator's `schedules:` YAML — missing → Create,
+	// differing → Update, unchanged → no-op (idempotent). Runs ONLY when the
+	// scheduler is enabled AND there are declared schedules, so the default
+	// byte-identical path never reaches here. Errors are logged per schedule, never
+	// fatal (a broken store at reconcile time does not block startup).
+	if cfg.SchedulerEnabled && len(cfg.DeclaredSchedules) > 0 {
+		reconcileSchedules(ctx, cfg, svc)
 	}
 
 	// Child-session retention GC (issue #38): wired AFTER the Service exists

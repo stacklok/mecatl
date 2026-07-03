@@ -48,6 +48,11 @@ type Subtree struct {
 	// Scalar marks a subtree that is a bare scalar (posture) rather than a mapping; its
 	// Fields holds a single pseudo-field describing the scalar.
 	Scalar bool
+	// ListBody marks a subtree whose body is a YAML SEQUENCE of the Fields (each field
+	// is one ELEMENT key), not a mapping. The skeleton renders one `- ` list element
+	// showing the fields; the reference renders the keys as `subtree[].field`. Used by
+	// the schedules: subtree (a bare sequence of declarations, no `items:` wrapper).
+	ListBody bool
 	// Fields are the keys within the subtree, in declaration order.
 	Fields []*Field
 	// Example is an optional commented example value block (raw YAML lines, no leading

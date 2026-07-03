@@ -26,6 +26,7 @@ func BuildModel(docs Docs) *Model {
 		outputEconomySubtree(docs),
 		reasoningEffortSubtree(docs),
 		modelsSubtree(docs),
+		schedulesSubtree(docs),
 	}}
 }
 
@@ -251,4 +252,39 @@ func docFor(docs Docs, key, fallback string) string {
 		return d
 	}
 	return fallback
+}
+
+func schedulesSubtree(docs Docs) *Subtree {
+	// SchedulesSection is a bare sequence (no mapping keys), so the subtree's fields
+	// ARE the ScheduleDecl element fields — there is no `items:` wrapper. Model them
+	// directly so the skeleton renders `- name: ...` list elements and the reference
+	// table shows `schedules[].name` etc.
+	fields := fieldsOf("ScheduleDecl", permconfig.ScheduleDecl{}, docs)
+	return &Subtree{
+		Key:  "schedules",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER scheduled-tasks declarations (issue #233, Phase 2b): a list of " +
+			"schedules the harness upserts into the durable ScheduleStore at startup " +
+			"(missing → Create, differing → Update, unchanged → no-op; removed schedules " +
+			"are NOT deleted). A project-tier schedules: block is IGNORED with a WARN " +
+			"(a project repo cannot register schedules).",
+		EnableNote: "Each list entry is one schedule; exactly one of `cron` / `oneShot` is " +
+			"required. The harness must be started with --scheduler for declared schedules " +
+			"to be reconciled and fired.",
+		CommentedOut: true,
+		ListBody:     true,
+		Fields:       fields,
+		Example: []string{
+			"schedules:",
+			"  - name: nightly-review",
+			`    cron: "0 9 * * *"`,
+			`    timezone: "UTC"`,
+			`    prompt: "Review open PRs and post a summary"`,
+			"    provider: openrouter",
+			"    model: anthropic/claude-sonnet-4",
+			"    mutating: false",
+			"    maxTurns: 20",
+			"    singleton: true",
+		},
+	}
 }

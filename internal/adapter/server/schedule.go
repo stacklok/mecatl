@@ -233,7 +233,12 @@ func (s *Service) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	if err != nil {
 		return port.Schedule{}, err
 	}
-	// Preserve the existing State (firing progress) — only the Spec changes.
+	// Preserve the existing State (firing progress) AND the creation timestamp —
+	// only the operator-authored Spec fields change on an Update. CreatedAt is a
+	// store-side timestamp, never operator-authored, so it must not be clobbered
+	// to the zero value (which the reconcile update path would otherwise do on
+	// every restart, destroying the audit trail).
+	spec.CreatedAt = existing.Spec.CreatedAt
 	updated := port.Schedule{Spec: spec, State: existing.State}
 	if err := store.Save(ctx, updated); err != nil {
 		return port.Schedule{}, err

@@ -25,6 +25,7 @@ func TestStrictFieldsMatchYAMLTags(t *testing.T) {
 		{"ModelsSection", (&ModelsSection{}).strictFields(), ModelsSection{}},
 		{"RouterSection", (&RouterSection{}).strictFields(), RouterSection{}},
 		{"RouterCategory", (&RouterCategory{}).strictFields(), RouterCategory{}},
+		{"ScheduleDecl", (&ScheduleDecl{}).strictFields(), ScheduleDecl{}},
 	}
 	for _, tc := range cases {
 		strictKeys := mapKeys(tc.strict)
