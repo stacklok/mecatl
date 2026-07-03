@@ -198,6 +198,27 @@ const (
 	// fold back into the parent conversation exclusively via the Parallel tool's
 	// ToolResult.
 	EvParallelEnd EventType = "parallel.end"
+
+	// EvScheduleFired is emitted when a schedule fires — a Claim→run→RecordFire
+	// cycle started for a named schedule. It is emitted from COMPOSITION (the
+	// scheduler) at fire time, NOT the agent loop (engine/agent never imports
+	// port.ScheduleStore). It is CLIENT-VISIBLE (unlike the log-only EvApproval /
+	// EvCompactionArchive / EvUserPrompt): the schedule.* lifecycle rides the live
+	// client wire so an operator watching a session stream sees scheduled fires
+	// attributed to their schedule. It carries the SchedulePayload; kind/stop/err
+	// are STRING passthroughs (the EvNoProgress/StopBudget discipline — no proto
+	// enum). Maps to the proto event-type string verbatim.
+	EvScheduleFired EventType = "schedule.fired"
+	// EvScheduleSkipped is emitted when a schedule's fire was SKIPPED — the
+	// singleton overlap check found a prior fire still running, or the misfire
+	// policy was MisfireSkip for a missed slot. Emitted from composition, not the
+	// loop; client-visible; carries SchedulePayload (kind="skipped").
+	EvScheduleSkipped EventType = "schedule.skipped"
+	// EvScheduleFailed is emitted when a schedule's fire FAILED — the fire's run
+	// ended with StopError, or the fire could not be claimed/driven at all. Emitted
+	// from composition, not the loop; client-visible; carries SchedulePayload
+	// (kind="failed", stop/err populated).
+	EvScheduleFailed EventType = "schedule.failed"
 )
 
 // ParallelEventKind discriminates which lifecycle transition an EvParallelBranch event
@@ -648,6 +669,43 @@ type ParallelPayload struct {
 	WinnerWorkspace string
 }
 
+// SchedulePayload is the structured detail carried by the schedule.* events
+// (EvScheduleFired / EvScheduleSkipped / EvScheduleFailed). It mirrors the
+// schedule.proto SchedulePayload one-for-one. It is emitted from COMPOSITION
+// (the scheduler) at fire time, NOT the agent loop (engine/agent never imports
+// port.ScheduleStore — the tick loop, cron parsing, misfire policy, and
+// leader-lease acquisition all live in composition). It is CLIENT-VISIBLE
+// (unlike the log-only EvApproval / EvCompactionArchive / EvUserPrompt): the
+// schedule.* lifecycle rides the live client wire so an operator watching a
+// session stream sees scheduled fires attributed to their schedule.
+//
+// STRING-PASSTHROUGH DISCIPLINE: Kind / Stop / Err are plain strings (the
+// EvNoProgress / StopBudget precedent — no proto enum, no closed set a later
+// value would silently mis-classify). Kind is "fired" / "skipped" / "failed";
+// Stop is a session.StopReason; Err is a flat error string.
+type SchedulePayload struct {
+	// ScheduleName is the schedule that fired / was skipped / failed (the
+	// ScheduleSpec.Name foreign key).
+	ScheduleName string
+	// FireID is the per-fire session id (the same id ScheduleFire.ID and
+	// ScheduleFire.SessionID carry — the fire's id IS its session id on the wire,
+	// the FireNowResponse.fire_id == session_id contract).
+	FireID string
+	// SessionID is the session the fire ran as. It equals FireID for a fired
+	// fire; it is empty for a skipped fire (no session was created).
+	SessionID SessionID
+	// Kind is the event kind: "fired" / "skipped" / "failed". String passthrough.
+	Kind string
+	// Stop is the terminal stop reason of the fire's run (a StopReason). Empty
+	// for a skipped fire (no run happened) and for a fired fire that has not yet
+	// completed.
+	Stop StopReason
+	// Err is the error string if the fire's run failed (Kind="failed"), empty
+	// otherwise. It is a flat string (no structured error crosses) so a consumer
+	// can render it without importing the run's error types.
+	Err string
+}
+
 // TeamMemberSpec is one roster entry forwarded on EvTeamStart: the member name,
 // its role label, and the read-only/mutating and lead flags. It is a small value
 // type carrying ONLY model-supplied metadata about the team's shape — never any
@@ -897,4 +955,9 @@ type Event struct {
 	// metadata-only observability projection of a Parallel fork-join run (group-level
 	// join/winner facts + per-branch metadata + fork paths, never branch content).
 	Parallel *ParallelPayload
+	// Schedule is set on the schedule.* events (fired / skipped / failed): the
+	// scheduler lifecycle projection emitted from composition (the scheduler), NOT
+	// the loop. Client-visible (unlike the log-only EvApproval /
+	// EvCompactionArchive / EvUserPrompt). See SchedulePayload.
+	Schedule *SchedulePayload
 }

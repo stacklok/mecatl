@@ -48,6 +48,9 @@ const EvPermissionAsk EventType = "permission.ask"
 const EvPermissionRetract EventType = "permission.retract"
 const EvReasoningDelta EventType = "reasoning.delta"
 const EvResult EventType = "result"
+const EvScheduleFailed EventType = "schedule.failed"
+const EvScheduleFired EventType = "schedule.fired"
+const EvScheduleSkipped EventType = "schedule.skipped"
 const EvSessionInit EventType = "session.init"
 const EvSubagentEnd EventType = "subagent.end"
 const EvSubagentStart EventType = "subagent.start"
@@ -143,7 +146,7 @@ type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; Schedule *SchedulePayload}
 type EventType string
 type HookDecision string
 type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID}
@@ -156,6 +159,7 @@ type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason s
 type PermissionMode string
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
 type Role string
+type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
 type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; CreatedAt time.Time}
 type SessionID string
 type State string

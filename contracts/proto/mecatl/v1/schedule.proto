@@ -1,0 +1,355 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl scheduled-tasks API surface (Phase 2a, issue #232).
+//
+// ScheduleService is the network surface over the scheduler: a durable registry
+// of named schedules (cron / one-shot) that fire an agent run on a configured
+// provider+model. It is a peer of HarnessService — the same package
+// (`mecatl.v1`), the same wire conventions (string-passthrough kinds, no enum
+// for the scheduler lifecycle), and the same `buf.validate.field` annotation
+// posture (authored for documentation + future runtime enforcement; v1 enforces
+// the required-field checks in the Go server adapter, see
+// internal/adapter/server).
+//
+// The value objects mirror engine/port/schedule.go (ScheduleSpec /
+// ScheduleState / Schedule / ScheduleFire / TriggerSpec /
+// ScheduleProviderSelector / MisfirePolicy) one-for-one. The at-most-once
+// claim-before-fire / singleton / pending-sentinel contract lives in the port
+// doc-comments; this proto is a byte-faithful wire projection of it, never an
+// reinterpretation.
+//
+// The schedule.* events (EvScheduleFired / EvScheduleSkipped / EvScheduleFailed)
+// are CLIENT-VISIBLE (unlike EvApproval / EvCompactionArchive / EvUserPrompt
+// which are log-only): they are emitted from COMPOSITION (the scheduler), NOT
+// the agent loop, and ride the Event.schedule field (field 15) defined in
+// harness.proto. Their kind / stop / err are STRING passthroughs (the
+// EvNoProgress / StopBudget discipline — no proto enum).
+
+syntax = "proto3";
+
+package mecatl.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "mecatl/v1/harness.proto";
+
+// ScheduleService is the scheduler API: a durable registry of named schedules
+// that fire agent runs on a configured cadence. A schedule's fires are
+// at-most-once across replicas (the claim-before-fire contract — see
+// ScheduleSpec / ScheduleState). The service is OPTIONAL: a backend that does
+// not implement port.ScheduleStore answers ErrScheduleUnsupported and
+// composition disables scheduling for the process (byte-identical no-schedule
+// path).
+service ScheduleService {
+  // CreateSchedule saves a new schedule (an upsert by name) and returns the
+  // created aggregate. The create-seam (composition) validates the spec — the
+  // exactly-one-of(cron, one_shot) trigger XOR, the prompt-or-parts non-empty
+  // rule, the cron grammar — fail-closed; the proto carries per-field
+  // constraints only (cross-field rules are server-enforced, the
+  // CreateSessionRequest.workspace posture).
+  rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
+
+  // GetSchedule returns the schedule stored under name (spec + state).
+  rpc GetSchedule(GetScheduleRequest) returns (GetScheduleResponse);
+
+  // ListSchedules returns all stored schedules, in no guaranteed order.
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+
+  // UpdateSchedule updates an existing schedule's spec (the state half is
+  // preserved on overwrite — call Delete + Create to reset firing progress).
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (UpdateScheduleResponse);
+
+  // DeleteSchedule removes the schedule stored under name. Idempotent: deleting
+  // an unknown name is success.
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+
+  // FireNow forces an immediate fire of the schedule, returning the per-fire
+  // session id (fire_id) the caller may poll via GetFire / the session APIs.
+  // It bypasses the due check but STILL claims the slot (at-most-once): a
+  // concurrent FireNow on the same schedule is serialised by the caller.
+  rpc FireNow(FireNowRequest) returns (FireNowResponse);
+
+  // PauseSchedule disables a schedule without deleting it (Enabled=false). A
+  // disabled schedule is excluded from Due even if NextFireAt is in the past.
+  rpc PauseSchedule(PauseScheduleRequest) returns (PauseScheduleResponse);
+
+  // ResumeSchedule re-enables a paused schedule (Enabled=true). It does NOT
+  // recompute NextFireAt — a schedule paused past its next fire resumes via the
+  // misfire policy on the next tick.
+  rpc ResumeSchedule(ResumeScheduleRequest) returns (ResumeScheduleResponse);
+
+  // GetFire returns the fire record stored under fire_id (the pull-only
+  // result-delivery read path for v1).
+  rpc GetFire(GetFireRequest) returns (GetFireResponse);
+
+  // ListFires returns the fire records for a schedule, in no guaranteed order.
+  rpc ListFires(ListFiresRequest) returns (ListFiresResponse);
+}
+
+// MisfirePolicy is what to do when a schedule's NextFireAt is in the past at
+// tick time — i.e. the scheduler wakes up (or a replica takes over) and finds a
+// due slot it missed. Mirrors port.MisfirePolicy. The zero value
+// (MISFIRE_FIRE_ONCE_NOW) is the default.
+enum MisfirePolicy {
+  // MISFIRE_POLICY_UNSPECIFIED defaults to FIRE_ONCE_NOW at the server boundary.
+  MISFIRE_POLICY_UNSPECIFIED = 0;
+  // MISFIRE_FIRE_ONCE_NOW fires the schedule a single time immediately for the
+  // missed slot, then resumes the normal cadence. The DEFAULT (zero value).
+  MISFIRE_FIRE_ONCE_NOW = 1;
+  // MISFIRE_SKIP skips the missed slot entirely and waits for the next due fire.
+  MISFIRE_SKIP = 2;
+}
+
+// ScheduleProviderSelector is the provider+model pair a schedule's fires run
+// on. Mirrors port.ScheduleProviderSelector. Both empty means "use the
+// deployment default" (the same opaque-string discipline as a session created
+// with no selector).
+message ScheduleProviderSelector {
+  // provider_id is the opaque provider identifier; "" means the deployment
+  // default.
+  string provider_id = 1;
+  // model_id is the opaque model identifier; "" means the deployment default
+  // for the provider.
+  string model_id = 2;
+}
+
+// TriggerSpec is the sum type for a schedule's firing trigger. Exactly ONE of
+// cron / one_shot is set.
+//
+// CROSS-FIELD RULE (exactly-one-of, enforced by the server at the create-seam,
+// NOT a proto rule): cross-field XOR is awkward to express in buf.validate, so
+// the proto carries both fields optional and composition's create-seam enforces
+// the XOR fail-closed (mirroring port.TriggerSpec.Validate). The store is
+// parser-free — it stores the raw expression verbatim and never interprets it;
+// the caller computes the next fire.
+message TriggerSpec {
+  // cron is the cron expression (5-field or @-macro). Mutually exclusive with
+  // one_shot. Empty unless this is a cron trigger.
+  string cron = 1;
+  // one_shot is the single wall-clock instant to fire at. Mutually exclusive
+  // with cron. The zero time means "not set". It MUST be in the future at
+  // schedule creation; the store does not re-validate this on save.
+  google.protobuf.Timestamp one_shot = 2;
+}
+
+// ScheduleSpec is the immutable definition of a schedule — the "what to run and
+// when" half. Mirrors port.ScheduleSpec. The durable FIRING state lives in
+// ScheduleState; the two halves together form a Schedule.
+message ScheduleSpec {
+  // name is the schedule's unique key (Save is an upsert by name).
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  // prompt is the free-text user prompt the fire runs with. Either prompt or
+  // parts (or both) must be non-empty — a cross-field rule enforced by the
+  // server, not the proto.
+  string prompt = 2;
+  // parts is an OPTIONAL multimodal extension (image/audio content parts),
+  // validated by the same session.ValidateMediaParts the wire path uses.
+  repeated Content parts = 3;
+  // trigger is the firing trigger (cron XOR one_shot).
+  TriggerSpec trigger = 4;
+  // selector selects the provider+model the fires run on. A zero value means
+  // the deployment default.
+  ScheduleProviderSelector selector = 5;
+  // profile is the session tool-surface profile ("" default, "no-fs" file-less).
+  string profile = 6;
+  // workspace is the session cwd. "" means the deployment default.
+  string workspace = 7;
+  // mode is the session permission posture. Reuses the PermissionMode enum from
+  // harness.proto (same package — proto allows cross-file refs within a package).
+  PermissionMode mode = 8;
+  // limits are the bounded per-fire budgets. Reuses the Limits message from
+  // harness.proto. They are PER-FIRE: each fire gets a fresh session with these
+  // limits.
+  Limits limits = 9;
+  // mutating is the explicit write opt-in. The DEFAULT is false (read-leaning),
+  // the same conservative default as a subagent.
+  bool mutating = 10;
+  // max_fires bounds the TOTAL number of fires for a cron schedule (0 = forever).
+  // Cron-only: a one-shot fires once by definition and max_fires is ignored.
+  int32 max_fires = 11;
+  // misfire is the misfire policy. Default MISFIRE_FIRE_ONCE_NOW.
+  MisfirePolicy misfire = 12;
+  // singleton is whether to skip the next fire if a prior fire is still running
+  // (the singleton / skip-overlap guard).
+  bool singleton = 13;
+  // timezone is the IANA timezone name the cron expression fires in. Empty
+  // means UTC. A one-shot trigger ignores it.
+  string timezone = 14;
+  // created_at is the schedule's creation timestamp.
+  google.protobuf.Timestamp created_at = 15;
+}
+
+// ScheduleState is the durable FIRING state of a schedule — the mutable half
+// that advances as the schedule fires. Mirrors port.ScheduleState. Updated
+// atomically by Claim (the claim-before-fire advance) and RecordFire (the
+// post-fire outcome).
+message ScheduleState {
+  // next_fire_at is the ground-truth next fire instant. The zero time means
+  // "no next fire" (a one-shot that fired, or a cron whose max_fires is
+  // exhausted) — the schedule is effectively done.
+  google.protobuf.Timestamp next_fire_at = 1;
+  // last_fire_at is the instant of the most recent Claim (the start of the most
+  // recent fire), not its completion.
+  google.protobuf.Timestamp last_fire_at = 2;
+  // fire_count is the total number of fires that have been Claimed.
+  int32 fire_count = 3;
+  // enabled is whether the schedule is active. A schedule may be disabled
+  // without deletion (pause/resume). Disabled schedules are excluded from Due.
+  bool enabled = 4;
+  // last_fire_session_id is the session id of the prior fire. The per-session
+  // LEASE on it is the authoritative cross-replica liveness oracle for the
+  // singleton check. The port.PendingFireSessionID sentinel ("pending") marks a
+  // Claim that has not yet been RecordFire'd.
+  string last_fire_session_id = 5;
+}
+
+// Schedule is the aggregate value object: the immutable Spec plus the durable
+// State. Mirrors port.Schedule. Load/List return this.
+message Schedule {
+  // spec is the immutable definition.
+  ScheduleSpec spec = 1;
+  // state is the durable firing state.
+  ScheduleState state = 2;
+}
+
+// ScheduleFire is one fire record: the outcome of a single Claim→run→RecordFire
+// cycle. Mirrors port.ScheduleFire. The fire's SESSION (the conversation,
+// usage, tool calls) lives in the SessionStore under session_id; this record is
+// the schedule-indexed pointer to it plus the terminal stop reason and any
+// error string.
+message ScheduleFire {
+  // id is the fire's unique identifier (caller-assigned at RecordFire time).
+  string id = 1;
+  // schedule_name is the schedule this fire belongs to.
+  string schedule_name = 2;
+  // session_id is the session the fire ran as.
+  string session_id = 3;
+  // fired_at is when the fire was Claimed (its start instant).
+  google.protobuf.Timestamp fired_at = 4;
+  // stop is the terminal stop reason of the fire's run (a session.StopReason
+  // string passthrough). Empty if the fire has not yet completed.
+  string stop = 5;
+  // err is the error string if the fire's run failed (stop == "error"), empty
+  // otherwise.
+  string err = 6;
+}
+
+// --- Request / Response messages --------------------------------------------
+
+// CreateScheduleRequest creates a new schedule.
+message CreateScheduleRequest {
+  // spec is the schedule definition to save. The create-seam validates the
+  // cross-field rules (trigger XOR, prompt-or-parts non-empty, cron grammar).
+  ScheduleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateScheduleResponse returns the created schedule (spec + state).
+message CreateScheduleResponse {
+  // schedule is the created aggregate.
+  Schedule schedule = 1;
+}
+
+// GetScheduleRequest names the schedule to look up.
+message GetScheduleRequest {
+  // name is the schedule's unique key.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// GetScheduleResponse wraps the schedule snapshot.
+message GetScheduleResponse {
+  // schedule is the requested schedule.
+  Schedule schedule = 1;
+}
+
+// ListSchedulesRequest lists all schedules. No filtering in v1.
+message ListSchedulesRequest {}
+
+// ListSchedulesResponse carries all stored schedules.
+message ListSchedulesResponse {
+  // schedules is the full list, in no guaranteed order.
+  repeated Schedule schedules = 1;
+}
+
+// UpdateScheduleRequest updates an existing schedule's spec. The state half is
+// preserved on overwrite.
+message UpdateScheduleRequest {
+  // spec is the new schedule definition. spec.name names the schedule to update
+  // (an upsert by name).
+  ScheduleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// UpdateScheduleResponse returns the updated schedule.
+message UpdateScheduleResponse {
+  // schedule is the updated aggregate.
+  Schedule schedule = 1;
+}
+
+// DeleteScheduleRequest names the schedule to delete.
+message DeleteScheduleRequest {
+  // name is the schedule's unique key. Idempotent: an unknown name succeeds.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// DeleteScheduleResponse is the empty acknowledgement.
+message DeleteScheduleResponse {}
+
+// FireNowRequest forces an immediate fire of the named schedule.
+message FireNowRequest {
+  // name is the schedule to fire.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// FireNowResponse returns the per-fire session id. fire_id and session_id are
+// the SAME value (the per-fire session id is the fire's id on the wire) — both
+// are returned so a caller holding either handle can poll GetFire / the session
+// APIs without a derivation.
+message FireNowResponse {
+  // fire_id is the per-fire session id (the same id GetFire takes and
+  // ScheduleFire.id / ScheduleFire.session_id carry).
+  string fire_id = 1;
+  // session_id is the session the fire ran as (== fire_id).
+  string session_id = 2;
+}
+
+// PauseScheduleRequest disables a schedule without deleting it.
+message PauseScheduleRequest {
+  // name is the schedule to pause.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// PauseScheduleResponse is the empty acknowledgement.
+message PauseScheduleResponse {}
+
+// ResumeScheduleRequest re-enables a paused schedule.
+message ResumeScheduleRequest {
+  // name is the schedule to resume.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ResumeScheduleResponse is the empty acknowledgement.
+message ResumeScheduleResponse {}
+
+// GetFireRequest names the fire to look up.
+message GetFireRequest {
+  // fire_id is the fire's unique identifier.
+  string fire_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// GetFireResponse wraps the fire record.
+message GetFireResponse {
+  // fire is the requested fire record.
+  ScheduleFire fire = 1;
+}
+
+// ListFiresRequest lists the fires for a schedule.
+message ListFiresRequest {
+  // schedule_name is the schedule whose fires to list.
+  string schedule_name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ListFiresResponse carries the fire records.
+message ListFiresResponse {
+  // fires is the list, in no guaranteed order.
+  repeated ScheduleFire fires = 1;
+}

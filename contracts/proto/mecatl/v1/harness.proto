@@ -692,6 +692,40 @@ message Event {
   // not branch content). The branch summaries fold into the parent conversation
   // only via the Parallel tool result.
   Parallel parallel = 14;
+  // schedule.* — the scheduler lifecycle (EvScheduleFired/Skipped/Failed). Client-visible
+  // (unlike EvApproval/EvCompactionArchive/EvUserPrompt which are log-only). Emitted from
+  // composition (the scheduler), NOT the loop. String-passthrough kind/stop/err, no enum.
+  SchedulePayload schedule = 15;
+}
+
+// SchedulePayload is the structured detail carried by the schedule.* events
+// (EvScheduleFired / EvScheduleSkipped / EvScheduleFailed). Mirrors
+// session.SchedulePayload. Emitted from composition (the scheduler) at fire
+// time, NOT the agent loop. Client-visible (unlike the log-only EvApproval /
+// EvCompactionArchive / EvUserPrompt). kind / stop / err are STRING passthroughs
+// (the EvNoProgress / StopBudget discipline — no proto enum). Defined here (not
+// schedule.proto) because it is the Event.schedule projection — Event lives in
+// harness.proto, and a cross-file reference back from harness.proto into
+// schedule.proto would form a circular import (schedule.proto imports
+// harness.proto for the shared Content/PermissionMode/Limits). Colocating the
+// projection with Event breaks the cycle cleanly.
+message SchedulePayload {
+  // schedule_name is the schedule that fired / was skipped / failed.
+  string schedule_name = 1;
+  // fire_id is the per-fire session id (the same id ScheduleFire.id /
+  // ScheduleFire.session_id carry).
+  string fire_id = 2;
+  // session_id is the session the fire ran as (== fire_id for a fired fire;
+  // empty for a skipped fire).
+  string session_id = 3;
+  // kind is the event kind: "fired" / "skipped" / "failed". String passthrough,
+  // no proto enum.
+  string kind = 4;
+  // stop is the terminal stop reason of the fire's run (a session.StopReason
+  // string passthrough). Empty for a skipped fire.
+  string stop = 5;
+  // err is the error string if the fire's run failed, empty otherwise.
+  string err = 6;
 }
 
 // HookDecision is the outcome a hook fire produced. Mirrors

@@ -27,6 +27,20 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **scheduled-tasks Phase 2a: `session.EvScheduleFired` / `EvScheduleSkipped` /
+  `EvScheduleFailed` events + `session.SchedulePayload`.** Three new
+  `EventType` string consts (`schedule.fired` / `schedule.skipped` /
+  `schedule.failed`) and a new `SchedulePayload` value object
+  (`ScheduleName`/`FireID`/`SessionID`/`Kind`/`Stop`/`Err`), plus a new
+  `Event.Schedule *SchedulePayload` field. They are the CLIENT-VISIBLE
+  scheduler-lifecycle projection (unlike the log-only `EvApproval` /
+  `EvCompactionArchive` / `EvUserPrompt`), emitted from COMPOSITION (the
+  scheduler) at fire time — NOT the agent loop (`engine/agent` never imports
+  `port.ScheduleStore`). `Kind`/`Stop`/`Err` are STRING passthroughs (the
+  `EvNoProgress`/`StopBudget` discipline — no proto enum). Classified Added per
+  COMPATIBILITY.md (new exported consts + a new struct field are minor bumps).
+  (#232)
+
 - **`port.ScheduleStore` + value objects** (`Schedule`, `ScheduleSpec`, `TriggerSpec`,
   `ScheduleState`, `ScheduleFire`, `ScheduleProviderSelector`, `ErrScheduleNotFound`,
   `ErrScheduleUnsupported`, `SchedulerLeaderLeaseID`, `TriggerKind`/`TriggerCron`/

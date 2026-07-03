@@ -136,6 +136,9 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Parallel != nil {
 		out.Parallel = toProtoParallel(*ev.Parallel)
 	}
+	if ev.Schedule != nil {
+		out.Schedule = toProtoSchedule(*ev.Schedule)
+	}
 	return out
 }
 
@@ -167,6 +170,23 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		DurationMs:      p.DurationMs,
 		Winner:          clampInt32(p.Winner),
 		WinnerWorkspace: p.WinnerWorkspace,
+	}
+}
+
+// toProtoSchedule maps a session.SchedulePayload to its proto SchedulePayload
+// form: the scheduler lifecycle projection emitted from composition (not the
+// loop). It copies the scalar fields verbatim — kind/stop/err are STRING
+// passthroughs (no enum), mirroring the domain payload's documented contract.
+// The payload carries no child content (the scheduler emits it at fire time,
+// not the agent loop), so there is no redaction surface here.
+func toProtoSchedule(p session.SchedulePayload) *mecatlv1.SchedulePayload {
+	return &mecatlv1.SchedulePayload{
+		ScheduleName: p.ScheduleName,
+		FireId:       p.FireID,
+		SessionId:    string(p.SessionID),
+		Kind:         p.Kind,
+		Stop:         string(p.Stop),
+		Err:          p.Err,
 	}
 }
 
