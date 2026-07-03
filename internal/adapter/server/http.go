@@ -10,6 +10,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -1001,6 +1002,8 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 }
 
 // writeServiceError maps a service sentinel error to an HTTP status.
+//
+//nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidArgument):
@@ -1033,6 +1036,23 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		// The per-session engine registry is at MaxSessionEngines (gRPC:
 		// ResourceExhausted): the client must release a session before opening another.
 		writeError(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, ErrNoScheduleStore):
+		// The configured store backend does not implement ScheduleStore: the
+		// schedule RPCs are not available on this deployment. 501.
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrScheduleDisabled):
+		// FireNow on a paused/done schedule. 412 (gRPC FailedPrecondition).
+		writeError(w, http.StatusPreconditionFailed, err.Error())
+	case errors.Is(err, ErrFireNowOverlap):
+		// FireNow singleton-overlap skip. 409 — the schedule exists and is
+		// well-formed, it is just running.
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, port.ErrScheduleNotFound):
+		// A schedule/fire not found from the store. 404.
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, port.ErrScheduleUnsupported):
+		// The backend can never store schedules (a sticky-disable case). 501.
+		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrNoActiveRun):
 		// Known session, but its run is not live in this process (e.g. the
 		// stream was lost across a restart): nothing to deliver the control to.

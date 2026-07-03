@@ -428,6 +428,15 @@ type ScheduleStore interface {
 	// deleted schedule is an error, not a silent no-op).
 	Claim(ctx context.Context, name string, now, nextFire time.Time) (Schedule, error)
 
+	// SetEnabled atomically sets the schedule's Enabled flag WITHOUT touching
+	// any other State field (unlike Save, which preserves State on a Spec
+	// overwrite — Save CANNOT mutate Enabled because it preserves the existing
+	// State half). It is the pause/resume primitive: PauseSchedule sets
+	// Enabled=false; ResumeSchedule sets Enabled=true. The not-found case wraps
+	// ErrScheduleNotFound. An implementation that cannot store schedules returns
+	// ErrScheduleUnsupported (wrapped).
+	SetEnabled(ctx context.Context, name string, enabled bool) error
+
 	// RecordFire records the outcome of a fire (f) and updates the schedule's
 	// LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID
 	// value Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is
@@ -441,4 +450,11 @@ type ScheduleStore interface {
 	// wraps ErrScheduleNotFound; any other error is an infrastructure failure. It
 	// is the pull-only result-delivery read path for v1.
 	LoadFire(ctx context.Context, fireID string) (ScheduleFire, error)
+
+	// ListFires returns the fire records for a schedule, in no guaranteed order.
+	// It is the list companion to LoadFire. The not-found case for the SCHEDULE
+	// wraps ErrScheduleNotFound; an empty fire list for an existing schedule is a
+	// successful empty slice (not an error). An implementation that cannot store
+	// schedules returns ErrScheduleUnsupported (wrapped).
+	ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error)
 }

@@ -796,6 +796,228 @@ func TestSingletonOverlapPreservesLivePointer(t *testing.T) {
 	}
 }
 
+// TestFireNow: the manual fire path Claims + fires a due schedule and records the
+// fire. It mirrors fireOne's tail via the shared fireClaimed helper.
+func TestFireNow(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	due := clk.Now()
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:    "manual",
+			Prompt:  "x",
+			Trigger: port.TriggerSpec{Cron: "* * * * *"},
+		},
+		State: port.ScheduleState{NextFireAt: due, Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	fr, err := s.FireNow(context.Background(), "manual", clk.Now())
+	if err != nil {
+		t.Fatalf("FireNow: %v", err)
+	}
+	if fr.ScheduleName != "manual" {
+		t.Errorf("ScheduleName = %q, want manual", fr.ScheduleName)
+	}
+	if fr.Stop != session.StopEndTurn {
+		t.Errorf("Stop = %q, want %q", fr.Stop, session.StopEndTurn)
+	}
+	if got := fire.count(); got != 1 {
+		t.Fatalf("fires = %d, want 1", got)
+	}
+	// Claim advanced + the fire record was stored.
+	loaded, _ := store.Load(context.Background(), "manual")
+	if loaded.State.FireCount != 1 {
+		t.Fatalf("FireCount = %d, want 1", loaded.State.FireCount)
+	}
+	got, err := store.LoadFire(context.Background(), fr.ID)
+	if err != nil {
+		t.Fatalf("LoadFire: %v", err)
+	}
+	if got.Stop != session.StopEndTurn {
+		t.Fatalf("stored fire Stop = %q, want %q", got.Stop, session.StopEndTurn)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestFireNowDisabled: a paused/done schedule is rejected with ErrFireNowDisabled
+// and is NOT claimed.
+func TestFireNowDisabled(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "paused", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: false},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := s.FireNow(context.Background(), "paused", clk.Now()); !errors.Is(err, scheduler.ErrFireNowDisabled) {
+		t.Fatalf("FireNow on disabled = %v, want ErrFireNowDisabled", err)
+	}
+	if got := fire.count(); got != 0 {
+		t.Fatalf("fires = %d, want 0 (disabled schedule not fired)", got)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestFireNowOneShotExhausted: a one-shot that has already fired is rejected
+// with ErrFireNowExhausted.
+func TestFireNowOneShotExhausted(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "once", Prompt: "x", Trigger: port.TriggerSpec{OneShot: clk.Now()}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true, FireCount: 1},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := s.FireNow(context.Background(), "once", clk.Now()); !errors.Is(err, scheduler.ErrFireNowExhausted) {
+		t.Fatalf("FireNow on exhausted one-shot = %v, want ErrFireNowExhausted", err)
+	}
+	if got := fire.count(); got != 0 {
+		t.Fatalf("fires = %d, want 0 (exhausted one-shot not fired)", got)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestFireNowSingletonOverlap: a singleton schedule whose prior fire is still
+// running is rejected with ErrFireNowOverlap and is NOT claimed (the live
+// pointer is preserved, mirroring the tick loop's singleton skip).
+func TestFireNowSingletonOverlap(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+
+	leaseBE := &heldSessionLease{held: map[session.SessionID]string{"sched--prior": "owner-prior"}, clk: clk}
+	s := scheduler.New(scheduler.Config{
+		Store:      store,
+		Lease:      leaseBE,
+		LeaseOwner: "owner-this",
+		Fire:       fire.fire,
+		Clock:      clk,
+	})
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      "singleton",
+			Prompt:    "x",
+			Trigger:   port.TriggerSpec{Cron: "* * * * *"},
+			Singleton: true,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        clk.Now(),
+			Enabled:           true,
+			LastFireSessionID: "sched--prior",
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := s.FireNow(context.Background(), "singleton", clk.Now()); !errors.Is(err, scheduler.ErrFireNowOverlap) {
+		t.Fatalf("FireNow on overlapping singleton = %v, want ErrFireNowOverlap", err)
+	}
+	if got := fire.count(); got != 0 {
+		t.Fatalf("fires = %d, want 0 (overlapping singleton not fired)", got)
+	}
+	// The live pointer is preserved (no Claim clobbered it).
+	loaded, _ := store.Load(context.Background(), "singleton")
+	if loaded.State.LastFireSessionID != "sched--prior" {
+		t.Fatalf("LastFireSessionID = %q, want %q (skip must not clobber the live pointer)",
+			loaded.State.LastFireSessionID, "sched--prior")
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestFireNowEmitCallback: the EmitScheduleEvent callback fires for a successful
+// FireNow (kind="fired") and for the failed path (kind="failed").
+func TestFireNowEmitCallback(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+
+	var gotMu sync.Mutex
+	var got []session.SchedulePayload
+	emit := func(p session.SchedulePayload) {
+		gotMu.Lock()
+		got = append(got, p)
+		gotMu.Unlock()
+	}
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Fire:               fire.fire,
+		Clock:              clk,
+		TickInterval:       1 * time.Hour,
+		MaxConcurrentFires: 4,
+		EmitScheduleEvent:  emit,
+	})
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "emit-ok", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := s.FireNow(context.Background(), "emit-ok", clk.Now()); err != nil {
+		t.Fatalf("FireNow: %v", err)
+	}
+	gotMu.Lock()
+	if len(got) != 1 || got[0].Kind != "fired" || got[0].ScheduleName != "emit-ok" {
+		t.Fatalf("emit on success = %+v, want one fired payload for emit-ok", got)
+	}
+	gotMu.Unlock()
+
+	// A failed fire emits kind="failed".
+	fire.err = errors.New("boom")
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "emit-fail", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now().Add(time.Second), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save fail: %v", err)
+	}
+	clk.advance(time.Minute) // make the new schedule due
+	if _, err := s.FireNow(context.Background(), "emit-fail", clk.Now()); err == nil {
+		t.Fatal("FireNow on failing fire = nil, want the fire error")
+	}
+	gotMu.Lock()
+	if len(got) != 2 || got[1].Kind != "failed" || got[1].ScheduleName != "emit-fail" {
+		t.Fatalf("emit on failure = %+v, want a failed payload for emit-fail as the 2nd", got)
+	}
+	gotMu.Unlock()
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // runtimeYield yields the goroutine to let the fan-out reach steady state.

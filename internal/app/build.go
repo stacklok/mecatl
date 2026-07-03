@@ -1982,6 +1982,14 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	}
 	svc.SetScheduler(sched)
 	sched.SetFire(makeFireFunc(svc))
+	// Wire the OPTIONAL emit callback: the scheduler invokes it from
+	// fireClaimed (fired/failed) and fireOne/FireNow (skipped) with a
+	// session.SchedulePayload; composition appends it as an EvSchedule* event to
+	// the fire session's durable EventLog (so schedule lifecycle rides the same
+	// durable log as the fire's own events). The callback closes over the
+	// Service — the scheduler pkg stays EventSink-free. A nil EventLog makes the
+	// callback a no-op (byte-identical no-emit path).
+	sched.SetEmitScheduleEvent(svc.EmitScheduleEvent)
 	if err := sched.Start(ctx); err != nil {
 		schedClose()
 		return noop, fmt.Errorf("start scheduler: %w", err)

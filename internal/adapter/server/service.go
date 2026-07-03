@@ -650,6 +650,13 @@ type Service struct {
 	// over the Service). Close stops it (drains in-flight fires + releases the
 	// leader lease); Drain arms its drain gate. nil when no scheduler is wired.
 	scheduler *scheduler.Scheduler
+
+	// scheduleStoreCache memoises the type-assertion of cfg.Store for a
+	// ScheduleStore (the PrunableStore/SessionLease precedent). It is computed
+	// once on first scheduleStore() call and cached so the byte-identical
+	// no-scheduling path stays cheap. Guarded by its own mutex (not s.mu) so a
+	// schedule lookup does not contend with the run/registry hot path.
+	scheduleStoreCache scheduleStoreCache
 }
 
 // heldLease is one process-held session lease plus the cancel that stops its

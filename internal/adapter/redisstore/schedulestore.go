@@ -200,6 +200,29 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 	return nil
 }
 
+// SetEnabled atomically sets the schedule's Enabled flag WITHOUT touching any
+// other State field (unlike Save, which preserves the State half on a Spec
+// overwrite and so cannot mutate Enabled). It is the pause/resume primitive.
+// The not-found case (key missing, redis.Nil) wraps ErrScheduleNotFound. Redis
+// serializes the HSET single-threaded, so no client mutex is required.
+func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled bool) error {
+	key := scheduleKey(name)
+	// HSET on a non-existent key creates it with just the enabled field — we
+	// must guard against that. EXISTS is the liveness probe (a missing key is
+	// not-found, not a new schedule to create).
+	exists, err := s.client.Exists(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: set enabled %q (exists): %w", name, err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	}
+	if err := s.client.HSet(ctx, key, fieldEnabled, boolStr(enabled)).Err(); err != nil {
+		return fmt.Errorf("redisstore: set enabled %q: %w", name, err)
+	}
+	return nil
+}
+
 // Load returns the schedule stored under name. The not-found case (key missing,
 // redis.Nil on HGETALL of a non-existent key returns an empty map rather than
 // Nil, so an empty map is treated as not-found) wraps port.ErrScheduleNotFound.
@@ -428,6 +451,53 @@ func (s *scheduleStore) LoadFire(ctx context.Context, fireID string) (port.Sched
 		return port.ScheduleFire{}, fmt.Errorf("redisstore: unknown schedule-fire format %q (want %q)", rec.V, scheduleFormat)
 	}
 	return rec.Fire, nil
+}
+
+// ListFires returns the fire records for a schedule, in no guaranteed order. The
+// not-found case for the SCHEDULE wraps port.ErrScheduleNotFound; an empty fire
+// list for an existing schedule is a successful empty slice (not an error). It
+// SCANs the fire keyspace (MATCH mecatl:schedulefire:*, the production-safe
+// cursor-based pattern — never KEYS) and filters by ScheduleName — a fire record
+// carries its ScheduleName foreign key, so it is locatable without a
+// per-schedule fire index. A corrupt entry (unparseable JSON) is skipped
+// best-effort rather than failing the whole list.
+func (s *scheduleStore) ListFires(ctx context.Context, scheduleName string) ([]port.ScheduleFire, error) {
+	// The schedule must exist (the not-found-for-the-schedule contract). HGETALL
+	// of a missing key returns an empty map, so an empty map is treated as
+	// not-found (the same discipline Load applies).
+	fields, err := s.client.HGetAll(ctx, scheduleKey(scheduleName)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redisstore: list fires %q (schedule): %w", scheduleName, err)
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("%w: %q", ErrScheduleNotFound, scheduleName)
+	}
+	out := make([]port.ScheduleFire, 0)
+	scan := s.client.Scan(ctx, 0, scheduleFireKeyPrefix+"*", 0).Iterator()
+	for scan.Next(ctx) {
+		raw, err := s.client.Get(ctx, scan.Val()).Bytes()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue // raced away between SCAN and GET — skip.
+			}
+			continue // best-effort: a corrupt/unreadable fire is skipped, not fatal.
+		}
+		var rec scheduleFireRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			continue
+		}
+		if rec.V != scheduleFormat {
+			continue
+		}
+		if rec.Fire.ScheduleName != scheduleName {
+			continue
+		}
+		out = append(out, rec.Fire)
+	}
+	if err := scan.Err(); err != nil {
+		return nil, fmt.Errorf("redisstore: list fires %q: %w", scheduleName, err)
+	}
+	return out, nil
 }
 
 // scheduleFireRecord is the envelope stored at a fire key: a format tag plus the

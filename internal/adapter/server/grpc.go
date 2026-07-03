@@ -10,6 +10,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -346,6 +347,8 @@ func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWor
 }
 
 // toStatus maps service sentinel errors to gRPC status codes.
+//
+//nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func toStatus(err error) error {
 	switch {
 	case errors.Is(err, ErrInvalidArgument):
@@ -382,6 +385,24 @@ func toStatus(err error) error {
 		return status.Error(codes.ResourceExhausted, err.Error())
 	case errors.Is(err, ErrTooManySessionEngines):
 		return status.Error(codes.ResourceExhausted, err.Error())
+	case errors.Is(err, ErrNoScheduleStore):
+		// The configured store backend does not implement ScheduleStore: the
+		// schedule RPCs are not available on this deployment. Unimplemented.
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrScheduleDisabled):
+		// FireNow on a paused/done schedule. FailedPrecondition (HTTP 412).
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrFireNowOverlap):
+		// FireNow singleton-overlap skip. FailedPrecondition (HTTP 409) — the
+		// schedule exists and is well-formed, it is just running.
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, port.ErrScheduleNotFound):
+		// A schedule/fire not found from the store. NotFound (HTTP 404).
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, port.ErrScheduleUnsupported):
+		// The backend can never store schedules (a sticky-disable case).
+		// Unimplemented (HTTP 501).
+		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrInternal):
 		return status.Error(codes.Internal, err.Error())
 	default:

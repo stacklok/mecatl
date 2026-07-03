@@ -72,4 +72,20 @@ var (
 	// map it to Unavailable / HTTP 503. The gate starts false (byte-identical
 	// default); Service.Drain arms it.
 	ErrUnavailable = errors.New("server: draining, not accepting new runs")
+	// Schedule-surface sentinels (internal/adapter/server/schedule.go). Defined
+	// here so toStatus/writeServiceError map them in the one error-classification
+	// chokepoint alongside the team/session sentinels.
+	// ErrNoScheduleStore signals that no ScheduleStore is available — the
+	// configured store backend does not expose one. Adapters map it to
+	// Unimplemented / HTTP 501.
+	ErrNoScheduleStore = errors.New("server: scheduled tasks are not supported by the configured store")
+	// ErrScheduleDisabled is returned by FireNow when the schedule is not enabled
+	// (paused or done). It wraps scheduler.ErrFireNowDisabled. Adapters map it to
+	// FailedPrecondition / HTTP 412.
+	ErrScheduleDisabled = errors.New("server: schedule is disabled")
+	// ErrFireNowOverlap is returned by FireNow when the singleton overlap check
+	// found a prior fire still running. It wraps scheduler.ErrFireNowOverlap.
+	// Adapters map it to FailedPrecondition / HTTP 409 (the schedule exists and
+	// is well-formed, it is just running).
+	ErrFireNowOverlap = errors.New("server: fire-now skipped (prior fire still running)")
 )

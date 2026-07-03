@@ -27,6 +27,24 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **scheduled-tasks Phase 2a: `port.ScheduleStore.SetEnabled`.** A new
+  `SetEnabled(ctx, name, enabled) error` method — the pause/resume primitive.
+  It atomically sets the schedule's `Enabled` flag WITHOUT touching any other
+  State field, which `Save` CANNOT do: `Save` preserves the existing State half
+  on a Spec overwrite (so a Load→set Enabled→Save is inert, the Enabled flip
+  does not persist). `PauseSchedule` sets `Enabled=false`; `ResumeSchedule`
+  sets `Enabled=true`. The not-found case wraps `ErrScheduleNotFound`.
+  Classified Added per COMPATIBILITY.md (a new interface method is a minor
+  bump). (#232)
+
+- **scheduled-tasks Phase 2a: `port.ScheduleStore.ListFires`.** A new
+  `ListFires(ctx, scheduleName) ([]ScheduleFire, error)` method — the list
+  companion to `LoadFire`. It returns the fire records for a schedule, in no
+  guaranteed order; the not-found case for the SCHEDULE wraps
+  `ErrScheduleNotFound`, and an empty fire list for an existing schedule is a
+  successful empty slice (not an error). Classified Added per COMPATIBILITY.md
+  (a new interface method is a minor bump). (#232)
+
 - **scheduled-tasks Phase 2a: `session.EvScheduleFired` / `EvScheduleSkipped` /
   `EvScheduleFailed` events + `session.SchedulePayload`.** Three new
   `EventType` string consts (`schedule.fired` / `schedule.skipped` /

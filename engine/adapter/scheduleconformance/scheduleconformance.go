@@ -500,6 +500,174 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		}
 	})
 
+	t.Run("list fires: empty for existing schedule, populated after record, not-found for unknown", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-listfires"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+
+		// (a) An existing schedule with NO fires returns a successful EMPTY slice
+		// (not an error, not nil).
+		got, err := s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires on existing schedule with no fires: %v (want nil err)", err)
+		}
+		if got == nil {
+			t.Fatal("ListFires on existing schedule with no fires = nil, want a non-nil empty slice")
+		}
+		if len(got) != 0 {
+			t.Fatalf("ListFires on existing schedule with no fires = %d records, want 0", len(got))
+		}
+
+		// (b) After RecordFire, ListFires returns the recorded fire(s).
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		fire1 := port.ScheduleFire{
+			ID:           "listfires-1",
+			ScheduleName: name,
+			SessionID:    "sess-listfires-1",
+			FiredAt:      now,
+			Stop:         session.StopEndTurn,
+		}
+		fire2 := port.ScheduleFire{
+			ID:           "listfires-2",
+			ScheduleName: name,
+			SessionID:    "sess-listfires-2",
+			FiredAt:      now,
+			Stop:         session.StopError,
+			Err:          "boom",
+		}
+		if err := s.RecordFire(ctx, fire1); err != nil {
+			t.Fatalf("RecordFire #1: %v", err)
+		}
+		if err := s.RecordFire(ctx, fire2); err != nil {
+			t.Fatalf("RecordFire #2: %v", err)
+		}
+		got, err = s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires after RecordFire: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("ListFires returned %d records, want 2", len(got))
+		}
+		// Both recorded fires must be present (order is not guaranteed, so collect
+		// by id and assert membership).
+		byID := make(map[string]port.ScheduleFire, len(got))
+		for _, f := range got {
+			byID[f.ID] = f
+		}
+		if f, ok := byID["listfires-1"]; !ok {
+			t.Errorf("ListFires missing %q", "listfires-1")
+		} else if f.SessionID != "sess-listfires-1" || f.Stop != session.StopEndTurn {
+			t.Errorf("ListFires %q = %+v, want the recorded fire", "listfires-1", f)
+		}
+		if f, ok := byID["listfires-2"]; !ok {
+			t.Errorf("ListFires missing %q", "listfires-2")
+		} else if f.Stop != session.StopError || f.Err != "boom" {
+			t.Errorf("ListFires %q = %+v, want the recorded fire", "listfires-2", f)
+		}
+
+		// (c) A second schedule's fires do NOT bleed into the first's list (the
+		// foreign-key filter holds).
+		const other = "conf-sched-listfires-other"
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: other, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save other: %v", err)
+		}
+		if _, err := s.Claim(ctx, other, now, next); err != nil {
+			t.Fatalf("Claim other: %v", err)
+		}
+		if err := s.RecordFire(ctx, port.ScheduleFire{
+			ID: "listfires-other-1", ScheduleName: other, SessionID: "sess-other", FiredAt: now, Stop: session.StopEndTurn,
+		}); err != nil {
+			t.Fatalf("RecordFire other: %v", err)
+		}
+		got, err = s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires after other schedule recorded: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("ListFires for %q returned %d records, want 2 (other schedule's fire bled in)", name, len(got))
+		}
+
+		// (d) ListFires on an UNKNOWN schedule wraps ErrScheduleNotFound.
+		if _, err := s.ListFires(ctx, "conf-sched-listfires-missing"); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ListFires(unknown schedule) = %v, want ErrScheduleNotFound", err)
+		}
+	})
+
+	t.Run("set enabled flips Enabled without touching other state", func(t *testing.T) {
+		// SetEnabled is the pause/resume primitive: it flips Enabled and ONLY
+		// Enabled — unlike Save (which preserves the existing State half on a
+		// Spec overwrite and so CANNOT mutate Enabled). The other State fields
+		// (NextFireAt/LastFireAt/FireCount/LastFireSessionID) must be unchanged.
+		s := newStore(t)
+		const name = "conf-sched-setenabled"
+		seed := port.Schedule{
+			Spec: port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{
+				NextFireAt:        time.Unix(1_700_000_060, 0),
+				LastFireAt:        time.Unix(1_700_000_000, 0),
+				FireCount:         3,
+				Enabled:           true,
+				LastFireSessionID: "sess-pre",
+			},
+		}
+		if err := s.Save(ctx, seed); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		// Pause: SetEnabled false.
+		if err := s.SetEnabled(ctx, name, false); err != nil {
+			t.Fatalf("SetEnabled(false): %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after SetEnabled(false): %v", err)
+		}
+		if got.State.Enabled {
+			t.Errorf("Enabled = true, want false (paused)")
+		}
+		if !got.State.NextFireAt.Equal(seed.State.NextFireAt) {
+			t.Errorf("NextFireAt = %v, want unchanged %v", got.State.NextFireAt, seed.State.NextFireAt)
+		}
+		if !got.State.LastFireAt.Equal(seed.State.LastFireAt) {
+			t.Errorf("LastFireAt = %v, want unchanged %v", got.State.LastFireAt, seed.State.LastFireAt)
+		}
+		if got.State.FireCount != seed.State.FireCount {
+			t.Errorf("FireCount = %d, want unchanged %d", got.State.FireCount, seed.State.FireCount)
+		}
+		if got.State.LastFireSessionID != seed.State.LastFireSessionID {
+			t.Errorf("LastFireSessionID = %q, want unchanged %q", got.State.LastFireSessionID, seed.State.LastFireSessionID)
+		}
+		// Resume: SetEnabled true.
+		if err := s.SetEnabled(ctx, name, true); err != nil {
+			t.Fatalf("SetEnabled(true): %v", err)
+		}
+		got, err = s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after SetEnabled(true): %v", err)
+		}
+		if !got.State.Enabled {
+			t.Errorf("Enabled = false, want true (resumed)")
+		}
+		// SetEnabled on an unknown name wraps ErrScheduleNotFound.
+		if err := s.SetEnabled(ctx, "conf-sched-setenabled-missing", false); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("SetEnabled(unknown) = %v, want ErrScheduleNotFound", err)
+		}
+	})
+
 	t.Run("max fires exhaustion disables on the final claim", func(t *testing.T) {
 		s := newStore(t)
 		now := time.Unix(1_700_000_000, 0)

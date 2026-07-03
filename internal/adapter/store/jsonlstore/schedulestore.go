@@ -117,6 +117,21 @@ func (s *scheduleStore) Save(_ context.Context, in port.Schedule) error {
 	return s.writeScheduleLocked(in.Spec.Name, rec)
 }
 
+// SetEnabled atomically sets the schedule's Enabled flag WITHOUT touching any
+// other State field (unlike Save, which preserves the State half on a Spec
+// overwrite and so cannot mutate Enabled). It is the pause/resume primitive.
+// The not-found case wraps ErrScheduleNotFound.
+func (s *scheduleStore) SetEnabled(_ context.Context, name string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil {
+		return err
+	}
+	rec.Schedule.State.Enabled = enabled
+	return s.writeScheduleLocked(name, rec)
+}
+
 // Load returns the schedule stored under name. The not-found case wraps
 // port.ErrScheduleNotFound.
 func (s *scheduleStore) Load(_ context.Context, name string) (port.Schedule, error) {
@@ -285,6 +300,43 @@ func (s *scheduleStore) LoadFire(_ context.Context, fireID string) (port.Schedul
 	return s.readFireFileLocked(fireID)
 }
 
+// ListFires returns the fire records for a schedule, in no guaranteed order. The
+// not-found case for the SCHEDULE wraps ErrScheduleNotFound; an empty fire list
+// for an existing schedule is a successful empty slice (not an error). It scans
+// the fire files (the schedulefire-- prefix) and filters by ScheduleName — a
+// fire record carries its ScheduleName foreign key, so it is locatable without a
+// per-schedule fire index.
+func (s *scheduleStore) ListFires(_ context.Context, scheduleName string) ([]port.ScheduleFire, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// The schedule must exist (the not-found-for-the-schedule contract).
+	if _, err := s.loadLocked(scheduleName); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, fmt.Errorf("jsonlstore: list fires dir: %w", err)
+	}
+	out := make([]port.ScheduleFire, 0)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), scheduleFirePrefix) || !strings.HasSuffix(e.Name(), scheduleSuffix) {
+			continue
+		}
+		// Read the fire file by its full path (readFireFileLocked re-encodes a
+		// fireID via safeFilePart, which would double-encode the filename-derived
+		// id; reading the file directly avoids that).
+		rec, err := readScheduleFireFile(filepath.Join(s.dir, e.Name()))
+		if err != nil {
+			continue // best-effort: a corrupt fire file is skipped, not fatal.
+		}
+		if rec.Fire.ScheduleName != scheduleName {
+			continue
+		}
+		out = append(out, rec.Fire)
+	}
+	return out, nil
+}
+
 // loadLocked reads the schedule file for name (caller holds mu). The not-found
 // case wraps port.ErrScheduleNotFound.
 func (s *scheduleStore) loadLocked(name string) (scheduleRecord, error) {
@@ -367,6 +419,25 @@ func readScheduleFile(path string) (scheduleRecord, error) {
 	}
 	if rec.V != scheduleFormat {
 		return scheduleRecord{}, fmt.Errorf("jsonlstore: unknown schedule format %q (want %q)", rec.V, scheduleFormat)
+	}
+	return rec, nil
+}
+
+// readScheduleFireFile reads + validates a fire file by its full path (the
+// path-based companion to readFireFileLocked, which takes a bare fireID and
+// re-encodes it via safeFilePart). Used by ListFires, which scans fire files by
+// filename and must not double-encode the filename-derived id.
+func readScheduleFireFile(path string) (scheduleFireRecord, error) {
+	b, err := os.ReadFile(path) //nolint:gosec // path is sanitized via firePath
+	if err != nil {
+		return scheduleFireRecord{}, err
+	}
+	var rec scheduleFireRecord
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return scheduleFireRecord{}, fmt.Errorf("jsonlstore: decode fire: %w", err)
+	}
+	if rec.V != scheduleFormat {
+		return scheduleFireRecord{}, fmt.Errorf("jsonlstore: unknown schedule-fire format %q (want %q)", rec.V, scheduleFormat)
 	}
 	return rec, nil
 }

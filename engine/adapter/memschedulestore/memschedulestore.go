@@ -206,6 +206,22 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 	return port.Schedule{Spec: cloneSpec(rec.spec), State: rec.state}, nil
 }
 
+// SetEnabled atomically sets the schedule's Enabled flag WITHOUT touching any
+// other State field (unlike Save, which preserves the State half on a Spec
+// overwrite and so cannot mutate Enabled). It is the pause/resume primitive.
+// The not-found case wraps ErrScheduleNotFound.
+func (s *Store) SetEnabled(_ context.Context, name string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.scheds[name]
+	if !ok {
+		return ErrNotFound
+	}
+	rec.state.Enabled = enabled
+	s.scheds[name] = rec
+	return nil
+}
+
 // RecordFire records the outcome of a fire (f) and updates the schedule's
 // LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID value
 // Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a
@@ -239,6 +255,25 @@ func (s *Store) LoadFire(_ context.Context, fireID string) (port.ScheduleFire, e
 		return port.ScheduleFire{}, ErrNotFound
 	}
 	return cloneFire(f), nil
+}
+
+// ListFires returns the fire records for a schedule, in no guaranteed order. The
+// not-found case for the SCHEDULE wraps ErrScheduleNotFound; an empty fire list
+// for an existing schedule is a successful empty slice (not an error).
+func (s *Store) ListFires(_ context.Context, scheduleName string) ([]port.ScheduleFire, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.scheds[scheduleName]; !ok {
+		return nil, ErrNotFound
+	}
+	out := make([]port.ScheduleFire, 0)
+	for _, f := range s.fires {
+		if f.ScheduleName != scheduleName {
+			continue
+		}
+		out = append(out, cloneFire(f))
+	}
+	return out, nil
 }
 
 // cloneSpec returns a copy of spec whose Parts slice is independent of the
