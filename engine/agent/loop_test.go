@@ -1231,6 +1231,85 @@ func TestPostToolUseHookNoMutationKeepsResult(t *testing.T) {
 	}
 }
 
+// TestPostToolUseHookSeesPartsProjection is the PR #226-review regression
+// (CWE-345 / OWASP LLM01): a resource_link block's Title/Description live ONLY
+// in ToolResult.Parts, but both provider adapters render them to the model via
+// session.ToolBlockText — the same projection the PostToolUse hook input must
+// now use when Parts is non-empty. Before the fix, the hook input was built from
+// ToolResult.Content alone, so a hostile MCP server smuggling prompt injection
+// into a resource_link Title would reach the model completely uninspected.
+func TestPostToolUseHookSeesPartsProjection(t *testing.T) {
+	const marker = "INJECTED-MARKER"
+	tl := &fakeTool{name: "Fetch", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			link := session.NewResourceLinkBlock(
+				"https://example.com/doc", "doc", marker+" evil title", "a description",
+				"text/plain", 0, nil)
+			// The legacy Content string deliberately carries no marker — only the
+			// Parts/Title does, mirroring the real bypass.
+			return session.NewToolResultWithParts(in.ID, "https://example.com/doc (doc)", []session.Content{link}), nil
+		}}
+	hooks := &capturingHookRunner{phase: governance.PhasePostToolUse}
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("c1", "Fetch", `{"url":"https://example.com/doc"}`)),
+		mockllm.TextTurn("done"),
+	)
+	sess := newSession(t, session.Limits{})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+
+	in := hooks.input()
+	if in == nil {
+		t.Fatalf("PostToolUse hook was never invoked")
+	}
+	if !strings.Contains(string(in), marker) {
+		t.Fatalf("PostToolUse hook input = %s, want it to contain %q (the Parts Title projection)", in, marker)
+	}
+
+	// Read-only widening only: the recorded (model-facing) result must be
+	// UNCHANGED — the marker must not leak into the legacy Content string, and
+	// the hook must not have mutated anything (no HookRunner mutation configured).
+	recRes := recordedToolResult(sess)
+	if recRes == nil || recRes.Content != "https://example.com/doc (doc)" {
+		t.Fatalf("recorded result Content = %+v, want the ORIGINAL unchanged legacy string", recRes)
+	}
+	if strings.Contains(recRes.Content, marker) {
+		t.Fatalf("recorded result Content leaked the marker: %+v", recRes)
+	}
+}
+
+// TestPostToolUseHookPartsEmptyUsesContent is the no-regression proof for the
+// legacy string-only path: with Parts empty, the PostToolUse hook input still
+// carries exactly ToolResult.Content, unchanged.
+func TestPostToolUseHookPartsEmptyUsesContent(t *testing.T) {
+	tl := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "plain content"), nil
+		}}
+	hooks := &capturingHookRunner{phase: governance.PhasePostToolUse}
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("c1", "Read", `{"path":"a"}`)),
+		mockllm.TextTurn("done"),
+	)
+	sess := newSession(t, session.Limits{})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+
+	in := hooks.input()
+	if in == nil {
+		t.Fatalf("PostToolUse hook was never invoked")
+	}
+	var decoded struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(in, &decoded); err != nil {
+		t.Fatalf("hook input not valid JSON: %v (%s)", err, in)
+	}
+	if decoded.Content != "plain content" {
+		t.Fatalf("hook input content = %q, want unchanged %q", decoded.Content, "plain content")
+	}
+}
+
 // advisoryHooks is a test hook runner that returns an advisory outcome
 // (Message set, no Block, no Mutated) on PreToolUse/PostToolUse — simulating
 // a modelhook advisory finding.

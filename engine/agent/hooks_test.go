@@ -168,6 +168,30 @@ func (h *mutatingHooks) Run(_ context.Context, ev governance.HookEvent) (governa
 	return governance.HookOutcome{}, nil
 }
 
+// capturingHookRunner is a port.HookRunner that records the last HookEvent.Input
+// seen for a configured phase (never blocks/mutates) — used to inspect exactly
+// what content a hook was shown, as opposed to the effective/recorded result.
+type capturingHookRunner struct {
+	mu    sync.Mutex
+	phase governance.HookPhase
+	last  json.RawMessage
+}
+
+func (h *capturingHookRunner) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+	if ev.Phase == h.phase {
+		h.mu.Lock()
+		h.last = ev.Input
+		h.mu.Unlock()
+	}
+	return governance.HookOutcome{}, nil
+}
+
+func (h *capturingHookRunner) input() json.RawMessage {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.last
+}
+
 // TestUserPromptSubmitMutationIsApplied asserts a UserPromptSubmit hook that
 // returns a mutated {"prompt": ...} payload rewrites the EFFECTIVE prompt: the
 // model receives the mutated text and the recorded conversation reflects it.

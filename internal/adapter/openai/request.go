@@ -255,34 +255,10 @@ func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) respo
 			// Text) has no Responses input member; render its MIME/URI as a text
 			// pointer rather than base64-dumping (mirrors the user-message path's
 			// honest "summarize, don't dump" stance).
-			list = append(list, responses.ResponseFunctionCallOutputItemParamOfInputText(toolBlockText(b)))
+			list = append(list, responses.ResponseFunctionCallOutputItemParamOfInputText(session.ToolBlockText(b)))
 		}
 	}
 	return responses.ResponseInputItemParamOfFunctionCallOutput(string(tr.CallID), list)
-}
-
-// blockText renders a non-image tool-result block as its model-facing text form.
-// BlockText / BlockStructuredContent carry their text in Text; a resource link
-// renders its URI + name/title; an embedded-resource blob (no Text) renders a
-// pointer (URI + mime) rather than a base64 dump.
-func toolBlockText(b session.Content) string {
-	switch b.BlockKind {
-	case session.BlockResourceLink:
-		if b.Title != "" {
-			return b.Title + " (" + b.URL + ")"
-		}
-		if b.Name != "" {
-			return b.Name + " (" + b.URL + ")"
-		}
-		return b.URL
-	case session.BlockEmbeddedResource:
-		if b.Text != "" {
-			return b.Text
-		}
-		return b.URL + " (" + b.MIMEType + ")"
-	default: // BlockText, BlockStructuredContent, and any text-bearing block.
-		return b.Text
-	}
 }
 
 // userContentList builds the Responses input-message content list for a

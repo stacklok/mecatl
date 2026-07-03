@@ -153,7 +153,32 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 		return session.NewToolError(in.ID, fmt.Sprintf("CallMcpWithQuery: %v", err)), nil
 	}
 
-	return session.NewToolResult(in.ID, toolkit.Truncate(filtered, toolkit.MaxOutputBytes)), nil
+	// Fail-closed on an OVER-CAP filtered result, mirroring tool.go's
+	// structuredTooLargeError. jq.Run already caps the filtered output at its own
+	// jq.MaxOutputBytes (100KB), which is looser than toolkit.MaxOutputBytes
+	// (25KB); a 25-100KB result truncated on a byte boundary here would be
+	// unparseable JSON handed to the model. filtered is always JSON-shaped
+	// (jq.Run json-encodes every value), so oversized here means oversized JSON —
+	// the same hazard the primary path fail-closes on rather than truncates.
+	if len(filtered) > toolkit.MaxOutputBytes {
+		return session.NewToolError(in.ID, filteredTooLargeError(toolName, server, jqFilter)), nil
+	}
+
+	return session.NewToolResult(in.ID, filtered), nil
+}
+
+// filteredTooLargeError is the fail-closed message a CallMcpWithQuery filtered
+// result over toolkit.MaxOutputBytes surfaces to the model. Truncating it would
+// leave unparseable JSON, so it names the actionable recovery path: narrow the
+// jq filter further, or paginate the remote call.
+func filteredTooLargeError(toolName, serverName, jqFilter string) string {
+	return fmt.Sprintf(
+		"CallMcpWithQuery: filtered result for tool %q (server %q) with jq_filter %q exceeded the "+
+			"%d-byte output cap and is JSON. Truncating it would make it unparseable, so it was NOT "+
+			"returned. To get the data, narrow the jq filter further to select a smaller subset (e.g. "+
+			"add pagination slicing like \".items[0:20]\" or project fewer fields), or paginate the "+
+			"remote call using the remote tool's own filter/pagination parameters.",
+		toolName, serverName, jqFilter, toolkit.MaxOutputBytes)
 }
 
 // RegisterCallWithQuery registers the CallMcpWithQuery meta-tool into cat, gated

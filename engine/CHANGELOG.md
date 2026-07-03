@@ -27,7 +27,6 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
-<<<<<<< HEAD
 - **`port.ScheduleStore` + value objects** (`Schedule`, `ScheduleSpec`, `TriggerSpec`,
   `ScheduleState`, `ScheduleFire`, `ScheduleProviderSelector`, `ErrScheduleNotFound`,
   `ErrScheduleUnsupported`, `SchedulerLeaderLeaseID`, `TriggerKind`/`TriggerCron`/
@@ -131,6 +130,16 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   check cannot (an attacker-controlled resolver answers the hostname check with a
   public IP, then returns 169.254.169.254 at dial time). Classified Added per
   COMPATIBILITY.md (a new exported function is a minor bump). (#223)
+
+- **`session.ToolBlockText`** — a new exported func
+  (`func ToolBlockText(b Content) string`) extracted from the byte-identical
+  `toolBlockText` helper duplicated in `internal/adapter/openai/request.go` and
+  `internal/adapter/anthropic/request.go`. It renders a non-image tool-result
+  block to its model-facing text form (resource-link URI+name/title, an
+  embedded-resource pointer when no inline `Text`, else `Text` verbatim). Both
+  adapters now call the shared domain projection instead of carrying their own
+  copy, removing a drift risk. Classified Added per COMPATIBILITY.md (a new
+  exported function is a minor bump). (PR #226 review)
 
 ### Notes
 

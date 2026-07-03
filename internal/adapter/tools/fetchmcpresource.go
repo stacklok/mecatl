@@ -195,8 +195,10 @@ func (t FetchMcpResourceTool) Execute(ctx context.Context, in session.ToolCall, 
 				// initial hop and every redirect dial. t.dialContext (test seam)
 				// overrides the production guard.
 				DialContext: ssrfGuardedDialContext,
-				// ForceClose avoids reuse of the per-call connection pool so a
-				// one-shot fetch does not leak idle conns across the tool boundary.
+				// A custom *http.Transport (unlike http.DefaultTransport) does not
+				// negotiate HTTP/2 unless explicitly opted in; ForceAttemptHTTP2
+				// re-enables it so this transport isn't silently downgraded to
+				// HTTP/1.1 just because it has a custom DialContext.
 				ForceAttemptHTTP2: true,
 			},
 		}

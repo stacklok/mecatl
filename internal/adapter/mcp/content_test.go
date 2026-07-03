@@ -261,6 +261,249 @@ func TestMapContentImageContent(t *testing.T) {
 	}
 }
 
+// TestMapContentImageContentAllowlist asserts the image-MIME allowlist
+// (Finding #9 / F-MIME): a core web image format still produces a typed
+// BlockImage (unchanged behavior, incl. a parameterized MIME), while a
+// valid-but-unsupported image MIME degrades to a text-only note instead of a
+// block — so a hostile/misbehaving MCP server can never push an
+// Anthropic/OpenAI-incompatible image MIME through to the provider.
+func TestMapContentImageContentAllowlist(t *testing.T) {
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+
+	t.Run("allowlisted gif", func(t *testing.T) {
+		result := &mcpsdk.CallToolResult{
+			Content: []mcpsdk.Content{
+				&mcpsdk.ImageContent{MIMEType: "image/gif", Data: png},
+			},
+		}
+		url := newContentServer(t, "imgok", nil, result)
+
+		res := callTool(t, url, "content", "imgok")
+		if res.IsError {
+			t.Fatalf("unexpected error result: %+v", res)
+		}
+		blk := findBlock(t, res.Parts, session.BlockImage)
+		if blk.MIMEType != "image/gif" {
+			t.Errorf("block MIMEType = %q, want image/gif", blk.MIMEType)
+		}
+		if !strings.Contains(res.Content, "[image content: image/gif]") {
+			t.Errorf("Content missing image note: %q", res.Content)
+		}
+	})
+
+	t.Run("allowlisted with MIME parameter", func(t *testing.T) {
+		result := &mcpsdk.CallToolResult{
+			Content: []mcpsdk.Content{
+				&mcpsdk.ImageContent{MIMEType: "image/jpeg; foo=bar", Data: png},
+			},
+		}
+		url := newContentServer(t, "imgparam", nil, result)
+
+		res := callTool(t, url, "content", "imgparam")
+		if res.IsError {
+			t.Fatalf("unexpected error result: %+v", res)
+		}
+		blk := findBlock(t, res.Parts, session.BlockImage)
+		if blk.MIMEType != "image/jpeg; foo=bar" {
+			t.Errorf("block MIMEType = %q, want image/jpeg; foo=bar (verbatim)", blk.MIMEType)
+		}
+	})
+
+	for _, mime := range []string{"image/svg+xml", "image/tiff"} {
+		t.Run("unsupported "+mime, func(t *testing.T) {
+			result := &mcpsdk.CallToolResult{
+				Content: []mcpsdk.Content{
+					&mcpsdk.ImageContent{MIMEType: mime, Data: png},
+				},
+			}
+			url := newContentServer(t, "imgbad_"+strings.NewReplacer("/", "_", "+", "_").Replace(mime), nil, result)
+
+			res := callTool(t, url, "content", "imgbad_"+strings.NewReplacer("/", "_", "+", "_").Replace(mime))
+			if res.IsError {
+				t.Fatalf("unexpected error result: %+v", res)
+			}
+			for _, p := range res.Parts {
+				if p.BlockKind == session.BlockImage {
+					t.Fatalf("unsupported MIME %q must not produce a BlockImage, got %+v", mime, p)
+				}
+			}
+			if !strings.Contains(res.Content, "unsupported image type, not sent") {
+				t.Errorf("Content missing unsupported-image note for %q: %q", mime, res.Content)
+			}
+			if !strings.Contains(res.Content, mime) {
+				t.Errorf("Content missing the MIME %q: %q", mime, res.Content)
+			}
+		})
+	}
+}
+
+// TestMapContentAudioContent asserts an audio block is constructed via
+// NewAudioContent and the model-facing Content carries the
+// [audio content: <mime>] note rather than dumping the bytes. Unlike images,
+// mapContent has no MIME allowlist gate for audio — any audio/* MIME that
+// session.NewAudioContent accepts reaches the constructor directly.
+func TestMapContentAudioContent(t *testing.T) {
+	wav := []byte{0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00}
+	result := &mcpsdk.CallToolResult{
+		Content: []mcpsdk.Content{
+			&mcpsdk.AudioContent{MIMEType: "audio/wav", Data: wav},
+		},
+	}
+	url := newContentServer(t, "audio", nil, result)
+
+	res := callTool(t, url, "content", "audio")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+
+	blk := findBlock(t, res.Parts, session.BlockAudio)
+	if blk.MIMEType != "audio/wav" {
+		t.Errorf("block MIMEType = %q, want audio/wav", blk.MIMEType)
+	}
+	if string(blk.Data) != string(wav) {
+		t.Errorf("block Data = %v, want %v", blk.Data, wav)
+	}
+	if !strings.Contains(res.Content, "[audio content: audio/wav]") {
+		t.Errorf("Content missing audio note: %q", res.Content)
+	}
+}
+
+// TestMapContentInvalidImage exercises the
+// "[image content: %s (invalid: %v)]" degrade branch. An allowlisted image
+// MIME clears isAllowlistedImageMIME, so the call reaches
+// session.NewImageContent — which then fails its exactly-one-of-data/url
+// invariant because mcpsdk.ImageContent carries no URL field, so an empty
+// Data can never satisfy it. The block is omitted; the model-facing note
+// surfaces the construction error instead of silently dropping the part.
+func TestMapContentInvalidImage(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		Content: []mcpsdk.Content{
+			&mcpsdk.ImageContent{MIMEType: "image/png", Data: nil},
+		},
+	}
+	url := newContentServer(t, "imgempty", nil, result)
+
+	res := callTool(t, url, "content", "imgempty")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	for _, p := range res.Parts {
+		if p.BlockKind == session.BlockImage {
+			t.Fatalf("empty-data image must not produce a BlockImage, got %+v", p)
+		}
+	}
+	if !strings.Contains(res.Content, "[image content: image/png (invalid:") {
+		t.Errorf("Content missing invalid-image note: %q", res.Content)
+	}
+}
+
+// TestMapContentInvalidAudio is the audio analogue of TestMapContentInvalidImage:
+// a syntactically valid audio/* MIME with empty Data fails
+// session.NewAudioContent's exactly-one-of-data/url invariant (no URL field on
+// mcpsdk.AudioContent either), surfacing the
+// "[audio content: %s (invalid: %v)]" note.
+func TestMapContentInvalidAudio(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		Content: []mcpsdk.Content{
+			&mcpsdk.AudioContent{MIMEType: "audio/wav", Data: nil},
+		},
+	}
+	url := newContentServer(t, "audioempty", nil, result)
+
+	res := callTool(t, url, "content", "audioempty")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	for _, p := range res.Parts {
+		if p.BlockKind == session.BlockAudio {
+			t.Fatalf("empty-data audio must not produce a BlockAudio, got %+v", p)
+		}
+	}
+	if !strings.Contains(res.Content, "[audio content: audio/wav (invalid:") {
+		t.Errorf("Content missing invalid-audio note: %q", res.Content)
+	}
+}
+
+// TestMapContentEmbeddedResourceMissing covers the c.Resource == nil branch:
+// an EmbeddedResource with no Resource at all produces no block and the
+// "[embedded resource: missing resource]" note.
+func TestMapContentEmbeddedResourceMissing(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		Content: []mcpsdk.Content{
+			&mcpsdk.EmbeddedResource{Resource: nil},
+		},
+	}
+	url := newContentServer(t, "embmissing", nil, result)
+
+	res := callTool(t, url, "content", "embmissing")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	if len(res.Parts) != 0 {
+		t.Errorf("nil-resource EmbeddedResource must not produce a block, got %+v", res.Parts)
+	}
+	if !strings.Contains(res.Content, "[embedded resource: missing resource]") {
+		t.Errorf("Content missing missing-resource note: %q", res.Content)
+	}
+}
+
+// TestMapContentEmbeddedResourceEmpty covers the neither-Text-nor-Blob branch:
+// a Resource that is present but carries neither Text nor Blob produces no
+// block and the "[embedded resource: empty resource]" note.
+func TestMapContentEmbeddedResourceEmpty(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		Content: []mcpsdk.Content{
+			&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{
+				URI:      "test://empty",
+				MIMEType: "text/plain",
+			}},
+		},
+	}
+	url := newContentServer(t, "embempty", nil, result)
+
+	res := callTool(t, url, "content", "embempty")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	if len(res.Parts) != 0 {
+		t.Errorf("empty resource EmbeddedResource must not produce a block, got %+v", res.Parts)
+	}
+	if !strings.Contains(res.Content, "[embedded resource: empty resource]") {
+		t.Errorf("Content missing empty-resource note: %q", res.Content)
+	}
+}
+
+// TestMapContentUnsupportedKind exercises mapContent's default branch
+// ("[unsupported content]"). mcpsdk.Content carries an unexported marker
+// method (fromWire), so it cannot be implemented by a test stub outside the
+// SDK package — there is no way to author a wholly foreign Content
+// implementation. Instead this uses a real SDK type mapContent does not
+// special-case: *mcpsdk.ToolUseContent. ToolUseContent/ToolResultContent are
+// documented as valid only in sampling message contexts, but
+// CallToolResult.Content is decoded with an UNRESTRICTED allow-map
+// (mcp/protocol.go's contentsFromWire(wire.Content, nil)), so a
+// misbehaving/legacy server can still smuggle one through as a tool-call
+// result, and mapContent must degrade rather than mis-render it.
+func TestMapContentUnsupportedKind(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		Content: []mcpsdk.Content{
+			&mcpsdk.ToolUseContent{ID: "tu-1", Name: "some-tool"},
+		},
+	}
+	url := newContentServer(t, "unsupported", nil, result)
+
+	res := callTool(t, url, "content", "unsupported")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	if len(res.Parts) != 0 {
+		t.Errorf("unsupported content kind must not produce a block, got %+v", res.Parts)
+	}
+	if !strings.Contains(res.Content, "[unsupported content]") {
+		t.Errorf("Content missing unsupported-content note: %q", res.Content)
+	}
+}
+
 // TestMapContentStructuredContentSchemaValidation asserts the OPTIONAL
 // defense-in-depth validator fires against a misbehaving server: a tool that
 // advertises an output schema but returns structured content that violates it

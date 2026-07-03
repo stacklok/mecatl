@@ -338,6 +338,32 @@ func ValidateToolResultParts(parts []Content) error {
 	return nil
 }
 
+// ToolBlockText renders a non-image tool-result block as its model-facing text
+// form. BlockText / BlockStructuredContent carry their text in Text; a resource
+// link renders its URI + name/title; an embedded-resource blob (no Text)
+// renders a pointer (URI + mime) rather than a base64 dump. It is the single
+// shared projection consumed by both the OpenAI and Anthropic adapters so their
+// tool-result rendering cannot drift.
+func ToolBlockText(b Content) string {
+	switch b.BlockKind {
+	case BlockResourceLink:
+		if b.Title != "" {
+			return b.Title + " (" + b.URL + ")"
+		}
+		if b.Name != "" {
+			return b.Name + " (" + b.URL + ")"
+		}
+		return b.URL
+	case BlockEmbeddedResource:
+		if b.Text != "" {
+			return b.Text
+		}
+		return b.URL + " (" + b.MIMEType + ")"
+	default: // BlockText, BlockStructuredContent, and any text-bearing block.
+		return b.Text
+	}
+}
+
 // validateMIME enforces that mime names a type consistent with kind: image/*
 // for MediaImage, audio/* for MediaAudio. It is honest input validation (a
 // mismatched mime is a client error), not a security boundary — JSON encodes the
@@ -434,12 +460,34 @@ var cgnatNet = func() *net.IPNet {
 	return n
 }()
 
+// nat64WellKnownNet is the RFC 6052 "Well-Known Prefix" 64:ff9b::/96 used by
+// NAT64/DNS64 to synthesize an IPv6 address embedding an IPv4 address in its
+// low 32 bits (e.g. 64:ff9b::a9fe:a9fe embeds 169.254.169.254). On an
+// IPv6-only egress path with NAT64 (common on GKE/EKS), that literal is
+// translated back to the embedded IPv4 and dialed — so it must be screened as
+// if it were the bare IPv4 address. This covers only the well-known prefix;
+// Network-Specific Prefixes (NSPs, RFC 6052 §3.1) are operator-chosen and
+// cannot be detected without site configuration, so they remain out of scope.
+// Parsed once.
+var nat64WellKnownNet = func() *net.IPNet {
+	_, n, _ := net.ParseCIDR("64:ff9b::/96")
+	return n
+}()
+
 // isGlobalUnicast reports whether ip is a routable, public address — i.e. it is
 // NOT loopback, link-local (unicast or multicast, which covers 169.254.0.0/16
 // and the 169.254.169.254 metadata IP), private/RFC1918, CGNAT (100.64.0.0/10,
-// which IsPrivate misses), unspecified, or multicast. Only such addresses are
-// permitted as a literal-IP media host.
+// which IsPrivate misses), unspecified, or multicast, or an RFC 6052 NAT64
+// well-known-prefix literal whose embedded IPv4 fails this same screen. Only
+// such addresses are permitted as a literal-IP media host.
 func isGlobalUnicast(ip net.IP) bool {
+	if nat64WellKnownNet != nil && nat64WellKnownNet.Contains(ip) {
+		// Extract the embedded IPv4 (the low 4 bytes of the 16-byte form) and
+		// re-run the SAME screen on it, so an embedded metadata/private/loopback
+		// address is rejected exactly as the bare IPv4 would be.
+		embedded := ip.To16()[12:16]
+		return isGlobalUnicast(embedded)
+	}
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
 		return false

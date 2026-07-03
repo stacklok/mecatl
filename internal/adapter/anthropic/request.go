@@ -419,12 +419,12 @@ func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.
 				// An image block with neither bytes nor a URL is malformed; render an
 				// honest empty-text marker rather than drop the block silently.
 				content = append(content, sdk.ToolResultBlockParamContentUnion{
-					OfText: &sdk.TextBlockParam{Text: toolBlockText(b)},
+					OfText: &sdk.TextBlockParam{Text: session.ToolBlockText(b)},
 				})
 			}
 		default:
 			content = append(content, sdk.ToolResultBlockParamContentUnion{
-				OfText: &sdk.TextBlockParam{Text: toolBlockText(b)},
+				OfText: &sdk.TextBlockParam{Text: session.ToolBlockText(b)},
 			})
 		}
 	}
@@ -433,30 +433,6 @@ func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.
 		Content:   content,
 	}
 	return sdk.ContentBlockParamUnion{OfToolResult: &blk}
-}
-
-// blockText renders a non-image tool-result block as its model-facing text form.
-// BlockText / BlockStructuredContent carry their text in Text; a resource link
-// renders its URI + name/title; an embedded-resource blob (no Text) renders a
-// pointer (URI + mime) rather than a base64 dump.
-func toolBlockText(b session.Content) string {
-	switch b.BlockKind {
-	case session.BlockResourceLink:
-		if b.Title != "" {
-			return b.Title + " (" + b.URL + ")"
-		}
-		if b.Name != "" {
-			return b.Name + " (" + b.URL + ")"
-		}
-		return b.URL
-	case session.BlockEmbeddedResource:
-		if b.Text != "" {
-			return b.Text
-		}
-		return b.URL + " (" + b.MIMEType + ")"
-	default: // BlockText, BlockStructuredContent, and any text-bearing block.
-		return b.Text
-	}
 }
 
 // userBlocks builds a user message's content blocks: a text block (when Text is

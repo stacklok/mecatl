@@ -64,6 +64,13 @@ func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []se
 			continue
 		case session.BlockText, session.BlockResourceLink, session.BlockEmbeddedResource, session.BlockStructuredContent:
 			// Text-summarised blocks always survive — no modality gate.
+		default:
+			// Fail CLOSED on an unrecognised BlockKind: skip it rather than pass it
+			// ungated to the provider. This is a second-line guard — the only
+			// production Parts producer runs session.ValidateToolResultParts, which
+			// rejects unknown kinds upstream — but a future/unknown BlockKind must
+			// never fall through as if it were an always-survives block.
+			continue
 		}
 		out = append(out, b)
 	}

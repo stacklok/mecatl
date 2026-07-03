@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -258,4 +259,56 @@ func TestIsSynthesisedSummary(t *testing.T) {
 			t.Fatalf("isSynthesisedSummary(%q) = %v, want %v", tc.text, got, tc.want)
 		}
 	}
+}
+
+// TestTruncateToolBodyPreservesParts pins the PR #226 fix: truncateToolBody keys
+// truncation on the TEXT body length only, and must not collaterally drop the
+// result's typed Parts (image/resource_link/embedded/structured blocks). The text
+// is still trimmed with the elision marker (the reason the function exists), but a
+// non-empty Parts slice must survive verbatim, and IsError must be preserved.
+func TestTruncateToolBodyPreservesParts(t *testing.T) {
+	longBody := strings.Repeat("X", 1000)
+	link := session.NewResourceLinkBlock("file:///report.pdf", "report.pdf", "Report", "", "application/pdf", 2048, nil)
+
+	t.Run("success result", func(t *testing.T) {
+		call := session.ToolCallID("c1")
+		orig := session.NewToolMessage(session.NewToolResultWithParts(call, longBody, []session.Content{link}))
+
+		got := truncateToolBody(orig, 400)
+
+		if got.ToolResult == nil {
+			t.Fatalf("truncateToolBody dropped the tool result")
+		}
+		if len(got.ToolResult.Content) >= len(longBody) {
+			t.Fatalf("text body was not truncated: got %d chars, want < %d", len(got.ToolResult.Content), len(longBody))
+		}
+		if !strings.Contains(got.ToolResult.Content, "elided by compaction") {
+			t.Fatalf("truncated body missing elision marker: %q", got.ToolResult.Content)
+		}
+		if len(got.ToolResult.Parts) != 1 {
+			t.Fatalf("Parts dropped by truncation: got %d blocks, want 1", len(got.ToolResult.Parts))
+		}
+		if !reflect.DeepEqual(got.ToolResult.Parts[0], link) {
+			t.Fatalf("surviving block was mutated: got %+v, want %+v", got.ToolResult.Parts[0], link)
+		}
+		if got.ToolResult.IsError {
+			t.Fatalf("IsError flipped true on a success result")
+		}
+	})
+
+	t.Run("error result", func(t *testing.T) {
+		call := session.ToolCallID("c2")
+		orig := session.NewToolResultWithParts(call, longBody, []session.Content{link})
+		orig.IsError = true
+		origMsg := session.NewToolMessage(orig)
+
+		got := truncateToolBody(origMsg, 400)
+
+		if !got.ToolResult.IsError {
+			t.Fatalf("IsError not preserved through truncation of an error result")
+		}
+		if len(got.ToolResult.Parts) != 1 {
+			t.Fatalf("Parts dropped by truncation of an error result: got %d blocks, want 1", len(got.ToolResult.Parts))
+		}
+	})
 }

@@ -240,6 +240,34 @@ func argsFor(raw json.RawMessage) (any, error) {
 	return v, nil
 }
 
+// renderableImageMIMEs is the allowlist of image media types this harness will
+// actually forward to a provider as a typed BlockImage. session.NewImageContent
+// (the shared domain constructor) only validates the "image/" PREFIX, which is
+// deliberately broad — but a valid-yet-exotic subtype (image/svg+xml,
+// image/tiff, image/bmp, …) is NOT accepted by mainstream vision providers
+// (Anthropic, OpenAI) and would surface as a hard HTTP 400 from the provider,
+// failing the whole turn. There is no runtime source of truth for "which image
+// subtypes does the configured provider accept" at this granularity, so this is
+// a hardcoded set of the four core web image formats both Anthropic and OpenAI
+// document support for. Degrading an unlisted MIME to a text note fails safe:
+// worst case a newly-supported format is needlessly described as text instead
+// of rendered as an image, never a crashed session.
+var renderableImageMIMEs = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+// isAllowlistedImageMIME reports whether mime (optionally carrying
+// parameters, e.g. "image/jpeg; charset=binary") names a core image format
+// this harness will forward as a typed image block. Matching is
+// case-insensitive on the bare media type.
+func isAllowlistedImageMIME(mime string) bool {
+	base, _, _ := strings.Cut(mime, ";")
+	return renderableImageMIMEs[strings.ToLower(strings.TrimSpace(base))]
+}
+
 // mapContent translates an MCP CallToolResult.Content slice into BOTH a
 // model-facing string (the legacy flattened view, kept for the default Content
 // field and for byte-stable truncation) and a slice of typed session.Content
@@ -260,12 +288,22 @@ func mapContent(parts []mcpsdk.Content) (modelString string, blocks []session.Co
 			blocks = append(blocks, session.NewTextBlock(c.Text))
 			b.WriteString(c.Text)
 		case *mcpsdk.ImageContent:
-			// NewImageContent validates (mime/kind consistency, exactly-one-of
-			// data/url) and builds the media fields; we then stamp BlockKind so
-			// the part reads as a tool-result BLOCK (not a legacy Message media
-			// part). On a construction error we surface a model-facing note
-			// rather than dropping silently — the model needs to see something
-			// came back malformed. The block is omitted on failure.
+			// NewImageContent only validates the "image/" PREFIX (broad, by
+			// design — it is the shared domain constructor). At THIS boundary we
+			// additionally enforce isAllowlistedImageMIME so a valid-but-exotic
+			// image MIME (e.g. image/svg+xml, image/tiff) can never reach a
+			// provider that will 400 on it — degrade to a text note instead.
+			// Once allowlisted, NewImageContent validates (mime/kind consistency,
+			// exactly-one-of data/url) and builds the media fields; we then stamp
+			// BlockKind so the part reads as a tool-result BLOCK (not a legacy
+			// Message media part). On a construction error we surface a
+			// model-facing note rather than dropping silently — the model needs
+			// to see something came back malformed. The block is omitted on
+			// failure (both the allowlist miss and the construction error).
+			if !isAllowlistedImageMIME(c.MIMEType) {
+				fmt.Fprintf(&b, "[image content: %s (unsupported image type, not sent)]", c.MIMEType)
+				continue
+			}
 			blk, err := session.NewImageContent(c.MIMEType, c.Data)
 			if err != nil {
 				fmt.Fprintf(&b, "[image content: %s (invalid: %v)]", c.MIMEType, err)

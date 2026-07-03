@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcp/jq"
 )
 
 // CallResult is the adapter value-object view of a remote MCP tool call's raw
@@ -82,8 +84,6 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 		return CallResult{}, fmt.Errorf("mcp call failed: %w", callErr)
 	}
 
-	out := callResultContent(res.Content)
-
 	var structured json.RawMessage
 	if res.StructuredContent != nil {
 		// The SDK unmarshals structuredContent into an any; re-marshal to a
@@ -98,6 +98,43 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 		}
 	}
 
+	// Early oversize gate (PR #226 review finding #5): without this, a
+	// hostile/oversized remote result would be fully copied by
+	// callResultContent (every block, incl. any blob/image data) BELOW, and
+	// only THEN would CallMcpWithQuery.Execute notice the JSON source it
+	// picked exceeds jq.MaxInputBytes — peak memory ~3x the response. The
+	// go-sdk has already parsed the whole result into memory by the time we
+	// get here (an irreducible floor this cannot bound); this only skips OUR
+	// additional per-block copy once the JSON source Execute would choose
+	// (StructuredContent first, else the first JSON-parseable text/embedded
+	// -resource block) is already over cap. jqInputPreview mirrors Execute's
+	// precedence directly off the raw SDK content so this gate doesn't itself
+	// pay for the copy it is trying to avoid. Skipped on a remote tool-level
+	// error: Execute's IsError branch concatenates ALL content text
+	// (concatContentText) regardless of jq's cap, so it needs the full copy.
+	if !res.IsError {
+		if text, size, found := jqInputPreview(res, structured); found && size > jq.MaxInputBytes {
+			var content []ResourceContents
+			if structured == nil {
+				// The chosen source was a text/embedded-resource block (not
+				// StructuredContent): carry just that one block so Execute's
+				// existing selection finds it and reports the identical
+				// over-cap message. Other blocks are irrelevant — Execute
+				// rejects before it would ever look at them.
+				content = []ResourceContents{{Text: text}}
+			}
+			return CallResult{
+				Server:            s.name,
+				Tool:              tool,
+				Content:           content,
+				StructuredContent: structured,
+				IsError:           res.IsError,
+			}, nil
+		}
+	}
+
+	out := callResultContent(res.Content)
+
 	return CallResult{
 		Server:            s.name,
 		Tool:              tool,
@@ -105,6 +142,41 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 		StructuredContent: structured,
 		IsError:           res.IsError,
 	}, nil
+}
+
+// jqInputPreview locates the JSON source CallMcpWithQuery.Execute will choose
+// for jq — StructuredContent first (already marshaled by the caller), else
+// the first JSON-parseable text (TextContent or EmbeddedResource.Resource.Text)
+// block — directly off the raw SDK result, mirroring Execute's precedence
+// WITHOUT paying for callResultContent's full per-block copy. It exists solely
+// to let callTool's early oversize gate (above) decide whether that copy is
+// worth doing; Execute performs its own (unchanged) selection over the
+// returned CallResult on every path, including the ones this function skips.
+func jqInputPreview(res *mcpsdk.CallToolResult, structured json.RawMessage) (text string, size int, found bool) {
+	if len(structured) > 0 {
+		return "", len(structured), true
+	}
+	for _, p := range res.Content {
+		var t string
+		switch c := p.(type) {
+		case *mcpsdk.TextContent:
+			t = c.Text
+		case *mcpsdk.EmbeddedResource:
+			if c.Resource != nil {
+				t = c.Resource.Text
+			}
+		default:
+			continue
+		}
+		if t == "" {
+			continue
+		}
+		var probe any
+		if json.Unmarshal([]byte(t), &probe) == nil {
+			return t, len(t), true
+		}
+	}
+	return "", 0, false
 }
 
 // callResultContent translates an MCP CallToolResult.Content slice into the

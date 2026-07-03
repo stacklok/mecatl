@@ -200,6 +200,26 @@ func TestRouteToolResultPartsAudienceNeverSuppresses(t *testing.T) {
 	}
 }
 
+// TestRouteToolResultPartsUnknownBlockKindDropped asserts the fail-CLOSED
+// default: a block carrying an unrecognised BlockKind (a future/unknown kind
+// this build doesn't know about) is DROPPED from the projection rather than
+// falling through ungated, while a known block alongside it survives.
+func TestRouteToolResultPartsUnknownBlockKindDropped(t *testing.T) {
+	unknown := session.Content{BlockKind: session.BlockKind("future_kind_xyz"), Text: "mystery"}
+	known := session.NewTextBlock("hello")
+
+	got := RouteToolResultParts(session.ToolResult{Parts: []session.Content{known, unknown}}, ProviderCapabilities{Image: true, Audio: true})
+	if contains(got, unknown) {
+		t.Fatalf("unknown BlockKind was not dropped: %v", got)
+	}
+	if !contains(got, known) {
+		t.Fatalf("known block alongside an unknown one was dropped: %v", got)
+	}
+	if len(got) != 1 {
+		t.Fatalf("projection len = %d, want 1 (only the known block survives)", len(got))
+	}
+}
+
 func contains(haystack []session.Content, needle session.Content) bool {
 	for _, h := range haystack {
 		if reflect.DeepEqual(h, needle) {

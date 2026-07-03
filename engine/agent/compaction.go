@@ -376,6 +376,11 @@ func buildSummary(paths []string) string {
 // truncateToolBody returns m unchanged unless it carries an oversized tool result
 // body, in which case it returns a copy with the body truncated to budget chars
 // plus an elision marker. Non-tool messages pass through untouched.
+//
+// Truncation is keyed on the TEXT body length only; it must not collaterally
+// destroy the result's typed Parts (image/resource_link/embedded/structured
+// blocks, PR #226). The original Parts and the IsError flag are carried over
+// verbatim onto the rebuilt result — only Content is trimmed.
 func truncateToolBody(m session.Message, budget int) session.Message {
 	if m.Role != session.RoleTool || m.ToolResult == nil {
 		return m
@@ -386,8 +391,7 @@ func truncateToolBody(m session.Message, budget int) session.Message {
 	}
 	truncated := fmt.Sprintf("%s\n... [%d bytes elided by compaction]",
 		body[:budget], len(body)-budget)
-	if m.ToolResult.IsError {
-		return session.NewToolMessage(session.NewToolError(m.ToolResult.CallID, truncated))
-	}
-	return session.NewToolMessage(session.NewToolResult(m.ToolResult.CallID, truncated))
+	tr := session.NewToolResultWithParts(m.ToolResult.CallID, truncated, m.ToolResult.Parts)
+	tr.IsError = m.ToolResult.IsError
+	return session.NewToolMessage(tr)
 }

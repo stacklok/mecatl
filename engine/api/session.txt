@@ -128,6 +128,7 @@ func NewToolResultWithParts(callID ToolCallID, content string, parts []Content) 
 func NewUserMessage(text string) Message
 func NewUserMessageWithParts(text string, parts []Content) Message
 func ParseArgs(call ToolCall, dst any) (msg string, ok bool)
+func ToolBlockText(b Content) string
 func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
 func ValidateMediaParts(parts []Content) error
 func ValidateMediaURL(raw string) error

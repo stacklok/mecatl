@@ -1187,9 +1187,40 @@ type resultPayload struct {
 	IsError bool   `json:"is_error"`
 }
 
+// postHookContent returns the string fed to the PostToolUse hook's Content field.
+// When res.Parts is non-empty, providers render the MODEL-FACING view from Parts
+// (via session.ToolBlockText — the shared projection consumed by both the OpenAI
+// and Anthropic adapters), not from the legacy res.Content string; a resource_link
+// block's Title/Description, for instance, live ONLY in Parts. Feeding the hook
+// only res.Content would leave it blind to that content (CWE-345 / OWASP LLM01: a
+// hostile MCP server can smuggle prompt injection in a block Title that reaches the
+// model but never reaches the guardrail). So when Parts is non-empty, the hook sees
+// the concatenation of ToolBlockText over the blocks instead — the same text the
+// model actually sees. Image blocks carry no text projection and are skipped, they
+// pose no analogous hidden-text risk. When Parts is empty, res.Content is returned
+// unchanged (no behavior change on the legacy string-only path).
+//
+// This ONLY widens what the hook is shown; it never mutates the recorded
+// session.ToolResult, the client event stream, or the model-facing request.
+func postHookContent(res session.ToolResult) string {
+	if len(res.Parts) == 0 {
+		return res.Content
+	}
+	texts := make([]string, 0, len(res.Parts))
+	for _, b := range res.Parts {
+		if b.BlockKind == session.BlockImage {
+			continue
+		}
+		texts = append(texts, session.ToolBlockText(b))
+	}
+	return strings.Join(texts, "\n")
+}
+
 // postHook runs the PostToolUse hook best-effort and returns the EFFECTIVE
 // result. It carries the result under review as the HookEvent.Input
-// ({"content", "is_error"}, plus the call args for context). A block only
+// ({"content", "is_error"}, plus the call args for context) — Content is
+// postHookContent(res), the model-facing Parts projection when Parts is
+// non-empty, else the legacy Content string (see postHookContent). A block only
 // annotates (the tool already executed; the result is neither undone nor
 // suppressed); a hook execution error is ignored — neither aborts the run.
 //
@@ -1211,7 +1242,7 @@ func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, tu
 		Args    json.RawMessage `json:"args"`
 		Content string          `json:"content"`
 		IsError bool            `json:"is_error"`
-	}{Args: c.Args, Content: res.Content, IsError: res.IsError})
+	}{Args: c.Args, Content: postHookContent(res), IsError: res.IsError})
 	ev := governance.HookEvent{
 		Phase:     governance.PhasePostToolUse,
 		Tool:      c.Name,

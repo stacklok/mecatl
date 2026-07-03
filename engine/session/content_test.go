@@ -137,6 +137,14 @@ func TestValidateMediaURL(t *testing.T) {
 		// A canonical PUBLIC IPv6 must still be allowed (numeric-form rejection
 		// must not over-block legitimate public literal IPs).
 		{"public ipv6 allowed", "https://[2606:2800:220:1::]/a.png", true},
+		// RFC 6052 NAT64 well-known prefix 64:ff9b::/96 embeds an IPv4 address in
+		// its low 32 bits; on a NAT64/DNS64 egress path this literal is
+		// translated back to the embedded IPv4 and dialed, so an embedded
+		// internal address must be rejected exactly as the bare IPv4 would be.
+		{"nat64 embedded metadata rejected", "https://[64:ff9b::a9fe:a9fe]/a.png", false},
+		{"nat64 embedded rfc1918 rejected", "https://[64:ff9b::a00:1]/a.png", false},
+		// An embedded PUBLIC v4 is not an SSRF target and must be allowed.
+		{"nat64 embedded public allowed", "https://[64:ff9b::808:808]/a.png", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,6 +181,16 @@ func TestValidateResolvedIP(t *testing.T) {
 		{"unspecified rejected", "0.0.0.0", false},
 		{"cgnat rejected", "100.64.0.1", false},
 		{"multicast rejected", "224.0.0.1", false},
+		// RFC 6052 NAT64 well-known-prefix literals embedding an internal IPv4
+		// in the low 32 bits must be rejected exactly as the bare IPv4 would be
+		// (see isGlobalUnicast); an embedded public IPv4 is not an SSRF target.
+		{"nat64 embedded metadata rejected", "64:ff9b::a9fe:a9fe", false},
+		{"nat64 embedded rfc1918 rejected", "64:ff9b::a00:1", false},
+		{"nat64 embedded public allowed", "64:ff9b::808:808", true},
+		// net.ParseIP("") == nil (an unresolved/failed-resolve IP). isGlobalUnicast
+		// short-circuits on the len(ip) == IPv4len || IPv6len guard, so a nil IP
+		// falls through every predicate without panicking and is rejected.
+		{"nil ip rejected", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -317,6 +335,71 @@ func TestNewStructuredContentBlock(t *testing.T) {
 	if c.Text != `{"k":"v"}` {
 		t.Fatalf("text = %q", c.Text)
 	}
+}
+
+func TestToolBlockText(t *testing.T) {
+	tests := []struct {
+		name string
+		c    Content
+		want string
+	}{
+		{
+			name: "text block",
+			c:    NewTextBlock("hello"),
+			want: "hello",
+		},
+		{
+			name: "structured content block",
+			c:    NewStructuredContentBlock(`{"k":"v"}`),
+			want: `{"k":"v"}`,
+		},
+		{
+			name: "resource link with title",
+			c:    NewResourceLinkBlock("https://example.com/r.json", "r", "Title", "desc", "application/json", 42, nil),
+			want: "Title (https://example.com/r.json)",
+		},
+		{
+			name: "resource link with name only",
+			c:    NewResourceLinkBlock("https://example.com/r.json", "r", "", "desc", "application/json", 42, nil),
+			want: "r (https://example.com/r.json)",
+		},
+		{
+			name: "resource link with neither title nor name",
+			c:    NewResourceLinkBlock("https://example.com/r.json", "", "", "desc", "application/json", 42, nil),
+			want: "https://example.com/r.json",
+		},
+		{
+			name: "embedded resource text form",
+			c:    mustEmbeddedResourceBlock(t, "https://example.com/r.txt", "text/plain", "body", nil),
+			want: "body",
+		},
+		{
+			name: "embedded resource blob form renders a pointer",
+			c:    mustEmbeddedResourceBlock(t, "https://example.com/r.bin", "application/octet-stream", "", []byte{1, 2, 3}),
+			want: "https://example.com/r.bin (application/octet-stream)",
+		},
+		{
+			name: "legacy media part with no block kind falls to the default text arm",
+			c:    Content{Text: "legacy"},
+			want: "legacy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ToolBlockText(tt.c); got != tt.want {
+				t.Fatalf("ToolBlockText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func mustEmbeddedResourceBlock(t *testing.T, uri, mimeType, text string, blob []byte) Content {
+	t.Helper()
+	c, err := NewEmbeddedResourceBlock(uri, mimeType, text, blob, nil)
+	if err != nil {
+		t.Fatalf("NewEmbeddedResourceBlock: %v", err)
+	}
+	return c
 }
 
 func TestValidateToolResultParts(t *testing.T) {

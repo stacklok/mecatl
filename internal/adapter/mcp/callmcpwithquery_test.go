@@ -373,13 +373,15 @@ func TestCallMcpWithQueryContextCancelled(t *testing.T) {
 	}
 }
 
-// TestCallMcpWithQueryOutputTruncation asserts the FINAL result is bounded by
-// toolkit.MaxOutputBytes (25 KiB) even when the jq filter produces more than
-// that but less than jq's own 100 KiB cap. Without the post-jq Truncate, a
-// ~30 KiB filtered result would enter context unbounded — the cap exists so
-// the jq escape hatch cannot simply move the context-budget problem from the
-// input to the output.
-func TestCallMcpWithQueryOutputTruncation(t *testing.T) {
+// TestCallMcpWithQueryOutputFailClosedOversized asserts the FINAL result
+// fails closed when the jq filter produces more than toolkit.MaxOutputBytes
+// (25 KiB) but less than jq's own 100 KiB cap. A ~30 KiB filtered result is
+// always JSON-shaped (jq.Run json-encodes every value), so Truncate()-ing it
+// at 25 KiB would hand the model an unparseable fragment — the exact hazard
+// the primary path (tool.go's structuredTooLargeError) already fails closed
+// on. This used to assert the opposite (truncate rather than error); it now
+// guards the fix that closes that gap on the recovery path.
+func TestCallMcpWithQueryOutputFailClosedOversized(t *testing.T) {
 	// A filter that produces ~30 KiB of JSON (over the 25 KiB output cap, well
 	// under jq's 100 KiB output cap): `[range(0;3000) | {id:.}]` yields a 3000
 	// element array, ~30 KiB JSON-encoded.
@@ -405,14 +407,14 @@ func TestCallMcpWithQueryOutputTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
-	if res.IsError {
-		t.Fatalf("unexpected IsError (a 30 KiB result is under jq's cap; it should truncate, not error): %q", res.Content)
+	if !res.IsError {
+		t.Fatalf("expected IsError (a >25KiB filtered JSON result must fail closed, not truncate): %q", res.Content)
 	}
-	if !strings.Contains(res.Content, toolkit.TruncationMarker) {
-		t.Errorf("Content missing truncation marker (result > 25 KiB must truncate): suffix %q", tail(res.Content, 60))
+	if !strings.Contains(res.Content, "narrow") {
+		t.Errorf("fail-closed message should guide the model to narrow the jq filter: %q", res.Content)
 	}
-	if got := len(res.Content); got > toolkit.MaxOutputBytes+len(toolkit.TruncationMarker)+10 {
-		t.Errorf("Content length = %d, want <= cap+marker (~%d)", got, toolkit.MaxOutputBytes+len(toolkit.TruncationMarker))
+	if strings.Contains(res.Content, toolkit.TruncationMarker) {
+		t.Errorf("fail-closed result must not carry truncated JSON: %q", res.Content)
 	}
 }
 

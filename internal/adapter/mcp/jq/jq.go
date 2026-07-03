@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/itchyny/gojq"
@@ -37,6 +39,27 @@ const MaxOutputBytes = 100_000
 // DefaultTimeout is applied when the context passed to [Run] carries no
 // deadline, so a pathological filter cannot run unbounded.
 const DefaultTimeout = 5 * time.Second
+
+// MaxHeapGrowthBytes bounds the heap a single [Run] may cause to grow before it
+// is cancelled (CWE-770/400). The output cap ([MaxOutputBytes]) only fires
+// AFTER each yielded value is materialized, so a filter that builds one huge
+// value (e.g. `[range(1e8)]`) allocates it in full inside gojq before the cap is
+// ever checked; without a memory bound, only [DefaultTimeout] limits it, and at
+// gojq's allocation rate that is ~1 GiB before the deadline — enough to OOM a
+// memory-constrained pod. gojq honours context cancellation during value
+// construction, so [Run] watches heap growth and cancels the run once it crosses
+// this budget. 256 MiB sits an order of magnitude above the [MaxInputBytes]
+// (20 MiB) working set a legitimate filter needs while staying below a typical
+// pod limit; a filter that needs more should narrow the remote call instead.
+const MaxHeapGrowthBytes = 256 << 20
+
+// maxHeapGrowth and heapSampleInterval mirror the tuning constants as package
+// vars so tests can lower them (a real 256 MiB / multi-second exercise is too
+// heavy for CI); production always uses the [MaxHeapGrowthBytes] default.
+var (
+	maxHeapGrowth      uint64 = MaxHeapGrowthBytes
+	heapSampleInterval        = 50 * time.Millisecond
+)
 
 // Run evaluates a jq filter against a JSON input and returns the
 // JSON-stringified result.
@@ -84,7 +107,30 @@ func Run(ctx context.Context, filter string, input []byte) (string, error) {
 		return "", fmt.Errorf("input is not valid JSON: %w", err)
 	}
 
-	iter := query.RunWithContext(ctx, inputAny)
+	// Memory watchdog: bound the heap a memory-amplifying filter can allocate.
+	// gojq honours cancellation of runCtx during value construction, so once heap
+	// growth crosses maxHeapGrowth the watchdog cancels the run and the next
+	// iter.Next() yields a context error, which we map to an explicit
+	// memory-budget error (distinct from the timeout path). The watchdog stops
+	// when Run returns (close(stop)) or runCtx is cancelled. Run BLOCKS on done
+	// so the goroutine never outlives Run — it reads the package vars
+	// maxHeapGrowth/heapSampleInterval, and tests mutate those under t.Cleanup,
+	// so a still-running watchdog after Run returns is a data race under -race.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var overBudget atomic.Bool
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchHeap(runCtx, cancel, &overBudget, stop)
+	}()
+	defer func() {
+		close(stop)
+		<-done
+	}()
+
+	iter := query.RunWithContext(runCtx, inputAny)
 
 	var outputs []any
 	accumulated := 0
@@ -94,6 +140,9 @@ func Run(ctx context.Context, filter string, input []byte) (string, error) {
 			break
 		}
 		if err, isErr := v.(error); isErr {
+			if overBudget.Load() {
+				return "", fmt.Errorf("jq filter exceeded the %d-byte memory budget (filter too broad?)", maxHeapGrowth)
+			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				return "", fmt.Errorf("jq filter timed out (possible pathological input): %w", err)
 			}
@@ -111,6 +160,10 @@ func Run(ctx context.Context, filter string, input []byte) (string, error) {
 		outputs = append(outputs, v)
 	}
 
+	if overBudget.Load() {
+		return "", fmt.Errorf("jq filter exceeded the %d-byte memory budget (filter too broad?)", maxHeapGrowth)
+	}
+
 	switch len(outputs) {
 	case 0:
 		return "null", nil
@@ -126,5 +179,39 @@ func Run(ctx context.Context, filter string, input []byte) (string, error) {
 			return "", fmt.Errorf("jq output could not be JSON-encoded: %w", err)
 		}
 		return string(b), nil
+	}
+}
+
+// watchHeap samples process heap growth over the baseline captured at start and
+// cancels the run (setting over) once growth crosses maxHeapGrowth. It exits when
+// stop is closed (Run returned) or ctx is cancelled. runtime.ReadMemStats is a
+// brief stop-the-world, but only long-running filters are sampled repeatedly —
+// legitimate filters finish before the first tick, so the steady-state cost is
+// zero. The heap signal is process-global, so a concurrent Run's allocations can
+// trip this one early; that is fail-safe (a bounded memory-budget error the model
+// can recover from by narrowing the filter) and reflects real aggregate pressure.
+func watchHeap(ctx context.Context, cancel context.CancelFunc, over *atomic.Bool, stop <-chan struct{}) {
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+
+	t := time.NewTicker(heapSampleInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			// Guard the unsigned subtraction: GC can drop HeapAlloc below the
+			// baseline, which would wrap to a huge value and false-trip.
+			if m.HeapAlloc > base.HeapAlloc && m.HeapAlloc-base.HeapAlloc > maxHeapGrowth {
+				over.Store(true)
+				cancel()
+				return
+			}
+		}
 	}
 }
