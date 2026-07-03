@@ -27,6 +27,23 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **scheduled-tasks Phase 2a: `port.ScheduleStore.ClaimNow`.** A new
+  `ClaimNow(ctx, name, now, nextFire) (Schedule, error)` method — the FireNow
+  primitive. It performs the SAME atomic advance as `Claim` (LastFireAt=now,
+  NextFireAt=nextFire, FireCount++, LastFireSessionID=PendingFireSessionID,
+  disable on zero nextFire) but does NOT enforce the `NextFireAt <= now`
+  due-check — it claims the slot regardless of whether it is due (a manual
+  trigger bypasses the cadence but still claims atomically for at-most-once).
+  The `Enabled` + `MaxFires` checks STILL apply (a disabled or exhausted
+  schedule cannot be force-fired). The at-most-once fence (no due-check) is
+  `LastFireAt == now`: a second `ClaimNow` at the same `now` is rejected (the
+  advance already happened), and a later `ClaimNow` at a new `now` succeeds
+  (crash-recoverable — a hard crash between ClaimNow and RecordFire does not
+  wedge the schedule, unlike a pending-sentinel fence). The tick loop's
+  `fireOne` KEEPS using `Claim` (the due-check is correct for the poll loop);
+  only `FireNow` uses `ClaimNow`. Classified Added per COMPATIBILITY.md (a new
+  interface method is a minor bump). (#189)
+
 - **scheduled-tasks Phase 2a: `port.ScheduleStore.SetEnabled`.** A new
   `SetEnabled(ctx, name, enabled) error` method — the pause/resume primitive.
   It atomically sets the schedule's `Enabled` flag WITHOUT touching any other

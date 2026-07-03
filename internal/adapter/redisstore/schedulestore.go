@@ -122,6 +122,52 @@ redis.call('HSET', KEYS[1],
 return {nextFire, ARGV[1], newFC, newEnabled, pending}
 `)
 
+// claimNowScript is the manual-trigger variant of claimScript (the FireNow
+// primitive): the SAME atomic advance WITHOUT the next_fire_at <= now due-check.
+// It fences at-most-once on last_fire_at == now instead: a prior ClaimNow (or a
+// Claim) at this same `now` already advanced last_fire_at, so a second is
+// rejected (Claim's fence is "next_fire_at is past now", which a future slot
+// fails — ClaimNow cannot use it). The enabled + MaxFires checks still apply.
+//
+// Returns the same shape as claimScript: "NOT_FOUND" / "NOT_CLAIMABLE" / the
+// advanced-state array. See port.ScheduleStore.ClaimNow for the rationale.
+var claimNowScript = redis.NewScript(`
+local exists = redis.call('EXISTS', KEYS[1])
+if exists == 0 then
+  return 'NOT_FOUND'
+end
+local enabled = redis.call('HGET', KEYS[1], 'enabled')
+local lfa = redis.call('HGET', KEYS[1], 'last_fire_at')
+local fc = redis.call('HGET', KEYS[1], 'fire_count')
+local now = ARGV[1]
+local nextFire = ARGV[2]
+local pending = ARGV[3]
+local maxFires = tonumber(ARGV[4])
+if enabled == false or enabled == '0' then
+  return 'NOT_CLAIMABLE'
+end
+if maxFires > 0 and tonumber(fc) >= maxFires then
+  return 'NOT_CLAIMABLE'
+end
+-- At-most-once fence WITHOUT the due-check: a prior Claim/ClaimNow at this same
+-- now already advanced last_fire_at. Reject so the advance is not repeated.
+if lfa == now then
+  return 'NOT_CLAIMABLE'
+end
+local newFC = tostring(tonumber(fc) + 1)
+local newEnabled = enabled
+if nextFire == '0' then
+  newEnabled = '0'
+end
+redis.call('HSET', KEYS[1],
+  'last_fire_at', now,
+  'next_fire_at', nextFire,
+  'fire_count', newFC,
+  'last_fire_session_id', pending,
+  'enabled', newEnabled)
+return {nextFire, now, newFC, newEnabled, pending}
+`)
+
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent *Store's
 // *redis.Client. It is the MULTI-REPLICA production schedule backend
 // (scheduled-tasks issue #189, Phase 1d): the SAME logic as
@@ -375,6 +421,50 @@ func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire ti
 		return port.Schedule{Spec: cloneSpec(spec), State: state}, nil
 	default:
 		return port.Schedule{}, fmt.Errorf("redisstore: claim schedule %q: unexpected script result type %T", name, res)
+	}
+}
+
+// ClaimNow is the manual-trigger variant of Claim (the FireNow primitive). It
+// EVALs claimNowScript, which performs the SAME atomic advance as claimScript
+// WITHOUT the next_fire_at <= now due-check — it claims the slot regardless of
+// whether it is due. The Enabled + MaxFires checks still apply. The at-most-once
+// fence is last_fire_at == now (a prior Claim/ClaimNow at this same now already
+// advanced it). The not-found case (key missing → NOT_FOUND) and the
+// not-claimable case (disabled / exhausted / already-advanced → NOT_CLAIMABLE)
+// both wrap ErrScheduleNotFound. See port.ScheduleStore.ClaimNow.
+func (s *scheduleStore) ClaimNow(ctx context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
+	key := scheduleKey(name)
+	specJSON, err := s.client.HGet(ctx, key, fieldSpec).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+		}
+		return port.Schedule{}, fmt.Errorf("redisstore: claim-now schedule %q (spec): %w", name, err)
+	}
+	var spec port.ScheduleSpec
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: claim-now schedule %q (decode spec): %w", name, err)
+	}
+	res, err := claimNowScript.Run(ctx, s.client,
+		[]string{key},
+		nanoStr(now), nanoStr(nextFire), string(port.PendingFireSessionID), spec.MaxFires,
+	).Result()
+	if err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: claim-now schedule %q: %w", name, err)
+	}
+	switch v := res.(type) {
+	case string:
+		// NOT_FOUND or NOT_CLAIMABLE — both map to ErrScheduleNotFound (the slot
+		// is gone: never existed, disabled, exhausted, or already-advanced).
+		return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	case []interface{}:
+		state, err := stateFromClaimResult(v)
+		if err != nil {
+			return port.Schedule{}, fmt.Errorf("redisstore: claim-now schedule %q (result): %w", name, err)
+		}
+		return port.Schedule{Spec: cloneSpec(spec), State: state}, nil
+	default:
+		return port.Schedule{}, fmt.Errorf("redisstore: claim-now schedule %q: unexpected script result type %T", name, res)
 	}
 }
 

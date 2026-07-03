@@ -662,7 +662,7 @@ func (s *Scheduler) emitSchedule(payload session.SchedulePayload) {
 // A cron schedule that is due now or in the future is Claimed and fired. A cron
 // whose NextFireAt is in the past is ALSO fired (the manual path is an explicit
 // request — it does not apply the misfire policy, which is a tick-loop concern
-// for polling cadence). The nextFire handed to Claim is computed via
+// for polling cadence). The nextFire handed to ClaimNow is computed via
 // computeNextFire (the same helper the tick loop uses).
 func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (port.ScheduleFire, error) {
 	sched, err := s.cfg.Store.Load(ctx, name)
@@ -697,7 +697,13 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 	if err != nil {
 		return port.ScheduleFire{}, fmt.Errorf("scheduler: fire-now %q: compute next fire: %w", name, err)
 	}
-	claimed, err := s.cfg.Store.Claim(ctx, name, now, nextFire)
+	// ClaimNow is Claim WITHOUT the NextFireAt <= now due-check — a manual fire
+	// bypasses the cadence but still claims atomically for at-most-once. The tick
+	// loop's fireOne KEEPS using Claim (the due-check is correct for the poll
+	// loop). ErrScheduleNotFound here means the slot was disabled/exhausted or a
+	// concurrent Claim/ClaimNow at the same now already advanced it (the
+	// at-most-once fence held).
+	claimed, err := s.cfg.Store.ClaimNow(ctx, name, now, nextFire)
 	if err != nil {
 		return port.ScheduleFire{}, err
 	}

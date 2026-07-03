@@ -60,10 +60,51 @@ Flags:
 | `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-save time (a schedule tighter than this is rejected). |
 | `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
 
-Schedules are saved via the `ScheduleService` gRPC/HTTP API (Phase 2). A YAML
-`schedules:` block in `settings.yaml` (Phase 2b) and a `mecatui /schedule`
-command (Phase 3) are planned. For now, schedules are seeded programmatically
-(e.g. by a test or an operator script writing to the store).
+Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,
+issue #232). A YAML `schedules:` block in `settings.yaml` (Phase 2b) and a
+`mecatui /schedule` command (Phase 3) are planned.
+
+**gRPC** (`mecatl.v1.ScheduleService`): `CreateSchedule`, `GetSchedule`,
+`ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`,
+`PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`.
+
+**REST** (under `/v1/schedules`):
+
+| Method | Route | RPC |
+|---|---|---|
+| POST | `/v1/schedules` | CreateSchedule |
+| GET | `/v1/schedules` | ListSchedules |
+| GET | `/v1/schedules/{name}` | GetSchedule |
+| PUT | `/v1/schedules/{name}` | UpdateSchedule |
+| DELETE | `/v1/schedules/{name}` | DeleteSchedule |
+| POST | `/v1/schedules/{name}/fire` | FireNow |
+| POST | `/v1/schedules/{name}/pause` | PauseSchedule |
+| POST | `/v1/schedules/{name}/resume` | ResumeSchedule |
+| GET | `/v1/schedules/{name}/fires` | ListFires |
+| GET | `/v1/schedules/{name}/fires/{id}` | GetFire |
+
+Create a cron schedule + force an immediate fire (REST):
+
+```sh
+# Create a cron schedule (read-leaning → plan mode).
+curl -X POST http://localhost:8080/v1/schedules \
+  -H 'content-type: application/json' \
+  -d '{"name":"nightly-report","prompt":"summarize today's commits",
+       "workspace":"/repo","mode":"PERMISSION_MODE_PLAN",
+       "trigger":{"cron":"0 9 * * *"}}'
+
+# Fire it immediately; returns fire_id + session_id.
+curl -X POST http://localhost:8080/v1/schedules/nightly-report/fire
+# -> {"fire_id":"sched--...","session_id":"sched--..."}
+
+# Poll the fire's outcome (stop reason + session id).
+curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire_id>
+```
+
+A deployment whose store does NOT expose a `ScheduleStore` (memstore, or a store
+without the accessor) honestly reports the schedule RPCs as `Unimplemented`
+(gRPC) / 501 (HTTP). `FireNow` on a paused/done schedule is `FailedPrecondition`
+/ 412.
 
 A scheduled fire mints a fresh `sched--` top-level session per fire with
 subagent-grade defaults (bounded turn/token budgets, read-leaning posture unless

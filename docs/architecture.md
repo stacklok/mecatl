@@ -306,3 +306,62 @@ the existing run-entry funnel. The pieces:
 See [ADR 0059](adr/0059-scheduled-tasks.md) for the frozen rationale (the 10
 resolved decisions + the leader-lease decision) and the consequences (one-shot
 loss on mid-fire crash; fresh-context-per-fire v1; carried-context deferred).
+
+### ScheduleService API surface (Phase 2a, issue #232)
+
+The scheduler is reachable over BOTH wire surfaces — gRPC `ScheduleService` and a
+peer REST surface — so an operator/client can create, inspect, pause, fire, and
+delete schedules out-of-band from the tick loop. The handlers are thin
+delegations over the same `Service` methods the tick loop uses; they live in
+`internal/adapter/server/grpc_schedule.go` (gRPC) and `internal/adapter/server/http.go`
+(the `schedule_*` REST handlers).
+
+**gRPC `ScheduleService`** (`contracts/proto/mecatl/v1/schedule.proto`,
+`ScheduleServer` in `internal/adapter/server/grpc_schedule.go`) — 10 RPCs:
+
+- `CreateSchedule` / `UpdateSchedule` — upsert by name; the create-seam
+  (`Service.CreateSchedule`) validates the trigger XOR, prompt-or-parts, cron
+  grammar, and the Mutating/Mode invariant fail-closed, then computes the first
+  `NextFireAt` (cron via `cronparse`; one-shot = the `OneShot` instant).
+- `GetSchedule` / `ListSchedules` / `DeleteSchedule` (idempotent).
+- `PauseSchedule` / `ResumeSchedule` — toggle `State.Enabled` via the atomic
+  `SetEnabled` (Save preserves State on a Spec overwrite, so pause/resume is a
+  dedicated primitive).
+- `FireNow` — force an immediate fire, returning `fire_id` + `session_id`
+  (fire_id == session_id). The fire is driven synchronously through the
+  `FireFunc`; poll `GetFire` for the terminal stop reason.
+- `GetFire` / `ListFires` — the pull-only outcome channel: a `ScheduleFire`
+  carries the stop reason + the session id whose `SessionStore` snapshot holds
+  the full conversation.
+
+**REST routes** (`internal/adapter/server/http.go`, under `/v1/schedules`):
+
+```
+POST   /v1/schedules                  -> CreateSchedule
+GET    /v1/schedules                  -> ListSchedules
+GET    /v1/schedules/{name}           -> GetSchedule
+PUT    /v1/schedules/{name}           -> UpdateSchedule
+DELETE /v1/schedules/{name}           -> DeleteSchedule
+POST   /v1/schedules/{name}/fire      -> FireNow
+POST   /v1/schedules/{name}/pause     -> PauseSchedule
+POST   /v1/schedules/{name}/resume   -> ResumeSchedule
+GET    /v1/schedules/{name}/fires     -> ListFires
+GET    /v1/schedules/{name}/fires/{id} -> GetFire
+```
+
+**Errors** — a backend with no `ScheduleStore` (memstore, or a store that does
+not expose the accessor) honestly reports `Unimplemented` (gRPC) / 501 (HTTP)
+from every schedule RPC; `FireNow` on a paused/done schedule is
+`FailedPrecondition` / 412; a singleton-overlap skip is `FailedPrecondition` /
+409; an unknown schedule/fire is `NotFound` / 404.
+
+**`schedule.*` events** (`EvScheduleFired` / `EvScheduleSkipped` /
+`EvScheduleFailed`, `session.SchedulePayload`) — the scheduler emits a
+lifecycle event for each fired/skipped/failed fire via the composition-injected
+`EmitScheduleEvent` callback (`Service.EmitScheduleEvent`), which appends it to
+the fire session's durable `EventLog` (so schedule lifecycle rides the same
+durable log as the fire's own events). The events are client-visible on the
+`Event.schedule` field (proto field 15); a skipped fire with no session is
+dropped from the durable log (the log is session-keyed) and surfaces only on the
+live client wire.
+

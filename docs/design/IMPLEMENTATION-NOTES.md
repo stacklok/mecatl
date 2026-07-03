@@ -3786,6 +3786,45 @@ and it is the prerequisite issue #28 (session-scoped background detach) was wait
   the nil session-store-driver default. Empty = the local default, byte-identical to
   pre-3c (pinned by `TestBuildStoreEventLogURL` + the unchanged `TestBuildStoreDefaults`).
 
+### Scheduled tasks (Phase 5, ADR 0059 + Phase 2a issue #232)
+
+A composition-layer subsystem (no `engine/agent` changes) that reuses the run-entry
+funnel to drive saved prompts autonomously on a cron or one-shot trigger. The
+pieces, all behind `--scheduler` (byte-identical default when unwired):
+
+- **`port.ScheduleStore`** (`engine/port/schedule.go`) — the durable registry, a peer
+  of `port.SessionLease`/`port.EventLog`. `Claim` is the at-most-once atomic advance
+  (NextFireAt + LastFireAt + FireCount); a crash mid-fire SKIPS the slot (recurring
+  self-heals via `MisfireFireOnceNow`; a one-shot can be lost — decision #1). Discovered
+  by type-assertion on a `ScheduleStore()` ACCESSOR (the jsonlstore + redisstore expose
+  one), mirroring `PrunableStore`/`SessionLease`. Adapters: `memschedulestore`
+  (reference), `jsonlstore` (single-host), `redisstore` (multi-replica, Lua CAS Claim).
+  All pass `engine/adapter/scheduleconformance`.
+- **`internal/adapter/scheduler`** — the tick loop, gated by a leader-lease on the
+  well-known `__scheduler__` id (only the leader ticks; the lease reuses the SAME backend
+  as the run-entry session lease, different id — no contention). On each tick:
+  `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`. The
+  `FireFunc` seam (`scheduler.FireFunc`) is how composition injects the run-entry funnel.
+- **Composition** (`internal/app/build.go` `buildScheduler`/`startScheduler`) wires the
+  scheduler behind `--scheduler`, reusing the configured store + the session-lease
+  backend. The `FireFunc` (`internal/app/scheduler_fire.go` `makeFireFunc`) mints a
+  fresh `sched--` top-level session per fire via `Service.CreateSessionWithProfile` +
+  `StartRunContent` with subagent-grade defaults (bounded budgets, read-leaning posture
+  unless `mutating: true`, headless ask model, fail-closed model pinning), drives it to
+  the terminal `EvResult`, and returns the `ScheduleFire` carrying the stop reason. The
+  OPTIONAL `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`) appends the
+  `EvScheduleFired`/`Skipped`/`Failed` event to the fire session's durable `EventLog`.
+- **Wire API (Phase 2a, #232).** `ScheduleService` — 10 gRPC RPCs
+  (`CreateSchedule`/`GetSchedule`/`ListSchedules`/`UpdateSchedule`/`DeleteSchedule`/
+  `FireNow`/`PauseSchedule`/`ResumeSchedule`/`GetFire`/`ListFires`) in
+  `internal/adapter/server/grpc_schedule.go` + a peer REST surface under `/v1/schedules`
+  (`internal/adapter/server/http.go`). The handlers are thin delegations over
+  `Service.CreateSchedule`/... (`internal/adapter/server/schedule.go`); the create-seam
+  validates the trigger XOR, prompt-or-parts, cron grammar, and the Mutating/Mode
+  invariant fail-closed. `FireNow` returns `fire_id` + `session_id` (fire_id ==
+  session_id); `GetFire`/`ListFires` are the pull-only outcome channel. A backend with
+  no `ScheduleStore` honestly reports `Unimplemented`/501.
+
 ## Proto — `contracts/proto/mecatl/v1/` (multi-provider Phase 0 S3 wire surface)
 
 `CreateSessionRequest` carries an OPTIONAL `provider_id`(4)+`model_id`(5) selector (two distinct

@@ -268,6 +268,46 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 	return port.Schedule{Spec: cloneSpec(spec), State: st}, nil
 }
 
+// ClaimNow is the manual-trigger variant of Claim (the FireNow primitive). It
+// performs the SAME atomic advance as Claim but does NOT enforce the
+// NextFireAt <= now due-check — it claims the slot regardless of whether it is
+// due. The Enabled + MaxFires checks STILL apply. The at-most-once fence is
+// LastFireAt == now (a prior advance at this same now already happened). See
+// port.ScheduleStore.ClaimNow for the rationale.
+func (s *scheduleStore) ClaimNow(_ context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	st := rec.Schedule.State
+	spec := rec.Schedule.Spec
+	if !st.Enabled {
+		return port.Schedule{}, ErrScheduleNotFound
+	}
+	if spec.MaxFires > 0 && st.FireCount >= spec.MaxFires {
+		return port.Schedule{}, ErrScheduleNotFound
+	}
+	// At-most-once fence (no due-check): a prior Claim/ClaimNow at this same now
+	// already advanced LastFireAt.
+	if st.LastFireAt.Equal(now) {
+		return port.Schedule{}, ErrScheduleNotFound
+	}
+	st.LastFireAt = now
+	st.NextFireAt = nextFire
+	st.FireCount++
+	st.LastFireSessionID = port.PendingFireSessionID
+	if nextFire.IsZero() {
+		st.Enabled = false
+	}
+	rec.Schedule.State = st
+	if err := s.writeScheduleLocked(name, rec); err != nil {
+		return port.Schedule{}, err
+	}
+	return port.Schedule{Spec: cloneSpec(spec), State: st}, nil
+}
+
 // RecordFire records the outcome of a fire (f) and updates the schedule's
 // LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID value
 // Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a

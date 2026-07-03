@@ -813,6 +813,118 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Errorf("LastFireAt = %v, want now %v", claimed.State.LastFireAt, now)
 		}
 	})
+
+	t.Run("claim now bypasses due-check", func(t *testing.T) {
+		// ClaimNow is the FireNow primitive: the SAME atomic advance as Claim but
+		// WITHOUT the NextFireAt <= now due-check — a manual trigger fires
+		// regardless of whether the slot is due, while still claiming atomically
+		// for at-most-once. The Enabled + MaxFires checks still apply. The
+		// at-most-once fence (no due-check) is LastFireAt == now: a second
+		// ClaimNow at the same now is rejected (the advance already happened).
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-claimnow"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		// A FUTURE NextFireAt — Claim would reject this (not due), ClaimNow must
+		// accept it (the manual trigger bypasses the cadence).
+		future := now.Add(time.Hour)
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: future, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+
+		// (a) ClaimNow on a future-due schedule succeeds and advances State.
+		claimed, err := s.ClaimNow(ctx, name, now, next)
+		if err != nil {
+			t.Fatalf("ClaimNow on future-due schedule: %v", err)
+		}
+		if !claimed.State.LastFireAt.Equal(now) {
+			t.Errorf("LastFireAt = %v, want now %v", claimed.State.LastFireAt, now)
+		}
+		if !claimed.State.NextFireAt.Equal(next) {
+			t.Errorf("NextFireAt = %v, want %v (advanced to next cron fire)", claimed.State.NextFireAt, next)
+		}
+		if claimed.State.FireCount != 1 {
+			t.Errorf("FireCount = %d, want 1 (incremented)", claimed.State.FireCount)
+		}
+		if claimed.State.LastFireSessionID != port.PendingFireSessionID {
+			t.Errorf("LastFireSessionID = %q, want %q (the pending sentinel)", claimed.State.LastFireSessionID, port.PendingFireSessionID)
+		}
+		if !claimed.State.Enabled {
+			t.Errorf("Enabled = false, want true (recurring cron stays enabled)")
+		}
+		// The persisted state reflects the advance (ClaimNow is durable, not a
+		// transient return value) — the same discipline as Claim.
+		persisted, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after ClaimNow: %v", err)
+		}
+		if !persisted.State.NextFireAt.Equal(next) {
+			t.Errorf("persisted NextFireAt = %v, want %v", persisted.State.NextFireAt, next)
+		}
+		if persisted.State.FireCount != 1 {
+			t.Errorf("persisted FireCount = %d, want 1", persisted.State.FireCount)
+		}
+
+		// (b) At-most-once: a SECOND ClaimNow at the same now is rejected — the
+		// advance already happened. ErrScheduleNotFound is the fail-safe "the
+		// slot is gone" interpretation (the same shape Claim's second-call
+		// contract pins).
+		_, err = s.ClaimNow(ctx, name, now, next) // same now/next — already advanced
+		if !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ClaimNow #2 at same now = %v, want ErrScheduleNotFound (the advance already happened — at-most-once)", err)
+		}
+
+		// (c) ClaimNow at a LATER now succeeds (crash-recoverability — no wedge).
+		// The fence is LastFireAt == now, so a new now passes (the stale
+		// LastFireAt != the new now). This is the self-heal property: a hard
+		// crash between ClaimNow and RecordFire does NOT wedge the schedule.
+		later := now.Add(2 * time.Hour)
+		next2, err := cronparse.NextFire(sampleCron, later, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire #2: %v", err)
+		}
+		if _, err := s.ClaimNow(ctx, name, later, next2); err != nil {
+			t.Fatalf("ClaimNow at later now = %v, want success (crash-recoverable: a new now passes the LastFireAt fence)", err)
+		}
+
+		// (d) ClaimNow on a DISABLED schedule → ErrScheduleNotFound (the Enabled
+		// check still applies — a paused schedule cannot be force-fired).
+		const disabled = "conf-sched-claimnow-disabled"
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: disabled, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: future, Enabled: false},
+		}); err != nil {
+			t.Fatalf("Save disabled: %v", err)
+		}
+		if _, err := s.ClaimNow(ctx, disabled, now, next); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ClaimNow on disabled = %v, want ErrScheduleNotFound (Enabled check still applies)", err)
+		}
+
+		// (e) ClaimNow on an unknown name → ErrScheduleNotFound.
+		if _, err := s.ClaimNow(ctx, "conf-sched-claimnow-missing", now, next); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ClaimNow(unknown) = %v, want ErrScheduleNotFound", err)
+		}
+
+		// (f) ClaimNow on a MaxFires-exhausted schedule → ErrScheduleNotFound (the
+		// MaxFires check still applies — an exhausted schedule cannot be
+		// force-fired).
+		const exhausted = "conf-sched-claimnow-exhausted"
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: exhausted, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}, MaxFires: 1},
+			State: port.ScheduleState{NextFireAt: future, Enabled: true, FireCount: 1},
+		}); err != nil {
+			t.Fatalf("Save exhausted: %v", err)
+		}
+		if _, err := s.ClaimNow(ctx, exhausted, now, next); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ClaimNow on exhausted = %v, want ErrScheduleNotFound (MaxFires check still applies)", err)
+		}
+	})
 }
 
 // assertScheduleEqual compares the spec + state fields the suite cares about

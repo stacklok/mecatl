@@ -451,6 +451,41 @@ The stated v1 constraint still stands as the DEFAULT (no lease backend): session
 affinity routing, one writer per session. A deployment that cannot guarantee
 affinity now wires a lease backend instead of relying on the deployer.
 
+**Phase 5 re-audit (List 1 / List 2).** Phase 5 (scheduled tasks, ADR 0059)
+added TWO new outlives-a-call resources (List 1 rows 30–31) and ONE new
+rehydrate-fidelity concern (List 2 row 21), all behind the `--scheduler` flag
+(byte-identical default when unwired):
+
+- the scheduler tick goroutine (List 1 row 30): owner
+  `internal/adapter/scheduler` (`Scheduler`), scope PROCESS, cleanup =
+  `Stop` cancels the tick loop + joins in-flight fires (with a grace), then
+  releases the leader lease; re-attach = a restarted process RE-ACQUIRES the
+  leader lease (or ticks standalone with no lease backend) and re-polls
+  `ScheduleStore.Due` — the schedule store is the durable ground truth, the
+  in-memory lookahead is derived. The tick goroutine is owned by the scheduler
+  the `Service` holds (`Service.scheduler`), so `Service.Close` stops it FIRST
+  (so in-flight fires drain while the service is still alive to serve them).
+- the leader-lease renewer goroutine (List 1 row 31): owner
+  `internal/adapter/scheduler` (`Scheduler`), scope PROCESS, cleanup =
+  cancelled at `Stop` (the leader lease is released alongside the tick loop);
+  re-attach = a restarted leader re-acquires the well-known
+  `__scheduler__` lease (the SAME backend as the run-entry session lease, a
+  different id so they never contend). It is hygiene, NOT correctness: the
+  `ScheduleStore.Claim` mutex is the at-most-once fence; the leader lease only
+  prevents two replicas from ticking the same store concurrently (double-fire
+  prevention in a multi-replica deployment).
+
+List 2 row 21 records the EvSchedule fire records: the
+`EvScheduleFired`/`Skipped`/`Failed` events are emitted by the scheduler via
+the composition-injected `EmitScheduleEvent` callback and APPENDED to the fire
+session's durable `EventLog` (so schedule lifecycle rides the same durable log as
+the fire's own events). They are reconstructable via `EventLog.Read` — a
+restarted process reads them back from the durable log (decision = derive). A
+skipped fire with no session id is dropped from the durable log (the log is
+session-keyed) and surfaces only on the live client wire. The re-audit verdict
+is CLEAN: no restart-losable session/run state that is not already derived from
+the durable `ScheduleStore` + `EventLog`.
+
 ### Sequencing rationale
 
 0→1→2 is a strict dependency chain (rehydrate needs faithful snapshots). 3 is
@@ -505,6 +540,8 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 27 | held session leases + per-session renewer goroutines (`Service.heldLeases`, Phase 4) | `server.Service` | session (one lease + renewer per leased session) | renewer cancelled + `SessionLease.Release` (cancel-detached short-timeout ctx) on `CloseSession` and shutdown `Close`; a lost lease cancels the run and drops the hold | **reconstructible** (a restart re-acquires on the next run-entry; a crashed holder's lease lapses after the TTL and a survivor takes over — no persisted state, the lease is derived); only constructed when a lease backend is wired (`SessionLease != nil`), else absent (byte-identical default) | `internal/adapter/server/service.go` (`heldLeases`, `acquireLease`, `renewLoop`, `releaseLease`); wired at `internal/app/build.go` (`buildSessionLease`) |
 | 28 | MCP standalone-SSE listener goroutine (`handleSSE`) per connected server | `mcp.Server` | per connected server (rides the SDK session, opened after `initialize` when `DisableStandaloneSSE: false`) | `Server.Close()` → `session.Close()` → `conn.Close()` cancels `connCtx` → `handleSSE` returns (async; the `mcp` package's `goleak` gate has a targeted ignore list for the SDK + stdlib goroutines that unwind asynchronously after close) | none (the SDK reconnects the stream itself on a transient drop; #177/ADR 0056 reconnects the whole session when the SSE reconnect exhausts → `ErrSessionMissing`) | `internal/adapter/mcp/mcp.go` (`dial`); ADR 0057 |
 | 29 | guardrail session waiver (`WaiverHolder`, ADR 0062) | `app.Build` constructs; the engine arms it via the `modelhook.Runner`'s `port.HookApprovalLearner` on a human `VerdictAllowAlways`, `modelhook.Runner.check` consults it | process | self-clearing; dies with the process (no `Close` — a nil `*WaiverHolder` is the byte-identical OFF posture) | **lost** (in-memory; a waiver never silently survives restart — fail-safe: the call re-blocks/re-asks until a human re-approves it, ADR 0062) | `internal/adapter/modelhook/waiver.go` (`WaiverHolder`); armed via `internal/adapter/modelhook/modelhook.go` (`LearnHookApproval`); constructed in `internal/app/build.go` |
+| 30 | scheduler tick goroutine (Phase 5, ADR 0059) | `internal/adapter/scheduler` (`Scheduler`), held by `server.Service.scheduler` | process | `Scheduler.Stop` cancels the tick loop + joins in-flight fires (with a grace) + releases the leader lease; `Service.Close` stops it FIRST so fires drain while the service is alive | **reconstructible** (a restarted process re-acquires the leader lease or ticks standalone, and re-polls `ScheduleStore.Due` — the store is ground truth, the lookahead is derived); only constructed when `--scheduler` is set (byte-identical default when unwired) | `internal/adapter/scheduler/scheduler.go` (`tickLoop`, `Start`, `Stop`); wired at `internal/app/build.go` (`startScheduler`) |
+| 31 | scheduler leader-lease renewer goroutine (Phase 5, ADR 0059) | `internal/adapter/scheduler` (`Scheduler`) | process | cancelled at `Scheduler.Stop` (the leader lease is released alongside the tick loop) | **reconstructible** (a restarted leader re-acquires the well-known `__scheduler__` lease on the SAME backend as the run-entry session lease, different id — no contention; a non-leader stands down). Hygiene, NOT correctness: `ScheduleStore.Claim` is the at-most-once fence; the lease only prevents two replicas ticking the same store | `internal/adapter/scheduler/scheduler.go` (`renewLeader`); `internal/app/build.go` (`buildScheduler`) |
 
 ### Does resource-lifetime management earn a seam now?
 
@@ -573,6 +610,7 @@ what is persisted), **reset-by-design** (documented, acceptable),
 | 18 | A delegation's ROUTED model — Subagent (ADR 0031), team member + Parallel branch (ADR 0034) | nowhere — the model the router chose for a child is NOT persisted; the child SESSION persists (row 7), but which model it ran on is a per-delegation, decide-once classification | a NEW delegation classifies fresh (the classifier is cheap): a new Subagent call, a new team via `CreateTeam`/the Team tool (members re-route at `AddMember`), a new Parallel call (branches re-route in `runBranch`). A Subagent `resume` is NOT re-classified (the router gates on `!resuming`); a member is routed once at AddMember and reused across rounds (never re-routed on `Reopen`). No fidelity gap: the route is advisory model selection, never correctness | derive (a fresh delegation re-classifies on demand; a resumed Subagent / re-Reopened member is never re-routed) — no new snapshot field | ADR 0031 + ADR 0034 (decide-once, derived) |
 | 19 | Reasoning-effort selector (ADR 0055) | **SHIPPED**: persisted as the additive opaque `ReasoningEffort` label on the aggregate (`session.Session`) + snapshot (`sessnap.Snapshot`) + `eventsource.SessionMeta`; `Service.rehydrateSession` re-derives the SAME effort via the factory from the persisted label (`needsRehydration` fires on a non-empty effort), re-minting the same-effort adapter | rebuilt on the SAME normalised+clamped effort via the factory; an unset effort rides the operator default. The re-minted adapter's resilience breaker resets to closed (fail-safe, derived — inventory row 11) | persist-in-snapshot (the neutral effort label); rehydration re-mints the engine via the factory (decision = derive — the breaker is re-armed) | 0055 (SHIPPED) |
 | 20 | guardrail session waiver (`WaiverHolder`, ADR 0062) | process-lifetime in-memory map (`internal/adapter/modelhook/waiver.go`; constructed in `internal/app/build.go`, armed by the engine via `modelhook.Runner.LearnHookApproval`) | a session waiver is lost on restart | reset-by-design (fail-safe; a restarted session re-blocks/re-asks until a human re-approves — the waiver arms ONLY from a genuine human `VerdictAllowAlways` verdict, never a prompt scan, ADR 0062) | 0062 |
+| 21 | EvSchedule fire records (`EvScheduleFired`/`Skipped`/`Failed`, Phase 5 ADR 0059) | the scheduler emits a `SchedulePayload` lifecycle event per fired/skipped/failed fire via the composition-injected `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`), which APPENDS it to the fire session's durable `EventLog` (so schedule lifecycle rides the same durable log as the fire's own events) | **derive**: the events are in the durable log, reconstructable via `EventLog.Read`; the fire's terminal stop reason + session id are ALSO in the `ScheduleFire` record (`ScheduleStore.LoadFire`/`ListFires`). A skipped fire with no session id is dropped from the durable log (the log is session-keyed) and surfaces only on the live client wire | derive-from-EventLog (the events are durable; no new snapshot field — the `ScheduleFire` record is the schedule-indexed pointer, the `EventLog` is the session-indexed timeline) | 5 (Phase 2a, #232) |
 
 Two ledger observations worth stating in prose:
 
