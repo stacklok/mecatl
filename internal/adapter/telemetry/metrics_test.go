@@ -491,6 +491,13 @@ func TestMetricsScrapeThroughPrometheusExporter(t *testing.T) {
 	}})
 	m.Emit(context.Background(), session.Event{Type: session.EvNoProgress})
 	m.ToolCall("s", session.NewToolCall("c", "bash", nil), session.NewToolResult("c", "ok"), 3*time.Millisecond, 5*time.Millisecond)
+	// Schedule-fire metrics (issue #233): a fired fire with a duration, a
+	// skipped fire (no duration), and a failed fire. EmitSchedule is the
+	// composition-injected callback target; the outcome label ("fired" /
+	// "skipped" / "failed") is the schedule-lifecycle dimension.
+	m.EmitSchedule(session.SchedulePayload{ScheduleName: "s", Kind: "fired"}, 250*time.Millisecond)
+	m.EmitSchedule(session.SchedulePayload{ScheduleName: "s", Kind: "skipped"}, 0)
+	m.EmitSchedule(session.SchedulePayload{ScheduleName: "s", Kind: "failed"}, 0)
 
 	body := scrape(t, MetricsHandler(reg))
 	// The prometheus exporter applies its own _total / unit suffixes; these are
@@ -511,11 +518,66 @@ func TestMetricsScrapeThroughPrometheusExporter(t *testing.T) {
 		"mecatl_inter_token_seconds",
 		"mecatl_inter_token_max_seconds",
 		"mecatl_tool_queue_seconds",
+		"mecatl_schedule_fires_total",
+		"mecatl_schedule_fire_duration_seconds",
 	} {
 		if !strings.Contains(body, name) {
 			t.Errorf("/metrics missing series %q", name)
 		}
 	}
+}
+
+// TestEmitSchedule asserts the schedule-fire counter (labelled by outcome) and
+// the fire-duration histogram record correctly, and that a skipped fire (no
+// duration) bumps the counter WITHOUT recording a histogram observation. It also
+// covers the nil-safe path (a nil Metrics must not panic). Schedule metrics are
+// NOT a role-family (issue #233): the series carry NO role label.
+func TestEmitSchedule(t *testing.T) {
+	m, reader := newTestMetrics(t)
+
+	// A fired fire with a duration; a failed fire with a duration; a skipped
+	// fire (no duration). The counter is bumped per outcome; the histogram only
+	// records when duration > 0.
+	m.EmitSchedule(session.SchedulePayload{ScheduleName: "a", Kind: "fired"}, 250*time.Millisecond)
+	m.EmitSchedule(session.SchedulePayload{ScheduleName: "b", Kind: "failed"}, 120*time.Millisecond)
+	m.EmitSchedule(session.SchedulePayload{ScheduleName: "c", Kind: "skipped"}, 0)
+
+	data := collect(t, reader)
+	fires := data["mecatl.schedule.fires"]
+	if got := sumPoint(t, fires, attrOutcome, "fired"); got != 1 {
+		t.Errorf("schedule.fires{fired} = %d, want 1", got)
+	}
+	if got := sumPoint(t, fires, attrOutcome, "failed"); got != 1 {
+		t.Errorf("schedule.fires{failed} = %d, want 1", got)
+	}
+	if got := sumPoint(t, fires, attrOutcome, "skipped"); got != 1 {
+		t.Errorf("schedule.fires{skipped} = %d, want 1", got)
+	}
+
+	// The fire-duration histogram: two observations (fired + failed); the
+	// skipped fire (duration 0) records NOTHING. The instrument shares the
+	// latencyBucketBoundaries explicit-bucket ladder (it is in latencyInstruments).
+	// It is labelled by outcome, so there are TWO data points (fired, failed).
+	hist, ok := data["mecatl.schedule.fire_duration"].(metricdata.Histogram[float64])
+	if !ok {
+		t.Fatalf("schedule.fire_duration is %T, want Histogram[float64]", data["mecatl.schedule.fire_duration"])
+	}
+	var count uint64
+	var boundsLen int
+	for _, dp := range hist.DataPoints {
+		count += dp.Count
+		boundsLen = len(dp.Bounds)
+	}
+	if count != 2 {
+		t.Errorf("schedule.fire_duration count = %d, want 2 (fired+failed; skipped must not record)", count)
+	}
+	if boundsLen != len(latencyBucketBoundaries) {
+		t.Errorf("schedule.fire_duration bounds = %d, want %d (latencyBucketBoundaries)", boundsLen, len(latencyBucketBoundaries))
+	}
+
+	// Nil-safe: a nil Metrics must not panic (the byte-identical no-metrics path).
+	var nilM *Metrics
+	nilM.EmitSchedule(session.SchedulePayload{Kind: "fired"}, time.Second)
 }
 
 // TestMetricsThroughRealSetup drives the production wiring end to end: it calls

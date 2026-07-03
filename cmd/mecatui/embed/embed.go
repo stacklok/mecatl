@@ -468,6 +468,13 @@ func wirePerfSinks(cfg *app.Config, metrics *telemetry.Metrics, tracing port.Eve
 	}
 	cfg.Sink = telemetry.NewSink(sinks...)
 	cfg.ToolCallRecorder = mainScoped
+	// Schedule metrics (issue #233, Phase 2b): wire the metrics callback over the
+	// telemetry adapter's EmitSchedule, mirroring MetricsRoleScoper. Schedule
+	// metrics are NOT a role-family; this is a separate schedule-lifecycle
+	// dimension. EmitSchedule is nil-safe, so a nil metrics (perf off) stays the
+	// byte-identical metrics-silent path — the embed builds metrics only under
+	// perf-on, so this closure is a no-op there until metrics is non-nil.
+	cfg.ScheduleMetricsEmitter = metrics.EmitSchedule
 	cfg.MetricsRoleScoper = func(familyRole string) (port.EventSink, port.ToolCallRecorder) {
 		scoped := metrics.WithRole(familyRole)
 		childSinks := []port.EventSink{scoped}

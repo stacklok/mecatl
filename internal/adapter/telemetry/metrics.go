@@ -47,6 +47,15 @@ const (
 	// toolQueueInstrument is the tool queue-time histogram: the wait from a call
 	// entering dispatch to its execution starting (the coordinated-omission fix).
 	toolQueueInstrument = "mecatl.tool.queue"
+	// scheduleFireDurationInstrument is the scheduled-task fire wall-clock
+	// histogram: the elapsed time from a fire's Claim to its terminal
+	// EvResult. It is a schedule-lifecycle latency signal, distinct from the
+	// role-family run/turn latency instruments (schedule metrics are NOT a
+	// role-family — issue #233): a fire mints a fresh session whose OWN run
+	// already carries role="main" via its EventSink; this instrument captures
+	// the schedule-level end-to-end fire cost (Claim→terminal), not the
+	// per-turn cost the run's own metrics already record.
+	scheduleFireDurationInstrument = "mecatl.schedule.fire_duration"
 )
 
 // latencyInstruments is the single source of truth for which instruments are
@@ -61,6 +70,7 @@ var latencyInstruments = []string{
 	interTokenInstrument,
 	interTokenMaxInstrument,
 	toolQueueInstrument,
+	scheduleFireDurationInstrument,
 }
 
 // latencyBucketBoundaries is the explicit upper-bound ladder (seconds) every
@@ -118,12 +128,13 @@ func LatencyViews() []sdkmetric.View {
 // values are bounded domain enums (event/stop/tool names) or low-cardinality
 // flags — never a session id or free text.
 const (
-	attrType  = "type"  // event type
-	attrStop  = "stop"  // run stop reason
-	attrTool  = "tool"  // tool name
-	attrError = "error" // tool error outcome ("true"/"false")
-	attrKind  = "kind"  // token kind (input/output/cache_read/cache_write/reasoning)
-	attrRole  = "role"  // engine role family (the closed Role* set below)
+	attrType    = "type"    // event type
+	attrStop    = "stop"    // run stop reason
+	attrTool    = "tool"    // tool name
+	attrError   = "error"   // tool error outcome ("true"/"false")
+	attrKind    = "kind"    // token kind (input/output/cache_read/cache_write/reasoning)
+	attrRole    = "role"    // engine role family (the closed Role* set below)
+	attrOutcome = "outcome" // schedule fire outcome (fired/skipped/failed)
 )
 
 // Role family values for the attrRole label. This is a CLOSED, bounded set —
@@ -191,6 +202,19 @@ type Metrics struct {
 	// toolQueue is the tool queue-time histogram (unit "s"): the wait from a call
 	// entering dispatch to its execution starting (coordinated-omission fix).
 	toolQueue metric.Float64Histogram
+	// scheduleFires counts scheduled-task fire outcomes (fired/skipped/failed),
+	// labelled by outcome. Schedule metrics are a SEPARATE dimension from the
+	// role-family instruments (issue #233): a fire mints a fresh session whose
+	// own run already carries role="main"; these instruments capture the
+	// schedule-lifecycle counts/latency the scheduler reports via the
+	// composition-injected ScheduleMetrics callback.
+	scheduleFires metric.Int64Counter
+	// scheduleFireDuration is the schedule fire wall-clock histogram (unit "s"):
+	// the elapsed time from a fire's Claim to its terminal EvResult. Only
+	// recorded for fired/failed fires (a skipped fire has no run — duration 0).
+	// Shares the latencyBucketBoundaries explicit-bucket ladder via
+	// scheduleFireDurationInstrument in latencyInstruments.
+	scheduleFireDuration metric.Float64Histogram
 }
 
 // Compile-time interface checks.
@@ -307,6 +331,19 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 		metric.WithUnit("s"),
 	); err != nil {
 		return nil, fmt.Errorf("telemetry: tool queue histogram: %w", err)
+	}
+	if m.scheduleFires, err = meter.Int64Counter(
+		"mecatl.schedule.fires",
+		metric.WithDescription("Total scheduled-task fires, by outcome (fired/skipped/failed)."),
+	); err != nil {
+		return nil, fmt.Errorf("telemetry: schedule fires counter: %w", err)
+	}
+	if m.scheduleFireDuration, err = meter.Float64Histogram(
+		scheduleFireDurationInstrument,
+		metric.WithDescription("Scheduled-task fire wall-clock duration in seconds (Claim→terminal)."),
+		metric.WithUnit("s"),
+	); err != nil {
+		return nil, fmt.Errorf("telemetry: schedule fire duration histogram: %w", err)
 	}
 
 	return m, nil
@@ -490,6 +527,30 @@ func (m *Metrics) toolCall(_ session.SessionID, call session.ToolCall, result se
 	toolAttr := withAttrs(prefix, attribute.String(attrTool, call.Name))
 	m.toolDuration.Record(ctx, took.Seconds(), toolAttr)
 	m.toolQueue.Record(ctx, queued.Seconds(), toolAttr)
+}
+
+// EmitSchedule records scheduled-task fire metrics. It is the
+// composition-injected callback target the scheduler invokes (via
+// Config.ScheduleMetrics) for every fired/skipped/failed fire. Schedule metrics
+// are NOT a role-family (issue #233): a fire mints a fresh session whose OWN
+// run already carries role="main" via its EventSink, so these instruments carry
+// NO role label — they are a separate schedule-lifecycle dimension.
+//
+// duration is the fire's wall-clock cost (Claim→terminal). The scheduler passes
+// it only for a fired/failed fire (the value of time.Since(now) captured in
+// fireClaimed); a SKIPPED fire (no run) passes duration 0 and the
+// fire-duration histogram is skipped. The fires counter is ALWAYS bumped
+// (labelled by outcome). Nil-safe: a nil Metrics is a no-op (the byte-identical
+// no-metrics path).
+func (m *Metrics) EmitSchedule(payload session.SchedulePayload, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	outcomeAttr := withAttrs(nil, attribute.String(attrOutcome, payload.Kind))
+	m.scheduleFires.Add(context.Background(), 1, outcomeAttr)
+	if duration > 0 {
+		m.scheduleFireDuration.Record(context.Background(), duration.Seconds(), outcomeAttr)
+	}
 }
 
 // roleAttr builds the one-element attribute prefix carrying the role label.

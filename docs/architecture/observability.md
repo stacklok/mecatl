@@ -63,6 +63,17 @@
   stops stay on `runs_total{stop}`; the turn counters carry only the bounded
   `role` label. The perf MCP surfaces both with a per-role breakdown
   (`turns_total`, `turn_empty_total` in `perf://metrics/summary`).
+  **Schedule metrics** (issue #233, Phase 2b) are a SEPARATE dimension — NOT a
+  role-family: a scheduled-task fire mints a fresh session whose OWN run already
+  carries `role="main"` via its EventSink, so the schedule series carry NO role
+  label. The scheduler (`internal/adapter/scheduler`) is telemetry-import-free and
+  reports fires through a callback seam (`Config.ScheduleMetrics`), which
+  composition wires over `Metrics.EmitSchedule`. Two instruments:
+  `mecatl_schedule_fires_total{outcome}` (fired/skipped/failed — bumped for
+  every fire, including the misfire-skip and singleton-overlap-skip paths) and
+  `mecatl_schedule_fire_duration_seconds` (the Claim→terminal wall-clock, recorded
+  only for a fired/failed fire; a skipped fire has no run, duration 0). The
+  duration histogram shares the `latencyInstruments` explicit-bucket ladder.
   > A broader performance-observability effort lands incrementally on a
   > **loopback-only, unauthenticated admin listener** (`--metrics-addr`, default
   > `127.0.0.1:9090`): `/metrics`, `/debug/pprof/*`, `/debug/vars` (a curated

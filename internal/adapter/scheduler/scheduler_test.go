@@ -1402,3 +1402,185 @@ func (h *heldSessionLease) release(id session.SessionID) {
 	defer h.mu.Unlock()
 	delete(h.held, id)
 }
+
+// metricCall records one ScheduleMetrics callback invocation.
+type metricCall struct {
+	payload  session.SchedulePayload
+	duration time.Duration
+}
+
+// TestScheduleMetricsFiredFailedSkipped asserts the ScheduleMetrics callback is
+// invoked with the correct payload (Kind) and duration on the fired, failed,
+// and skipped (misfire) paths:
+//   - fired/failed: duration > 0 (Claim→terminal), recorded from fireClaimed;
+//   - skipped (misfire): duration == 0 (no run), recorded from the fireOne
+//     skip path.
+//
+// It uses the fakeClock: a custom FireFunc advances the clock during the fire so
+// the recorded duration is deterministically non-zero.
+func TestScheduleMetricsFiredFailedSkipped(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	// --- fired path ---
+	t.Run("fired", func(t *testing.T) {
+		defer goleak.VerifyNone(t)
+		clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+		store := memschedulestore.New()
+		fire := &fireStub{}
+
+		var mu sync.Mutex
+		var calls []metricCall
+		metrics := func(p session.SchedulePayload, d time.Duration) {
+			mu.Lock()
+			calls = append(calls, metricCall{payload: p, duration: d})
+			mu.Unlock()
+		}
+		s := scheduler.New(scheduler.Config{
+			Store:              store,
+			Fire:               fire.fire,
+			Clock:              clk,
+			TickInterval:       1 * time.Hour,
+			MaxConcurrentFires: 4,
+			ScheduleMetrics:    metrics,
+		})
+		// A custom fire that advances the clock mid-fire so the recorded
+		// Claim→terminal duration is deterministically non-zero.
+		wrappedFire := func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
+			clk.advance(2 * time.Second)
+			return fire.fire(ctx, sched, now)
+		}
+		s.SetFire(wrappedFire)
+
+		if err := store.Save(context.Background(), port.Schedule{
+			Spec:  port.ScheduleSpec{Name: "m-fired", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+			State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		s.RunOnceForTest(context.Background())
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 1 {
+			t.Fatalf("metrics calls = %d, want 1: %+v", len(calls), calls)
+		}
+		if calls[0].payload.Kind != "fired" {
+			t.Errorf("kind = %q, want fired", calls[0].payload.Kind)
+		}
+		if calls[0].payload.ScheduleName != "m-fired" {
+			t.Errorf("schedule = %q, want m-fired", calls[0].payload.ScheduleName)
+		}
+		if calls[0].duration <= 0 {
+			t.Errorf("fired duration = %v, want > 0", calls[0].duration)
+		}
+		if calls[0].duration != 2*time.Second {
+			t.Errorf("fired duration = %v, want 2s (clock advanced 2s during fire)", calls[0].duration)
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	})
+
+	// --- failed path ---
+	t.Run("failed", func(t *testing.T) {
+		defer goleak.VerifyNone(t)
+		clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+		store := memschedulestore.New()
+		fire := &fireStub{err: errors.New("boom")}
+
+		var mu sync.Mutex
+		var calls []metricCall
+		metrics := func(p session.SchedulePayload, d time.Duration) {
+			mu.Lock()
+			calls = append(calls, metricCall{payload: p, duration: d})
+			mu.Unlock()
+		}
+		s := scheduler.New(scheduler.Config{
+			Store:              store,
+			Fire:               fire.fire,
+			Clock:              clk,
+			TickInterval:       1 * time.Hour,
+			MaxConcurrentFires: 4,
+			ScheduleMetrics:    metrics,
+		})
+		wrappedFire := func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
+			clk.advance(3 * time.Second)
+			return fire.fire(ctx, sched, now)
+		}
+		s.SetFire(wrappedFire)
+
+		if err := store.Save(context.Background(), port.Schedule{
+			Spec:  port.ScheduleSpec{Name: "m-failed", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+			State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		s.RunOnceForTest(context.Background())
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 1 {
+			t.Fatalf("metrics calls = %d, want 1: %+v", len(calls), calls)
+		}
+		if calls[0].payload.Kind != "failed" {
+			t.Errorf("kind = %q, want failed", calls[0].payload.Kind)
+		}
+		if calls[0].duration != 3*time.Second {
+			t.Errorf("failed duration = %v, want 3s (clock advanced 3s during fire)", calls[0].duration)
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	})
+
+	// --- skipped (misfire) path ---
+	t.Run("skipped", func(t *testing.T) {
+		defer goleak.VerifyNone(t)
+		clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+		store := memschedulestore.New()
+		fire := &fireStub{}
+
+		var mu sync.Mutex
+		var calls []metricCall
+		metrics := func(p session.SchedulePayload, d time.Duration) {
+			mu.Lock()
+			calls = append(calls, metricCall{payload: p, duration: d})
+			mu.Unlock()
+		}
+		s := scheduler.New(scheduler.Config{
+			Store:              store,
+			Fire:               fire.fire,
+			Clock:              clk,
+			TickInterval:       1 * time.Hour,
+			MaxConcurrentFires: 4,
+			ScheduleMetrics:    metrics,
+		})
+		// MisfireSkip + a slot missed beyond the grace window (1h tick) → skipped.
+		past := clk.Now().Add(-2 * time.Hour)
+		if err := store.Save(context.Background(), port.Schedule{
+			Spec:  port.ScheduleSpec{Name: "m-skip", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}, Misfire: port.MisfireSkip},
+			State: port.ScheduleState{NextFireAt: past, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		s.RunOnceForTest(context.Background())
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 1 {
+			t.Fatalf("metrics calls = %d, want 1: %+v", len(calls), calls)
+		}
+		if calls[0].payload.Kind != "skipped" {
+			t.Errorf("kind = %q, want skipped", calls[0].payload.Kind)
+		}
+		if calls[0].duration != 0 {
+			t.Errorf("skipped duration = %v, want 0 (no run)", calls[0].duration)
+		}
+		if calls[0].payload.ScheduleName != "m-skip" {
+			t.Errorf("schedule = %q, want m-skip", calls[0].payload.ScheduleName)
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	})
+}

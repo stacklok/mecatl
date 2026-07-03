@@ -124,6 +124,16 @@ type Config struct {
 	// fireClaimed (fired/failed) and fireOne/FireNow (skipped) — the caller
 	// decides the kind; the callback decides where it lands.
 	EmitScheduleEvent func(payload session.SchedulePayload)
+	// ScheduleMetrics is the OPTIONAL composition-injected metrics callback
+	// (issue #233, Phase 2b). It is nil-safe (nil = no metrics recorded — the
+	// byte-identical no-metrics path). The scheduler invokes it from
+	// fireClaimed (fired/failed, with the Claim→terminal duration) and
+	// fireOne/FireNow (skipped, duration 0). Composition wires it over the
+	// telemetry adapter's Metrics.EmitSchedule — the scheduler pkg stays
+	// telemetry-import-free (the metrics seam is a plain callback, mirroring
+	// EmitScheduleEvent). The payload's Kind ("fired"/"skipped"/"failed")
+	// labels the outcome; duration > 0 only for a fired/failed fire.
+	ScheduleMetrics func(payload session.SchedulePayload, duration time.Duration)
 }
 
 // Defaults. The leader-lease defaults mirror the run-entry lease defaults
@@ -142,6 +152,14 @@ const (
 	// leaderLeaseRenewFraction bounds a Renew call to a fraction of the renew
 	// interval (mirrors the run-entry seam's leaseRenewFraction).
 	leaderLeaseRenewFraction = 2
+	// Schedule-fire Kind values (the session.SchedulePayload.Kind contract). They
+	// are STRING-PASSTHROUGH on the wire (no proto enum — a later value would not
+	// silently mis-classify); these unexported constants are the single source of
+	// the literals the scheduler constructs, so goconst does not flag the repeated
+	// string and a typo can't drift a payload's Kind off the contract.
+	scheduleKindFired   = "fired"
+	scheduleKindSkipped = "skipped"
+	scheduleKindFailed  = "failed"
 	// stopFireGrace is how long Stop waits for in-flight fires to drain before
 	// cancelling them. A fire mid-run when Stop is called gets this much headroom
 	// to complete cleanly; after it, Stop cancels and joins.
@@ -241,6 +259,20 @@ func (s *Scheduler) SetEmitScheduleEvent(cb func(payload session.SchedulePayload
 		panic("scheduler: SetEmitScheduleEvent after Start")
 	}
 	s.cfg.EmitScheduleEvent = cb
+}
+
+// SetScheduleMetrics sets the OPTIONAL composition-injected metrics callback
+// (issue #233, Phase 2b). It is the late-bind seam, parallel to
+// SetEmitScheduleEvent: a nil callback is the byte-identical no-metrics path.
+// Composition calls it after SetFire (so the FireFunc is bound) and before
+// Start (so the callback is in place when the first tick fires).
+func (s *Scheduler) SetScheduleMetrics(cb func(payload session.SchedulePayload, duration time.Duration)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started.Load() {
+		panic("scheduler: SetScheduleMetrics after Start")
+	}
+	s.cfg.ScheduleMetrics = cb
 }
 
 // New constructs a Scheduler. It applies Config defaults (TTLs, intervals,
@@ -568,8 +600,12 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 		if overlap {
 			s.emitSchedule(session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
-				Kind:         "skipped",
+				Kind:         scheduleKindSkipped,
 			})
+			s.emitScheduleMetrics(session.SchedulePayload{
+				ScheduleName: sched.Spec.Name,
+				Kind:         scheduleKindSkipped,
+			}, 0)
 			s.diag.Log(ctx, port.LevelInfo, "scheduler: skipping fire (prior fire still running)",
 				"schedule", sched.Spec.Name, "prior_session", sched.State.LastFireSessionID)
 			// Do NOT Claim here. A Claim would advance NextFireAt (so the slot
@@ -609,8 +645,12 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	if skipFire {
 		s.emitSchedule(session.SchedulePayload{
 			ScheduleName: sched.Spec.Name,
-			Kind:         "skipped",
+			Kind:         scheduleKindSkipped,
 		})
+		s.emitScheduleMetrics(session.SchedulePayload{
+			ScheduleName: sched.Spec.Name,
+			Kind:         scheduleKindSkipped,
+		}, 0)
 		s.diag.Log(ctx, port.LevelInfo, "skipped misfire (MisfireSkip)",
 			"schedule", sched.Spec.Name)
 		return
@@ -656,25 +696,32 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 	// ended with StopError (even when fireErr is nil — makeFireFunc returns
 	// (fire, nil) for a run that drained to terminal EvResult{stop=StopError});
 	// "fired" otherwise (a completed fire, any non-Error stop).
+	var payload session.SchedulePayload
 	if fireErr != nil || fire.Stop == session.StopError {
-		s.emitSchedule(session.SchedulePayload{
+		payload = session.SchedulePayload{
 			ScheduleName: claimed.Spec.Name,
 			FireID:       fire.ID,
 			SessionID:    fire.SessionID,
-			Kind:         "failed",
+			Kind:         scheduleKindFailed,
 			Stop:         fire.Stop,
 			Err:          fire.Err,
-		})
+		}
 	} else {
-		s.emitSchedule(session.SchedulePayload{
+		payload = session.SchedulePayload{
 			ScheduleName: claimed.Spec.Name,
 			FireID:       fire.ID,
 			SessionID:    fire.SessionID,
-			Kind:         "fired",
+			Kind:         scheduleKindFired,
 			Stop:         fire.Stop,
 			Err:          fire.Err,
-		})
+		}
 	}
+	s.emitSchedule(payload)
+	// Record the fire metrics (Claim→terminal duration). now is the Claim time
+	// fireClaimed was called with; the run is now terminal, so time.Since(now)
+	// is the end-to-end fire cost. Skipped fires (no run) record metrics with a
+	// zero duration at their own call sites in fireOne/FireNow.
+	s.emitScheduleMetrics(payload, s.cfg.Clock.Now().Sub(now))
 	// RecordFire is idempotent per fire id; a transient failure is best-effort
 	// (the fire already ran — we lose the outcome record, not the at-most-once
 	// guarantee).
@@ -692,6 +739,18 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 func (s *Scheduler) emitSchedule(payload session.SchedulePayload) {
 	if s.cfg.EmitScheduleEvent != nil {
 		s.cfg.EmitScheduleEvent(payload)
+	}
+}
+
+// emitScheduleMetrics invokes the optional ScheduleMetrics callback (nil-safe).
+// It is the single chokepoint for recording schedule fire metrics —
+// fireClaimed calls it with the Claim→terminal duration for a fired/failed
+// fire, fireOne/FireNow call it with duration 0 for a skipped fire. A nil
+// callback is the byte-identical no-metrics path. duration is the fire's
+// wall-clock cost (time.Since(now)); a skipped fire passes 0 (no run).
+func (s *Scheduler) emitScheduleMetrics(payload session.SchedulePayload, duration time.Duration) {
+	if s.cfg.ScheduleMetrics != nil {
+		s.cfg.ScheduleMetrics(payload, duration)
 	}
 }
 
@@ -744,8 +803,12 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 		if overlap {
 			s.emitSchedule(session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
-				Kind:         "skipped",
+				Kind:         scheduleKindSkipped,
 			})
+			s.emitScheduleMetrics(session.SchedulePayload{
+				ScheduleName: sched.Spec.Name,
+				Kind:         scheduleKindSkipped,
+			}, 0)
 			return port.ScheduleFire{}, ErrFireNowOverlap
 		}
 	}

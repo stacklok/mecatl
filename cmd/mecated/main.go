@@ -861,7 +861,7 @@ func run() error {
 		return telemetry.NewSink(childSinks...), scoped
 	}
 
-	built, err := app.Build(ctx, appConfig(cfg, sink, mainScoped, roleScoper, diag))
+	built, err := app.Build(ctx, appConfig(cfg, sink, mainScoped, roleScoper, metrics, diag))
 	if err != nil {
 		return err
 	}
@@ -885,9 +885,10 @@ func run() error {
 // appConfig maps the CLI/env config onto the shared app.Config build contract,
 // threading the telemetry sink (EventSink), the per-tool audit recorder
 // (ToolCallRecorder), the child-engine role scoper (MetricsRoleScoper, issue
-// #47), and the general-purpose operational logging sink (Diagnostics) into the
-// engine/composition.
-func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), diag port.Diagnostics) app.Config {
+// #47), the schedule-fire metrics callback (ScheduleMetricsEmitter, issue
+// #233), and the general-purpose operational logging sink (Diagnostics) into
+// the engine/composition.
+func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:                    cfg.workspace,
 		Model:                        cfg.model,
@@ -1017,11 +1018,12 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// park the child until run-end, so we run NON-interactive (Interactive=false),
 		// engaging the auto-deny path and the opt-in --subagent-ask-reviewer. (The
 		// offline demo likewise leaves app.Config.Interactive false.)
-		Interactive:       !cfg.headless,
-		Sink:              sink,
-		ToolCallRecorder:  recorder,
-		MetricsRoleScoper: roleScoper,
-		Diagnostics:       diag,
+		Interactive:            !cfg.headless,
+		Sink:                   sink,
+		ToolCallRecorder:       recorder,
+		MetricsRoleScoper:      roleScoper,
+		ScheduleMetricsEmitter: metrics.EmitSchedule,
+		Diagnostics:            diag,
 	}
 	// Apply the shared provider credentials + base URLs (env reads happen here, once).
 	// An OPENAI_API_KEY in the environment implies the user wants the real provider —

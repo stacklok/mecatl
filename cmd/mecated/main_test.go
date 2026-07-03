@@ -107,7 +107,7 @@ func TestParseFlagsSubagentModelRouter(t *testing.T) {
 		t.Error("--subagent-model-router (bare) must record set=true value=true")
 	}
 	// A bare flag / =true is a no-op: it must NOT disable the router (taxonomy governs).
-	if cfg := appConfig(bare, nil, nil, nil, nil); cfg.RouterDisabled {
+	if cfg := appConfig(bare, nil, nil, nil, nil, nil); cfg.RouterDisabled {
 		t.Error("a bare --subagent-model-router must leave RouterDisabled false")
 	}
 
@@ -119,11 +119,11 @@ func TestParseFlagsSubagentModelRouter(t *testing.T) {
 	if !off.subagentModelRouterSet || off.subagentModelRouter {
 		t.Error("--subagent-model-router=false must record set=true value=false")
 	}
-	if cfg := appConfig(off, nil, nil, nil, nil); !cfg.RouterDisabled {
+	if cfg := appConfig(off, nil, nil, nil, nil, nil); !cfg.RouterDisabled {
 		t.Error("--subagent-model-router=false must set RouterDisabled (the kill-switch)")
 	}
 	// Unset → RouterDisabled false (router governed by taxonomy presence).
-	if cfg := appConfig(def, nil, nil, nil, nil); cfg.RouterDisabled {
+	if cfg := appConfig(def, nil, nil, nil, nil, nil); cfg.RouterDisabled {
 		t.Error("an unset --subagent-model-router must leave RouterDisabled false")
 	}
 }
@@ -249,7 +249,7 @@ func TestAppConfigMapsPermissionConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	ac := appConfig(cfg, nil, nil, nil, nil)
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
 	if !ac.PermissionsConventional {
 		t.Errorf("PermissionsConventional = false, want true (default)")
 	}
@@ -289,7 +289,7 @@ func TestParseFlagsServerDefaultModel(t *testing.T) {
 	if cfg.defaultModel != "openai/gpt-5-mini" {
 		t.Errorf("defaultModel = %q, want openai/gpt-5-mini", cfg.defaultModel)
 	}
-	ac := appConfig(cfg, nil, nil, nil, nil)
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
 	if ac.DefaultProvider != "openrouter" || ac.DefaultModel != "openai/gpt-5-mini" {
 		t.Errorf("app.Config Default* = (%q, %q), want the parsed flags threaded through", ac.DefaultProvider, ac.DefaultModel)
 	}
@@ -306,7 +306,7 @@ func TestAppConfigMapsAgentDefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	ac := appConfig(cfg, nil, nil, nil, nil)
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
 	if len(ac.AgentsDirs) != 1 || ac.AgentsDirs[0] != "/x" {
 		t.Errorf("AgentsDirs = %v", ac.AgentsDirs)
 	}
@@ -352,7 +352,7 @@ func TestParseFlagsAndAppConfigMapsAskReviewer(t *testing.T) {
 	if cfg.subagentAskReviewerPolicy != "ALLOW read-only only." {
 		t.Errorf("policy content = %q, want the file's content", cfg.subagentAskReviewerPolicy)
 	}
-	ac := appConfig(cfg, nil, nil, nil, nil)
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
 	if ac.SubagentAskReviewerModel != "gpt-5-mini" {
 		t.Errorf("SubagentAskReviewerModel = %q", ac.SubagentAskReviewerModel)
 	}
@@ -382,14 +382,14 @@ func TestHeadlessFlagDrivesInteractive(t *testing.T) {
 	if def.headless {
 		t.Errorf("headless default = true, want false")
 	}
-	if ac := appConfig(def, nil, nil, nil, nil); !ac.Interactive {
+	if ac := appConfig(def, nil, nil, nil, nil, nil); !ac.Interactive {
 		t.Errorf("default mecated must be Interactive=true (surfaces asks to the client)")
 	}
 	on, err := parseFlags([]string{"--headless"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if ac := appConfig(on, nil, nil, nil, nil); ac.Interactive {
+	if ac := appConfig(on, nil, nil, nil, nil, nil); ac.Interactive {
 		t.Errorf("--headless must set app.Config.Interactive=false so the reviewer/auto-deny path engages")
 	}
 }
@@ -417,7 +417,7 @@ func TestAppConfigMapsAllowAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if ac := appConfig(cfg, nil, nil, nil, nil); !ac.AllowAllTools {
+	if ac := appConfig(cfg, nil, nil, nil, nil, nil); !ac.AllowAllTools {
 		t.Errorf("appConfig.AllowAllTools = false, want true")
 	}
 
@@ -425,7 +425,7 @@ func TestAppConfigMapsAllowAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags(nil): %v", err)
 	}
-	if ac := appConfig(off, nil, nil, nil, nil); ac.AllowAllTools {
+	if ac := appConfig(off, nil, nil, nil, nil, nil); ac.AllowAllTools {
 		t.Errorf("appConfig.AllowAllTools = true with flag off, want false")
 	}
 }
@@ -437,7 +437,7 @@ func TestAppConfigMapsMaxTeamTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if ac := appConfig(cfg, nil, nil, nil, nil); ac.MaxTeamTokens != 12345 {
+	if ac := appConfig(cfg, nil, nil, nil, nil, nil); ac.MaxTeamTokens != 12345 {
 		t.Errorf("appConfig.MaxTeamTokens = %d, want 12345", ac.MaxTeamTokens)
 	}
 
@@ -445,7 +445,7 @@ func TestAppConfigMapsMaxTeamTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags(nil): %v", err)
 	}
-	if ac := appConfig(def, nil, nil, nil, nil); ac.MaxTeamTokens != 0 {
+	if ac := appConfig(def, nil, nil, nil, nil, nil); ac.MaxTeamTokens != 0 {
 		t.Errorf("appConfig.MaxTeamTokens = %d with flag absent, want 0 (disabled by default)", ac.MaxTeamTokens)
 	}
 }
@@ -649,7 +649,7 @@ func TestAppConfigPostureMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	ac := appConfig(cfg, nil, nil, nil, nil)
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
 	if ac.Posture != app.PostureYolo {
 		t.Errorf("appConfig.Posture = %v, want PostureYolo", ac.Posture)
 	}
