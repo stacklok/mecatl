@@ -65,10 +65,12 @@ func serve(ctx context.Context, cfg config, svc *server.Service) error {
 	}
 	grpcSrv := grpc.NewServer(grpcOpts...)
 	mecatlv1.RegisterHarnessServiceServer(grpcSrv, server.NewHarnessServer(svc))
+	mecatlv1.RegisterScheduleServiceServer(grpcSrv, server.NewScheduleServer(svc))
 	healthSrv := health.NewServer()
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthSrv.SetServingStatus("mecatl.v1.HarnessService", healthpb.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus("mecatl.v1.ScheduleService", healthpb.HealthCheckResponse_SERVING)
 
 	// --- HTTP: health + /drain mounted OUTSIDE auth/rate-limit; the API mux
 	// wrapped in the auth middleware. The readiness probe is DYNAMIC:

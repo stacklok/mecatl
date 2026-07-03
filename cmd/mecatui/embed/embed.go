@@ -182,6 +182,7 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 	// blast radius (filesystem perms, no network surface at all).
 	grpcSrv := grpc.NewServer()
 	mecatlv1.RegisterHarnessServiceServer(grpcSrv, server.NewHarnessServer(built.Service))
+	mecatlv1.RegisterScheduleServiceServer(grpcSrv, server.NewScheduleServer(built.Service))
 
 	// Mount the standard gRPC health service so client.IsReachable-style probes
 	// (and orchestration tooling) can confirm readiness over the same socket.
@@ -189,6 +190,7 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthSrv.SetServingStatus("mecatl.v1.HarnessService", healthpb.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus("mecatl.v1.ScheduleService", healthpb.HealthCheckResponse_SERVING)
 
 	go func() { _ = grpcSrv.Serve(lis) }() // returns when GracefulStop is called
 

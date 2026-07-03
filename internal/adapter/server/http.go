@@ -64,6 +64,18 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/teams/{id}/run", h.runTeam)
 	h.mux.HandleFunc("GET /v1/teams/{id}", h.listTeam)
 	h.mux.HandleFunc("DELETE /v1/teams/{id}", h.cleanupTeam)
+	// Schedule routes (issue #232, Phase 2a): a peer REST surface over the same
+	// Service.CreateSchedule/... methods the gRPC ScheduleService delegates to.
+	h.mux.HandleFunc("POST /v1/schedules", h.createSchedule)
+	h.mux.HandleFunc("GET /v1/schedules", h.listSchedules)
+	h.mux.HandleFunc("GET /v1/schedules/{name}", h.getSchedule)
+	h.mux.HandleFunc("PUT /v1/schedules/{name}", h.updateSchedule)
+	h.mux.HandleFunc("DELETE /v1/schedules/{name}", h.deleteSchedule)
+	h.mux.HandleFunc("POST /v1/schedules/{name}/fire", h.fireNowSchedule)
+	h.mux.HandleFunc("POST /v1/schedules/{name}/pause", h.pauseSchedule)
+	h.mux.HandleFunc("POST /v1/schedules/{name}/resume", h.resumeSchedule)
+	h.mux.HandleFunc("GET /v1/schedules/{name}/fires", h.listFires)
+	h.mux.HandleFunc("GET /v1/schedules/{name}/fires/{id}", h.getFire)
 	return h
 }
 
@@ -834,6 +846,198 @@ func (h *HTTPHandler) cleanupTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- schedule request bodies + handlers --------------------------------------
+
+// scheduleSpecBody mirrors the proto ScheduleSpec (minus the path-borne name on
+// update) so the HTTP and gRPC surfaces share one shape. It is decoded into a
+// *mecatlv1.ScheduleSpec and run through protoToScheduleSpec, the SAME mapping
+// path the gRPC handler uses — one validation/mapping chokepoint, not two.
+type scheduleSpecBody struct {
+	Name      string                             `json:"name,omitempty"`
+	Prompt    string                             `json:"prompt,omitempty"`
+	Parts     []*mecatlv1.Content                `json:"parts,omitempty"`
+	Trigger   *mecatlv1.TriggerSpec              `json:"trigger,omitempty"`
+	Selector  *mecatlv1.ScheduleProviderSelector `json:"selector,omitempty"`
+	Profile   string                             `json:"profile,omitempty"`
+	Workspace string                             `json:"workspace,omitempty"`
+	Mode      mecatlv1.PermissionMode            `json:"mode,omitempty"`
+	Limits    *mecatlv1.Limits                   `json:"limits,omitempty"`
+	Mutating  bool                               `json:"mutating,omitempty"`
+	MaxFires  int32                              `json:"max_fires,omitempty"`
+	Misfire   mecatlv1.MisfirePolicy             `json:"misfire,omitempty"`
+	Singleton bool                               `json:"singleton,omitempty"`
+	Timezone  string                             `json:"timezone,omitempty"`
+}
+
+// toProto builds a *mecatlv1.ScheduleSpec from the JSON body (the name is
+// overridden on the update path, where it rides the URL).
+func (b scheduleSpecBody) toProto(name string) *mecatlv1.ScheduleSpec {
+	spec := &mecatlv1.ScheduleSpec{
+		Prompt:    b.Prompt,
+		Parts:     b.Parts,
+		Trigger:   b.Trigger,
+		Selector:  b.Selector,
+		Profile:   b.Profile,
+		Workspace: b.Workspace,
+		Mode:      b.Mode,
+		Limits:    b.Limits,
+		Mutating:  b.Mutating,
+		MaxFires:  b.MaxFires,
+		Misfire:   b.Misfire,
+		Singleton: b.Singleton,
+		Timezone:  b.Timezone,
+	}
+	if name != "" {
+		spec.Name = name
+	} else {
+		spec.Name = b.Name
+	}
+	return spec
+}
+
+// createSchedule handles POST /v1/schedules. The proto CreateScheduleResponse
+// is JSON-encoded so the HTTP and gRPC surfaces share one shape.
+func (h *HTTPHandler) createSchedule(w http.ResponseWriter, r *http.Request) {
+	var body scheduleSpecBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	spec, err := protoToScheduleSpec(body.toProto(""))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sched, err := h.svc.CreateSchedule(r.Context(), spec)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, &mecatlv1.CreateScheduleResponse{Schedule: scheduleToProto(sched)})
+}
+
+// listSchedules handles GET /v1/schedules.
+func (h *HTTPHandler) listSchedules(w http.ResponseWriter, r *http.Request) {
+	schedules, err := h.svc.ListSchedules(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	out := make([]*mecatlv1.Schedule, 0, len(schedules))
+	for _, s := range schedules {
+		out = append(out, scheduleToProto(s))
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.ListSchedulesResponse{Schedules: out})
+}
+
+// getSchedule handles GET /v1/schedules/{name}.
+func (h *HTTPHandler) getSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	sched, err := h.svc.GetSchedule(r.Context(), name)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.GetScheduleResponse{Schedule: scheduleToProto(sched)})
+}
+
+// updateSchedule handles PUT /v1/schedules/{name}. The name rides the URL; the
+// body's spec (if any name field) is overridden to the path-borne name.
+func (h *HTTPHandler) updateSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body scheduleSpecBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	spec, err := protoToScheduleSpec(body.toProto(name))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sched, err := h.svc.UpdateSchedule(r.Context(), spec)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.UpdateScheduleResponse{Schedule: scheduleToProto(sched)})
+}
+
+// deleteSchedule handles DELETE /v1/schedules/{name}. Idempotent.
+func (h *HTTPHandler) deleteSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := h.svc.DeleteSchedule(r.Context(), name); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// fireNowSchedule handles POST /v1/schedules/{name}/fire, returning the per-fire
+// session id (fire_id == session_id on the wire).
+func (h *HTTPHandler) fireNowSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	fire, err := h.svc.FireNow(r.Context(), name)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, &mecatlv1.FireNowResponse{
+		FireId:    fire.ID,
+		SessionId: string(fire.SessionID),
+	})
+}
+
+// pauseSchedule handles POST /v1/schedules/{name}/pause.
+func (h *HTTPHandler) pauseSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := h.svc.PauseSchedule(r.Context(), name); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resumeSchedule handles POST /v1/schedules/{name}/resume.
+func (h *HTTPHandler) resumeSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := h.svc.ResumeSchedule(r.Context(), name); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listFires handles GET /v1/schedules/{name}/fires.
+func (h *HTTPHandler) listFires(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	fires, err := h.svc.ListFires(r.Context(), name)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	out := make([]*mecatlv1.ScheduleFire, 0, len(fires))
+	for _, f := range fires {
+		out = append(out, scheduleFireToProto(f))
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.ListFiresResponse{Fires: out})
+}
+
+// getFire handles GET /v1/schedules/{name}/fires/{id}.
+func (h *HTTPHandler) getFire(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	fire, err := h.svc.GetFire(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.GetFireResponse{Fire: scheduleFireToProto(fire)})
 }
 
 // --- MCP inspection handlers -------------------------------------------------
