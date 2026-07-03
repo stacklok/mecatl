@@ -2202,9 +2202,11 @@ type Event struct {
 	// not branch content). The branch summaries fold into the parent conversation
 	// only via the Parallel tool result.
 	Parallel *Parallel `protobuf:"bytes,14,opt,name=parallel,proto3" json:"parallel,omitempty"`
-	// schedule.* — the scheduler lifecycle (EvScheduleFired/Skipped/Failed). Client-visible
-	// (unlike EvApproval/EvCompactionArchive/EvUserPrompt which are log-only). Emitted from
-	// composition (the scheduler), NOT the loop. String-passthrough kind/stop/err, no enum.
+	// schedule.* — the scheduler lifecycle (EvScheduleFired/Skipped/Failed). For v1
+	// delivered to the fire session's durable EventLog ONLY (pull-only via
+	// GetFire/ListFires); a live broadcast stream is a future phase. Emitted from
+	// composition (the scheduler), NOT the loop. String-passthrough kind/stop/err,
+	// no enum.
 	Schedule      *SchedulePayload `protobuf:"bytes,15,opt,name=schedule,proto3" json:"schedule,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2348,14 +2350,15 @@ func (x *Event) GetSchedule() *SchedulePayload {
 // SchedulePayload is the structured detail carried by the schedule.* events
 // (EvScheduleFired / EvScheduleSkipped / EvScheduleFailed). Mirrors
 // session.SchedulePayload. Emitted from composition (the scheduler) at fire
-// time, NOT the agent loop. Client-visible (unlike the log-only EvApproval /
-// EvCompactionArchive / EvUserPrompt). kind / stop / err are STRING passthroughs
-// (the EvNoProgress / StopBudget discipline — no proto enum). Defined here (not
-// schedule.proto) because it is the Event.schedule projection — Event lives in
-// harness.proto, and a cross-file reference back from harness.proto into
-// schedule.proto would form a circular import (schedule.proto imports
-// harness.proto for the shared Content/PermissionMode/Limits). Colocating the
-// projection with Event breaks the cycle cleanly.
+// time, NOT the agent loop. For v1 delivered to the fire session's durable
+// EventLog ONLY (pull-only via GetFire/ListFires); a live broadcast stream is a
+// future phase. kind / stop / err are STRING passthroughs (the EvNoProgress /
+// StopBudget discipline — no proto enum). Defined here (not schedule.proto)
+// because it is the Event.schedule projection — Event lives in harness.proto,
+// and a cross-file reference back from harness.proto into schedule.proto would
+// form a circular import (schedule.proto imports harness.proto for the shared
+// Content/PermissionMode/Limits). Colocating the projection with Event breaks
+// the cycle cleanly.
 type SchedulePayload struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// schedule_name is the schedule that fired / was skipped / failed.

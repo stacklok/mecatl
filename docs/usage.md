@@ -89,15 +89,20 @@ Create a cron schedule + force an immediate fire (REST):
 # Create a cron schedule (read-leaning → plan mode).
 curl -X POST http://localhost:8080/v1/schedules \
   -H 'content-type: application/json' \
-  -d '{"name":"nightly-report","prompt":"summarize today's commits",
+  -d '{"name":"nightly-report","prompt":"summarize commits from today",
        "workspace":"/repo","mode":"PERMISSION_MODE_PLAN",
        "trigger":{"cron":"0 9 * * *"}}'
 
-# Fire it immediately; returns fire_id + session_id.
+# Fire it immediately. FireNow is SYNCHRONOUS-TO-TERMINAL: it blocks until
+# the fire's run completes (bounded by the schedule's turn/token limits, default
+# 50 turns), then returns the fire_id + session_id. A client/proxy timeout
+# (gRPC deadline, HTTP proxy_read_timeout) shorter than the run will truncate
+# the response — set a generous client deadline. The fire keeps running
+# server-side after the client disconnects; poll GetFire for the persisted record.
 curl -X POST http://localhost:8080/v1/schedules/nightly-report/fire
 # -> {"fire_id":"sched--...","session_id":"sched--..."}
 
-# Poll the fire's outcome (stop reason + session id).
+# Retrieve the persisted fire record (stop reason + session id) after the run.
 curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire_id>
 ```
 
