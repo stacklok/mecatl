@@ -3825,7 +3825,62 @@ pieces, all behind `--scheduler` (byte-identical default when unwired):
   session_id); `GetFire`/`ListFires` are the pull-only outcome channel. A backend with
   no `ScheduleStore` honestly reports `Unimplemented`/501.
 
-## Proto — `contracts/proto/mecatl/v1/` (multi-provider Phase 0 S3 wire surface)
+#### Phase 2b (issue #233) — declarative config + CLI + metrics
+
+The three shipped Phase 2b surfaces, all composition/`cmd`-layer (no `engine/agent`
+change), reusing the Phase 5 + 2a substrate above:
+
+- **Operator-tier `settings.yaml` `schedules:` block.** The `permconfig.Resolver`
+  exposes the operator-tier `schedules:` YAML subtree via
+  `Resolver.OperatorSchedules` (`internal/adapter/permconfig/resolve.go`): it reads
+  the user-global + CLI tiers ONLY — a **project-tier** file's `schedules:` block is
+  **IGNORED with a WARN** (`internal/adapter/permconfig/resolve.go`, the same
+  tighten-only/security-downgrade fold as guardrails/posture — a project repo cannot
+  register schedules). The subtree is parsed STRICTLY at the per-element grain
+  (`internal/adapter/permconfig/schema.go` `SchedulesSection.UnmarshalYAML` +
+  `ScheduleDecl.UnmarshalYAML`: the `schedules:` key is a YAML SEQUENCE, each element
+  is a `ScheduleDecl` whose own `UnmarshalYAML` rejects unknown keys, and a non-
+  sequence node is a parse error — a typo inside one declaration cannot silently
+  disable a schedule). `ScheduleDecl` is the YAML-friendly mirror of
+  `port.ScheduleSpec` (cron/oneShot are bare strings parsed by composition;
+  provider/model are opaque selector strings).
+- **`reconcileSchedules` — idempotent upsert, no-delete.**
+  `internal/app/schedules.go` (`foldOperatorSchedules` + `reconcileSchedules`) is the
+  declarative→store path. `foldOperatorSchedules` (called once in `Build` BEFORE the
+  scheduler starts) maps each `ScheduleDecl` to a `port.ScheduleSpec` via
+  `toScheduleSpec` (parse cron/one-shot, map selector/profile/mode/limits, interpret
+  the misfire policy), fail-SOFT per declaration (one bad schedule is WARN'd + skipped,
+  not fatal — mirroring `compileGuardrailRules`). `reconcileSchedules` (called AFTER
+  the scheduler starts, since it needs the live `*server.Service`) upserts the declared
+  specs into the durable `ScheduleStore`: a missing schedule is `CreateSchedule`'d, a
+  differing one is `UpdateSchedule`'d, an unchanged one is left alone (idempotent —
+  re-running `Build` does not churn; the diff normalizes against the create-seam's
+  `applyScheduleDefaults` so a `singleton: false` declaration does not spuriously
+  Update every restart). **Schedules removed from the YAML are NOT deleted** — an
+  operator must delete them explicitly via the API/CLI (no destructive reconcile).
+  Errors are WARN'd per schedule, never fatal — a broken store at reconcile time does
+  not block startup. The whole path is a no-op when no operator-tier `schedules:`
+  block was configured (the byte-identical default).
+- **`mecated schedules <verb>` CLI subcommands** (`cmd/mecated/schedules_cmd.go`) — a
+  thin HTTP client over the running server's `/v1/schedules` REST surface (dials
+  `--server-addr`, default the loopback HTTP listener the server itself binds). Verbs:
+  `create` (cron or one-shot), `list`, `inspect` (optionally its recent fires),
+  `pause`, `resume`, `delete`, and `fire` (force an immediate fire). A bare
+  `mecated schedules` or an unknown verb prints the usage banner and exits 2 — it
+  NEVER falls through to boot the daemon (mirrors the `config` subcommand shape).
+- **Schedule metrics** (`internal/adapter/telemetry/metrics.go` `EmitSchedule`, the
+  composition-injected `Config.ScheduleMetrics` callback the scheduler invokes via
+  `SetScheduleMetrics`). Two instruments, BOTH carrying an `outcome` attribute (the
+  `session.SchedulePayload.Kind` — fired/skipped/failed) and NO role label (a fire
+  mints a fresh session whose OWN run already carries `role="main"` via its EventSink;
+  these are a separate schedule-lifecycle dimension, not a role-family — issue #233):
+  `mecatl.schedule.fires` (Int64Counter, total fires by outcome — ALWAYS bumped) and
+  `mecatl.schedule.fire_duration` (Float64Histogram, seconds, Claim→terminal wall-
+  clock — recorded ONLY for a fired/failed fire; a SKIPPED fire passes duration 0 and
+  skips the histogram). Nil-safe: a nil `*Metrics` is a no-op (the byte-identical no-
+  metrics path).
+
+
 
 `CreateSessionRequest` carries an OPTIONAL `provider_id`(4)+`model_id`(5) selector (two distinct
 fields, NEVER slash-joined) and an OPTIONAL `profile`(6) (enum-as-string; see the session-profiles

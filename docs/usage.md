@@ -61,8 +61,9 @@ Flags:
 | `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
 
 Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,
-issue #232). A YAML `schedules:` block in `settings.yaml` (Phase 2b) and a
-`mecatui /schedule` command (Phase 3) are planned.
+issue #232), the operator-tier **`settings.yaml` `schedules:` block** (Phase 2b,
+issue #233 — declarative reconcile into the store), and the **`mecated schedules`
+CLI** (Phase 2b). A `mecatui /schedule` command (Phase 3) is planned.
 
 **gRPC** (`mecatl.v1.ScheduleService`): `CreateSchedule`, `GetSchedule`,
 `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`,
@@ -116,3 +117,80 @@ subagent-grade defaults (bounded turn/token budgets, read-leaning posture unless
 `mutating: true` is set on the schedule, headless ask model). The at-most-once
 firing semantics mean a crash mid-fire skips the slot — a recurring schedule
 self-heals via the fire-once-now misfire policy; a one-shot can be lost.
+
+### Declarative schedules (`settings.yaml`, Phase 2b)
+
+An operator can declare schedules in the **operator-tier** `settings.yaml` (the
+user-global file or a CLI-supplied config) instead of creating them one-by-one over
+the API. On startup `mecated` parses the `schedules:` block and **reconciles** it
+into the durable `ScheduleStore` (idempotent upsert — create missing, update
+differing, leave unchanged alone):
+
+```yaml
+# ~/.config/mecatl/settings.yaml  (operator-tier — NOT a project file)
+schedules:
+  - name: nightly-review
+    cron: "0 9 * * *"          # 5-field cron or @-macro; mutually exclusive with oneShot
+    timezone: "America/New_York" # IANA name; empty = UTC
+    prompt: "Summarize today's commits and open a follow-up if any test broke."
+    workspace: "/repo"
+    mode: plan                  # a non-mutating schedule MUST run in plan mode
+    # mutating: true           # opt into write tools (then mode may be default/acceptEdits)
+    maxTurns: 20                # per-fire turn budget (0 = disabled)
+    maxToolCalls: 40            # per-fire tool-call budget (0 = disabled)
+    maxFires: 0                 # total fires for a cron (0 = forever); ignored for one-shot
+    singleton: true             # skip the next fire if a prior one is still running
+    # misfire: skip             # "" (default = fire-once-now) or "skip"
+
+  - name: one-shot-patch
+    oneShot: "2026-07-04T10:00:00Z"  # RFC3339 instant; must be in the future
+    prompt: "Apply the pending security patch."
+    mutating: true
+    provider: anthropic
+    model: claude-sonnet-4-5
+```
+
+Notes:
+
+- The `schedules:` key is a **YAML sequence** (no `items:` wrapper). Each element is
+  decoded **strictly** — an unknown key inside one declaration is a parse error, so a
+  typo can't silently disable a schedule.
+- **Operator-tier only.** A **project-tier** `.mecatl/settings.yaml` `schedules:`
+  block is **ignored with a WARN** — a project repo cannot register schedules (same
+  security-downgrade fold as guardrails/posture). Set `schedules:` in your
+  user-global `settings.yaml` or pass it via `--config`.
+- **No destructive reconcile.** Removing a schedule from the YAML does NOT delete it
+  from the store — an operator must delete it explicitly via the API/CLI. Re-running
+  `mecated` only creates/updates; it never deletes.
+- A declaration with neither `cron` nor `oneShot`, or with both, is rejected by the
+  create-seam at reconcile time (WARN'd + skipped, not fatal — one bad schedule does
+  not drop the rest).
+
+### `mecated schedules` CLI (Phase 2b)
+
+`mecated schedules <verb>` is a thin HTTP client over the running server's
+`/v1/schedules` REST surface — it dials `--server-addr` (default the loopback HTTP
+listener the server itself binds) and never boots the daemon. Use it for ad-hoc
+management against a running `mecated`:
+
+```sh
+# Create a cron schedule (flags mirror the REST body).
+mecated schedules create --name nightly-review --cron "0 9 * * *" \
+  --prompt "Summarize today's commits." --workspace /repo --mode plan
+
+# List all schedules (text by default; --output json for machine consumption).
+mecated schedules list
+
+# Inspect one schedule (optionally its recent fires with --fires).
+mecated schedules inspect nightly-review --fires
+
+# Pause / resume / delete.
+mecated schedules pause  nightly-review
+mecated schedules resume nightly-review
+mecated schedules delete nightly-review
+
+# Force an immediate fire (synchronous-to-terminal, like FireNow).
+mecated schedules fire nightly-review
+```
+
+A bare `mecated schedules` or an unknown verb prints the usage banner and exits 2.
