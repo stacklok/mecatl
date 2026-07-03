@@ -318,14 +318,15 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			// holds within this process. No leader-lease state to record.
 		} else {
 			// Acquired: store the lease and start the renewer.
+			renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+			renewerDone := make(chan struct{})
 			s.mu.Lock()
 			s.leaderLease = &lease
-			s.mu.Unlock()
-			renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 			s.renewerCancel = cancel
-			s.renewerDone = make(chan struct{})
+			s.renewerDone = renewerDone
+			s.mu.Unlock()
 			go func() {
-				defer close(s.renewerDone)
+				defer close(renewerDone)
 				s.renewLeader(renewCtx)
 			}()
 		}
@@ -333,12 +334,19 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 	// Launch the tick loop regardless (standalone or leader). The tick ctx is
 	// detached from the caller's ctx so a request-scope cancel does not stop
-	// the loop — only Stop or a lost leader does.
-	s.tickCtx, s.tickCancel = context.WithCancel(context.WithoutCancel(ctx))
-	s.tickDone = make(chan struct{})
+	// the loop — only Stop or a lost leader does. tickCtx/tickCancel/tickDone
+	// are written under s.mu (mirroring RunOnceForTest's existing locked read)
+	// because the renewer goroutine started above may already be running and
+	// can read tickCancel via declareLeaderLost concurrently with this write
+	// (a definitive lease loss racing the tick loop's own startup).
+	tickCtx, tickCancel := context.WithCancel(context.WithoutCancel(ctx))
+	tickDone := make(chan struct{})
+	s.mu.Lock()
+	s.tickCtx, s.tickCancel, s.tickDone = tickCtx, tickCancel, tickDone
+	s.mu.Unlock()
 	go func() {
-		defer close(s.tickDone)
-		s.tick(s.tickCtx)
+		defer close(tickDone)
+		s.tick(tickCtx)
 	}()
 	return nil
 }
@@ -426,9 +434,15 @@ func (s *Scheduler) declareLeaderLost(ctx context.Context, cause error) {
 	s.diag.Log(ctx, port.LevelWarn, "lost scheduler leader lease; stopping tick loop",
 		"owner", s.cfg.LeaseOwner, "err", cause.Error())
 	// The tick-ctx cancel is the actual loss mechanism; no leader-state flag
-	// needs bookkeeping (leaderLease is cleared on Stop's release path).
-	if s.tickCancel != nil {
-		s.tickCancel()
+	// needs bookkeeping (leaderLease is cleared on Stop's release path). Read
+	// tickCancel under s.mu: Start's own launch of the tick loop writes it
+	// concurrently with this renewer goroutine on a fast definitive loss (a
+	// lease lost moments after Start), so an unguarded read here would race.
+	s.mu.Lock()
+	cancel := s.tickCancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -806,23 +820,31 @@ func (s *Scheduler) Stop() error {
 	if !s.stopped.CompareAndSwap(false, true) {
 		return nil
 	}
+	// Read the cancel funcs + done channels under s.mu (Start writes them under
+	// the same lock, and declareLeaderLost may concurrently read tickCancel on
+	// the renewer goroutine) — copy locally, then act on them OUTSIDE the lock
+	// so a channel receive below never blocks while holding s.mu.
+	s.mu.Lock()
+	tickCancel, renewerCancel := s.tickCancel, s.renewerCancel
+	tickDone, renewerDone := s.tickDone, s.renewerDone
+	s.mu.Unlock()
 	// Cancel the tick loop first so no new fires start.
-	if s.tickCancel != nil {
-		s.tickCancel()
+	if tickCancel != nil {
+		tickCancel()
 	}
 	// Stop the renewer so it does not race the release.
-	if s.renewerCancel != nil {
-		s.renewerCancel()
+	if renewerCancel != nil {
+		renewerCancel()
 	}
 	// Wait for the tick + renewer goroutines to fully exit so goleak / a
 	// NumGoroutine check sees a clean shutdown. Both unwind on their ctx cancel
 	// (the tick loop's select returns on ctx.Done(); the renewer likewise). A
 	// nil channel (Start not called, or no renewer) skips the wait.
-	if s.tickDone != nil {
-		<-s.tickDone
+	if tickDone != nil {
+		<-tickDone
 	}
-	if s.renewerDone != nil {
-		<-s.renewerDone
+	if renewerDone != nil {
+		<-renewerDone
 	}
 	// Join in-flight fires with a grace. After the grace, the tickCtx cancel
 	// has already propagated to any fire whose ctx derives from it; the

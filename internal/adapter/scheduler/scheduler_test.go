@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1076,11 +1077,265 @@ func TestFireNowStopErrorEmitsFailed(t *testing.T) {
 	}
 }
 
+// TestRenewLeaderDefinitiveLossStopsTicking is the renewLeader/declareLeaderLost
+// coverage test for the DEFINITIVE-loss path: once Renew returns
+// port.ErrLeaseHeld (a competitor took over the __scheduler__ leader lease),
+// declareLeaderLost must cancel the tick ctx so the tick loop STOPS ticking —
+// a schedule that becomes due AFTER the loss must never fire, or two replicas
+// could double-fire the same slot.
+//
+// It exercises the real Start() ticker (not RunOnceForTest, which drives
+// tickOnce directly regardless of whether the tick ctx was cancelled and so
+// cannot observe "the loop stopped"): a schedule due at Start proves the
+// ticker is alive; a captured diagnostics WARN proves declareLeaderLost ran;
+// a second schedule made due strictly AFTER that WARN, given several more
+// real tick intervals to fire, proves the loop genuinely stopped rather than
+// merely being slow.
+func TestRenewLeaderDefinitiveLossStopsTicking(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	diag := &capturingDiag{}
+
+	// Acquire succeeds once (for "owner-this"); every Renew thereafter is a
+	// DEFINITIVE loss (ErrLeaseHeld) — mirrors a peer having taken over.
+	lease := &renewFailLease{}
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Lease:              lease,
+		LeaseOwner:         "owner-this",
+		Fire:               fire.fire,
+		Clock:              clk,
+		Diagnostics:        diag,
+		TickInterval:       25 * time.Millisecond,
+		LeaseRenewInterval: 25 * time.Millisecond,
+		MaxConcurrentFires: 4,
+	})
+
+	// A schedule already due at Start: proves the ticker is alive before the
+	// leader-lease loss.
+	due := clk.Now()
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "before-loss", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: due, Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if !pollUntil(10*time.Second, func() bool { return fire.count() >= 1 }) {
+		t.Fatal("scheduler never fired the initial due schedule (ticker not running)")
+	}
+	if !pollUntil(10*time.Second, diag.sawLostLease) {
+		t.Fatal("renewLeader never declared the leader lease lost on a definitive ErrLeaseHeld")
+	}
+
+	// A second schedule made due STRICTLY AFTER the declared loss. If the tick
+	// loop had NOT actually stopped (declareLeaderLost's tickCancel a no-op),
+	// this would fire on one of the next several real ticks.
+	countAtLoss := fire.count()
+	clk.advance(time.Minute)
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "after-loss", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save after-loss: %v", err)
+	}
+	// Several would-be tick intervals of real time — long enough that a live
+	// (buggy) tick loop would have fired at least once, even under heavy CI
+	// load (this window is intentionally generous relative to TickInterval).
+	time.Sleep(500 * time.Millisecond)
+	if got := fire.count(); got != countAtLoss {
+		t.Fatalf("fires after declared leader-lease loss = %d, want %d (tick loop must stop on definitive renew loss)", got, countAtLoss)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestRenewLeaderTransientFaultKeepsTicking is the renewLeader coverage test
+// for the TRANSIENT-fault path: a Renew error that is NOT port.ErrLeaseHeld,
+// with plenty of headroom before the held lease's expiry, must NOT stop the
+// tick loop (renewLeader's "continue" branch) — only a definitive loss or an
+// imminent expiry should ever call declareLeaderLost.
+func TestRenewLeaderTransientFaultKeepsTicking(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+
+	// A generous TTL (1h) means every transient Renew failure still has ample
+	// headroom (LeaseRenewInterval, 15ms) before expiry, so renewLeader must
+	// "continue" (retry) rather than declare loss.
+	lease := &transientFailLease{clk: clk, ttl: time.Hour}
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Lease:              lease,
+		LeaseOwner:         "owner-this",
+		Fire:               fire.fire,
+		Clock:              clk,
+		TickInterval:       25 * time.Millisecond,
+		LeaseRenewInterval: 25 * time.Millisecond,
+		MaxConcurrentFires: 4,
+	})
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "cron", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// First fire — the ticker is alive.
+	if !pollUntil(10*time.Second, func() bool { return fire.count() >= 1 }) {
+		t.Fatal("scheduler never fired the initial due schedule")
+	}
+	// Let several transient-failure renew cycles accumulate — the renewer must
+	// keep retrying (not stop) across all of them.
+	if !pollUntil(10*time.Second, func() bool { return lease.renewCalls() >= 3 }) {
+		t.Fatal("renewer never retried after a transient renew fault")
+	}
+
+	// Advance the clock so the cron is due again. If the transient fault had
+	// (incorrectly) stopped the tick loop, this would never fire.
+	loaded, err := store.Load(context.Background(), "cron")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	clk.advance(loaded.State.NextFireAt.Sub(clk.Now()) + time.Second)
+	if !pollUntil(10*time.Second, func() bool { return fire.count() >= 2 }) {
+		t.Fatal("tick loop stopped ticking after a transient renew fault (want: keep ticking, per renewLeader's headroom-retry branch)")
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // runtimeYield yields the goroutine to let the fan-out reach steady state.
 func runtimeYield() {
 	time.Sleep(time.Millisecond)
+}
+
+// pollUntil polls f every 5ms until it returns true or the deadline elapses
+// (then evaluates f once more), for driving a REAL ticker-backed goroutine
+// (Start, not RunOnceForTest) to a deterministic checkpoint without a fixed
+// sleep. Mirrors the `eventually` helper used elsewhere in this repo (e.g.
+// internal/app/scheduler_fire_test.go).
+func pollUntil(deadline time.Duration, f func() bool) bool {
+	deadlineAt := time.Now().Add(deadline)
+	for time.Now().Before(deadlineAt) {
+		if f() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return f()
+}
+
+// capturingDiag is a port.Diagnostics that records every log message, so a
+// test can assert an internal event (like declareLeaderLost's WARN) fired
+// without a exported hook into the scheduler's private state.
+type capturingDiag struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (d *capturingDiag) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.msgs = append(d.msgs, msg)
+}
+
+func (d *capturingDiag) With(...any) port.Diagnostics { return d }
+
+// sawLostLease reports whether declareLeaderLost's WARN has been recorded.
+func (d *capturingDiag) sawLostLease() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, m := range d.msgs {
+		if strings.Contains(m, "lost scheduler leader lease") {
+			return true
+		}
+	}
+	return false
+}
+
+// renewFailLease is a port.SessionLease that grants Acquire once per id (to
+// whichever owner asks first) and then returns port.ErrLeaseHeld from EVERY
+// Renew call — a DEFINITIVE leader-lease loss on the first renew, modelling a
+// peer having taken over.
+type renewFailLease struct {
+	mu     sync.Mutex
+	holder string
+}
+
+func (l *renewFailLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.holder != "" && l.holder != owner {
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	l.holder = owner
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+func (*renewFailLease) Renew(_ context.Context, _ port.Lease) (port.Lease, error) {
+	return port.Lease{}, port.ErrLeaseHeld
+}
+
+func (*renewFailLease) Release(_ context.Context, _ port.Lease) error { return nil }
+
+// transientFailLease is a port.SessionLease that grants Acquire once (with an
+// expiry ttl past the fake clock's current time) and then returns a NON-
+// ErrLeaseHeld ("transient infra fault") error from every Renew call — the
+// renewLeader "keep the lease unless within one renew interval of expiry"
+// retry branch, as long as the caller keeps ttl generous relative to how far
+// the test advances the fake clock.
+type transientFailLease struct {
+	mu         sync.Mutex
+	holder     string
+	expiry     time.Time
+	clk        port.Clock
+	ttl        time.Duration
+	renewCount int
+}
+
+func (l *transientFailLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.holder != "" && l.holder != owner {
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	l.holder = owner
+	l.expiry = l.clk.Now().Add(l.ttl)
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: l.expiry}, nil
+}
+
+func (l *transientFailLease) Renew(_ context.Context, _ port.Lease) (port.Lease, error) {
+	l.mu.Lock()
+	l.renewCount++
+	l.mu.Unlock()
+	return port.Lease{}, errors.New("transient infra fault")
+}
+
+func (*transientFailLease) Release(_ context.Context, _ port.Lease) error { return nil }
+
+func (l *transientFailLease) renewCalls() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.renewCount
 }
 
 // memleaseHeldBy returns a memlease.Lease already held by `owner` so a second

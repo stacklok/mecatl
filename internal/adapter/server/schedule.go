@@ -15,9 +15,10 @@ import (
 
 // Sentinel errors for the schedule surface are defined in errors.go (the
 // single error-classification chokepoint): ErrNoScheduleStore,
-// ErrScheduleDisabled (wraps scheduler.ErrFireNowDisabled), ErrFireNowOverlap
-// (wraps scheduler.ErrFireNowOverlap). toStatus / writeServiceError map them in
-// the one place alongside the team/session sentinels.
+// ErrSchedulerNotRunning, ErrScheduleDisabled (wraps
+// scheduler.ErrFireNowDisabled), ErrFireNowOverlap (wraps
+// scheduler.ErrFireNowOverlap). toStatus / writeServiceError map them in the
+// one place alongside the team/session sentinels.
 
 // scheduleStoreVal is the memoised result of type-asserting the configured Store
 // for a ScheduleStore (the PrunableStore/SessionLease precedent). It is computed
@@ -71,22 +72,20 @@ func (s *Service) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 		return port.Schedule{}, ErrNoScheduleStore
 	}
 	now := s.cfg.Now()
-	if err := validateScheduleSpec(spec, now); err != nil {
+	cronNextFire, err := validateScheduleSpec(spec, now)
+	if err != nil {
 		return port.Schedule{}, err
 	}
 	applyScheduleDefaults(&spec)
-	// Compute the first NextFireAt. A cron trigger computes it via cronparse
-	// (fail-closed on a bad expression); a one-shot's first fire is its OneShot
-	// instant (already validated as in the future).
+	// Compute the first NextFireAt. A cron trigger's next fire was ALREADY
+	// computed by validateScheduleSpec (it must parse the expression to
+	// validate the grammar, so that parse is reused here rather than calling
+	// cronparse.NextFire a second time for the same expression); a one-shot's
+	// first fire is its OneShot instant (already validated as in the future).
 	var nextFireAt time.Time
 	switch spec.Trigger.Kind() {
 	case port.TriggerCron:
-		loc := scheduler.LoadLocation(spec.Timezone)
-		next, err := cronparse.NextFire(spec.Trigger.Cron, now, loc)
-		if err != nil {
-			return port.Schedule{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
-		}
-		nextFireAt = next
+		nextFireAt = cronNextFire
 	case port.TriggerOneShot:
 		nextFireAt = spec.Trigger.OneShot
 	}
@@ -139,16 +138,22 @@ func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 // validateScheduleSpec validates the trigger XOR, the cron grammar (via
 // cronparse), the one-shot future invariant, and the Mutating/Mode invariant.
 // It is fail-closed: a bad spec is rejected, never silently saved as a
-// never-fires schedule.
-func validateScheduleSpec(spec port.ScheduleSpec, now time.Time) error {
+// never-fires schedule. For a cron trigger it ALSO returns the first
+// NextFireAt computed by the SAME cronparse.NextFire call that validates the
+// grammar — the parse is inherently required to validate a cron expression,
+// so the caller (CreateSchedule) reuses this return value instead of parsing
+// the identical expression a second time. For a one-shot trigger, or on any
+// validation error, it returns the zero time (the caller already knows a
+// one-shot's first fire is its own OneShot instant).
+func validateScheduleSpec(spec port.ScheduleSpec, now time.Time) (time.Time, error) {
 	if spec.Name == "" {
-		return fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
+		return time.Time{}, fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
 	}
 	if spec.Prompt == "" && len(spec.Parts) == 0 {
-		return fmt.Errorf("%w: prompt or parts is required", ErrInvalidArgument)
+		return time.Time{}, fmt.Errorf("%w: prompt or parts is required", ErrInvalidArgument)
 	}
 	if err := spec.Trigger.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		return time.Time{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	// Reject a read-leaning schedule (Mutating=false) with a write-capable Mode
 	// (the scheduler_fire.go:54-55 TODO — a read-leaning schedule must not carry
@@ -163,22 +168,26 @@ func validateScheduleSpec(spec port.ScheduleSpec, now time.Time) error {
 		mode = session.ModeDefault
 	}
 	if !spec.Mutating && mode != session.ModePlan {
-		return fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
+		return time.Time{}, fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
 	}
 	switch spec.Trigger.Kind() {
 	case port.TriggerOneShot:
 		if !spec.Trigger.OneShot.After(now) {
-			return fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument)
+			return time.Time{}, fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument)
 		}
 	case port.TriggerCron:
 		// cronparse.NextFire is the fail-closed grammar check; a bad expression
-		// is rejected here so a schedule with a bad cron is never saved.
+		// is rejected here so a schedule with a bad cron is never saved. Its
+		// result IS the first NextFireAt — return it so CreateSchedule does not
+		// need a second, redundant parse of the same expression.
 		loc := scheduler.LoadLocation(spec.Timezone)
-		if _, err := cronparse.NextFire(spec.Trigger.Cron, now, loc); err != nil {
-			return fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
+		next, err := cronparse.NextFire(spec.Trigger.Cron, now, loc)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
 		}
+		return next, nil
 	}
-	return nil
+	return time.Time{}, nil
 }
 
 // GetSchedule loads a schedule by name.
@@ -213,7 +222,10 @@ func (s *Service) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 		return port.Schedule{}, ErrNoScheduleStore
 	}
 	now := s.cfg.Now()
-	if err := validateScheduleSpec(spec, now); err != nil {
+	// The computed cron next-fire is not needed here (Update preserves the
+	// existing State, including NextFireAt); the call is still made for its
+	// validation side effect (the shared create-seam checks).
+	if _, err := validateScheduleSpec(spec, now); err != nil {
 		return port.Schedule{}, err
 	}
 	applyScheduleDefaults(&spec)
@@ -280,10 +292,17 @@ func (s *Service) ListFires(ctx context.Context, scheduleName string) ([]port.Sc
 
 // FireNow manually fires a schedule by name. It delegates to the scheduler's
 // FireNow (if wired) and maps the scheduler pkg's sentinels to the server
-// sentinels. Returns ErrNoScheduleStore when no scheduler is wired.
+// sentinels. When no scheduler is wired it distinguishes the two possible
+// causes: no ScheduleStore at all (ErrNoScheduleStore — Create/List etc. don't
+// work either) vs a ScheduleStore present but no in-process scheduler driving
+// it (ErrSchedulerNotRunning — the store works fine, there's just nothing to
+// fire a manual request through).
 func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, error) {
 	if s.scheduler == nil {
-		return port.ScheduleFire{}, ErrNoScheduleStore
+		if s.scheduleStore() == nil {
+			return port.ScheduleFire{}, ErrNoScheduleStore
+		}
+		return port.ScheduleFire{}, ErrSchedulerNotRunning
 	}
 	fire, err := s.scheduler.FireNow(ctx, name, s.cfg.Now())
 	if err != nil {

@@ -79,6 +79,15 @@ var (
 	// configured store backend does not expose one. Adapters map it to
 	// Unimplemented / HTTP 501.
 	ErrNoScheduleStore = errors.New("server: scheduled tasks are not supported by the configured store")
+	// ErrSchedulerNotRunning is returned by FireNow when a ScheduleStore IS
+	// available (Create/Get/List/etc. all work) but no scheduler.Scheduler is
+	// wired on this process (s.scheduler == nil — e.g. --scheduler was not
+	// passed, or this is a store-only replica). It is distinct from
+	// ErrNoScheduleStore (which means the STORE itself cannot hold schedules at
+	// all): here the schedule exists and is well-formed, there is just no
+	// in-process scheduler to drive a manual fire. Adapters map it to
+	// FailedPrecondition / HTTP 412, the same class as ErrScheduleDisabled.
+	ErrSchedulerNotRunning = errors.New("server: scheduler is not running")
 	// ErrScheduleDisabled is returned by FireNow when the schedule is not enabled
 	// (paused or done). It wraps scheduler.ErrFireNowDisabled. Adapters map it to
 	// FailedPrecondition / HTTP 412.

@@ -389,6 +389,11 @@ func toStatus(err error) error {
 		// The configured store backend does not implement ScheduleStore: the
 		// schedule RPCs are not available on this deployment. Unimplemented.
 		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrSchedulerNotRunning):
+		// A ScheduleStore is available but no in-process scheduler is wired to
+		// drive a manual FireNow. FailedPrecondition (HTTP 412), distinct from
+		// ErrNoScheduleStore's Unimplemented (the store itself works fine).
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrScheduleDisabled):
 		// FireNow on a paused/done schedule. FailedPrecondition (HTTP 412).
 		return status.Error(codes.FailedPrecondition, err.Error())

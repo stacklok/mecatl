@@ -6,9 +6,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
@@ -131,6 +138,88 @@ func TestSchedulerFire(t *testing.T) {
 		t.Errorf("fire session state = %q, want completed", sess.State)
 	}
 	_ = filepath.Separator // keep filepath import (store dir layoutagnostic)
+}
+
+// TestMakeFireFuncReleasesSessionLease is the F-1 regression test (PR #211
+// review): makeFireFunc's `defer svc.CloseSession(sess.ID)` must release the
+// fire session's cross-process lease when the fire's run completes, keeping
+// the durable snapshot but freeing the lease + renewer (internal/app/scheduler_fire.go).
+// Before that fix, a lease-backed deployment leaked a held lease + renewer
+// goroutine on EVERY fire (they are released only by CloseSession/shutdown,
+// never per-run otherwise); the leak is doubly bad for a Singleton schedule
+// (review #189), whose next fire's trial-acquire on the still-held lease
+// would return port.ErrLeaseHeld and skip forever.
+//
+// This constructs a *server.Service directly (this test file is package app,
+// so it can call the unexported makeFireFunc — Build's real composition path
+// — without going through app.Build's Config, which has no knob to wire an
+// engine/adapter/memlease backend directly; Config only exposes flock/driver/
+// k8s SessionLease backends via SessionLeaseDir/URL/K8sNamespace). It proves
+// the release DIRECTLY against Service.ActiveRuns() (the held-lease count)
+// rather than depending on the scheduler's real-wallclock tick loop, which
+// would be flaky — makeFireFunc is called synchronously, twice, so a leak
+// shows up immediately as a non-zero count instead of requiring a timing-
+// sensitive wait for a second real tick.
+func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	workspace := t.TempDir()
+
+	store, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	llm := mockllm.New(mockllm.TextTurn("hello from fire one"), mockllm.TextTurn("hello from fire two"))
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "test-model",
+		Store:   store,
+	})
+	lease := memlease.New(wallclock.Clock{}, 30*time.Second)
+	svc, err := server.NewService(server.Config{
+		Engine:              engine,
+		Store:               store,
+		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:                 time.Now,
+		DefaultCapabilities: llm.Capabilities(),
+		EventLog:            store,
+		Diagnostics:         port.NopDiagnostics{},
+		SessionLease:        lease,
+		LeaseOwner:          "test-owner",
+		LeaseTTL:            30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	fire := makeFireFunc(svc)
+	sched := port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      "lease-release",
+			Prompt:    "say hi",
+			Workspace: workspace,
+			Mode:      session.ModePlan,
+		},
+	}
+
+	if _, err := fire(ctx, sched, time.Now()); err != nil {
+		t.Fatalf("fire #1: %v", err)
+	}
+	if n := svc.ActiveRuns(); n != 0 {
+		t.Fatalf("ActiveRuns after fire #1 = %d, want 0 (the fire session's lease must be released — review #189)", n)
+	}
+
+	// A second, independent fire proves the release is not a one-shot fluke: a
+	// leak that only shows up on the SECOND fire (e.g. an off-by-one in the
+	// registry) would be missed by asserting only once.
+	if _, err := fire(ctx, sched, time.Now()); err != nil {
+		t.Fatalf("fire #2: %v", err)
+	}
+	if n := svc.ActiveRuns(); n != 0 {
+		t.Fatalf("ActiveRuns after fire #2 = %d, want 0", n)
+	}
 }
 
 // firstFireID returns the fire id for the schedule's most recent fire. The fire

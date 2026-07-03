@@ -1244,6 +1244,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		// The configured store backend does not implement ScheduleStore: the
 		// schedule RPCs are not available on this deployment. 501.
 		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrSchedulerNotRunning):
+		// A ScheduleStore is available but no in-process scheduler is wired to
+		// drive a manual FireNow. 412 (gRPC FailedPrecondition), distinct from
+		// ErrNoScheduleStore's 501 (the store itself works fine).
+		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, ErrScheduleDisabled):
 		// FireNow on a paused/done schedule. 412 (gRPC FailedPrecondition).
 		writeError(w, http.StatusPreconditionFailed, err.Error())

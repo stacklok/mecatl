@@ -811,16 +811,19 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 		t.Fatalf("resume status = %d, want 204", rresp.StatusCode)
 	}
 
-	// POST /v1/schedules/http-cron/fire → 200 (no scheduler wired here, but the
-	// HTTP handler delegates to svc.FireNow; the svc has no scheduler, so it
-	// returns ErrNoScheduleStore → 501). This is the no-store→501 path.
+	// POST /v1/schedules/http-cron/fire → 412 (no scheduler wired here, but the
+	// jsonlstore DOES expose a ScheduleStore — Create/Get/Pause/Resume above all
+	// worked — so this is the store-present/scheduler-not-running case: the HTTP
+	// handler delegates to svc.FireNow, which returns ErrSchedulerNotRunning,
+	// distinct from the true no-store ErrNoScheduleStore/501 case exercised by
+	// TestHTTPScheduleNoStore501 below).
 	fresp, err := http.Post(srv.URL+"/v1/schedules/http-cron/fire", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST fire: %v", err)
 	}
 	defer fresp.Body.Close()
-	if fresp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("fire status = %d, want 501 (no scheduler wired)", fresp.StatusCode)
+	if fresp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("fire status = %d, want 412 (scheduler not running, but the store is present)", fresp.StatusCode)
 	}
 }
 
