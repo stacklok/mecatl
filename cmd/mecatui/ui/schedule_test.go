@@ -301,6 +301,73 @@ func TestSchedulePauseResumeFireNowDelete(t *testing.T) {
 	}
 }
 
+// TestScheduleFilterModeDoesNotFireActions asserts the "/"-to-filter fix
+// (collision between the single-letter action keys and the filter input): the
+// overlay opens in ACTION mode (filter not focused), "/" enters filter mode,
+// letters that double as action keys (p/r) are fed to the filter instead of
+// firing pause/resume while filtering, esc exits filter mode keeping the
+// value, and the SAME letter fires its action once back in action mode.
+func TestScheduleFilterModeDoesNotFireActions(t *testing.T) {
+	// Named "production" (not just "prod") so filtering down to "prod" still
+	// matches the row — the point being tested is the key-routing, not the
+	// filter's substring semantics.
+	fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("production")}}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: fs.schedules})
+	m.schedule.cursor = 0
+
+	if m.schedule.filter.Focused() {
+		t.Fatal("openSchedule should NOT focus the filter (action mode by default)")
+	}
+
+	// "/" enters filter mode.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m = mm.(Model)
+	if !m.schedule.filter.Focused() {
+		t.Fatal("'/' should focus the filter")
+	}
+
+	// p, r, o, d while filtering must feed the input, not fire actions.
+	for _, r := range "prod" {
+		mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+		if cmd != nil {
+			m = feedCmd(t, m, cmd)
+		}
+	}
+	if m.schedule.filter.Value() != "prod" {
+		t.Fatalf("filter value = %q, want %q", m.schedule.filter.Value(), "prod")
+	}
+	if fs.pauseCalls != 0 || fs.resumeCalls != 0 {
+		t.Fatalf("typing p/r while filtering must not fire actions: pause=%d resume=%d",
+			fs.pauseCalls, fs.resumeCalls)
+	}
+
+	// esc blurs the filter but KEEPS the value.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	if m.schedule.filter.Focused() {
+		t.Fatal("esc in filter mode should blur, not close")
+	}
+	if m.schedule.filter.Value() != "prod" {
+		t.Fatalf("esc should keep the filter value, got %q", m.schedule.filter.Value())
+	}
+
+	// Now back in action mode, 'p' fires pause.
+	mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("'p' in action mode should return the pause command")
+	}
+	m = feedCmd(t, m, cmd)
+	if fs.pauseCalls != 1 {
+		t.Fatalf("pause calls = %d, want 1", fs.pauseCalls)
+	}
+}
+
 // TestScheduleInspectLoadsFires asserts enter opens the inspect sub-view, fires
 // GetSchedule + ListFires, and renders the fires.
 func TestScheduleInspectLoadsFires(t *testing.T) {

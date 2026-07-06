@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,12 @@ import (
 // read-only inspect sub-view (full spec + state + fires) and per-row action keys
 // (pause/resume/fire-now/delete). Phase 3a scope: list/inspect/pause/resume/
 // fire-now/delete; no in-overlay Create form (author via CLI or settings.yaml).
+//
+// UNLIKE /worktrees and /models, the filter input is NOT focused on open — the
+// panel's own single-letter action keys (p/r/f/d) would otherwise be
+// unreachable (they'd always hit the focused filter instead of firing).
+// Pressing "/" enters filter mode (focuses the input); esc or enter while
+// filtering exits it (blur, value kept). See onScheduleKey.
 
 // scheduleView is the active /schedule overlay (none = closed).
 type scheduleView int
@@ -29,8 +36,10 @@ const (
 )
 
 // scheduleState holds the /schedule overlay state on the Model. Value-embedded so
-// the Model stays a plain struct Update copies; the slices are replaced wholesale
-// on each RPC result / filter recompute (never mutated in place).
+// the Model stays a plain struct Update copies. On List, schedules is replaced
+// wholesale; on a Get-driven refresh (ScheduleMsg), the matching element is
+// updated in place instead. filtered is always rebuilt from schedules by
+// syncScheduleFilter.
 type scheduleState struct {
 	view         scheduleView
 	loading      bool
@@ -64,10 +73,9 @@ func (m Model) openSchedule() (tea.Model, tea.Cmd) {
 	ti := textinput.New()
 	ti.Placeholder = "filter schedules…"
 	ti.SetWidth(40)
-	ti.Focus()
 	m.schedule.filter = ti
 	m.schedule.filtered = nil
-	return m, tea.Batch(client.ListSchedulesCmd(m.deps.Ctx, m.deps.Sched), textinput.Blink)
+	return m, client.ListSchedulesCmd(m.deps.Ctx, m.deps.Sched)
 }
 
 // closeSchedule dismisses the overlay and returns focus to the prompt input.
@@ -77,10 +85,18 @@ func (m Model) closeSchedule() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onScheduleKey routes key presses while the overlay is open. Mirrors
-// onWorktreesKey: the filter input is FOCUSED, so nav/action keys are intercepted
-// first and everything else feeds the input. esc is two-stage (clear filter, then
-// close).
+// onScheduleKey routes key presses while the overlay is open. UNLIKE
+// onWorktreesKey/onModelsKey, the filter is NOT focused by default — the panel
+// has per-row action keys (p/r/f/d) that would otherwise be unreachable through
+// a focused filter. Two modes, keyed off m.schedule.filter.Focused():
+//
+//   - Filter mode (focused): esc or enter blurs the input (exits filter mode,
+//     keeps the value so the list stays narrowed); everything else feeds the
+//     textinput.
+//   - Action mode (blurred, the default): "/" focuses the filter (enters filter
+//     mode); esc is two-stage (clear filter if set, else close); nav/inspect/
+//     action keys behave as before; any other key is swallowed (never leaks
+//     into the filter).
 func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.schedule.view == scheduleNone {
 		return m, nil, false
@@ -91,7 +107,17 @@ func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.schedule.view == scheduleInspect {
 		return m.onScheduleInspectKey(msg)
 	}
-	var cmd tea.Cmd
+	if m.schedule.filter.Focused() {
+		switch {
+		case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Choose):
+			m.schedule.filter.Blur()
+			return m, nil, true
+		}
+		var cmd tea.Cmd
+		m.schedule.filter, cmd = m.schedule.filter.Update(msg)
+		m = m.syncScheduleFilter()
+		return m, cmd, true
+	}
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		if m.schedule.filter.Value() != "" {
@@ -101,6 +127,9 @@ func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		mm, c := m.closeSchedule()
 		return mm, c, true
+	case msg.String() == "/":
+		cmd := m.schedule.filter.Focus()
+		return m, cmd, true
 	case msg.String() == keyMenuUp:
 		if m.schedule.cursor > 0 {
 			m.schedule.cursor--
@@ -128,9 +157,8 @@ func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	case msg.String() == "d":
 		return m.openScheduleConfirm()
 	}
-	m.schedule.filter, cmd = m.schedule.filter.Update(msg)
-	m = m.syncScheduleFilter()
-	return m, cmd, true
+	// Swallow anything unmatched — action mode never feeds the filter.
+	return m, nil, true
 }
 
 // openScheduleInspect opens the inspect sub-view for the cursor row, firing
@@ -320,6 +348,12 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("schedules") + "\n")
 	b.WriteString(th.Style("muted").Render("browse & manage scheduled tasks") + "\n\n")
+	switch {
+	case st.filter.Focused():
+		b.WriteString(st.filter.View() + "\n\n")
+	case st.filter.Value() != "":
+		b.WriteString(th.Style("muted").Render("filter: "+sanitizeTerminal(st.filter.Value())) + "\n\n")
+	}
 	if st.loading {
 		b.WriteString(th.Style("muted").Render("loading…"))
 		return b.String()
@@ -355,13 +389,13 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 			"  " + state +
 			"  next:" + formatScheduleTime(s.State.NextFireAt) +
 			"  last:" + formatScheduleTime(s.State.LastFireAt) +
-			"  fires:" + itoa(int(s.State.FireCount))
+			"  fires:" + strconv.Itoa(int(s.State.FireCount))
 		if i == st.cursor {
 			line = th.Style("accent").Render(line)
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: inspect  p: pause  r: resume  f: fire-now  d: delete  esc: close"))
+	b.WriteString("\n" + th.Style("muted").Render("enter: inspect  p: pause  r: resume  f: fire-now  d: delete  /: filter  esc: close"))
 	return b.String()
 }
 
@@ -400,13 +434,13 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, _, _ int) string {
 	b.WriteString(muted.Render("mutating: ") + boolStr(spec.Mutating) +
 		"  singleton: " + boolStr(spec.Singleton) +
 		"  misfire: " + spec.Misfire +
-		"  max_fires: " + itoa(int(spec.MaxFires)) + "\n")
+		"  max_fires: " + strconv.Itoa(int(spec.MaxFires)) + "\n")
 	if spec.Timezone != "" {
 		b.WriteString(muted.Render("timezone: ") + sanitizeTerminal(spec.Timezone) + "\n")
 	}
 	b.WriteString("\n" + muted.Render("state") + "\n")
 	b.WriteString(muted.Render("enabled: ") + boolStr(s.State.Enabled) +
-		"  fire_count: " + itoa(int(s.State.FireCount)) + "\n")
+		"  fire_count: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
 	b.WriteString(muted.Render("next_fire: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
 	b.WriteString(muted.Render("last_fire: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
 	if s.State.LastFireSessionID != "" {
@@ -462,28 +496,4 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-// itoa is a stdlib-free int→string for the render path (avoids pulling fmt into
-// the render hot path; mirrors the bare strconv usage elsewhere).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

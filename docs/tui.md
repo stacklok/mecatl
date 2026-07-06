@@ -688,13 +688,17 @@ cue, `/posture` is its consequence.
 schedule lister. It fires `ListSchedules` and renders the stored schedules as a
 flat list: each row shows the name, a trigger summary (`cron: */5 * * * *` or
 `one-shot: 2026-07-06 14:00`), the enabled/paused state, the next/last fire
-times, and the fire count. The panel opens with a **type-to-filter** input
-focused (matches on name + trigger summary, mirroring `/worktrees`); `↑`/`↓`
-move the cursor, `home`/`end` jump. `esc` is two-stage (clear filter, then
-close). The per-row action keys are bare runes: **`p`** pause, **`r`** resume,
-**`f`** fire-now (forces an immediate fire; the fire id surfaces in the status
-line), **`d`** delete (opens a confirm sub-view: `enter` deletes, `esc` backs
-out). On a successful action the list re-fetches to reflect the new state.
+times, and the fire count. UNLIKE `/worktrees`/`/models`, the filter input is
+**not** focused on open — the panel's bare-rune action keys (`p`/`r`/`f`/`d`)
+would otherwise be unreachable. `↑`/`↓` move the cursor, `home`/`end` jump,
+**`/`** enters filter mode (focuses the input; matches on name + trigger
+summary), and `esc`/`enter` while filtering exits it back to action mode
+(blurs, keeps the narrowed value). `esc` in action mode is two-stage (clear
+filter, then close). The per-row action keys are bare runes: **`p`** pause,
+**`r`** resume, **`f`** fire-now (forces an immediate fire; the fire id
+surfaces in the status line), **`d`** delete (opens a confirm sub-view: `enter`
+deletes, `esc` backs out). On a successful action the list re-fetches to
+reflect the new state.
 **`enter`** opens a read-only **inspect** sub-view: the full spec (trigger,
 prompt preview, selector, mode, mutating, singleton, misfire, timezone,
 max_fires) + the durable state (enabled, fire_count, next/last fire,

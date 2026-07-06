@@ -326,7 +326,7 @@ func mapScheduleSpec(in *mecatlv1.ScheduleSpec) ScheduleSpec {
 		Mode:      modeStringFromProto(in.GetMode()),
 		Mutating:  in.GetMutating(),
 		MaxFires:  in.GetMaxFires(),
-		Misfire:   misfireFromString(in.GetMisfire()),
+		Misfire:   misfireStringFromProto(in.GetMisfire()),
 		Singleton: in.GetSingleton(),
 		Timezone:  in.GetTimezone(),
 	}
@@ -427,10 +427,10 @@ func scheduleSpecToProto(in ScheduleSpec) *mecatlv1.ScheduleSpec {
 	return out
 }
 
-// misfireFromString maps the proto MisfirePolicy enum to the canonical string
-// ("fire_once_now" / "skip"), defaulting UNSPECIFIED to the zero value's default
-// (fire_once_now).
-func misfireFromString(m mecatlv1.MisfirePolicy) string {
+// misfireStringFromProto maps the proto MisfirePolicy enum to the canonical
+// string ("fire_once_now" / "skip"), defaulting UNSPECIFIED to the zero value's
+// default (fire_once_now).
+func misfireStringFromProto(m mecatlv1.MisfirePolicy) string {
 	switch m {
 	case mecatlv1.MisfirePolicy_MISFIRE_SKIP:
 		return "skip"
