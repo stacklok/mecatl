@@ -391,6 +391,6 @@ substrate:
   `Config.ScheduleMetrics` callback (`internal/adapter/telemetry/metrics.go`
   `EmitSchedule`): `mecatl.schedule.fires` (counter, by `outcome` =
   fired/skipped/failed) and `mecatl.schedule.fire_duration` (histogram, seconds,
-  Claim→terminal — skipped fires record no duration). No role label (a fire's own run
+  due→terminal — skipped fires record no duration). No role label (a fire's own run
   already carries `role="main"`).
 

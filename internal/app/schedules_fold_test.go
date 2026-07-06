@@ -115,3 +115,31 @@ schedules:
 		t.Fatalf("expected only the good declaration to survive; got %+v", cfg.DeclaredSchedules)
 	}
 }
+
+// foldOperatorSchedules warns (but does not drop) a singleton:false declaration —
+// the create-seam still coerces it to true (M1, opt-out not yet supported), so the
+// YAML path must be honest about the override instead of silently accepting it.
+func TestFoldOperatorSchedulesSingletonFalseWarns(t *testing.T) {
+	const yamlCfg = `
+schedules:
+  - name: overlap-ok
+    cron: "0 9 * * *"
+    prompt: "ok"
+    mode: plan
+    singleton: false
+`
+	path := filepath.Join(t.TempDir(), "schedules.yaml")
+	if err := os.WriteFile(path, []byte(yamlCfg), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	res := permconfig.New(permconfig.Options{ExplicitFiles: []string{path}})
+	rec := &recordingDiag{}
+	cfg := foldOperatorSchedules(Config{permResolver: res, Diagnostics: rec})
+
+	if len(cfg.DeclaredSchedules) != 1 || cfg.DeclaredSchedules[0].Name != "overlap-ok" {
+		t.Fatalf("expected the declaration to still fold through; got %+v", cfg.DeclaredSchedules)
+	}
+	if !rec.has("singleton:false is not yet supported") {
+		t.Fatalf("expected a singleton:false WARN; got %v", rec.messages())
+	}
+}

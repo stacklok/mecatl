@@ -139,7 +139,7 @@ schedules:
     maxTurns: 20                # per-fire turn budget (0 = disabled)
     maxToolCalls: 40            # per-fire tool-call budget (0 = disabled)
     maxFires: 0                 # total fires for a cron (0 = forever); ignored for one-shot
-    singleton: true             # skip the next fire if a prior one is still running
+    singleton: true             # skip the next fire if a prior one is still running (currently always effectively true — see notes)
     # misfire: skip             # "" (default = fire-once-now) or "skip"
 
   - name: one-shot-patch
@@ -165,6 +165,15 @@ Notes:
 - A declaration with neither `cron` nor `oneShot`, or with both, is rejected by the
   create-seam at reconcile time (WARN'd + skipped, not fatal — one bad schedule does
   not drop the rest).
+- **`workspace` is required** for a default-profile schedule (a fire mints a real
+  filesystem session), and must be OMITTED for a `no-fs`-profile schedule. The
+  create-seam validates this up front, so an empty-workspace default schedule is
+  rejected at create/reconcile time rather than failing later at fire time.
+- **`singleton` currently always effectively resolves to `true`.** The create-seam
+  coerces `singleton: false` to `true` (overlap suppression) — a `false` value is
+  accepted but silently overridden, so a fold-time WARN names the schedule. Full
+  opt-out support (allowing overlapping fires) needs an engine-port/proto change and
+  is deferred.
 
 ### `mecated schedules` CLI (Phase 2b)
 

@@ -106,7 +106,57 @@ func validateScheduleName(name string) error {
 	if !scheduleNameRe.MatchString(name) {
 		return fmt.Errorf("invalid schedule name: must match [A-Za-z0-9._-]+")
 	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid schedule name: must match [A-Za-z0-9._-]+")
+	}
 	return nil
+}
+
+// scheduleModeProtoName maps the human --mode word to the protojson enum name
+// the server decodes (the CLI is a local JSON mirror — see cliScheduleSpec).
+// These names are the stable wire contract (mecatlv1.PermissionMode); the CLI
+// mirrors them here rather than importing contracts/gen, matching the rest of
+// the local-JSON-mirror design.
+func scheduleModeProtoName(m string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "plan":
+		return "PERMISSION_MODE_PLAN", nil
+	case "default":
+		return "PERMISSION_MODE_DEFAULT", nil
+	case "acceptedits", "accept-edits", "accept_edits":
+		return "PERMISSION_MODE_ACCEPT_EDITS", nil
+	default:
+		return "", fmt.Errorf("--mode must be plan|default|acceptEdits (got %q)", m)
+	}
+}
+
+// buildScheduleTrigger builds the trigger body from the mutually-exclusive
+// --cron / --one-shot flags (the caller has already checked exactly one is set).
+func buildScheduleTrigger(cron, oneShot string) (*cliTriggerSpec, error) {
+	if cron != "" {
+		return &cliTriggerSpec{Cron: cron}, nil
+	}
+	t, err := time.Parse(time.RFC3339, oneShot)
+	if err != nil {
+		return nil, fmt.Errorf("--one-shot must be RFC3339: %w", err)
+	}
+	return &cliTriggerSpec{OneShot: t}, nil
+}
+
+// resolveCreateMode applies the CLI's mode default and translates the human
+// word to the protojson enum name. A non-mutating schedule defaults to plan
+// mode (mirroring the declarative fold — the create-seam rejects a non-mutating
+// schedule that is not in plan mode). Returns "" when no mode should be sent
+// (a mutating schedule with no explicit --mode; the server picks its default).
+func resolveCreateMode(mode string, mutating bool) (string, error) {
+	m := strings.TrimSpace(mode)
+	if m == "" {
+		if mutating {
+			return "", nil
+		}
+		m = "plan"
+	}
+	return scheduleModeProtoName(m)
 }
 
 // schedulePath builds a /v1/schedules/<name>[suffix] path, percent-escaping
@@ -186,11 +236,14 @@ func (c *scheduleClient) print(data []byte) error {
 
 // --- scheduleSpecBody mirror (kept LOCAL to the CLI client) ----------------
 //
-// The server's scheduleSpecBody (internal/adapter/server/http.go) is an
-// unexported struct. The CLI client speaks JSON over HTTP, so it mirrors the
-// shape here. The fields match the proto ScheduleSpec JSON tags exactly, so a
-// server-side change to the proto would surface as a drift here (the same
-// discipline as any generated-client mirror).
+// The CLI client speaks JSON over HTTP against the server's protojson decoder
+// (internal/adapter/server/http.go), so it mirrors the *mecatlv1.ScheduleSpec
+// shape here. This is a MINIMAL subset: only the fields the CLI populates
+// (cron/one-shot trigger, prompt, workspace, provider/model, mode, mutating,
+// limits) — it omits Misfire/Profile/MaxFires. Mode is sent as the protojson
+// enum NAME (e.g. "PERMISSION_MODE_PLAN", via scheduleModeProtoName), since
+// protojson decodes an enum from its canonical name or number, not the human
+// word. It relies on protojson leniency (DiscardUnknown) for the rest.
 
 type cliScheduleSpec struct {
 	Name      string               `json:"name,omitempty"`
@@ -238,6 +291,8 @@ func runSchedulesCreate(argv []string, out, errOut io.Writer) error {
 		prompt    string
 		provider  string
 		model     string
+		mode      string
+		workspace string
 		mutating  bool
 		timezone  string
 		maxTurns  int
@@ -250,6 +305,8 @@ func runSchedulesCreate(argv []string, out, errOut io.Writer) error {
 	fs.StringVar(&prompt, "prompt", "", "the user prompt the fire runs with (required)")
 	fs.StringVar(&provider, "provider", "", "provider id; empty = deployment default")
 	fs.StringVar(&model, "model", "", "model id; empty = deployment default")
+	fs.StringVar(&mode, "mode", "", "permission mode: plan|default|acceptEdits (defaults to plan for a non-mutating schedule)")
+	fs.StringVar(&workspace, "workspace", "", "session working directory; empty = deployment default")
 	fs.BoolVar(&mutating, "mutating", false, "explicit write opt-in (default false)")
 	fs.StringVar(&timezone, "timezone", "UTC", "IANA timezone name the cron fires in")
 	fs.IntVar(&maxTurns, "max-turns", 0, "per-fire max model turns (0 = disabled)")
@@ -276,21 +333,23 @@ func runSchedulesCreate(argv []string, out, errOut io.Writer) error {
 	if cron != "" && oneShot != "" {
 		return fmt.Errorf("--cron and --one-shot are mutually exclusive")
 	}
+	trigger, err := buildScheduleTrigger(cron, oneShot)
+	if err != nil {
+		return err
+	}
+	modeName, err := resolveCreateMode(mode, mutating)
+	if err != nil {
+		return err
+	}
 	spec := cliScheduleSpec{
 		Name:      name,
 		Prompt:    prompt,
+		Workspace: workspace,
+		Mode:      modeName,
 		Mutating:  mutating,
 		Timezone:  timezone,
 		Singleton: singleton,
-	}
-	if cron != "" {
-		spec.Trigger = &cliTriggerSpec{Cron: cron}
-	} else {
-		t, err := time.Parse(time.RFC3339, oneShot)
-		if err != nil {
-			return fmt.Errorf("--one-shot must be RFC3339: %w", err)
-		}
-		spec.Trigger = &cliTriggerSpec{OneShot: t}
+		Trigger:   trigger,
 	}
 	if provider != "" || model != "" {
 		spec.Selector = &cliProviderSelector{ProviderID: provider, ModelID: model}

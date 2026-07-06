@@ -423,8 +423,11 @@ type ScheduleDecl struct {
 	// MaxToolCalls caps the total tool invocations per fire (0 = disabled).
 	MaxToolCalls int `yaml:"maxToolCalls"`
 	// Singleton is whether to skip the next fire if a prior fire is still running.
-	// The create-seam defaults this to true when left false (the conservative
-	// default — overlapping fires are suppressed).
+	// v1 LIMITATION: this currently always resolves to true — a bare bool cannot
+	// distinguish "unset" from "explicitly false", so the create-seam coerces a
+	// false to true (overlapping fires are suppressed) and the declarative fold
+	// emits a WARN. Opt-out (a real false) is not yet supported; a future *bool /
+	// proto-optional field will carry the explicit override.
 	Singleton bool `yaml:"singleton"`
 	// Misfire is the misfire policy: "" (default = MisfireFireOnceNow) or "skip".
 	Misfire string `yaml:"misfire"`

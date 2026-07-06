@@ -44,6 +44,15 @@ func foldOperatorSchedules(cfg Config) Config {
 				"name", decl.Name, "err", err.Error())
 			continue
 		}
+		// singleton:false opt-out is not yet supported end to end (the create-seam
+		// forces Singleton=true — a *bool/proto-optional change is deferred). Make
+		// the YAML path honest: warn rather than silently overriding the operator's
+		// declared intent.
+		if !decl.Singleton {
+			cfg.diag().Log(context.Background(), port.LevelWarn,
+				"schedules: singleton:false is not yet supported and the schedule will run with singleton=true (overlap suppression); track/opt-out is a future change",
+				"name", decl.Name)
+		}
 		specs = append(specs, spec)
 	}
 	cfg.DeclaredSchedules = specs

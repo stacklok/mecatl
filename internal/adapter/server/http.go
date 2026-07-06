@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+
+	"google.golang.org/protobuf/encoding/protojson"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -850,66 +853,40 @@ func (h *HTTPHandler) cleanupTeam(w http.ResponseWriter, r *http.Request) {
 
 // --- schedule request bodies + handlers --------------------------------------
 
-// scheduleSpecBody mirrors the proto ScheduleSpec (minus the path-borne name on
-// update) so the HTTP and gRPC surfaces share one shape. It is decoded into a
-// *mecatlv1.ScheduleSpec and run through protoToScheduleSpec, the SAME mapping
-// path the gRPC handler uses — one validation/mapping chokepoint, not two.
-type scheduleSpecBody struct {
-	Name      string                             `json:"name,omitempty"`
-	Prompt    string                             `json:"prompt,omitempty"`
-	Parts     []*mecatlv1.Content                `json:"parts,omitempty"`
-	Trigger   *mecatlv1.TriggerSpec              `json:"trigger,omitempty"`
-	Selector  *mecatlv1.ScheduleProviderSelector `json:"selector,omitempty"`
-	Profile   string                             `json:"profile,omitempty"`
-	Workspace string                             `json:"workspace,omitempty"`
-	Mode      mecatlv1.PermissionMode            `json:"mode,omitempty"`
-	Limits    *mecatlv1.Limits                   `json:"limits,omitempty"`
-	Mutating  bool                               `json:"mutating,omitempty"`
-	MaxFires  int32                              `json:"max_fires,omitempty"`
-	Misfire   mecatlv1.MisfirePolicy             `json:"misfire,omitempty"`
-	Singleton bool                               `json:"singleton,omitempty"`
-	Timezone  string                             `json:"timezone,omitempty"`
-}
-
-// toProto builds a *mecatlv1.ScheduleSpec from the JSON body (the name is
-// overridden on the update path, where it rides the URL).
-func (b scheduleSpecBody) toProto(name string) *mecatlv1.ScheduleSpec {
-	spec := &mecatlv1.ScheduleSpec{
-		Prompt:    b.Prompt,
-		Parts:     b.Parts,
-		Trigger:   b.Trigger,
-		Selector:  b.Selector,
-		Profile:   b.Profile,
-		Workspace: b.Workspace,
-		Mode:      b.Mode,
-		Limits:    b.Limits,
-		Mutating:  b.Mutating,
-		MaxFires:  b.MaxFires,
-		Misfire:   b.Misfire,
-		Singleton: b.Singleton,
-		Timezone:  b.Timezone,
+// decodeScheduleSpec reads r's body and unmarshals it into a *mecatlv1.ScheduleSpec
+// via protojson — NOT stdlib encoding/json — so the proto well-known types
+// embedded in ScheduleSpec (the one_shot google.protobuf.Timestamp, the Content
+// oneof, the PermissionMode/MisfirePolicy enums) decode correctly from their
+// wire JSON forms (RFC3339 string, oneof field, enum name-or-number). It is run
+// through protoToScheduleSpec, the SAME mapping path the gRPC handler uses —
+// one validation/mapping chokepoint, not two. DiscardUnknown preserves the
+// previous lenient (ignore-unknown-field) decode behavior.
+func decodeScheduleSpec(r *http.Request) (*mecatlv1.ScheduleSpec, error) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
 	}
-	if name != "" {
-		spec.Name = name
-	} else {
-		spec.Name = b.Name
+	spec := &mecatlv1.ScheduleSpec{}
+	unmarshaler := protojson.UnmarshalOptions{DiscardUnknown: true}
+	if err := unmarshaler.Unmarshal(data, spec); err != nil {
+		return nil, err
 	}
-	return spec
+	return spec, nil
 }
 
 // createSchedule handles POST /v1/schedules. The proto CreateScheduleResponse
 // is JSON-encoded so the HTTP and gRPC surfaces share one shape.
 func (h *HTTPHandler) createSchedule(w http.ResponseWriter, r *http.Request) {
-	var body scheduleSpecBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	body, err := decodeScheduleSpec(r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if body.Name == "" {
+	if body.GetName() == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	spec, err := protoToScheduleSpec(body.toProto(""))
+	spec, err := protoToScheduleSpec(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -951,12 +928,13 @@ func (h *HTTPHandler) getSchedule(w http.ResponseWriter, r *http.Request) {
 // body's spec (if any name field) is overridden to the path-borne name.
 func (h *HTTPHandler) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	var body scheduleSpecBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	body, err := decodeScheduleSpec(r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	spec, err := protoToScheduleSpec(body.toProto(name))
+	body.Name = name
+	spec, err := protoToScheduleSpec(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

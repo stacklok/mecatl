@@ -59,11 +59,12 @@ func TestReconcileSchedulesSingletonFalseIdempotent(t *testing.T) {
 	ctx := context.Background()
 
 	decl := port.ScheduleSpec{
-		Name:     "nightly",
-		Prompt:   "review",
-		Trigger:  port.TriggerSpec{Cron: "0 9 * * *"},
-		Mutating: false,
-		Mode:     session.ModePlan,
+		Name:      "nightly",
+		Prompt:    "review",
+		Trigger:   port.TriggerSpec{Cron: "0 9 * * *"},
+		Mutating:  false,
+		Mode:      session.ModePlan,
+		Workspace: "/tmp",
 		// Singleton left false — the create-seam normalises it to true.
 	}
 	cfg := Config{DeclaredSchedules: []port.ScheduleSpec{decl}}
@@ -116,10 +117,11 @@ func TestToScheduleSpecMutatingFalseWithoutModeDefaultsToPlan(t *testing.T) {
 	ctx := context.Background()
 
 	spec, err := toScheduleSpec(permconfig.ScheduleDecl{
-		Name:     "read-only",
-		Cron:     "0 9 * * *",
-		Prompt:   "scan",
-		Mutating: false,
+		Name:      "read-only",
+		Cron:      "0 9 * * *",
+		Prompt:    "scan",
+		Mutating:  false,
+		Workspace: "/tmp",
 		// Mode intentionally empty — toScheduleSpec must default it to plan.
 	})
 	if err != nil {

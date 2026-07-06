@@ -827,6 +827,52 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 	}
 }
 
+// TestHTTPScheduleCreateOneShot is the regression test for the protojson decode
+// fix: a one-shot trigger's Timestamp is an RFC3339 STRING on the wire
+// (google.protobuf.Timestamp's JSON mapping), which stdlib encoding/json
+// cannot decode into a *timestamppb.Timestamp — the create body the CLI
+// actually sends (`mecated schedules create --one-shot ...`) 400'd before this
+// fix. Asserts 201 plus a round-tripped OneShot time via the store, not just
+// the response envelope.
+func TestHTTPScheduleCreateOneShot(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc, schedStore := newScheduleService(t, now)
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+
+	const oneShot = "2035-01-01T00:00:00Z"
+	createBody := `{"name":"once","prompt":"p","trigger":{"one_shot":"` + oneShot + `"},"mutating":true,"workspace":"/tmp"}`
+	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json", strings.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("POST /v1/schedules: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp.StatusCode)
+	}
+	var created mecatlv1.CreateScheduleResponse
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	wantOneShot, err := time.Parse(time.RFC3339, oneShot)
+	if err != nil {
+		t.Fatalf("parse want time: %v", err)
+	}
+	gotOneShot := created.GetSchedule().GetSpec().GetTrigger().GetOneShot().AsTime()
+	if !gotOneShot.Equal(wantOneShot) {
+		t.Errorf("response one_shot = %v, want %v", gotOneShot, wantOneShot)
+	}
+
+	// Confirm the round trip through the store too, not just the response echo.
+	stored, err := schedStore.Load(context.Background(), "once")
+	if err != nil {
+		t.Fatalf("load stored schedule: %v", err)
+	}
+	if !stored.Spec.Trigger.OneShot.Equal(wantOneShot) {
+		t.Errorf("stored one_shot = %v, want %v", stored.Spec.Trigger.OneShot, wantOneShot)
+	}
+}
+
 // TestHTTPScheduleNoStore501 (S7): a Service with no ScheduleStore (memstore)
 // reports schedule RPCs as 501.
 func TestHTTPScheduleNoStore501(t *testing.T) {

@@ -155,6 +155,81 @@ func TestSchedulesCreateCron(t *testing.T) {
 	}
 }
 
+// TestSchedulesCreateModeDefaulting pins the create-verb mode behavior: a
+// non-mutating schedule (the default) sends the plan enum without the operator
+// having to pass --mode (mirrors the declarative fold and the server's
+// non-mutating-must-be-plan invariant); a mutating schedule sends no mode
+// (server default); an explicit --mode is translated to the protojson enum
+// name; and --workspace round-trips.
+func TestSchedulesCreateModeDefaulting(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantMode any // nil = mode key must be absent
+	}{
+		{"non-mutating defaults to plan", []string{"create", "--name", "s", "--cron", "0 2 * * *", "--prompt", "p"}, "PERMISSION_MODE_PLAN"},
+		{"mutating sends no mode", []string{"create", "--name", "s", "--cron", "0 2 * * *", "--prompt", "p", "--mutating"}, nil},
+		{"explicit mode default", []string{"create", "--name", "s", "--cron", "0 2 * * *", "--prompt", "p", "--mutating", "--mode", "default"}, "PERMISSION_MODE_DEFAULT"},
+		{"explicit mode acceptEdits", []string{"create", "--name", "s", "--cron", "0 2 * * *", "--prompt", "p", "--mutating", "--mode", "acceptEdits"}, "PERMISSION_MODE_ACCEPT_EDITS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody []byte
+			m := newMockScheduleServer(t, func(req recordedReq) (int, []byte) {
+				gotBody = req.body
+				resp, _ := json.Marshal(map[string]any{"schedule": map[string]any{"spec": map[string]any{"name": "s"}}})
+				return http.StatusCreated, resp
+			})
+			ts := m.serve()
+			defer ts.Close()
+			mustRunSchedules(t, ts.URL, tc.args...)
+			var spec map[string]any
+			if err := json.Unmarshal(gotBody, &spec); err != nil {
+				t.Fatalf("body not JSON: %v\n%s", err, gotBody)
+			}
+			got, present := spec["mode"]
+			if tc.wantMode == nil {
+				if present {
+					t.Errorf("mode should be absent for a mutating create, got %v", got)
+				}
+				return
+			}
+			if got != tc.wantMode {
+				t.Errorf("mode: want %v, got %v", tc.wantMode, got)
+			}
+		})
+	}
+
+	t.Run("workspace round-trips", func(t *testing.T) {
+		var gotBody []byte
+		m := newMockScheduleServer(t, func(req recordedReq) (int, []byte) {
+			gotBody = req.body
+			resp, _ := json.Marshal(map[string]any{"schedule": map[string]any{"spec": map[string]any{"name": "s"}}})
+			return http.StatusCreated, resp
+		})
+		ts := m.serve()
+		defer ts.Close()
+		mustRunSchedules(t, ts.URL, "create", "--name", "s", "--cron", "0 2 * * *", "--prompt", "p", "--workspace", "/repo")
+		var spec map[string]any
+		_ = json.Unmarshal(gotBody, &spec)
+		if spec["workspace"] != "/repo" {
+			t.Errorf("workspace: want /repo, got %v", spec["workspace"])
+		}
+	})
+
+	t.Run("invalid mode rejected client-side", func(t *testing.T) {
+		m := newMockScheduleServer(t, func(recordedReq) (int, []byte) {
+			t.Fatal("server should not be dialed on an invalid --mode")
+			return 0, nil
+		})
+		ts := m.serve()
+		defer ts.Close()
+		if err := runSchedules([]string{"create", "--server-addr", ts.URL, "--name", "s", "--cron", "0 2 * * *", "--prompt", "p", "--mode", "bogus"}, io.Discard, io.Discard); err == nil {
+			t.Fatal("expected an error for --mode bogus")
+		}
+	})
+}
+
 func TestSchedulesCreateOneShot(t *testing.T) {
 	var gotBody []byte
 	m := newMockScheduleServer(t, func(req recordedReq) (int, []byte) {
@@ -298,8 +373,21 @@ func TestSchedulesCreateMaxTokensNotTransmitted(t *testing.T) {
 	}
 }
 
+func TestValidateScheduleName(t *testing.T) {
+	for _, name := range []string{"nightly-review", "my.schedule"} {
+		if err := validateScheduleName(name); err != nil {
+			t.Errorf("validateScheduleName(%q) = %v, want nil", name, err)
+		}
+	}
+	for _, name := range []string{".", ".."} {
+		if err := validateScheduleName(name); err == nil {
+			t.Errorf("validateScheduleName(%q) = nil, want error", name)
+		}
+	}
+}
+
 func TestSchedulesCreateInvalidNameRejected(t *testing.T) {
-	for _, bad := range []string{"../admin", "a/b", "a?b", "a#b"} {
+	for _, bad := range []string{"../admin", "a/b", "a?b", "a#b", ".", ".."} {
 		m := newMockScheduleServer(t, func(_ recordedReq) (int, []byte) {
 			t.Fatalf("should not dial server for an invalid name")
 			return 500, nil
@@ -312,13 +400,15 @@ func TestSchedulesCreateInvalidNameRejected(t *testing.T) {
 
 func TestSchedulesInvalidNameRejectedAcrossVerbs(t *testing.T) {
 	for _, verb := range []string{"inspect", "pause", "resume", "delete", "fire"} {
-		m := newMockScheduleServer(t, func(_ recordedReq) (int, []byte) {
-			t.Fatalf("should not dial server for an invalid name")
-			return 500, nil
-		})
-		ts := m.serve()
-		mustRunSchedulesErr(t, ts.URL, "invalid schedule name", verb, "--name", "a/b")
-		ts.Close()
+		for _, bad := range []string{"a/b", ".", ".."} {
+			m := newMockScheduleServer(t, func(_ recordedReq) (int, []byte) {
+				t.Fatalf("should not dial server for an invalid name")
+				return 500, nil
+			})
+			ts := m.serve()
+			mustRunSchedulesErr(t, ts.URL, "invalid schedule name", verb, "--name", bad)
+			ts.Close()
+		}
 	}
 }
 

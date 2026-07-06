@@ -136,7 +136,7 @@ OPERATOR-TIER scheduled-tasks declarations (issue #233, Phase 2b): a list of sch
 | `schedules[].maxFires` | `int` | `0` | MaxFires bounds the TOTAL number of fires for a cron schedule (0 = forever). Ignored for a one-shot (fires once by definition). |
 | `schedules[].maxTurns` | `int` | `0` | MaxTurns caps the number of model calls per fire (0 = disabled). |
 | `schedules[].maxToolCalls` | `int` | `0` | MaxToolCalls caps the total tool invocations per fire (0 = disabled). |
-| `schedules[].singleton` | `bool` | `false` | Singleton is whether to skip the next fire if a prior fire is still running. The create-seam defaults this to true when left false (the conservative default — overlapping fires are suppressed). |
+| `schedules[].singleton` | `bool` | `false` | Singleton is whether to skip the next fire if a prior fire is still running. v1 LIMITATION: this currently always resolves to true — a bare bool cannot distinguish "unset" from "explicitly false", so the create-seam coerces a false to true (overlapping fires are suppressed) and the declarative fold emits a WARN. Opt-out (a real false) is not yet supported; a future *bool / proto-optional field will carry the explicit override. |
 | `schedules[].misfire` | `string` | `(empty)` | Misfire is the misfire policy: "" (default = MisfireFireOnceNow) or "skip". |
 
 ## Flag- / file-configured features (NOT in `settings.yaml`)

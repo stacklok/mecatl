@@ -1583,4 +1583,70 @@ func TestScheduleMetricsFiredFailedSkipped(t *testing.T) {
 			t.Fatalf("Stop: %v", err)
 		}
 	})
+
+	// --- skipped (singleton overlap) path ---
+	// L3: the only other skipped-path metric emit (the overlap branch in fireOne,
+	// distinct from the misfire-skip branch above) was untested. Mirrors
+	// TestSingletonOverlapPreservesLivePointer's held-lease setup.
+	t.Run("skipped-singleton-overlap", func(t *testing.T) {
+		defer goleak.VerifyNone(t)
+		clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+		store := memschedulestore.New()
+		fire := &fireStub{}
+
+		leaseBE := &heldSessionLease{held: map[session.SessionID]string{"sched--prior": "owner-prior"}, clk: clk}
+
+		var mu sync.Mutex
+		var calls []metricCall
+		metrics := func(p session.SchedulePayload, d time.Duration) {
+			mu.Lock()
+			calls = append(calls, metricCall{payload: p, duration: d})
+			mu.Unlock()
+		}
+		s := scheduler.New(scheduler.Config{
+			Store:              store,
+			Lease:              leaseBE,
+			LeaseOwner:         "owner-this",
+			Fire:               fire.fire,
+			Clock:              clk,
+			TickInterval:       1 * time.Hour,
+			MaxConcurrentFires: 4,
+			ScheduleMetrics:    metrics,
+		})
+
+		if err := store.Save(context.Background(), port.Schedule{
+			Spec: port.ScheduleSpec{
+				Name:      "m-overlap",
+				Prompt:    "x",
+				Trigger:   port.TriggerSpec{Cron: "* * * * *"},
+				Singleton: true,
+			},
+			State: port.ScheduleState{
+				NextFireAt:        clk.Now(),
+				Enabled:           true,
+				LastFireSessionID: "sched--prior", // a prior fire is still running
+			},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		s.RunOnceForTest(context.Background())
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 1 {
+			t.Fatalf("metrics calls = %d, want 1: %+v", len(calls), calls)
+		}
+		if calls[0].payload.Kind != "skipped" {
+			t.Errorf("kind = %q, want skipped", calls[0].payload.Kind)
+		}
+		if calls[0].duration != 0 {
+			t.Errorf("overlap-skip duration = %v, want 0 (no run)", calls[0].duration)
+		}
+		if calls[0].payload.ScheduleName != "m-overlap" {
+			t.Errorf("schedule = %q, want m-overlap", calls[0].payload.ScheduleName)
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	})
 }

@@ -3875,7 +3875,7 @@ change), reusing the Phase 5 + 2a substrate above:
   mints a fresh session whose OWN run already carries `role="main"` via its EventSink;
   these are a separate schedule-lifecycle dimension, not a role-family — issue #233):
   `mecatl.schedule.fires` (Int64Counter, total fires by outcome — ALWAYS bumped) and
-  `mecatl.schedule.fire_duration` (Float64Histogram, seconds, Claim→terminal wall-
+  `mecatl.schedule.fire_duration` (Float64Histogram, seconds, due→terminal wall-
   clock — recorded ONLY for a fired/failed fire; a SKIPPED fire passes duration 0 and
   skips the histogram). Nil-safe: a nil `*Metrics` is a no-op (the byte-identical no-
   metrics path).

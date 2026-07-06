@@ -71,7 +71,7 @@
   composition wires over `Metrics.EmitSchedule`. Two instruments:
   `mecatl_schedule_fires_total{outcome}` (fired/skipped/failed — bumped for
   every fire, including the misfire-skip and singleton-overlap-skip paths) and
-  `mecatl_schedule_fire_duration_seconds` (the Claim→terminal wall-clock, recorded
+  `mecatl_schedule_fire_duration_seconds` (the due→terminal wall-clock, recorded
   only for a fired/failed fire; a skipped fire has no run, duration 0). The
   duration histogram shares the `latencyInstruments` explicit-bucket ladder.
   > A broader performance-observability effort lands incrementally on a

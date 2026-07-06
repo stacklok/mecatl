@@ -170,6 +170,24 @@ func validateScheduleSpec(spec port.ScheduleSpec, now time.Time) (time.Time, err
 	if !spec.Mutating && mode != session.ModePlan {
 		return time.Time{}, fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
 	}
+	// Validate the workspace PROFILE-AWARE, mirroring the session create-seam
+	// (service.go createSession): a default-profile schedule REQUIRES a workspace
+	// (a fire mints a filesystem session), a no-fs schedule must NOT carry one.
+	// Enforcing it HERE is fail-closed — otherwise an empty-workspace default
+	// schedule is accepted at create but fails at FIRE time ("workspace is
+	// required"), i.e. a schedule that can never fire.
+	switch SessionProfile(spec.Profile) {
+	case ProfileDefault:
+		if spec.Workspace == "" {
+			return time.Time{}, fmt.Errorf("%w: a default-profile schedule requires a workspace (the fire mints a filesystem session)", ErrInvalidArgument)
+		}
+	case ProfileNoFS:
+		if spec.Workspace != "" {
+			return time.Time{}, fmt.Errorf("%w: a %q schedule must not carry a workspace (a no-FS fire has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, spec.Workspace)
+		}
+	default:
+		return time.Time{}, fmt.Errorf("%w: unknown schedule profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, spec.Profile, ProfileNoFS)
+	}
 	switch spec.Trigger.Kind() {
 	case port.TriggerOneShot:
 		if !spec.Trigger.OneShot.After(now) {

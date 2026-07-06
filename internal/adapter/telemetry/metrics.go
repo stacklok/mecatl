@@ -48,13 +48,14 @@ const (
 	// entering dispatch to its execution starting (the coordinated-omission fix).
 	toolQueueInstrument = "mecatl.tool.queue"
 	// scheduleFireDurationInstrument is the scheduled-task fire wall-clock
-	// histogram: the elapsed time from a fire's Claim to its terminal
-	// EvResult. It is a schedule-lifecycle latency signal, distinct from the
-	// role-family run/turn latency instruments (schedule metrics are NOT a
-	// role-family — issue #233): a fire mints a fresh session whose OWN run
-	// already carries role="main" via its EventSink; this instrument captures
-	// the schedule-level end-to-end fire cost (Claim→terminal), not the
-	// per-turn cost the run's own metrics already record.
+	// histogram: the elapsed time from a fire's due time (captured before
+	// Store.Claim) to its terminal EvResult. It is a schedule-lifecycle latency
+	// signal, distinct from the role-family run/turn latency instruments
+	// (schedule metrics are NOT a role-family — issue #233): a fire mints a
+	// fresh session whose OWN run already carries role="main" via its
+	// EventSink; this instrument captures the schedule-level end-to-end fire
+	// cost (due→terminal), not the per-turn cost the run's own metrics already
+	// record.
 	scheduleFireDurationInstrument = "mecatl.schedule.fire_duration"
 )
 
@@ -340,7 +341,7 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 	}
 	if m.scheduleFireDuration, err = meter.Float64Histogram(
 		scheduleFireDurationInstrument,
-		metric.WithDescription("Scheduled-task fire wall-clock duration in seconds (Claim→terminal)."),
+		metric.WithDescription("Scheduled-task fire wall-clock duration in seconds (due→terminal)."),
 		metric.WithUnit("s"),
 	); err != nil {
 		return nil, fmt.Errorf("telemetry: schedule fire duration histogram: %w", err)
@@ -536,12 +537,13 @@ func (m *Metrics) toolCall(_ session.SessionID, call session.ToolCall, result se
 // run already carries role="main" via its EventSink, so these instruments carry
 // NO role label — they are a separate schedule-lifecycle dimension.
 //
-// duration is the fire's wall-clock cost (Claim→terminal). The scheduler passes
-// it only for a fired/failed fire (the value of time.Since(now) captured in
-// fireClaimed); a SKIPPED fire (no run) passes duration 0 and the
-// fire-duration histogram is skipped. The fires counter is ALWAYS bumped
-// (labelled by outcome). Nil-safe: a nil Metrics is a no-op (the byte-identical
-// no-metrics path).
+// duration is the fire's wall-clock cost (due→terminal — measured from the
+// tick/due time captured before Store.Claim, not from the Claim op itself).
+// The scheduler passes it only for a fired/failed fire (the value of
+// time.Since(now) captured in fireClaimed); a SKIPPED fire (no run) passes
+// duration 0 and the fire-duration histogram is skipped. The fires counter is
+// ALWAYS bumped (labelled by outcome). Nil-safe: a nil Metrics is a no-op (the
+// byte-identical no-metrics path).
 func (m *Metrics) EmitSchedule(payload session.SchedulePayload, duration time.Duration) {
 	if m == nil {
 		return
