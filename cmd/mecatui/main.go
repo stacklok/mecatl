@@ -140,6 +140,7 @@ func run(args []string) error {
 		UserModel:           cl,
 		Models:              cl,
 		Worktrees:           cl,
+		Sched:               cl,
 		SelectionStore:      store,
 		InitialModel:        initialSel,
 		WorkspaceDefault:    wsDefault,

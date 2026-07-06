@@ -34,8 +34,9 @@ type DialConfig struct {
 // Client is a connected mecated gRPC client: the dialled conn plus the generated
 // service stub. Close it on shutdown.
 type Client struct {
-	conn *grpc.ClientConn
-	svc  mecatlv1.HarnessServiceClient
+	conn        *grpc.ClientConn
+	svc         mecatlv1.HarnessServiceClient
+	scheduleSvc mecatlv1.ScheduleServiceClient
 }
 
 // Dial connects to mecated per cfg. It uses grpc.NewClient (not the deprecated
@@ -86,7 +87,7 @@ func Dial(cfg DialConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %q: %w", cfg.Server, err)
 	}
-	return &Client{conn: conn, svc: mecatlv1.NewHarnessServiceClient(conn)}, nil
+	return &Client{conn: conn, svc: mecatlv1.NewHarnessServiceClient(conn), scheduleSvc: mecatlv1.NewScheduleServiceClient(conn)}, nil
 }
 
 // Close releases the underlying connection.

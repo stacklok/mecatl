@@ -90,6 +90,12 @@ type Deps struct {
 	UserModel client.UserModelLister // user-model inspection for the /usermodel panel; nil disables it
 	Models    client.ModelLister     // selectable-model discovery for the /models picker; nil disables it
 	Worktrees client.WorktreeLister  // worktree discovery for the /worktrees overlay (issue #102); nil disables it
+	// Sched is the schedule discovery + management surface for the /schedule overlay
+	// (issue #234); nil disables it (the overlay is honestly absent). The embedded
+	// mecatui server has a ScheduleStore but NOT the scheduler tick loop, so the
+	// overlay can create/inspect/pause/resume/fire-now on any store-backed server
+	// while auto-firing on a cadence is the operator's `mecated --scheduler`.
+	Sched client.ScheduleLister
 	// SelectionStore persists the picked model (last-used). nil disables persistence
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
@@ -303,6 +309,7 @@ type Model struct {
 	models       modelsState    // /models picker overlay state (view==modelsNone when closed)
 	effort       effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
 	worktrees    worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
+	schedule     scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
 	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
 	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
 	// picker, and reconciled-to-default at connect when its provider is unavailable. It

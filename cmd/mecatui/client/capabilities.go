@@ -41,6 +41,12 @@ type Capabilities struct {
 	// git worktree (issue #102). An older server, or a no-FS/cloud server with no
 	// lister, yields false, so the overlay is honestly absent.
 	Worktrees bool
+	// Scheduling is true when a ScheduleStore is reachable on the server (the
+	// ScheduleService RPCs are functional). Gates the /schedule overlay. An older
+	// server (field absent → false) hides the overlay. Independent of the scheduler
+	// tick loop: the overlay can create/inspect/pause/resume/fire-now on any
+	// store-backed server; auto-firing on a cadence is the operator's --scheduler.
+	Scheduling bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -64,6 +70,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Audio:          c.GetAudio(),
 		Posture:        c.GetPosture(),
 		Worktrees:      c.GetWorktrees(),
+		Scheduling:     c.GetScheduling(),
 	}
 }
 

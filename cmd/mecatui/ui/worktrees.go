@@ -215,25 +215,29 @@ func (m Model) restartOnWorkspaceCmd(oldID, workspace string) tea.Cmd {
 	}
 }
 
-// updateInventoryMsgs dispatches the no-follow-up-command inventory-overlay msgs
-// (agentsInv, soul, userModel, /worktrees) in one fall-through chain, so update()
-// stays under the cyclomatic cap as overlays accrue. Each helper returns
-// handled=false for a non-matching msg, so at most one consumes. Returns
-// (model, nil, false) when no inventory msg matched.
-func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, bool) {
+// updateInventoryMsgs dispatches the inventory-overlay msgs (agentsInv, soul,
+// userModel, /worktrees, /schedule) in one fall-through chain, so update() stays
+// under the cyclomatic cap as overlays accrue. Each helper returns handled=false
+// for a non-matching msg, so at most one consumes. Most are no-follow-up-command
+// (the cmd slot is nil); /schedule's ScheduleActionMsg re-lists on success, so
+// the cmd is propagated. Returns (model, nil, false) when no inventory msg matched.
+func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
-		return mm, true
+		return mm, nil, true
 	}
 	if mm, handled := m.updateSoulMsg(msg); handled {
-		return mm, true
+		return mm, nil, true
 	}
 	if mm, handled := m.updateUserModelMsg(msg); handled {
-		return mm, true
+		return mm, nil, true
 	}
 	if mm, handled := m.updateWorktreesMsg(msg); handled {
-		return mm, true
+		return mm, nil, true
 	}
-	return m, false
+	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
+		return mm, cmd, true
+	}
+	return m, nil, false
 }
 
 // updateWorktreesMsg reduces a client.WorktreesMsg (the ListWorktrees RPC result):

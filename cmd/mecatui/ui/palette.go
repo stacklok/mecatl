@@ -84,7 +84,7 @@ func (m Model) builtinRows() []client.Command {
 	bs := builtinCommands(m.caps, wiredCollaborators{
 		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
-		Worktrees: m.deps.Worktrees != nil,
+		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 	})
 	rows := make([]client.Command, 0, len(bs))
 	for _, b := range bs {

@@ -264,8 +264,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// /worktrees) — none carries a follow-up command. Grouped into one helper to
 		// keep update() under the cyclomatic cap as overlays accrue; each falls
 		// through if its msg type does not match.
-		if mm, handled := m.updateInventoryMsgs(msg); handled {
-			return mm, nil
+		if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
+			return mm, cmd
 		}
 		// /models picker result/error + selection-saved msg. During connect it also
 		// returns the CreateSession command (the §4 reconcile-then-create sequence),
@@ -1000,6 +1000,7 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onModelsKey,
 		m.onEffortKey,
 		m.onWorktreesKey,
+		m.onScheduleKey,
 	}
 	for _, route := range overlays {
 		if mm, cmd, handled := route(msg); handled {
@@ -1727,7 +1728,7 @@ func (m Model) runSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 	b, found := builtinByName(m.caps, wiredCollaborators{
 		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
-		Worktrees: m.deps.Worktrees != nil,
+		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 	}, row.Name)
 	if !found {
 		return m, nil, false
@@ -1779,7 +1780,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		if b, found := builtinByName(m.caps, wiredCollaborators{
 			MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 			Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
-			Worktrees: m.deps.Worktrees != nil,
+			Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		}, name); found {
 			m.ta.Reset()
 			return b.run(m)

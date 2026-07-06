@@ -79,7 +79,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // The fixed order is clear, help, mcp, agents, team, skills, soul, usermodel,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
-	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Posture: "auto"}
+	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, Posture: "auto"}
 	cases := []struct {
 		name string
 		caps client.Capabilities
@@ -109,14 +109,17 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"worktrees cap but not wired", client.Capabilities{Worktrees: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"worktrees wired but no cap", client.Capabilities{}, wiredCollaborators{Worktrees: true}, []string{"clear", "help"}},
 		{"worktrees cap and wired", client.Capabilities{Worktrees: true}, wiredCollaborators{Worktrees: true}, []string{"clear", "help", "worktrees"}},
+		{"schedule cap but not wired", client.Capabilities{Scheduling: true}, wiredCollaborators{}, []string{"clear", "help"}},
+		{"schedule wired but no cap", client.Capabilities{}, wiredCollaborators{Scheduling: true}, []string{"clear", "help"}},
+		{"schedule cap and wired", client.Capabilities{Scheduling: true}, wiredCollaborators{Scheduling: true}, []string{"clear", "help", "schedule"}},
 		{"posture empty omits the builtin", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"posture set adds the builtin", client.Capabilities{Posture: "yolo"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
 		{"posture strict still shows (chrome is reportable)", client.Capabilities{Posture: "strict"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
 		{
 			"all",
 			all,
-			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true},
-			[]string{"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "posture"},
+			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true},
+			[]string{"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "posture"},
 		},
 	}
 	for _, tc := range cases {
@@ -132,9 +135,9 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 // TestBuiltinByName covers the dispatch lookup: a registered built-in is found,
 // a gated-off one is not, and an unknown name is not.
 func TestBuiltinByName(t *testing.T) {
-	// agents cap + teams + skills cap + model_selection + worktrees, mcp off.
-	caps := client.Capabilities{Agents: true, Teams: true, Skills: true, ModelSelection: true, Worktrees: true}
-	wired := wiredCollaborators{Agents: true, Skills: true, Models: true, Worktrees: true}
+	// agents cap + teams + skills cap + model_selection + worktrees + scheduling, mcp off.
+	caps := client.Capabilities{Agents: true, Teams: true, Skills: true, ModelSelection: true, Worktrees: true, Scheduling: true}
+	wired := wiredCollaborators{Agents: true, Skills: true, Models: true, Worktrees: true, Scheduling: true}
 	if _, ok := builtinByName(caps, wired, "clear"); !ok {
 		t.Error("clear should be found (always registered)")
 	}
@@ -162,8 +165,14 @@ func TestBuiltinByName(t *testing.T) {
 	if _, ok := builtinByName(caps, wired, "worktrees"); !ok {
 		t.Error("worktrees should be found (worktrees cap + wired)")
 	}
-	if _, ok := builtinByName(caps, wiredCollaborators{Agents: true, Skills: true, Models: true}, "worktrees"); ok {
+	if _, ok := builtinByName(caps, wiredCollaborators{Agents: true, Skills: true, Models: true, Scheduling: true}, "worktrees"); ok {
 		t.Error("worktrees should NOT be found (worktrees cap on but not wired)")
+	}
+	if _, ok := builtinByName(caps, wired, "schedule"); !ok {
+		t.Error("schedule should be found (scheduling cap + wired)")
+	}
+	if _, ok := builtinByName(caps, wiredCollaborators{Agents: true, Skills: true, Models: true, Worktrees: true}, "schedule"); ok {
+		t.Error("schedule should NOT be found (scheduling cap on but not wired)")
 	}
 	if _, ok := builtinByName(caps, wired, "mcp"); ok {
 		t.Error("mcp should NOT be found (mcp off / not wired)")

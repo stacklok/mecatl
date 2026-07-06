@@ -1081,6 +1081,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Audio:          pcaps.Audio,
 		Posture:        s.cfg.Posture,
 		Worktrees:      s.cfg.Worktrees != nil,
+		Scheduling:     s.scheduleStore() != nil,
 	}
 }
 

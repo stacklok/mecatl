@@ -219,11 +219,13 @@ resolved registry the `Subagent` tool routes delegations to), `/team` (the unifi
 agents overlay pinned to the Teams tab — same surface as `ctrl+a`, which picks a
 context-sensitive default tab), `/skills` (browse the skills inventory),
 `/soul` (inspect the persona — read-only), `/usermodel` (inspect the user
-model — read-only), and `/models` (pick the model for the next session) appear
+model — read-only), `/models` (pick the model for the next session), `/worktrees`
+(switch to a sibling git worktree), and `/schedule` (browse & manage scheduled
+tasks) appear
 only when the connected server advertises those capabilities (and, for
-`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/models`, the matching client
+`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order is
-`clear, help, mcp, agents, team, skills, soul, usermodel, models` (locked by a test).
+`clear, help, mcp, agents, team, skills, soul, usermodel, models, effort, worktrees, schedule` (locked by a test).
 `/agents` and `/team` are distinct: `/agents` is the **definition inventory** (a
 palette-only `ListAgents` snapshot, gated on `caps.agents`), while `/team` opens
 the **live overlay** of a team that has actually run (gated on `caps.teams`).
@@ -538,7 +540,7 @@ show the plain prompt-hint card.
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
-| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/models`; plus workspace commands) |
+| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/models`, `/effort`, `/worktrees`, `/schedule`; plus workspace commands) |
 | `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |
@@ -680,6 +682,35 @@ The badge announces *that* the posture is loud, not *what it permits*: type **`/
 for the one-line summary of what the active tier actually allows (e.g. for YOLO: all-tools
 auto-approve and the child prompt-injection defense off) — the badge is the at-a-glance
 cue, `/posture` is its consequence.
+
+**`/schedule` (scheduled-tasks overlay — Phase 3a, issue #234).** Gated on
+`caps.scheduling` (a `ScheduleStore` is reachable on the server) AND a wired
+schedule lister. It fires `ListSchedules` and renders the stored schedules as a
+flat list: each row shows the name, a trigger summary (`cron: */5 * * * *` or
+`one-shot: 2026-07-06 14:00`), the enabled/paused state, the next/last fire
+times, and the fire count. The panel opens with a **type-to-filter** input
+focused (matches on name + trigger summary, mirroring `/worktrees`); `↑`/`↓`
+move the cursor, `home`/`end` jump. `esc` is two-stage (clear filter, then
+close). The per-row action keys are bare runes: **`p`** pause, **`r`** resume,
+**`f`** fire-now (forces an immediate fire; the fire id surfaces in the status
+line), **`d`** delete (opens a confirm sub-view: `enter` deletes, `esc` backs
+out). On a successful action the list re-fetches to reflect the new state.
+**`enter`** opens a read-only **inspect** sub-view: the full spec (trigger,
+prompt preview, selector, mode, mutating, singleton, misfire, timezone,
+max_fires) + the durable state (enabled, fire_count, next/last fire,
+last_fire_session) + the fire records (id, fired_at, stop, err); `esc` returns
+to the panel.
+
+**v1 limits.** The overlay lists/inspects/manages schedules authored elsewhere
+— there is **no in-overlay Create form** (author via `mecated schedule create`
+or the `settings.yaml` `schedules:` block), and **NL→cron** (a natural-language
+"every weekday at 9am" → `0 9 * * 1-5`) is deferred to v2. Triggers are raw
+cron expressions or one-shot timestamps only. The embedded mecatui server has
+the `ScheduleStore` (the overlay works — create via CLI/settings, then
+pause/resume/fire-now/delete from the TUI) but **NOT** the scheduler tick loop,
+so auto-firing on a cadence requires `mecated --scheduler` (or the
+`settings.yaml` schedules + a mecated with the tick loop running); `FireNow`
+works to trigger a schedule manually regardless.
 
 A single layout model (`layout.go`) is the source of truth: `View()` renders
 it, the per-message relayout step sizes the viewport from it, and the mouse

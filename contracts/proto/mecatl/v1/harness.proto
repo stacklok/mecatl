@@ -338,6 +338,12 @@ message ServerCapabilities {
   // client hides the overlay. A no-FS/cloud server (no lister wired) also yields
   // false, so the feature is honestly absent there.
   bool worktrees = 14;
+  // scheduling is true when a ScheduleStore is reachable (the schedule RPCs are
+  // functional: Create/List/Get/Pause/Resume/Delete/FireNow/GetFire/ListFires).
+  // Gates the client's /schedule overlay. Independent of the scheduler tick
+  // loop (--scheduler): the store-backed RPCs work without the tick loop.
+  // Additive: an older server leaves it false and the client hides the overlay.
+  bool scheduling = 15;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.

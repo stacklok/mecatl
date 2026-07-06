@@ -22,6 +22,7 @@
 ┃    ctrl+p                MCP prompts                                                                                                                               ┃
 ┃    ctrl+a                agents overlay (subagents / parallel / teams · tab to switch)                                                                             ┃
 ┃    ctrl+e                reasoning-effort picker                                                                                                                   ┃
+┃    /schedule             browse & manage scheduled tasks                                                                                                           ┃
 ┃    alt+m                 cycle permission mode (default / plan / accept-edits)                                                                                     ┃
 ┃    ctrl+t                expand/collapse details                                                                                                                   ┃
 ┃                                                                                                                                                                    ┃

@@ -62,8 +62,10 @@ Flags:
 
 Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,
 issue #232), the operator-tier **`settings.yaml` `schedules:` block** (Phase 2b,
-issue #233 — declarative reconcile into the store), and the **`mecated schedules`
-CLI** (Phase 2b). A `mecatui /schedule` command (Phase 3) is planned.
+issue #233 — declarative reconcile into the store), the **`mecated schedules`
+CLI** (Phase 2b), and the **`mecatui /schedule` overlay** (Phase 3a, issue #234
+— list/inspect/pause/resume/fire-now/delete from the TUI; see `docs/tui.md`).
+An in-overlay Create form + NL→cron is planned for a later phase.
 
 **gRPC** (`mecatl.v1.ScheduleService`): `CreateSchedule`, `GetSchedule`,
 `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`,

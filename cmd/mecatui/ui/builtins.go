@@ -28,13 +28,14 @@ type builtin struct {
 // had reached 7 and was growing per feature) into one named struct so call sites
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
-	MCP       bool
-	Agents    bool
-	Skills    bool
-	Soul      bool
-	UserModel bool
-	Models    bool // mirrors client.Capabilities.ModelSelection
-	Worktrees bool
+	MCP        bool
+	Agents     bool
+	Skills     bool
+	Soul       bool
+	UserModel  bool
+	Models     bool // mirrors client.Capabilities.ModelSelection
+	Worktrees  bool
+	Scheduling bool
 }
 
 // builtinCommands returns the caps-filtered built-in set for the connected
@@ -50,11 +51,13 @@ type wiredCollaborators struct {
 // (w.UserModel); /models (the model picker) only when the server advertises
 // model_selection AND a model lister is wired (w.Models); /worktrees (the
 // worktree switch overlay, issue #102) only when the server advertises
-// worktrees AND a worktree lister is wired (w.Worktrees). /effort (the
+// worktrees AND a worktree lister is wired (w.Worktrees). /schedule (the
+// scheduled-tasks overlay, issue #234) only when the server advertises
+// scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
 // reasoning-effort picker, ADR 0055) is gated identically to /models and sits
 // directly after it. The order is fixed (clear, help, mcp, agents, team, skills,
-// soul, usermodel, models, effort, worktrees) and locked by a test so the palette
-// ordering is stable.
+// soul, usermodel, models, effort, worktrees, schedule) and locked by a test so
+// the palette ordering is stable.
 func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	out := []builtin{
 		{
@@ -130,6 +133,13 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			name: "worktrees",
 			desc: "switch to a sibling git worktree",
 			run:  Model.runWorktrees,
+		})
+	}
+	if caps.Scheduling && w.Scheduling {
+		out = append(out, builtin{
+			name: "schedule",
+			desc: "browse & manage scheduled tasks",
+			run:  Model.runSchedule,
 		})
 	}
 	// /posture prints the server-wide operator posture tier + a line per defense.
@@ -242,6 +252,13 @@ func (m Model) runEffort() (tea.Model, tea.Cmd) {
 // nil/idle guards are belt-and-braces here.
 func (m Model) runWorktrees() (tea.Model, tea.Cmd) {
 	return m.openWorktrees()
+}
+
+// runSchedule opens the /schedule overlay (issue #234). Only registered when
+// caps.Scheduling && the schedule lister is wired, so openSchedule's own
+// nil/idle guards are belt-and-braces here.
+func (m Model) runSchedule() (tea.Model, tea.Cmd) {
+	return m.openSchedule()
 }
 
 // runPosture shows the server-wide operator posture tier and a compact per-defense
