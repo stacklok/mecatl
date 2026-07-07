@@ -1,9 +1,9 @@
 # Reuse-ladder brief (Domain axis)
 
 The prompt brief appended to the `library-reuse-reviewer` and
-`code-duplication-reviewer` agent calls in Step 8. Adopted from
-Ponytail's `ponytail-review` skill — the 7-rung ladder and the
-`delete:`/`stdlib:`/`native:`/`yagni:`/`shrink:` tag vocabulary.
+`code-duplication-reviewer` agent calls in Step 8 — the 7-rung
+ladder and the `delete:`/`stdlib:`/`native:`/`yagni:`/`shrink:`
+tag vocabulary.
 
 ## Why a structured brief
 
@@ -57,10 +57,3 @@ new dependency was added" or "actual duplication shape is already
 visible" skips them on exactly the diffs where they add the most
 value. They default to silence when they find nothing, so the cost
 of a false-positive inclusion is low (one quiet agent).
-
-## Source
-
-- Ponytail `ponytail-review` —
-  https://github.com/DietrichGebert/ponytail/blob/main/skills/ponytail-review/SKILL.md
-- Ponytail `AGENTS.md` (the 7-rung ladder) —
-  https://github.com/DietrichGebert/ponytail/blob/main/AGENTS.md

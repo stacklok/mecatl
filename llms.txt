@@ -1,6 +1,6 @@
 # mecatl
 
-> A markdown documentation corpus of 129 document(s) across 10 component(s), with 1504 heading(s) and 1344 resolved reference(s). Entries are ordered by importance (most-connected first). 10 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.80, docs ~2.5 clicks apart.
+> A markdown documentation corpus of 129 document(s) across 10 component(s), with 1510 heading(s) and 1348 resolved reference(s). Entries are ordered by importance (most-connected first). 12 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.78, docs ~2.5 clicks apart.
 
 ## Documentation
 
@@ -276,7 +276,7 @@ This corpus is INCOMPLETE for navigation; an agent should not assume full covera
 - 0 orphan document(s) (nothing links to them)
 - 0 unreachable document(s) (not reachable from a root)
 - 0 under-linked document(s) (few inbound links; hard to discover)
-- 0 dead-end document(s) (no onward links)
+- 2 dead-end document(s) (no onward links)
 - 0 broken link(s)
 - 0 broken anchor(s)
 - 0 ambiguous link(s)

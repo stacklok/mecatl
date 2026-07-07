@@ -466,14 +466,10 @@ synthesis happens within the Domain axis only.
 
 The reuse pair (`library-reuse-reviewer` +
 `code-duplication-reviewer`) is DEFAULT-ON for non-trivial code
-diffs, adopted from Ponytail's stance that over-engineering review
-runs on every diff and *finds* the reinvention rather than gating
-on an already-visible signal. The 7-rung reuse ladder and the
-`delete:`/`stdlib:`/`native:`/`yagni:`/`shrink:` tag vocabulary in
-the reuse-pair brief (Step 8) are adapted from Ponytail's
-`ponytail-review` skill; the `net: -<N> lines possible.` score
-gives the reuse axis a concrete countable metric instead of
-generic prose.
+diffs: over-engineering review runs on every diff and *finds* the
+reinvention rather than gating on an already-visible signal. The
+`net: -<N> lines possible.` score gives the reuse axis a concrete
+countable metric instead of generic prose.
 
 ## See also
 
@@ -485,10 +481,6 @@ generic prose.
   the rendered shape of the Step 9 three-tier report.
 - Matt Pocock's two-axis `/review` skill —
   https://github.com/mattpocock/skills/blob/main/skills/in-progress/review/SKILL.md
-- Ponytail (lazy senior dev) — the 7-rung reuse ladder and the
-  `delete:`/`stdlib:`/`native:`/`yagni:`/`shrink:` tag vocabulary
-  the reuse-pair brief adopts —
-  https://github.com/DietrichGebert/ponytail
 - Claude Code best practices, "Add an adversarial review step" —
   https://code.claude.com/docs/en/best-practices
 - Sub-agents reference, "Run parallel research" pattern —
