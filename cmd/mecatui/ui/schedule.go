@@ -54,6 +54,7 @@ type scheduleState struct {
 	firesLoading bool
 	firesErr     error
 	actionErr    string
+	fireCursor   int // cursor into fires in the inspect sub-view (jump-to-fire, #235)
 }
 
 // openSchedule opens the picker and fires the ListSchedules RPC. Only callable
@@ -172,6 +173,7 @@ func (m Model) openScheduleInspect() (tea.Model, tea.Cmd, bool) {
 	m.schedule.firesLoading = true
 	m.schedule.firesErr = nil
 	m.schedule.actionErr = ""
+	m.schedule.fireCursor = 0
 	name := m.schedule.inspect.Spec.Name
 	return m, tea.Batch(
 		client.GetScheduleCmd(m.deps.Ctx, m.deps.Sched, name),
@@ -227,16 +229,62 @@ func (m Model) onScheduleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 }
 
 // onScheduleInspectKey routes keys while the inspect sub-view is open. esc
-// returns to the panel; everything else is swallowed (read-only).
+// returns to the panel; ↑/↓ move the fire cursor (clamped to len(fires));
+// enter or "t" jumps to the fire's transcript (issue #235), reusing the
+// /sessions handoff (switchToSession). A fire is a top-level session with a
+// `sched--` family id and always carries a terminal Stop, so the state gate
+// (isSessionOpenable) naturally passes — no state derivation from fire.Stop is
+// needed. Jump guards: Replayer nil → no-op; fireCursor out of range or the
+// fire's SessionID empty → set a statusMsg, stay in inspect.
 func (m Model) onScheduleInspectKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if key.Matches(msg, m.keys.Close) {
 		m.schedule.view = schedulePanel
 		m.schedule.inspect = client.Schedule{}
 		m.schedule.fires = nil
 		m.schedule.firesErr = nil
+		m.schedule.fireCursor = 0
 		return m, nil, true
 	}
+	switch {
+	case msg.String() == keyMenuUp:
+		if m.schedule.fireCursor > 0 {
+			m.schedule.fireCursor--
+		}
+		return m, nil, true
+	case msg.String() == keyMenuDown:
+		if m.schedule.fireCursor < len(m.schedule.fires)-1 {
+			m.schedule.fireCursor++
+		}
+		return m, nil, true
+	case key.Matches(msg, m.keys.Choose), msg.String() == "t":
+		return m.jumpToFireTranscript()
+	}
 	return m, nil, true
+}
+
+// jumpToFireTranscript opens a read-only transcript of the cursor fire's
+// session, reusing the /sessions handoff. It clears the schedule overlay state
+// (the transcript view owns the screen) and calls switchToSession with a
+// SessionListItem carrying just the fire's session id (fire records are
+// terminal, so the state gate passes). Guards: no Replayer → no-op; cursor out
+// of range or empty SessionID → statusMsg, stay in inspect.
+func (m Model) jumpToFireTranscript() (tea.Model, tea.Cmd, bool) {
+	if m.deps.Replayer == nil {
+		return m, nil, true
+	}
+	if m.schedule.fireCursor < 0 || m.schedule.fireCursor >= len(m.schedule.fires) {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("fire has no session id")
+		return m, nil, true
+	}
+	fire := m.schedule.fires[m.schedule.fireCursor]
+	if fire.SessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("fire has no session id")
+		return m, nil, true
+	}
+	item := client.SessionListItem{ID: fire.SessionID}
+	// Clear the schedule overlay state — the transcript view owns the screen now.
+	m.schedule = scheduleState{}
+	return m.switchToSession(item)
 }
 
 // syncScheduleFilter recomputes the filtered slice from the filter input and
@@ -331,13 +379,14 @@ func filterSchedules(scheds []client.Schedule, q string) []client.Schedule {
 	return out
 }
 
-// renderScheduleOverlay draws the overlay, dispatching on the view.
-func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabilities, width, height int) string {
+// renderScheduleOverlay draws the overlay, dispatching on the view. replayerWired
+// gates the jump-to-fire footer hint in the inspect sub-view (#235).
+func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabilities, replayerWired bool, width, height int) string {
 	switch st.view {
 	case scheduleConfirm:
 		return renderScheduleConfirm(th, st, width, height)
 	case scheduleInspect:
-		return renderScheduleInspect(th, st, width, height)
+		return renderScheduleInspect(th, st, replayerWired, width, height)
 	default:
 		return renderSchedulePanel(th, st, caps, width, height)
 	}
@@ -408,8 +457,11 @@ func renderScheduleConfirm(th theme.Theme, st scheduleState, _, _ int) string {
 	return b.String()
 }
 
-// renderScheduleInspect renders the full-spec + state + fires card.
-func renderScheduleInspect(th theme.Theme, st scheduleState, _, _ int) string {
+// renderScheduleInspect renders the full-spec + state + fires card. The fire
+// list is cursor-navigable (#235): the cursor row is highlighted with the
+// accent style + a ▶ marker, and the footer hint advertises the jump-to-fire
+// action only when a replayer is wired.
+func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool, _, _ int) string {
 	s := st.inspect
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("schedule — "+sanitizeTerminal(s.Spec.Name)) + "\n\n")
@@ -454,17 +506,28 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, _, _ int) string {
 	} else if len(st.fires) == 0 {
 		b.WriteString(muted.Render("no fires recorded"))
 	} else {
-		for _, f := range st.fires {
-			line := "  " + sanitizeTerminal(f.ID) +
+		for i, f := range st.fires {
+			marker := "  "
+			if i == st.fireCursor {
+				marker = "▶ "
+			}
+			line := marker + sanitizeTerminal(f.ID) +
 				"  " + formatScheduleTime(f.FiredAt) +
 				"  " + sanitizeTerminal(f.Stop)
 			if f.Err != "" {
 				line += "  err: " + sanitizeTerminal(f.Err)
 			}
+			if i == st.fireCursor {
+				line = th.Style("accent").Render(line)
+			}
 			b.WriteString(line + "\n")
 		}
 	}
-	b.WriteString("\n" + muted.Render("esc: back"))
+	hint := "esc: back"
+	if replayerWired {
+		hint = "↑↓: select fire  enter/t: open transcript  esc: back"
+	}
+	b.WriteString("\n" + muted.Render(hint))
 	return b.String()
 }
 

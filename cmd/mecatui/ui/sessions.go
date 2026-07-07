@@ -206,6 +206,12 @@ func (m Model) onSessionsConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 	chosen := m.sessions.confirm
 	switch {
 	case key.Matches(msg, m.keys.Choose): // enter — open read-only
+		if !isSessionOpenable(chosen.State) {
+			m.statusMsg = m.deps.Theme.Style("warning").Render(
+				"session " + sanitizeTerminal(chosen.ID) + " is currently " + chosen.State +
+					" — cannot open read-only while active")
+			return m, nil, true // confirm overlay stays open so the user can esc back
+		}
 		return m.switchToSession(chosen)
 	case key.Matches(msg, m.keys.Close): // esc — undo
 		m.sessions.view = sessionsPanel
@@ -309,6 +315,20 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, bool) {
 	m.sessions.sessions = sm.Sessions
 	m = m.syncSessionsFilter()
 	return m, true
+}
+
+// isSessionOpenable reports whether a stored session in the given state may be
+// opened read-only. The replay RPC (StreamSessionEvents) is a pure durable-log
+// read with NO live-tail: it streams what has been appended so far and ends at
+// the log's current tail. Opening a running/awaiting session would therefore
+// show a PARTIAL transcript with no terminal EvResult — the honest posture is
+// to block it at the UI level and tell the user why. This is a best-effort
+// client-side gate: a session that transitions to running between the
+// ListSessions call and the open will still replay successfully (a partial
+// transcript ending at the log's current tail) — the gate closes the common
+// case, not the race.
+func isSessionOpenable(state string) bool {
+	return state != "running" && state != "awaiting"
 }
 
 // stateBadge returns the one-glyph state badge for a stored session's state string

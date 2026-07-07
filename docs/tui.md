@@ -703,7 +703,25 @@ reflect the new state.
 prompt preview, selector, mode, mutating, singleton, misfire, timezone,
 max_fires) + the durable state (enabled, fire_count, next/last fire,
 last_fire_session) + the fire records (id, fired_at, stop, err); `esc` returns
-to the panel.
+to the panel. In the inspect sub-view the fire records are cursor-navigable
+(`↑`/`↓`, clamped): **`enter`** or **`t`** on a fire jumps straight to that
+fire's read-only transcript (issue #235) — a fire is just a top-level
+`sched--` session, so this reuses the `/sessions` replay handoff. The
+jump-to-fire footer hint (`↑↓: select fire  enter/t: open transcript  esc:
+back`) appears only when a session replayer is wired; a fire whose
+`SessionID` is empty reports "fire has no session id" and stays in inspect.
+
+**State gate (open-a-session).** The `/sessions` picker and the schedule
+jump-to-fire both open a session via the replay RPC (`StreamSessionEvents`),
+which is a **pure durable-log read with no live-tail** — it streams what has
+been appended so far and ends at the log's current tail. Opening a session
+that is currently **`running`** or **`awaiting`** (parked on a permission ask)
+would therefore show a *partial* transcript with no terminal result, so the
+UI **blocks** it with a "session <id> is currently <state> — cannot open
+read-only while active" notice. This is a best-effort client-side gate: a
+session that transitions to running between the `ListSessions` call and the
+open will still replay successfully (a partial transcript ending at the log's
+current tail).
 
 **v1 limits.** The overlay lists/inspects/manages schedules authored elsewhere
 — there is **no in-overlay Create form** (author via `mecated schedule create`

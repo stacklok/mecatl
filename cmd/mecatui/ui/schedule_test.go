@@ -135,7 +135,8 @@ func newScheduleModel(t *testing.T, conv *fakeConv, fs *fakeScheduleLister, caps
 		Ctx:         context.Background(),
 		NoAltScreen: true,
 	})
-	m = applyAll(m,
+	m = applyAll(
+		m,
 		tea.WindowSizeMsg{Width: 100, Height: 40},
 		client.SessionReadyMsg{
 			SessionID:    "sess-test-0001",
@@ -550,5 +551,226 @@ func TestRunScheduleNotIdle(t *testing.T) {
 	}
 	if fs.listCalls != 0 {
 		t.Errorf("openSchedule mid-run should not call ListSchedules, got %d", fs.listCalls)
+	}
+}
+
+// newScheduleModelWithReplayer builds a schedule model that ALSO wires a
+// session lister + replayer (so the jump-to-fire shortcut's switchToSession
+// handoff has a replayer to call). Mirrors newScheduleModel + newSessionsModel.
+func newScheduleModelWithReplayer(t *testing.T, conv *fakeConv, fs *fakeScheduleLister, caps client.Capabilities, fr *fakeSessionReplayer) Model {
+	t.Helper()
+	deps := Deps{
+		Session:     conv,
+		Conv:        conv,
+		Sched:       fs,
+		Sessions:    &fakeSessionLister{},
+		Replayer:    fr,
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Workspace:   "/workspace",
+		Mode:        "default",
+		Model:       "mock-model",
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	}
+	if fr == nil {
+		deps.Replayer = nil
+	}
+	m := New(deps)
+	m = applyAll(
+		m,
+		tea.WindowSizeMsg{Width: 100, Height: 40},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: caps},
+	)
+	return m
+}
+
+// openInspectWithFires drives openSchedule → SchedulesMsg → enter (inspect) →
+// GetSchedule+ListFires, returning the model in the inspect sub-view with the
+// fires loaded. Shared by the jump-to-fire tests.
+func openInspectWithFires(t *testing.T, m Model, fs *fakeScheduleLister) Model {
+	t.Helper()
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: fs.schedules})
+	m.schedule.cursor = 0
+	mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	m = feedCmd(t, m, cmd) // GetSchedule + ListFires
+	if m.schedule.view != scheduleInspect {
+		t.Fatalf("setup: view = %v, want scheduleInspect", m.schedule.view)
+	}
+	return m
+}
+
+// TestScheduleInspectJumpToFireTranscript asserts enter on a fire cursor row
+// jumps to the fire's read-only transcript: phase moves to phaseReplay, the
+// sessionID is the fire's SessionID, the schedule overlay is cleared
+// (scheduleNone), and the replayer is called with the fire's session id.
+func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sampleSchedule("nightly")},
+		sched:     sampleSchedule("nightly"),
+		fires: []client.ScheduleFire{
+			{ID: "fire-1", ScheduleName: "nightly", SessionID: "sess-fire-1", Stop: "end_turn"},
+			{ID: "fire-2", ScheduleName: "nightly", SessionID: "sess-fire-2", Stop: "end_turn"},
+		},
+	}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), fr)
+	m = openInspectWithFires(t, m, fs)
+
+	// Move cursor down to fire-2, then enter → jump.
+	mm, _, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = mm.(Model)
+	if m.schedule.fireCursor != 1 {
+		t.Fatalf("fireCursor = %d, want 1", m.schedule.fireCursor)
+	}
+	mm, _, _ = m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseReplay {
+		t.Fatalf("phase = %v, want phaseReplay", m.phase)
+	}
+	if m.sessionID != "sess-fire-2" {
+		t.Fatalf("sessionID = %q, want sess-fire-2", m.sessionID)
+	}
+	if m.schedule.view != scheduleNone {
+		t.Fatalf("schedule view = %v, want scheduleNone (cleared on jump)", m.schedule.view)
+	}
+	if fr.calls != 1 || fr.lastID != "sess-fire-2" {
+		t.Fatalf("replayer calls=%d lastID=%q, want 1/sess-fire-2", fr.calls, fr.lastID)
+	}
+}
+
+// TestScheduleInspectJumpToFireNoSessionID asserts a fire with an empty
+// SessionID sets a statusMsg about "no session id" and stays in the inspect
+// sub-view (no jump).
+func TestScheduleInspectJumpToFireNoSessionID(t *testing.T) {
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sampleSchedule("nightly")},
+		sched:     sampleSchedule("nightly"),
+		fires: []client.ScheduleFire{
+			{ID: "fire-1", ScheduleName: "nightly", SessionID: "", Stop: "end_turn"},
+		},
+	}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), fr)
+	m = openInspectWithFires(t, m, fs)
+
+	mm, _, _ := m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (no jump)", m.phase)
+	}
+	if m.schedule.view != scheduleInspect {
+		t.Fatalf("view = %v, want scheduleInspect (stayed)", m.schedule.view)
+	}
+	if fr.calls != 0 {
+		t.Errorf("replayer should NOT be called, got %d calls", fr.calls)
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "no session id") {
+		t.Errorf("statusMsg = %q, want it to mention 'no session id'", got)
+	}
+}
+
+// TestScheduleInspectJumpToFireNoReplayer asserts that with no Replayer wired,
+// enter/t is a no-op (no jump, no statusMsg) and the footer hint does NOT
+// advertise the transcript action.
+func TestScheduleInspectJumpToFireNoReplayer(t *testing.T) {
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sampleSchedule("nightly")},
+		sched:     sampleSchedule("nightly"),
+		fires: []client.ScheduleFire{
+			{ID: "fire-1", ScheduleName: "nightly", SessionID: "sess-fire-1", Stop: "end_turn"},
+		},
+	}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), nil) // no replayer
+	m = openInspectWithFires(t, m, fs)
+
+	mm, _, _ := m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (no-op)", m.phase)
+	}
+	if m.schedule.view != scheduleInspect {
+		t.Fatalf("view = %v, want scheduleInspect (stayed)", m.schedule.view)
+	}
+	// 't' is also a no-op.
+	mm, _, _ = m.onScheduleInspectKey(tea.KeyPressMsg{Code: 't', Text: "t"})
+	m = mm.(Model)
+	if m.schedule.view != scheduleInspect {
+		t.Fatalf("view = %v, want scheduleInspect (stayed after 't')", m.schedule.view)
+	}
+	out := stripANSIstr(m.View().Content)
+	if strings.Contains(out, "open transcript") {
+		t.Errorf("footer hint should NOT advertise the transcript action without a replayer:\n%s", out)
+	}
+	if !strings.Contains(out, "esc: back") {
+		t.Errorf("footer hint should still show 'esc: back':\n%s", out)
+	}
+}
+
+// TestScheduleInspectFireCursorNavigation asserts ↑/↓ move the fireCursor,
+// clamped at the bounds, and the render reflects the cursor highlight (the ▶
+// marker on the cursor row).
+func TestScheduleInspectFireCursorNavigation(t *testing.T) {
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sampleSchedule("nightly")},
+		sched:     sampleSchedule("nightly"),
+		fires: []client.ScheduleFire{
+			{ID: "fire-1", ScheduleName: "nightly", SessionID: "sess-1", Stop: "end_turn"},
+			{ID: "fire-2", ScheduleName: "nightly", SessionID: "sess-2", Stop: "end_turn"},
+			{ID: "fire-3", ScheduleName: "nightly", SessionID: "sess-3", Stop: "end_turn"},
+		},
+	}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), fr)
+	m = openInspectWithFires(t, m, fs)
+	if m.schedule.fireCursor != 0 {
+		t.Fatalf("initial fireCursor = %d, want 0", m.schedule.fireCursor)
+	}
+
+	// Down twice → cursor 2.
+	m = applyAll(
+		m,
+		tea.KeyPressMsg{Code: tea.KeyDown},
+		tea.KeyPressMsg{Code: tea.KeyDown},
+	)
+	if m.schedule.fireCursor != 2 {
+		t.Fatalf("fireCursor = %d, want 2", m.schedule.fireCursor)
+	}
+	// Down once more → clamped at 2 (len-1).
+	mm, _, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = mm.(Model)
+	if m.schedule.fireCursor != 2 {
+		t.Fatalf("fireCursor = %d, want 2 (clamped)", m.schedule.fireCursor)
+	}
+	// Up once → cursor 1.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	m = mm.(Model)
+	if m.schedule.fireCursor != 1 {
+		t.Fatalf("fireCursor = %d, want 1", m.schedule.fireCursor)
+	}
+	// Up to 0, then up once more → clamped at 0.
+	m = applyAll(
+		m,
+		tea.KeyPressMsg{Code: tea.KeyUp},
+		tea.KeyPressMsg{Code: tea.KeyUp},
+	)
+	if m.schedule.fireCursor != 0 {
+		t.Fatalf("fireCursor = %d, want 0 (clamped)", m.schedule.fireCursor)
+	}
+	// Render reflects the cursor: the ▶ marker is on fire-1 (cursor 0), the
+	// other rows have the blank marker.
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "▶ fire-1") {
+		t.Errorf("render should highlight fire-1 with ▶:\n%s", out)
+	}
+	if strings.Contains(out, "▶ fire-2") || strings.Contains(out, "▶ fire-3") {
+		t.Errorf("only the cursor row should be highlighted:\n%s", out)
 	}
 }

@@ -81,7 +81,8 @@ func newSessionsModel(t *testing.T, conv *fakeConv, fl *fakeSessionLister, fr *f
 		deps.Replayer = nil
 	}
 	m := New(deps)
-	m = applyAll(m,
+	m = applyAll(
+		m,
 		tea.WindowSizeMsg{Width: 100, Height: 40},
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{}},
 	)
@@ -605,5 +606,76 @@ func TestReplayApprovalVerdictNotices(t *testing.T) {
 		if blocks[0].raw != c.want {
 			t.Errorf("verdict %q: notice = %q, want %q", c.verdict, blocks[0].raw, c.want)
 		}
+	}
+}
+
+// TestSwitchToSessionBlocksRunning asserts the state gate blocks opening a
+// session whose State is "running": Enter→confirm→Enter does NOT switch to
+// phaseReplay, sets a statusMsg naming the state and "cannot open", and leaves
+// the confirm overlay up so the user can esc back to the picker.
+func TestSwitchToSessionBlocksRunning(t *testing.T) {
+	fl := &fakeSessionLister{sessions: []client.SessionListItem{
+		{ID: "sess-run", ModifiedAt: nowMinusMinutes(1), State: "running", Turns: 2, ModelID: "gpt-5"},
+	}}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	// Enter → confirm
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.sessions.view != sessionsConfirm {
+		t.Fatalf("after enter: view = %v, want sessionsConfirm", m.sessions.view)
+	}
+	// Enter → open (blocked by the state gate)
+	mm, _, _ = m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (did not switch)", m.phase)
+	}
+	if m.sessions.view != sessionsConfirm {
+		t.Fatalf("view = %v, want sessionsConfirm (confirm overlay still up)", m.sessions.view)
+	}
+	if fr.calls != 0 {
+		t.Errorf("replayer should NOT be called, got %d calls", fr.calls)
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "running") || !strings.Contains(got, "cannot open") {
+		t.Errorf("statusMsg = %q, want it to mention 'running' and 'cannot open'", got)
+	}
+}
+
+// TestSwitchToSessionBlocksAwaiting asserts the state gate also blocks an
+// "awaiting" session (parked on a permission ask — a partial transcript).
+func TestSwitchToSessionBlocksAwaiting(t *testing.T) {
+	fl := &fakeSessionLister{sessions: []client.SessionListItem{
+		{ID: "sess-wait", ModifiedAt: nowMinusMinutes(1), State: "awaiting", Turns: 1, ModelID: "gpt-5"},
+	}}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})                   // → confirm
+	mm, _, _ = m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // → open (blocked)
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (did not switch)", m.phase)
+	}
+	if m.sessions.view != sessionsConfirm {
+		t.Fatalf("view = %v, want sessionsConfirm (confirm overlay still up)", m.sessions.view)
+	}
+	if fr.calls != 0 {
+		t.Errorf("replayer should NOT be called, got %d calls", fr.calls)
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "awaiting") || !strings.Contains(got, "cannot open") {
+		t.Errorf("statusMsg = %q, want it to mention 'awaiting' and 'cannot open'", got)
 	}
 }
