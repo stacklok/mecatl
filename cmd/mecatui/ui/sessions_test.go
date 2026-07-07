@@ -352,8 +352,9 @@ func TestReplayStreamErrShowsError(t *testing.T) {
 }
 
 // TestReplayStreamClosedKeepsTranscript asserts a StreamClosedMsg from the replay
-// flips the loading card to "transcript loaded", stays in phaseReplay, and does
-// not re-arm.
+// keeps the transcript rendered (Slice 3b: the full transcript renders, not just a
+// "loaded" card), stays in phaseReplay, and does not re-arm. With no prior events
+// the transcript is empty, so the view renders the "no events" note.
 func TestReplayStreamClosedKeepsTranscript(t *testing.T) {
 	fl := &fakeSessionLister{sessions: sampleSessions()}
 	conv := newSessionsConv()
@@ -372,8 +373,11 @@ func TestReplayStreamClosedKeepsTranscript(t *testing.T) {
 	if cmd != nil {
 		t.Errorf("StreamClosedMsg should NOT re-arm, got cmd = %v", cmd)
 	}
-	if !strings.Contains(m.View().Content, "transcript loaded") {
-		t.Errorf("transcript view should render 'transcript loaded':\n%s", m.View().Content)
+	if !strings.Contains(m.View().Content, "read-only transcript") {
+		t.Errorf("transcript view should render the read-only transcript header:\n%s", m.View().Content)
+	}
+	if !strings.Contains(m.View().Content, "no events") {
+		t.Errorf("an empty closed transcript should render the 'no events' note:\n%s", m.View().Content)
 	}
 }
 
@@ -431,5 +435,175 @@ func TestSessionsEscOnTranscriptTearsDown(t *testing.T) {
 	}
 	if !m.conv.isEmpty() {
 		t.Errorf("conv should be cleared by resetSession, got %d blocks", len(m.conv.blocks))
+	}
+}
+
+// replayScriptMsgs is a scripted replay sequence (user_prompt + turn.start +
+// assistant delta + tool.call + tool.result + approval + result) the projection-
+// equivalence test drives through updateReplayMsg. It is the SAME shape of
+// sequence askFrameMsgs drives through the LIVE updateStreamEvent path, so the
+// two paths' projections can be compared.
+func replayScriptMsgs() []tea.Msg {
+	return []tea.Msg{
+		client.UserPromptMsg{Text: "read the greeting file"},
+		client.TurnStartMsg{Turn: 1},
+		client.AssistantDeltaMsg{Turn: 1, Text: "Reading the greeting file."},
+		client.ToolCallMsg{ID: "call-read-1", Name: "Read", Args: `{"path":"greeting.txt"}`},
+		client.ToolResultMsg{CallID: "call-read-1", Content: "hello from the mecatl demo workspace"},
+		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100},
+		client.ApprovalMsg{AskID: "ask-1", Verdict: "allow_once", Tool: "Read", CallID: "call-read-1"},
+		client.ResultMsg{Stop: "end_turn"},
+	}
+}
+
+// driveReplay feeds a scripted replay sequence through updateReplayMsg, gen-
+// matching each msg, returning the resulting model. Mirrors how the live path's
+// applyAll feeds askFrameMsgs through Update.
+func driveReplay(t *testing.T, m Model, msgs []tea.Msg) Model {
+	t.Helper()
+	for _, msg := range msgs {
+		mm, _ := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: msg})
+		m = mm.(Model)
+	}
+	return m
+}
+
+// setupReplayTranscript sets up the phaseReplay transcript state WITHOUT opening
+// a real replay stream (so a test can drive updateReplayMsg deterministically
+// with scripted msgs, without a live reader goroutine racing the gen guard). It
+// mirrors switchToSession's state setup minus the ReplayStreamCmd open: adopt the
+// session id, enter phaseReplay, and zero the transcript. The block caches are
+// reset (as switchToSession does via resetSession) so the transcript's blocks
+// never alias a prior conversation's cache entries.
+func setupReplayTranscript(m Model, s client.SessionListItem) Model {
+	m = m.resetSession()
+	m.sessionID = s.ID
+	m.sessions.replayGen = 1
+	m.sessions.transcript = conversation{}
+	m.sessions.view = sessionsTranscript
+	m.sessions.confirm = s
+	m.phase = phaseReplay
+	m.restartedThisRun = true
+	return m
+}
+
+// TestReplayProjectionEquivalence drives a scripted replay (user_prompt + turn +
+// assistant text + tool call/result + turn-end + approval verdict + result)
+// through updateReplayMsg and asserts m.sessions.transcript has the right blocks
+// (a user block, an assistant block carrying the text, a resolved tool block, a
+// turn-stat, an approval verdict notice, and NO error block). This is the
+// projection-equivalence proof: the replay path produces the SAME block shape the
+// live updateStreamEvent path would for the same event sequence.
+func TestReplayProjectionEquivalence(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+	m = setupReplayTranscript(m, sampleSessions()[0])
+	m = driveReplay(t, m, replayScriptMsgs())
+
+	blocks := m.sessions.transcript.blocks
+	// Expected block kinds in order: user, assistant, tool, turnStat, notice(approval).
+	// (ResultMsg{Stop:"end_turn"} is a non-error terminal → no block.)
+	if len(blocks) < 5 {
+		t.Fatalf("transcript blocks = %d, want ≥5:\n%+v", len(blocks), blocks)
+	}
+	if blocks[0].kind != blockUser {
+		t.Errorf("block 0 kind = %v, want blockUser", blocks[0].kind)
+	}
+	if blocks[0].raw != "read the greeting file" {
+		t.Errorf("block 0 raw = %q, want the user prompt text", blocks[0].raw)
+	}
+	if blocks[1].kind != blockAssistant {
+		t.Errorf("block 1 kind = %v, want blockAssistant", blocks[1].kind)
+	}
+	if !strings.Contains(blocks[1].raw, "Reading the greeting file.") {
+		t.Errorf("block 1 raw = %q, want the assistant text", blocks[1].raw)
+	}
+	if blocks[2].kind != blockTool {
+		t.Errorf("block 2 kind = %v, want blockTool", blocks[2].kind)
+	}
+	if blocks[2].toolName != "Read" || !blocks[2].resolved {
+		t.Errorf("block 2 = %+v, want a resolved Read tool block", blocks[2])
+	}
+	if !strings.Contains(blocks[2].resultBody, "hello from the mecatl demo workspace") {
+		t.Errorf("block 2 resultBody = %q, want the tool result content", blocks[2].resultBody)
+	}
+	if blocks[3].kind != blockTurnStat {
+		t.Errorf("block 3 kind = %v, want blockTurnStat", blocks[3].kind)
+	}
+	// The approval verdict is a notice. Find the notice block carrying the verdict.
+	found := false
+	for _, b := range blocks {
+		if b.kind == blockNotice && strings.Contains(b.raw, "allowed once") && strings.Contains(b.raw, "Read") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("transcript missing the approval verdict notice, blocks:\n%+v", blocks)
+	}
+	// No error block: ResultMsg{Stop:"end_turn"} is a clean terminal.
+	for i, b := range blocks {
+		if b.kind == blockError {
+			t.Errorf("block %d is blockError, want none for a clean terminal result: %+v", i, b)
+		}
+	}
+	// The live m.conv must be UNTOUCHED (the replay projects into sessions.transcript,
+	// never the live conversation).
+	if !m.conv.isEmpty() {
+		t.Errorf("live conv should be empty during replay, got %d blocks", len(m.conv.blocks))
+	}
+}
+
+// TestReplayCompactionArchiveNotice asserts a CompactionArchiveMsg renders as a
+// bounded "history compacted — N turns archived" notice rather than the verbatim
+// (huge) archived message slice.
+func TestReplayCompactionArchiveNotice(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+	m = setupReplayTranscript(m, sampleSessions()[0])
+	archive := client.CompactionArchiveMsg{Replaced: []client.ConversationMessage{
+		{Role: "user", Text: "old prompt 1"},
+		{Role: "assistant", Text: "old answer 1"},
+		{Role: "user", Text: "old prompt 2"},
+	}}
+	m = driveReplay(t, m, []tea.Msg{archive})
+	blocks := m.sessions.transcript.blocks
+	if len(blocks) != 1 || blocks[0].kind != blockNotice {
+		t.Fatalf("transcript blocks = %+v, want one blockNotice", blocks)
+	}
+	if !strings.Contains(blocks[0].raw, "history compacted") {
+		t.Errorf("notice = %q, want 'history compacted'", blocks[0].raw)
+	}
+	if !strings.Contains(blocks[0].raw, "3 turns archived") {
+		t.Errorf("notice = %q, want '3 turns archived'", blocks[0].raw)
+	}
+}
+
+// TestReplayApprovalVerdictNotices asserts the three verdict kinds render their
+// one-line notice correctly.
+func TestReplayApprovalVerdictNotices(t *testing.T) {
+	cases := []struct {
+		verdict string
+		want    string
+	}{
+		{"allow_once", "✓ allowed once: Bash"},
+		{"allow_always", "✓ allowed always: Bash"},
+		{"deny", "✗ denied: Bash"},
+	}
+	for _, c := range cases {
+		fl := &fakeSessionLister{sessions: sampleSessions()}
+		conv := newSessionsConv()
+		m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+		m = setupReplayTranscript(m, sampleSessions()[0])
+		m = driveReplay(t, m, []tea.Msg{client.ApprovalMsg{Verdict: c.verdict, Tool: "Bash"}})
+		blocks := m.sessions.transcript.blocks
+		if len(blocks) != 1 || blocks[0].kind != blockNotice {
+			t.Fatalf("verdict %q: blocks = %+v, want one blockNotice", c.verdict, blocks)
+		}
+		if blocks[0].raw != c.want {
+			t.Errorf("verdict %q: notice = %q, want %q", c.verdict, blocks[0].raw, c.want)
+		}
 	}
 }

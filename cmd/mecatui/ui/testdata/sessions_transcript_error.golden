@@ -1,9 +1,36 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-session transcript
+session sess-test-0001 · read-only transcript
+ ✗ replay error: could not reach session store
 
-replay error: could not reach session store
-esc: close
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                    esc: back
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

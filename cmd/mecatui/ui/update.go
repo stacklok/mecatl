@@ -695,29 +695,38 @@ func noticeLine(msg tea.Msg) string {
 // carries no child content either way, so a lost subagent event only costs the
 // trace, never correctness or isolation.
 func (m *Model) applySubagent(msg client.SubagentMsg) {
-	// Two destinations, fed from the SAME event: (1) the inline Subagent card, keyed by
-	// ParentCallID (the calm in-context default); (2) the flat fleet collection, keyed
-	// by ChildID, which backs the fleet footer segment and the ctrl+a Subagents tab.
-	// Both are redacted, metadata-only — neither carries child content (gauntlet #7).
-	switch msg.Kind {
-	case client.SubagentStart:
-		m.conv.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
-		m.conv.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model, msg.Background)
-	case client.SubagentTool:
-		m.conv.addSubagentTool(msg.ParentCallID, msg.ToolName, msg.IsError, msg.ToolCount)
-		m.conv.fleetTool(msg.ChildID, msg.ToolName, msg.IsError, msg.ToolCount)
-	case client.SubagentEnd:
-		m.conv.setSubagentEnd(msg.ParentCallID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
-		m.conv.fleetEnd(msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
-		// A BACKGROUND child finishing is otherwise invisible (its Subagent card
-		// resolved long ago with the started-result), so surface a brief transient
-		// footer notice — the same advisory channel as team-done / no-progress, never
-		// a durable scrollback line. The result body goes to the AGENT (via
-		// SubagentStatus), not to this client; the copy says exactly that.
+	applySubagentTo(&m.conv, msg)
+	// A BACKGROUND child finishing is otherwise invisible (its Subagent card
+	// resolved long ago with the started-result), so surface a brief transient
+	// footer notice — the same advisory channel as team-done / no-progress, never
+	// a durable scrollback line. The result body goes to the AGENT (via
+	// SubagentStatus), not to this client; the copy says exactly that.
+	if msg.Kind == client.SubagentEnd {
 		if ln := findFleetLane(m.conv.subagentFleet, msg.ChildID); ln != nil && ln.background {
 			m.statusMsg = m.deps.Theme.Style("muted").Render(
 				"background subagent #" + shortChildID(msg.ChildID) + " done — result ready for the agent")
 		}
+	}
+}
+
+// applySubagentTo is the pure conversation-projection half of applySubagent: it
+// routes a REDACTED subagent projection into the inline Subagent card (keyed by
+// ParentCallID) AND the flat fleet collection (keyed by ChildID) on c. Both are
+// redacted, metadata-only — neither carries child content (gauntlet #7). The live
+// applySubagent delegates here and layers the transient footer status on top; the
+// replay path (applyReplayEvent) calls this directly so the read-only transcript
+// gets the SAME projection without any live-run footer side-effect.
+func applySubagentTo(c *conversation, msg client.SubagentMsg) {
+	switch msg.Kind {
+	case client.SubagentStart:
+		c.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
+		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model, msg.Background)
+	case client.SubagentTool:
+		c.addSubagentTool(msg.ParentCallID, msg.ToolName, msg.IsError, msg.ToolCount)
+		c.fleetTool(msg.ChildID, msg.ToolName, msg.IsError, msg.ToolCount)
+	case client.SubagentEnd:
+		c.setSubagentEnd(msg.ParentCallID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
+		c.fleetEnd(msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
 	}
 }
 
@@ -728,17 +737,25 @@ func (m *Model) applySubagent(msg client.SubagentMsg) {
 // model reads; these events are the client observability channel only. All fields are
 // redacted, metadata-only — none carries branch content (gauntlet #7).
 func (m *Model) applyParallel(msg client.ParallelMsg) {
+	applyParallelTo(&m.conv, msg)
+}
+
+// applyParallelTo is the pure conversation-projection half of applyParallel: it
+// routes a REDACTED Parallel fork-join projection into c's parallelGroups (keyed
+// by ParentCallID). The live applyParallel delegates here; the replay path calls
+// this directly. All fields are redacted, metadata-only (gauntlet #7).
+func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 	switch msg.Kind {
 	case client.ParallelStart:
-		m.conv.parallelStart(msg.ParentCallID, msg.Join, msg.BranchCount)
+		c.parallelStart(msg.ParentCallID, msg.Join, msg.BranchCount)
 	case client.ParallelBranchStart:
-		m.conv.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
+		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
 	case client.ParallelBranchTool:
-		m.conv.parallelBranchTool(msg.ParentCallID, msg.BranchIndex, msg.ToolName, msg.IsError, msg.ToolCount)
+		c.parallelBranchTool(msg.ParentCallID, msg.BranchIndex, msg.ToolName, msg.IsError, msg.ToolCount)
 	case client.ParallelBranchEnd:
-		m.conv.parallelBranchEnd(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.Failed, msg.Workspace, msg.DurationMs)
+		c.parallelBranchEnd(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.Failed, msg.Workspace, msg.DurationMs)
 	case client.ParallelEnd:
-		m.conv.parallelEnd(msg.ParentCallID, msg.Join, msg.BranchCount, msg.Winner, msg.WinnerWorkspace, msg.Stop)
+		c.parallelEnd(msg.ParentCallID, msg.Join, msg.BranchCount, msg.Winner, msg.WinnerWorkspace, msg.Stop)
 	}
 }
 
@@ -747,17 +764,8 @@ func (m *Model) applyParallel(msg client.ParallelMsg) {
 // member transcripts never enter the parent conversation either way, so a lost
 // team.* event only costs the lane trace, never correctness or isolation.
 func (m *Model) applyTeam(msg client.TeamMsg) {
-	switch msg.Kind {
-	case client.TeamStart:
-		m.conv.setTeamStart(msg.ParentCallID, msg.TeamID, msg.Roster)
-	case client.TeamMember:
-		m.conv.addTeamMember(msg)
-	case client.TeamTasks:
-		m.conv.setTeamTasks(msg.ParentCallID, msg.Tasks)
-	case client.TeamFindings:
-		m.conv.setTeamFindings(msg.ParentCallID, msg.Findings)
-	case client.TeamEnd:
-		m.conv.setTeamEnd(msg.ParentCallID, msg.TeamID, msg.Rounds, msg.Stop, msg.Usage, msg.Dispositions)
+	applyTeamTo(&m.conv, msg)
+	if msg.Kind == client.TeamEnd {
 		// team.end carries the terminal task + findings snapshots too, so the sub-views
 		// land the final state even if no member event followed the last transition.
 		m.conv.setTeamTasks(msg.ParentCallID, msg.Tasks)
@@ -766,6 +774,27 @@ func (m *Model) applyTeam(msg client.TeamMsg) {
 		// status, never a durable scrollback notice. The durable team outcome already rides
 		// the team card + the run's ResultMsg.
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("team done · %s", plural(msg.Rounds, "round")))
+	}
+}
+
+// applyTeamTo is the pure conversation-projection half of applyTeam: it routes a
+// BOUNDED team projection into c's Team tool card (keyed by ParentCallID). The
+// live applyTeam delegates here and layers the terminal task/findings snapshot +
+// the transient footer status on top; the replay path calls this directly so the
+// read-only transcript gets the SAME projection without any live-run footer
+// side-effect.
+func applyTeamTo(c *conversation, msg client.TeamMsg) {
+	switch msg.Kind {
+	case client.TeamStart:
+		c.setTeamStart(msg.ParentCallID, msg.TeamID, msg.Roster)
+	case client.TeamMember:
+		c.addTeamMember(msg)
+	case client.TeamTasks:
+		c.setTeamTasks(msg.ParentCallID, msg.Tasks)
+	case client.TeamFindings:
+		c.setTeamFindings(msg.ParentCallID, msg.Findings)
+	case client.TeamEnd:
+		c.setTeamEnd(msg.ParentCallID, msg.TeamID, msg.Rounds, msg.Stop, msg.Usage, msg.Dispositions)
 	}
 }
 
@@ -2017,11 +2046,14 @@ func (m Model) waitReplayCmd() tea.Cmd {
 // after esc tore down a transcript view), so the message is dropped and NOT
 // re-armed — the stale reader dies with it. Parallel to onStreamMsg.
 //
-// Slice 3a: the inner msg is drained honestly (gen-guard + count + mark dirty) but
-// NOT projected into sessions.transcript — the updateStreamEvent refactor to
-// target a conversation is Slice 3b. The loading card renders the drained state
-// (loading / loaded / error). The channel-close handling (StreamClosedMsg /
-// StreamErrMsg) flips the loading card to its terminal arm.
+// Slice 3b: the inner msg is PROJECTED into m.sessions.transcript via
+// applyReplayEvent (the SAME conversation mutators the live updateStreamEvent
+// path calls — conv.addUser/addTool/appendAssistant/addNotice/… — over a SEPARATE
+// conversation so the read-only replay transcript and the live m.conv never
+// collide). The replay never mutates the live model's run-derived state
+// (activeTool/usage/ask-queue/footer-heal): those are live-run concerns; a replay
+// is a bounded, read-only batch. StreamClosedMsg / StreamErrMsg flip the transcript
+// to its terminal arm (loaded / error line) and stay in phaseReplay.
 func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 	if sm.gen != m.sessions.replayGen {
 		return m, nil // stale reader — drop, do not re-arm
@@ -2029,25 +2061,202 @@ func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 	switch msg := sm.msg.(type) {
 	case client.StreamClosedMsg:
 		// Clean replay EOF: the transcript is loaded. Stay in phaseReplay; the
-		// loading card flips to "transcript loaded". No re-arm (the channel closed).
+		// transcript renders fully. No re-arm (the channel closed).
 		m.sessions.replayClosed = true
 		m.sessions.loading = false
 		m.refreshView()
 		return m, nil
 	case client.StreamErrMsg:
-		// A replay error: render the error line, stay in phaseReplay. No re-arm.
+		// A replay error: render the error line IN the transcript (so any partial
+		// projection before the error survives), stay in phaseReplay. No re-arm.
 		m.sessions.replayClosed = true
 		m.sessions.replayErr = msg.Err
 		m.sessions.loading = false
+		m.sessions.transcript.addError("replay error: " + msg.Err.Error())
 		m.refreshView()
 		return m, nil
 	default:
-		// A replay event msg: count it (3a drains honestly without projecting; 3b
-		// will wire the projection into sessions.transcript). Re-arm the reader.
+		// A replay event msg: project it into the transcript via the SAME
+		// conversation mutators the live path uses (projection equivalence), count
+		// it, and re-arm the reader. loading clears on the first projected msg.
+		(&m).applyReplayEvent(msg)
 		m.sessions.receivedMsgs++
+		m.sessions.loading = false
 		m.refreshView()
 		return m, m.waitReplayCmd()
 	}
+}
+
+// applyReplayEvent projects ONE replayed stream event into m.sessions.transcript
+// via the SAME conversation mutators the live updateStreamEvent path calls
+// (conv.addUser / addTool / appendAssistant / addNotice / addHook / addError /
+// resolveTool / startAssistant / …). It is the read-only-replay analogue of
+// updateStreamEvent's conversation-mutating arms, targeting a SEPARATE
+// conversation (&m.sessions.transcript) so the replay transcript and the live
+// m.conv never collide.
+//
+// It deliberately does NOT reproduce the live path's Model side-effects
+// (m.activeTool / m.toolProgress / m.usage / m.askQueue / m.contextTokens / the
+// footer context-meter self-heal / recordFileChange): those are live-run
+// concerns, and a replay is a bounded, read-only inspection. The three log-only
+// replay msgs (UserPromptMsg / ApprovalMsg / CompactionArchiveMsg) — which the
+// live Converse wire NEVER relays — render here: UserPromptMsg → addUser (the
+// user's prompt text); ApprovalMsg → a muted verdict notice (the replay has no
+// live ask modal, so a one-line "✓ allowed: Bash" / "✗ denied: Bash" annotation
+// is the honest transcript record); CompactionArchiveMsg → a notice ("history
+// compacted — N turns archived") rather than the verbatim archived message slice
+// (which is huge and already represented by the compacted tail that follows).
+func (m *Model) applyReplayEvent(msg tea.Msg) {
+	c := &m.sessions.transcript
+	switch msg := msg.(type) {
+	case client.UserPromptMsg:
+		// The recorded user message (EvUserPrompt). Text is the flattened prompt
+		// body; Parts carries any image/audio media. Mirror the live submit path's
+		// addUser/addUserWithMedia so a multimodal prompt renders its 📎 placeholders.
+		if descs := mediaDescriptors(msg.Parts); len(descs) > 0 {
+			c.addUserWithMedia(msg.Text, descs)
+		} else {
+			c.addUser(msg.Text)
+		}
+	case client.TurnStartMsg:
+		c.startAssistant()
+	case client.AssistantDeltaMsg:
+		c.appendAssistant(msg.Text)
+	case client.ReasoningDeltaMsg:
+		c.appendReasoning(msg.Text)
+	case client.TurnEndMsg:
+		c.endReasoningStream()
+		if !trivialTurn(msg) {
+			c.addTurnStat(turnStatLine(msg))
+		}
+	case client.ToolCallMsg:
+		c.addTool(msg.ID, msg.Name, msg.Args)
+	case client.ToolResultMsg:
+		if !c.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
+			c.addNotice("orphan tool result for " + msg.CallID)
+		}
+	case client.HookMsg:
+		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
+	case client.ResultMsg:
+		// The terminal event. A stop=error with an Error string renders as an
+		// error notice (mirroring applyResult's addError); any other stop is a
+		// silent terminal (the footer would carry it live, but the replay footer
+		// is read-only chrome — the transcript's tool/result blocks already show
+		// the run's outcome).
+		if msg.Stop == stopError && msg.Error != "" {
+			c.addError(msg.Error)
+		}
+	default:
+		// The log-only msgs (UserPrompt/Approval/CompactionArchive are NOT here —
+		// they are primary transcript content), the delegation projections, the
+		// transient notices, and the no-projection msgs are reduced by
+		// applyReplayEventSecondary (a second switch) to keep this dispatcher
+		// under the cyclomatic-complexity bound — the same split the live path's
+		// updateStreamEvent/updateStreamSecondary carries. Together the two
+		// switches are total over the replay msg taxonomy.
+		m.applyReplayEventSecondary(msg)
+	}
+}
+
+// applyReplayEventSecondary is the back half of applyReplayEvent: the log-only
+// replay msgs (Approval/CompactionArchive — UserPrompt is primary, handled
+// above), the delegation projections, the transient notices, and the
+// no-projection msgs. Split out only so neither dispatcher grows past the
+// cyclomatic-complexity bound, mirroring the live updateStreamSecondary split.
+func (m *Model) applyReplayEventSecondary(msg tea.Msg) {
+	c := &m.sessions.transcript
+	switch msg := msg.(type) {
+	case client.ApprovalMsg:
+		// The verdict half of a permission ask (EvApproval). The replay has no
+		// live ask modal, so render a one-line verdict notice adjacent to the
+		// tool call's result. Metadata-only (gauntlet #7): tool NAME + verdict,
+		// never the raw args.
+		c.addNotice(approvalNotice(msg))
+	case client.CompactionArchiveMsg:
+		// The pre-compaction conversation (EvCompactionArchive). It is HUGE (a
+		// full message slice) and already represented by the compacted tail the
+		// following events replay, so render a bounded notice rather than the
+		// verbatim archive.
+		c.addNotice(compactionArchiveNotice(msg))
+	case client.CompactionMsg:
+		c.addNotice(noticeLine(msg))
+	case client.NoProgressMsg:
+		// Transient in the live path; in a replay it is a durable record of the
+		// run's no-progress boundary, so render it as a muted notice.
+		c.addNotice(noticeLine(msg))
+	case client.SubagentMsg:
+		// The delegation projections route into the transcript's Subagent card /
+		// fleet via the SAME mutators the live applySubagent path uses.
+		applySubagentTo(c, msg)
+	case client.ParallelMsg:
+		applyParallelTo(c, msg)
+	case client.TeamMsg:
+		applyTeamTo(c, msg)
+	case client.PermissionAskMsg, client.PermissionRetractMsg, client.ToolProgressMsg,
+		client.SessionInitMsg:
+		// No transcript projection: PermissionAskMsg opens the live modal (the
+		// replay surfaces the verdict via ApprovalMsg instead), PermissionRetractMsg
+		// withdraws a live modal, ToolProgressMsg is a transient live status line,
+		// and SessionInitMsg is a transport handshake. None enters the transcript.
+	default:
+		// Unknown msg: no projection (mirrors updateStreamSecondary's no-op default).
+	}
+}
+
+// mediaDescriptors builds one human-readable descriptor per non-text media part of
+// a replayed user prompt (UserPromptMsg.Parts), mirroring the live submit path's
+// media.Descriptors so addUserWithMedia renders the same "📎 …" placeholder lines.
+// Text/embedded/structured parts are already represented in the flattened Text and
+// are skipped here (as they are on the live path).
+func mediaDescriptors(parts []client.ContentBlock) []string {
+	var out []string
+	for _, p := range parts {
+		switch p.Kind {
+		case client.ContentBlockImage, client.ContentBlockAudio:
+			if p.URL != "" {
+				out = append(out, string(p.Kind)+" ("+p.URL+")")
+			} else if p.MimeType != "" {
+				out = append(out, p.MimeType+" (inline)")
+			} else {
+				out = append(out, string(p.Kind)+" (inline)")
+			}
+		}
+	}
+	return out
+}
+
+// approvalNotice renders the muted one-line verdict notice for a replayed
+// EvApproval (ApprovalMsg). The replay has no live ask modal, so this is the
+// transcript's audit record of the verdict. Metadata-only (gauntlet #7): tool
+// NAME + verdict, never the raw args.
+func approvalNotice(msg client.ApprovalMsg) string {
+	tool := msg.Tool
+	if tool == "" {
+		tool = "tool"
+	}
+	switch msg.Verdict {
+	case "allow_once":
+		return "✓ allowed once: " + tool
+	case "allow_always":
+		return "✓ allowed always: " + tool
+	case "deny":
+		return "✗ denied: " + tool
+	default:
+		if msg.Verdict == "" {
+			return "· permission: " + tool
+		}
+		return "· " + msg.Verdict + ": " + tool
+	}
+}
+
+// compactionArchiveNotice renders a bounded notice for a replayed
+// EvCompactionArchive (CompactionArchiveMsg). The archive carries the FULL
+// pre-compaction message slice (huge); the compacted tail the following events
+// replay already represents the surviving conversation, so a one-line "history
+// compacted — N turns archived" notice is the honest transcript record.
+func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
+	n := len(msg.Replaced)
+	return "history compacted — " + plural(n, "turn") + " archived"
 }
 
 // onReplayKey routes keys while a stored-session transcript replay is open
@@ -2650,6 +2859,19 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
+	// phaseReplay renders the read-only transcript conversation (m.sessions.transcript)
+	// instead of the live m.conv. The transcript is a bounded, read-only batch: no
+	// selection, no expand-tools, no changed-files footer. The renderer's per-block
+	// caches were reset on the switchToSession handoff (resetSession) and are reset
+	// again on closeSessionsTranscript, so the two conversations never alias a cache
+	// entry. Stuck stays true (auto-follow the bottom as the batch drains).
+	if m.phase == phaseReplay {
+		m.vp.SetContentLines(m.rend.renderConversationLines(&m.sessions.transcript, false))
+		if m.stuck {
+			m.vp.GotoBottom()
+		}
+		return
+	}
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
 	// changed-files footer is not in play (it renders only under the global expand
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line

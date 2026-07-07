@@ -1,0 +1,41 @@
+ mecatui  ·  session sess-aaa  ·  mock-model  ·  mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+session sess-aaa · read-only transcript
+ ▌ you
+ │ read the greeting file
+
+ ● mecatl
+
+   Reading the greeting file.
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ ✓ Read                                                                                        │
+ │ path: "greeting.txt"                                                                          │
+ │ hello from the mecatl demo workspace                                                          │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                    esc: back
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

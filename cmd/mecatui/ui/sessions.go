@@ -348,14 +348,18 @@ func relativeTime(unixSec int64) string {
 
 // renderSessionsOverlay draws the picker, its post-Enter confirmation, or the
 // read-only transcript view. Mirrors renderWorktreesOverlay's centred-card shape.
-// The transcript arm (3a) renders a loading card; 3b will render the drained
-// transcript.
-func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabilities, width, height int) string {
+// The transcript arm (3b) renders the drained transcript: the viewport content
+// (populated by refreshView from m.sessions.transcript) framed by a header line
+// and an esc hint, falling back to the loading/error card when there is nothing
+// to render yet. sessionID is the adopted session's id (m.sessionID), shown in the
+// transcript header — distinct from st.confirm.ID (the picker candidate, cleared
+// on the switchToSession handoff).
+func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabilities, sessionID, vpContent string, width, height int) string {
 	switch st.view {
 	case sessionsConfirm:
 		return renderSessionsConfirm(th, st, width, height)
 	case sessionsTranscript:
-		return renderSessionsTranscript(th, st, width, height)
+		return renderSessionsTranscript(th, st, sessionID, vpContent, width, height)
 	default:
 		return renderSessionsPanel(th, st, caps, width, height)
 	}
@@ -418,23 +422,49 @@ func renderSessionsConfirm(th theme.Theme, st sessionsState, _, _ int) string {
 	return b.String()
 }
 
-// renderSessionsTranscript renders the read-only replay view. Slice 3a renders a
-// loading card ("loading transcript for <id>…" / "transcript loaded" / the replay
-// error line); Slice 3b will render the drained transcript via the block
-// renderers over sessions.transcript.
-func renderSessionsTranscript(th theme.Theme, st sessionsState, _, _ int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("session transcript") + "\n\n")
-	if st.replayErr != nil {
-		b.WriteString(th.Style("errorText").Render("replay error: " + sanitizeTerminal(st.replayErr.Error())))
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+// renderSessionsTranscript renders the read-only replay view. Slice 3b renders
+// the drained transcript: the viewport content (the block renderers' projection of
+// m.sessions.transcript, populated by refreshView) framed by a "session <id> ·
+// read-only transcript" header and an "esc: back" hint. While the replay is still
+// loading (no content, not closed, no error) it renders the loading card; on a
+// replay error it renders the error line; once the stream closes (or content has
+// arrived) it renders the transcript. The transcript is a STATIC viewport
+// (read-only, no auto-follow streaming dynamics — the replay is a bounded batch).
+func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpContent string, _, _ int) string {
+	// Loading arm: nothing projected yet AND the stream has not closed → the
+	// loading card. Once the first msg lands (transcript non-empty) OR the stream
+	// closes (replayClosed), render the transcript view.
+	if st.transcript.isEmpty() && !st.replayClosed {
+		var b strings.Builder
+		b.WriteString(th.Style("title").Render("session transcript") + "\n\n")
+		b.WriteString(th.Style("muted").Render("loading transcript for " + sanitizeTerminal(sessionID) + "…"))
+		b.WriteString("\n" + th.Style("muted").Render("esc: back"))
 		return b.String()
 	}
-	if st.replayClosed {
-		b.WriteString(th.Style("muted").Render("transcript loaded"))
-	} else {
-		b.WriteString(th.Style("muted").Render("loading transcript for " + sanitizeTerminal(st.confirm.ID) + "…"))
+	// Transcript arm: the header line + the projected transcript blocks (which
+	// include any replay-error line projected by updateReplayMsg's StreamErrMsg
+	// arm, so a partial projection before the error survives) + the esc hint.
+	// The transcript conversation's isEmpty() is the honest emptiness signal: the
+	// viewport pads empty content to its height with blank lines, so vpContent is
+	// never truly "" for a sized viewport. An empty transcript (a clean EOF over
+	// zero events, or only an error with no prior content) renders the error card
+	// (when replayErr is set) or a "no events" note.
+	if st.transcript.isEmpty() && st.replayErr != nil {
+		var b strings.Builder
+		b.WriteString(th.Style("title").Render("session transcript") + "\n\n")
+		b.WriteString(th.Style("errorText").Render("replay error: " + sanitizeTerminal(st.replayErr.Error())))
+		b.WriteString("\n" + th.Style("muted").Render("esc: back"))
+		return b.String()
 	}
-	b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+	var b strings.Builder
+	b.WriteString(th.Style("muted").Render("session " + sanitizeTerminal(sessionID) + " · read-only transcript"))
+	b.WriteString("\n")
+	if st.transcript.isEmpty() {
+		b.WriteString(th.Style("muted").Render("(no events in this session)"))
+		b.WriteString("\n")
+	} else {
+		b.WriteString(vpContent)
+	}
+	b.WriteString(th.Style("muted").Render("esc: back"))
 	return b.String()
 }

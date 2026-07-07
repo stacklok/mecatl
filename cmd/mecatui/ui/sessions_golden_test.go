@@ -171,3 +171,29 @@ func TestSessionsTranscriptErrorGolden(t *testing.T) {
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "sessions_transcript_error.golden", got)
 }
+
+// TestSessionsTranscriptRenderedGolden locks the rendered transcript view (Slice
+// 3b): a scripted 3-event replay (user prompt + assistant text + tool call +
+// result) is projected into m.sessions.transcript via updateReplayMsg, then
+// View() renders the transcript blocks through the SAME block renderers the live
+// scrollback uses — the projection-equivalence golden. The replay state is hand-
+// set (no real stream goroutine) so the scripted msgs drive updateReplayMsg
+// deterministically without racing a live reader.
+func TestSessionsTranscriptRenderedGolden(t *testing.T) {
+	m := newSessionsGoldenModel(t, sampleSessions())
+	m = setupReplayTranscript(m, sampleSessions()[0])
+	msgs := []tea.Msg{
+		client.UserPromptMsg{Text: "read the greeting file"},
+		client.TurnStartMsg{Turn: 1},
+		client.AssistantDeltaMsg{Turn: 1, Text: "Reading the greeting file."},
+		client.ToolCallMsg{ID: "call-read-1", Name: "Read", Args: `{"path":"greeting.txt"}`},
+		client.ToolResultMsg{CallID: "call-read-1", Content: "hello from the mecatl demo workspace"},
+		client.ResultMsg{Stop: "end_turn"},
+	}
+	for _, msg := range msgs {
+		mm, _ := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: msg})
+		m = mm.(Model)
+	}
+	got := stripANSI([]byte(m.View().Content))
+	compareGolden(t, "sessions_transcript_rendered.golden", got)
+}
