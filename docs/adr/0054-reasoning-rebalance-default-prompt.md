@@ -94,6 +94,10 @@ keeping the rest of ADR 0041 verbatim:
 
 ## See also
 
+- [ADR 0064](./0064-interleaved-reasoning-discrimination.md) — the wire-side
+  complement: a marker-based discriminator that keeps an interleaved-reasoning
+  model's chain-of-thought display-only (out of the answer) instead of relying
+  on the prompt to scope brevity away from it.
 - [ADR 0041](./0041-output-economy-default-prompt.md) — the output-economy tone this amends.
 - [ADR 0024](./0024-system-prompt-research.md) — the system-prompt research this builds on.
 - `engine/prompt/builder.go` — the `defaultTone` constant.

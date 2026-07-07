@@ -210,7 +210,7 @@ func regWithRemintRecorder(defaultReply string) (*providerRegistry, *mockllm.Pro
 				id:        providerOpenAI,
 				provider:  def,
 				available: true,
-				remint: func(effort string, _ port.ProviderCapabilities) port.LLMProvider {
+				remint: func(effort string, _ port.ProviderCapabilities, _ string) port.LLMProvider {
 					reminted = append(reminted, effort)
 					return mockllm.New(mockllm.TextTurn("REMINTED:" + effort))
 				},

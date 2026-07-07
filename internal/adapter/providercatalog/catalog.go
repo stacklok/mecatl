@@ -118,6 +118,15 @@ type rawModel struct {
 		Input  []string `json:"input"`
 		Output []string `json:"output"`
 	} `json:"modalities"`
+	// Interleaved mirrors the models.dev `interleaved` object: when present, the
+	// model emits reasoning INLINE as a sibling field on the delta event whose
+	// name is `field` (e.g. "reasoning_content"), instead of on dedicated
+	// response.reasoning_* events. The field name is the discriminator the openai
+	// adapter reads off each delta's raw JSON to tell an interleaved reasoning
+	// delta from a visible-text delta (issue #240). Absent on most models.
+	Interleaved struct {
+		Field string `json:"field"`
+	} `json:"interleaved"`
 	Limit struct {
 		Context int `json:"context"`
 		Input   int `json:"input"`
@@ -159,6 +168,11 @@ type Model struct {
 	reasoning       bool
 	toolCall        bool
 	attachment      bool
+	// interleavedField is the catalog's `interleaved.field` value: the name of the
+	// sibling field the model emits reasoning INLINE on, on each output_text.delta
+	// event, instead of on dedicated response.reasoning_* events (issue #240). Empty
+	// on the overwhelming majority of models (the byte-identical default path).
+	interleavedField string
 }
 
 var (
@@ -198,16 +212,17 @@ func parse(data []byte) (*Catalog, error) {
 		models := make([]Model, 0, len(rp.Models))
 		for _, rm := range rp.Models {
 			models = append(models, Model{
-				id:              rm.ID,
-				name:            rm.Name,
-				family:          rm.Family,
-				contextLimit:    rm.Limit.Context,
-				inputLimit:      rm.Limit.Input,
-				outputLimit:     rm.Limit.Output,
-				inputModalities: append([]string(nil), rm.Modalities.Input...),
-				reasoning:       rm.Reasoning,
-				toolCall:        rm.ToolCall,
-				attachment:      rm.Attachment,
+				id:               rm.ID,
+				name:             rm.Name,
+				family:           rm.Family,
+				contextLimit:     rm.Limit.Context,
+				inputLimit:       rm.Limit.Input,
+				outputLimit:      rm.Limit.Output,
+				inputModalities:  append([]string(nil), rm.Modalities.Input...),
+				reasoning:        rm.Reasoning,
+				toolCall:         rm.ToolCall,
+				attachment:       rm.Attachment,
+				interleavedField: rm.Interleaved.Field,
 			})
 		}
 		sort.Slice(models, func(i, j int) bool { return models[i].id < models[j].id })
@@ -307,3 +322,12 @@ func (m Model) SupportsToolCall() bool { return m.toolCall }
 
 // SupportsAttachment reports whether the model accepts file attachments.
 func (m Model) SupportsAttachment() bool { return m.attachment }
+
+// InterleavedReasoningField returns the name of the sibling field the model emits
+// reasoning INLINE on, on each output_text.delta event (e.g. "reasoning_content"),
+// instead of on dedicated response.reasoning_* events (issue #240). Empty means the
+// model uses the standard dedicated-reasoning event stream (the default path). The
+// openai adapter reads this off the catalog via composition to discriminate an
+// interleaved reasoning delta from a visible-text delta by inspecting the event's
+// raw JSON for this field.
+func (m Model) InterleavedReasoningField() string { return m.interleavedField }

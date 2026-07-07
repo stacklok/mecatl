@@ -2609,6 +2609,81 @@ breaker is untouched (a mid-stream error structurally never reaches the establis
 behaviour change). A package-level `goleak` gate (`leakmain_test.go`) proves the watchdog goroutine
 unwinds on every path.
 
+### `openai` — interleaved-reasoning discrimination (issue #240, ADR 0064)
+
+Most reasoning models emit chain-of-thought on a DEDICATED event channel
+(`response.reasoning_summary_text.delta` / `response.reasoning_text.delta` /
+reasoning `output_item.done`), which `translate` maps to `ChunkReasoning` /
+`ChunkReasoningItem`. The visible answer rides a separate
+`response.output_text.delta` channel → `ChunkText`, and the single-visible-text-part
+guard (one visible text identity per turn — `item_id`/`output_index`/`content_index`)
+only ever sees the one answer part.
+
+`z-ai/glm-5.2` (via OpenRouter) does NOT follow this shape: it emits reasoning
+INLINE as a sibling `reasoning_content` string on the very same
+`response.output_text.delta` event (the openai-go SDK's typed struct has no such
+field — it arrives only in the event's `RawJSON()`). Under the old, marker-less
+translator two failures followed: (1) the reasoning `delta` string leaked into
+the user-visible assistant text; (2) GLM emits its reasoning deltas on a
+differing `content_index` from the final answer, so the single-visible-text-part
+guard saw "multiple text parts" and aborted the turn BEFORE the trailing
+`function_call` `output_item.done` was translated — a reasoning-then-tool turn
+terminated tool-less.
+
+The fix is a MARKER-BASED discriminator, NOT a model flag (ADR 0064). A flag
+heuristic (route ALL `output_text.delta` → `ChunkReasoning` when the model is
+known to interleave) is REJECTED: GLM emits its real final answer on the SAME
+`output_text.delta` channel with NO marker — a blanket reclassification would
+swallow the real answer into display-only `ChunkReasoning`, leaving the turn
+textless. The wire MUST carry the discriminator.
+
+The seam is catalog → composition → adapter:
+
+- **Catalog** (`internal/adapter/providercatalog/catalog.go`):
+  `Model.InterleavedReasoningField()` returns the models.dev `interleaved.field`
+  value (e.g. `"reasoning_content"`), empty for the standard dedicated-reasoning
+  path. Empty on the overwhelming majority of models.
+- **Composition** (`internal/app/capability.go`):
+  `interleavedReasoningField(reg, providerID, modelID)` reads it CATALOG-ONLY
+  (the live-metadata store does not surface this field today; models.dev's
+  `interleaved` is a static catalog property, not a live-listed one — so a live
+  entry is NOT authoritative here, unlike modalities/reasoning-effort-support).
+  The per-session engine factory re-mints the openai adapter with
+  `openai.WithInterleavedReasoningField(field)` when a session resolves a model
+  that carries it — the SAME `remint`-closure discipline as reasoning effort
+  (ADR 0055) and the per-session capability intersection (T7): the `remint`
+  closure now takes `(effort, caps, interleavedField)`. It is an
+  adapter-CONSTRUCTION Option, NOT a `port.LLMRequest` field (the
+  frozen-neutral-request invariant holds; no `port` interface is widened).
+- **Adapter** (`internal/adapter/openai/stream.go`): in the
+  `response.output_text.delta` case, when `streamState.interleavedField` is
+  non-empty, `interleavedReasoningContent` decodes the event's `RawJSON()` into a
+  `map[string]json.RawMessage` (via `encoding/json`, NOT gjson — depguard stays
+  clean), picks the named field, and unmarshals it as a string. A present AND
+  non-empty sibling field → emit a display-only `ChunkReasoning` and RETURN EARLY
+  (do NOT invoke `translateTextDelta`, so the single-visible-text-part guard
+  only ever sees one visible-text identity). A delta with NO sibling field (the
+  real answer) falls through to `ChunkText` unchanged. The marker is REQUIRED
+  for reclassification — the field name is the opt-in — so the default path
+  (field empty) is byte-identical to the pre-#240 behaviour and the guard is NOT
+  weakened. Fail-safe: an absent / empty / non-string sibling (e.g.
+  `reasoning_details` is an array) returns `""` → visible-text path (an
+  unrecognised shape never swallows the real answer).
+
+**`isCommitting` implication (retry-safe reasoning prefix).** `ChunkReasoning`
+is a NON-COMMITTING chunk in `llmresilience`'s establishment seam, so a leading
+interleaved-reasoning prefix is buffered and replayed on a successful
+re-establishment — the resilience wrapper can retry a turn whose first commit
+failed AFTER the reasoning streamed, without losing or duplicating it. This is
+the same property the dedicated-reasoning path already enjoyed; the marker
+extends it to interleaved reasoning for free. See the GLM-5.2 establishment-bug
+narrative in the `llmresilience` note above (the ~line-2581 incident) — that bug
+was about the per-attempt DEADLINE cutting a reasoning turn; this feature is
+about correctly CLASSIFYING the reasoning deltas once they arrive. The two are
+complementary: the deadline fix lets the reasoning prefix stream through, and
+the marker makes sure that prefix is routed to display-only `ChunkReasoning`
+instead of leaking into the answer.
+
 ### `WebSearch` core tool + `search` adapters (issue #26 — source discovery before WebFetch)
 
 WebSearch is a READ-ONLY core tool that returns compact, bounded, source-attributed

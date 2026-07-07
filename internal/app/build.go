@@ -1653,19 +1653,21 @@ func sessionEngineFactory(
 		// request builder consults to project a tool result's typed Parts (T7) —
 		// threaded into the adapter via the re-mint below.
 		sessionCaps := modelCapability(reg, resolvedProviderID, resolvedModel)
-		// Re-mint ONLY when the resolved session effort OR capability intersection
-		// differs from the OPERATOR-DEFAULT the entry's shared .provider was built
-		// with (the SAME normalise+clamp the registry applied at build, and the
-		// default-model caps the post-assembly fixup stamped). When both match, the
-		// shared provider is reused byte-for-byte (the byte-identical default path).
-		// A hand-built/test registry entry with no defaultCaps (zero value) is treated
-		// as "match anything" so a test without defaultCaps never re-mints on caps.
+		// Re-mint ONLY when the resolved session effort, capability intersection,
+		// OR interleaved-reasoning field differs from the operator-default the
+		// entry's shared .provider was built with (entry.defaultInterleaved, the
+		// default-model's interleaved field). When all match, the shared provider is
+		// reused byte-for-byte (the byte-identical default path). A hand-built/test
+		// registry entry with no defaultCaps (zero value) is treated as "match
+		// anything" so a test without defaultCaps never re-mints on caps; the
+		// interleaved field compares as plain strings ("" == "").
+		sessionInterleaved := interleavedReasoningField(reg, resolvedProviderID, resolvedModel)
 		if entry, ok := reg.Lookup(resolvedProviderID); ok && entry.remint != nil {
 			entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
 			entryEffort, _ = clampEffortForProvider(resolvedProviderID, entryEffort)
 			capsDiff := entry.defaultCaps != sessionCaps && entry.defaultCaps != (port.ProviderCapabilities{})
-			if resolvedEffort != entryEffort || capsDiff {
-				resolvedProvider = entry.remint(resolvedEffort, sessionCaps)
+			if resolvedEffort != entryEffort || capsDiff || sessionInterleaved != entry.defaultInterleaved {
+				resolvedProvider = entry.remint(resolvedEffort, sessionCaps, sessionInterleaved)
 			}
 		}
 		// The compaction window is the LIVE-FIRST resolver over the resolved

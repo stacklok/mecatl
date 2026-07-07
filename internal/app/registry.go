@@ -116,20 +116,23 @@ type providerEntry struct {
 	// openai share the SAME openai.Provider adapter and only openrouter opts in.
 	lister modelLister
 	// remint RE-MINTS this entry's provider adapter with a different reasoning-
-	// effort token (ADR 0055) AND/OR a different per-session capability
-	// intersection (T7), returning a fresh resilience-wrapped port.LLMProvider.
-	// It captures the construction inputs (key/baseURL/resolvers/resilience
-	// config) so the per-session engine factory can build a same-provider adapter
-	// that carries the SESSION's effort + caps when EITHER differs from the
+	// effort token (ADR 0055), a different per-session capability intersection
+	// (T7), AND/OR a different interleaved-reasoning field (issue #240),
+	// returning a fresh resilience-wrapped port.LLMProvider. It captures the
+	// construction inputs (key/baseURL/resolvers/resilience config) so the
+	// per-session engine factory can build a same-provider adapter that carries
+	// the SESSION's effort + caps + interleaved field when ANY differs from the
 	// operator-default model the entry's .provider was built with — the SAME
 	// factory discipline as the per-call model override (the factory owns adapter
-	// construction; effort and caps are never port.LLMRequest fields). The DEFAULT
-	// path never calls it (the shared .provider is reused byte-for-byte). effort is
-	// an ALREADY-CLAMPED neutral token ("" = unset, the provider default); caps is
-	// the composition-computed catalog ∩ adapter intersection for the session's
-	// resolved (provider, model). nil for the mock entry (it ignores effort/caps)
+	// construction; effort/caps/interleaved are never port.LLMRequest fields). The
+	// DEFAULT path never calls it (the shared .provider is reused byte-for-byte).
+	// effort is an ALREADY-CLAMPED neutral token ("" = unset, the provider
+	// default); caps is the composition-computed catalog ∩ adapter intersection
+	// for the session's resolved (provider, model); interleavedField is the
+	// catalog's `interleaved.field` for the resolved model ("" = standard
+	// dedicated-reasoning event path). nil for the mock entry (it ignores them)
 	// and for a providerConstructor test seam that did not wire one.
-	remint func(effort string, caps port.ProviderCapabilities) port.LLMProvider
+	remint func(effort string, caps port.ProviderCapabilities, interleavedField string) port.LLMProvider
 	// defaultCaps is the capability intersection the entry's shared .provider was
 	// built with (modelCapability over the operator-default provider+model), so the
 	// per-session factory can compare against the session's resolved intersection
@@ -138,6 +141,15 @@ type providerEntry struct {
 	// treats zero as "match anything" (no caps-driven re-mint) so a test registry
 	// without defaultCaps behaves as before.
 	defaultCaps port.ProviderCapabilities
+	// defaultInterleaved is the interleaved-reasoning field the entry's shared
+	// .provider was built with (interleavedReasoningField over the operator-default
+	// provider+model), mirroring defaultCaps. The per-session factory compares it
+	// against the session's resolved field and re-mints ONLY when they differ (the
+	// byte-identical default path). Zero value ("") for a provider/default-model
+	// that does not interleave, or a hand-built/test registry that did not set it —
+	// the factory treats "" as "no interleaved field" so a non-interleaving session
+	// never re-mints on this axis.
+	defaultInterleaved string
 }
 
 // providerRegistry holds the N configured providers. It is built once in Build
@@ -328,8 +340,10 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 			model = reg.defaultModel
 		}
 		defCaps := modelCapability(reg, id, model)
-		entry.provider = entry.remint(operatorDefaultEffortFor(cfg, id), defCaps)
+		defInterleaved := interleavedReasoningField(reg, id, model)
+		entry.provider = entry.remint(operatorDefaultEffortFor(cfg, id), defCaps, defInterleaved)
 		entry.defaultCaps = defCaps
+		entry.defaultInterleaved = defInterleaved
 		entries[id] = entry
 	}
 	return reg, nil
@@ -367,11 +381,12 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 	}
 	// construct mints a resilience-wrapped openai adapter carrying the given
 	// reasoning-effort token (ADR 0055) and per-session capability intersection
-	// (T7). It is the SINGLE construction path: the default .provider is
-	// construct(defaultEffort, defaultCaps) and the per-session re-mint is
-	// construct(sessionEffort, sessionCaps), so the two cannot drift on resilience
-	// wrapping.
-	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
+	// (T7) + interleaved-reasoning field (issue #240). It is the SINGLE
+	// construction path: the default .provider is construct(defaultEffort,
+	// defaultCaps, defaultInterleaved) and the per-session re-mint is
+	// construct(sessionEffort, sessionCaps, sessionInterleaved), so the two
+	// cannot drift on resilience wrapping.
+	construct := func(effort string, caps port.ProviderCapabilities, interleavedField string) port.LLMProvider {
 		opts := []openai.Option{openai.WithAPIKey(key)}
 		if baseURL != "" {
 			opts = append(opts, openai.WithBaseURL(baseURL))
@@ -380,6 +395,9 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 			opts = append(opts, openai.WithReasoningEffort(effort))
 		}
 		opts = append(opts, openai.WithProviderCapabilities(caps))
+		if interleavedField != "" {
+			opts = append(opts, openai.WithInterleavedReasoningField(interleavedField))
+		}
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -398,13 +416,14 @@ func newOpenAIEntry(cfg Config, id, key, baseURL string) providerEntry {
 	// The OPERATOR-DEFAULT effort baked into the shared .provider: normalise +
 	// per-provider clamp (xhigh/max→high for openai), narrating a clamp at startup so
 	// an operator who set --reasoning-effort max against OpenAI sees the promised WARN.
-	// A per-session selector that resolves to a DIFFERENT effort OR capability
-	// intersection re-mints via remint; the default path reuses .provider byte-for-byte.
-	// defaultCaps is computed AFTER the registry is assembled (it needs the live-meta
-	// store + catalog) — see buildProviderRegistry's post-assembly fixup. Until then
-	// the shared .provider is built with the adapter's static transmit caps (no Parts
-	// path fires pre-fixup since no tool produces Parts at build time).
-	llm := construct(operatorDefaultEffortFor(cfg, id), openaiStaticCaps)
+	// A per-session selector that resolves to a DIFFERENT effort, capability
+	// intersection, OR interleaved-reasoning field re-mints via remint; the default
+	// path reuses .provider byte-for-byte. defaultCaps is computed AFTER the registry
+	// is assembled (it needs the live-meta store + catalog) — see
+	// buildProviderRegistry's post-assembly fixup. Until then the shared .provider is
+	// built with the adapter's static transmit caps (no Parts path fires pre-fixup
+	// since no tool produces Parts at build time) and an empty interleaved field.
+	llm := construct(operatorDefaultEffortFor(cfg, id), openaiStaticCaps, "")
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", id,
 		"max_attempts", cfg.LLMMaxAttempts,
@@ -440,9 +459,13 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 	// reasoning-effort token (ADR 0055) and per-session capability intersection
 	// (T7), over the SAME max-tokens + thinking resolvers. It is the SINGLE
 	// construction path: the default .provider is construct(defaultEffort,
-	// defaultCaps) and the per-session re-mint is construct(sessionEffort,
-	// sessionCaps), so the two cannot drift on resolvers or resilience wrapping.
-	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
+	// defaultCaps, "") and the per-session re-mint is construct(sessionEffort,
+	// sessionCaps, ""), so the two cannot drift on resolvers or resilience
+	// wrapping. The interleavedField parameter is accepted to satisfy the shared
+	// remint signature but is ALWAYS "" for anthropic (Anthropic emits reasoning
+	// on dedicated message_delta/thinking events, never as an interleaved sibling
+	// field on a text delta — issue #240 is openai-Responses-only).
+	construct := func(effort string, caps port.ProviderCapabilities, _ string) port.LLMProvider {
 		opts := []anthropic.Option{
 			anthropic.WithAPIKey(key),
 			// PER-MODEL max_tokens: each request's max_tokens is resolved LIVE-FIRST from
@@ -492,7 +515,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 	// default-model capability intersection is stamped by buildProviderRegistry's
 	// post-assembly fixup (it needs the assembled registry + meta); until then the
 	// shared .provider carries the adapter's static transmit caps.
-	llm := construct(operatorDefaultEffortFor(cfg, providerAnthropic), anthropicStaticCaps)
+	llm := construct(operatorDefaultEffortFor(cfg, providerAnthropic), anthropicStaticCaps, "")
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", providerAnthropic,
 		"max_attempts", cfg.LLMMaxAttempts,

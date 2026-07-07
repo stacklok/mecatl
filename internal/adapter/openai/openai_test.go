@@ -33,6 +33,24 @@ func decodeFixture(t *testing.T, name string) []port.Chunk {
 	return chunks
 }
 
+// decodeFixtureWithField drives decodeSSEWithField so a fixture carrying an
+// interleaved-reasoning model's `reasoning_content` sibling field can be
+// translated with the field configured (issue #240). Existing fixtures use
+// decodeFixture (field="") and stay byte-identical.
+func decodeFixtureWithField(t *testing.T, name, field string) []port.Chunk {
+	t.Helper()
+	f, err := os.Open(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer f.Close()
+	chunks, err := decodeSSEWithField(f, field)
+	if err != nil {
+		t.Fatalf("decodeSSEWithField: %v", err)
+	}
+	return chunks
+}
+
 // decodeFixtureErr decodes a fixture expecting a terminal error, returning the
 // chunks emitted before the error and the error itself.
 func decodeFixtureErr(t *testing.T, name string) ([]port.Chunk, error) {
@@ -83,10 +101,12 @@ func TestUsageCacheReadSubsetOfInput(t *testing.T) {
 	// terminal error for these (exercised via decodeFixtureErr elsewhere),
 	// so the happy-path helper can't decode them.
 	skip := map[string]bool{
-		"error_event.sse":                true,
-		"response_failed.sse":            true,
-		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
+		"error_event.sse":                    true,
+		"response_failed.sse":                true,
+		"response_failed_rate_limit.sse":     true,
+		"multi_text_part_turn.sse":           true,
+		"glm_interleaved_reasoning.sse":      true,
+		"glm_interleaved_reasoning_only.sse": true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -160,10 +180,12 @@ func TestUsageReasoningSubsetOfOutput(t *testing.T) {
 	// Deliberately malformed / error-path fixtures: decodeSSE returns a
 	// terminal error for these, so the happy-path helper can't decode them.
 	skip := map[string]bool{
-		"error_event.sse":                true,
-		"response_failed.sse":            true,
-		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
+		"error_event.sse":                    true,
+		"response_failed.sse":                true,
+		"response_failed_rate_limit.sse":     true,
+		"multi_text_part_turn.sse":           true,
+		"glm_interleaved_reasoning.sse":      true,
+		"glm_interleaved_reasoning_only.sse": true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -822,6 +844,123 @@ func TestTranslateMultipleReasoningSummariesNoError(t *testing.T) {
 		{Kind: port.ChunkReasoning, Text: "Second summary."},
 	}
 	assertChunks(t, got, want)
+}
+
+// TestTranslateGLMInterleavedReasoning is the regression for issue #240: a
+// model that interleaves reasoning as a sibling `reasoning_content` field on
+// response.output_text.delta events (z-ai/glm-5.2 via OpenRouter). The field
+// is catalog-derived and threaded into the streamState as interleavedField. Two
+// invariants must hold:
+//
+//  1. The reasoning_content-bearing deltas reclassify to ChunkReasoning (NOT
+//     ChunkText), so GLM's reasoning does not leak into the user-visible
+//     assistant text.
+//  2. The model's real final answer (a later output_text.delta WITHOUT the
+//     sibling field) is the one ChunkText delta, and the single-visible-text-part
+//     guard only ever sees ONE visible-text identity — under the OLD code the
+//     reasoning deltas (on differing content_index) tripped the guard's
+//     multi-part error and the stream aborted BEFORE the function_call
+//     output_item.done was translated, so the turn terminated tool-less. The
+//     function_call MUST now translate to a ChunkToolCall.
+func TestTranslateGLMInterleavedReasoning(t *testing.T) {
+	got := decodeFixtureWithField(t, "glm_interleaved_reasoning.sse", "reasoning_content")
+	want := []port.Chunk{
+		{Kind: port.ChunkReasoning, Text: "Let me reason"},
+		{Kind: port.ChunkReasoning, Text: "about this."},
+		{Kind: port.ChunkText, Text: "The answer."},
+		{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{
+			ID:     "call_g1",
+			Name:   "read_file",
+			Args:   json.RawMessage(`{"path":"a.go"}`),
+			ItemID: "fc_g1",
+		}},
+		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 40, OutputTokens: 9, CacheReadTokens: 0}},
+		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	}
+	assertChunks(t, got, want)
+}
+
+// TestTranslateGLMInterleavedReasoningOnly pins symptom #1 in isolation: a
+// GLM turn that emits reasoning (interleaved as reasoning_content) followed by
+// a final text answer, with NO tool call. The reasoning renders as ChunkReasoning
+// and the answer as ChunkText — the turn is text-bearing and never hits the
+// no-progress death a flag-heuristic (route ALL output_text → reasoning) would
+// cause.
+func TestTranslateGLMInterleavedReasoningOnly(t *testing.T) {
+	got := decodeFixtureWithField(t, "glm_interleaved_reasoning_only.sse", "reasoning_content")
+	want := []port.Chunk{
+		{Kind: port.ChunkReasoning, Text: "Thinking step one"},
+		{Kind: port.ChunkReasoning, Text: "and step two"},
+		{Kind: port.ChunkText, Text: "Final answer."},
+		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 20, OutputTokens: 7, CacheReadTokens: 0}},
+		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	}
+	assertChunks(t, got, want)
+}
+
+// TestTranslateGLMInterleavedFieldAbsentFallsThroughToText pins the marker
+// requirement: when a stream is configured with interleavedField but a given
+// output_text.delta carries NO reasoning_content sibling, it MUST fall through
+// to the visible-text path (ChunkText). This is the property that keeps GLM's
+// real final answer visible — a flag-heuristic that blanket-reclassified every
+// output_text.delta would swallow it.
+func TestTranslateGLMInterleavedFieldAbsentFallsThroughToText(t *testing.T) {
+	// Reuse the plain text_turn fixture (no reasoning_content on any delta) but
+	// drive it WITH the field configured: the field is absent on every delta, so
+	// the translation must be byte-identical to the no-field decode.
+	want := decodeFixture(t, "text_turn.sse")
+	got := decodeFixtureWithField(t, "text_turn.sse", "reasoning_content")
+	assertChunks(t, got, want)
+}
+
+// TestTranslateGLMInterleavedFieldEmptyIsByteIdentical pins the default path:
+// when the stream is constructed with NO interleaved field (the byte-identical
+// default path), a delta carrying reasoning_content is NOT reclassified — the
+// sibling field is invisible to the translator. This proves the marker is
+// REQUIRED for reclassification (the field name is the opt-in), so a non-GLM
+// model that happens to emit a reasoning_content sibling (none do today) is
+// unaffected.
+func TestTranslateGLMInterleavedFieldEmptyIsByteIdentical(t *testing.T) {
+	// The reasoning fixture's reasoning deltas would trip the multi-text-part
+	// guard under the empty-field path (different content_index), so this must
+	// return the guard's error — proving the field-empty path is byte-identical
+	// to the pre-#240 behaviour (the guard is NOT weakened).
+	f, err := os.Open(filepath.Join("testdata", "glm_interleaved_reasoning.sse"))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer f.Close()
+	chunks, err := decodeSSEWithField(f, "")
+	if err == nil {
+		t.Fatalf("expected the multi-text-part guard error under field=\"\" (default path), got nil; chunks=%+v", chunks)
+	}
+	if !strings.Contains(err.Error(), "multiple assistant text parts") {
+		t.Errorf("error %q does not mention the multi-part condition (the guard must fire under field=\"\")", err.Error())
+	}
+}
+
+// TestTranslateGLMInterleavedNonStringSiblingFailSafe pins the fail-safe branch
+// of interleavedReasoningContent: when the named sibling field is present but NOT
+// a JSON string (e.g. reasoning_details as an array), the function returns "" and
+// the delta falls through to the visible-text path (ChunkText). This is the
+// conservative direction — an unrecognised shape never swallows the real answer
+// into display-only ChunkReasoning. Without this test the fail-safe branch could
+// silently regress to a panic or a swallow.
+func TestTranslateGLMInterleavedNonStringSiblingFailSafe(t *testing.T) {
+	// A single output_text.delta whose reasoning_content sibling is a JSON array
+	// (the shape reasoning_details would take). Build it inline — one event, no
+	// fixture file warranted for an edge case.
+	sse := "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1," +
+		"\"item_id\":\"msg_x\",\"output_index\":0,\"content_index\":0," +
+		"\"delta\":\"visible text\",\"reasoning_content\":[{\"summary\":\"x\"}]}\n\n"
+	f := strings.NewReader(sse)
+	chunks, err := decodeSSEWithField(f, "reasoning_content")
+	if err != nil {
+		t.Fatalf("decodeSSEWithField errored on a non-string reasoning_content sibling: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].Kind != port.ChunkText || chunks[0].Text != "visible text" {
+		t.Fatalf("got %+v, want exactly one ChunkText \"visible text\" (the non-string sibling must fall through to visible text, not be swallowed)", chunks)
+	}
 }
 
 func assertChunks(t *testing.T, got, want []port.Chunk) {

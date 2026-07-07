@@ -1,0 +1,20 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_g2","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"msg_g2","type":"message","role":"assistant","status":"in_progress","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_g2","output_index":0,"content_index":0,"delta":"Thinking step one","reasoning_content":"Thinking step one"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_g2","output_index":0,"content_index":1,"delta":"and step two","reasoning_content":"and step two"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"msg_g2","output_index":0,"content_index":0,"delta":"Final answer."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":5,"output_index":0,"item":{"id":"msg_g2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Final answer."}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":6,"response":{"id":"resp_g2","status":"completed","usage":{"input_tokens":20,"output_tokens":7,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":27}}}

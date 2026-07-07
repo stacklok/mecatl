@@ -248,6 +248,32 @@ func TestOpenRouterGLM52Metadata(t *testing.T) {
 	if glm52.SupportsImageInput() {
 		t.Error("SupportsImageInput() = true, want false (GLM 5.2 is text-only in OpenRouter)")
 	}
+	// Interleaved reasoning (issue #240): GLM-5.2 emits reasoning inline as a
+	// sibling `reasoning_content` field on output_text.delta events, instead of on
+	// dedicated response.reasoning_* events. The catalog carries this fact so the
+	// openai adapter can reclassify those deltas to ChunkReasoning via composition.
+	if got := glm52.InterleavedReasoningField(); got != "reasoning_content" {
+		t.Errorf("InterleavedReasoningField() = %q, want \"reasoning_content\"", got)
+	}
+}
+
+// TestInterleavedReasoningFieldNegative asserts the field is EMPTY for a model
+// that uses the standard dedicated-reasoning event stream (the byte-identical
+// default path the openai adapter keeps when no interleaved field is configured).
+func TestInterleavedReasoningFieldNegative(t *testing.T) {
+	p, ok := Default().Provider("openai")
+	if !ok {
+		t.Fatal("openai missing")
+	}
+	for _, m := range p.Models() {
+		if m.ID() == "gpt-5" {
+			if got := m.InterleavedReasoningField(); got != "" {
+				t.Errorf("gpt-5 InterleavedReasoningField() = %q, want \"\" (no interleaved reasoning)", got)
+			}
+			return
+		}
+	}
+	t.Fatal("openai/gpt-5 not found in curated catalog")
 }
 
 // TestParseAPINullDecodesToEmpty pins the null→"" contract at the parse() level

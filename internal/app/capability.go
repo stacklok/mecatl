@@ -122,6 +122,33 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	return false, false
 }
 
+// interleavedReasoningField returns the name of the sibling field the (provider,
+// model) emits reasoning INLINE on, on each response.output_text.delta event
+// (e.g. "reasoning_content"), instead of on dedicated response.reasoning_* events
+// (issue #240). It is CATALOG-ONLY: the live-metadata store does not surface this
+// field today (models.dev's interleaved is a static catalog property, not a
+// live-listed one), so a live entry is NOT authoritative over the catalog here —
+// unlike modalities/reasoning-effort-support. "" means the model uses the standard
+// dedicated-reasoning event path (the byte-identical default path the openai
+// adapter keeps when the field is empty). Composition derives it and threads it
+// into the adapter via WithInterleavedReasoningField; the per-session engine
+// factory re-mints the adapter when a session resolves a model that carries it.
+func interleavedReasoningField(_ *providerRegistry, providerID, modelID string) string {
+	if providerID == "" || modelID == "" {
+		return ""
+	}
+	p, ok := providercatalog.Default().Provider(providerID)
+	if !ok {
+		return ""
+	}
+	for _, m := range p.Models() {
+		if m.ID() == modelID {
+			return m.InterleavedReasoningField()
+		}
+	}
+	return ""
+}
+
 // modelAdapterCaps returns the wired adapter's transmit capabilities for a
 // provider (the AUTHORITY on what it can actually send), or the zero value
 // (text-only) for an unknown/unavailable provider or a nil registry — a provider

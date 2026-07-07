@@ -47,6 +47,18 @@ type Provider struct {
 	// (zero-value) intersection is distinguishable from "unset". A tool result with
 	// no Parts always takes the legacy string path regardless.
 	caps *port.ProviderCapabilities
+	// interleavedReasoningField is the name of the sibling field the model emits
+	// reasoning INLINE on, on each response.output_text.delta event (e.g.
+	// "reasoning_content"), instead of on dedicated response.reasoning_* events
+	// (issue #240). Empty (the default) means the standard dedicated-reasoning
+	// event path — the byte-identical default path. The stream translator reads it
+	// to reclassify those deltas as ChunkReasoning instead of ChunkText. It is an
+	// adapter-CONSTRUCTION Option, NOT a port.LLMRequest field (the model's
+	// reasoning wire shape is not a per-request decision); composition derives it
+	// from the catalog and the per-session engine factory re-mints the adapter when
+	// a session resolves a model that carries it (the same factory discipline as
+	// reasoning effort + caps).
+	interleavedReasoningField string
 }
 
 // Option configures a Provider.
@@ -58,6 +70,9 @@ type config struct {
 	effort  string
 	caps    *port.ProviderCapabilities
 	extra   []option.RequestOption
+	// interleavedReasoningField carries the catalog's `interleaved.field` value
+	// into the constructed Provider (issue #240). See Provider's field doc.
+	interleavedReasoningField string
 }
 
 // WithAPIKey sets the API key used to authenticate requests.
@@ -103,6 +118,25 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 	}
 }
 
+// WithInterleavedReasoningField stamps the name of the sibling field the model
+// emits reasoning INLINE on, on each response.output_text.delta event (e.g.
+// "reasoning_content"), instead of on dedicated response.reasoning_* events
+// (issue #240). The stream translator inspects each output_text.delta's raw JSON
+// for this field and, when present and non-empty, reclassifies the delta as
+// ChunkReasoning (display-only) instead of ChunkText — keeping GLM-5.2's
+// interleaved reasoning out of the user-visible assistant text AND off the
+// single-visible-text-part guard's radar (the guard only ever sees one
+// visible-text identity). Empty (the default) is a no-op: the standard
+// dedicated-reasoning event path is byte-identical to the pre-#240 behaviour. It
+// is an adapter-CONSTRUCTION Option, not a port.LLMRequest field — the model's
+// reasoning wire shape is catalog-derived, not an operator/per-request decision,
+// so composition derives it and the per-session engine factory re-mints the
+// adapter when a session resolves a model that carries it (the same factory
+// discipline as reasoning effort + caps).
+func WithInterleavedReasoningField(field string) Option {
+	return func(c *config) { c.interleavedReasoningField = field }
+}
+
 // WithRequestOption threads an arbitrary openai-go request option through to the
 // client (e.g. option.WithHeader, option.WithMaxRetries). Multiple are applied
 // in order, after the API key and base URL.
@@ -127,7 +161,12 @@ func New(opts ...Option) *Provider {
 	reqOpts = append(reqOpts, c.extra...)
 
 	client := oai.NewClient(reqOpts...)
-	return &Provider{client: client.Responses, effort: c.effort, caps: c.caps}
+	return &Provider{
+		client:                    client.Responses,
+		effort:                    c.effort,
+		caps:                      c.caps,
+		interleavedReasoningField: c.interleavedReasoningField,
+	}
 }
 
 // Stream issues a streaming Responses request and yields provider-neutral
@@ -146,6 +185,7 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()
 		var st streamState
+		st.interleavedField = p.interleavedReasoningField
 		for stream.Next() {
 			select {
 			case <-ctx.Done():

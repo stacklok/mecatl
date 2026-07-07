@@ -22,6 +22,18 @@ type streamState struct {
 	// and a later terminal event arrive.
 	done bool
 
+	// interleavedField is the name of the sibling field the model emits reasoning
+	// INLINE on, on each response.output_text.delta event (e.g.
+	// "reasoning_content"), instead of on dedicated response.reasoning_* events
+	// (issue #240). When non-empty, the output_text.delta case inspects the
+	// event's raw JSON for this field and, when present and non-empty, emits a
+	// ChunkReasoning and returns early — keeping GLM-5.2's interleaved reasoning
+	// out of the user-visible text AND off the single-visible-text-part guard
+	// (the guard only ever sees one visible-text identity). Empty (the default)
+	// means the standard dedicated-reasoning event path — byte-identical to the
+	// pre-#240 behaviour. Set by the Provider when constructing the stream.
+	interleavedField string
+
 	// The identity (item_id, output_index, content_index) of the single visible
 	// assistant text part currently being assembled. The harness's domain
 	// Message.Text is one string, so a turn may carry exactly one visible text
@@ -53,7 +65,11 @@ type streamState struct {
 // that emits events we do not consume.
 //
 // Mapping:
-//   - response.output_text.delta            -> ChunkText (event.Delta)
+//   - response.output_text.delta            -> ChunkText (event.Delta), UNLESS the
+//     model interleaves reasoning as a sibling field on the delta event (issue
+//     #240, keyed on st.interleavedField from the catalog) — then a delta
+//     carrying that field reclassifies to ChunkReasoning and skips the
+//     single-visible-text-part guard
 //   - response.reasoning_summary_text.delta -> ChunkReasoning (event.Delta, DISPLAY summary)
 //   - response.reasoning_text.delta         -> ChunkReasoning (event.Delta, DISPLAY summary)
 //   - response.output_item.done (reasoning)     -> ChunkReasoningItem (encrypted_content, REPLAY blob)
@@ -84,6 +100,29 @@ type streamState struct {
 func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]port.Chunk, error) {
 	switch event.Type {
 	case "response.output_text.delta":
+		// Interleaved-reasoning discrimination (issue #240): some models (e.g.
+		// z-ai/glm-5.2 via OpenRouter) emit reasoning INLINE as a sibling field on
+		// the output_text.delta event (the catalog's `interleaved.field`, e.g.
+		// "reasoning_content"), instead of on dedicated response.reasoning_* events.
+		// The SDK's typed structs have NO such field, so it arrives only in the
+		// event's raw JSON. When the stream is configured with the field name
+		// (st.interleavedField, catalog-derived via composition), inspect the raw
+		// JSON: a present and non-empty sibling field marks this delta as
+		// reasoning, so emit a display-only ChunkReasoning and RETURN EARLY — do
+		// NOT invoke translateTextDelta, so the single-visible-text-part guard
+		// only ever sees one visible-text identity (reasoning never pins it) and
+		// the model's real final answer (a later output_text.delta WITHOUT the
+		// sibling field) is the one that does. A flag-heuristic (route ALL
+		// output_text → reasoning when the model flag is set) is REJECTED: GLM
+		// emits its real final answer on the same output_text.delta channel with
+		// no marker, so a blanket reclassification would swallow the real answer
+		// into display-only ChunkReasoning, leaving the turn textless. The marker
+		// is required, and the wire carries it.
+		if st.interleavedField != "" {
+			if rc := interleavedReasoningContent(event, st.interleavedField); rc != "" {
+				return []port.Chunk{{Kind: port.ChunkReasoning, Text: rc}}, nil
+			}
+		}
 		return translateTextDelta(event, st)
 
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
@@ -223,6 +262,45 @@ func translateTextDelta(event responses.ResponseStreamEventUnion, st *streamStat
 			event.ItemID, event.OutputIndex, event.ContentIndex)
 	}
 	return []port.Chunk{{Kind: port.ChunkText, Text: event.Delta}}, nil
+}
+
+// interleavedReasoningContent reads the named sibling field off a
+// response.output_text.delta event's raw JSON. The openai-go SDK's typed struct
+// for ResponseStreamEventUnion has NO `reasoning_content` field (it is a
+// provider-specific extension some models emit as a sibling on the delta event),
+// so it arrives only in the raw JSON exposed by event.RawJSON(). field is the
+// catalog's `interleaved.field` value (e.g. "reasoning_content") and is treated
+// as DATA — the field name a model emits reasoning on is catalog-driven, so this
+// does NOT hardcode the JSON tag. Returns "" when the field is absent OR empty
+// OR not a JSON string (e.g. reasoning_details is an array) — the caller treats
+// that as "not a reasoning delta" and falls through to the visible-text path
+// (fail-safe: an unrecognised shape never swallows the real answer). Uses
+// encoding/json (NOT gjson) so the adapter's depguard allowlist stays clean.
+func interleavedReasoningContent(event responses.ResponseStreamEventUnion, field string) string {
+	raw := event.RawJSON()
+	if raw == "" || field == "" {
+		return ""
+	}
+	// Decode into a map keyed by field name so a future catalog entry carrying a
+	// different interleaved.field value needs no struct edit here. Only the
+	// top-level keys are materialised; values stay as json.RawMessage until the
+	// one named field is picked, keeping the allocation footprint minimal.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return ""
+	}
+	v, ok := probe[field]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(v, &s); err != nil {
+		// The field is present but not a JSON string (e.g. reasoning_details is
+		// an array). Fail safe toward the visible-text path rather than
+		// guessing at a string projection.
+		return ""
+	}
+	return s
 }
 
 // responseErrorString renders a Responses ResponseError (on a failed response)
@@ -428,10 +506,23 @@ func mapStop(status responses.ResponseStatus) session.StopReason {
 // each event in order. It exists so tests can drive the exact translation path
 // from a recorded golden fixture without a real client. Lines are parsed as
 // "data: <json>" records separated by blank lines; "event:" lines are ignored
-// because the event JSON carries its own "type".
+// because the event JSON carries its own "type". The stream is constructed with
+// NO interleaved field (the byte-identical default path); use decodeSSEWithField
+// to exercise an interleaved-reasoning model's translation (issue #240).
 func decodeSSE(r io.Reader) ([]port.Chunk, error) {
+	return decodeSSEWithField(r, "")
+}
+
+// decodeSSEWithField is the test seam that drives translate with a configured
+// interleaved-reasoning field name (the catalog's `interleaved.field`, threaded
+// into the streamState the Provider sets when it constructs a stream for an
+// interleaved-reasoning model). Existing fixtures use decodeSSE (field="") so
+// they stay byte-identical to the pre-#240 behaviour; the GLM-5.2 fixtures use
+// this with field="reasoning_content".
+func decodeSSEWithField(r io.Reader, field string) ([]port.Chunk, error) {
 	var out []port.Chunk
 	var st streamState
+	st.interleavedField = field
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
