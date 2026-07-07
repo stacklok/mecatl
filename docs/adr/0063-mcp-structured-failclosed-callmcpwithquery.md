@@ -66,7 +66,7 @@ Two tiers, both **environment-agnostic** (no local-disk dependency anywhere):
    caller's ctx carries no deadline; input ≤ 20 MiB (`MaxInputBytes`), output ≤ ~100
    KiB (`MaxOutputBytes`) so a too-broad filter does not simply move the context-budget
    problem from input to output. The JSON input fed to jq is chosen by **precedence**:
-   `StructuredContent` (the typed, schema-validated view) first, then the first
+   `StructuredContent` (the typed view) first, then the first
    JSON-parseable `Text` content block, else a **loud error** (a non-JSON result is not
    silently filtered). A remote tool-level error (`IsError`) is surfaced verbatim
    (truncated) **pre-filter** — the model asked to filter a failed call, so it is told
@@ -99,6 +99,11 @@ and `CallMcpWithQuery` returns the narrowed subset within the same output cap.
 - **Cloud-native portable.** No disk anywhere — the fail-closed error is a string, the
   jq filter runs in memory, and both paths work in the no-FS profile (issue #55) and on
   the storage-free `mecak8s` agent (ADR 0048).
+- **`structuredContent` may be any valid JSON value** (object, array, or primitive),
+  not just an object — the MCP spec's "JSON object" is a SHOULD. The optional
+  `outputSchema` validation (`internal/adapter/mcp/tool.go` (`validateStructuredContent`))
+  suppresses a top-level type mismatch (e.g. an array against an object-only schema);
+  field-level violations inside a matching shape still surface as a warning.
 - **Cost honestly:** a `CallMcpWithQuery` call fetches the full remote result before
   filtering, so it does not save bandwidth/latency on the remote hop — it saves the
   *context budget*. The model should prefer narrowing the remote call with its own

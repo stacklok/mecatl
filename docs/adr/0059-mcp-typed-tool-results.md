@@ -10,7 +10,8 @@
 
 Issue #223. An MCP `CallToolResult` is a typed, audience-aware content array
 (`content[]`: text, image, audio, `resource`/`EmbeddedResource`,
-`resource_link`) plus an optional `structuredContent` JSON object; the tool
+`resource_link`) plus an optional `structuredContent` JSON value (object, array,
+or primitive); the tool
 definition may carry an `outputSchema`. mecatl collapses all of that to a single
 string and discards the rest.
 

@@ -418,6 +418,55 @@ func TestCallMcpWithQueryOutputFailClosedOversized(t *testing.T) {
 	}
 }
 
+// TestCallMcpWithQueryFiltersArrayStructuredContent asserts jq narrows a
+// StructuredContent payload that is a JSON ARRAY (not an object): `length` → 2,
+// `.[].id` → [1,2], `.[0].name` → "a". Mirrors TestCallMcpWithQueryFiltersSubset
+// over an array-typed structured content.
+func TestCallMcpWithQueryFiltersArrayStructuredContent(t *testing.T) {
+	structured := json.RawMessage(`[{"id":1,"name":"a"},{"id":2,"name":"b"}]`)
+	tl := scriptedCallTool(CallResult{Server: "fake", Tool: "structarray", StructuredContent: structured})
+
+	for _, tc := range []struct {
+		filter string
+		want   string
+	}{
+		{filter: `length`, want: `2`},
+		{filter: `.[].id`, want: `[1,2]`},
+		{filter: `.[0].name`, want: `"a"`},
+	} {
+		call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(`{"server":"fake","tool":"structarray","jq_filter":`+quoteJSON(tc.filter)+`}`))
+		res, err := tl.Execute(context.Background(), call, nil)
+		if err != nil {
+			t.Fatalf("filter %q: unexpected Go error: %v", tc.filter, err)
+		}
+		if res.IsError {
+			t.Fatalf("filter %q: unexpected IsError: %q", tc.filter, res.Content)
+		}
+		if res.Content != tc.want {
+			t.Fatalf("filter %q: Content = %q, want %q", tc.filter, res.Content, tc.want)
+		}
+	}
+}
+
+// TestCallMcpWithQueryFiltersPrimitiveStructuredContent asserts jq handles a
+// primitive (number) StructuredContent: `.` → 42.
+func TestCallMcpWithQueryFiltersPrimitiveStructuredContent(t *testing.T) {
+	structured := json.RawMessage(`42`)
+	tl := scriptedCallTool(CallResult{Server: "fake", Tool: "structprim", StructuredContent: structured})
+	call := session.NewToolCall("c", callMcpWithQueryToolName,
+		json.RawMessage(`{"server":"fake","tool":"structprim","jq_filter":"."}`))
+	res, err := tl.Execute(context.Background(), call, nil)
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %q", res.Content)
+	}
+	if res.Content != `42` {
+		t.Fatalf("Content = %q, want 42", res.Content)
+	}
+}
+
 // quoteJSON returns the JSON string literal for s.
 func quoteJSON(s string) string {
 	b, err := json.Marshal(s)

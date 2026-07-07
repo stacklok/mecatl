@@ -537,3 +537,129 @@ func TestMapContentStructuredContentSchemaValidation(t *testing.T) {
 		t.Errorf("Content missing validation warning note: %q", res.Content)
 	}
 }
+
+// TestMapContentStructuredContentArray asserts a tool returning a JSON ARRAY as
+// its StructuredContent (with no outputSchema) produces a BlockStructuredContent
+// block carrying the array JSON, the JSON also appears in the model-facing
+// Content, and NO validation warning is surfaced (there is no schema to violate).
+func TestMapContentStructuredContentArray(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		StructuredContent: []any{
+			map[string]any{"id": float64(1), "name": "a"},
+			map[string]any{"id": float64(2), "name": "b"},
+		},
+	}
+	url := newContentServer(t, "structarray", nil, result)
+
+	res := callTool(t, url, "content", "structarray")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+
+	blk := findBlock(t, res.Parts, session.BlockStructuredContent)
+	var got []any
+	if err := json.Unmarshal([]byte(blk.Text), &got); err != nil {
+		t.Fatalf("structured block Text is not a valid JSON array: %v (%q)", err, blk.Text)
+	}
+	if len(got) != 2 {
+		t.Fatalf("structured block = %d elements, want 2", len(got))
+	}
+	if !strings.Contains(res.Content, `"name":"a"`) || !strings.Contains(res.Content, `"name":"b"`) {
+		t.Errorf("Content missing the array JSON mirror: %q", res.Content)
+	}
+	if strings.Contains(res.Content, "structured output validation warning") {
+		t.Errorf("Content must not carry a validation warning for a schema-less array: %q", res.Content)
+	}
+}
+
+// TestMapContentStructuredContentArrayAgainstObjectSchema is the REGRESSION test
+// for the top-level type-mismatch bug: a tool advertises an object-only
+// outputSchema but returns a JSON ARRAY. The array is a valid StructuredContent
+// value (the spec's "JSON object" is a SHOULD), so the validation warning MUST
+// be suppressed — the structured content still rides through as a block, with
+// NO "structured output validation warning" note. Without the fix the validator
+// returns a top-level type-mismatch error surfaced as a misleading warning.
+func TestMapContentStructuredContentArrayAgainstObjectSchema(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"items": map[string]any{"type": "array"},
+		},
+	}
+	result := &mcpsdk.CallToolResult{
+		StructuredContent: []any{
+			map[string]any{"id": float64(1), "name": "a"},
+			map[string]any{"id": float64(2), "name": "b"},
+		},
+	}
+	url := newContentServer(t, "arrayvsobj", schema, result)
+
+	res := callTool(t, url, "content", "arrayvsobj")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	blk := findBlock(t, res.Parts, session.BlockStructuredContent)
+	var got []any
+	if err := json.Unmarshal([]byte(blk.Text), &got); err != nil {
+		t.Fatalf("structured block Text is not a valid JSON array: %v (%q)", err, blk.Text)
+	}
+	if len(got) != 2 {
+		t.Fatalf("structured block = %d elements, want 2", len(got))
+	}
+	// THE regression assertion: no top-level type-mismatch warning.
+	if strings.Contains(res.Content, "structured output validation warning") {
+		t.Errorf("Content must NOT carry a top-level type-mismatch warning for an array against an object schema: %q", res.Content)
+	}
+}
+
+// TestMapContentStructuredContentPrimitiveAgainstObjectSchema mirrors
+// TestMapContentStructuredContentArrayAgainstObjectSchema for the PRIMITIVE
+// suppression path: a tool advertises an object-only outputSchema but returns a
+// bare JSON number as StructuredContent. The number is a valid StructuredContent
+// value (the spec's "JSON object" is a SHOULD), so the top-level type-mismatch
+// warning MUST be suppressed — the primitive still rides through as a block
+// carrying 42, with NO "structured output validation warning" note.
+func TestMapContentStructuredContentPrimitiveAgainstObjectSchema(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "number"},
+		},
+		"required": []string{"answer"},
+	}
+	result := &mcpsdk.CallToolResult{
+		StructuredContent: float64(42),
+	}
+	url := newContentServer(t, "primvsobj", schema, result)
+
+	res := callTool(t, url, "content", "primvsobj")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	blk := findBlock(t, res.Parts, session.BlockStructuredContent)
+	if blk.Text != "42" {
+		t.Errorf("structured block Text = %q, want 42", blk.Text)
+	}
+	if strings.Contains(res.Content, "structured output validation warning") {
+		t.Errorf("Content must NOT carry a top-level type-mismatch warning for a primitive against an object schema: %q", res.Content)
+	}
+}
+
+// TestMapContentStructuredContentPrimitive asserts a tool returning a JSON
+// primitive (a number) as its StructuredContent produces a BlockStructuredContent
+// block whose Text is the primitive's JSON encoding, with no schema warning.
+func TestMapContentStructuredContentPrimitive(t *testing.T) {
+	result := &mcpsdk.CallToolResult{
+		StructuredContent: float64(42),
+	}
+	url := newContentServer(t, "structprim", nil, result)
+
+	res := callTool(t, url, "content", "structprim")
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res)
+	}
+	blk := findBlock(t, res.Parts, session.BlockStructuredContent)
+	if blk.Text != "42" {
+		t.Errorf("structured block Text = %q, want 42", blk.Text)
+	}
+}

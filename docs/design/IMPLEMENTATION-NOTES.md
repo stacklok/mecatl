@@ -2733,7 +2733,8 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
 The MCP adapter's `flattenContent` choke point collapsed an MCP
 `CallToolResult` — a typed, audience-aware content array (`text`/`image`/
 `audio`/`resource`/`EmbeddedResource`/`resource_link`) plus an optional
-`structuredContent` JSON object and `outputSchema` — to a single model-facing
+`structuredContent` JSON value (object, array, or primitive) and
+`outputSchema` — to a single model-facing
 string, discarding every non-text block. The architectural root cause was that
 the domain value object `session.ToolResult` was `{Content string, IsError
 bool}` (string-only, no structured channel), mirrored by the gRPC `ToolResult`
@@ -2852,7 +2853,10 @@ filesystem to spill to):
   access), ctx-deadline-bounded (default 5s), input ≤ 20 MiB (`MaxInputBytes`), output
   ≤ ~100 KiB (`MaxOutputBytes`) so a too-broad filter doesn't move the context-budget
   problem from input to output. The JSON input fed to jq is chosen by **precedence**:
-  `StructuredContent` (the typed, schema-validated view) → the first JSON-parseable
+  `StructuredContent` (the typed view; `structuredContent` may be any valid JSON
+  value — object, array, or primitive; the optional `outputSchema` validation
+  suppresses a top-level type mismatch, e.g. an array against an object-only
+  schema) → the first JSON-parseable
   `Text` content block → a **loud error** (a non-JSON result is never silently
   filtered). A remote tool-level error (`IsError`) is surfaced verbatim (truncated)
   **pre-filter** — the model asked to filter a failed call; it is told the call failed.

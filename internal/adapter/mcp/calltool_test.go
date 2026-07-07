@@ -57,6 +57,21 @@ func newCallToolTestServer(t *testing.T) string {
 		}, nil
 	})
 
+	// arraystruct tool: returns a JSON ARRAY as StructuredContent, round-tripped
+	// through CallTool to assert arrays (not just objects) survive the wire.
+	srv.AddTool(&mcpsdk.Tool{
+		Name:        "arraystruct",
+		Description: "returns array-typed structured content",
+		InputSchema: map[string]any{"type": "object"},
+	}, func(_ context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{
+			StructuredContent: []any{
+				map[string]any{"id": float64(1), "name": "a"},
+				map[string]any{"id": float64(2), "name": "b"},
+			},
+		}, nil
+	})
+
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
 	httpSrv := httptest.NewServer(handler)
 	// See newTestServer: close the listener AFTER *Server.Close (LIFO) so the
@@ -132,6 +147,41 @@ func TestManagerCallToolStructuredContent(t *testing.T) {
 	}
 	if got["ok"] != true {
 		t.Errorf("StructuredContent.ok = %v, want true", got["ok"])
+	}
+}
+
+// TestManagerCallToolStructuredContentArray asserts a JSON ARRAY returned as
+// StructuredContent round-trips through CallTool and re-parses as []any (NOT a
+// map), mirroring TestManagerCallToolStructuredContent over an array-typed
+// structured content.
+func TestManagerCallToolStructuredContentArray(t *testing.T) {
+	url := newCallToolTestServer(t)
+	m := managerFromURL(t, url)
+
+	res, err := m.CallTool(context.Background(), "fake", "arraystruct", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Errorf("unexpected IsError for arraystruct: %+v", res)
+	}
+	if res.StructuredContent == nil {
+		t.Fatalf("StructuredContent is nil; want the raw array payload")
+	}
+	// Round-trips: re-parse the raw message and assert it is an array, not a map.
+	var got []any
+	if err := json.Unmarshal(res.StructuredContent, &got); err != nil {
+		t.Fatalf("StructuredContent not valid JSON array: %v (%s)", err, res.StructuredContent)
+	}
+	if len(got) != 2 {
+		t.Fatalf("StructuredContent = %d elements, want 2", len(got))
+	}
+	first, ok := got[0].(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent[0] = %T, want map[string]any", got[0])
+	}
+	if first["id"] != float64(1) || first["name"] != "a" {
+		t.Errorf("StructuredContent[0] = %v, want id=1 name=a", first)
 	}
 }
 

@@ -453,7 +453,113 @@ func validateStructuredContent(schemaRaw json.RawMessage, instance any) string {
 		return ""
 	}
 	if err := resolved.Validate(instance); err != nil {
+		// Suppress a warning when the failure is SOLELY a top-level type
+		// mismatch between the instance's JSON type and the schema's declared
+		// top-level type. The MCP spec's "must marshal to a JSON object" is a
+		// SHOULD, not a hard contract; a valid JSON value of any shape is an
+		// acceptable StructuredContent. A field-level violation (a real schema
+		// breach inside an object instance) is NOT suppressed — those still
+		// surface as warnings, because they are a misbehaving-server signal.
+		declared := schema.Type
+		declaredTypes := schema.Types
+		if isTopLevelTypeMismatch(declared, declaredTypes, instance) {
+			return ""
+		}
 		return fmt.Sprintf("[structured output validation warning: %v]", err)
+	}
+	return ""
+}
+
+// JSON type name constants (the JSON Schema "type" vocabulary), shared by the
+// top-level type-mismatch classifier and the instance-type probe.
+const (
+	jsonTypeObject  = "object"
+	jsonTypeArray   = "array"
+	jsonTypeNumber  = "number"
+	jsonTypeInteger = "integer"
+	jsonTypeString  = "string"
+	jsonTypeBoolean = "boolean"
+	jsonTypeNull    = "null"
+)
+
+// isTopLevelTypeMismatch reports whether the instance's JSON type does not
+// match ANY of the schema's declared top-level types — i.e. the validation
+// failure is a top-level shape mismatch (array-against-object, etc.), NOT a
+// field-level breach inside a matching shape. declared is schema.Type (a
+// single type, "" when the schema used Types); declaredTypes is schema.Types
+// (nil for a single-type schema). The two are mutually exclusive on
+// jsonschema.Schema (see schema.go: "Use Type for a single type, or Types for
+// multiple types; never both").
+//
+// integer is treated as a subtype of number (a JSON instance number that is
+// integral matches a schema type of integer OR number), mirroring the
+// validator's own subsumption rule. A schema with NO top-level type (both
+// empty) cannot produce a top-level type mismatch, so this returns false and
+// the original validation error surfaces.
+func isTopLevelTypeMismatch(declared string, declaredTypes []string, instance any) bool {
+	types := declaredTypes
+	if len(types) == 0 && declared != "" {
+		types = []string{declared}
+	}
+	if len(types) == 0 {
+		// No top-level type declared — the validation failure is not a
+		// top-level type mismatch; surface the original error.
+		return false
+	}
+	got := jsonInstanceType(instance)
+	if got == "" {
+		return false
+	}
+	for _, t := range types {
+		if t == got {
+			return false
+		}
+		// "number" subsumes "integer": an integral instance matches a schema
+		// type of number (mirrors the validator's own rule). The reverse is
+		// NOT true: a non-integral number does not match an "integer" schema.
+		if t == jsonTypeNumber && got == jsonTypeInteger {
+			return false
+		}
+	}
+	return true
+}
+
+// jsonInstanceType returns the JSON type name of instance ("object",
+// "array", "number", "integer", "string", "boolean", "null"), or "" when the
+// value is not a valid JSON instance. A json.RawMessage is unmarshaled first
+// (the SDK may pass StructuredContent through raw). A float64 that is
+// mathematically an integer is reported as "integer" so a schema type of
+// "integer" can match it.
+func jsonInstanceType(instance any) string {
+	if raw, ok := instance.(json.RawMessage); ok {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return ""
+		}
+		instance = v
+	}
+	switch v := instance.(type) {
+	case nil:
+		return jsonTypeNull
+	case bool:
+		return jsonTypeBoolean
+	case string:
+		return jsonTypeString
+	case map[string]any:
+		return jsonTypeObject
+	case []any:
+		return jsonTypeArray
+	case float64:
+		if v == float64(int64(v)) {
+			return jsonTypeInteger
+		}
+		return jsonTypeNumber
+	case int:
+		return jsonTypeInteger
+	case int32:
+		return jsonTypeInteger
+	case int64:
+		return jsonTypeInteger
 	}
 	return ""
 }
