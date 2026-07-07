@@ -20,7 +20,7 @@ description: >-
 
   NOT for: trivial edits (use /code-review), cloud review (use
   /code-review ultra), drafting code, posting GitHub comments (use
-  /pr-review-post), pure-docs / pure-config diffs.
+  /pr-review-post), pure-config diffs.
 ---
 
 # Panel review
@@ -206,6 +206,7 @@ take precedence over generic ones** when their scope matches.
 | **DevOps / CI / IaC** | `.github/workflows/*`, `.gitlab-ci.yml`, `*.tf`, `*.tfvars`, `Dockerfile`, `*.dockerfile`, `cloudbuild.yaml`, `Jenkinsfile`, `Pulumi.yaml`, `cdk.json`, `Taskfile.yml`, `Makefile` | `devops-expert` |
 | **Duplication** | Three+ touched files with similar shape; new files that look like copies of existing | `code-duplication-reviewer` |
 | **Library reuse / dep audit** | `go.mod`, `package.json`, `requirements.txt`, `pyproject.toml`, new top-level dependency, hand-rolled utility shapes | `library-reuse-reviewer` |
+| **Reinvention / over-build** | Any non-trivial code diff (default-on, NOT signal-gated — see below) | `library-reuse-reviewer` + `code-duplication-reviewer` |
 | **Project-specific surfaces** | (varies — read each available agent's `description` frontmatter to learn its scope) | Any project-level agent in `.claude/agents/` that names a domain not covered above — typically architects for a specific framework, protocol, API surface, or UI workspace |
 
 Classification rules:
@@ -221,10 +222,19 @@ Classification rules:
   can run on the same diff: the project-specific one carries
   domain-loaded invariants and ADR knowledge, `software-architect`
   carries the cross-cutting design lens.
-- **`code-duplication-reviewer`** only when actual duplication
-  shape is present.
-- **`library-reuse-reviewer`** only when a new dependency is added
-  OR hand-rolled utility shapes appear.
+- **`code-duplication-reviewer`** and **`library-reuse-reviewer`
+  are DEFAULT-ON for any non-trivial code diff** (any diff touching
+  application logic — not pure-docs / pure-config). Do NOT gate
+  them on "a new dependency was added" or "actual duplication
+  shape is already visible". Their entire job is to FIND the
+  duplication and the reinvented stdlib that ISN'T obvious from
+  the diff surface; gating them on the signal already being
+  visible skips them on exactly the diffs where they add the most
+  value. When in doubt, include both — they default to silence
+  when they find nothing. The reuse pair is cheap insurance
+  against the most common over-build failure mode an agent
+  introduces (reinvented stdlib, speculative abstraction,
+  unrequested layer). See the reuse-ladder brief in Step 8.
 - **Pure-docs diffs** skip the Domain axis (Spec axis may still
   run).
 - **Pure-test diffs**: a single Domain reviewer
@@ -243,11 +253,11 @@ Domain axis (running in parallel):
   - secure-code-reviewer        — auth/HTTP/SSRF surface in api/handlers/
   - kubernetes-deployment-expert — deploy/staging/ manifests
   - devops-expert               — .github/workflows/release.yml changes
-  - library-reuse-reviewer      — new dependency in go.mod
+  - library-reuse-reviewer      — default-on: reinvented stdlib / over-build
+  - code-duplication-reviewer   — default-on: duplication across the diff
 
 Skipping (no diff in scope):
   - kubernetes-operator-expert
-  - code-duplication-reviewer
 
 Gaps (dimension detected, no matching agent installed):
   - (none)
@@ -291,6 +301,10 @@ They run concurrently, separate contexts, no order dependencies.
   > Quote the specific spec line / requirement for each finding.
   > Under 400 words. Default to silence when uncertain — only flag
   > concrete mismatches.
+  >
+  > Root-cause discipline: when a finding names a symptom, note
+  > whether the diff fixes the root cause or only the path the
+  > ticket names — a sibling caller may still be broken.
 
 If no spec source was found in Step 3, **skip this call** and note
 in final output.
@@ -326,6 +340,19 @@ For each specialist in the panel:
   - Reminder: "Respect your calibration discipline — flag only
     findings that affect correctness, security, or stated
     requirements. Default action when uncertain is silence."
+
+**Reuse pair — extra brief (library-reuse-reviewer +
+code-duplication-reviewer).** When fanning out the default-on reuse
+pair, append the reuse-ladder brief from
+[references/reuse-ladder.md](references/reuse-ladder.md) to each of
+their prompts so they review systematically rather than ad-hoc. The
+brief gives them the 7-rung reuse ladder (Does this need to exist?
+→ Already in codebase? → Stdlib? → Native platform? → Installed
+dep? → One line? → Minimum), the `delete:`/`stdlib:`/`native:`/
+`yagni:`/`shrink:` tag vocabulary, the `net: -<N> lines possible.`
+score, and root-cause discipline (grep every caller, fix the shared
+function once). Read the reference file and paste the brief block
+into each reuse agent's prompt.
 
 Set `run_in_background: false` (default) so synthesis blocks on
 completion.
@@ -366,94 +393,10 @@ For the **Domain** axis only, synthesise across the panel:
 
 ### Final output structure
 
-```
-# Panel review — <scope>
-
-**Fixed point:** <fp>
-**Diff:** N files, M insertions, L deletions, K commits
-
----
-
-## Spec — does this implement what was asked?
-
-**Source:** #123 "Add /preview endpoint" (fetched via `gh issue view 123`)
-
-- **[Missing]** Spec requires rate-limiting on `/preview`; diff
-  doesn't implement it. (Spec lines 8–11: "the endpoint must cap
-  to 60 req/min per IP".)
-- **[Scope creep]** Diff adds a `/preview/v2` endpoint not in the
-  spec.
-- **[Wrong]** Spec calls for image-only previews; diff also fetches
-  HTML. (Spec line 14: "image URLs only".)
-
-(Or: "Spec axis skipped — no source available." with reason.)
-
----
-
-## Standards — does this follow project conventions?
-
-**Sources read:** CLAUDE.md, .claude/rules/code-style.md,
-.claude/rules/<module>.md, docs/adr/NNNN, docs/adr/MMMM
-**Tooling-skipped:** linter, formatter, type-checker
-
-- **[Violation]** `<path/to/file>:42` uses an error-wrapping form
-  forbidden by `.claude/rules/code-style.md § Errors`.
-- **[Judgement]** New file `<path/to/new-file>` introduces a
-  package-level singleton — `docs/design/principles.md` forbids
-  global state. Was this discussed?
-
-(Or: "Standards axis: no project standards docs found — axis
-returned an empty report.")
-
----
-
-## Domain — what do the specialist reviewers say?
-
-**Panel:** secure-code-reviewer, kubernetes-deployment-expert,
-devops-expert, library-reuse-reviewer
-
-### Ship-blockers (2)
-- **[Critical]** SSRF in `/api/<endpoint>` —
-  `<path/to/handler>:42`
-  Sources: secure-code-reviewer
-  …
-
-### Cross-confirmed (1)
-- **[High]** Missing `runAsNonRoot` and `PodSecurityContext` —
-  flagged by both kubernetes-deployment-expert and
-  secure-code-reviewer. Highest confidence.
-
-### Mechanical fixes (3)
-…
-
-### Judgement calls (1)
-- **[Medium]** New top-level dep `github.com/X/Y` — `go.mod`
-  Sources: library-reuse-reviewer
-  Rationale: stdlib `slog` covers logging; new dep is single-
-  vendor. Discuss before adding.
-
-### Polish (4)
-…
-
-### Gaps
-- (none)
-
----
-
-## Summary
-
-- **Spec axis:** 3 findings (1 missing, 1 scope creep, 1 wrong)
-- **Standards axis:** 2 findings (1 violation, 1 judgement)
-- **Domain axis:** 2 ship-blockers, 3 mechanical, 1 judgement,
-  4 polish; 1 cross-confirmed
-
-**Most important single issue:** Critical SSRF in
-`<path/to/handler>:42` (Domain).
-
-Each axis is orthogonal — Spec, Standards, and Domain findings
-don't mask each other. Verify each axis independently before
-shipping.
-```
+Render the report following the template in
+[references/output-template.md](references/output-template.md).
+The prose rules above (don't merge across axes; synthesis within
+Domain only) govern; the template is the shape.
 
 ## Step 10 — Offer follow-up
 
@@ -475,7 +418,11 @@ Don't loop on synthesis. The panel ran once; the report stands.
   Domain are orthogonal by design; one masking another is the
   failure mode this skill exists to prevent.
 - Doesn't fan out to every available Domain agent regardless of
-  diff — irrelevant reviewers waste tokens and add noise.
+  diff — irrelevant reviewers waste tokens and add noise. (The
+  reuse pair is the exception: default-on for non-trivial code
+  diffs, because over-engineering is the most common agent
+  failure mode and the signal is rarely visible on the diff
+  surface.)
 - Doesn't duplicate the built-in `/code-review` skill's
   single-pass logic.
 - Doesn't override the user's choice of agents.
@@ -517,10 +464,31 @@ selected from the project's installed `.claude/agents/`. The
 **don't merge across axes** principle is preserved verbatim —
 synthesis happens within the Domain axis only.
 
+The reuse pair (`library-reuse-reviewer` +
+`code-duplication-reviewer`) is DEFAULT-ON for non-trivial code
+diffs, adopted from Ponytail's stance that over-engineering review
+runs on every diff and *finds* the reinvention rather than gating
+on an already-visible signal. The 7-rung reuse ladder and the
+`delete:`/`stdlib:`/`native:`/`yagni:`/`shrink:` tag vocabulary in
+the reuse-pair brief (Step 8) are adapted from Ponytail's
+`ponytail-review` skill; the `net: -<N> lines possible.` score
+gives the reuse axis a concrete countable metric instead of
+generic prose.
+
 ## See also
 
+- [references/reuse-ladder.md](references/reuse-ladder.md) — the
+  7-rung reuse-ladder brief and `delete:`/`stdlib:`/`native:`/
+  `yagni:`/`shrink:` tag vocabulary, appended to the reuse-pair
+  agent prompts in Step 8.
+- [references/output-template.md](references/output-template.md) —
+  the rendered shape of the Step 9 three-tier report.
 - Matt Pocock's two-axis `/review` skill —
   https://github.com/mattpocock/skills/blob/main/skills/in-progress/review/SKILL.md
+- Ponytail (lazy senior dev) — the 7-rung reuse ladder and the
+  `delete:`/`stdlib:`/`native:`/`yagni:`/`shrink:` tag vocabulary
+  the reuse-pair brief adopts —
+  https://github.com/DietrichGebert/ponytail
 - Claude Code best practices, "Add an adversarial review step" —
   https://code.claude.com/docs/en/best-practices
 - Sub-agents reference, "Run parallel research" pattern —
