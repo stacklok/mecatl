@@ -79,6 +79,14 @@ var (
 	// configured store backend does not expose one. Adapters map it to
 	// Unimplemented / HTTP 501.
 	ErrNoScheduleStore = errors.New("server: scheduled tasks are not supported by the configured store")
+	// ErrNoEventLog signals that no durable EventLog (cloud-native Phase 3a,
+	// port.EventLog) is configured — the configured store backend does not expose
+	// one. It is the EventLog analogue of ErrNoScheduleStore:
+	// StreamSessionEvents returns it so the wire adapters map to UNIMPLEMENTED
+	// (HTTP 501), honestly reporting that the read-back surface is absent rather
+	// than pretending an unknown id. ListSessions does NOT use it (it degrades to
+	// an empty list via PrunableStore instead).
+	ErrNoEventLog = errors.New("server: no durable event log configured")
 	// ErrSchedulerNotRunning is returned by FireNow when a ScheduleStore IS
 	// available (Create/Get/List/etc. all work) but no scheduler.Scheduler is
 	// wired on this process (s.scheduler == nil — e.g. --scheduler was not

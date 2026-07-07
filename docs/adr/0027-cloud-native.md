@@ -283,7 +283,12 @@ stays the replay projection; the log is additive.
   (`engine/agent/dispatch.go` (`authorize`) and `engine/agent/dispatch.go`
   (`resolvePendingCall`)) and recorded by the relay. The loop stays storage-agnostic
   (it only emits; it never imports `port.EventLog`). 3a is the FOUNDATION: the log
-  records the stream; nothing consumes it yet (that is 3b).
+  records the stream; nothing consumes it yet (that is 3b). The log is now publicly
+  readable over the `HarnessService` via the server-streaming `StreamSessionEvents` RPC
+  (issue #245 Phase 1) — the client-tier surface over the same `port.EventLog.Read`,
+  replaying a session's full timeline (including the log-only `EvApproval` /
+  `EvCompactionArchive` / `EvUserPrompt` a live `Converse` relay skips); no new List 1 /
+  List 2 row (the RPC adds no outlives-a-call resource — it reads the existing log).
 - **3b (SHIPPED):** the durability CONSUMERS of the 3a log. (1) Non-destructive
   compaction archive: a new `EvCompactionArchive`
   (`engine/session/event.go` (`CompactionArchivePayload`)) carries the pre-compaction

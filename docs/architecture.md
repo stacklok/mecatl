@@ -208,7 +208,12 @@ HEAD` plus a `git diff --no-index` new-file hunk per untracked file, so a downst
 apply` reproduces new files too), a machine-readable run-summary JSON (`Summary`,
 additive-only contract), and an optional durable JSONL event log — then maps the terminal
 `StopReason` to a process exit code (`0` clean incl. the honest non-completions, `1` run
-failure/cancel/timeout, `2` setup failure). Unlike `mecated` it owns no listeners, TLS,
+failure/cancel/timeout, `2` setup failure). The durable event log (`port.EventLog`,
+cloud-native Phase 3a) is now readable over the public `HarnessService` via the
+server-streaming `StreamSessionEvents` RPC (and `GET /v1/sessions/{id}/events` over HTTP) —
+the client-tier surface over the same `port.EventLog.Read` the operator-tier 3c
+`EventLogService.Read` serves, so a client opening a past session replays its full timeline
+(the loop stays storage-agnostic; it only emits). Unlike `mecated` it owns no listeners, TLS,
 auth, or telemetry pipeline; unlike `mecatui` it has no UI. It defaults `--headless`
 (inverted from `mecated`): a CI run has no approver, so a child ask auto-denies or routes
 to the opt-in ask-reviewer, and a *main-engine* ask under `posture strict` cancels the run

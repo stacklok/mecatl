@@ -56,6 +56,8 @@ const (
 	HarnessService_ListAgents_FullMethodName          = "/mecatl.v1.HarnessService/ListAgents"
 	HarnessService_ListCommands_FullMethodName        = "/mecatl.v1.HarnessService/ListCommands"
 	HarnessService_ListWorktrees_FullMethodName       = "/mecatl.v1.HarnessService/ListWorktrees"
+	HarnessService_StreamSessionEvents_FullMethodName = "/mecatl.v1.HarnessService/StreamSessionEvents"
+	HarnessService_ListSessions_FullMethodName        = "/mecatl.v1.HarnessService/ListSessions"
 	HarnessService_ListSkills_FullMethodName          = "/mecatl.v1.HarnessService/ListSkills"
 	HarnessService_GetSoul_FullMethodName             = "/mecatl.v1.HarnessService/GetSoul"
 	HarnessService_GetUserModel_FullMethodName        = "/mecatl.v1.HarnessService/GetUserModel"
@@ -138,6 +140,40 @@ type HarnessServiceClient interface {
 	// model/network call and never mutates anything. An empty workspace or a server
 	// with no worktree lister also returns an empty list.
 	ListWorktrees(ctx context.Context, in *ListWorktreesRequest, opts ...grpc.CallOption) (*ListWorktreesResponse, error)
+	// StreamSessionEvents replays a session's durable event log as a server stream
+	// of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier
+	// surface over the SAME `port.EventLog.Read` the operator-tier 3c
+	// EventLogService.Read serves; the loop itself stays storage-agnostic (it only
+	// emits — persistence lives at the relay, never in `engine/agent`). The log
+	// stores ALREADY-REDACTED events and inherits the stream's redaction, so this
+	// path adds none (gauntlet #7: no raw args/deny-reason bodies/child content
+	// ever cross).
+	//
+	// UNLIKE the live `Converse` relay — which SKIPS the three log-only event kinds
+	// (`approval`/`compaction_archive`/`user_prompt`) on the client wire because they
+	// are persistence-only — StreamSessionEvents relays ALL events, including those
+	// three: a client opening a PAST session wants the verdicts and user prompts, as
+	// they ARE the transcript. They are metadata-only/redacted by construction, so no
+	// extra filter applies here.
+	//
+	// Read-only: no live model call, no mutation, no Converse run is started. An
+	// unknown session id yields an EMPTY stream (absence is data — a never-created or
+	// pruned id is indistinguishable, by design). A server with NO durable EventLog
+	// wired returns `UNIMPLEMENTED` (HTTP 501). There is intentionally NO
+	// ServerCapabilities bit for this feature: the capability is RPC-discoverable
+	// (UNIMPLEMENTED vs. an empty stream degrade honestly).
+	StreamSessionEvents(ctx context.Context, in *StreamSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
+	// ListSessions returns the stored-session inventory — the picker metadata a
+	// client renders to let an operator open an EXISTING session by id (issue #245
+	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
+	// configured store); a store that does not implement `PrunableStore`, or one that
+	// returns `ErrPruneUnsupported`, degrades to an EMPTY list — never an error — so
+	// a no-persistence/cloud server honestly reports "no sessions". Each row carries
+	// only picker metadata (id, timestamps, state, turn count, model id); NO
+	// conversation content is loaded. Rows are sorted most-recently-active first
+	// (modified_at descending). Read-only. There is intentionally NO
+	// ServerCapabilities bit — see StreamSessionEvents for the rationale.
+	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
 	// ListSkills returns the resolved skills inventory snapshot: each discovered
 	// skill's name + one-line description. Derived from the snapshot taken at
 	// startup (skills are discovered once at build time and immutable for the
@@ -345,6 +381,35 @@ func (c *harnessServiceClient) ListWorktrees(ctx context.Context, in *ListWorktr
 	return out, nil
 }
 
+func (c *harnessServiceClient) StreamSessionEvents(ctx context.Context, in *StreamSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[1], HarnessService_StreamSessionEvents_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamSessionEventsRequest, Event]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_StreamSessionEventsClient = grpc.ServerStreamingClient[Event]
+
+func (c *harnessServiceClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionsResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *harnessServiceClient) ListSkills(ctx context.Context, in *ListSkillsRequest, opts ...grpc.CallOption) (*ListSkillsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSkillsResponse)
@@ -427,7 +492,7 @@ func (c *harnessServiceClient) CancelTeammate(ctx context.Context, in *CancelTea
 
 func (c *harnessServiceClient) RunTeam(ctx context.Context, in *RunTeamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TeamEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[1], HarnessService_RunTeam_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[2], HarnessService_RunTeam_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -533,6 +598,40 @@ type HarnessServiceServer interface {
 	// model/network call and never mutates anything. An empty workspace or a server
 	// with no worktree lister also returns an empty list.
 	ListWorktrees(context.Context, *ListWorktreesRequest) (*ListWorktreesResponse, error)
+	// StreamSessionEvents replays a session's durable event log as a server stream
+	// of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier
+	// surface over the SAME `port.EventLog.Read` the operator-tier 3c
+	// EventLogService.Read serves; the loop itself stays storage-agnostic (it only
+	// emits — persistence lives at the relay, never in `engine/agent`). The log
+	// stores ALREADY-REDACTED events and inherits the stream's redaction, so this
+	// path adds none (gauntlet #7: no raw args/deny-reason bodies/child content
+	// ever cross).
+	//
+	// UNLIKE the live `Converse` relay — which SKIPS the three log-only event kinds
+	// (`approval`/`compaction_archive`/`user_prompt`) on the client wire because they
+	// are persistence-only — StreamSessionEvents relays ALL events, including those
+	// three: a client opening a PAST session wants the verdicts and user prompts, as
+	// they ARE the transcript. They are metadata-only/redacted by construction, so no
+	// extra filter applies here.
+	//
+	// Read-only: no live model call, no mutation, no Converse run is started. An
+	// unknown session id yields an EMPTY stream (absence is data — a never-created or
+	// pruned id is indistinguishable, by design). A server with NO durable EventLog
+	// wired returns `UNIMPLEMENTED` (HTTP 501). There is intentionally NO
+	// ServerCapabilities bit for this feature: the capability is RPC-discoverable
+	// (UNIMPLEMENTED vs. an empty stream degrade honestly).
+	StreamSessionEvents(*StreamSessionEventsRequest, grpc.ServerStreamingServer[Event]) error
+	// ListSessions returns the stored-session inventory — the picker metadata a
+	// client renders to let an operator open an EXISTING session by id (issue #245
+	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
+	// configured store); a store that does not implement `PrunableStore`, or one that
+	// returns `ErrPruneUnsupported`, degrades to an EMPTY list — never an error — so
+	// a no-persistence/cloud server honestly reports "no sessions". Each row carries
+	// only picker metadata (id, timestamps, state, turn count, model id); NO
+	// conversation content is loaded. Rows are sorted most-recently-active first
+	// (modified_at descending). Read-only. There is intentionally NO
+	// ServerCapabilities bit — see StreamSessionEvents for the rationale.
+	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
 	// ListSkills returns the resolved skills inventory snapshot: each discovered
 	// skill's name + one-line description. Derived from the snapshot taken at
 	// startup (skills are discovered once at build time and immutable for the
@@ -638,6 +737,12 @@ func (UnimplementedHarnessServiceServer) ListCommands(context.Context, *ListComm
 }
 func (UnimplementedHarnessServiceServer) ListWorktrees(context.Context, *ListWorktreesRequest) (*ListWorktreesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListWorktrees not implemented")
+}
+func (UnimplementedHarnessServiceServer) StreamSessionEvents(*StreamSessionEventsRequest, grpc.ServerStreamingServer[Event]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamSessionEvents not implemented")
+}
+func (UnimplementedHarnessServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSkills not implemented")
@@ -934,6 +1039,35 @@ func _HarnessService_ListWorktrees_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_StreamSessionEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamSessionEventsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HarnessServiceServer).StreamSessionEvents(m, &grpc.GenericServerStream[StreamSessionEventsRequest, Event]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_StreamSessionEventsServer = grpc.ServerStreamingServer[Event]
+
+func _HarnessService_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListSessions(ctx, req.(*ListSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_ListSkills_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSkillsRequest)
 	if err := dec(in); err != nil {
@@ -1185,6 +1319,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HarnessService_ListWorktrees_Handler,
 		},
 		{
+			MethodName: "ListSessions",
+			Handler:    _HarnessService_ListSessions_Handler,
+		},
+		{
 			MethodName: "ListSkills",
 			Handler:    _HarnessService_ListSkills_Handler,
 		},
@@ -1231,6 +1369,11 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _HarnessService_Converse_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "StreamSessionEvents",
+			Handler:       _HarnessService_StreamSessionEvents_Handler,
+			ServerStreams: true,
 		},
 		{
 			StreamName:    "RunTeam",

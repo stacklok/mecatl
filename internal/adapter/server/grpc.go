@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -346,6 +347,45 @@ func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWor
 	return &mecatlv1.ListWorktreesResponse{Worktrees: toProtoWorktrees(wts)}, nil
 }
 
+// StreamSessionEvents replays a session's durable event log as a server stream
+// of Event envelopes (issue #245 Phase 1; cloud-native Phase 3a read-back).
+func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
+	if req.GetSessionId() == "" {
+		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
+	}
+	events, err := h.svc.StreamSessionEvents(stream.Context(), session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return toStatus(err)
+	}
+	// CRITICAL (replay-vs-live): the LIVE Converse relay SKIPS the three log-only
+	// event kinds (EvApproval/EvCompactionArchive/EvUserPrompt) on the client wire
+	// because they are persistence-only. StreamSessionEvents is the READ-BACK of the
+	// durable log itself — a client opening a PAST session WANTS the verdicts and
+	// user prompts (they ARE the transcript). So relay ALL events through toProto,
+	// including the three log-only kinds. They are already metadata-only/redacted by
+	// construction (gauntlet #7). Do NOT copy the live-relay filter here.
+	for ev, iterErr := range events {
+		if iterErr != nil {
+			return status.Error(codes.Internal, iterErr.Error())
+		}
+		if err := stream.Send(toProto(ev)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListSessions returns the stored-session inventory — the picker metadata a
+// client renders to let an operator open an EXISTING session by id (issue #245
+// Phase 1).
+func (h *HarnessServer) ListSessions(ctx context.Context, _ *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
+	rows, err := h.svc.ListSessions(ctx)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ListSessionsResponse{Sessions: toProtoSessionSummaries(rows)}, nil
+}
+
 // toStatus maps service sentinel errors to gRPC status codes.
 //
 //nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
@@ -388,6 +428,11 @@ func toStatus(err error) error {
 	case errors.Is(err, ErrNoScheduleStore):
 		// The configured store backend does not implement ScheduleStore: the
 		// schedule RPCs are not available on this deployment. Unimplemented.
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrNoEventLog):
+		// No durable EventLog (cloud-native Phase 3a) is configured: the
+		// StreamSessionEvents read-back surface is not available on this
+		// deployment. Unimplemented (HTTP 501).
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrSchedulerNotRunning):
 		// A ScheduleStore is available but no in-process scheduler is wired to

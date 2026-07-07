@@ -106,6 +106,42 @@ service HarnessService {
   // with no worktree lister also returns an empty list.
   rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse);
 
+  // StreamSessionEvents replays a session's durable event log as a server stream
+  // of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier
+  // surface over the SAME `port.EventLog.Read` the operator-tier 3c
+  // EventLogService.Read serves; the loop itself stays storage-agnostic (it only
+  // emits — persistence lives at the relay, never in `engine/agent`). The log
+  // stores ALREADY-REDACTED events and inherits the stream's redaction, so this
+  // path adds none (gauntlet #7: no raw args/deny-reason bodies/child content
+  // ever cross).
+  //
+  // UNLIKE the live `Converse` relay — which SKIPS the three log-only event kinds
+  // (`approval`/`compaction_archive`/`user_prompt`) on the client wire because they
+  // are persistence-only — StreamSessionEvents relays ALL events, including those
+  // three: a client opening a PAST session wants the verdicts and user prompts, as
+  // they ARE the transcript. They are metadata-only/redacted by construction, so no
+  // extra filter applies here.
+  //
+  // Read-only: no live model call, no mutation, no Converse run is started. An
+  // unknown session id yields an EMPTY stream (absence is data — a never-created or
+  // pruned id is indistinguishable, by design). A server with NO durable EventLog
+  // wired returns `UNIMPLEMENTED` (HTTP 501). There is intentionally NO
+  // ServerCapabilities bit for this feature: the capability is RPC-discoverable
+  // (UNIMPLEMENTED vs. an empty stream degrade honestly).
+  rpc StreamSessionEvents(StreamSessionEventsRequest) returns (stream Event);
+
+  // ListSessions returns the stored-session inventory — the picker metadata a
+  // client renders to let an operator open an EXISTING session by id (issue #245
+  // Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
+  // configured store); a store that does not implement `PrunableStore`, or one that
+  // returns `ErrPruneUnsupported`, degrades to an EMPTY list — never an error — so
+  // a no-persistence/cloud server honestly reports "no sessions". Each row carries
+  // only picker metadata (id, timestamps, state, turn count, model id); NO
+  // conversation content is loaded. Rows are sorted most-recently-active first
+  // (modified_at descending). Read-only. There is intentionally NO
+  // ServerCapabilities bit — see StreamSessionEvents for the rationale.
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
   // ListSkills returns the resolved skills inventory snapshot: each discovered
   // skill's name + one-line description. Derived from the snapshot taken at
   // startup (skills are discovered once at build time and immutable for the
@@ -430,6 +466,52 @@ message GetSessionResponse {
   Session session = 1;
 }
 
+// StreamSessionEventsRequest names the session whose durable event log is replayed.
+message StreamSessionEventsRequest {
+  // session_id is the id of the session to replay. An unknown id yields an empty
+  // stream (absence is data); a server with no durable EventLog returns
+  // UNIMPLEMENTED.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ListSessionsRequest is the empty unary request for the stored-session inventory.
+message ListSessionsRequest {}
+
+// SessionSummary is one stored session's picker metadata — id, timestamps, state,
+// turn count, and the resolved model id. It carries NO conversation content: it is
+// the cheap row a client renders in an "open existing session" picker (issue #245
+// Phase 1). `model_id` is a bare opaque string (NOT a full ResolvedModel) to keep
+// the picker row cheap and provider-neutral — the client resolves a display name
+// from its ListModels inventory by (provider_id, model_id) if it needs one.
+message SessionSummary {
+  // session_id is the stored session's id.
+  string session_id = 1;
+  // modified_at_unix is the last-write timestamp in Unix seconds (the
+  // PrunableStore row mtime; the sort key for the picker).
+  int64 modified_at_unix = 2;
+  // state is the persisted lifecycle state (idle/running/awaiting/completed/...).
+  // Empty when the snapshot could not be loaded (a corrupt store row still
+  // surfaces its id/mtime).
+  string state = 3;
+  // turns is the persisted model-call count. Zero when the snapshot could not be
+  // loaded.
+  int32 turns = 4;
+  // model_id is the resolved model id this session ran on (bare string, no
+  // provider context). Empty when the session never resolved a model or the
+  // snapshot could not be loaded.
+  string model_id = 5;
+  // created_at_unix is the creation timestamp in Unix seconds. Zero when the
+  // snapshot could not be loaded.
+  int64 created_at_unix = 6;
+}
+
+// ListSessionsResponse carries the stored-session inventory, sorted by
+// modified_at descending (most-recently-active first).
+message ListSessionsResponse {
+  // sessions are the (possibly empty) stored-session summaries.
+  repeated SessionSummary sessions = 1;
+}
+
 // SetModeRequest changes a session's permission posture.
 message SetModeRequest {
   // session_id is the session to update.
@@ -704,7 +786,98 @@ message Event {
   // composition (the scheduler), NOT the loop. String-passthrough kind/stop/err,
   // no enum.
   SchedulePayload schedule = 15;
+  // approval is set on approval events (EvApproval — the verdict half of a
+  // permission ask). LOG-ONLY on the live Converse wire (the relay skips them:
+  // the client holds its own verdict; this is audit history). StreamSessionEvents
+  // (the read-back of the durable log) relays them so a transcript replay shows
+  // the verdicts. Metadata-only by construction (gauntlet #7): tool NAME + verdict
+  // string + askID, NEVER raw args.
+  Approval approval = 16;
+  // user_prompt is set on user_prompt events (EvUserPrompt — the recorded user
+  // message). LOG-ONLY on the live Converse wire; StreamSessionEvents relays them
+  // so a transcript replay shows what the user asked.
+  UserPrompt user_prompt = 17;
+  // compaction_archive is set on compaction.archive events (EvCompactionArchive —
+  // the pre-compaction conversation). LOG-ONLY on the live Converse wire;
+  // StreamSessionEvents relays them so a transcript replay recovers dropped turns.
+  CompactionArchive compaction_archive = 18;
 }
+
+// Approval is the proto projection of session.ApprovalPayload (EvApproval):
+// the verdict half of a permission ask. Metadata-only (gauntlet #7): tool NAME +
+// verdict string + askID + the opaque gated-call id + the allow-always flag.
+// NEVER raw args. LOG-ONLY on the live Converse wire; surfaced only by the
+// StreamSessionEvents replay.
+message Approval {
+  // ask_id is the id of the resolved permission ask (mirrors PermissionAsk.ask_id).
+  string ask_id = 1;
+  // verdict is the resolution string (allow_once / allow_always / deny) — a
+  // passthrough of session.VerdictString*, no enum.
+  string verdict = 2;
+  // tool is the NAME of the tool the ask gated. It is the tool name ALONE — never
+  // the call's args.
+  string tool = 3;
+  // call_id is the opaque id of the gated ToolCall (the durable, grammar-free
+  // correlation handle a 3b consumer uses to find the call in the conversation).
+  string call_id = 4;
+  // allow_always mirrors (Verdict == allow_always): the verdict asked the harness
+  // to learn a per-session allow rule. It honestly reflects the VERDICT, not the
+  // policy outcome (Policy.Learn may no-op on an unlearnable call).
+  bool allow_always = 5;
+}
+
+// UserPrompt is the proto projection of session.UserPromptPayload (EvUserPrompt):
+// the recorded user message (Text + non-text media Parts). It is the durable
+// record of what the user asked. LOG-ONLY on the live Converse wire; surfaced only
+// by the StreamSessionEvents replay.
+message UserPrompt {
+  // text is the flattened user-message text (the prompt body, or a harness-authored
+  // continuation/notice).
+  string text = 1;
+  // parts carries any non-text media (image/audio) that rode alongside the text on
+  // the user message; nil for a text-only prompt.
+  repeated Content parts = 2;
+}
+
+// CompactionArchive is the proto projection of session.CompactionArchivePayload
+// (EvCompactionArchive): the pre-compaction conversation that ReplaceHistory
+// replaced. It carries the full pre-compaction Messages slice so a replay recovers
+// the dropped turns. The parent's OWN conversation (gauntlet #7 — no child content).
+// LOG-ONLY on the live Converse wire; surfaced only by the StreamSessionEvents
+// replay.
+message CompactionArchive {
+  // replaced is the pre-compaction message slice (each message is a
+  // ConversationMessage).
+  repeated ConversationMessage replaced = 1;
+}
+
+// ConversationMessage is the proto projection of one session.Message (an immutable
+// entry in the model-visible conversation history). It exists so the
+// CompactionArchive payload can carry a message slice — the live Converse wire has
+// no message-slice surface (the relay streams events, not history), so this type is
+// introduced here for the replay path. It mirrors the Message value object: Role +
+// Text + the assistant's ToolCalls + an optional tool-role ToolResult + the opaque
+// provider replay blobs (Reasoning / ProviderPhase) + the user-role media Parts.
+message ConversationMessage {
+  // role is the author (user / assistant / tool / system).
+  string role = 1;
+  // text is the message body (assistant text, user prompt, etc.).
+  string text = 2;
+  // tool_calls holds the tool invocations requested by an assistant message.
+  repeated ToolCall tool_calls = 3;
+  // tool_result holds the result carried by a tool-role message; nil otherwise.
+  ToolResult tool_result = 4;
+  // reasoning is the provider's opaque reasoning REPLAY blob, replayed back
+  // verbatim and never interpreted/displayed by the harness.
+  string reasoning = 5;
+  // provider_phase is the OpenAI Responses opaque phase marker on an assistant
+  // message, replayed verbatim and never interpreted/displayed.
+  string provider_phase = 6;
+  // parts carries non-text media (image/audio) on a USER message; nil otherwise.
+  repeated Content parts = 7;
+}
+
+// SchedulePayload is the structured detail carried by the schedule.* events
 
 // SchedulePayload is the structured detail carried by the schedule.* events
 // (EvScheduleFired / EvScheduleSkipped / EvScheduleFailed). Mirrors

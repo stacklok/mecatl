@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -602,3 +605,329 @@ func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Work
 }
 
 var _ tool.Tool = (*gateTool)(nil)
+
+// --- StreamSessionEvents (issue #245 Phase 1) --------------------------------
+
+// driveAskingSessionToCompletion drives the askingEventLogService session through
+// its full Converse cycle (tool.call -> permission.ask -> approve(allow_always) ->
+// tool.result -> result) over the gRPC relay, answering the single ask. It is the
+// shared setup for the StreamSessionEvents replay tests: by the time it returns,
+// the durable EventLog holds the full timeline including the log-only EvApproval
+// and EvUserPrompt the live relay skipped.
+func driveAskingSessionToCompletion(t *testing.T, client mecatlv1.HarnessServiceClient, sessionID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream, err := client.Converse(ctx)
+	if err != nil {
+		t.Fatalf("Converse: %v", err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{
+		Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: sessionID, Text: "go"}},
+	}); err != nil {
+		t.Fatalf("Send prompt: %v", err)
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		ev := resp.GetEvent()
+		if ev.GetType() == "approval" || ev.GetType() == "user_prompt" {
+			t.Fatalf("live relay must skip %s (log-only), got it on the wire", ev.GetType())
+		}
+		if ev.GetType() == "permission.ask" {
+			if err := stream.Send(&mecatlv1.ConverseRequest{
+				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
+					ResumeApproval: &mecatlv1.ResumeApproval{
+						AskId:   ev.GetAsk().GetAskId(),
+						Allow:   true,
+						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
+					},
+				},
+			}); err != nil {
+				t.Fatalf("Send allow-always: %v", err)
+			}
+		}
+		if ev.GetType() == "result" {
+			_ = stream.CloseSend()
+		}
+	}
+}
+
+// TestStreamSessionEventsRoundTrip drives a fixture session through Converse,
+// then replays it via Service.StreamSessionEvents and asserts the replayed
+// events equal the recorded (type + seq), AND that the log-only events the live
+// relay skipped (EvApproval, EvUserPrompt) ARE present on the replay — the
+// replay-vs-live correctness call (D1).
+func TestStreamSessionEventsRoundTrip(t *testing.T) {
+	log := memstore.NewEventLog()
+	svc, cs := askingEventLogService(t, log)
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	driveAskingSessionToCompletion(t, client, cs.GetSessionId())
+
+	// The recorded timeline (directly from the EventLog) is the source of truth.
+	recorded := readEventLog(t, log, session.SessionID(cs.GetSessionId()))
+
+	// Replay over the Service method (proto-free core).
+	replayed, err := svc.StreamSessionEvents(context.Background(), session.SessionID(cs.GetSessionId()))
+	if err != nil {
+		t.Fatalf("StreamSessionEvents: %v", err)
+	}
+	var got []session.Event
+	for ev, iterErr := range replayed {
+		if iterErr != nil {
+			t.Fatalf("replay iterator: %v", iterErr)
+		}
+		got = append(got, ev)
+	}
+	if len(got) != len(recorded) {
+		t.Fatalf("replay length = %d, want %d (recorded)", len(got), len(recorded))
+	}
+	for i, ev := range got {
+		if ev.Type != recorded[i].Type {
+			t.Fatalf("replay[%d].Type = %q, want %q", i, ev.Type, recorded[i].Type)
+		}
+		if ev.Seq != recorded[i].Seq {
+			t.Fatalf("replay[%d].Seq = %d, want %d", i, ev.Seq, recorded[i].Seq)
+		}
+	}
+
+	// The log-only kinds MUST be present on the replay (the live relay skips them;
+	// StreamSessionEvents does NOT).
+	sawApproval, sawUserPrompt := false, false
+	var approvalTool string
+	var approvalVerdict string
+	var firstPrompt string
+	for _, ev := range got {
+		switch ev.Type {
+		case session.EvApproval:
+			sawApproval = true
+			if ev.Approval != nil {
+				approvalTool = ev.Approval.Tool
+				approvalVerdict = ev.Approval.Verdict
+			}
+		case session.EvUserPrompt:
+			sawUserPrompt = true
+			if ev.UserPrompt != nil && firstPrompt == "" {
+				firstPrompt = ev.UserPrompt.Text
+			}
+		}
+	}
+	if !sawApproval {
+		t.Fatalf("replay MUST include EvApproval (the live relay skips it); got: %v", typeNames(got))
+	}
+	if approvalTool != "Write" {
+		t.Fatalf("replay EvApproval.Tool = %q, want Write", approvalTool)
+	}
+	if approvalVerdict != session.VerdictStringAllowAlways {
+		t.Fatalf("replay EvApproval.Verdict = %q, want %q", approvalVerdict, session.VerdictStringAllowAlways)
+	}
+	if !sawUserPrompt {
+		t.Fatalf("replay MUST include EvUserPrompt (the live relay skips it); got: %v", typeNames(got))
+	}
+	if firstPrompt != "go" {
+		t.Fatalf("replay EvUserPrompt.Text = %q, want %q", firstPrompt, "go")
+	}
+}
+
+// TestStreamSessionEventsUnknownIDIsEmpty asserts an unknown/pruned session id
+// yields an EMPTY stream (absence is data), not an error.
+func TestStreamSessionEventsUnknownIDIsEmpty(t *testing.T) {
+	log := memstore.NewEventLog()
+	svc, _ := askingEventLogService(t, log) // engine wired; we never drive this session
+
+	events, err := svc.StreamSessionEvents(context.Background(), session.SessionID("never-existed"))
+	if err != nil {
+		t.Fatalf("StreamSessionEvents unknown id: %v (want nil err + empty stream)", err)
+	}
+	count := 0
+	for _, iterErr := range events {
+		if iterErr != nil {
+			t.Fatalf("replay iterator error on unknown id: %v", iterErr)
+		}
+		count++
+	}
+	if count != 0 {
+		t.Fatalf("unknown id replayed %d events, want 0 (absence is data)", count)
+	}
+}
+
+// TestLiveConverseRelaySkipsLogOnlyKinds is the CRITICAL regression guard for the
+// replay-vs-live filter split. The three log-only kinds (EvApproval /
+// EvCompactionArchive / EvUserPrompt) are persisted to the durable EventLog (so
+// StreamSessionEvents can replay them) but MUST NOT appear on the LIVE Converse
+// client wire — the driving client already holds its own prompt/verdict; these are
+// audit records. This test drives a session through the LIVE gRPC Converse relay,
+// collects every client-side event, and asserts NONE of the three log-only kinds
+// arrive on the live wire (while they ARE in the durable log, proving the split is
+// a relay FILTER, not a toProto gap).
+//
+// MUTATION-KILL: if a future change moved the skip out of the relay loop (e.g.
+// making toProto drop them — which would also break the replay), or accidentally
+// relayed the log-only kinds live, this fails.
+func TestLiveConverseRelaySkipsLogOnlyKinds(t *testing.T) {
+	log := memstore.NewEventLog()
+	svc, cs := askingEventLogService(t, log)
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream, err := client.Converse(ctx)
+	if err != nil {
+		t.Fatalf("Converse: %v", err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{
+		Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: cs.GetSessionId(), Text: "go"}},
+	}); err != nil {
+		t.Fatalf("Send prompt: %v", err)
+	}
+	var liveTypes []string
+	for {
+		resp, rerr := stream.Recv()
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			t.Fatalf("Recv: %v", rerr)
+		}
+		ev := resp.GetEvent()
+		liveTypes = append(liveTypes, ev.GetType())
+		switch ev.GetType() {
+		case "approval", "user_prompt", "compaction_archive":
+			t.Fatalf("LIVE relay must SKIP log-only %s (it is audit history, not a client event); live types: %v", ev.GetType(), liveTypes)
+		case "permission.ask":
+			if err := stream.Send(&mecatlv1.ConverseRequest{
+				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
+					ResumeApproval: &mecatlv1.ResumeApproval{
+						AskId:   ev.GetAsk().GetAskId(),
+						Allow:   true,
+						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
+					},
+				},
+			}); err != nil {
+				t.Fatalf("Send allow-always: %v", err)
+			}
+		case "result":
+			_ = stream.CloseSend()
+		}
+	}
+
+	// The durable log MUST contain the log-only kinds the live wire skipped — this
+	// is the other half of the split (they are persisted, just not relayed live). If
+	// the log is also missing them, the skip became a drop (the bug this guards
+	// against): toProto is now total, but the relay FILTER decides what to SEND live.
+	logged := readEventLog(t, log, session.SessionID(cs.GetSessionId()))
+	hasApproval, hasUserPrompt := false, false
+	for _, ev := range logged {
+		if ev.Type == session.EvApproval {
+			hasApproval = true
+		}
+		if ev.Type == session.EvUserPrompt {
+			hasUserPrompt = true
+		}
+	}
+	if !hasApproval {
+		t.Fatalf("durable log MUST contain EvApproval (live skipped it, log kept it); logged: %v", typeNames(logged))
+	}
+	if !hasUserPrompt {
+		t.Fatalf("durable log MUST contain EvUserPrompt (live skipped it, log kept it); logged: %v", typeNames(logged))
+	}
+}
+
+// nilEventLogService builds a Service with NO durable EventLog wired — the
+// deployment shape where the StreamSessionEvents read-back surface is absent.
+// It is the shared setup for the ErrNoEventLog wire tests (the gRPC + HTTP
+// handlers must map it to UNIMPLEMENTED / 501, not a bare 500).
+func nilEventLogService(t *testing.T) *server.Service {
+	t.Helper()
+	llm := mockllm.New(mockllm.TextTurn("hi"))
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(nil, nil),
+		Model:   "test-model",
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:              engine,
+		Store:               memstore.New(),
+		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:                 func() time.Time { return time.Unix(0, 0) },
+		DefaultCapabilities: llm.Capabilities(),
+		// EventLog intentionally nil.
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	return svc
+}
+
+// TestStreamSessionEventsNilEventLogUnimplemented asserts a Service with NO
+// durable EventLog wired returns ErrNoEventLog (the wire adapters map to
+// UNIMPLEMENTED / HTTP 501).
+func TestStreamSessionEventsNilEventLogUnimplemented(t *testing.T) {
+	svc := nilEventLogService(t)
+	_, err := svc.StreamSessionEvents(context.Background(), session.SessionID("any"))
+	if !errors.Is(err, server.ErrNoEventLog) {
+		t.Fatalf("err = %v, want ErrNoEventLog", err)
+	}
+}
+
+// TestStreamSessionEventsNilEventLogHTTP501 asserts the HTTP handler maps a
+// nil-EventLog Service to 501 Not Implemented (the wire-level mapping the QA
+// reviewer flagged: the Service-layer test above does not exercise the handler).
+func TestStreamSessionEventsNilEventLogHTTP501(t *testing.T) {
+	svc := nilEventLogService(t)
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/v1/sessions/any/events")
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501 (ErrNoEventLog → Not Implemented)", resp.StatusCode)
+	}
+}
+
+// TestStreamSessionEventsNilEventLogGRPCUnimplemented asserts the gRPC handler
+// maps a nil-EventLog Service to codes.Unimplemented (the wire-level mapping the
+// QA reviewer flagged: the Service-layer test only asserts errors.Is(ErrNoEventLog)).
+func TestStreamSessionEventsNilEventLogGRPCUnimplemented(t *testing.T) {
+	svc := nilEventLogService(t)
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	stream, err := client.StreamSessionEvents(context.Background(), &mecatlv1.StreamSessionEventsRequest{SessionId: "any"})
+	if err == nil {
+		// The error may arrive on Recv rather than the initial call; drain.
+		_, err = stream.Recv()
+	}
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("status = %v, want codes.Unimplemented (ErrNoEventLog)", status.Code(err))
+	}
+}
+
+// TestStreamSessionEventsGRPC_EmptySessionID asserts the gRPC handler rejects an
+// empty session_id with InvalidArgument (the wire-level gate no test exercised).
+func TestStreamSessionEventsGRPC_EmptySessionID(t *testing.T) {
+	log := memstore.NewEventLog()
+	svc, _ := askingEventLogService(t, log) // any service with a wired EventLog
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	stream, err := client.StreamSessionEvents(context.Background(), &mecatlv1.StreamSessionEventsRequest{SessionId: ""})
+	if err == nil {
+		// The error may arrive on Recv rather than the initial call; drain.
+		_, err = stream.Recv()
+	}
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("status = %v, want codes.InvalidArgument (empty session_id)", status.Code(err))
+	}
+}

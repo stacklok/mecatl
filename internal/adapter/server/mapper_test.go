@@ -598,8 +598,111 @@ func TestToProtoNoSubmessages(t *testing.T) {
 	got := toProto(session.Event{Type: session.EvTurnStart})
 	if got.GetToolCall() != nil || got.GetToolResult() != nil || got.GetAsk() != nil ||
 		got.GetResult() != nil || got.GetTurnEnd() != nil || got.GetUsage() != nil ||
-		got.GetSubagent() != nil || got.GetTeam() != nil || got.GetParallel() != nil {
+		got.GetSubagent() != nil || got.GetTeam() != nil || got.GetParallel() != nil ||
+		got.GetApproval() != nil || got.GetUserPrompt() != nil || got.GetCompactionArchive() != nil {
 		t.Fatalf("unexpected submessage on bare event: %+v", got)
+	}
+}
+
+// TestToProtoLogOnlyPayloads pins the three log-only submessage branches added so
+// the StreamSessionEvents replay surfaces them (the live Converse relay skips
+// them, but toProto MUST be total — the relay FILTER decides what to SEND, not
+// toProto). Each payload is already metadata-only/redacted by construction
+// (gauntlet #7), so the mapper adds no redaction: Approval carries NAME+verdict+
+// askID+call id+allow-always (never args); UserPrompt carries Text+media Parts;
+// CompactionArchive carries the parent's OWN pre-compaction message slice via the
+// new ConversationMessage projection (Role/Text/ToolCalls/ToolResult/Reasoning/
+// ProviderPhase/Parts).
+func TestToProtoLogOnlyPayloads(t *testing.T) {
+	// Approval.
+	apr := toProto(session.Event{
+		Type: session.EvApproval,
+		Approval: &session.ApprovalPayload{
+			AskID:       "s1:1:c1:r0",
+			Verdict:     session.VerdictStringAllowAlways,
+			Tool:        "Bash",
+			Call:        session.ToolCallID("c1"),
+			AllowAlways: true,
+		},
+	}).GetApproval()
+	if apr == nil {
+		t.Fatal("approval submessage not projected")
+	}
+	if apr.GetAskId() != "s1:1:c1:r0" || apr.GetVerdict() != session.VerdictStringAllowAlways ||
+		apr.GetTool() != "Bash" || apr.GetCallId() != "c1" || !apr.GetAllowAlways() {
+		t.Fatalf("approval projected wrong: %+v", apr)
+	}
+
+	// UserPrompt with a media part.
+	img := session.Content{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte("px")}
+	up := toProto(session.Event{
+		Type: session.EvUserPrompt,
+		UserPrompt: &session.UserPromptPayload{
+			Text:  "look",
+			Parts: []session.Content{img},
+		},
+	}).GetUserPrompt()
+	if up == nil {
+		t.Fatal("user_prompt submessage not projected")
+	}
+	if up.GetText() != "look" {
+		t.Errorf("user_prompt.Text = %q, want look", up.GetText())
+	}
+	if len(up.GetParts()) != 1 || up.GetParts()[0].GetKind() != mecatlv1.Content_KIND_IMAGE ||
+		up.GetParts()[0].GetMimeType() != "image/png" {
+		t.Errorf("user_prompt.Parts projected wrong: %+v", up.GetParts())
+	}
+
+	// CompactionArchive with a full message slice (assistant w/ tool calls, tool-role
+	// w/ result, user w/ media).
+	tr := session.NewToolResult("c1", "ok")
+	arch := toProto(session.Event{
+		Type: session.EvCompactionArchive,
+		CompactionArchive: &session.CompactionArchivePayload{
+			Replaced: []session.Message{
+				session.NewUserMessageWithParts("hi", []session.Content{img}),
+				session.NewAssistantMessage("calling", "reason", []session.ToolCall{
+					session.NewToolCall("c1", "Bash", json.RawMessage(`{"cmd":"ls"}`)),
+				}),
+				session.NewToolMessage(tr),
+			},
+		},
+	}).GetCompactionArchive()
+	if arch == nil {
+		t.Fatal("compaction_archive submessage not projected")
+	}
+	if len(arch.GetReplaced()) != 3 {
+		t.Fatalf("replaced = %d msgs, want 3", len(arch.GetReplaced()))
+	}
+	if arch.GetReplaced()[0].GetRole() != "user" || arch.GetReplaced()[0].GetText() != "hi" {
+		t.Errorf("replaced[0] wrong: %+v", arch.GetReplaced()[0])
+	}
+	if len(arch.GetReplaced()[0].GetParts()) != 1 {
+		t.Errorf("replaced[0].Parts = %d, want 1", len(arch.GetReplaced()[0].GetParts()))
+	}
+	if arch.GetReplaced()[1].GetRole() != "assistant" || arch.GetReplaced()[1].GetReasoning() != "reason" {
+		t.Errorf("replaced[1] wrong: %+v", arch.GetReplaced()[1])
+	}
+	if len(arch.GetReplaced()[1].GetToolCalls()) != 1 ||
+		arch.GetReplaced()[1].GetToolCalls()[0].GetName() != "Bash" {
+		t.Errorf("replaced[1].ToolCalls wrong: %+v", arch.GetReplaced()[1].GetToolCalls())
+	}
+	if arch.GetReplaced()[2].GetRole() != "tool" || arch.GetReplaced()[2].GetToolResult() == nil ||
+		arch.GetReplaced()[2].GetToolResult().GetCallId() != "c1" {
+		t.Errorf("replaced[2] wrong: %+v", arch.GetReplaced()[2])
+	}
+
+	// Empty CompactionArchive (a nil/empty Replaced slice) still projects a non-nil
+	// submessage (so the replay shows the event, not a bare type-only stub).
+	emptyArch := toProto(session.Event{
+		Type:              session.EvCompactionArchive,
+		CompactionArchive: &session.CompactionArchivePayload{},
+	}).GetCompactionArchive()
+	if emptyArch == nil {
+		t.Fatal("empty compaction_archive must still project a non-nil submessage")
+	}
+	if len(emptyArch.GetReplaced()) != 0 {
+		t.Errorf("empty compaction_archive.Replaced = %d, want 0", len(emptyArch.GetReplaced()))
 	}
 }
 

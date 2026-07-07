@@ -139,6 +139,15 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Schedule != nil {
 		out.Schedule = toProtoSchedule(*ev.Schedule)
 	}
+	if ev.Approval != nil {
+		out.Approval = toProtoApproval(*ev.Approval)
+	}
+	if ev.UserPrompt != nil {
+		out.UserPrompt = toProtoUserPrompt(*ev.UserPrompt)
+	}
+	if ev.CompactionArchive != nil {
+		out.CompactionArchive = toProtoCompactionArchive(*ev.CompactionArchive)
+	}
 	return out
 }
 
@@ -188,6 +197,80 @@ func toProtoSchedule(p session.SchedulePayload) *mecatlv1.SchedulePayload {
 		Stop:         string(p.Stop),
 		Err:          p.Err,
 	}
+}
+
+// toProtoApproval maps a session.ApprovalPayload (EvApproval) to its proto Approval
+// form: the verdict half of a permission ask. It copies the metadata-only scalars
+// (tool NAME + verdict string + askID + the opaque gated-call id + the allow-always
+// flag) — gauntlet #7: NEVER raw args. The live Converse relay SKIPS this event
+// (log-only); this mapper exists so the StreamSessionEvents replay surfaces it.
+func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
+	return &mecatlv1.Approval{
+		AskId:       p.AskID,
+		Verdict:     p.Verdict,
+		Tool:        p.Tool,
+		CallId:      string(p.Call),
+		AllowAlways: p.AllowAlways,
+	}
+}
+
+// toProtoUserPrompt maps a session.UserPromptPayload (EvUserPrompt) to its proto
+// UserPrompt form: the recorded user message (Text + non-text media Parts). It
+// reuses contentToProto (the inverse of contentFromProto) for the media Parts.
+// The live Converse relay SKIPS this event (log-only); this mapper exists so the
+// StreamSessionEvents replay surfaces what the user asked.
+func toProtoUserPrompt(p session.UserPromptPayload) *mecatlv1.UserPrompt {
+	return &mecatlv1.UserPrompt{
+		Text:  p.Text,
+		Parts: contentToProto(p.Parts),
+	}
+}
+
+// toProtoCompactionArchive maps a session.CompactionArchivePayload
+// (EvCompactionArchive) to its proto CompactionArchive form: the pre-compaction
+// conversation that ReplaceHistory replaced. It carries the full pre-compaction
+// Messages slice via toProtoConversationMessage (the parent's OWN history —
+// gauntlet #7, no child content). The live Converse relay SKIPS this event
+// (log-only); this mapper exists so the StreamSessionEvents replay recovers the
+// dropped turns.
+func toProtoCompactionArchive(p session.CompactionArchivePayload) *mecatlv1.CompactionArchive {
+	if len(p.Replaced) == 0 {
+		return &mecatlv1.CompactionArchive{}
+	}
+	out := make([]*mecatlv1.ConversationMessage, 0, len(p.Replaced))
+	for _, m := range p.Replaced {
+		out = append(out, toProtoConversationMessage(m))
+	}
+	return &mecatlv1.CompactionArchive{Replaced: out}
+}
+
+// toProtoConversationMessage maps one session.Message (an immutable conversation
+// history entry) to its proto ConversationMessage form. It mirrors the Message
+// value object: Role + Text + the assistant's ToolCalls + an optional tool-role
+// ToolResult + the opaque provider replay blobs (Reasoning / ProviderPhase) + the
+// user-role media Parts. It reuses the existing toProtoToolCall / toProtoToolResult
+// / contentToProto mappers so there is no second projection path. This type exists
+// for the CompactionArchive replay surface — the live Converse wire streams events,
+// not history, so it has no message-slice mapper of its own.
+func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage {
+	out := &mecatlv1.ConversationMessage{
+		Role:          string(m.Role),
+		Text:          m.Text,
+		Reasoning:     m.Reasoning,
+		ProviderPhase: m.ProviderPhase,
+		Parts:         contentToProto(m.Parts),
+	}
+	if len(m.ToolCalls) > 0 {
+		calls := make([]*mecatlv1.ToolCall, 0, len(m.ToolCalls))
+		for _, c := range m.ToolCalls {
+			calls = append(calls, toProtoToolCall(c))
+		}
+		out.ToolCalls = calls
+	}
+	if m.ToolResult != nil {
+		out.ToolResult = toProtoToolResult(*m.ToolResult)
+	}
+	return out
 }
 
 // toProtoTeam maps a session.TeamPayload to its proto Team form: the bounded
@@ -750,6 +833,30 @@ func toProtoWorktrees(wts []Worktree) []*mecatlv1.Worktree {
 	out := make([]*mecatlv1.Worktree, 0, len(wts))
 	for _, w := range wts {
 		out = append(out, toProtoWorktree(w))
+	}
+	return out
+}
+
+// toProtoSessionSummary maps a Service SessionSummary (the surface-agnostic
+// picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
+// picker metadata — no conversation content.
+func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
+	return &mecatlv1.SessionSummary{
+		SessionId:      s.SessionID,
+		ModifiedAtUnix: s.ModifiedAtUnix,
+		State:          s.State,
+		Turns:          clampInt32(s.Turns),
+		ModelId:        s.ModelID,
+		CreatedAtUnix:  s.CreatedAtUnix,
+	}
+}
+
+// toProtoSessionSummaries maps a slice of Service SessionSummary rows to their
+// proto form (mirrors toProtoWorktrees/toProtoCommands).
+func toProtoSessionSummaries(rows []SessionSummary) []*mecatlv1.SessionSummary {
+	out := make([]*mecatlv1.SessionSummary, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toProtoSessionSummary(r))
 	}
 	return out
 }

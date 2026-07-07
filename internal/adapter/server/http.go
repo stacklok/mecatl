@@ -60,6 +60,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/usermodel", h.getUserModel)
 	h.mux.HandleFunc("GET /v1/commands", h.listCommands)
 	h.mux.HandleFunc("GET /v1/worktrees", h.listWorktrees)
+	h.mux.HandleFunc("GET /v1/sessions", h.listSessions)
+	h.mux.HandleFunc("GET /v1/sessions/{id}/events", h.streamSessionEvents)
 	h.mux.HandleFunc("POST /v1/teams", h.createTeam)
 	h.mux.HandleFunc("POST /v1/teams/{id}/members", h.spawnTeammate)
 	h.mux.HandleFunc("POST /v1/teams/{id}/messages", h.sendTeammateMessage)
@@ -1154,6 +1156,70 @@ func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ListWorktreesResponse{Worktrees: toProtoWorktrees(wts)})
 }
 
+// listSessions handles GET /v1/sessions — the stored-session inventory picker
+// (issue #245 Phase 1). Read-only; loads no conversation content.
+func (h *HTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.svc.ListSessions(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.ListSessionsResponse{Sessions: toProtoSessionSummaries(rows)})
+}
+
+// streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
+// durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
+// native Phase 3a read-back). This is the READ path: it never calls appendEvent
+// and never starts a run.
+func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request) {
+	id := session.SessionID(r.PathValue("id"))
+	flusher, _ := w.(http.Flusher)
+	if flusher == nil {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	events, err := h.svc.StreamSessionEvents(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// CRITICAL (replay-vs-live): the LIVE relayRunSSE SKIPS the three log-only
+	// event kinds (EvApproval/EvCompactionArchive/EvUserPrompt) on the client wire
+	// because they are persistence-only. This is the READ-BACK of the durable log
+	// itself — a client opening a PAST session WANTS the verdicts and user prompts
+	// (they ARE the transcript). So relay ALL events through toProto, including the
+	// three log-only kinds. They are already metadata-only/redacted by construction
+	// (gauntlet #7). Do NOT copy the live-relay filter here.
+	enc := json.NewEncoder(w)
+	for ev, iterErr := range events {
+		if iterErr != nil {
+			// Mid-stream fault: emit an SSE error frame and stop. The iter.Seq2
+			// releases its file handle on early break per port.EventLog.Read's
+			// contract.
+			_ = enc.Encode(map[string]string{"error": iterErr.Error()})
+			_, _ = w.Write([]byte("\n"))
+			flusher.Flush()
+			return
+		}
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			return // client disconnected; the iter releases its file handle on break
+		}
+		if err := enc.Encode(toProto(ev)); err != nil { // Encode appends a newline
+			return
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // modeFromString maps a JSON mode string to a session.PermissionMode. Unknown
@@ -1221,6 +1287,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNoScheduleStore):
 		// The configured store backend does not implement ScheduleStore: the
 		// schedule RPCs are not available on this deployment. 501.
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrNoEventLog):
+		// No durable EventLog (cloud-native Phase 3a) is configured: the
+		// StreamSessionEvents read-back surface is not available on this
+		// deployment. 501 (gRPC Unimplemented).
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrSchedulerNotRunning):
 		// A ScheduleStore is available but no in-process scheduler is wired to

@@ -10,6 +10,8 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session |
 | `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources (learned rules, per-session engine/workspace); idempotent |
 | `Converse(stream ConverseRequest) → stream ConverseResponse` | bidi | drive one agent run |
+| `StreamSessionEvents(StreamSessionEventsRequest) → stream Event` | server-stream | replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips** — a client opening a past session gets the verdicts and user prompts, which ARE the transcript |
+| `ListSessions(ListSessionsRequest) → ListSessionsResponse` | unary | the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore` |
 
 **Inventory & introspection** (read-only; most are snapshots taken at startup):
 
@@ -196,6 +198,19 @@ func main() {
 
 `GetSession` returns a snapshot (`session_id`, `state`, `mode`, `workspace`,
 `limits`, `turns`, `tool_calls`, `created_at_unix`).
+
+**Inspecting / reopening a past session:** `ListSessions` returns the stored-
+session inventory (picker rows: id, timestamps, state, turn count, model id —
+no conversation content), sorted most-recently-active first. `StreamSessionEvents`
+then replays a session's FULL durable timeline as a server stream of `Event`
+envelopes — including the log-only `approval` / `compaction_archive` /
+`user_prompt` events a LIVE `Converse` relay skips on the client wire. A client
+opening a past session WANTS the verdicts and user prompts (they ARE the
+transcript), so the replay does not apply the live-relay filter; the events are
+already metadata-only / redacted by construction. An unknown id yields an empty
+stream (absence is data); a server with no durable `EventLog` returns
+`UNIMPLEMENTED`. Neither surface has a `ServerCapabilities` bit — the capability
+is RPC-discoverable (`UNIMPLEMENTED` / empty-list degrade honestly).
 
 ### The terminal UI (`mecatui`)
 

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"iter"
 	"sort"
 	"strings"
 	"sync"
@@ -2792,4 +2793,115 @@ func (s *Service) ListWorktrees(ctx context.Context, workspace string) ([]Worktr
 		return nil, fmt.Errorf("%w: list worktrees: %v", ErrInternal, err)
 	}
 	return wts, nil
+}
+
+// --- Stored-session inventory (issue #245 Phase 1) --------------------------
+
+// SessionSummary is one stored session's picker metadata — id, timestamps,
+// state, turn count, and the resolved model id. It carries NO conversation
+// content: it is the cheap row a client renders in an "open existing session"
+// picker. The Service exposes its own proto-free type so the wire adapters
+// (toProtoSessionSummaries) and any in-process consumer need not import the
+// proto package. `model_id` is a bare opaque string (NOT a full ResolvedModel)
+// to keep the picker row cheap and provider-neutral.
+type SessionSummary struct {
+	// SessionID is the stored session's id.
+	SessionID string
+	// ModifiedAtUnix is the last-write timestamp in Unix seconds (the
+	// PrunableStore row mtime; the sort key for the picker).
+	ModifiedAtUnix int64
+	// State is the persisted lifecycle state (idle/running/awaiting/completed/...).
+	// Empty when the snapshot could not be loaded (a corrupt store row still
+	// surfaces its id/mtime).
+	State string
+	// Turns is the persisted model-call count. Zero when the snapshot could not
+	// be loaded.
+	Turns int
+	// ModelID is the resolved model id this session ran on (bare string, no
+	// provider context). Empty when the session never resolved a model or the
+	// snapshot could not be loaded.
+	ModelID string
+	// CreatedAtUnix is the creation timestamp in Unix seconds. Zero when the
+	// snapshot could not be loaded.
+	CreatedAtUnix int64
+}
+
+// StreamSessionEvents replays a session's durable event log as a lazy iterator
+// over the recorded events (cloud-native Phase 3a read-back). It is the
+// service-layer surface over port.EventLog.Read that the gRPC/HTTP handlers
+// stream to a client opening an existing session (issue #245 Phase 1).
+//
+// A nil EventLog (no durable log configured) returns ErrNoEventLog so the wire
+// adapters map to UNIMPLEMENTED (HTTP 501) — honestly reporting the surface is
+// absent rather than pretending an unknown id. An unknown/pruned session id
+// yields an EMPTY iterator (absence is data): port.EventLog.Read is defined to
+// return an empty stream for an unknown id, so the service surfaces that
+// verbatim. The loop stays storage-agnostic — this method never starts a run or
+// makes a model call. Read-only.
+//
+// The returned iterator yields the events the relay PERSISTED — including the
+// three log-only kinds (EvApproval/EvCompactionArchive/EvUserPrompt) a LIVE
+// Converse relay skips on the client wire. The caller (the gRPC/HTTP handler)
+// relays ALL of them: a client opening a PAST session wants the verdicts and
+// user prompts, as they ARE the transcript. They are already metadata-only /
+// redacted by construction (gauntlet #7: no raw args/deny-reason bodies/child
+// content ever cross), so no extra filter applies at this layer.
+func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID) (iter.Seq2[session.Event, error], error) {
+	if s.cfg.EventLog == nil {
+		return nil, ErrNoEventLog
+	}
+	return s.cfg.EventLog.Read(ctx, id), nil
+}
+
+// ListSessions returns the stored-session inventory — the picker metadata a
+// client renders to let an operator open an EXISTING session by id (issue #245
+// Phase 1). It is backed by port.PrunableStore.List (type-asserted on the
+// configured store); a store that does not implement PrunableStore, or one that
+// returns ErrPruneUnsupported, degrades to an EMPTY slice — never an error — so
+// a no-persistence/cloud server honestly reports "no sessions".
+//
+// Each row carries only picker metadata (id, timestamps, state, turn count,
+// model id); NO conversation content is loaded. For each PrunableStore row the
+// service best-effort loads the snapshot to populate State/Turns/CreatedAtUnix
+// and the resolved ModelID; a Load failure leaves those fields zeroed but still
+// returns the row (a corrupt snapshot file is surfaced in the picker with its
+// id/mtime, so the operator can see it exists even if it can't be opened). Rows
+// are sorted most-recently-active first (modified_at descending). Read-only.
+//
+// Cost: each row does a Store.Load (jsonlstore: reads the last snapshot line).
+// Acceptable for a picker; no pagination in Phase 1.
+func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
+	ps, ok := s.cfg.Store.(port.PrunableStore)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := ps.List(ctx)
+	if err != nil {
+		if errors.Is(err, port.ErrPruneUnsupported) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: list sessions: %v", ErrInternal, err)
+	}
+	out := make([]SessionSummary, 0, len(rows))
+	for _, r := range rows {
+		summary := SessionSummary{
+			SessionID:      string(r.ID),
+			ModifiedAtUnix: r.ModifiedAt.Unix(),
+		}
+		if sess, lerr := s.cfg.Store.Load(ctx, r.ID); lerr == nil && sess != nil {
+			summary.State = string(sess.State)
+			summary.Turns = sess.Counters.Turns
+			summary.CreatedAtUnix = sess.CreatedAt.Unix()
+			if rm := s.ResolvedModel(r.ID); rm.ModelID != "" {
+				summary.ModelID = rm.ModelID
+			}
+		}
+		out = append(out, summary)
+	}
+	// Most-recently-active first (modified_at descending). Stable on ties so the
+	// store's own ordering is preserved within an equal-mtime batch.
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].ModifiedAtUnix > out[j].ModifiedAtUnix
+	})
+	return out, nil
 }

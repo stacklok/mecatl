@@ -9,7 +9,9 @@ share one event shape.
 | Method & path | Body | Response |
 | --- | --- | --- |
 | `POST /v1/sessions` | `{workspace, mode?, limits?, provider_id?, model_id?, profile?}` | `201` `{session_id}` |
+| `GET /v1/sessions` | — | `200` `{sessions: [...]}` — the stored-session inventory (picker rows: id, timestamps, state, turns, model id; no conversation content), most-recently-active first |
 | `GET /v1/sessions/{id}` | — | `200` session snapshot |
+| `GET /v1/sessions/{id}/events` | — | `200` `text/event-stream` — replay a session's durable event log (full timeline incl. the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired |
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events |
 | `POST /v1/sessions/{id}/approve` | `{ask_id, allow}` | `204` |
