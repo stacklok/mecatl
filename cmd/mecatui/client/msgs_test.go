@@ -167,6 +167,39 @@ func TestEventToMsg(t *testing.T) {
 			}},
 			ResultMsg{Stop: "end_turn", Text: "done", Usage: Usage{InputTokens: 10, OutputTokens: 5}},
 		},
+		{
+			// The three log-only kinds are relayed ONLY by the replay (the live
+			// Converse relay skips them). EventToMsg must still map them so the
+			// shared readEventLoop path projects them for a transcript viewer.
+			"approval",
+			&mecatlv1.Event{Type: "approval", Approval: &mecatlv1.Approval{
+				AskId: "a1", Verdict: "allow_always", Tool: "Write", CallId: "c1", AllowAlways: true,
+			}},
+			ApprovalMsg{AskID: "a1", Verdict: "allow_always", Tool: "Write", CallID: "c1", AllowAlways: true},
+		},
+		{
+			"user_prompt with parts",
+			&mecatlv1.Event{Type: "user_prompt", UserPrompt: &mecatlv1.UserPrompt{
+				Text: "look at this",
+				Parts: []*mecatlv1.Content{
+					{Kind: mecatlv1.Content_KIND_IMAGE, MimeType: "image/png", Data: []byte{0x89}},
+				},
+			}},
+			UserPromptMsg{Text: "look at this", Parts: []ContentBlock{
+				{Kind: ContentBlockImage, MimeType: "image/png", Data: []byte{0x89}},
+			}},
+		},
+		{
+			"compaction_archive with replaced",
+			&mecatlv1.Event{Type: "compaction_archive", CompactionArchive: &mecatlv1.CompactionArchive{
+				Replaced: []*mecatlv1.ConversationMessage{
+					{Role: "user", Text: "old task"},
+				},
+			}},
+			CompactionArchiveMsg{Replaced: []ConversationMessage{
+				{Role: "user", Text: "old task"},
+			}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -288,6 +321,76 @@ func TestEventToMsgTeam(t *testing.T) {
 				t.Errorf("EventToMsg(%s) = %#v, want %#v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestConversationMessagesFromProto covers the ConversationMessage projection
+// beyond the simple single-field table cases: an assistant message carrying
+// ToolCalls + a tool-role ToolResult + the opaque replay blobs, and a user
+// message carrying media Parts. Nil-safe (nil slice → nil; nil entries → zero).
+func TestConversationMessagesFromProto(t *testing.T) {
+	in := []*mecatlv1.ConversationMessage{
+		{
+			Role:          "assistant",
+			Text:          "I'll read x then write y.",
+			Reasoning:     "<reasoning blob>",
+			ProviderPhase: "commentary",
+			ToolCalls: []*mecatlv1.ToolCall{
+				{Id: "c1", Name: "Read", Args: `{"path":"x"}`},
+				{Id: "c2", Name: "Write", Args: `{"path":"y"}`},
+			},
+			ToolResult: &mecatlv1.ToolResult{
+				CallId: "c1", Content: "x contents", IsError: false,
+				Blocks:            []*mecatlv1.ContentBlock{{Kind: mecatlv1.ContentBlock_KIND_RESOURCE_LINK, Name: "res", Url: "file://x"}},
+				StructuredContent: `{"ok":true}`,
+			},
+		},
+		{
+			Role: "user",
+			Text: "see this",
+			Parts: []*mecatlv1.Content{
+				{Kind: mecatlv1.Content_KIND_IMAGE, MimeType: "image/png", Data: []byte{1, 2}},
+			},
+		},
+		nil,
+	}
+	got := conversationMessagesFromProto(in)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+
+	// Assistant message: ToolCalls + ToolResult + blobs.
+	a := got[0]
+	if a.Role != "assistant" || a.Text != "I'll read x then write y." || a.Reasoning != "<reasoning blob>" || a.ProviderPhase != "commentary" {
+		t.Errorf("assistant base = %#v", a)
+	}
+	if len(a.ToolCalls) != 2 || a.ToolCalls[0] != (ConvToolCall{ID: "c1", Name: "Read", Args: `{"path":"x"}`}) {
+		t.Errorf("assistant ToolCalls = %#v", a.ToolCalls)
+	}
+	if a.ToolResult == nil || a.ToolResult.CallID != "c1" || a.ToolResult.Content != "x contents" || a.ToolResult.StructuredContent != `{"ok":true}` {
+		t.Errorf("assistant ToolResult = %#v", a.ToolResult)
+	}
+	if len(a.ToolResult.Blocks) != 1 || a.ToolResult.Blocks[0].Kind != ContentBlockResourceLink || a.ToolResult.Blocks[0].Name != "res" {
+		t.Errorf("assistant ToolResult Blocks = %#v", a.ToolResult.Blocks)
+	}
+
+	// User message: Parts projected to ContentBlock (image).
+	u := got[1]
+	if u.Role != "user" || u.Text != "see this" {
+		t.Errorf("user base = %#v", u)
+	}
+	if len(u.Parts) != 1 || u.Parts[0].Kind != ContentBlockImage || u.Parts[0].MimeType != "image/png" || string(u.Parts[0].Data) != "\x01\x02" {
+		t.Errorf("user Parts = %#v", u.Parts)
+	}
+
+	// nil entry → zero value (nil-safe).
+	if !reflect.DeepEqual(got[2], ConversationMessage{}) {
+		t.Errorf("nil entry = %#v, want zero", got[2])
+	}
+
+	// nil slice → nil.
+	if conversationMessagesFromProto(nil) != nil {
+		t.Error("nil slice should map to nil")
 	}
 }
 

@@ -19,6 +19,16 @@ type Recver interface {
 	Recv() (*mecatlv1.ConverseResponse, error)
 }
 
+// EventRecver is the minimal receive side of a server-streaming Event replay
+// (StreamSessionEvents): it yields *mecatlv1.Event directly, with NO
+// ConverseResponse envelope. The generated grpc.ServerStreamingClient[Event]
+// satisfies it (its Recv returns *Event); tests supply a scripted fake. It is
+// the Event-replay analogue of Recver (which wraps one extra ConverseResponse
+// envelope for the bidi Converse stream).
+type EventRecver interface {
+	Recv() (*mecatlv1.Event, error)
+}
+
 // Sender is the send side of the Converse stream. Separated from Recver so the
 // reader goroutine holds only what it reads and the ui-side send helpers hold
 // only what they send. The generated bidi client satisfies both.
@@ -45,12 +55,15 @@ func NewStream(recv Recver, send Sender) *Stream {
 	return &Stream{recv: recv, send: send}
 }
 
-// ReadLoop runs the receive loop on its OWN goroutine: it drains Recv and pushes
-// translated tea.Msgs onto out, then closes out when the stream ends. It MUST
-// run off the Bubble Tea update goroutine (it does no rendering and touches no
-// model state) — glamour and the model are driven only from Update via the
-// drained channel. A clean EOF yields StreamClosedMsg; any other error yields
-// StreamErrMsg; both then close the channel so WaitForMsg stops re-arming.
+// ReadLoop runs the receive loop on its OWN goroutine over the live Converse
+// stream: it drains Recv and pushes translated tea.Msgs onto out, then closes
+// out when the stream ends. It MUST run off the Bubble Tea update goroutine (it
+// does no rendering and touches no model state) — glamour and the model are
+// driven only from Update via the drained channel. A clean EOF yields
+// StreamClosedMsg; any other error yields StreamErrMsg; both then close the
+// channel so WaitForMsg stops re-arming. It delegates to readEventLoop (the
+// shared translation path) after stripping the ConverseResponse envelope via
+// GetEvent, so the live stream and the replay feed project identically.
 //
 // Every send selects on ctx.Done() as well as out, so the goroutine can never
 // wedge if the ui drops the channel (e.g. endRun finalised the run and stopped
@@ -62,9 +75,27 @@ func NewStream(recv Recver, send Sender) *Stream {
 // server closes the stream, so the ui finalises on ResultMsg and treats a later
 // StreamClosedMsg as a no-op.
 func (s *Stream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
+	readEventLoop(ctx, func() (*mecatlv1.Event, error) {
+		resp, err := s.recv.Recv()
+		if err != nil {
+			return nil, err
+		}
+		return resp.GetEvent(), nil
+	}, out)
+}
+
+// readEventLoop is the SINGLE translation path both the live Converse stream
+// (via Stream.ReadLoop, which strips the ConverseResponse envelope) and the
+// replay feed (via EventStream.ReadLoop) drain through: it pulls Events from
+// recv, translates each via EventToMsg, pushes tea.Msgs onto out, then closes
+// out when the stream ends. A clean EOF yields StreamClosedMsg; any other error
+// yields StreamErrMsg; ctx cancellation unblocks a stuck send (no-leak) —
+// projection equivalence: the SAME EventToMsg path, the SAME lifecycle msgs, so
+// a replay and a live run project identically for the same event sequence.
+func readEventLoop(ctx context.Context, recv func() (*mecatlv1.Event, error), out chan<- tea.Msg) {
 	defer close(out)
 	for {
-		resp, err := s.recv.Recv()
+		ev, err := recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				emit(ctx, out, StreamClosedMsg{})
@@ -73,7 +104,7 @@ func (s *Stream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 			emit(ctx, out, StreamErrMsg{Err: err, Transient: TransientStreamErr(err)})
 			return
 		}
-		if m := EventToMsg(resp.GetEvent()); m != nil {
+		if m := EventToMsg(ev); m != nil {
 			if !emit(ctx, out, m) {
 				return // context cancelled — stop reading
 			}

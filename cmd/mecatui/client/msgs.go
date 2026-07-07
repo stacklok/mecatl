@@ -467,6 +467,79 @@ type StreamErrMsg struct {
 // (e.g. server closed early). Normal completion arrives as ResultMsg first.
 type StreamClosedMsg struct{}
 
+// The log-only replay msgs. These three kinds (approval/user_prompt/
+// compaction_archive) are LOG-ONLY on the live Converse wire (the relay skips
+// them) and are relayed ONLY by the StreamSessionEvents replay. They are the
+// transcript-viewer's audit/history surface (cloud-native Phase 3a read-back).
+
+// ApprovalMsg is the verdict half of a permission ask (EvApproval), relayed
+// only by the replay (log-only on the live wire). Metadata-only (gauntlet #7):
+// tool NAME + verdict string + askID + callID + the allow-always flag. NEVER raw
+// args.
+type ApprovalMsg struct {
+	AskID       string
+	Verdict     string
+	Tool        string
+	CallID      string
+	AllowAlways bool
+}
+
+// UserPromptMsg is the recorded user message (EvUserPrompt), relayed only by the
+// replay. Text carries the flattened prompt body (or a harness-authored
+// continuation/notice); Parts carries any non-text media (image/audio) that rode
+// alongside it, projected to the plain ContentBlock type (image/audio only).
+type UserPromptMsg struct {
+	Text  string
+	Parts []ContentBlock
+}
+
+// CompactionArchiveMsg is the pre-compaction conversation (EvCompactionArchive),
+// relayed only by the replay, so a transcript recovers the dropped turns. It is
+// the parent's OWN conversation (gauntlet #7 — no child content).
+type CompactionArchiveMsg struct {
+	Replaced []ConversationMessage
+}
+
+// ConversationMessage is the proto-free mirror of mecatlv1.ConversationMessage:
+// one immutable entry in the model-visible conversation history. It mirrors the
+// session.Message value object — Role + Text + the assistant's ToolCalls + an
+// optional tool-role ToolResult + the opaque provider replay blobs (Reasoning /
+// ProviderPhase) + the user-role media Parts. The ToolCalls/ToolResult fields
+// use the dedicated ConvToolCall/ConvToolResult structs below (NOT the event-msg
+// types ToolCallMsg/ToolResultMsg — those are EVENTS, not message PARTS: a
+// tool.call event is a transient status line, a ConvToolCall is the persisted
+// assistant message part; overloading them would conflate the two lifecycles).
+// If the Phase-3 ui only renders Role+Text, the extra fields are unused-but-cheap.
+type ConversationMessage struct {
+	Role          string
+	Text          string
+	ToolCalls     []ConvToolCall
+	ToolResult    *ConvToolResult
+	Reasoning     string
+	ProviderPhase string
+	Parts         []ContentBlock
+}
+
+// ConvToolCall is the proto-free mirror of one assistant-message tool invocation
+// (mecatlv1.ToolCall as carried by a ConversationMessage). Distinct from
+// ToolCallMsg (an event) — see the ConversationMessage doc.
+type ConvToolCall struct {
+	ID   string
+	Name string
+	Args string // raw JSON
+}
+
+// ConvToolResult is the proto-free mirror of a tool-role message's result
+// (mecatlv1.ToolResult as carried by a ConversationMessage). Distinct from
+// ToolResultMsg (an event) — see the ConversationMessage doc.
+type ConvToolResult struct {
+	CallID            string
+	Content           string
+	IsError           bool
+	Blocks            []ContentBlock
+	StructuredContent string
+}
+
 // hookDecisionFrom converts a proto HookDecision enum to the plain HookDecision
 // string the ui keys off. An unspecified/unknown value (including a nil Hook,
 // since GetDecision is nil-safe) maps to HookInfo, the benign baseline.
@@ -697,6 +770,12 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 			Usage:     usageFrom(r.GetUsage()),
 			Transient: TransientResultError(r.GetError()),
 		}
+	case "approval":
+		return approvalMsg(ev.GetApproval())
+	case "user_prompt":
+		return userPromptMsg(ev.GetUserPrompt())
+	case "compaction_archive":
+		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
 		// The subagent.* / team.* delegation projections are mapped by
 		// delegationEventToMsg (a second switch) to keep this dispatcher under the
@@ -788,4 +867,112 @@ func contentBlockKindFromProto(k mecatlv1.ContentBlock_Kind) ContentBlockKind {
 	default:
 		return ContentBlockUnspecified
 	}
+}
+
+// contentKindFromProto maps a proto Content_Kind (the USER-message media-part
+// kind: image/audio) to the plain ContentBlockKind the ui renders. It reuses
+// the same ContentBlock plain type (image/audio are the only kinds a user-part
+// Content carries), so a transcript viewer renders user-prompt media with the
+// same code path as tool-result image blocks. UNSPECIFIED (and any unknown
+// value) maps to the empty string (absent).
+func contentKindFromProto(k mecatlv1.Content_Kind) ContentBlockKind {
+	switch k {
+	case mecatlv1.Content_KIND_IMAGE:
+		return ContentBlockImage
+	case mecatlv1.Content_KIND_AUDIO:
+		return ContentBlockAudio
+	default:
+		return ContentBlockUnspecified
+	}
+}
+
+// contentPartsFromProto maps the proto user-message media Parts ([]*Content,
+// the image/audio prompt-part type DISTINCT from []*ContentBlock) to the plain
+// ContentBlock values the ui renders. It is the single translation point for a
+// UserPrompt's Parts, mirroring contentBlocksFromProto — keeping the ui
+// proto-free. A nil/empty slice returns nil (text-only prompt, the common case).
+func contentPartsFromProto(in []*mecatlv1.Content) []ContentBlock {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ContentBlock, 0, len(in))
+	for _, p := range in {
+		out = append(out, ContentBlock{
+			Kind:     contentKindFromProto(p.GetKind()),
+			MimeType: p.GetMimeType(),
+			Data:     p.GetData(),
+			URL:      p.GetUrl(),
+		})
+	}
+	return out
+}
+
+// approvalMsg builds an ApprovalMsg from a proto Approval payload (nil-safe via
+// the generated getters). It is the single translation point for the
+// log-only "approval" event kind.
+func approvalMsg(a *mecatlv1.Approval) ApprovalMsg {
+	return ApprovalMsg{
+		AskID:       a.GetAskId(),
+		Verdict:     a.GetVerdict(),
+		Tool:        a.GetTool(),
+		CallID:      a.GetCallId(),
+		AllowAlways: a.GetAllowAlways(),
+	}
+}
+
+// userPromptMsg builds a UserPromptMsg from a proto UserPrompt payload (nil-safe
+// via the generated getters). It is the single translation point for the
+// log-only "user_prompt" event kind; Parts uses contentPartsFromProto.
+func userPromptMsg(u *mecatlv1.UserPrompt) UserPromptMsg {
+	return UserPromptMsg{
+		Text:  u.GetText(),
+		Parts: contentPartsFromProto(u.GetParts()),
+	}
+}
+
+// compactionArchiveMsg builds a CompactionArchiveMsg from a proto
+// CompactionArchive payload (nil-safe via the generated getters). It is the
+// single translation point for the log-only "compaction_archive" event kind.
+func compactionArchiveMsg(c *mecatlv1.CompactionArchive) CompactionArchiveMsg {
+	return CompactionArchiveMsg{
+		Replaced: conversationMessagesFromProto(c.GetReplaced()),
+	}
+}
+
+// conversationMessagesFromProto maps a proto ConversationMessage slice (the
+// pre-compaction history carried by a CompactionArchive) to the plain
+// ConversationMessage values the ui renders. Nil-safe via the generated
+// getters; a nil/empty slice returns nil (no archived turns).
+func conversationMessagesFromProto(in []*mecatlv1.ConversationMessage) []ConversationMessage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ConversationMessage, 0, len(in))
+	for _, m := range in {
+		msg := ConversationMessage{
+			Role:          m.GetRole(),
+			Text:          m.GetText(),
+			Reasoning:     m.GetReasoning(),
+			ProviderPhase: m.GetProviderPhase(),
+			Parts:         contentPartsFromProto(m.GetParts()),
+		}
+		for _, tc := range m.GetToolCalls() {
+			msg.ToolCalls = append(msg.ToolCalls, ConvToolCall{
+				ID:   tc.GetId(),
+				Name: tc.GetName(),
+				Args: tc.GetArgs(),
+			})
+		}
+		if tr := m.GetToolResult(); tr != nil {
+			msg.ToolResult = &ConvToolResult{
+				CallID:            tr.GetCallId(),
+				Content:           tr.GetContent(),
+				IsError:           tr.GetIsError(),
+				Blocks:            contentBlocksFromProto(tr.GetBlocks()),
+				StructuredContent: tr.GetStructuredContent(),
+			}
+		}
+		out = append(out, msg)
+	}
+	return out
 }
