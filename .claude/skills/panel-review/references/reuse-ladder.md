@@ -57,3 +57,5 @@ new dependency was added" or "actual duplication shape is already
 visible" skips them on exactly the diffs where they add the most
 value. They default to silence when they find nothing, so the cost
 of a false-positive inclusion is low (one quiet agent).
+
+[← back to the skill](../SKILL.md)

@@ -94,3 +94,5 @@ Each axis is orthogonal — Spec, Standards, and Domain findings
 don't mask each other. Verify each axis independently before
 shipping.
 ```
+
+[← back to the skill](../SKILL.md)
