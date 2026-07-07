@@ -39,6 +39,21 @@ type wiredCollaborators struct {
 	Sessions   bool // /sessions picker — gated on the lister + replayer being wired (NO caps bit)
 }
 
+// wiredCollaborators builds the struct from m.deps — the SINGLE construction
+// site for it, called by every builtinCommands/builtinByName call site
+// (palette.go's builtinRows, update.go's runSelectedBuiltin and submitPrompt) so
+// the three can never drift out of sync again (issue: the palette's hand-rolled
+// copy once omitted Sessions, so /sessions never appeared in autocomplete even
+// though the actual dispatch path built it correctly).
+func (m Model) wiredCollaborators() wiredCollaborators {
+	return wiredCollaborators{
+		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
+		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
+		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
+		Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
+	}
+}
+
 // builtinCommands returns the caps-filtered built-in set for the connected
 // server. /clear and /help are ALWAYS present — they act purely on the Model and
 // need no server feature. /mcp is present only when the server advertises MCP

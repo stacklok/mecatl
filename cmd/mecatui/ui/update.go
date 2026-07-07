@@ -1768,12 +1768,7 @@ func (m Model) runSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 	if !row.Builtin {
 		return m, nil, false
 	}
-	b, found := builtinByName(m.caps, wiredCollaborators{
-		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
-		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
-		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
-		Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
-	}, row.Name)
+	b, found := builtinByName(m.caps, m.wiredCollaborators(), row.Name)
 	if !found {
 		return m, nil, false
 	}
@@ -1821,12 +1816,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// "/name arg" line has a space → commandPrefix is false → also falls through
 	// (workspace commands expand server-side from the full line).
 	if name, ok := commandPrefix(text); ok {
-		if b, found := builtinByName(m.caps, wiredCollaborators{
-			MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
-			Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
-			Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
-			Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
-		}, name); found {
+		if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
 			m.ta.Reset()
 			return b.run(m)
 		}

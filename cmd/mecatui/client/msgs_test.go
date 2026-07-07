@@ -191,7 +191,7 @@ func TestEventToMsg(t *testing.T) {
 		},
 		{
 			"compaction_archive with replaced",
-			&mecatlv1.Event{Type: "compaction_archive", CompactionArchive: &mecatlv1.CompactionArchive{
+			&mecatlv1.Event{Type: "compaction.archive", CompactionArchive: &mecatlv1.CompactionArchive{
 				Replaced: []*mecatlv1.ConversationMessage{
 					{Role: "user", Text: "old task"},
 				},

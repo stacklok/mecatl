@@ -2863,7 +2863,10 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 // Each row carries only picker metadata (id, timestamps, state, turn count,
 // model id); NO conversation content is loaded. For each PrunableStore row the
 // service best-effort loads the snapshot to populate State/Turns/CreatedAtUnix
-// and the resolved ModelID; a Load failure leaves those fields zeroed but still
+// and ModelID from the session's own PERSISTED sess.ModelID (NOT
+// Service.ResolvedModel, which falls back to the shared default engine's model
+// for a non-live session — that would misreport every session that was ever run
+// on a non-default model); a Load failure leaves those fields zeroed but still
 // returns the row (a corrupt snapshot file is surfaced in the picker with its
 // id/mtime, so the operator can see it exists even if it can't be opened). Rows
 // are sorted most-recently-active first (modified_at descending). Read-only.
@@ -2892,8 +2895,8 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			summary.State = string(sess.State)
 			summary.Turns = sess.Counters.Turns
 			summary.CreatedAtUnix = sess.CreatedAt.Unix()
-			if rm := s.ResolvedModel(r.ID); rm.ModelID != "" {
-				summary.ModelID = rm.ModelID
+			if sess.ModelID != "" {
+				summary.ModelID = sess.ModelID
 			}
 		}
 		out = append(out, summary)

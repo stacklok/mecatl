@@ -366,6 +366,38 @@ func TestPaletteSkillsRowGatedOnWiredAndCap(t *testing.T) {
 	}
 }
 
+// TestPaletteSessionsRowGatedOnWiredCollaborators verifies the /sessions
+// built-in row surfaces in the palette when BOTH the session lister AND the
+// replayer are wired (m.deps.Sessions/m.deps.Replayer != nil, no caps bit — P1
+// regression: the palette's hand-rolled wiredCollaborators literal once omitted
+// Sessions, so /sessions never appeared in autocomplete even though the actual
+// dispatch path (runSelectedBuiltin/submitPrompt) built it correctly. All three
+// sites now build the struct via the single Model.wiredCollaborators() method).
+func TestPaletteSessionsRowGatedOnWiredCollaborators(t *testing.T) {
+	hasSessions := func(m Model) bool {
+		for _, r := range m.builtinRows() {
+			if r.Name == "sessions" {
+				return true
+			}
+		}
+		return false
+	}
+
+	m := newPaletteModel(t, nil)
+	m.deps.Sessions = &fakeSessionLister{}
+	m.deps.Replayer = &fakeSessionReplayer{}
+	if !hasSessions(m) {
+		t.Error("/sessions should appear when both the lister and the replayer are wired")
+	}
+
+	m2 := newPaletteModel(t, nil)
+	m2.deps.Sessions = nil
+	m2.deps.Replayer = &fakeSessionReplayer{}
+	if hasSessions(m2) {
+		t.Error("/sessions should NOT appear without a session lister")
+	}
+}
+
 // TestPaletteClosesWhenLeavingCommandMode verifies a space after the name (args)
 // or a non-command line closes the palette.
 func TestPaletteClosesWhenLeavingCommandMode(t *testing.T) {

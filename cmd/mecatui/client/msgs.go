@@ -468,7 +468,7 @@ type StreamErrMsg struct {
 type StreamClosedMsg struct{}
 
 // The log-only replay msgs. These three kinds (approval/user_prompt/
-// compaction_archive) are LOG-ONLY on the live Converse wire (the relay skips
+// compaction.archive) are LOG-ONLY on the live Converse wire (the relay skips
 // them) and are relayed ONLY by the StreamSessionEvents replay. They are the
 // transcript-viewer's audit/history surface (cloud-native Phase 3a read-back).
 
@@ -774,7 +774,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return approvalMsg(ev.GetApproval())
 	case "user_prompt":
 		return userPromptMsg(ev.GetUserPrompt())
-	case "compaction_archive":
+	case "compaction.archive":
 		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
 		// The subagent.* / team.* delegation projections are mapped by
@@ -932,7 +932,7 @@ func userPromptMsg(u *mecatlv1.UserPrompt) UserPromptMsg {
 
 // compactionArchiveMsg builds a CompactionArchiveMsg from a proto
 // CompactionArchive payload (nil-safe via the generated getters). It is the
-// single translation point for the log-only "compaction_archive" event kind.
+// single translation point for the log-only "compaction.archive" event kind.
 func compactionArchiveMsg(c *mecatlv1.CompactionArchive) CompactionArchiveMsg {
 	return CompactionArchiveMsg{
 		Replaced: conversationMessagesFromProto(c.GetReplaced()),

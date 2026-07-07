@@ -800,7 +800,7 @@ func TestLiveConverseRelaySkipsLogOnlyKinds(t *testing.T) {
 		ev := resp.GetEvent()
 		liveTypes = append(liveTypes, ev.GetType())
 		switch ev.GetType() {
-		case "approval", "user_prompt", "compaction_archive":
+		case "approval", "user_prompt", "compaction.archive":
 			t.Fatalf("LIVE relay must SKIP log-only %s (it is audit history, not a client event); live types: %v", ev.GetType(), liveTypes)
 		case "permission.ask":
 			if err := stream.Send(&mecatlv1.ConverseRequest{

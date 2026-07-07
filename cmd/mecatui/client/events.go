@@ -47,7 +47,7 @@ func (s *EventStream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 // read-back) for session id and wraps the returned server stream in an
 // EventStream. The replay yields *mecatlv1.Event directly (NO ConverseResponse
 // envelope), and INCLUDES the three log-only kinds (approval/user_prompt/
-// compaction_archive) — a transcript viewer wants the verdicts and user prompts;
+// compaction.archive) — a transcript viewer wants the verdicts and user prompts;
 // metadata-only by construction (gauntlet #7). An unknown id yields an EMPTY
 // stream (absence is data) → a single StreamClosedMsg; a server with no durable
 // EventLog returns gRPC UNIMPLEMENTED → a StreamErrMsg.

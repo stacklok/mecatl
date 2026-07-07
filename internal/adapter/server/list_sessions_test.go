@@ -29,8 +29,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-// listSessionsService builds a Service over a jsonlstore whose DefaultResolvedModel
-// is set so ListSessions' ModelID field is populated for each row.
+// listSessionsService builds a Service over a jsonlstore. DefaultResolvedModel is
+// set to "test-model" so the tests can assert ListSessions does NOT fall back to
+// it for a session with its own persisted ModelID (M1: a non-live row must report
+// sess.ModelID, never the default engine's model).
 func listSessionsService(t *testing.T, store port.SessionStore) *server.Service {
 	t.Helper()
 	llm := mockllm.New(mockllm.TextTurn("hi"))
@@ -82,9 +84,14 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 		t.Fatalf("jsonlstore: %v", err)
 	}
 
-	// Three sessions with distinct creation times and turn counts.
-	mkSession := func(id session.SessionID, created time.Time, turns int) *session.Session {
+	// Three sessions with distinct creation times, turn counts, and PERSISTED
+	// model ids (each different from the service's DefaultResolvedModel
+	// "test-model" and from each other) — a non-live ListSessions row must report
+	// the session's OWN model, never the default engine's (the M1 regression this
+	// test guards).
+	mkSession := func(id session.SessionID, created time.Time, turns int, modelID string) *session.Session {
 		s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, created)
+		s.ModelID = modelID
 		// Bump the turn counter by recording assistant turns.
 		for i := 0; i < turns; i++ {
 			s.BeginTurn()
@@ -98,9 +105,9 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 		}
 		return s
 	}
-	sessA := mkSession("sess-a", time.Unix(1700000000, 0).UTC(), 1) // oldest creation
-	sessB := mkSession("sess-b", time.Unix(1700000100, 0).UTC(), 3)
-	sessC := mkSession("sess-c", time.Unix(1700000200, 0).UTC(), 2)
+	sessA := mkSession("sess-a", time.Unix(1700000000, 0).UTC(), 1, "model-a") // oldest creation
+	sessB := mkSession("sess-b", time.Unix(1700000100, 0).UTC(), 3, "model-b")
+	sessC := mkSession("sess-c", time.Unix(1700000200, 0).UTC(), 2, "model-c")
 
 	// Vary mtimes so the sort order is unambiguous: B newest, then C, then A.
 	// (jsonlstore derives ModifiedAt from the session file's mtime.)
@@ -158,9 +165,9 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 		modelID  string
 		modified int64
 	}{
-		{string(sessA.ID), string(session.StateCompleted), 1, 1700000000, "test-model", 1800000000},
-		{string(sessB.ID), string(session.StateCompleted), 3, 1700000100, "test-model", 1900000000},
-		{string(sessC.ID), string(session.StateCompleted), 2, 1700000200, "test-model", 1850000000},
+		{string(sessA.ID), string(session.StateCompleted), 1, 1700000000, "model-a", 1800000000},
+		{string(sessB.ID), string(session.StateCompleted), 3, 1700000100, "model-b", 1900000000},
+		{string(sessC.ID), string(session.StateCompleted), 2, 1700000200, "model-c", 1850000000},
 	} {
 		row := byID[c.id]
 		if row.State != c.state {
@@ -378,6 +385,11 @@ func TestListSessionsGRPC(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	sB := session.New("ls-b", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000100, 0).UTC())
+	// sB used a non-default model at create time; its OWN persisted ModelID must
+	// surface here, never the service's DefaultResolvedModel ("test-model") — the
+	// M1 regression this test guards (a non-live row previously reported the
+	// default engine's model for every session, regardless of what it actually ran on).
+	sB.ModelID = "model-b"
 	if err := st.Save(ctx, sB); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -399,8 +411,8 @@ func TestListSessionsGRPC(t *testing.T) {
 	if resp.GetSessions()[0].GetSessionId() != "ls-b" || resp.GetSessions()[1].GetSessionId() != "ls-a" {
 		t.Fatalf("order = %s, %s; want ls-b, ls-a", resp.GetSessions()[0].GetSessionId(), resp.GetSessions()[1].GetSessionId())
 	}
-	if resp.GetSessions()[0].GetModelId() != "test-model" {
-		t.Errorf("model_id = %q, want test-model", resp.GetSessions()[0].GetModelId())
+	if resp.GetSessions()[0].GetModelId() != "model-b" {
+		t.Errorf("model_id = %q, want model-b (sB's own persisted model, not the default)", resp.GetSessions()[0].GetModelId())
 	}
 }
 

@@ -62,7 +62,7 @@ func eventsFromScript(resps []*mecatlv1.ConverseResponse) []*mecatlv1.Event {
 }
 
 // logOnlyScript is the replay script for TestReplayReadLoopLogOnlyKinds: one of
-// each of the three log-only kinds (approval/user_prompt/compaction_archive),
+// each of the three log-only kinds (approval/user_prompt/compaction.archive),
 // carrying representative fields the test asserts against.
 func logOnlyScript() []*mecatlv1.Event {
 	return []*mecatlv1.Event{
@@ -75,7 +75,7 @@ func logOnlyScript() []*mecatlv1.Event {
 		{Type: "approval", Approval: &mecatlv1.Approval{
 			AskId: "ask-write-1", Verdict: "allow_always", Tool: "Write", CallId: "call-write-1", AllowAlways: true,
 		}},
-		{Type: "compaction_archive", CompactionArchive: &mecatlv1.CompactionArchive{
+		{Type: "compaction.archive", CompactionArchive: &mecatlv1.CompactionArchive{
 			Replaced: []*mecatlv1.ConversationMessage{
 				{Role: "user", Text: "old task"},
 				{Role: "assistant", Text: "old answer", Reasoning: "thought", ProviderPhase: "commentary",
@@ -93,7 +93,7 @@ func logOnlyScript() []*mecatlv1.Event {
 //
 // This intentionally drives the SHARED kinds only — the ones BOTH the live relay
 // and the replay feed emit. The live relay skips the three log-only kinds
-// (approval/user_prompt/compaction_archive) by design (they are relay-persisted
+// (approval/user_prompt/compaction.archive) by design (they are relay-persisted
 // but not sent on the client wire; the replay feed DOES emit them, since a
 // transcript viewer wants verdicts + user prompts). That asymmetry is exercised
 // separately by TestReplayReadLoopLogOnlyKinds; do not add log-only events here

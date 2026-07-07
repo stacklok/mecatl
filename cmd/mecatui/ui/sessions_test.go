@@ -188,6 +188,37 @@ func TestSessionsFilterNarrows(t *testing.T) {
 	}
 }
 
+// TestSessionsListExcludesCurrentSession asserts the current live session
+// (m.sessionID, newly created and empty) is dropped from the picker's list — a
+// user opening /sessions is looking for a PAST session, and the current one
+// would otherwise sort to the top of the newest-first ordering and get clicked
+// by mistake.
+func TestSessionsListExcludesCurrentSession(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+	// newSessionsModel adopts "sess-test-0001" via SessionReadyMsg; inject it into
+	// the RPC result as the newest, emptiest entry.
+	current := client.SessionListItem{ID: m.sessionID, ModifiedAt: nowMinusMinutes(0), State: "idle", Turns: 0}
+	withCurrent := append([]client.SessionListItem{current}, sampleSessions()...)
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: withCurrent})
+	if len(m.sessions.sessions) != len(sampleSessions()) {
+		t.Fatalf("sessions = %d, want %d (current session excluded)", len(m.sessions.sessions), len(sampleSessions()))
+	}
+	for _, s := range m.sessions.sessions {
+		if s.ID == m.sessionID {
+			t.Fatalf("current session %q should be excluded from the picker list", m.sessionID)
+		}
+	}
+	for _, s := range m.sessions.filtered {
+		if s.ID == m.sessionID {
+			t.Fatalf("current session %q should be excluded from the filtered list", m.sessionID)
+		}
+	}
+}
+
 // TestSessionsEscCloses: esc closes the overlay.
 func TestSessionsEscCloses(t *testing.T) {
 	fl := &fakeSessionLister{sessions: sampleSessions()}
@@ -436,6 +467,9 @@ func TestSessionsEscOnTranscriptTearsDown(t *testing.T) {
 	}
 	if !m.conv.isEmpty() {
 		t.Errorf("conv should be cleared by resetSession, got %d blocks", len(m.conv.blocks))
+	}
+	if m.sessionID != "" {
+		t.Errorf("sessionID should be cleared after teardown, got %q", m.sessionID)
 	}
 }
 

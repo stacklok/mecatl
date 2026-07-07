@@ -288,6 +288,7 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 	m.sessions.replayErr = nil
 	m.sessions.view = sessionsNone
 	m = m.resetSession() // drop the adopted session id + transcript
+	m.sessionID = ""
 	m.phase = phaseIdle
 	m.statusMsg = ""
 	cmd := m.ta.Focus()
@@ -296,9 +297,10 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 }
 
 // updateSessionsMsg reduces a client.SessionsListedMsg (the ListSessions RPC
-// result): it stores the list, derives the filtered slice, clears loading, and
-// keeps the overlay open. On error it records the error and clears loading (the
-// panel renders an error line). Returns handled=false for any non-SessionsListedMsg.
+// result): it stores the list (minus the current adopted session, see
+// excludeCurrentSession), derives the filtered slice, clears loading, and keeps
+// the overlay open. On error it records the error and clears loading (the panel
+// renders an error line). Returns handled=false for any non-SessionsListedMsg.
 func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, bool) {
 	sm, ok := msg.(client.SessionsListedMsg)
 	if !ok {
@@ -312,9 +314,30 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, bool) {
 		return m, true
 	}
 	m.sessions.err = nil
-	m.sessions.sessions = sm.Sessions
+	m.sessions.sessions = excludeCurrentSession(sm.Sessions, m.sessionID)
 	m = m.syncSessionsFilter()
 	return m, true
+}
+
+// excludeCurrentSession drops the current live session (matched by id) from the
+// picker's master list, so a freshly-created, still-empty session never appears
+// in /sessions and never sorts to the top of the newest-first ordering — a user
+// opening /sessions wants to find a PAST session, not the one they are in. The
+// exclusion happens once here (the master-list write), so it holds for both the
+// initial listing and every subsequent filterSessions recompute without needing
+// to thread currentID through the filter path.
+func excludeCurrentSession(sessions []client.SessionListItem, currentID string) []client.SessionListItem {
+	if currentID == "" {
+		return sessions
+	}
+	out := make([]client.SessionListItem, 0, len(sessions))
+	for _, s := range sessions {
+		if s.ID == currentID {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // isSessionOpenable reports whether a stored session in the given state may be
