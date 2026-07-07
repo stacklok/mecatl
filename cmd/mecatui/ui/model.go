@@ -96,6 +96,20 @@ type Deps struct {
 	// overlay can create/inspect/pause/resume/fire-now on any store-backed server
 	// while auto-firing on a cadence is the operator's `mecated --scheduler`.
 	Sched client.ScheduleLister
+	// Sessions is the stored-session inventory surface for the /sessions picker
+	// (issue #245 Phase 2); nil disables it (the overlay is honestly absent). It is
+	// the lister the picker calls to enumerate stored sessions. Unlike the
+	// caps-gated overlays it is NOT gated on a ServerCapabilities bit — the picker
+	// is available whenever a lister + replayer are wired (a no-FS/cloud server
+	// with a durable SessionStore still has stored sessions to list).
+	Sessions client.SessionLister
+	// Replayer is the durable-event-log replay surface for the /sessions transcript
+	// viewer (issue #245 Phase 2/3, cloud-native Phase 3a read-back); nil disables
+	// the /sessions overlay (the picker needs BOTH a lister AND a replayer — gating
+	// on both keeps the overlay honest: a lister without a replayer could list
+	// sessions it cannot open). The ui holds the interface (not a *Client) so it is
+	// injectable with a fake for offline tests.
+	Replayer client.SessionReplayer
 	// SelectionStore persists the picked model (last-used). nil disables persistence
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
@@ -222,6 +236,7 @@ const (
 	phaseRunning                       // a Converse run is streaming
 	phaseAwaitingApproval              // a permission modal is open
 	phaseFatal                         // connect/fatal error; input disabled
+	phaseReplay                        // a stored-session transcript replay is open (read-only; issue #245)
 )
 
 // spinnerVisible reports whether the footer renders the animated spinner in the
@@ -230,7 +245,17 @@ const (
 // which terminates the self-perpetuating tick chain; every transition INTO a
 // visible phase must re-arm m.sp.Tick.
 func (m Model) spinnerVisible() bool {
-	return m.phase == phaseRunning || m.phase == phaseConnecting
+	if m.phase == phaseRunning || m.phase == phaseConnecting {
+		return true
+	}
+	// In phaseReplay the spinner shows while the replay is still loading (the first
+	// replay msg is pending or the stream has not yet closed). Once the transcript
+	// is loaded the spinner idles to zero. Slice 3a's loading card is the visible
+	// affordance; Slice 3b's transcript render will key off the same loading flag.
+	if m.phase == phaseReplay {
+		return m.sessions.loading || (!m.sessions.replayClosed && m.sessions.receivedMsgs == 0)
+	}
+	return false
 }
 
 // Model is the root Elm model. It owns the conversation, the bubbles widgets, the
@@ -310,6 +335,7 @@ type Model struct {
 	effort       effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
 	worktrees    worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
 	schedule     scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
+	sessions     sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
 	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
 	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
 	// picker, and reconciled-to-default at connect when its provider is unavailable. It
@@ -622,6 +648,17 @@ func (m *Model) recordFileChange(path string) {
 // It also drops any staged follow-up prompts (queued): /clear wipes the
 // session-derived state, and a queue of as-yet-unsent follow-ups is part of that
 // state — leaving them to drain into a freshly-cleared transcript would surprise.
+//
+// It deliberately does NOT clear the picker/inventory overlay state (models/
+// worktrees/schedule/sessions) — those are transport/compose state like
+// activeModel/caps, NOT session-derived transcript state, so a /clear or a
+// session switch must not dismiss an open picker. The /sessions replay-derived
+// fields (replayCh/replayStop/transcript) are cleared by closeSessionsTranscript
+// on the esc-teardown path from phaseReplay, NOT here — resetSession is called on
+// the switchToSession handoff BEFORE those are set, and closeSessionsTranscript
+// owns their teardown. Only the transcript conversation (m.conv) is session-
+// derived; the sessionsState's replay-transcript field (sessions.transcript) is a
+// SEPARATE conversation the replay projects into, cleared by closeSessionsTranscript.
 func (m Model) resetSession() Model {
 	m.conv = conversation{}
 	// Drop the renderer's per-block caches (blockCache AND blockMD) alongside the

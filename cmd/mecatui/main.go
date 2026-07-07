@@ -141,6 +141,8 @@ func run(args []string) error {
 		Models:              cl,
 		Worktrees:           cl,
 		Sched:               cl,
+		Sessions:            cl,
+		Replayer:            cl,
 		SelectionStore:      store,
 		InitialModel:        initialSel,
 		WorkspaceDefault:    wsDefault,

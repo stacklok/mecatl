@@ -1,0 +1,14 @@
+ mecatui  ·  session sess-aaa  ·  mock-model  ·  mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+session transcript
+
+loading transcript for …
+esc: close
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ready                                                                       ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

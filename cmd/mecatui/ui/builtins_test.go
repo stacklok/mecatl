@@ -112,14 +112,16 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"schedule cap but not wired", client.Capabilities{Scheduling: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"schedule wired but no cap", client.Capabilities{}, wiredCollaborators{Scheduling: true}, []string{"clear", "help"}},
 		{"schedule cap and wired", client.Capabilities{Scheduling: true}, wiredCollaborators{Scheduling: true}, []string{"clear", "help", "schedule"}},
+		{"sessions wired (no caps bit)", client.Capabilities{}, wiredCollaborators{Sessions: true}, []string{"clear", "help", "sessions"}},
+		{"sessions not wired", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"posture empty omits the builtin", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"posture set adds the builtin", client.Capabilities{Posture: "yolo"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
 		{"posture strict still shows (chrome is reportable)", client.Capabilities{Posture: "strict"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
 		{
 			"all",
 			all,
-			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true},
-			[]string{"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "posture"},
+			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true, Sessions: true},
+			[]string{"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
 		},
 	}
 	for _, tc := range cases {

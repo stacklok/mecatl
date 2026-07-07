@@ -112,6 +112,7 @@ func selectable(m Model) bool {
 		!m.deps.NoMouse &&
 		m.phase != phaseFatal &&
 		m.phase != phaseAwaitingApproval &&
+		m.phase != phaseReplay &&
 		!m.showHelp &&
 		m.mcp.view == mcpNone &&
 		m.team.view == teamNone &&
@@ -121,7 +122,8 @@ func selectable(m Model) bool {
 		m.userModel.view == userModelNone &&
 		m.models.view == modelsNone &&
 		m.effort.view == effortNone &&
-		m.worktrees.view == worktreesNone
+		m.worktrees.view == worktreesNone &&
+		m.sessions.view == sessionsNone
 }
 
 // screenToContent maps a screen cell (x, y) to a LOGICAL content position (line

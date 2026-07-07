@@ -78,6 +78,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, agentsKey, jumpKey strin
 		{key: agentsKey, action: "agents overlay (subagents / parallel / teams · tab to switch)"},
 		{key: "ctrl+e", action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
 		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
+		{key: "/sessions", action: "open a stored session (read-only transcript)"},
 		{key: "alt+m", action: "cycle permission mode (default / plan / accept-edits)"},
 		{key: "ctrl+t", action: "expand/collapse details"},
 	})

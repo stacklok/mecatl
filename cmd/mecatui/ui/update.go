@@ -202,6 +202,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamMsg:
 		return m.onStreamMsg(msg)
 
+	case replayMsg:
+		return m.updateReplayMsg(msg)
+
 	case tea.WindowSizeMsg:
 		return m.onResize(msg)
 
@@ -971,11 +974,21 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.switchMode(client.NextMode(m.desiredMode()))
 	}
 
+	return m.dispatchPhaseKey(msg)
+}
+
+// dispatchPhaseKey is the per-phase key router, extracted from onKey so onKey
+// stays under the cyclomatic cap as phases accrue. phaseAwaitingApproval→modal,
+// phaseRunning→running-key, phaseReplay→replay-key (esc closes the transcript),
+// phaseIdle→idle-key. The default (connecting/fatal) is a no-op.
+func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.phase {
 	case phaseAwaitingApproval:
 		return m.onApprovalKey(msg)
 	case phaseRunning:
 		return m.onRunningKey(msg)
+	case phaseReplay:
+		return m.onReplayKey(msg)
 	case phaseIdle:
 		return m.onIdleKey(msg)
 	default:
@@ -1001,6 +1014,7 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onEffortKey,
 		m.onWorktreesKey,
 		m.onScheduleKey,
+		m.onSessionsKey,
 	}
 	for _, route := range overlays {
 		if mm, cmd, handled := route(msg); handled {
@@ -1729,6 +1743,7 @@ func (m Model) runSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
+		Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
 	}, row.Name)
 	if !found {
 		return m, nil, false
@@ -1781,6 +1796,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 			MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 			Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 			Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
+			Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
 		}, name); found {
 			m.ta.Reset()
 			return b.run(m)
@@ -1966,6 +1982,84 @@ func (m Model) waitCmd() tea.Cmd {
 	gen := m.streamGen
 	read := client.WaitForMsg(m.streamCh)
 	return func() tea.Msg { return streamMsg{gen: gen, msg: read()} }
+}
+
+// replayMsg wraps one message pulled from a stored-session replay's reader
+// channel with the replay GENERATION that channel belonged to when the reader was
+// armed. It is the replay-stream analogue of streamMsg: the reducer drops any
+// replayMsg whose gen no longer matches m.sessions.replayGen (see updateReplayMsg),
+// so a reader left bound to an abandoned replay (a prior transcript view torn down
+// by esc, or any future double-arm) cannot route its messages into the current
+// replay view. It is the structural backstop behind the "exactly one reader per
+// replay" fan-in invariant — parallel to streamGen/streamMsg for the live run.
+type replayMsg struct {
+	gen uint64
+	msg tea.Msg
+}
+
+// waitReplayCmd re-arms the fan-in command on the current replay channel, tagging
+// whatever it delivers with the current replay generation so a stale reader's
+// output is dropped rather than misrouted (see replayMsg + updateReplayMsg's gen
+// check). Returns nil when no replay is active (defensive). Parallel to waitCmd.
+func (m Model) waitReplayCmd() tea.Cmd {
+	if m.sessions.replayCh == nil {
+		return nil
+	}
+	gen := m.sessions.replayGen
+	read := client.WaitForMsg(m.sessions.replayCh)
+	return func() tea.Msg { return replayMsg{gen: gen, msg: read()} }
+}
+
+// updateReplayMsg applies the generation guard for the replay fan-in, then reduces
+// the inner msg. A message produced by a replay's reader (waitReplayCmd) carries
+// the generation of the channel it was read from; if that no longer matches the
+// current replay, the reader is bound to an ABANDONED channel (a reader left over
+// after esc tore down a transcript view), so the message is dropped and NOT
+// re-armed — the stale reader dies with it. Parallel to onStreamMsg.
+//
+// Slice 3a: the inner msg is drained honestly (gen-guard + count + mark dirty) but
+// NOT projected into sessions.transcript — the updateStreamEvent refactor to
+// target a conversation is Slice 3b. The loading card renders the drained state
+// (loading / loaded / error). The channel-close handling (StreamClosedMsg /
+// StreamErrMsg) flips the loading card to its terminal arm.
+func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
+	if sm.gen != m.sessions.replayGen {
+		return m, nil // stale reader — drop, do not re-arm
+	}
+	switch msg := sm.msg.(type) {
+	case client.StreamClosedMsg:
+		// Clean replay EOF: the transcript is loaded. Stay in phaseReplay; the
+		// loading card flips to "transcript loaded". No re-arm (the channel closed).
+		m.sessions.replayClosed = true
+		m.sessions.loading = false
+		m.refreshView()
+		return m, nil
+	case client.StreamErrMsg:
+		// A replay error: render the error line, stay in phaseReplay. No re-arm.
+		m.sessions.replayClosed = true
+		m.sessions.replayErr = msg.Err
+		m.sessions.loading = false
+		m.refreshView()
+		return m, nil
+	default:
+		// A replay event msg: count it (3a drains honestly without projecting; 3b
+		// will wire the projection into sessions.transcript). Re-arm the reader.
+		m.sessions.receivedMsgs++
+		m.refreshView()
+		return m, m.waitReplayCmd()
+	}
+}
+
+// onReplayKey routes keys while a stored-session transcript replay is open
+// (phaseReplay). Esc closes the transcript view (closeSessionsTranscript): stop
+// the replay, clear replay state, resetSession, return to idle with NO live
+// session — read-only inspection ends honestly. Any other key is swallowed (the
+// replay is read-only; continue-interactive is out of scope for Slice 3a).
+func (m Model) onReplayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Close) {
+		return m.closeSessionsTranscript()
+	}
+	return m, nil
 }
 
 // refreshCmd is the command returned on the run-completion paths, after endRun +

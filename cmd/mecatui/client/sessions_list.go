@@ -75,6 +75,19 @@ type SessionLister interface {
 	ListSessions(ctx context.Context) ([]SessionListItem, error)
 }
 
+// SessionReplayer is the narrow subset of *Client the ui's read-only transcript
+// viewer needs: opening the durable-event-log replay stream for one stored session
+// (issue #245 Phase 2/3, cloud-native Phase 3a read-back). Split out from *Client
+// so the ui is injectable with a fake for offline tests; *Client satisfies it (the
+// StreamSessionEvents method on events.go is the concrete implementation).
+type SessionReplayer interface {
+	StreamSessionEvents(ctx context.Context, id string) (*EventStream, error)
+}
+
+// Compile-time assertion: *Client satisfies SessionReplayer (the picker's
+// replay-stream collaborator). Mirrors the SessionLister pattern.
+var _ SessionReplayer = (*Client)(nil)
+
 // ListSessionsCmd fetches the stored-session inventory off the update goroutine;
 // the result (success or error) arrives as a SessionsListedMsg. Mirrors
 // ListWorktreesCmd.

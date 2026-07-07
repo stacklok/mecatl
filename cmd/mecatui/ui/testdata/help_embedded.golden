@@ -23,6 +23,7 @@
 ┃    ctrl+a                agents overlay (subagents / parallel / teams · tab to switch)                                                                             ┃
 ┃    ctrl+e                reasoning-effort picker  [not enabled]                                                                                                    ┃
 ┃    /schedule             browse & manage scheduled tasks  [not enabled]                                                                                            ┃
+┃    /sessions             open a stored session (read-only transcript)                                                                                              ┃
 ┃    alt+m                 cycle permission mode (default / plan / accept-edits)                                                                                     ┃
 ┃    ctrl+t                expand/collapse details                                                                                                                   ┃
 ┃                                                                                                                                                                    ┃

@@ -476,3 +476,81 @@ func TestStreamSessionEventsCmdMidStreamErrorClosesChannel(t *testing.T) {
 		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
 	}
 }
+
+// fakeSessionReplayer is a scripted client.SessionReplayer for the
+// ReplayStreamCmd test: it returns a *EventStream over a fakeEventStream (an
+// EventRecver) or a configured open error, recording the id it was called with.
+// It mirrors the ui package's fakeSessionReplayer but lives here so the client
+// test stays self-contained.
+type fakeSessionReplayer struct {
+	stream *fakeEventStream
+	err    error
+	calls  int
+	lastID string
+}
+
+func (f *fakeSessionReplayer) StreamSessionEvents(_ context.Context, id string) (*EventStream, error) {
+	f.calls++
+	f.lastID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return NewEventStream(f.stream), nil
+}
+
+// TestReplayStreamCmd asserts the interface variant of StreamSessionEventsCmd:
+// ReplayStreamCmd opens the replay stream via a SessionReplayer + runs ReadLoop,
+// that the channel yields the scripted msgs then closes, and that stop() cancels
+// (idempotent + no panic). Mirrors TestStreamSessionEventsCmd but over the
+// SessionReplayer interface (the seam the ui's /sessions transcript viewer holds).
+func TestReplayStreamCmd(t *testing.T) {
+	fr := &fakeSessionReplayer{
+		stream: newFakeEventStream(eventsFromScript(scriptedRunResult())...),
+	}
+
+	ch, stop := ReplayStreamCmd(context.Background(), fr, "sess-replay")
+	defer stop()
+
+	msgs := drain(ch)
+	if len(msgs) == 0 {
+		t.Fatal("no msgs")
+	}
+	if fr.calls != 1 {
+		t.Errorf("StreamSessionEvents calls = %d, want 1", fr.calls)
+	}
+	if fr.lastID != "sess-replay" {
+		t.Errorf("replayer called with id %q, want sess-replay", fr.lastID)
+	}
+	if _, ok := msgs[0].(SessionInitMsg); !ok {
+		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
+	}
+	if _, ok := msgs[len(msgs)-1].(StreamClosedMsg); !ok {
+		t.Errorf("last msg = %T, want StreamClosedMsg", msgs[len(msgs)-1])
+	}
+	// stop is idempotent and never panics.
+	stop()
+	stop()
+}
+
+// TestReplayStreamCmdOpenError asserts an open-error emits a StreamErrMsg wrapping
+// the error as its LAST msg AND closes the channel (so WaitForMsg terminates),
+// mirroring the concrete cmd's open-error path.
+func TestReplayStreamCmdOpenError(t *testing.T) {
+	boom := errors.New("rpc gone")
+	fr := &fakeSessionReplayer{err: boom}
+
+	ch, stop := ReplayStreamCmd(context.Background(), fr, "sess-err")
+	defer stop()
+
+	msgs := drain(ch)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d msgs, want 1 (the open-error StreamErrMsg): %#v", len(msgs), msgs)
+	}
+	se, ok := msgs[0].(StreamErrMsg)
+	if !ok {
+		t.Fatalf("msg = %T, want StreamErrMsg: %#v", msgs[0], msgs)
+	}
+	if !errors.Is(se.Err, boom) {
+		t.Errorf("err = %v, want boom", se.Err)
+	}
+}

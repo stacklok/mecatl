@@ -86,3 +86,35 @@ func StreamSessionEventsCmd(ctx context.Context, c *Client, id string) (ch chan 
 	go es.ReadLoop(ctx, ch)
 	return ch, stop
 }
+
+// ReplayStreamCmd is the interface variant of StreamSessionEventsCmd: it opens the
+// replay stream for session id via a SessionReplayer (instead of a concrete
+// *Client) and runs ReadLoop on a goroutine, pushing tea.Msgs onto a channel the
+// ui drains via WaitForMsg (the SAME fan-in the live Converse stream uses). It is
+// the open path the /sessions transcript viewer calls — the ui holds a
+// SessionReplayer (the interface), not a *Client, so it cannot call the concrete
+// StreamSessionEventsCmd. Mirrors StreamSessionEventsCmd exactly but calls
+// r.StreamSessionEvents instead of c.svc.StreamSessionEvents. Returns the channel
+// + a teardown func (cancel) the ui calls when it leaves the transcript view. The
+// channel is buffered (64). An open error emits a StreamErrMsg{Err,
+// Transient: TransientStreamErr(err)} then closes the channel, so the ui's
+// WaitForMsg fan-in always terminates. stop is idempotent (context.WithCancel +
+// sync.Once).
+func ReplayStreamCmd(ctx context.Context, r SessionReplayer, id string) (ch chan tea.Msg, stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	ch = make(chan tea.Msg, 64)
+	var once sync.Once
+	stop = func() { once.Do(cancel) }
+
+	es, err := r.StreamSessionEvents(ctx, id)
+	if err != nil {
+		// open-error path: emit the failure then close, so WaitForMsg terminates.
+		go func() {
+			defer close(ch)
+			emit(ctx, ch, StreamErrMsg{Err: err, Transient: TransientStreamErr(err)})
+		}()
+		return ch, stop
+	}
+	go es.ReadLoop(ctx, ch)
+	return ch, stop
+}
