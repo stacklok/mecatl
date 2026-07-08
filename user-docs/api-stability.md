@@ -5,7 +5,7 @@ title: API stability
 
 # API stability
 
-`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a tiny dependency closure (`doublestar` + `x/sync` + test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
+`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a tiny dependency closure (`doublestar` + `x/sync` + `robfig/cron/v3`, itself a zero-dependency module, used only by the scheduling-adjacent `engine/adapter/cronparse` + test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
 
 ---
 
@@ -116,7 +116,7 @@ When you change a core package's exported API on purpose:
 4. Add an entry to **`engine/CHANGELOG.md`** under `## [Unreleased]`, classified per `engine/COMPATIBILITY.md` (Added = minor; Changed/Deprecated/Removed = breaking).
 5. In the PR, the reviewer sees the readable `.txt` diff and the CHANGELOG classification together. The break is deliberate, reviewed, and recorded — never silent.
 
-See [`engine/CHANGELOG.md`](../engine/CHANGELOG.md) for the current state of the unreleased surface and the history of versioned changes. Recent examples: `v0.2.0` added `session.Session.ReasoningEffort` and `session.HookAdvisory`; it also changed the values of `tool.MaxAgentDescriptionBytes` and `tool.MaxAgentBodyBytes` (a breaking change in the const-value sense, CHANGELOG-classified accordingly).
+See [`engine/CHANGELOG.md`](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md) for the current state of the unreleased surface and the history of versioned changes. Recent examples: `v0.4.0` added `session.Usage.ReasoningTokens`; `v0.3.0` added the guardrail approve-once seam (`governance.HookOutcome.AskApproval`, `session.PendingAsk.HookOriginated`, `port.HookApprovalLearner`); `v0.1.0` **removed** `agent.WithWritableChildForker` and `agent.WithSubagentAutoMerge` (a breaking change, CHANGELOG-classified accordingly, once the writable Subagent moved to direct-write per ADR 0041).
 
 :::note[Go minor-version toolchain bumps]
 
@@ -164,6 +164,6 @@ A session reconstructed by folding mecatl's own event stream is therefore **byte
 ## What's next
 
 - [The agent loop](what-you-get/agent-loop.md) — how the engine runs turns, dispatches tools, and emits the event stream.
-- [Extension points](extension-points.md) — implement a port interface (`port.LLMProvider`, `port.SessionStore`, `port.PermissionPolicy`, and others) to replace any capability.
+- [Extension points](extension-points/index.md) — implement a port interface (`port.LLMProvider`, `port.SessionStore`, `port.PermissionPolicy`, and others) to replace any capability.
 - [Deployment decision](getting-started/deployment-decision.md) — choosing between `mecated` and the embedded engine library.
-- [`engine/CHANGELOG.md`](../engine/CHANGELOG.md) — the full history of versioned API changes.
+- [`engine/CHANGELOG.md`](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md) — the full history of versioned API changes.

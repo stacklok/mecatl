@@ -50,12 +50,11 @@ When memory is enabled, the agent has access to these tools in every session:
 | **Remember** | Stores a key-value entry with an optional one-line description |
 | **Recall** | Retrieves the full value for a key (or lists entries matching a prefix) |
 | **SearchMemory** | BM25 keyword search across all stored entries, including those trimmed from the index |
-| **Forget** | Removes an entry by key |
 | **RememberUser** | Stores a fact about the operator in the cross-project user model (see below) |
 | **RecallUser** | Retrieves a user-model entry by key |
 | **SearchUserModel** | BM25 search across user-model entries |
 
-The first four operate on the per-project store. The last three operate on the user model.
+The first three operate on the per-project store. The last three operate on the user model. There is no agent-facing "forget" tool — the underlying `MemoryStore` interface does have a `Forget(key)` method, but it's used internally by consolidation (to drop stale entries), not exposed for the model to call directly.
 
 ### Semantic recall
 

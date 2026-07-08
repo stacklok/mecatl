@@ -30,7 +30,7 @@ A run emits up to three artifacts, plus an exit code:
 | `StopReason` | `stop_reason` | Verbatim `session.StopReason` string (see below) |
 | `NonEmptyDiff` | `non_empty_diff` | Whether the run left an uncommitted working-tree change |
 | `DiffBytes` | `diff_bytes` | Byte length of the computed patch |
-| `Usage` | `usage` | `{input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens}` |
+| `Usage` | `usage` | `{input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens}` |
 | `FinalText` | `final_text` | Terminal assistant prose |
 | `Error` | `error` | Non-empty only when `stop_reason == "error"` |
 
@@ -167,7 +167,7 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 | Flag | Default | Notes |
 |---|---|---|
 | `--workspace` | cwd | Session workspace root. Must be a git repository top level. |
-| `--provider` / `--default-provider` | `""` | Select a provider by id (`openai`, `openrouter`, `anthropic`). |
+| `--default-provider` | `""` | Select a provider by id (`openai`, `openrouter`, `anthropic`). |
 | `--model` | `""` | Per-session passthrough model id. Accepts any id the provider serves, including ids newer than the embedded catalog. Prefer this over `--default-model` for newer models. |
 | `--posture` | `""` (strict) | Operator posture ladder: `strict < trusted < auto < yolo`. For an autonomous CI run use `--posture auto` (allow-all, child injection-defence on). With `strict` posture and `--headless`, a main-engine permission ask cancels the run and exits 1. |
 | `--headless` | `true` | Default on (inverted from `mecated`). A single-shot CI run has no human approver; child asks are auto-denied or routed to the opt-in ask reviewer. |

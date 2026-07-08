@@ -26,12 +26,13 @@ Choose a pre-built binary (`mecated`, `mecak8s`, `mecatequi`) when you want the 
 
 ## Dependency footprint
 
-The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its `go.mod` requires exactly three packages at runtime:
+The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its `go.mod` requires three packages at runtime plus one test-only package:
 
 | Package | Role |
 |---|---|
 | `golang.org/x/sync` | `errgroup` for concurrent tool dispatch |
 | `github.com/bmatcuk/doublestar/v4` | Glob matching for permission patterns in `engine/adapter/memfs` |
+| `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` (scheduled tasks); itself a dependency-free module |
 | `go.uber.org/goleak` | Test-only (leaked-goroutine detection); never enters a production build |
 
 Nothing from mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.

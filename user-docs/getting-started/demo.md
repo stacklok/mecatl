@@ -3,11 +3,11 @@ sidebar_position: 1
 title: See it in 60 seconds
 ---
 
-`mecademo` drives a real `agent.Engine` against a scripted offline provider — no network, no API key — and shows three scenarios: the core loop (tool call, permission pause, approval, result), a 2-member agent team, and a background subagent with deferred collection.
+`mecademo` drives a real `agent.Engine` against a scripted offline provider — no network, no API key — and shows three scenarios: the core loop (tool call, permission pause, approval, result), a 2-member agent team, and a background subagent with deferred collection. The source is in [`cmd/mecademo/demo.go`](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go) if you want to read the engine wiring directly.
 
 ## Prerequisites
 
-- **Go 1.26.3** (the `go` directive in `go.mod` auto-fetches the toolchain via `GOTOOLCHAIN`)
+- **Go 1.26 or newer** (the `go` directive in `go.mod` pins the minor version only, so any 1.26.x toolchain works)
 - The repo cloned locally:
   ```console
   $ git clone https://github.com/stacklok/mecatl
@@ -45,22 +45,22 @@ guardrails: OFF (no checker model configured; bind the `guardrail` model slot or
 
 ## What each event means
 
-| Event | What it represents |
-|---|---|
-| `session.init` | Once, before the first turn — the run has started and the session is initialised. |
-| `user_prompt` | The user message has been recorded into the session history. |
-| `turn.start` | A new model call begins. `turn=N` increments each time the loop calls the provider. |
-| `turn.end` | The model finished streaming this turn (text + any tool calls received). |
-| `message.delta` | Streamed assistant text for this turn. In production this arrives incrementally. |
-| `tool.call` | The model requested a tool, with the raw JSON `args` it supplied. |
+| Event            | What it represents                                                                                                                                                                                                   |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.init`   | Once, before the first turn — the run has started and the session is initialised.                                                                                                                                    |
+| `user_prompt`    | The user message has been recorded into the session history.                                                                                                                                                         |
+| `turn.start`     | A new model call begins. `turn=N` increments each time the loop calls the provider.                                                                                                                                  |
+| `message.delta`  | Streamed assistant text for this turn. In production this arrives incrementally.                                                                                                                                     |
+| `turn.end`       | The model finished streaming this turn (text + any tool calls received).                                                                                                                                             |
+| `tool.call`      | The model requested a tool, with the raw JSON `args` it supplied.                                                                                                                                                    |
+| `tool.result`    | The tool's output. `error=false` means it ran cleanly; the result text is what gets fed back to the model.                                                                                                           |
 | `permission.ask` | The loop paused for client approval. Carries the tool name, proposed args, and a human-readable `reason`. The demo immediately calls `run.Approve(askID, true)`. Over HTTP this is `POST /v1/sessions/{id}/approve`. |
-| `approval` | The verdict has been received and recorded (allow once, allow always, or deny). |
-| `tool.result` | The tool's output. `error=false` means it ran cleanly; the result text is what gets fed back to the model. |
-| `result` | Terminal event. `stop` is the reason (`end_turn`, `max_turns`, `cancelled`, …), followed by the final assistant text and cumulative token usage. `cacheHitRate` is `cacheRead / inputTokens`. |
+| `approval`       | The verdict has been received and recorded (allow once, allow always, or deny).                                                                                                                                      |
+| `result`         | Terminal event. `stop` is the reason (`end_turn`, `max_turns`, `cancelled`, …), followed by the final assistant text and cumulative token usage. `cacheHitRate` is `cacheRead / inputTokens`.                        |
 
 The `permission.ask` / approve round-trip is the key integration point. Your client decides whether to allow or deny each ask; the loop resumes or surfaces an error result accordingly. In a live deployment you surface this to a human or route it through your own policy layer.
 
-## Act 2 — agent team (offline only)
+## Act 2 — agent team
 
 The second act runs a 2-member team: a lead and a worker. The worker records a finding to the shared ledger; the lead's final synthesis turn consolidates it into the team's deliverable.
 
@@ -75,7 +75,13 @@ Consolidated report: the worker confirmed greeting.txt reads cleanly; nothing to
 
 The report is the lead's synthesis, not a concatenation of member outputs. See [Subagents & teams](/what-you-get/agent-loop.md) for how teams work.
 
-## Act 3 — background subagent (offline only)
+:::note
+
+This example only works offline. It will be disabled if you configure a live LLM backend.
+
+:::
+
+## Act 3 — background subagent
 
 The third act demonstrates the background subagent pattern: the parent starts a child with `background: true`, gets an immediate started-result, parks on `SubagentStatus` until the child finishes, then collects the result body after the harness injects a completion notice into the model's history.
 
@@ -114,6 +120,12 @@ A subagent runs in the background; the harness notice lands at the next turn bou
 
 The `user_prompt` at event 015 is the harness notice — a recorded user-role message the model sees at the next turn boundary. It is not a user keystroke; it is the mechanism by which the loop informs the model that a background child finished.
 
+:::note
+
+This example only works offline. It will be disabled if you configure a live LLM backend.
+
+:::
+
 ## Run it live (optional)
 
 Drive the same scenario against a real model:
@@ -123,13 +135,15 @@ $ export OPENAI_API_KEY=sk-...
 $ go run ./cmd/mecademo --openai --model gpt-5
 ```
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--openai` | `false` | Use the live OpenAI Responses API (reads `OPENAI_API_KEY`) |
-| `--model` | `mock-model` | Model identifier when `--openai` is set |
-| `--openai-base-url` | `""` | Override the OpenAI API base URL (any OpenAI-compatible endpoint) |
+| Flag                | Default      | Meaning                                                           |
+| ------------------- | ------------ | ----------------------------------------------------------------- |
+| `--openai`          | `false`      | Use the live OpenAI Responses API (reads `OPENAI_API_KEY`)        |
+| `--model`           | `mock-model` | Model identifier when `--openai` is set                           |
+| `--openai-base-url` | `""`         | Override the OpenAI API base URL (any OpenAI-compatible endpoint) |
 
 Without `--openai` the demo is fully offline. With `--openai` and no key set, it exits immediately with an error.
+
+Currently only OpenAI and a mock model are supported in the demo.
 
 ## What's next?
 

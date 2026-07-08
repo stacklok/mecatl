@@ -26,14 +26,14 @@ If you landed on **mecated** but want multi-replica support without affinity rou
 
 | Shape | When to choose | State model | Key dependency |
 |-------|---------------|-------------|----------------|
-| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | Only `golang.org/x/sync` + `doublestar` at runtime |
+| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `golang.org/x/sync` + `doublestar` + `robfig/cron/v3` at runtime |
 | **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory or JSONL on disk; optional Redis or gRPC driver | A running process; PV for durable sessions |
 | **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
 | **mecatequi** | GitHub Actions (or any CI): label/comment → patch → PR | None — stateless per run | LLM provider key; GitHub Actions runner |
 
 ## Embed the engine
 
-Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's dep closure is three packages — `golang.org/x/sync`, `doublestar`, and (test-only) `goleak`. Nothing from mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
+Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's dep closure is four packages — `golang.org/x/sync`, `doublestar`, `robfig/cron/v3` (itself dependency-free; used only by `engine/adapter/cronparse`), and (test-only) `goleak`. Nothing from mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
 
 You implement `port.LLMProvider`, `port.SessionStore`, and the rest using the reference adapters under `engine/adapter/` as a starting point, or bring your own. You get the agent loop, the full tool catalog, the permission model, hooks, subagent delegation, and compaction with no binary dependency.
 

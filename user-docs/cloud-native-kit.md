@@ -137,7 +137,7 @@ Everything else is either persisted in the snapshot, replayed from the event log
 
 Without a lease backend, the deployer is responsible for session-affinity routing. Two replicas over one shared store without a lease can interleave snapshot appends — jsonlstore uses `O_APPEND` with an in-process mutex only; there is no cross-process guard.
 
-With a lease backend wired, the run-entry funnel acquires the lease before starting a run. A second replica attempting to start the same session gets HTTP 409 / gRPC `FAILED_PRECONDITION`. If the lease-holding process dies, the flock lease auto-releases on file-handle close; the Kubernetes `coordination.k8s.io` lease lapses after the TTL (configurable via `--session-lease-k8s-ttl`).
+With a lease backend wired, the run-entry funnel acquires the lease before starting a run. A second replica attempting to start the same session gets HTTP 409 / gRPC `FAILED_PRECONDITION`. If the lease-holding process dies, the flock lease auto-releases on file-handle close; the Kubernetes `coordination.k8s.io` lease lapses after the TTL (configurable via `--session-lease-ttl`, default `30s`, shared across all lease backends).
 
 The token used in the lease value object is plumbed but not consulted for CAS-Save — the lease grant itself is the enforcement in v1.
 

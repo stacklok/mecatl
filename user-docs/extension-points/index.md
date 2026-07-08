@@ -116,10 +116,10 @@ func Build(cfg Config) (*server.Service, error) {
     policy := permpolicy.NewPolicy(rules, permStore)
 
     // 4. Diagnostics (satisfies Diagnostics)
-    diag := slogdiag.New(slog.Default())
+    diag := slogdiag.NewFromLogger(slog.Default())
 
-    // 5. Clock (satisfies Clock)
-    clk := wallclock.New()
+    // 5. Clock (satisfies Clock) -- the zero value is ready to use, no constructor
+    clk := wallclock.Clock{}
 
     // 6. Hook runner (satisfies HookRunner)
     hooks, err := hookexec.New(cfg.HookConfig)
@@ -162,7 +162,7 @@ To validate your implementation against the conformance suite:
 storeconformance.Run(t, func(t *testing.T) port.SessionStore { return yourstore.New() })
 ```
 
-Conformance suites ship in `engine/adapter/storeconformance`, `leaseconformance`, `fsconformance`, `sourceconformance`, and `memconformance`. An adapter that passes its suite is compatible with mecatl's expectations.
+Conformance suites ship in `engine/adapter/storeconformance`, `leaseconformance`, `fsconformance`, `sourceconformance`, `memconformance`, `eventlogconformance`, and `scheduleconformance`. An adapter that passes its suite is compatible with mecatl's expectations.
 
 ---
 

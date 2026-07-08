@@ -9,7 +9,7 @@ mecatl ships in four deployment shapes. Each shape is a different composition ro
 
 :::note[Need help deciding?]
 
-The [Pick your deployment shape](/getting-started/deployment-decision) guide in Getting Started walks the full decision tree with trade-offs for each shape.
+The [Pick your deployment shape](/getting-started/deployment-decision.md) guide in Getting Started walks the full decision tree with trade-offs for each shape.
 
 :::
 
@@ -19,7 +19,7 @@ The [Pick your deployment shape](/getting-started/deployment-decision) guide in 
 
 | Shape | When to choose | Key dependency | Persistence model |
 |---|---|---|---|
-| **Embed** | You own the binary; want the loop in-process with fine-grained control over every port | `github.com/stacklok/mecatl/engine` (`golang.org/x/sync` + `doublestar` at runtime) | You implement `port.SessionStore` |
+| **Embed** | You own the binary; want the loop in-process with fine-grained control over every port | `github.com/stacklok/mecatl/engine` (`golang.org/x/sync` + `doublestar` + `robfig/cron/v3` at runtime) | You implement `port.SessionStore` |
 | **mecated** | Standalone server with interactive clients (TUI, IDE), or a controlled service deployment | A running process; PV for durable sessions | In-memory (default), JSONL on disk (`--store-dir`), or gRPC driver |
 | **mecak8s** | Kubernetes with no persistent volumes, multi-replica, disposable pods | Redis StatefulSet + `coordination.k8s.io` RBAC | Redis — no local state; k8s `Lease` for single-writer enforcement |
 | **mecatequi** | Single-shot CI: one prompt → git-diff patch → exit | LLM provider key + a GitHub Actions runner | None — stateless per run |
@@ -42,6 +42,6 @@ The [Pick your deployment shape](/getting-started/deployment-decision) guide in 
 
 ## What's next
 
-- [Pick your deployment shape](/getting-started/deployment-decision) — full decision tree with trade-offs before you commit to a shape.
-- [The agent loop](/what-you-get/agent-loop) — understand what the engine does once it is running, regardless of which composition root you chose.
-- [Permissions & guardrails](/what-you-get/permissions) — the posture ladder (`--posture strict|trusted|auto|yolo`) and workspace trust behave identically across all four shapes; the only deployment-specific difference is headless vs interactive defaults.
+- [Pick your deployment shape](/getting-started/deployment-decision.md) — full decision tree with trade-offs before you commit to a shape.
+- [The agent loop](/what-you-get/agent-loop.md) — understand what the engine does once it is running, regardless of which composition root you chose.
+- [Permissions & guardrails](/what-you-get/permissions.md) — the posture ladder (`--posture strict|trusted|auto|yolo`) and workspace trust behave identically across all four shapes; the only deployment-specific difference is headless vs interactive defaults.

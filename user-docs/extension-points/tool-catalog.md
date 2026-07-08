@@ -153,7 +153,7 @@ Register it before calling `app.Build`:
 cat.MustRegister(mytool.PingTool{})
 ```
 
-`session.NewToolResult(id, content)` and `session.NewToolError(id, msg)` are the two constructors. Use `NewToolError` when the tool failed in a way the model should know about and can recover from.
+`session.NewToolResult(id, content)` and `session.NewToolError(id, msg)` are the two constructors for a plain text result. Use `NewToolError` when the tool failed in a way the model should know about and can recover from. A third constructor, `session.NewToolResultWithParts(id, content, parts)`, backs the typed-content-block results described in [MCP client](/what-you-get/mcp-client.md#typed-tool-results) — most custom tools only need the plain-text pair above.
 
 :::note[Build-time vs. per-session]
 

@@ -5,7 +5,7 @@ title: HookRunner
 
 # HookRunner
 
-`port.HookRunner` is the port the loop calls at every lifecycle transition in a session. Hooks observe or intercept events ranging from individual tool calls to prompt submission to session termination. A hook can allow an action, block it, or rewrite its payload — with the understanding that only a `PreToolUse` block is a real veto.
+`port.HookRunner` is the port the loop calls at every lifecycle transition in a session. Hooks observe or intercept events ranging from individual tool calls to prompt submission to session termination. A hook can allow an action, block it, or rewrite its payload — with the understanding that only a `PreToolUse` block is a real veto (a `PreToolUse` block can optionally be refined into an interactive approval ask instead of a dead end — see `AskApproval` below).
 
 ---
 
@@ -41,15 +41,19 @@ The `Input` shape is phase-specific. For `PreToolUse` it is the raw tool-call ar
 
 ```go
 type HookOutcome struct {
-    Block   bool
-    Message string
-    Mutated json.RawMessage
+    Block       bool
+    Message     string
+    Mutated     json.RawMessage
+    AskApproval bool
 }
 ```
 
 - **`Block`** — when true, the hook vetoes the action. Effective only on phases that support blocking (see the table below).
 - **`Message`** — human-readable explanation surfaced to the model on a block, or as an annotation on mutation.
 - **`Mutated`** — when non-empty on an allowing outcome, replaces the phase's payload. The replacement must be valid JSON in the same shape as `HookEvent.Input` for that phase; a malformed payload is silently ignored and the original stands.
+- **`AskApproval`** — refines a `PreToolUse` `Block` into an *askable* block instead of a dead end: on an interactive engine, the loop surfaces it as an ordinary permission ask (pause → `EvPermissionAsk` → approve/deny), reusing the same machinery as Layer-1 permission asks — an allow runs the call, a deny refuses it. A headless (non-interactive) engine ignores the bit and the block simply stands, which is the fail-safe default. It's meaningless outside `PreToolUse Block == true` and is silently ignored elsewhere. A hook implementation that predates this field just never sets it, reproducing the pre-existing dead-end-block behavior exactly.
+
+A `HookRunner` consumer can optionally also implement `port.HookApprovalLearner` (`LearnHookApproval(ctx, HookEvent)`), which the loop calls when the human resolves an askable block with "allow and don't ask again" — letting the consumer arm its own longer-lived waiver for that tool/pattern. It's a separate, optional interface (not a `HookRunner` method), so implementing it is opt-in and doesn't touch the required `HookRunner` surface.
 
 ---
 
@@ -150,7 +154,7 @@ To suppress a bad inbound result — for example, because it contains injected i
 
 The loop records the mutated result in the session history, emits it on the client event stream, and delivers it to the model — all three views agree on the rewritten result. The raw tool output never reaches the model.
 
-Only `PreToolUse` Block is a real veto.
+Only `PreToolUse` Block is a real veto — and even there, setting `AskApproval` turns it from a dead end into an interactive ask rather than removing the veto.
 
 :::note[Loop consistency guarantee]
 
