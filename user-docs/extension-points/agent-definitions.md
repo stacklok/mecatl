@@ -238,9 +238,9 @@ The model invokes a specialist by passing the `agent` parameter to the Subagent 
 Subagent(agent="code-reviewer", task="review the diff in HEAD")
 ```
 
-On the Subagent path, named specialists are **read-only** (`SubagentTool.ReadOnly()` stays `true`). Edit and Write are dropped from the catalog even if the def's `tools` allowlist includes them, with a startup diagnostic. The specialist runs in an isolated git worktree (when Bash is configured and the workspace is trusted) so it retains a shell for inspection while writes land in a throwaway clone.
+On the Subagent path, named specialists are **read-only by default** (`SubagentTool.ReadOnly()` stays `true`). Edit and Write are dropped from the catalog even if the def's `tools` allowlist includes them, with a startup diagnostic. The specialist runs in an isolated git worktree (when Bash is configured and the workspace is trusted) so it retains a shell for inspection while writes land in a throwaway clone.
 
-For a mutating specialist — one that needs to edit files — use the team member path with a `Mutating` member flag.
+A specialist can also be invoked writable, landing edits directly in the real workspace — see [Writable named specialists](#writable-named-specialists) below. For concurrent mutating work, use the team member path with a `Mutating` member flag instead.
 
 ### Combining `agent` and `model`
 
@@ -252,9 +252,27 @@ Subagent(agent="code-reviewer", model="opus", task="deep review")
 
 The harness rebuilds the specialist's scoped engine on the override model (catalog, prompt, skills, hooks, memory — the full def scope) rather than using the pre-built def engine. The model is taken verbatim with no alias resolution (parity with the model-only path). The per-def limits still bind. A def with inline MCP servers is rejected on the `agent`+`model` path in v1 (the inline manager has no process-lifetime owner for a per-call engine); reference-only MCP is supported.
 
-### `mode: "read-write"` + `agent` is rejected in v1
+### Writable named specialists
 
-A `mode: "read-write"` Subagent runs direct-write against the real workspace. Named specialists run read-only on the Subagent path in v1. The combination is validated and rejected at call time with a model-visible error listing the constraint.
+A named specialist can also run **writable**: pass `mode: "read-write"` alongside `agent` and the specialist edits the real parent workspace directly, instead of running read-only in a throwaway worktree clone.
+
+```
+Subagent(agent="code-reviewer", mode="read-write", task="apply the review fixes")
+```
+
+This reuses the same direct-write mechanics as the generic writable Subagent (no fork, no copy, no merge-back — the specialist's Edit/Write/Bash mutate the real tree in place, exactly as the main agent does). What's new is that the specialist keeps its **own** scoped engine — prompt, skills, catalog, model — instead of falling back to the generic writable explorer. The harness rebuilds the def's scoped engine with mutating tools kept, on the def's resolved provider/model, using the main session's command runner.
+
+A few scope limits apply:
+
+- **`agent` + `model` + `mode: "read-write"` together is rejected.** A writable specialist always runs on its own resolved model; there's no per-call model override for this path. Drop `model` (or drop `agent` to get a writable explorer on a chosen model).
+- **The deployment must wire writable-specialist support**, or the call fails with "not supported in this deployment." A no-filesystem session never wires this path, so writable specialists are unavailable there.
+- **The def's own tool allowlist still governs.** Running writable only *permits* Edit/Write/Bash to survive scoping — it doesn't force-inject them. A def whose `tools` allowlist excludes Edit/Write stays non-mutating even when invoked with `mode: "read-write"`.
+- **Inline MCP servers are declined** on this path (a v1 scope limit — an inline server's live connection has no process-lifetime owner on a per-call engine). Reference-only MCP servers (naming a configured main server) work fine, since they borrow the shared connection.
+- **Permissions resolve at main-session parity.** The child's posture is non-isolated, so it does not get the isolated-child auto-approve for read-only/build commands — its Bash, Edit, and Write asks resolve under the operator's normal posture and policy, the same as the main agent's own tools.
+
+As with the generic writable Subagent, a crashed or cancelled writable specialist can leave partial edits in the working tree — there's no fork to discard. Git is the rollback layer: review with `git diff`/`git status`, undo with `git checkout`/`git stash`.
+
+An unknown agent name, or a known agent whose def can't run writable (inline MCP servers), is a model-addressable error suggesting the specialist be run read-only or that an anonymous writable explorer be used instead.
 
 ### What the model sees when no def matches
 
@@ -278,7 +296,7 @@ A remote gRPC driver implements `mecatl.driver.v1.AgentSourceService` and is wir
 
 ## What's next
 
-- [Skills](skills.md) — the skill source port follows the same snapshot seam and shares the conformance-suite pattern.
+- [Skills](/extension-points/tool-catalog.md#skills) — the skill source port follows the same snapshot seam and shares the conformance-suite pattern.
 - [Subagent delegation](/what-you-get/agent-loop.md) — how the agent loop dispatches child runs and manages concurrency.
 - [Permissions & guardrails](/what-you-get/permissions.md) — how workspace trust gates the project tier and what untrusted mode degrades.
 - [Hook system](/what-you-get/hooks.md) — per-def hooks scoped to a specialist's engine.

@@ -99,6 +99,105 @@ Two optional behaviors are on by default:
 
 ---
 
+## Typed tool results
+
+An MCP tool result isn't always just text. The spec lets a server return a typed
+content array — text, images, audio, embedded resources, `resource_link`
+references — plus an optional structured JSON payload. mecatl carries all of
+that through instead of flattening it to a string.
+
+The typed blocks ride on `ToolResult.Parts`, a `[]session.Content` field
+alongside the existing `Content` string. It's additive: a legacy result with an
+empty `Parts` is byte-identical to the pre-typed-results shape, so nothing
+about older sessions or simpler servers changes.
+
+**Capability gating decides what a block reaches the model.** Whether an image
+or audio block is actually sent to the model depends on what the active
+provider and model can accept — the same capability intersection (catalog ∩
+adapter) that gates multimodal input elsewhere. Text, `resource_link`
+references, embedded resources, and structured-content blocks always pass
+through; only image and audio are gated on modality support.
+
+**`Audience` is advisory display routing, never a suppression control.** A
+content block can carry an `Audience` hint (e.g. `["user"]`) suggesting it's
+meant for a human viewer rather than the model. mecatl treats this as
+advisory only — an MCP server is an untrusted supply-chain surface, and
+trusting a server's own audience tag to *hide* content from the model would
+let a malicious server smuggle a payload past the model's view (CWE-345). A
+`["user"]`-tagged block may additionally render for a human-facing client;
+the model always still gets its copy.
+
+**`resource_link` URIs are never auto-dereferenced.** If a tool result points
+at a resource by URI instead of embedding it, mecatl does not fetch it
+automatically — a server pointing at an internal or cloud-metadata host would
+otherwise make mecatl an SSRF proxy (CWE-918). The model can fetch it back
+itself: an `https://` URI can be retrieved with the `FetchMcpResource` tool,
+which validates the target through the same `ValidateMediaURL` check used
+elsewhere (absolute HTTPS only, private/metadata IP ranges denied, redirects
+re-validated). Non-`https` URIs are server-readonly — use `ReadMcpResource`
+with the owning server name instead.
+
+---
+
+## Large and structured results: fail-closed truncation + CallMcpWithQuery
+
+Every tool result is capped at a fixed output size before it enters context.
+For plain text, truncating an oversized result with a marker is a reasonable
+degrade — the model still gets a usable, if partial, string.
+
+Truncation is not safe for **structured (JSON) results**: cutting a JSON blob
+mid-token leaves an unparseable fragment the model can't do anything useful
+with. mecatl detects this case and fails closed instead of returning garbage.
+
+A result counts as structured if any of these hold: the remote tool
+advertised an `outputSchema`, the result carried `structuredContent`, or a
+content block is JSON by MIME type or by parsing as JSON. When an oversized
+result is structured, mecatl returns an actionable tool error naming two ways
+forward — narrow or paginate the call using the remote tool's own
+filter/pagination parameters, or call it through **`CallMcpWithQuery`** with a
+jq filter — rather than handing the model a truncated blob it can't parse.
+Error results are exempt from this: a failed call's error text still
+truncates as plain text, so the model can read what went wrong.
+
+**`CallMcpWithQuery`** is a meta-tool that calls a remote MCP tool and filters
+its JSON result through a [jq](https://jqlang.org) expression before the
+result enters context, so a large response can be narrowed to just the
+fields you need instead of being truncated. It takes the target `server` and
+`tool` name, the remote tool's `args`, and a `jq_filter` expression. The
+filter runs against a pure-Go jq implementation with file, stdin, and
+environment access disabled — it can only see the JSON it's given — and is
+bounded by a compute deadline and by input/output size limits, so a runaway
+filter expression can't hang or blow up the context budget. Everything
+happens in memory; nothing is spilled to disk, which is what keeps this tool
+working the same way on a storage-free deployment as on a normal one. It's
+read-only, so it participates in read-parallel dispatch like any other
+read-only tool.
+
+---
+
+## Server-initiated notifications
+
+mecatl keeps a persistent connection open to each MCP server so the server
+can push notifications — most importantly `tools/list_changed`,
+`prompts/list_changed`, and `resources/list_changed`, the server's signal
+that its catalog has changed and should be re-fetched.
+
+Receiving one of these doesn't trigger an immediate re-fetch. It marks the
+corresponding list as stale; the next time that server's tools, prompts, or
+resources are actually read, mecatl re-fetches fresh and clears the staleness
+flag. This keeps the notification handler itself cheap — it never blocks on a
+network call — while still ensuring nothing is served stale forever.
+
+One practical consequence: a new session created after a server announces a
+change picks up the fresh tool set, but a tool catalog already assembled for
+an in-flight session is not modified — mecatl's tool catalog is append-only
+within a session, so live catalog mutation for a running session isn't
+supported yet. If a server drops a tool an existing session still has
+registered, calling it surfaces an error the model can react to, rather than
+the tool silently vanishing.
+
+---
+
 ## Global vs per-session MCP servers
 
 **Global servers** (`--mcp-server` / ToolHive discovery) are registered once at startup and shared across all sessions. Their tools are part of every session's catalog, including no-filesystem sessions. The global MCP manager is owned by the server process — it is never closed or reconnected per-session.

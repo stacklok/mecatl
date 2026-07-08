@@ -108,6 +108,17 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--session-lease-ttl` | `30s` | Lease lifetime; a crashed holder's lease becomes claimable after this long |
 | `--session-store-url` | `""` | gRPC driver endpoint replacing the local JSONL store (mutually exclusive with `--store-dir`) |
 
+### Scheduled tasks
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--scheduler` | `false` | Enable the in-process scheduler tick loop. Requires a store that exposes a `ScheduleStore` (`--store-dir` or `--session-store-url` with redisstore); fails startup otherwise |
+| `--scheduler-tick-interval` | `30s` | How often the tick loop polls for due schedules |
+| `--scheduler-min-interval` | `0` (off) | Frequency floor enforced at schedule-create time |
+| `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
+
+See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the `mecated schedules` CLI, the declarative `settings.yaml schedules:` block, and the gRPC/REST management surface.
+
 ### LLM resilience
 
 | Flag | Default | Notes |
@@ -318,6 +329,8 @@ mecated perf-mcp print-config
 full candidate content, asks for operator confirmation (or `--yes` for CI), validates
 the promotion, and moves the file. The model cannot perform this step — it does not
 have filesystem access outside the workspace.
+
+There's a fourth subcommand group, `mecated schedules <verb>` (`create`/`list`/`inspect`/`pause`/`resume`/`delete`/`fire`) — unlike the three above it's an HTTP client against an *already-running* server (it dials `--server-addr`), not an offline one-shot. See [Scheduled tasks](/what-you-get/scheduled-tasks.md#the-mecated-schedules-cli) for its usage.
 
 ---
 

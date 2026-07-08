@@ -296,22 +296,85 @@ the recorded history, the client event stream, and the model's view all show the
 and the raw injected result never reaches either. Only a `PreToolUse` block is a true
 veto.
 
+### Recovering from a block: approve-once
+
+A `block` verdict is not a permanent dead end. When the checker blocks a
+`PreToolUse` call, the block is *askable*: on an interactive session the harness
+pauses the run and surfaces it to the human through the **same permission-ask flow**
+Layer 1 uses (see [The `permission.ask` flow](#the-permissionask-flow)) — an ordinary
+approval modal carrying the actual blocked call, not a slash command or a prompt
+directive the human has to predict and pre-type. The human picks one of the same
+three verdicts:
+
+- **Deny** — the call never runs; the model receives the block reason and adapts.
+- **Allow once** — the call runs, this time only.
+- **Allow & don't ask again** — the call runs, and the harness arms a **session-scoped
+  waiver**: a later call matching the *exact* tool and the *exact* normalized command
+  (`Bash`) or arguments (any other tool) skips the checker for the rest of the
+  session. Matching is exact — never a substring, never a blanket per-tool bypass —
+  so approving one `gh pr merge` call never waves through an unrelated one. The
+  waiver is in-memory only and does not survive a process restart.
+
+A run parked on an askable guardrail block resumes exactly like any other pending
+approval, including across a process restart. In a **headless** deployment there is
+no human to ask, so an askable block simply resolves as a terminal block — the same
+fail-safe default as an unresolved Layer 1 ask.
+
+**Posture coupling.** Under the [`yolo` posture](#the-posture-ladder) — the fully
+gate-free tier — every guardrail rule is demoted to advisory (log and notify only;
+never block or ask). `strict`, `trusted`, and `auto` all keep enforcing: under `auto`
+the interactive approve-once ask *is* the intended behavior (the checker blocks, an
+interactive human allows it once), so `auto` is deliberately excluded from the
+demotion — only `yolo` trades the guardrail's enforcement away.
+
 ### Configuring guardrails
 
 Guardrails are **off until you configure a checker model** — configuring a model is
 the opt-in to spend (the only cost is the per-call checker LLM call). With a model
-and no explicit rule list, guardrails are on with the **default block ruleset** for
-the network/MCP surfaces, off for local tools:
+and no explicit rule list, guardrails are on with the **default block ruleset**:
 
 | Tool matcher | Phases | Mode |
 |---|---|---|
 | `WebSearch` | pre + post | block |
 | `WebFetch` | post | block |
 | `mcp__*` (all MCP tools) | pre + post | block |
+| `Bash` | pre | block (read-only commands skip the checker) |
 
-Local tools (`Read`/`Edit`/`Write`/`Bash`/`Grep`/`Glob`) are deliberately not
-matched — their I/O stays on the machine. Set `defaultMode: advisory` to start the
-default set in observe-only mode and tune up from there.
+The other local tools (`Read`/`Edit`/`Write`/`Grep`/`Glob`) are deliberately not
+matched — they have no outward reach, and `Edit`/`Write` are workspace mutations git
+already covers as the rollback layer. `Bash` **is** matched, because the shell is an
+agent's single largest blast radius: it can push, merge, delete, or exfiltrate, and a
+guardrail that ignores it misses exactly that surface (the motivating incident was an
+agent running `gh pr merge --squash` as a `Bash` call and merging its own PR
+unattended, with guardrails never seeing it).
+
+Inspecting every shell command would be an unacceptable latency/cost tax on the `ls` /
+`grep` / `git status` traffic that dominates a session, so the default `Bash` rule
+carries a **read-only pre-filter**: a command that is confidently read-only (the same
+classifiers Layer 1's rule engine uses) skips the checker entirely — zero LLM calls.
+Anything else — a mutating or outward command, an unrecognized verb, or a substitution
+it can't prove read-only — falls through to inspection; ambiguity always fails toward
+inspecting, never skipping.
+
+The default `Bash` rule also swaps in a **Bash-specific rubric** in place of the
+generic exfiltration prompt used for the network/MCP rules — the generic rubric's
+"if uncertain, judge unsafe" false-positives badly on ordinary shell work (a write to
+a sibling repo never leaves the machine, so it isn't exfiltration). The Bash rubric
+instead judges a command **safe unless it names one of five concrete danger
+categories**: (1) sending data off the machine to a network destination, especially
+secrets; (2) fetching and executing remote code (`curl … | sh`); (3) an irreversible
+action against a remote you may not control (force-push, push/merge, `gh pr merge`,
+publishing a release, deleting a remote branch/repo); (4) a destructive, hard-to-
+reverse local operation (recursive deletion, overwriting a disk device, mass
+recursive chmod/chown); (5) a local-persistence write to a credential, SSH key,
+shell-startup file, scheduler entry, or git hook — a write that never leaves the
+machine but grants later off-machine access or persistent code execution. Ordinary
+local writes (source, config, build output, notes — including to sibling repos),
+builds, tests, local file moves/copies, and routine origin-remote git operations are
+explicitly judged safe.
+
+Set `defaultMode: advisory` to start the default set in observe-only mode and tune up
+from there.
 
 ```yaml
 # ~/.config/mecatl/settings.yaml  (user-global only — NOT a checked-in project file)

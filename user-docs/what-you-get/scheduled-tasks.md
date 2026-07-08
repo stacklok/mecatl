@@ -1,0 +1,215 @@
+---
+sidebar_position: 8
+title: Scheduled tasks
+---
+
+# Scheduled tasks
+
+Scheduled tasks let an operator register a saved prompt to run on a cron cadence or once at a future time, and have mecatl drive that run **autonomously, durably, and exactly-once** across a multi-replica deployment — with no human present at fire time.
+
+This exists because every other run in mecatl starts with a human (or a client) sending a prompt. Unattended deployments — a nightly digest, an hourly heartbeat, a one-shot reminder — need a way to fire a prompt on a schedule without a human to approve a tool call, re-issue a prompt, or recover a stalled turn. So a fire is bounded (subagent-grade limits), posture-pinned (an explicit mutating opt-in, never "the schedule runs in yolo"), and recoverable through the same run-entry seams a human-driven run uses.
+
+Scheduled tasks are a **composition-layer** subsystem — no change to `engine/agent`. Each fire mints a fresh, bounded session and drives it through the ordinary run-entry funnel; the tick loop, cron parsing, and leader-lease acquisition all live in composition, not the loop.
+
+## The `port.ScheduleStore` seam
+
+`port.ScheduleStore` (`engine/port/schedule.go`) is a durable schedule registry, a peer of `port.SessionLease` and `port.EventLog`. It's discovered by type assertion exactly like those ports: a backend that doesn't implement it is simply never consulted, and the default path is byte-identical with no scheduling.
+
+A `Schedule` splits into two halves:
+
+- **`ScheduleSpec`** — the immutable "what to run and when": name, prompt (or multimodal `Parts`), trigger (cron XOR one-shot), provider/model selector, profile, workspace, permission mode, per-fire limits, the `Mutating` opt-in, `MaxFires`, misfire policy, singleton flag, and timezone.
+- **`ScheduleState`** — the mutable firing progress: `NextFireAt`, `LastFireAt`, `FireCount`, `Enabled`, and `LastFireSessionID`.
+
+The store is ground truth. An in-memory timer, if one exists, is only a derived lookahead over it — never the source of truth.
+
+### At-most-once via claim-before-fire
+
+The core contract is `Claim`: it atomically advances `NextFireAt` **before** the fire runs, along with `LastFireAt`, `FireCount`, and a `LastFireSessionID` placeholder (`port.PendingFireSessionID`). Once a slot is claimed, a peer replica's `Due` no longer returns it, so a second `Claim` on the same slot is structurally impossible. There's no owner/claim-holder field the way `SessionLease` has one — the durable `NextFireAt` advance *is* the fence.
+
+The trade-off: a crash mid-fire skips the slot, because the advance already happened. A recurring schedule self-heals on the next tick via the misfire policy; a one-shot fire can be lost. This is the documented cost of exactly-once semantics without a distributed transaction.
+
+`ClaimNow` is the manual-trigger sibling — the same atomic advance, but without the due-check, so an operator can force an immediate fire that still claims atomically.
+
+### Store adapters
+
+| Adapter | Package | Fit |
+|---|---|---|
+| Reference / in-memory | `engine/adapter/memschedulestore` | Tests, offline development |
+| Single-host durable | `internal/adapter/store/jsonlstore` | One `mecated` replica with a local store directory |
+| Multi-replica durable | `internal/adapter/redisstore` | `mecak8s` or any multi-replica deployment sharing a Redis backend, using a Lua script for the atomic `Claim` |
+
+All three pass the shared `engine/adapter/scheduleconformance` test suite, so they behave identically from a caller's perspective. A deployment gets scheduling over whichever `SessionStore` backend it's already configured with (jsonlstore or redisstore) via type-assertion — there's no separate `--schedule-store-url` flag.
+
+Cron expressions themselves are parsed by `engine/adapter/cronparse`, a thin wrapper over `robfig/cron/v3`'s standard parser. The store never interprets the expression it's given — it stores the raw string verbatim; the caller (composition) computes the next fire time and hands it to `Claim`.
+
+## The tick loop and leader-lease gating
+
+`internal/adapter/scheduler` runs the tick loop. On each tick it: polls `Due`, applies the misfire policy, calls `Claim` to win the slot, invokes the `FireFunc` composition seam, then calls `RecordFire` with the outcome.
+
+In a multi-replica deployment, the tick loop is gated behind a leader-lease on the well-known session id `__scheduler__` (`port.SchedulerLeaderLeaseID`), reusing the same `port.SessionLease` port as the run-entry lease. Only the leader replica ticks. This is **hygiene, not correctness** — the `Claim` fence is what actually prevents a double-fire; the lease just stops every replica from burning cycles polling the same store. With no lease backend configured, the scheduler runs standalone (single-replica by affinity) and a startup WARN names the multi-replica hazard rather than failing silently.
+
+### Misfire policy
+
+Read from `ScheduleSpec.Misfire` at tick time (not by the store itself):
+
+| Policy | Behavior |
+|---|---|
+| `MisfireFireOnceNow` (default) | Fires once immediately for a missed slot, then resumes the normal cadence. Does not cascade — a slot missed by an hour fires once, not sixty times. |
+| `MisfireSkip` | Skips the missed slot entirely and waits for the next due fire. `Claim` still advances `NextFireAt` (so the slot isn't re-returned), but `Fire` is never called. |
+
+### The singleton guard
+
+A schedule's `Singleton` flag (effectively always `true` in the current release — see the note under [declarative schedules](#declarative-schedules-settingsyaml) below) skips a fire if a prior fire of the same schedule is still running. The liveness check is a trial acquire of the per-session lease on `ScheduleState.LastFireSessionID`: a still-held lease means the prior fire is genuinely in flight (skip); a released or expired lease means it finished or crashed (fire freely, self-healing).
+
+### Fresh session per fire
+
+Each fire mints a brand-new top-level session (a `sched--`-prefixed id on the create-failure fallback path; ordinarily whatever id session creation mints) via the same `CreateSessionWithProfile` + `StartRunContent` calls any client uses, with subagent-grade defaults: bounded turn/tool-call budgets, a read-leaning posture unless the schedule opts into `Mutating: true`, and a headless ask model (there's no human to answer a permission prompt at fire time). There is no "schedule session" reused across fires — every fire starts with a fresh context. A schedule that needs continuity across fires (say, yesterday's digest) has to persist that itself, via memory or a file, and re-load it in the prompt.
+
+The fire's own conversation, tool calls, and usage live in the `SessionStore` under that session id. The `ScheduleFire` record the schedule store keeps is just the pointer to it — the fire id, the session id, the fired-at time, the terminal stop reason, and an error string if it failed. Result delivery is **pull-only in this release**: a caller polls `GetFire`/`ListFires` to see what happened, rather than the store pushing results out.
+
+## Managing schedules: gRPC, REST, and CLI
+
+The scheduler is reachable on both wire surfaces the rest of mecatl uses, so schedules can be created and inspected out-of-band from the tick loop.
+
+**gRPC** — `mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`): `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`.
+
+**REST** (under `/v1/schedules`):
+
+| Method | Route | RPC |
+|---|---|---|
+| POST | `/v1/schedules` | CreateSchedule |
+| GET | `/v1/schedules` | ListSchedules |
+| GET | `/v1/schedules/{name}` | GetSchedule |
+| PUT | `/v1/schedules/{name}` | UpdateSchedule |
+| DELETE | `/v1/schedules/{name}` | DeleteSchedule |
+| POST | `/v1/schedules/{name}/fire` | FireNow |
+| POST | `/v1/schedules/{name}/pause` | PauseSchedule |
+| POST | `/v1/schedules/{name}/resume` | ResumeSchedule |
+| GET | `/v1/schedules/{name}/fires` | ListFires |
+| GET | `/v1/schedules/{name}/fires/{id}` | GetFire |
+
+A backend whose store doesn't expose a `ScheduleStore` (the plain in-memory session store, for instance) honestly reports every schedule RPC as `Unimplemented` (gRPC) / 501 (HTTP) rather than pretending to work. `FireNow` on a paused or exhausted schedule is `FailedPrecondition` / 412; an unknown schedule or fire is `NotFound` / 404.
+
+Creating a cron schedule and forcing an immediate fire over REST:
+
+```sh
+# Create a cron schedule (read-leaning -> plan mode).
+curl -X POST http://localhost:8080/v1/schedules \
+  -H 'content-type: application/json' \
+  -d '{"name":"nightly-report","prompt":"summarize commits from today",
+       "workspace":"/repo","mode":"PERMISSION_MODE_PLAN",
+       "trigger":{"cron":"0 9 * * *"}}'
+
+# Fire it immediately. FireNow is synchronous-to-terminal: it blocks until
+# the fire's run completes (bounded by the schedule's turn/token limits),
+# then returns the fire_id + session_id. Set a generous client deadline —
+# the fire keeps running server-side even if the client disconnects.
+curl -X POST http://localhost:8080/v1/schedules/nightly-report/fire
+# -> {"fire_id":"sched--...","session_id":"sched--..."}
+
+# Retrieve the persisted fire record (stop reason + session id) after the run.
+curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire_id>
+```
+
+### Enabling the tick loop
+
+```sh
+mecated --store-dir ./state --scheduler --scheduler-tick-interval 30s
+mecak8s --redis-url redis://... --scheduler   # multi-replica
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--scheduler` | `false` | Enable the in-process scheduler tick loop. Requires a store that exposes a `ScheduleStore` (jsonlstore via `--store-dir`, or redisstore via `--redis-url`); fails startup otherwise. |
+| `--scheduler-tick-interval` | `30s` | How often the tick loop polls `ScheduleStore.Due`. |
+| `--scheduler-min-interval` | `0` (off) | The frequency floor enforced at schedule-save time — a schedule tighter than this is rejected, fail-closed. |
+| `--scheduler-max-concurrent-fires` | `4` | Bounds the per-tick fire fan-out. |
+
+### Declarative schedules (`settings.yaml`)
+
+Instead of creating schedules one-by-one over the API, an operator can declare them in the **operator-tier** `settings.yaml`. On startup, `mecated` parses the `schedules:` block and reconciles it into the durable store — an idempotent upsert that creates missing schedules and updates ones that differ, leaving unchanged ones alone:
+
+```yaml
+# ~/.config/mecatl/settings.yaml  (operator-tier — NOT a project file)
+schedules:
+  - name: nightly-review
+    cron: "0 9 * * *"             # 5-field cron or @-macro; mutually exclusive with oneShot
+    timezone: "America/New_York"  # IANA name; empty = UTC
+    prompt: "Summarize today's commits and open a follow-up if any test broke."
+    workspace: "/repo"
+    mode: plan                    # a non-mutating schedule MUST run in plan mode
+    # mutating: true              # opt into write tools (then mode may be default/acceptEdits)
+    maxTurns: 20                  # per-fire turn budget (0 = disabled)
+    maxToolCalls: 40              # per-fire tool-call budget (0 = disabled)
+    maxFires: 0                   # total fires for a cron (0 = forever); ignored for one-shot
+    singleton: true               # skip the next fire if a prior one is still running
+    # misfire: skip               # "" (default = fire-once-now) or "skip"
+
+  - name: one-shot-patch
+    oneShot: "2026-07-04T10:00:00Z"  # RFC3339 instant; must be in the future
+    prompt: "Apply the pending security patch."
+    mutating: true
+    provider: anthropic
+    model: claude-sonnet-4-5
+```
+
+A few things worth knowing before relying on this:
+
+- `schedules:` is a plain YAML sequence, decoded **strictly** — an unknown key inside a declaration is a parse error, so a typo can't silently disable a schedule.
+- **Operator-tier only.** A project-tier `.mecatl/settings.yaml` `schedules:` block is ignored with a WARN — a project repo can't register its own schedules, the same security-downgrade fold as guardrails and posture config.
+- **No destructive reconcile.** Removing a schedule from the YAML does not delete it from the store. An operator has to delete it explicitly via the API or CLI; re-running `mecated` only ever creates or updates.
+- A declaration with neither `cron` nor `oneShot`, or with both, is rejected at reconcile time — logged and skipped, not fatal, so one bad entry doesn't take down the rest.
+- `workspace` is required for a default-profile schedule and must be omitted for a `no-fs`-profile one; the create-seam validates this up front rather than failing later at fire time.
+
+:::note[Singleton is currently always effectively true]
+
+The create-seam coerces `singleton: false` to `true` (overlap suppression is always on), logging a WARN naming the schedule when it does. Full opt-out — allowing overlapping fires of the same schedule — needs an engine-port/proto change and is deferred to a later release.
+
+:::
+
+### The `mecated schedules` CLI
+
+`mecated schedules <verb>` is a thin HTTP client over a running server's `/v1/schedules` REST surface — it dials `--server-addr` and never boots its own daemon:
+
+```sh
+# Create a cron schedule (flags mirror the REST body).
+mecated schedules create --name nightly-review --cron "0 9 * * *" \
+  --prompt "Summarize today's commits." --workspace /repo --mode plan
+
+# List all schedules (text by default; --output json for machine consumption).
+mecated schedules list
+
+# Inspect one schedule (optionally its recent fires with --fires).
+mecated schedules inspect --name nightly-review --fires
+
+# Pause / resume / delete.
+mecated schedules pause  --name nightly-review
+mecated schedules resume --name nightly-review
+mecated schedules delete --name nightly-review
+
+# Force an immediate fire (synchronous-to-terminal, like FireNow).
+mecated schedules fire --name nightly-review
+```
+
+A bare `mecated schedules` or an unknown verb prints the usage banner and exits with status 2 — it never falls through to booting the server.
+
+There's also a read/manage overlay in the `mecatui` TUI (`/schedule`, gated on the connected server advertising a reachable `ScheduleStore`): it lists schedules with their trigger, enabled state, and fire counts, and supports pause/resume/fire-now/delete plus a read-only inspect view. It doesn't yet have an in-overlay create form or natural-language-to-cron conversion — author schedules via the CLI or the `settings.yaml` block, then manage them from the TUI.
+
+## Events and metrics
+
+The scheduler emits a lifecycle event for each fire — `EvScheduleFired`, `EvScheduleSkipped`, or `EvScheduleFailed` (`session.SchedulePayload`) — appended to the fire session's durable event log, so schedule lifecycle rides the same log as the fire's own events. Delivery is durable-log-only: pull it via `GetFire`/`ListFires`. A skipped fire (which never gets a session) has no durable log to land in, so it surfaces only through the operator diagnostic stream.
+
+Two metrics instruments are emitted:
+
+| Metric | Type | Labels | Notes |
+|---|---|---|---|
+| `mecatl.schedule.fires` | Counter | `outcome` = `fired`/`skipped`/`failed` | One increment per tick-loop decision |
+| `mecatl.schedule.fire_duration` | Histogram (seconds) | — | Due-to-terminal duration; skipped fires record no duration |
+
+Neither carries a role label — a fire's own run already reports `role="main"` on its usual per-run metrics.
+
+## What's next
+
+- [Operator deployment — mecated](/deployment/mecated.md) for the full flag reference and how the scheduler fits into a running server.
+- [The agent loop](/what-you-get/agent-loop.md) for what actually happens inside a fire's session once it starts.
+- [Extension points — session store](/extension-points/session-store.md) for implementing a custom backend that also wants to back scheduled tasks.

@@ -72,7 +72,7 @@ The service is `mecatl.v1.HarnessService`.
 
 ### Agent team RPCs
 
-Teams require `--enable-teams` (the default). See the full field-level reference in [`docs/usage/grpc-api.md`](../../docs/usage/grpc-api.md).
+Teams require `--enable-teams` (the default). See the full field-level reference in [`docs/usage/grpc-api.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md).
 
 | RPC | Kind | Purpose |
 |---|---|---|
@@ -83,6 +83,10 @@ Teams require `--enable-teams` (the default). See the full field-level reference
 | `RunTeam` | server-stream | Drive to quiescence; stream ends with a terminal `TeamEvent.outcome` frame |
 | `ListTeam` | unary | Roster, task list, and quiescence snapshot |
 | `CleanupTeam` | unary | Tear down a finished team |
+
+### Scheduled-task RPCs
+
+`mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`) manages cron/one-shot scheduled runs out-of-band from the tick loop: `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule`, `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`. It requires a backend whose store exposes a `ScheduleStore` (jsonlstore or redisstore) — otherwise every RPC reports `Unimplemented`. See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the full surface, the REST equivalent, and the `mecated schedules` CLI.
 
 ---
 
@@ -219,11 +223,14 @@ The HTTP adapter wraps the same service. Every event is one SSE `data:` line car
 |---|---|---|
 | `POST /v1/sessions` | `{workspace, mode?, limits?, provider_id?, model_id?, profile?}` | `201` `{session_id}` |
 | `GET /v1/sessions/{id}` | — | `200` session snapshot |
+| `POST /v1/sessions/{id}/mode` | `{mode}` | `200` updated session snapshot; rejected mid-turn |
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` |
-| `POST /v1/sessions/{id}/approve` | `{ask_id, allow}` | `204` |
+| `POST /v1/sessions/{id}/approve` | `{ask_id, verdict}` (`allow_once`\|`allow_always`\|`deny`; legacy `{ask_id, allow}` bool still accepted) | `204` |
 | `POST /v1/sessions/{id}/cancel` | — | `204` |
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for unknown/finished child |
+
+Scheduled-tasks has its own REST surface under `/v1/schedules` — see [Scheduled tasks](/what-you-get/scheduled-tasks.md#managing-schedules-grpc-rest-and-cli).
 
 ### Creating a session and running a prompt
 
@@ -338,6 +345,7 @@ message Event {
   Subagent      subagent    = 12; // subagent.* events
   Team          team        = 13; // team.* events
   Parallel      parallel    = 14; // parallel.* events
+  SchedulePayload schedule  = 15; // schedule.* events (fired/skipped/failed)
 }
 ```
 
@@ -417,4 +425,4 @@ Both listeners default to loopback-only (`127.0.0.1`). A non-loopback bind with 
 - [Run mecated standalone](mecated.md) — flags, TLS, auth, and the observability surface (`/metrics`, pprof, OTel).
 - [Cloud-native k8s with mecak8s](mecak8s.md) — Redis + Kubernetes lease, no PVC, multi-replica.
 - [The agent loop](../what-you-get/agent-loop.md) — how events map to the internal run lifecycle (`session.init` → `turn.start` → `tool.call` → `permission.ask` → `result`).
-- Internal API reference: [`docs/usage/grpc-api.md`](../../docs/usage/grpc-api.md) and [`docs/usage/http-sse-api.md`](../../docs/usage/http-sse-api.md) — full field-level reference for every RPC and HTTP endpoint.
+- Internal API reference: [`docs/usage/grpc-api.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md) and [`docs/usage/http-sse-api.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md) — full field-level reference for every RPC and HTTP endpoint.

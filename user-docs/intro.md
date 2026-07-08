@@ -26,6 +26,7 @@ _Everything here you do not have to build._
 
 | Doc | What it covers |
 |-----|----------------|
+| [Engine & session model](/what-you-get/engine-and-session.md) | The three core objects: Engine, Session, Run — and how they relate |
 | [The agent loop](/what-you-get/agent-loop.md) | Turn structure, compaction, max-turns, cancellation |
 | [Core tools](/what-you-get/core-tools.md) | Read, Write, Edit, Bash, Search, and the tool catalog |
 | [Permissions & guardrails](/what-you-get/permissions.md) | Layer-1 rule engine, layer-2 model classifier, workspace trust |
@@ -33,6 +34,7 @@ _Everything here you do not have to build._
 | [Memory & knowledge](/what-you-get/memory.md) | Cross-session memory, dream consolidation, user model |
 | [MCP client](/what-you-get/mcp-client.md) | Streaming-HTTP MCP, namespaced tools, reconnect |
 | [Observability & resilience](/what-you-get/observability.md) | OTel traces, LLM resilience decorator, slow-turn ring |
+| [Scheduled tasks](/what-you-get/scheduled-tasks.md) | Autonomous cron/one-shot runs, exactly-once across replicas |
 
 ### Extension points
 
