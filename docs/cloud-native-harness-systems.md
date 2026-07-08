@@ -7,28 +7,28 @@ not to answer them. Not a design record under [ADR 0002](adr/0002-documentation-
 [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md)'s strawman status,
 one level more speculative still.*
 
-## Origin and what this doc is not
+## Already resolved — out of scope here
 
-This is what remains of a broader subsystem inventory (originally
-`docs/design/CLOUD-NATIVE-KIT.md`, opened as GitHub PR #54 — "DO NOT MERGE, speculative
-scoping doc") after most of its findings were picked up and resolved by real work:
+Two things this doc could have covered are deliberately left out because real work
+already resolved them:
 
-- **[ADR 0027 — Cloud-native arc](adr/0027-cloud-native.md)** (Accepted, Phases 0–5
-  shipped) directly cites that inventory and closes its session/event-state gaps: a
-  durable event log (`port.EventLog`), non-destructive compaction, verdict replay,
-  mid-turn awaiting-approval evict/rehydrate, and cross-process single-writer leasing
-  (`port.SessionLease`). It also ran the inventory's "does resource-lifetime
-  management earn a seam yet?" question directly and answered it (not yet; a
-  trip-wire condition is recorded for when to revisit).
-- **[ADR 0048 — mecak8s](adr/0048-mecak8s.md)** (shipped MVP) is the concrete
-  demonstration: a storage-free k8s-native agent binary, a Redis-backed
-  `port.SessionStore`/`port.EventLog`/`port.PrunableStore` adapter, and a kind-based
-  e2e proof of multi-replica disposability.
+- **Session / event state.** [ADR 0027 — Cloud-native arc](adr/0027-cloud-native.md)
+  (Accepted, Phases 0–5 shipped) closes the session/event-state gaps: a durable
+  event log (`port.EventLog`), non-destructive compaction, verdict replay, mid-turn
+  awaiting-approval evict/rehydrate, and cross-process single-writer leasing
+  (`port.SessionLease`).
+- **Resource-lifetime management.** ADR 0027 also directly answers "does
+  resource-lifetime management earn a seam yet?" (not yet; a trip-wire condition is
+  recorded for when to revisit) — so it isn't repeated here as an open question.
+- **A concrete demonstration.** [ADR 0048 — mecak8s](adr/0048-mecak8s.md) (shipped
+  MVP) is the k8s-native proof of these properties: a storage-free agent binary, a
+  Redis-backed `port.SessionStore`/`port.EventLog`/`port.PrunableStore` adapter, and
+  a kind-based e2e proof of multi-replica disposability.
 
-**Don't re-litigate those here.** This doc keeps only the threads that inventory
-raised and nothing has since addressed — confirmed against current `main` as of
-2026-07-08. If a future audit finds one of these has since shipped, delete the
-section rather than update it; this doc's only job is to name what's still unscoped.
+Everything below is what's left — confirmed still unaddressed against current
+`main` as of 2026-07-08. If a future audit finds one of these has since shipped,
+delete the section rather than update it; this doc's only job is to name what's
+still unscoped.
 
 ## 1. The shared-handle problem
 
@@ -265,8 +265,8 @@ In priority order, if any of this is picked up:
 - [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md) — the kit
   definition this doc's open threads eventually feed, if pursued.
 - [`docs/adr/0027-cloud-native.md`](adr/0027-cloud-native.md) — the shipped arc that
-  resolved this inventory's session/event-state findings; also where subsystem-6
-  ("does resource-lifetime management earn a seam") was directly answered.
+  resolved the session/event-state questions this doc doesn't cover; also where
+  "does resource-lifetime management earn a seam" was directly answered.
 - [`docs/adr/0048-mecak8s.md`](adr/0048-mecak8s.md) — the concrete k8s-native
   demonstration of the properties this whole line of thinking is in service of.
 - [`docs/adr/0005-driver-seams.md`](adr/0005-driver-seams.md) — the driver protocol
