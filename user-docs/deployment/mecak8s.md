@@ -8,14 +8,16 @@ title: Cloud-native k8s with mecak8s
 `mecak8s` (`cmd/mecak8s`) is a thin composition-root binary that reuses the same `app.Build` assembly as `mecated`, but with Kubernetes-native defaults baked in. The agent pods hold no durable state: session snapshots and the event log live in Redis, and single-writer enforcement per session uses `coordination.k8s.io` Leases backed by the Kubernetes API server.
 
 ```mermaid
-block-beta
-  columns 3
-  Pod1["Pod 1\n(mecak8s)"] Pod2["Pod 2\n(mecak8s)"] space
-  space Redis["Redis\n(session store\n+ event log)"] K8sAPI["k8s API server\n(coordination.k8s.io\nLeases)"]
-  Pod1 --> Redis
-  Pod2 --> Redis
-  Pod1 --> K8sAPI
-  Pod2 --> K8sAPI
+flowchart TD
+    subgraph Pods["mecak8s pods (2 replicas)"]
+        Pod1["Pod 1"]
+        Pod2["Pod 2"]
+    end
+    Redis["Redis<br/>(session store + event log)"]
+    K8sAPI["k8s API server<br/>(coordination.k8s.io Leases)"]
+
+    Pods --> Redis
+    Pods --> K8sAPI
 ```
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
@@ -190,9 +192,9 @@ sequenceDiagram
   K->>K: SIGTERM
   Note over G,GS: svc.Drain() is idempotent — no double-drain
   GS->>GS: grpcSrv.GracefulStop() (30s timeout)
-  note over GS: in-flight runs cancelled; Recover-able on survivor
+  note over GS: in-flight runs cancelled, Recover-able on survivor
   GS->>L: built.Close() → release all held coordination.k8s.io Leases
-  note over L: cancel-detached short ctx; survivor acquires immediately
+  note over L: cancel-detached short ctx, survivor acquires immediately
 ```
 
 The `GracefulStop` timeout is 30 seconds, well within the 60-second `terminationGracePeriodSeconds`. If it elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
