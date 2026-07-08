@@ -169,6 +169,58 @@ func mockProvider() *mockllm.Provider {
 	)
 }
 
+// RunTeamScenario drives a fully-offline 2-member agent team (a lead + a worker)
+// through the real agent.Supervisor and returns its consolidated report. It proves
+// the new aggregation shape end to end: the worker records a finding to the shared
+// ledger, the lead's FINAL synthesis turn consolidates that finding into the team's
+// deliverable, and that synthesis — not a bare per-member concatenation — is the
+// returned report. It is offline (mockllm + memfs) so `go run ./cmd/mecademo` shows
+// the new deliverable without a network.
+func RunTeamScenario(ctx context.Context) (agent.TeamOutcome, error) {
+	tm := team.New("demo-team")
+	base := memfs.NewWorkspace(demoWorkspaceRoot)
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+
+	recordFinding := session.NewToolCall("w1", "RecordFinding",
+		json.RawMessage(`{"finding":"greeting.txt reads cleanly; no encoding issues"}`))
+	scripts := map[string]*mockllm.Provider{
+		"lead": mockllm.New(
+			mockllm.TextTurn("Delegating the inspection to the worker."),
+			mockllm.TextTurn("Consolidated report: the worker confirmed greeting.txt reads cleanly; nothing to fix."),
+		),
+		"worker": mockllm.New(
+			mockllm.ToolCallTurn(recordFinding),
+			mockllm.TextTurn("Inspection complete; finding recorded."),
+		),
+	}
+	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
+		prov, ok := scripts[spec.Name]
+		if !ok {
+			return agent.MemberBuild{}
+		}
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
+			LLM: prov, Catalog: cat, Policy: allow, Hooks: hookexec.New(nil), Model: demoModel,
+		})}
+	}
+
+	sup := agent.NewSupervisor(tm, base, factory,
+		agent.WithTeamGoal("verify the demo greeting file is intact"),
+		agent.WithMemberStore(memstore.New()),
+		agent.WithMemberSessionPrefix("team-demo"),
+		agent.WithMaxRounds(6))
+	if err := sup.AddMember(ctx, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "coordinate the verification"}); err != nil {
+		return agent.TeamOutcome{}, fmt.Errorf("enrol lead: %w", err)
+	}
+	if err := sup.AddMember(ctx, agent.MemberSpec{Name: "worker", InitialPrompt: "inspect greeting.txt and report"}); err != nil {
+		return agent.TeamOutcome{}, fmt.Errorf("enrol worker: %w", err)
+	}
+	return sup.Run(ctx, nil), nil
+}
+
 // demoBackgroundChildID is the deterministic child session id of the background
 // scenario's subagent ("subagent-<callID>" — the single handle convention), used
 // by the scripted collection turn and asserted by the e2e test.
@@ -257,56 +309,4 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 		}
 	}
 	return events, notes
-}
-
-// RunTeamScenario drives a fully-offline 2-member agent team (a lead + a worker)
-// through the real agent.Supervisor and returns its consolidated report. It proves
-// the new aggregation shape end to end: the worker records a finding to the shared
-// ledger, the lead's FINAL synthesis turn consolidates that finding into the team's
-// deliverable, and that synthesis — not a bare per-member concatenation — is the
-// returned report. It is offline (mockllm + memfs) so `go run ./cmd/mecademo` shows
-// the new deliverable without a network.
-func RunTeamScenario(ctx context.Context) (agent.TeamOutcome, error) {
-	tm := team.New("demo-team")
-	base := memfs.NewWorkspace(demoWorkspaceRoot)
-	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
-
-	recordFinding := session.NewToolCall("w1", "RecordFinding",
-		json.RawMessage(`{"finding":"greeting.txt reads cleanly; no encoding issues"}`))
-	scripts := map[string]*mockllm.Provider{
-		"lead": mockllm.New(
-			mockllm.TextTurn("Delegating the inspection to the worker."),
-			mockllm.TextTurn("Consolidated report: the worker confirmed greeting.txt reads cleanly; nothing to fix."),
-		),
-		"worker": mockllm.New(
-			mockllm.ToolCallTurn(recordFinding),
-			mockllm.TextTurn("Inspection complete; finding recorded."),
-		),
-	}
-	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
-		prov, ok := scripts[spec.Name]
-		if !ok {
-			return agent.MemberBuild{}
-		}
-		cat := tool.NewCatalog()
-		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
-			cat.MustRegister(tl)
-		}
-		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
-			LLM: prov, Catalog: cat, Policy: allow, Hooks: hookexec.New(nil), Model: demoModel,
-		})}
-	}
-
-	sup := agent.NewSupervisor(tm, base, factory,
-		agent.WithTeamGoal("verify the demo greeting file is intact"),
-		agent.WithMemberStore(memstore.New()),
-		agent.WithMemberSessionPrefix("team-demo"),
-		agent.WithMaxRounds(6))
-	if err := sup.AddMember(ctx, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "coordinate the verification"}); err != nil {
-		return agent.TeamOutcome{}, fmt.Errorf("enrol lead: %w", err)
-	}
-	if err := sup.AddMember(ctx, agent.MemberSpec{Name: "worker", InitialPrompt: "inspect greeting.txt and report"}); err != nil {
-		return agent.TeamOutcome{}, fmt.Errorf("enrol worker: %w", err)
-	}
-	return sup.Run(ctx, nil), nil
 }
