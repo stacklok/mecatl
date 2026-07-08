@@ -130,20 +130,34 @@ into the open.
 
 ## 2. Forking as environment descent
 
-`tool.WorkspaceForker.Fork(ctx, base, label) (child, cleanup, err)` — two working
-implementations exist today (git-worktree default, force-copy for mutating forks),
-proving the interface is genuinely swappable. But it expresses exactly one sharing
-policy: a full opaque copy whose merge strategy is hardwired to discard.
+`tool.WorkspaceForker.Fork(ctx, base, label) (child, cleanup, advisory, err)` — two
+working implementations exist today (git-worktree default, force-copy for mutating
+forks), proving the interface is genuinely swappable. Merge-back is **not**
+hardwired to discard across the board any more: a diff-apply `tool.ForkMerger`
+(`internal/adapter/forker.Merger`, wrapped in a process-wide `SerializingMerger`)
+promotes a preserved fork's changes into the parent, default-on when wired
+([ADR 0039](adr/0039-parallel-auto-merge.md)) — but it is scoped narrowly, to
+Parallel's single-branch fast path (`join=first`/`join=judge`, exactly one
+branch), and it only ever does one strategy: apply the fork's `git diff HEAD` and
+fail loud on conflict (no force, no three-way merge). Every other fork path still
+discards: Team members and multi-branch Parallel fan-out stay read-only-by-design
+specifically to dodge the merge-conflict problem, and the writable Subagent
+(`mode:"read-write"`) deliberately bypasses forking altogether — it edits the
+parent tree directly during the run, no fork and no merge involved
+([ADR 0041](adr/0041-direct-write-subagent.md), which superseded an earlier
+fork-and-merge design for it in [ADR 0040](adr/0040-writable-subagent-and-serialized-merge.md)).
 
 - **A menu of sharing policies**, chosen per child, is the richer model: (a) a
   descoped read-only view of a subtree (bind-mount / 9P-attach style, no merge
-  needed because the base is untouched by construction), (b) today's copy-on-write
-  fork but with an explicit merge-back strategy (promote-on-success,
-  hand-back-as-diff, three-way merge, or discard — not always-discard), (c) a
-  shared tree with no isolation at all. Only (b)-discard exists today; the moment
-  mutating forks merge back, the harness owns conflict resolution — the exact
-  distributed-systems cost the current read-only-children design was built to
-  dodge, so this shouldn't be taken on lightly.
+  needed because the base is untouched by construction), (b) a copy-on-write fork
+  with an explicit merge-back strategy — today that's exactly one variant
+  (promote-on-success via diff-apply, one call site), with hand-back-as-diff-for-review
+  and three-way merge still unimplemented, and still not generalized past
+  Parallel's single-branch path — (c) a shared tree with no isolation at all. The
+  remaining question is less "should mutating forks merge back" (they now do, for
+  one path) and more "should every fork path get a choice of merge-back strategy,
+  not just Parallel's winner" — which is still the harness taking on conflict
+  resolution as a general capability, so it shouldn't be generalized lightly.
 - **Read-only peers are a distinct primitive** from CoW-fork-then-merge: a shared
   tree where each child gets its own writable region and a read-only view of its
   peers' regions — a blackboard pattern trading isolation for live coordination
@@ -153,8 +167,10 @@ policy: a full opaque copy whose merge strategy is hardwired to discard.
   the isolation *mechanism* is proven (the forker interface holds), but
   `governance.IsolationApprovable` (`engine/governance/bash.go`) hardcodes a
   git-worktree assumption: it auto-approves `{go test, build, vet, list}` and
-  rejects `git push/remote/fetch/config/worktree` specifically *because* a worktree
-  shares the base `.git` object store. Force-copy severs `.git`, so that posture is
+  rejects `git push/remote/fetch/config/worktree` (among other subcommands that,
+  per its comment, "reach outside the throwaway checkout") specifically *because*
+  a worktree shares the base `.git` object database and refs (spelled out in
+  `internal/adapter/forker`'s package doc). Force-copy severs `.git`, so that posture is
   needlessly restrictive for it; a read-only-subtree view would need a third
   posture again. **Confirmed still unaddressed** — `IsolationApprovable` still
   takes a single `cmd string` with no isolation-kind parameter. Making this
@@ -162,8 +178,9 @@ policy: a full opaque copy whose merge strategy is hardwired to discard.
   concrete near-term items in this doc (see §4).
 - **"Fork a workspace" should mean "fork the environment."** A forked workspace
   already varies on four independent axes the way a container does: filesystem
-  view (today: full-CoW-only), tool catalog (today: harness-decided per role, not
-  per-fork), credentials/auth (today: **absent** — MCP/tool auth and git
+  view (today: CoW, with promote-on-success merge-back wired for exactly one path
+  — Parallel's single-branch winner), tool catalog (today: harness-decided per
+  role, not per-fork), credentials/auth (today: **absent** — MCP/tool auth and git
   credentials are ambient, no per-fork scoping), and budget/limits (today:
   genuinely mature — tighten-only `MaxTurns`/`MaxToolCalls`/`MaxRunTokens`/timeout).
   Auth is the one completely missing axis. The unifying move, if pursued, is
