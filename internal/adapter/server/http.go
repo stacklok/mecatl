@@ -204,6 +204,10 @@ type sessionResp struct {
 	Workspace string `json:"workspace"`
 	Turns     int    `json:"turns"`
 	ToolCalls int    `json:"tool_calls"`
+	// Title is the human-readable session label (snapshot Title, or the lazy
+	// deriveTitle fallback when the snapshot Title is empty). Omitted via
+	// omitempty only when both are empty (no genuine prompt).
+	Title string `json:"title,omitempty"`
 	// ResolvedModel mirrors the gRPC Session snapshot's resolved_model so the HTTP
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
@@ -345,6 +349,11 @@ func (h *HTTPHandler) setMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
+	title := sess.Title
+	if title == "" {
+		// Lazy display-time fallback (no write-on-read: sess.Title is not mutated).
+		title = DeriveTitle(sess)
+	}
 	writeJSON(w, status, sessionResp{
 		SessionID:     string(sess.ID),
 		State:         string(sess.State),
@@ -352,6 +361,7 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		Workspace:     sess.Workspace,
 		Turns:         sess.Counters.Turns,
 		ToolCalls:     sess.Counters.ToolCalls,
+		Title:         title,
 		ResolvedModel: resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
 	})
 }

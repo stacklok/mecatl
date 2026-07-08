@@ -19,6 +19,7 @@ type SessionSnapshot struct {
 	Mode          string
 	State         string
 	ResolvedModel ResolvedModel
+	Title         string
 }
 
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
@@ -29,6 +30,7 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		Mode:          ModeString(s.GetMode()),
 		State:         s.GetState(),
 		ResolvedModel: resolvedModelFrom(s.GetResolvedModel()),
+		Title:         s.GetTitle(),
 	}
 }
 

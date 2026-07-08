@@ -128,6 +128,7 @@ honour.
 | recorded stop reason (`RecordedStopReason`) | **MUST** | `EvResult.Stop` |
 | pending ask (`PendingAsk`, when awaiting) | **MUST** | the trailing `EvPermissionAsk` with no following `EvApproval`/`EvResult` |
 | cumulative `Usage` | **MUST** | the **SUM** of every per-run `EvResult.Usage` (each `EvResult.Usage` is PER-RUN; the budget brake reads the cumulative aggregate) |
+| `Title` | **MUST** (best-effort) | seeded from the FIRST genuine `EvUserPrompt` (via `session.SetTitle`, set-once + clamped); a synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the title survives compaction. |
 | creation metadata: id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta` |
 | `Counters` (turns / tool calls / consecutive failures) | run-scoped — reflects the **latest run segment** (they reset on `Reopen`), derived from the latest run's events | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
 | run plumbing (diagnostics binding, askID serials, ctx) | safe to lose — rebuilt fresh | n/a |

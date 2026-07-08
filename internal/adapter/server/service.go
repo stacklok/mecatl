@@ -2824,6 +2824,12 @@ type SessionSummary struct {
 	// CreatedAtUnix is the creation timestamp in Unix seconds. Zero when the
 	// snapshot could not be loaded.
 	CreatedAtUnix int64
+	// Title is the human-readable session label (seeded once from the first
+	// genuine user prompt, clamped to 120 runes). Populated from the snapshot
+	// Title, or — when that is empty — from the lazy deriveTitle fallback
+	// (walks the conversation for the first genuine user prompt). Empty for a
+	// session with no genuine prompt.
+	Title string
 }
 
 // StreamSessionEvents replays a session's durable event log as a lazy iterator
@@ -2898,6 +2904,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			if sess.ModelID != "" {
 				summary.ModelID = sess.ModelID
 			}
+			summary.Title = DeriveTitle(sess)
 		}
 		out = append(out, summary)
 	}
@@ -2907,4 +2914,32 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 		return out[i].ModifiedAtUnix > out[j].ModifiedAtUnix
 	})
 	return out, nil
+}
+
+// DeriveTitle returns the session's human-readable label: the snapshot Title if
+// set, else the clamped text of the FIRST genuine user prompt found by walking
+// sess.Conversation.Messages (via session.IsGenuineUserPrompt, which skips
+// synthesised compaction summaries), else "" (no genuine prompt). It is the lazy
+// display-time fallback for a session whose Title was never seeded (e.g. a
+// session created before the Title field existed, or one whose first prompt
+// was multimodal-only). It does NOT mutate sess.Title — NO write-on-read: the
+// snapshot stays the authoritative set-once label, and the derived value is a
+// pure read projection the caller places on the wire. Used by ListSessions
+// (picker) and the GetSession handlers.
+func DeriveTitle(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	if sess.Title != "" {
+		return sess.Title
+	}
+	if sess.Conversation == nil {
+		return ""
+	}
+	for _, m := range sess.Conversation.Messages {
+		if session.IsGenuineUserPrompt(m) && strings.TrimSpace(m.Text) != "" {
+			return session.ClampTitle(m.Text)
+		}
+	}
+	return ""
 }

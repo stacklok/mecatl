@@ -41,27 +41,13 @@ type Compactor interface {
 // head of each body survive so the model retains orientation.
 const maxToolBodyChars = 400
 
-// compactionSummaryMarker prefixes the synthesised paths-summary message both
-// compactors emit (a RoleUser message). tier4SummaryMarker prefixes the cascade's
-// tier-4 LLM summary message (also a RoleUser message). BOTH are harness-authored
-// context, not real user instructions, so the user-turn back-snap SKIPS them (via
-// isSynthesisedSummary): a re-compaction must not treat a prior compaction's summary
-// as a recent user turn, which would snap the whole post-summary history into the
-// verbatim tail and defeat re-compaction. Keep these in sync with the literals
-// buildSummary (compaction.go) and CascadeCompactor.summarize (cascade.go) emit.
-const (
-	compactionSummaryMarker = "[conversation compacted]"
-	tier4SummaryMarker      = "[earlier turns summarised]"
-)
-
-// isSynthesisedSummary reports whether a message's text is a harness-synthesised
-// compaction summary (the paths-summary OR the tier-4 LLM summary) rather than a
-// genuine user instruction. The back-snap uses it to avoid anchoring the verbatim
-// tail on a prior compaction's own output (the re-compaction footgun).
-func isSynthesisedSummary(text string) bool {
-	return strings.HasPrefix(text, compactionSummaryMarker) ||
-		strings.HasPrefix(text, tier4SummaryMarker)
-}
+// The synthesised-summary markers (session.CompactionSummaryMarker /
+// session.Tier4SummaryMarker) and the IsSynthesisedSummary predicate live in
+// the domain leaf (engine/session/title.go) so the read-time Title consumers
+// (the server lazy fallback + eventsource.Fold) can reach them — engine/session
+// cannot import engine/agent. buildSummary (below) and CascadeCompactor.summarize
+// (cascade.go) reference the exported consts; isGenuineUserTurn delegates its
+// synthesised-summary arm to session.IsSynthesisedSummary.
 
 // keepLastTurns is the number of trailing conversation messages the heuristic
 // compactor preserves verbatim (the recent working set the model is mid-task on).
@@ -248,8 +234,10 @@ func snapCutToRecentUserTurn(msgs []session.Message, cut int, floor int) int {
 // history:
 //
 //   - synthesised compaction summaries (the paths-summary and the tier-4 LLM
-//     summary), recognised by isSynthesisedSummary — this arm is LOAD-BEARING: a
-//     re-compaction must not anchor the pin/back-snap on a PRIOR summary;
+//     summary), recognised by session.IsSynthesisedSummary (the domain-leaf export;
+//     the markers live there as session.CompactionSummaryMarker /
+//     session.Tier4SummaryMarker) — this arm is LOAD-BEARING: a re-compaction must
+//     not anchor the pin/back-snap on a PRIOR summary;
 //   - turn-0 context fragments (project instructions / soul / memory index / user
 //     model), recognised by prompt.IsInjectedTurn0Fragment. As of ADR 0043 these
 //     fragments are EPHEMERAL — prepended to the request per-run, never persisted
@@ -267,9 +255,13 @@ func snapCutToRecentUserTurn(msgs []session.Message, cut int, floor int) int {
 // config-variable (0–4+), so a positional "first N" cannot work; the anchor must be
 // content-identified.
 func isGenuineUserTurn(m session.Message) bool {
-	return m.Role == session.RoleUser &&
-		!prompt.IsInjectedTurn0Fragment(m.Text) &&
-		!isSynthesisedSummary(m.Text)
+	// Widens session.IsGenuineUserPrompt with the prompt.IsInjectedTurn0Fragment
+	// arm (defense-in-depth for legacy persisted fragments; ADR 0043 makes turn-0
+	// fragments ephemeral so they don't appear in persisted history today, but
+	// this arm keeps the predicate sound if that ever changes). The two predicates
+	// MUST agree on every persisted message — session.IsGenuineUserPrompt is the
+	// subset the title's read-time consumers (DeriveTitle, eventsource.Fold) use.
+	return session.IsGenuineUserPrompt(m) && !prompt.IsInjectedTurn0Fragment(m.Text)
 }
 
 // isRecentUserTurn reports whether m is a genuine user instruction the back-snap
@@ -359,7 +351,7 @@ func extractPath(args json.RawMessage) string {
 // message is preserved (doc-08 §12; doc-07 §4 "what to preserve / what to drop").
 func buildSummary(paths []string) string {
 	var b strings.Builder
-	b.WriteString(compactionSummaryMarker + " Earlier turns were summarised to fit the context window. ")
+	b.WriteString(session.CompactionSummaryMarker + " Earlier turns were summarised to fit the context window. ")
 	b.WriteString("The original goal and the most-recent user instructions are preserved verbatim, ")
 	b.WriteString("along with the files touched so far; earlier or superseded context, ")
 	b.WriteString("large tool outputs, and stale file contents were summarised or dropped.")

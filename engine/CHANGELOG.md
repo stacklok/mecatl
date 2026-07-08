@@ -27,6 +27,32 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`session.Session.Title`** — a new `string` field (after `ReasoningEffort`)
+  carrying a human-readable session label seeded ONCE from the first genuine
+  user prompt, clamped to 120 runes (`maxTitleRunes`). It is set via the new
+  `session.Session.SetTitle(text string)` (set-once: only the first non-empty
+  prompt sticks; subsequent prompts do not overwrite), called by the loop from
+  `recordPrompt` (the genuine prompt site) only — never the synthetic
+  continuation/nudge site — so a no-progress nudge never seeds or overwrites
+  the title. It is persisted in the snapshot (an inert stored label, like
+  `Profile`; `omitempty` keeps a pre-Title snapshot decoding to `""` — additive,
+  no format-tag bump) and projected on the wire (`Session.title`,
+  `SessionSummary.title`). Two read-time consumers derive it lazily without
+  write-on-read when empty: `ListSessions`/`GetSession` (the server lazy
+  fallback, `deriveTitle`) and the event-sourced `eventsource.Fold`. The new
+  `session.IsGenuineUserPrompt(m Message) bool`,
+  `session.IsSynthesisedSummary(text string) bool`, and
+  `session.ClampTitle(s string) string` (plus the exported markers
+  `session.CompactionSummaryMarker` / `session.Tier4SummaryMarker`, promoted
+  from the unexported `engine/agent` constants) back those consumers — the
+  domain leaf owns the genuine-vs-synthesised distinction it needs without
+  importing `engine/agent`/`engine/prompt`. `IsGenuineUserPrompt` deliberately
+  does NOT check `prompt.IsInjectedTurn0Fragment` (ADR 0043 makes turn-0
+  fragments ephemeral, so they never appear in persisted history); the loop's
+  own `isGenuineUserTurn` keeps that arm as defense-in-depth and delegates its
+  synthesised-summary arm to the new domain export. Classified Added per
+  COMPATIBILITY.md (new struct field + methods + consts are a minor bump). (#247)
+
 - **scheduled-tasks Phase 2a: `port.ScheduleStore.ClaimNow`.** A new
   `ClaimNow(ctx, name, now, nextFire) (Schedule, error)` method — the FireNow
   primitive. It performs the SAME atomic advance as `Claim` (LastFireAt=now,

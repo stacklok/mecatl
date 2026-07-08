@@ -655,6 +655,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel) *mecatlv1.Session {
 		ToolCalls:     clampInt32(s.Counters.ToolCalls),
 		CreatedAtUnix: s.CreatedAt.Unix(),
 		ResolvedModel: resolvedModelToProto(rm),
+		Title:         s.Title,
 	}
 }
 
@@ -848,6 +849,7 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		Turns:          clampInt32(s.Turns),
 		ModelId:        s.ModelID,
 		CreatedAtUnix:  s.CreatedAtUnix,
+		Title:          s.Title,
 	}
 }
 

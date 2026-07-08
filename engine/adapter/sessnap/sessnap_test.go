@@ -24,6 +24,7 @@ func runningSession(t *testing.T) *session.Session {
 	s.ProviderID = "openrouter"
 	s.ModelID = "anthropic/claude-3.5-sonnet"
 	s.ReasoningEffort = "high"
+	s.SetTitle("Fix the flaky CI job")
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -81,6 +82,9 @@ func assertEquivalent(t *testing.T, got, want *session.Session) {
 	}
 	if got.ReasoningEffort != want.ReasoningEffort {
 		t.Errorf("ReasoningEffort = %q, want %q", got.ReasoningEffort, want.ReasoningEffort)
+	}
+	if got.Title != want.Title {
+		t.Errorf("Title = %q, want %q", got.Title, want.Title)
 	}
 	if got.Usage != want.Usage {
 		t.Errorf("Usage = %+v, want %+v", got.Usage, want.Usage)
@@ -467,5 +471,56 @@ func TestLoadV1SnapshotMissingPhase1FieldsLoads(t *testing.T) {
 	}
 	if got.Usage != (session.Usage{}) {
 		t.Errorf("Usage = %+v, want zero for a snapshot with no usage key", got.Usage)
+	}
+}
+
+// TestLoadV1SnapshotMissingTitleKeyLoads is the additive-field guard for Title:
+// a snapshot with NO "title" key (a pre-Title snapshot, or one from a session
+// that never seeded a title) decodes to an EMPTY Title — purely additive, no
+// format-tag bump (the same omitempty precedent as Profile/ProviderID). The
+// lazy deriveTitle fallback applies on read.
+func TestLoadV1SnapshotMissingTitleKeyLoads(t *testing.T) {
+	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
+		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"messages":[{"role":"user","text":"hello there"}]}`
+	got, err := sessnap.Unmarshal([]byte(v1))
+	if err != nil {
+		t.Fatalf("Unmarshal v1: %v", err)
+	}
+	if got.Title != "" {
+		t.Errorf("Title = %q, want empty for a snapshot with no title key", got.Title)
+	}
+}
+
+// TestRoundTripTitlePreserved asserts the seeded Title survives a marshal→
+// unmarshal round-trip (the omitempty tag must NOT drop a non-empty title).
+func TestRoundTripTitlePreserved(t *testing.T) {
+	want := runningSession(t) // seeds Title "Fix the flaky CI job"
+	line := mustMarshal(t, want)
+	// The wire JSON must carry the title key (omitempty only drops the empty case).
+	if !strings.Contains(string(line), `"title":`) {
+		t.Fatalf("marshaled snapshot missing the title key:\n%s", line)
+	}
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	assertEquivalent(t, got, want)
+}
+
+// TestRoundTripEmptyTitleOmitsKey asserts an empty Title marshals to no title
+// key (byte-identical to a pre-Title snapshot) — the omitempty contract.
+func TestRoundTripEmptyTitleOmitsKey(t *testing.T) {
+	s := session.New("s2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	line := mustMarshal(t, s)
+	if strings.Contains(string(line), `"title"`) {
+		t.Fatalf("empty-Title snapshot unexpectedly carries a title key:\n%s", line)
+	}
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.Title != "" {
+		t.Errorf("restored Title = %q, want empty", got.Title)
 	}
 }

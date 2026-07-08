@@ -233,7 +233,8 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	// Every EXPORTED field of session.Session the reconstruction contract considers.
 	// Classification (kept in sync with COMPATIBILITY.md "Session reconstruction
 	// contract"):
-	//   reconstructed-from-events: Conversation, State, Usage
+	//   reconstructed-from-events: Conversation, State, Usage, Title
+	//     (Title is seeded from the first genuine EvUserPrompt via SetTitle)
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
 	//     Profile, ProviderID, ModelID, ReasoningEffort, CreatedAt
@@ -241,6 +242,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "CreatedAt": {},
+		"Title": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,
 		"session.Session — classify the new field in COMPATIBILITY.md's reconstruction contract")

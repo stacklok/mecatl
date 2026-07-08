@@ -28,6 +28,7 @@ type SessionListItem struct {
 	Turns      int32
 	ModelID    string
 	CreatedAt  int64 // Unix seconds
+	Title      string
 }
 
 // SessionsListedMsg carries a ListSessions success (the picker's session list).
@@ -63,6 +64,7 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 			Turns:      s.GetTurns(),
 			ModelID:    s.GetModelId(),
 			CreatedAt:  s.GetCreatedAtUnix(),
+			Title:      s.GetTitle(),
 		})
 	}
 	return out

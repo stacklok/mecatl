@@ -711,6 +711,14 @@ jump-to-fire footer hint (`↑↓: select fire  enter/t: open transcript  esc:
 back`) appears only when a session replayer is wired; a fire whose
 `SessionID` is empty reports "fire has no session id" and stays in inspect.
 
+**Row format.** Each `/sessions` picker row renders as
+`<state-badge> <relative-time> <turns>t <label> (<model-id>)`, where `<label>`
+is the session **title** (seeded once from the first genuine user prompt, clamped
+to 120 runes) and falls back to the session id when no title is set. The
+confirm card keeps the session id (precise identification) and shows the title
+when present. A session with no genuine prompt yet (e.g. a freshly-created,
+still-empty session, which is also excluded from the list) shows the id.
+
 **State gate (open-a-session).** The `/sessions` picker and the schedule
 jump-to-fire both open a session via the replay RPC (`StreamSessionEvents`),
 which is a **pure durable-log read with no live-tail** — it streams what has

@@ -44,11 +44,11 @@ func TestListSessionsFromProto(t *testing.T) {
 		{
 			"populated",
 			[]*mecatlv1.SessionSummary{
-				{SessionId: "s1", ModifiedAtUnix: 1700000000, State: "completed", Turns: 5, ModelId: "openai/gpt-4.5", CreatedAtUnix: 1699999000},
+				{SessionId: "s1", ModifiedAtUnix: 1700000000, State: "completed", Turns: 5, ModelId: "openai/gpt-4.5", CreatedAtUnix: 1699999000, Title: "Fix the CI"},
 				{SessionId: "s2", ModifiedAtUnix: 1700000001, State: "idle", Turns: 0, ModelId: "anthropic/claude-3.5"},
 			},
 			[]SessionListItem{
-				{ID: "s1", ModifiedAt: 1700000000, State: "completed", Turns: 5, ModelID: "openai/gpt-4.5", CreatedAt: 1699999000},
+				{ID: "s1", ModifiedAt: 1700000000, State: "completed", Turns: 5, ModelID: "openai/gpt-4.5", CreatedAt: 1699999000, Title: "Fix the CI"},
 				{ID: "s2", ModifiedAt: 1700000001, State: "idle", Turns: 0, ModelID: "anthropic/claude-3.5"},
 			},
 		},
@@ -88,6 +88,29 @@ func TestListSessionsWrapper(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "s1" || got[0].ModifiedAt != 100 || got[0].State != "idle" || got[0].Turns != 3 || got[0].ModelID != "m1" || got[0].CreatedAt != 50 {
 		t.Errorf("got = %+v", got)
+	}
+}
+
+// TestListSessionsWrapperCarriesTitle asserts the wrapper maps the proto Title
+// onto the SessionListItem (nil-safe for an absent/empty field).
+func TestListSessionsWrapperCarriesTitle(t *testing.T) {
+	fake := &fakeListSessionsClient{resp: &mecatlv1.ListSessionsResponse{Sessions: []*mecatlv1.SessionSummary{
+		{SessionId: "s1", Title: "My session title"},
+		{SessionId: "s2"}, // no title — stays empty
+	}}}
+	cl := newFakeClient(fake)
+	got, err := cl.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Title != "My session title" {
+		t.Errorf("got[0].Title = %q, want %q", got[0].Title, "My session title")
+	}
+	if got[1].Title != "" {
+		t.Errorf("got[1].Title = %q, want empty (absent field)", got[1].Title)
 	}
 }
 

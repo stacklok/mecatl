@@ -1373,6 +1373,13 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	if rerr := sess.RecordUserPromptWithParts(finalText, parts, nil); rerr != nil {
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
+	// Seed the session Title ONCE from this genuine prompt (set-once guard in
+	// SetTitle: only the first non-empty prompt sticks). The loop calls SetTitle
+	// ONLY here at recordPrompt (the genuine site), never at recordContinuation
+	// (the synthetic nudge/notice site), so a no-progress nudge or a background
+	// notice never seeds or overwrites the title. A multimodal-only prompt
+	// (finalText=="" with parts) leaves Title=="" — the lazy fallback applies.
+	sess.SetTitle(finalText)
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.

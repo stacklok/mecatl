@@ -22,6 +22,7 @@
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).SeedHistory(messages []Message) error
     method func (*Session).SetMode(mode PermissionMode) error
+    method func (*Session).SetTitle(text string)
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
     method func (Limits).WithDefaults(d Limits) Limits
@@ -35,6 +36,7 @@ const BlockImage BlockKind = "image"
 const BlockResourceLink BlockKind = "resource_link"
 const BlockStructuredContent BlockKind = "structured"
 const BlockText BlockKind = "text"
+const CompactionSummaryMarker untyped string = "[conversation compacted]"
 const EvApproval EventType = "approval"
 const EvCompaction EventType = "compaction"
 const EvCompactionArchive EventType = "compaction.archive"
@@ -103,14 +105,18 @@ const StopMaxTurns StopReason = "max_turns"
 const StopNoProgress StopReason = "no_progress"
 const StopNone StopReason = ""
 const StopStructuredOutput StopReason = "structured_output"
+const Tier4SummaryMarker untyped string = "[earlier turns summarised]"
 const VerdictAllowAlways ApprovalVerdict = 2
 const VerdictAllowOnce ApprovalVerdict = 1
 const VerdictDeny ApprovalVerdict = 0
 const VerdictStringAllowAlways untyped string = "allow_always"
 const VerdictStringAllowOnce untyped string = "allow_once"
 const VerdictStringDeny untyped string = "deny"
+func ClampTitle(s string) string
 func CloneMessages(msgs []Message) []Message
 func ForkSnapshot(c *Conversation) []Message
+func IsGenuineUserPrompt(m Message) bool
+func IsSynthesisedSummary(text string) bool
 func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session
 func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Message
 func NewAudioContent(mime string, data []byte) (Content, error)
@@ -160,7 +166,7 @@ type PermissionMode string
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; CreatedAt time.Time}
 type SessionID string
 type State string
 type StopReason string

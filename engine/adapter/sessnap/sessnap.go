@@ -56,6 +56,13 @@ type Snapshot struct {
 	// — additive, no version bump. Persisting it lets a restarted process re-mint the
 	// SAME per-session engine (the same-effort adapter) via the factory.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// Title is the session's human-readable label seeded from the first genuine
+	// user prompt. omitempty keeps a pre-Title snapshot with no "title" key
+	// decoding to "" — additive, no format-tag bump (the same precedent as
+	// Profile / ProviderID / Parts). Persisting it lets a restarted process show
+	// the label without re-deriving it. It is an inert stored label (like
+	// Profile), restored by direct assignment, NOT a state transition.
+	Title string `json:"title,omitempty"`
 	// Usage is the cumulative run-token accounting, a POINTER for true omitempty
 	// (matching the Pending precedent): a zero Usage marshals nothing and a v1
 	// snapshot with no "usage" key decodes to a nil pointer => the zero Usage on
@@ -113,6 +120,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		ProviderID:      s.ProviderID,
 		ModelID:         s.ModelID,
 		ReasoningEffort: s.ReasoningEffort,
+		Title:           s.Title,
 		CreatedAt:       s.CreatedAt,
 	}
 	// Usage is a pointer for true omitempty: only emit the key when there is spend
@@ -156,6 +164,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
 	s.ReasoningEffort = snap.ReasoningEffort
+	s.Title = snap.Title
 
 	// The cumulative usage to seed (a nil pointer => the zero Usage, the pre-Usage
 	// default), passed to RestoreState alongside the counters so it seeds the budget

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -297,6 +298,15 @@ type Session struct {
 	// the factory instead of falling to the operator default. Write-once creation
 	// label set by the composition root after New (no mutator).
 	ReasoningEffort string
+	// Title is a human-readable session label seeded ONCE from the first genuine
+	// user prompt (via SetTitle, called from the loop's recordPrompt), clamped to
+	// maxTitleRunes (120) runes. Subsequent prompts do NOT overwrite it (set-once).
+	// It is persisted in the snapshot (an inert stored label, like Profile), and
+	// read-time consumers (the lazy ListSessions/GetSession fallback, the
+	// event-sourced Fold) use session.IsGenuineUserPrompt to derive it when empty.
+	// It is "" for a session with no genuine prompt yet (lazy display-time
+	// fallback applies). The aggregate never interprets it.
+	Title string
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 
@@ -758,6 +768,24 @@ func (s *Session) SetMode(mode PermissionMode) error {
 	}
 	s.Mode = mode
 	return nil
+}
+
+// maxTitleRunes bounds Session.Title (and ClampTitle) — a human-readable label,
+// not a paragraph. 120 runes is generous for a one-line session summary.
+const maxTitleRunes = 120
+
+// SetTitle seeds Session.Title from a user prompt, ONCE: a non-empty text on a
+// session whose Title is still "" sets it (clamped via ClampTitle); any later
+// call is a no-op (subsequent prompts do NOT overwrite the first). The caller —
+// the loop's recordPrompt (the GENUINE prompt site) — MUST ensure it passes only
+// a genuine user prompt: the aggregate enforces set-once, the caller enforces
+// genuineness. An empty/whitespace-only text leaves Title=="" (a multimodal-only
+// prompt with no text, or an empty prompt, does not seed). It is NOT a state
+// transition (legal from any state) — Title is an inert stored label.
+func (s *Session) SetTitle(text string) {
+	if s.Title == "" && strings.TrimSpace(text) != "" {
+		s.Title = ClampTitle(text)
+	}
 }
 
 // StopReason reports why the run should stop. It is a DERIVED predicate: it

@@ -80,7 +80,14 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.GetSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID))}, nil
+	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID))
+	// Lazy display-time fallback: a session whose snapshot Title was never seeded
+	// (or is empty) gets a derived label so GetSession shows one without a
+	// write-on-read — sess.Title is NOT mutated.
+	if sess.Title == "" {
+		proto.Title = DeriveTitle(sess)
+	}
+	return &mecatlv1.GetSessionResponse{Session: proto}, nil
 }
 
 // SetMode changes the permission posture of the requested session.

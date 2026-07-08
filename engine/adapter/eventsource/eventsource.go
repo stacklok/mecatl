@@ -63,6 +63,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
@@ -163,6 +164,13 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	// Seed the session Title from the first genuine user prompt captured during the
+	// fold (set-once + clamped via SetTitle). This reuses the domain predicate + the
+	// same seam the loop uses (recordPrompt → SetTitle), so a Fold-reconstructed
+	// session carries the same label a snapshot round-trip would. For a compacted
+	// session the opener's EvUserPrompt was emitted before the compaction, so the
+	// title survives compaction here (better than the snapshot lazy fallback).
+	s.SetTitle(f.firstGenuineText)
 	return s, nil
 }
 
@@ -188,6 +196,9 @@ func (f *folder) reconstructAwaiting(s *session.Session, _ SessionMeta) (*sessio
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
 	}
+	// Seed the session Title from the first genuine user prompt captured during the
+	// fold (same set-once seam as the non-awaiting path above).
+	s.SetTitle(f.firstGenuineText)
 	return s, nil
 }
 
@@ -209,6 +220,18 @@ type folder struct {
 	curText  string
 	curCalls []session.ToolCall
 	curOpen  bool // an assistant turn is being assembled
+
+	// firstGenuineText captures the text of the FIRST genuine user prompt seen
+	// in the stream (an EvUserPrompt whose message passes
+	// session.IsGenuineUserPrompt), so Fold can seed the session Title from it
+	// after reconstruction (via SetTitle, which clamps + is set-once). A
+	// synthesised-summary EvUserPrompt or a synthetic continuation does not
+	// capture. For a compacted session whose opener was dropped into the
+	// summarised head, the opener's EvUserPrompt was emitted BEFORE the
+	// compaction in the stream, so Fold captured it — the title survives
+	// compaction (better than the snapshot lazy fallback, which only sees the
+	// post-compaction history).
+	firstGenuineText string
 
 	// derived lifecycle.
 	usage   session.Usage // cumulative = SUM of every EvResult.Usage
@@ -249,7 +272,16 @@ func (f *folder) consume(ev session.Event) {
 		// EvTurnStart does), so it touches no counter.
 		f.flushTurn()
 		if ev.UserPrompt != nil {
-			f.messages = append(f.messages, session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts))
+			msg := session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts)
+			f.messages = append(f.messages, msg)
+			// Capture the first GENUINE user prompt for the session Title (Fold seeds
+			// it via SetTitle after reconstruction). A synthesised compaction summary
+			// does not capture (IsSynthesisedSummary skips it). Text-only; a
+			// multimodal-only prompt (Text=="") leaves firstGenuineText=="" — the lazy
+			// fallback applies.
+			if f.firstGenuineText == "" && session.IsGenuineUserPrompt(msg) && strings.TrimSpace(msg.Text) != "" {
+				f.firstGenuineText = msg.Text
+			}
 		}
 	case session.EvTurnStart:
 		// A new turn begins: flush the previous assistant turn (if any) and start a

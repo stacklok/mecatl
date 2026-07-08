@@ -1898,10 +1898,14 @@ preserve every user message verbatim.
 - **Genuine-user predicate (the pin anchor).** `firstUser`, `userSnapFloor`, `preservedHead`, and
   the back-snap's `isRecentUserTurn` all anchor on the first GENUINE user instruction via the
   SHARED `isGenuineUserTurn`: a `RoleUser` message that is NEITHER a synthesised compaction summary
-  (`isSynthesisedSummary` — the LOAD-BEARING arm: a re-compaction must not anchor on a prior
-  summary) NOR a harness-injected turn-0 fragment (`prompt.IsInjectedTurn0Fragment` —
-  project-instructions/soul/memory-index/user-model, recognised by the assemblers' own headers,
-  the source of truth). The fragment arm is now DEFENSE-IN-DEPTH: as of
+  (`session.IsSynthesisedSummary` — the LOAD-BEARING arm, now exported from the domain leaf: a
+  re-compaction must not anchor on a prior summary) NOR a harness-injected turn-0 fragment
+  (`prompt.IsInjectedTurn0Fragment` — project-instructions/soul/memory-index/user-model, recognised
+  by the assemblers' own headers, the source of truth). The synthesised-summary markers
+  (`session.CompactionSummaryMarker` / `session.Tier4SummaryMarker`, promoted from the unexported
+  `engine/agent` consts) and `IsSynthesisedSummary` live in `engine/session/title.go` so the
+  read-time `Title` consumers (the server lazy fallback + `eventsource.Fold`) can reach them
+  without importing `engine/agent`. The fragment arm is now DEFENSE-IN-DEPTH: as of
   [ADR 0043](../adr/0043-ephemeral-turn0-instruction-fragments.md) the turn-0 fragments are
   EPHEMERAL (prepended to the request per-run, never persisted), so they normally do not appear in
   the history at all — the arm only protects legacy history snapshotted before that cutover.
@@ -1918,7 +1922,7 @@ preserve every user message verbatim.
   instruction(s) verbatim instead of summarising them. It walks backward from `cut-1` toward
   `floor`, counting genuine user turns (`isRecentUserTurn` = `isGenuineUserTurn`, above:
   `isSynthesisedSummary` recognises BOTH the paths-summary
-  (`compactionSummaryMarker`) AND the cascade tier-4 LLM summary (`tier4SummaryMarker`); both are
+  (`session.CompactionSummaryMarker`) AND the cascade tier-4 LLM summary (`session.Tier4SummaryMarker`); both are
   harness-authored context, skipped so a RE-compaction can't anchor on a prior summary and drag
   the whole post-summary history into the tail), and stops at the FIRST of: `recentUserTurnsKept`
   (3) user turns passed (snap to the Kth-most-recent so it lands IN the tail); `maxUserSnapLookback`
@@ -3415,6 +3419,18 @@ mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
   with none of the keys loads with an empty profile/selector and a zero Usage. Guarded by
   the round-trip tests, the v1-downgrade test, and the `storeconformance` suite (every store
   driver proves the round-trip).
+- **`Session.Title`** is an additive snapshot field (`sessnap.Snapshot.Title`, `json:"title,omitempty"`)
+  — a human-readable session label seeded ONCE from the first genuine user prompt (clamped to
+  120 runes) by the loop (`recordPrompt` → `session.SetTitle`, set-once), persisted like
+  `Profile`/`ProviderID` (inert stored label, restored by direct assignment). `omitempty`
+  keeps a pre-Title snapshot decoding to `""` (no format-tag bump). Two read-time consumers
+  derive it lazily WITHOUT write-on-read when empty: `ListSessions`/`GetSession` (the server
+  `deriveTitle` fallback) and the event-sourced `eventsource.Fold` (captures the first genuine
+  `EvUserPrompt` text, then `SetTitle` after reconstruction). Both use the domain-exported
+  `session.IsGenuineUserPrompt` / `session.IsSynthesisedSummary` (markers
+  `session.CompactionSummaryMarker` / `session.Tier4SummaryMarker`, promoted from the
+  unexported `engine/agent` consts) — `engine/session` cannot import `engine/agent`/`engine/prompt`,
+  so the genuine-vs-synthesised distinction the read path needs lives in the domain leaf.
 
 ### Awaiting-approval evict/rehydrate (cloud-native Phase 2)
 

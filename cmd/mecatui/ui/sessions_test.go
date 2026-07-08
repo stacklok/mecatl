@@ -136,6 +136,49 @@ func TestRunSessionsOpensOverlay(t *testing.T) {
 	}
 }
 
+// TestSessionsPanelRendersTitleLeadingRow asserts the picker row renders the
+// session Title (when set) as the leading label, falling back to the ID when
+// the Title is empty. The ID stays on the confirm card for precise ID.
+func TestSessionsPanelRendersTitleLeadingRow(t *testing.T) {
+	t.Run("title leads when set", func(t *testing.T) {
+		sessions := []client.SessionListItem{
+			{ID: "sess-aaa", Title: "Fix the flaky CI", ModifiedAt: nowMinusMinutes(5), State: "completed", Turns: 12, ModelID: "gpt-5"},
+		}
+		fl := &fakeSessionLister{sessions: sessions}
+		conv := newSessionsConv()
+		m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+		mm, cmd := m.runSessions()
+		m = mm.(Model)
+		m = feedCmd(t, m, cmd)
+
+		content := m.View().Content
+		// The Title leads the row.
+		if !strings.Contains(content, "Fix the flaky CI") {
+			t.Errorf("row missing the Title label:\n%s", content)
+		}
+		// The ID is NOT the row label when a Title is set (it still appears on the
+		// confirm card after Enter, but the panel row shows the title).
+		// Sanity: the row still carries the model id parenthetical.
+		if !strings.Contains(content, "(gpt-5)") {
+			t.Errorf("row missing the model id parenthetical:\n%s", content)
+		}
+	})
+	t.Run("id leads when title empty", func(t *testing.T) {
+		sessions := []client.SessionListItem{
+			{ID: "sess-bbb", Title: "", ModifiedAt: nowMinusMinutes(5), State: "completed", Turns: 3},
+		}
+		fl := &fakeSessionLister{sessions: sessions}
+		conv := newSessionsConv()
+		m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+		mm, cmd := m.runSessions()
+		m = mm.(Model)
+		m = feedCmd(t, m, cmd)
+		if !strings.Contains(m.View().Content, "sess-bbb") {
+			t.Errorf("row missing the ID fallback label:\n%s", m.View().Content)
+		}
+	})
+}
+
 // TestRunSessionsNilGuard: with no lister wired, openSessions is a no-op.
 func TestRunSessionsNilGuard(t *testing.T) {
 	conv := newSessionsConv()

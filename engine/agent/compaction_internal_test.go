@@ -57,8 +57,8 @@ func TestIsGenuineUserTurnSkipsInjectedFragments(t *testing.T) {
 	for _, m := range []session.Message{
 		injectedSoulFragment(t),
 		injectedMemoryFragment(t),
-		session.NewUserMessage(compactionSummaryMarker + " earlier turns…"),
-		session.NewUserMessage(tier4SummaryMarker + "\n## Goal"),
+		session.NewUserMessage(session.CompactionSummaryMarker + " earlier turns…"),
+		session.NewUserMessage(session.Tier4SummaryMarker + "\n## Goal"),
 		session.NewAssistantMessage("not a user turn", "", nil),
 	} {
 		if isGenuineUserTurn(m) {
@@ -105,7 +105,7 @@ func TestSnapCutToRecentUserTurn(t *testing.T) {
 			case 'u':
 				out[i] = session.NewUserMessage("u")
 			case 's':
-				out[i] = session.NewUserMessage(compactionSummaryMarker + " synthesised")
+				out[i] = session.NewUserMessage(session.CompactionSummaryMarker + " synthesised")
 			case 'a':
 				out[i] = session.NewAssistantMessage("a", "", nil)
 			case 't':
@@ -249,14 +249,14 @@ func TestIsSynthesisedSummary(t *testing.T) {
 		text string
 		want bool
 	}{
-		{compactionSummaryMarker + " earlier turns…", true},
-		{tier4SummaryMarker + "\n## Goal", true},
+		{session.CompactionSummaryMarker + " earlier turns…", true},
+		{session.Tier4SummaryMarker + "\n## Goal", true},
 		{"rename Foo to Bar", false},
 		{"", false},
 	}
 	for _, tc := range cases {
-		if got := isSynthesisedSummary(tc.text); got != tc.want {
-			t.Fatalf("isSynthesisedSummary(%q) = %v, want %v", tc.text, got, tc.want)
+		if got := session.IsSynthesisedSummary(tc.text); got != tc.want {
+			t.Fatalf("IsSynthesisedSummary(%q) = %v, want %v", tc.text, got, tc.want)
 		}
 	}
 }

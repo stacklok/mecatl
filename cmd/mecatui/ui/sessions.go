@@ -436,8 +436,14 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		if i == st.cursor {
 			marker = "▶ "
 		}
+		// Title leads the row (falls back to the id when absent); the id stays on
+		// the confirm card for precise identification.
+		label := s.Title
+		if label == "" {
+			label = s.ID
+		}
 		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) +
-			" " + strconv.Itoa(int(s.Turns)) + "t " + sanitizeTerminal(s.ID)
+			" " + strconv.Itoa(int(s.Turns)) + "t " + sanitizeTerminal(label)
 		if s.ModelID != "" {
 			line += "  (" + sanitizeTerminal(s.ModelID) + ")"
 		}
@@ -457,6 +463,9 @@ func renderSessionsConfirm(th theme.Theme, st sessionsState, _, _ int) string {
 	b.WriteString(th.Style("title").Render("open session") + "\n\n")
 	b.WriteString("open a read-only transcript of:\n")
 	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(s.ID)) + "\n")
+	if s.Title != "" {
+		b.WriteString(th.Style("muted").Render("  title: "+sanitizeTerminal(s.Title)) + "\n")
+	}
 	b.WriteString(th.Style("muted").Render("  state: "+s.State) + "\n")
 	if s.ModelID != "" {
 		b.WriteString(th.Style("muted").Render("  model: "+sanitizeTerminal(s.ModelID)) + "\n")

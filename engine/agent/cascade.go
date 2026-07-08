@@ -332,11 +332,11 @@ func (c CascadeCompactor) summarize(ctx context.Context, head, middle []session.
 	if out == "" {
 		return "", fmt.Errorf("summariser returned an empty summary")
 	}
-	// The tier4SummaryMarker prefix is load-bearing beyond display: it lets the
-	// user-turn back-snap (isSynthesisedSummary) recognise this synthesised summary on
-	// a LATER compaction and NOT anchor the verbatim tail on it (the re-compaction
-	// footgun). Keep it byte-for-byte in sync with the const.
-	return tier4SummaryMarker + "\n" + out, nil
+	// The Tier4SummaryMarker prefix is load-bearing beyond display: it lets the
+	// user-turn back-snap (session.IsSynthesisedSummary) recognise this synthesised
+	// summary on a LATER compaction and NOT anchor the verbatim tail on it (the
+	// re-compaction footgun). Keep it byte-for-byte in sync with the const.
+	return session.Tier4SummaryMarker + "\n" + out, nil
 }
 
 // deMediaMessages returns msgs with every media-bearing user message rewritten

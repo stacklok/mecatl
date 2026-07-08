@@ -25,3 +25,21 @@ func TestSnapshotFromReadsState(t *testing.T) {
 		t.Fatalf("nil Mode = %q, want %q", nilSnap.Mode, ModeDefaultString)
 	}
 }
+
+// TestSnapshotFromReadsTitle asserts snapshotFrom projects the proto Session's
+// Title field — the footer/heal surface may surface it. Covers the populated,
+// empty, and nil cases (nil-safe via the getter).
+func TestSnapshotFromReadsTitle(t *testing.T) {
+	snap := snapshotFrom(&mecatlv1.Session{Title: "Fix the CI"})
+	if snap.Title != "Fix the CI" {
+		t.Fatalf("Title = %q, want %q", snap.Title, "Fix the CI")
+	}
+	empty := snapshotFrom(&mecatlv1.Session{})
+	if empty.Title != "" {
+		t.Fatalf("empty Title = %q, want empty", empty.Title)
+	}
+	nilSnap := snapshotFrom(nil)
+	if nilSnap.Title != "" {
+		t.Fatalf("nil Title = %q, want empty", nilSnap.Title)
+	}
+}
