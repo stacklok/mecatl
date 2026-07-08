@@ -138,6 +138,19 @@ code {
   overflow: hidden;
 }
 
+/* wrapLongLines is not implemented in Docusaurus 3.x — enforce wrapping via CSS.
+   Add class="nowrap" to a CodeBlock component to opt out. */
+.theme-code-block pre {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.theme-code-block.nowrap pre {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
 /* ─── Tables ─────────────────────────────────────────────────────────────── */
 
 table {
