@@ -187,3 +187,7 @@ consumer's policy, not a structural property the kit bakes in.
   the source of properties #1–#2.
 - `adr/0005-driver-seams.md`: the port / driver protocol that makes capabilities-as-a-service (#3)
   already real in mecatl.
+- [`cloud-native-harness-systems.md`](cloud-native-harness-systems.md): speculative,
+  unscoped future work (the shared-handle problem across the filesystem/forker/command-runner,
+  environment-as-descent forking, execution-as-a-service) that isn't a decision yet and may
+  never become one.
