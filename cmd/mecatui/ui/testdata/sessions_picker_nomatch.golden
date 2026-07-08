@@ -1,10 +1,9 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-sessions
-select a stored session to open read-only
+▸ Sessions    Children
 
 no matches — clear filter to see all
-esc: close
+tab: switch  esc: close
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

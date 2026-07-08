@@ -603,9 +603,10 @@ func openInspectWithFires(t *testing.T, m Model, fs *fakeScheduleLister) Model {
 }
 
 // TestScheduleInspectJumpToFireTranscript asserts enter on a fire cursor row
-// jumps to the fire's read-only transcript: phase moves to phaseReplay, the
-// sessionID is the fire's SessionID, the schedule overlay is cleared
-// (scheduleNone), and the replayer is called with the fire's session id.
+// jumps to the fire's session: since a fire session id is top-level, the
+// continue-by-default handoff binds the session id and drops to phaseIdle
+// (live/interactive). The schedule overlay is cleared (scheduleNone), and the
+// replayer is NOT called (no replay stream for top-level continue).
 func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
 	fs := &fakeScheduleLister{
 		schedules: []client.Schedule{sampleSchedule("nightly")},
@@ -628,8 +629,9 @@ func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
 	}
 	mm, _, _ = m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if m.phase != phaseReplay {
-		t.Fatalf("phase = %v, want phaseReplay", m.phase)
+	// A fire session id is top-level → continue-by-default → phaseIdle.
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (continue-by-default for a top-level fire session)", m.phase)
 	}
 	if m.sessionID != "sess-fire-2" {
 		t.Fatalf("sessionID = %q, want sess-fire-2", m.sessionID)
@@ -637,8 +639,9 @@ func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
 	if m.schedule.view != scheduleNone {
 		t.Fatalf("schedule view = %v, want scheduleNone (cleared on jump)", m.schedule.view)
 	}
-	if fr.calls != 1 || fr.lastID != "sess-fire-2" {
-		t.Fatalf("replayer calls=%d lastID=%q, want 1/sess-fire-2", fr.calls, fr.lastID)
+	// No replay stream for a top-level continue.
+	if fr.calls != 0 {
+		t.Fatalf("replayer calls = %d, want 0 (no replay for top-level continue)", fr.calls)
 	}
 }
 

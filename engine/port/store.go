@@ -62,6 +62,72 @@ type StoredSession struct {
 	ModifiedAt time.Time
 }
 
+// SessionMeta is the lightweight picker metadata for a stored session: the
+// fields a session LISTING (the /sessions picker) needs to render a row WITHOUT
+// loading the full conversation. It is a PROJECTION of the latest snapshot —
+// state, turn count, model id, title, and creation time — with the large
+// conversation (messages array) skipped entirely. The store adapter populates
+// it by reading ONLY the last snapshot line and decoding into a small struct,
+// so listing N sessions is O(N × last-line-read) rather than O(N × filesize).
+//
+// It is owned by the PORT (so the server adapter references the shape without
+// importing any concrete store) and implemented by a store via the optional
+// MetaLister interface — discovered by type assertion, exactly like
+// PrunableStore. A store that does NOT implement MetaLister falls back to the
+// Load-per-row path (correct, just slower). State carries the persisted
+// session.State verbatim; an invalid/unknown state is left empty (the row still
+// surfaces its id/mtime, matching the Load-fails zeroed-fields behaviour).
+type SessionMeta struct {
+	// ID is the stored session's real id (decoded from the snapshot, not the
+	// filename — safeName is not invertible).
+	ID session.SessionID
+	// ModifiedAt is the last-write timestamp (file mtime, or the store's
+	// nearest equivalent).
+	ModifiedAt time.Time
+	// State is the persisted lifecycle state (idle/running/awaiting/completed/
+	// ...). Empty when the snapshot could not be decoded or carries an unknown
+	// state.
+	State session.State
+	// Turns is the persisted model-call count. Zero when the snapshot could not
+	// be decoded.
+	Turns int
+	// ModelID is the resolved model id this session ran on (bare string, no
+	// provider context). Empty when the session never resolved a model or the
+	// snapshot could not be decoded.
+	ModelID string
+	// CreatedAt is the creation timestamp. Zero when the snapshot could not be
+	// decoded.
+	CreatedAt time.Time
+	// Title is the human-readable session label (seeded once from the first
+	// genuine user prompt, clamped). Populated from the snapshot Title ONLY — a
+	// session whose Title was never seeded (a pre-Title snapshot, or a
+	// multimodal-only first prompt) carries "" here; the caller may fall back to
+	// the lazy deriveTitle walk via a full Load if it needs the derived value.
+	Title string
+}
+
+// MetaLister is the OPTIONAL cheap-listing seam a SessionStore adapter may
+// additionally implement to enumerate picker metadata WITHOUT loading the full
+// conversation of every stored session. It is a separate interface —
+// SessionStore itself stays the minimal Save/Load pair — and consumers discover
+// it by type assertion: a store that does not implement it falls back to the
+// Load-per-row path. The metadata is a PROJECTION of the latest snapshot line,
+// so it is the same latest-line-wins source Load trusts, just decoded into a
+// small struct that skips the messages array.
+//
+// Contract:
+//   - MetaList returns ALL stored sessions' picker metadata (id + state +
+//     turns + model id + title + creation + last-modified), in no guaranteed
+//     order. A row whose last snapshot line cannot be decoded
+//     (truncated/empty/corrupt file) is skipped best-effort rather than failing
+//     the whole inventory — the same tolerance List applies.
+//   - It applies NO filtering — which rows to show is the CALLER's business.
+type MetaLister interface {
+	// MetaList returns every stored session's picker metadata, reading only the
+	// last snapshot line of each (never the full conversation).
+	MetaList(ctx context.Context) ([]SessionMeta, error)
+}
+
 // ErrPruneUnsupported is the port-level sentinel a PrunableStore's List or
 // Delete wraps (with %w) when the store's BACKEND cannot enumerate/delete
 // sessions at all — e.g. a remote driver answering UNIMPLEMENTED. It is the

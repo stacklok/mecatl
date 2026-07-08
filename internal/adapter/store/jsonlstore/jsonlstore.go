@@ -96,8 +96,25 @@ func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session
 	defer func() { _ = f.Close() }()
 
 	var last []byte
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	last, err = scanLastNonBlankLine(f)
+	if err != nil {
+		return nil, fmt.Errorf("jsonlstore: scan session file: %w", err)
+	}
+	if last == nil {
+		return nil, fmt.Errorf("%w: %q (empty file)", ErrNotFound, id)
+	}
+	return sessnap.Unmarshal(last)
+}
+
+// scanLastNonBlankLine returns the last non-blank line of f (seeking to 0 first).
+// It is the shared latest-line-wins snapshot read that Load, decodeSessionID, and
+// readLastLineFull (the metalist fallback) all call — ONE scan discipline across
+// the three "read the latest snapshot line" sites, so a format/scan change fixes
+// once and the picker's fast path cannot drift from Load's truth. The caller owns
+// the returned slice (a fresh copy; the scanner's buffer is reused internally).
+func scanLastNonBlankLine(f *os.File) ([]byte, error) {
+	var last []byte
+	sc := newScanner(f)
 	for sc.Scan() {
 		b := sc.Bytes()
 		if len(strings.TrimSpace(string(b))) == 0 {
@@ -106,12 +123,17 @@ func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session
 		last = append(last[:0], b...) // copy: scanner reuses its buffer
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("jsonlstore: scan session file: %w", err)
+		return nil, err
 	}
-	if last == nil {
-		return nil, fmt.Errorf("%w: %q (empty file)", ErrNotFound, id)
-	}
-	return sessnap.Unmarshal(last)
+	return last, nil
+}
+
+// newScanner builds a bufio.Scanner over f with the generous buffer a snapshot
+// line can need (a snapshot carrying a large conversation can be multi-MB).
+func newScanner(f *os.File) *bufio.Scanner {
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	return sc
 }
 
 // sessionFileSuffix / toolsFileSuffix are the per-session file suffixes under
@@ -220,17 +242,8 @@ func decodeSessionID(path string) (session.SessionID, error) {
 		return "", err
 	}
 	defer func() { _ = f.Close() }()
-	var last []byte
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		b := sc.Bytes()
-		if len(strings.TrimSpace(string(b))) == 0 {
-			continue
-		}
-		last = append(last[:0], b...) // copy: scanner reuses its buffer
-	}
-	if err := sc.Err(); err != nil {
+	last, err := scanLastNonBlankLine(f)
+	if err != nil {
 		return "", err
 	}
 	if last == nil {

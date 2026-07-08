@@ -277,9 +277,11 @@ func TestSessionsEscCloses(t *testing.T) {
 	}
 }
 
-// TestSelectSessionOpensReplay asserts the handoff: Enter→confirm→Enter opens the
-// replay stream, drives phase to phaseReplay, adopts the chosen session id, and
-// calls the replayer with the chosen id.
+// TestSelectSessionOpensReplay asserts the continue-by-default handoff for a
+// TOP-LEVEL session: Enter→confirm→Enter binds the session id, drops to
+// phaseIdle (live/interactive), focuses the textarea, and sets a "continuing"
+// status. NO replay stream is opened (the server replays history to the model on
+// the first prompt). The conversation view starts fresh (no prior transcript).
 func TestSelectSessionOpensReplay(t *testing.T) {
 	fl := &fakeSessionLister{sessions: sampleSessions()}
 	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
@@ -294,7 +296,7 @@ func TestSelectSessionOpensReplay(t *testing.T) {
 		t.Fatalf("view = %v, want sessionsPanel", m.sessions.view)
 	}
 
-	// Cursor on the first row; Enter → confirm; Enter → switch.
+	// Cursor on the first row; Enter → confirm; Enter → continue.
 	m.sessions.cursor = 0
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // chooseSession → sessionsConfirm
 	if m.sessions.view != sessionsConfirm {
@@ -304,29 +306,31 @@ func TestSelectSessionOpensReplay(t *testing.T) {
 		t.Fatalf("confirm candidate = %+v, want sess-aaa", m.sessions.confirm)
 	}
 
-	mm, cmd, _ := m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // switch
+	mm, _, _ = m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // continue
 	m = mm.(Model)
-	if m.phase != phaseReplay {
-		t.Fatalf("phase = %v, want phaseReplay", m.phase)
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (continue-by-default)", m.phase)
 	}
 	if m.sessionID != "sess-aaa" {
 		t.Fatalf("sessionID = %q, want sess-aaa", m.sessionID)
 	}
-	if m.sessions.replayCh == nil {
-		t.Fatal("replayCh should be set after switchToSession")
+	// NO replay stream should be opened for a top-level session.
+	if m.sessions.replayCh != nil {
+		t.Error("replayCh should be nil (no replay stream for top-level continue)")
 	}
-	if fr.calls != 1 {
-		t.Fatalf("StreamSessionEvents calls = %d, want 1", fr.calls)
+	if fr.calls != 0 {
+		t.Fatalf("StreamSessionEvents calls = %d, want 0 (no replay for top-level)", fr.calls)
 	}
-	if fr.lastID != "sess-aaa" {
-		t.Fatalf("replayer called with id %q, want sess-aaa", fr.lastID)
+	if m.sessions.view != sessionsNone {
+		t.Fatalf("view = %v, want sessionsNone (overlay dismissed on continue)", m.sessions.view)
 	}
-	if m.sessions.view != sessionsTranscript {
-		t.Fatalf("view = %v, want sessionsTranscript", m.sessions.view)
+	if !m.ta.Focused() {
+		t.Error("textarea should be focused after continue")
 	}
-	// The handoff returned a batch (closeSessions cmd + waitReplayCmd + sp.Tick);
-	// drain it so the first replay msg lands and the reader re-arms deterministically.
-	_ = cmd
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "continuing") || !strings.Contains(got, "sess-aaa") {
+		t.Errorf("statusMsg = %q, want 'continuing' and 'sess-aaa'", got)
+	}
 }
 
 // TestStateBadge pins the one-glyph state badge for each stored-session state.
@@ -374,14 +378,20 @@ func TestRelativeTime(t *testing.T) {
 
 // TestReplayGenGuardsStaleReader asserts a replayMsg whose gen no longer matches
 // m.sessions.replayGen is dropped (a stale reader from a torn-down replay cannot
-// route into the current view), and NOT re-armed.
+// route into the current view), and NOT re-armed. Uses a CHILD session (which
+// opens the replay stream); a top-level session no longer uses replays.
 func TestReplayGenGuardsStaleReader(t *testing.T) {
-	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fl := &fakeSessionLister{sessions: []client.SessionListItem{
+		{ID: "subagent-call1", ModifiedAt: nowMinusMinutes(4), State: "completed", Turns: 2, ModelID: "gpt-5"},
+	}}
 	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
 	conv := newSessionsConv()
 	m := newSessionsModel(t, conv, fl, fr)
-	mm, _, _ := m.switchToSession(sampleSessions()[0])
+	mm, _, _ := m.switchToSession(fl.sessions[0])
 	m = mm.(Model)
+	if m.phase != phaseReplay {
+		t.Fatalf("setup: phase = %v, want phaseReplay (child)", m.phase)
+	}
 	before := m.sessions.receivedMsgs
 	// A stale-gen replayMsg must be dropped.
 	stale := replayMsg{gen: m.sessions.replayGen + 1, msg: client.SessionInitMsg{}}
@@ -457,27 +467,32 @@ func TestReplayStreamClosedKeepsTranscript(t *testing.T) {
 }
 
 // TestSessionsEscOnTranscriptTearsDown asserts the esc-teardown path from
-// phaseReplay (update.go's phaseReplay arm → onReplayKey → closeSessionsTranscript):
+// phaseReplay (now only reached for CHILD sessions opened from the Children tab):
 // esc stops the replay (spy replayStop called), clears replayCh/replayStop,
 // bumps replayGen (invalidating any stale reader), returns to phaseIdle, dismisses
 // the overlay (sessions.view == sessionsNone), and runs resetSession so the
 // adopted session's transcript (m.conv) is cleared. Read-only inspection ends
-// honestly — no live session survives the teardown.
+// honestly — no live session survives the teardown. Uses a CHILD session (which
+// still opens the replay stream); a top-level session goes straight to phaseIdle.
 func TestSessionsEscOnTranscriptTearsDown(t *testing.T) {
-	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fl := &fakeSessionLister{sessions: []client.SessionListItem{
+		{ID: "subagent-call1", ModifiedAt: nowMinusMinutes(4), State: "completed", Turns: 2, ModelID: "gpt-5"},
+	}}
 	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
 	conv := newSessionsConv()
 	m := newSessionsModel(t, conv, fl, fr)
 
 	// Drive the real handoff so the replay state is set up by production code
 	// (switchToSession), not hand-rolled — then esc from the transcript view.
-	mm, _, _ := m.switchToSession(sampleSessions()[0])
+	// A child session opens the replay stream and enters phaseReplay.
+	child := fl.sessions[0]
+	mm, _, _ := m.switchToSession(child)
 	m = mm.(Model)
 	if m.phase != phaseReplay {
-		t.Fatalf("setup: phase = %v, want phaseReplay", m.phase)
+		t.Fatalf("setup: phase = %v, want phaseReplay (child session)", m.phase)
 	}
 	if m.sessions.replayCh == nil || m.sessions.replayStop == nil {
-		t.Fatal("setup: replay stream should be open after switchToSession")
+		t.Fatal("setup: replay stream should be open after switchToSession (child)")
 	}
 	genBefore := m.sessions.replayGen
 	// Plant a non-empty conversation so resetSession's clearing is observable, and a
@@ -754,5 +769,197 @@ func TestSwitchToSessionBlocksAwaiting(t *testing.T) {
 	got := stripANSIstr(m.statusMsg)
 	if !strings.Contains(got, "awaiting") || !strings.Contains(got, "cannot open") {
 		t.Errorf("statusMsg = %q, want it to mention 'awaiting' and 'cannot open'", got)
+	}
+}
+
+// TestContinueByDefaultTopLevel asserts the continue-by-default handoff for a
+// top-level session: switchToSession binds the session id, drops to phaseIdle
+// (live/interactive), focuses the textarea, arms auto-follow, dismisses the
+// overlay, and sets a "continuing session <id>" status. NO replay stream is
+// opened, and the conversation view starts fresh (no prior transcript carried —
+// the server replays history to the model on the first prompt).
+func TestContinueByDefaultTopLevel(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+	top := sampleSessions()[0] // sess-aaa, no child prefix
+
+	mm, _, _ := m.switchToSession(top)
+	m = mm.(Model)
+
+	if m.phase != phaseIdle {
+		t.Fatalf("phase = %v, want phaseIdle (continue-by-default)", m.phase)
+	}
+	if m.sessionID != top.ID {
+		t.Errorf("sessionID = %q, want %q (kept)", m.sessionID, top.ID)
+	}
+	if m.sessions.replayCh != nil {
+		t.Errorf("replayCh should be nil (no replay stream for top-level continue), got %v", m.sessions.replayCh)
+	}
+	if m.sessions.replayStop != nil {
+		t.Error("replayStop should be nil (no replay stream)")
+	}
+	if !m.conv.isEmpty() {
+		t.Errorf("m.conv should be empty (no transcript carried), got %d blocks", len(m.conv.blocks))
+	}
+	if m.sessions.view != sessionsNone {
+		t.Fatalf("sessions.view = %v, want sessionsNone (overlay dismissed)", m.sessions.view)
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "continuing") || !strings.Contains(got, top.ID) {
+		t.Errorf("statusMsg = %q, want 'continuing' and %q", got, top.ID)
+	}
+	if !m.ta.Focused() {
+		t.Error("textarea should be focused after continue-by-default")
+	}
+	if !m.stuck {
+		t.Error("stuck should be true (auto-follow armed for the live tail)")
+	}
+	if m.restartedThisRun != true {
+		t.Error("restartedThisRun should be true (suppresses the welcome splash)")
+	}
+	if fr.calls != 0 {
+		t.Errorf("replayer should NOT be called for top-level, got %d calls", fr.calls)
+	}
+}
+
+// TestContinueByDefaultChildStaysReadOnly asserts a CHILD session (opened from
+// the Children tab) does NOT continue by default: it opens the replay stream and
+// enters phaseReplay (read-only transcript inspection), since continuing a child
+// as a top-level live session is incoherent (no parent context).
+func TestContinueByDefaultChildStaysReadOnly(t *testing.T) {
+	child := client.SessionListItem{ID: "subagent-call1", ModifiedAt: nowMinusMinutes(4), State: "completed", Turns: 2, ModelID: "gpt-5"}
+	fl := &fakeSessionLister{sessions: []client.SessionListItem{child}}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	mm, _, _ := m.switchToSession(child)
+	m = mm.(Model)
+
+	if m.phase != phaseReplay {
+		t.Fatalf("phase = %v, want phaseReplay (child stays read-only)", m.phase)
+	}
+	if m.sessionID != child.ID {
+		t.Errorf("sessionID = %q, want %q", m.sessionID, child.ID)
+	}
+	if m.sessions.replayCh == nil {
+		t.Error("replayCh should be set (child opens the replay stream)")
+	}
+	if fr.calls != 1 || fr.lastID != child.ID {
+		t.Fatalf("replayer calls=%d lastID=%q, want 1/%q", fr.calls, fr.lastID, child.ID)
+	}
+	// The transcript hint must NOT advertise "c: continue" (no Continue action).
+	content := m.View().Content
+	if strings.Contains(stripANSIstr(content), "c: continue") {
+		t.Errorf("child transcript hint should omit 'c: continue':\n%s", content)
+	}
+	if !strings.Contains(stripANSIstr(content), "esc: back") {
+		t.Errorf("child transcript hint should show 'esc: back':\n%s", content)
+	}
+}
+
+// mixedSessions is a fixed inventory mixing top-level and child-prefixed ids for
+// the tab-split tests.
+func mixedSessions() []client.SessionListItem {
+	return []client.SessionListItem{
+		{ID: "sess-aaa", ModifiedAt: nowMinusMinutes(5), State: "completed", Turns: 12, ModelID: "gpt-5"},
+		{ID: "subagent-call1", ModifiedAt: nowMinusMinutes(4), State: "completed", Turns: 2, ModelID: "gpt-5"},
+		{ID: "team-t1-alice", ModifiedAt: nowMinusMinutes(3), State: "completed", Turns: 4, ModelID: "claude-opus"},
+		{ID: "sess-bbb", ModifiedAt: nowMinusMinutes(60), State: "running", Turns: 3, ModelID: "claude-opus"},
+		{ID: "parallel-call2-0", ModifiedAt: nowMinusMinutes(2), State: "completed", Turns: 1, ModelID: "gpt-5"},
+	}
+}
+
+// TestSessionsTabsSplitTopLevelAndChildren asserts the Sessions tab shows only
+// top-level sessions (no child prefix) and the Children tab shows only child
+// sessions (subagent-/team-/parallel-), and `tab` switches between them.
+func TestSessionsTabsSplitTopLevelAndChildren(t *testing.T) {
+	fl := &fakeSessionLister{sessions: mixedSessions()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, &fakeSessionReplayer{})
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+
+	// Default tab is Sessions: only top-level (sess-aaa, sess-bbb).
+	if m.sessions.tab != tabSessions {
+		t.Fatalf("default tab = %v, want tabSessions", m.sessions.tab)
+	}
+	if len(m.sessions.filtered) != 2 {
+		t.Fatalf("Sessions tab filtered = %d, want 2 (top-level only):\n%+v", len(m.sessions.filtered), m.sessions.filtered)
+	}
+	for _, s := range m.sessions.filtered {
+		if isChildSessionID(s.ID) {
+			t.Errorf("Sessions tab should not contain child session %q", s.ID)
+		}
+	}
+
+	// Press `tab` → Children tab.
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	m = mm.(Model)
+	if m.sessions.tab != tabChildren {
+		t.Fatalf("after tab: tab = %v, want tabChildren", m.sessions.tab)
+	}
+	if len(m.sessions.filtered) != 3 {
+		t.Fatalf("Children tab filtered = %d, want 3 (subagent+team+parallel):\n%+v", len(m.sessions.filtered), m.sessions.filtered)
+	}
+	for _, s := range m.sessions.filtered {
+		if !isChildSessionID(s.ID) {
+			t.Errorf("Children tab should not contain top-level session %q", s.ID)
+		}
+	}
+
+	// Press `tab` again → back to Sessions.
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	m = mm.(Model)
+	if m.sessions.tab != tabSessions {
+		t.Fatalf("after second tab: tab = %v, want tabSessions", m.sessions.tab)
+	}
+}
+
+// (TestContinueGatedOnChildren and TestContinueAllowedOnTopLevel were removed:
+// the bare `c` key / continueSession have been removed — top-level sessions now
+// continue by default, and children stay read-only. The behavior is covered by
+// TestContinueByDefaultTopLevel and TestContinueByDefaultChildStaysReadOnly above.)
+
+// TestReplayCoalescesNoGlamourPerEvent proves the replay path coalesces like the
+// live delta path: N replay events project into the transcript with ZERO glamour
+// renders (they only append + mark dirty via markDirtyReplay), and a single
+// frame-cadence renderTickMsg flushes exactly one. This is the O(N) not O(N²)
+// fix for the child-inspection replay (Change 2). Uses a CHILD session so the
+// replay stream path is exercised.
+func TestReplayCoalescesNoGlamourPerEvent(t *testing.T) {
+	child := client.SessionListItem{ID: "subagent-call1", ModifiedAt: nowMinusMinutes(4), State: "completed", Turns: 2, ModelID: "gpt-5"}
+	fl := &fakeSessionLister{sessions: []client.SessionListItem{child}}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+	mm, _, _ := m.switchToSession(child)
+	m = mm.(Model)
+	if m.phase != phaseReplay {
+		t.Fatalf("setup: phase = %v, want phaseReplay (child)", m.phase)
+	}
+	before := m.rend.mdRenders
+
+	// Drive a scripted replay (several events) WITHOUT flushing a tick between them.
+	msgs := replayScriptMsgs()
+	for _, msg := range msgs {
+		mm, _ := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: msg})
+		m = mm.(Model)
+	}
+	if m.rend.mdRenders != before {
+		t.Fatalf("expected %d glamour renders across %d coalesced replay events, got %d", before, len(msgs), m.rend.mdRenders-before)
+	}
+	if !m.viewDirty {
+		t.Fatal("expected viewDirty=true after replay events with no flush")
+	}
+
+	// A single renderTickMsg flushes exactly one glamour render.
+	flushedBefore := m.rend.mdRenders
+	m = applyAll(m, renderTickMsg{})
+	if got := m.rend.mdRenders - flushedBefore; got != 1 {
+		t.Fatalf("expected exactly 1 glamour render on the flush, got %d", got)
 	}
 }

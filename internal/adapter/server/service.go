@@ -2879,7 +2879,25 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 //
 // Cost: each row does a Store.Load (jsonlstore: reads the last snapshot line).
 // Acceptable for a picker; no pagination in Phase 1.
+//
+// FAST PATH: when the store implements port.MetaLister (jsonlstore does),
+// ListSessions uses MetaList — a CHEAP last-line read that skips the full
+// conversation — instead of a full Load per row. This keeps listing N sessions
+// O(N × last-line-read) rather than O(N × filesize) for large histories. The
+// MetaLister path is the same latest-line-wins source Load trusts; a store that
+// does NOT implement MetaLister falls back to the Load-per-row path (correct,
+// just slower; memstore/redisstore/grpcdriver use it until they implement
+// MetaList). The Title from MetaList is the snapshot Title ONLY — the lazy
+// deriveTitle fallback (walking the conversation) is NOT available on the fast
+// path; a session whose Title was never seeded shows "" on the fast path. That
+// is acceptable for a picker (the snapshot Title is seeded by the loop on the
+// first genuine prompt, so the common case is populated).
 func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
+	// FAST PATH: a store that implements MetaLister enumerates picker metadata
+	// cheaply (last-line read, no conversation unmarshal).
+	if ml, ok := s.cfg.Store.(port.MetaLister); ok {
+		return listSessionsMeta(ctx, ml)
+	}
 	ps, ok := s.cfg.Store.(port.PrunableStore)
 	if !ok {
 		return nil, nil
@@ -2910,6 +2928,42 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 	}
 	// Most-recently-active first (modified_at descending). Stable on ties so the
 	// store's own ordering is preserved within an equal-mtime batch.
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].ModifiedAtUnix > out[j].ModifiedAtUnix
+	})
+	return out, nil
+}
+
+// listSessionsMeta builds the SessionSummary slice from a MetaLister's cheap
+// metadata projection (no conversation unmarshal). It is the fast-path
+// implementation of ListSessions for stores that implement port.MetaLister.
+func listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]SessionSummary, error) {
+	rows, err := ml.MetaList(ctx)
+	if err != nil {
+		if errors.Is(err, port.ErrPruneUnsupported) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: list sessions: %v", ErrInternal, err)
+	}
+	out := make([]SessionSummary, 0, len(rows))
+	for _, r := range rows {
+		summary := SessionSummary{
+			SessionID:      string(r.ID),
+			ModifiedAtUnix: r.ModifiedAt.Unix(),
+			State:          string(r.State),
+			Turns:          r.Turns,
+			CreatedAtUnix:  r.CreatedAt.Unix(),
+			ModelID:        r.ModelID,
+			Title:          r.Title,
+		}
+		// A zero CreatedAt (a snapshot with no created_at, or a corrupt row that
+		// left CreatedAt at the zero time) maps to 0, NOT the zero time's Unix
+		// value (-62135596800) — matching the Load-fails zeroed-fields behaviour.
+		if r.CreatedAt.IsZero() {
+			summary.CreatedAtUnix = 0
+		}
+		out = append(out, summary)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].ModifiedAtUnix > out[j].ModifiedAtUnix
 	})

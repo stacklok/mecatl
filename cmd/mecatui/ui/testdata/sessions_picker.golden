@@ -1,12 +1,11 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-sessions
-select a stored session to open read-only
+▸ Sessions    Children
 
 ▶ ✓ 5m ago 12t sess-aaa  (gpt-5)
   ▶ 1h ago 3t sess-bbb  (claude-opus)
 
-enter: open read-only  esc: close
+enter: continue  tab: switch  esc: close
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

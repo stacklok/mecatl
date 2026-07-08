@@ -27,6 +27,21 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`port.MetaLister` + `port.SessionMeta`** — a new OPTIONAL cheap-listing seam
+  a `SessionStore` adapter may additionally implement, discovered by type
+  assertion (the same pattern as `PrunableStore`). `MetaList(ctx) ([]SessionMeta, error)`
+  returns every stored session's picker metadata (id/state/turns/model id/title/
+  created_at/last-modified) by reading ONLY the last snapshot line of each and
+  decoding into a small struct that SKIPS the `messages` array — so listing N
+  sessions is O(N × last-line-read) rather than O(N × filesize) for large
+  histories. `Service.ListSessions` prefers `MetaLister` when the store
+  implements it (jsonlstore does, via a tail-read `readLastLine` helper) and
+  falls back to the Load-per-row path otherwise (memstore/redisstore/grpcdriver).
+  `SessionMeta` is a port-owned struct (the server adapter references the shape
+  without importing any concrete store). Classified Added per COMPATIBILITY.md
+  (a new interface + struct are a minor bump; `SessionStore` itself is unchanged).
+  (#245)
+
 - **`session.Session.Title`** — a new `string` field (after `ReasoningEffort`)
   carrying a human-readable session label seeded ONCE from the first genuine
   user prompt, clamped to 120 runes (`maxTitleRunes`). It is set via the new

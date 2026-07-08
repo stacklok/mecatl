@@ -8,6 +8,7 @@
     ifacemethod func (HookRunner).Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)
     ifacemethod func (LLMProvider).Capabilities() ProviderCapabilities
     ifacemethod func (LLMProvider).Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)
+    ifacemethod func (MetaLister).MetaList(ctx context.Context) ([]SessionMeta, error)
     ifacemethod func (PermissionPolicy).Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
     ifacemethod func (PermissionPolicy).Learn(sessionID session.SessionID, c session.ToolCall)
     ifacemethod func (PermissionStore).Record(sessionID session.SessionID, rule governance.Rule)
@@ -66,6 +67,7 @@ type LLMProvider interface{Capabilities() ProviderCapabilities; Stream(ctx conte
 type LLMRequest struct{System prompt.Layered; Messages []session.Message; Tools []tool.ToolSpec; Model string}
 type Lease struct{SessionID session.SessionID; Owner string; Token uint64; Expiry time.Time}
 type Level int
+type MetaLister interface{MetaList(ctx context.Context) ([]SessionMeta, error)}
 type MisfirePolicy int
 type NopDiagnostics struct{}
 type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
@@ -79,6 +81,7 @@ type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Tr
 type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; LastFireSessionID session.SessionID}
 type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); Delete(ctx context.Context, name string) error; Due(ctx context.Context, now time.Time) ([]Schedule, error); List(ctx context.Context) ([]Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); Load(ctx context.Context, name string) (Schedule, error); LoadFire(ctx context.Context, fireID string) (ScheduleFire, error); RecordFire(ctx context.Context, f ScheduleFire) error; Save(ctx context.Context, s Schedule) error; SetEnabled(ctx context.Context, name string, enabled bool) error}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
+type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string}
 type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*session.Session, error); Save(ctx context.Context, s *session.Session) error}
 type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
 type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}

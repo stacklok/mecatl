@@ -1,7 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-sessions
-select a stored session to open read-only
+▸ Sessions    Children
 
 could not list sessions: could not reach session store
 esc: close

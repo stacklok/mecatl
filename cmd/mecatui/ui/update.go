@@ -95,6 +95,23 @@ func (m Model) markDirty() (Model, tea.Cmd) {
 	return m, tea.Batch(m.waitCmd(), m.renderTickCmd())
 }
 
+// markDirtyReplay is the replay-path analogue of markDirty: it records a streamed
+// replay event mutated m.sessions.transcript and drives the coalesced flush. It
+// arms a one-shot renderTickMsg ONLY when none is already pending (tickArmed), and
+// re-arms the REPLAY reader (waitReplayCmd, not waitCmd). onRenderTick's phase gate
+// allows phaseReplay so the flush engages during a replay. The coalescing makes a
+// burst of replay events O(N) not O(N²) (the live delta path's discipline applied
+// to the child-inspection transcript). The StreamClosed/StreamErr terminal arms
+// force-flush via refreshView (boundaries).
+func (m Model) markDirtyReplay() (Model, tea.Cmd) {
+	m.viewDirty = true
+	if m.tickArmed {
+		return m, m.waitReplayCmd()
+	}
+	m.tickArmed = true
+	return m, tea.Batch(m.waitReplayCmd(), m.renderTickCmd())
+}
+
 // Update is the Elm reducer. It is split by message type; all model mutation and
 // all glamour rendering happen here on the single update goroutine (the stream
 // reader never touches the model). After most state changes it calls refreshView
@@ -441,7 +458,11 @@ func (m Model) onRenderTick() (tea.Model, tea.Cmd) {
 	if m.viewDirty {
 		m.refreshView()
 	}
-	if m.viewDirty && m.phase == phaseRunning {
+	// Re-arm the tick while the view is still dirty AND a streaming phase is
+	// active: phaseRunning (the live delta path) OR phaseReplay (the child-
+	// inspection replay path — its per-event arm coalesces via markDirtyReplay,
+	// so it needs the same frame-cadence flush a live turn does).
+	if m.viewDirty && (m.phase == phaseRunning || m.phase == phaseReplay) {
 		m.tickArmed = true
 		return m, m.renderTickCmd()
 	}
@@ -2051,7 +2072,8 @@ func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 	switch msg := sm.msg.(type) {
 	case client.StreamClosedMsg:
 		// Clean replay EOF: the transcript is loaded. Stay in phaseReplay; the
-		// transcript renders fully. No re-arm (the channel closed).
+		// transcript renders fully. No re-arm (the channel closed). Force-flush
+		// the final state (a boundary, like the live path's afterEvent/endRun).
 		m.sessions.replayClosed = true
 		m.sessions.loading = false
 		m.refreshView()
@@ -2059,6 +2081,7 @@ func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 	case client.StreamErrMsg:
 		// A replay error: render the error line IN the transcript (so any partial
 		// projection before the error survives), stay in phaseReplay. No re-arm.
+		// Force-flush the final state (a boundary).
 		m.sessions.replayClosed = true
 		m.sessions.replayErr = msg.Err
 		m.sessions.loading = false
@@ -2069,11 +2092,16 @@ func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 		// A replay event msg: project it into the transcript via the SAME
 		// conversation mutators the live path uses (projection equivalence), count
 		// it, and re-arm the reader. loading clears on the first projected msg.
+		// Coalesce the re-render via markDirty (NOT refreshView per event) so a
+		// burst of replay events is O(N) not O(N²): the per-event arm mirrors the
+		// live delta path's discipline — deltas mark the view dirty, a 16ms
+		// renderTickMsg flushes at most once per frame. onRenderTick's phase gate
+		// also allows phaseReplay so the coalesced flush engages during a replay.
+		// The StreamClosed/StreamErr terminal arms above still force-flush.
 		(&m).applyReplayEvent(msg)
 		m.sessions.receivedMsgs++
 		m.sessions.loading = false
-		m.refreshView()
-		return m, m.waitReplayCmd()
+		return m.markDirtyReplay()
 	}
 }
 
@@ -2249,11 +2277,16 @@ func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
 	return "history compacted — " + plural(n, "turn") + " archived"
 }
 
-// onReplayKey routes keys while a stored-session transcript replay is open
-// (phaseReplay). Esc closes the transcript view (closeSessionsTranscript): stop
-// the replay, clear replay state, resetSession, return to idle with NO live
-// session — read-only inspection ends honestly. Any other key is swallowed (the
-// replay is read-only; continue-interactive is out of scope for Slice 3a).
+// onReplayKey routes keys while a CHILD session's read-only transcript replay is
+// open (phaseReplay — now reached ONLY for child sessions opened from the
+// Children tab; top-level sessions go straight to phaseIdle via
+// continueSessionDirect). Esc closes the transcript view
+// (closeSessionsTranscript): stop the replay, clear replay state, resetSession,
+// return to idle with NO live session — read-only inspection ends honestly.
+// continueSession and the bare `c` key have been REMOVED: top-level sessions no
+// longer pass through phaseReplay (they continue by default), and a child
+// session cannot be continued as a top-level live session (no parent context), so
+// there is no Continue action to offer. Any key other than esc is swallowed.
 func (m Model) onReplayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeSessionsTranscript()

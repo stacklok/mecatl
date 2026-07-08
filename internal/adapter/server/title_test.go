@@ -223,7 +223,13 @@ func TestListSessionsCarriesTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore: %v", err)
 	}
-	s := saveSessionWithPrompt(ctx, t, st, "ls-title", "List my sessions please", false)
+	// The loop seeds the snapshot Title from the first genuine prompt (via
+	// SetTitle); the fast MetaList path returns the snapshot Title ONLY (the
+	// lazy deriveTitle walk needs the full conversation, which MetaList skips).
+	// So seed the Title here to mirror production — this test asserts the Title
+	// CARRIES on the wire, not the lazy fallback (tested separately via
+	// TestDeriveTitle* / TestGetSessionCarriesTitle/lazy).
+	s := saveSessionWithPrompt(ctx, t, st, "ls-title", "List my sessions please", true)
 	setSessionMtime(t, dir, s.ID, time.Unix(1800000000, 0).UTC())
 	svc := titleService(t, st)
 

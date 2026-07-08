@@ -13,14 +13,46 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// sessions.go is the /sessions overlay (issue #245 Phase 3a) — the THIRD
-// *selecting* overlay after /models and /worktrees. It lists the stored-session
-// inventory (the durable SessionStore's picker metadata), lets the user filter by
-// id/model, and on Enter confirms + opens a READ-ONLY replay of the chosen
-// session's durable event log. Unlike /worktrees there is no restart handoff: the
-// replay is a read-only inspection (phaseReplay); continue-interactive is out of
-// scope (Slice 3a). Esc from the transcript view returns to idle with NO live
-// session — read-only inspection ends honestly.
+// sessions.go is the /sessions overlay (issue #245) — the THIRD *selecting*
+// overlay after /models and /worktrees. It lists the stored-session inventory
+// (the durable SessionStore's picker metadata), lets the user filter by
+// id/model, and on Enter confirms + opens the chosen session. Opening a TOP-LEVEL
+// agent session CONTINUES BY DEFAULT: it binds the session id and drops straight
+// to phaseIdle (live/interactive) — the user types immediately, and the server
+// replays the full history to the model on the first prompt (loadAndReopen).
+// The prior transcript is NOT shown in the TUI scrollback (a fresh conversation
+// view binds the existing server session). This eliminates the read-only
+// phaseReplay mode for top-level sessions. CHILD sessions (subagent/team/parallel,
+// opened from the Children tab) stay READ-ONLY: they open the replay stream and
+// enter phaseReplay (a read-only transcript inspection), since continuing a child
+// as a top-level live session is incoherent (no parent context). Esc from a
+// child's transcript view returns to idle with NO live session — read-only
+// inspection ends honestly.
+
+// Child-session id prefixes (the wire-side convention from
+// engine/agent/childregistry.go: SubagentSessionPrefix/TeamSessionPrefix/
+// ParallelSessionPrefix). Mirrored here as plain strings because the ui package
+// must not import engine/agent — the id is an opaque string on the wire and the
+// prefix is a stable documented contract. A top-level session id is a crypto-random
+// hex string with NONE of these prefixes.
+const (
+	subagentIDPrefix = "subagent-"
+	teamIDPrefix     = "team-"
+	parallelIDPrefix = "parallel-"
+)
+
+// sessionsTab selects which slice the /sessions overlay's panel shows. Mirrors the
+// agents_overlay.go tab pattern: ONE surface with two tabs — Sessions (top-level
+// agent sessions only, where Continue is meaningful) and Children (subagent +
+// team-member + parallel-branch sessions, read-only inspection). The default tab is
+// always Sessions (the common case is finding a past agent session); the Children
+// tab is opt-in via `tab`.
+type sessionsTab int
+
+const (
+	tabSessions sessionsTab = iota // top-level agent sessions (no child prefix)
+	tabChildren                    // child sessions (subagent-/team-/parallel-), read-only
+)
 
 // sessionsView is the active /sessions overlay (none = closed). Like /worktrees it
 // has a real cursor and an enter-to-confirm step; the transcript arm
@@ -49,8 +81,9 @@ const (
 // "loaded but empty" — Slice 3b will replace this with a real transcript render.
 type sessionsState struct {
 	view         sessionsView
-	loading      bool  // the ListSessions RPC is in flight
-	err          error // last ListSessions error, rendered distinctly
+	tab          sessionsTab // active panel tab (Sessions | Children); default tabSessions
+	loading      bool        // the ListSessions RPC is in flight
+	err          error       // last ListSessions error, rendered distinctly
 	sessions     []client.SessionListItem
 	filtered     []client.SessionListItem
 	filter       textinput.Model        // the type-to-filter input; focused while the picker is open
@@ -77,6 +110,7 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	}
 	m.ta.Blur() // overlay owns the keyboard while open
 	m.sessions.view = sessionsPanel
+	m.sessions.tab = tabSessions // default tab: top-level agent sessions (the common case)
 	m.sessions.loading = true
 	m.sessions.err = nil
 	m.sessions.cursor = 0
@@ -96,6 +130,7 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 // confirm (no replay is open until the Enter→switchToSession handoff).
 func (m Model) closeSessions() (tea.Model, tea.Cmd) {
 	m.sessions.view = sessionsNone
+	m.sessions.tab = tabSessions
 	m.sessions.filter = textinput.Model{}
 	m.sessions.filtered = nil
 	cmd := m.ta.Focus()
@@ -120,6 +155,13 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.sessions.view == sessionsTranscript {
 		// The phaseReplay arm (onReplayKey) owns the transcript view's keys.
 		return m, nil, false
+	}
+	// `tab` switches the panel tab (Sessions↔Children), mirroring the agents
+	// overlay's switchAgentsTab. Only from the panel (not the transcript view —
+	// onReplayKey owns its keys; tab does nothing there).
+	if key.Matches(msg, m.keys.NextTab) {
+		m = m.switchSessionsTab()
+		return m, nil, true
 	}
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -155,14 +197,40 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m, cmd, true
 }
 
-// syncSessionsFilter recomputes the filtered slice from the filter input and
-// clamps the cursor.
+// syncSessionsFilter recomputes the filtered slice from the active tab + the filter
+// input and clamps the cursor. The tab split is the FIRST filter: the Sessions tab
+// shows only top-level sessions (no child prefix), the Children tab shows only
+// child sessions (subagent-/team-/parallel-). The text filter then narrows within
+// the tab's slice by id/model.
 func (m Model) syncSessionsFilter() Model {
-	m.sessions.filtered = filterSessions(m.sessions.sessions, m.sessions.filter.Value())
+	tabbed := filterSessionsByTab(m.sessions.sessions, m.sessions.tab)
+	m.sessions.filtered = filterSessions(tabbed, m.sessions.filter.Value())
 	if m.sessions.cursor >= len(m.sessions.filtered) {
 		m.sessions.cursor = 0
 	}
 	return m
+}
+
+// filterSessionsByTab returns the slice for the active tab: tabSessions keeps
+// top-level ids (no child prefix), tabChildren keeps child ids (subagent-/team-/
+// parallel-). Pure; an empty input passes through.
+func filterSessionsByTab(sessions []client.SessionListItem, tab sessionsTab) []client.SessionListItem {
+	if tab == tabChildren {
+		out := make([]client.SessionListItem, 0, len(sessions))
+		for _, s := range sessions {
+			if isChildSessionID(s.ID) {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	out := make([]client.SessionListItem, 0, len(sessions))
+	for _, s := range sessions {
+		if !isChildSessionID(s.ID) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // filterSessions returns the sessions whose ID or ModelID contains q
@@ -196,20 +264,22 @@ func (m Model) chooseSession() Model {
 
 // onSessionsConfirmKey routes keys while the confirmation overlay is open. Two
 // choices:
-//   - enter — OPEN READ-ONLY: adopt the chosen session id and open the replay
-//     stream (switchToSession). No live session is created; the transcript is
-//     read-only.
+//   - enter — OPEN: for a top-level session, continue it interactively
+//     (switchToSession → continueSessionDirect → phaseIdle); for a child
+//     session, open the read-only replay transcript (switchToSession →
+//     phaseReplay).
 //   - esc — UNDO: return to the picker panel without opening.
 //
 // Any other key is swallowed.
 func (m Model) onSessionsConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	chosen := m.sessions.confirm
 	switch {
-	case key.Matches(msg, m.keys.Choose): // enter — open read-only
+	case key.Matches(msg, m.keys.Choose): // enter — open (continue top-level / read-only child)
 		if !isSessionOpenable(chosen.State) {
 			m.statusMsg = m.deps.Theme.Style("warning").Render(
 				"session " + sanitizeTerminal(chosen.ID) + " is currently " + chosen.State +
-					" — cannot open read-only while active")
+					" — cannot open while active",
+			)
 			return m, nil, true // confirm overlay stays open so the user can esc back
 		}
 		return m.switchToSession(chosen)
@@ -221,20 +291,43 @@ func (m Model) onSessionsConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 	return m, nil, true
 }
 
-// switchToSession performs the read-only handoff for a stored session (issue #245
-// Phase 3a): it tears down ALL per-session client state bound to the OLD (live)
-// session, resets the conversation transcript, adopts the chosen session id, and
-// opens the replay stream via client.ReplayStreamCmd. The adopted session's model
-// arrives via the replay (or stays zero — read-only inspection does not rebind a
-// live session). The phase moves to phaseReplay (a read-only inspection phase);
-// the spinner shows while the first replay msg is pending. Esc from phaseReplay
-// closes the transcript view (closeSessionsTranscript): stop the replay, clear
-// replay state, resetSession, return to idle with NO live session.
+// switchToSession performs the open handoff for a stored session (issue #245).
+// The path branches on whether the chosen session is a TOP-LEVEL agent session
+// or a CHILD (subagent/team/parallel):
+//
+//   - TOP-LEVEL (no child prefix): CONTINUE BY DEFAULT — adopt the session id
+//     and go STRAIGHT to phaseIdle (live/interactive) WITHOUT opening a replay
+//     stream. The user sees no prior transcript in the scrollback (a fresh
+//     conversation view), but the first prompt they send goes to the server,
+//     which loadAndReopens the session and replays the full history to the
+//     model — so the model has the context. This eliminates the read-only
+//     phaseReplay mode for top-level sessions entirely: the user types
+//     immediately. (This is the old continueSession body, minus the
+//     transcript-carry, since there is no transcript to carry — it's a fresh
+//     start that binds the existing server session.)
+//
+//   - CHILD (subagent-/team-/parallel- prefix): READ-ONLY TRANSCRIPT — open the
+//     replay stream via client.ReplayStreamCmd, project events into
+//     m.sessions.transcript, and enter phaseReplay (read-only inspection). A
+//     child session has no coherent parent context to continue as a live
+//     top-level session, so it stays read-only. Esc from phaseReplay closes the
+//     transcript view (closeSessionsTranscript).
 func (m Model) switchToSession(s client.SessionListItem) (tea.Model, tea.Cmd, bool) {
-	// Cancel any in-flight run FIRST (safe when idle). The live session is torn down
-	// — read-only inspection does not keep it alive.
+	// Cancel any in-flight run FIRST (safe when idle). The live session is torn
+	// down — the adopted session owns the screen next.
 	m = m.endRun("")
 
+	if !isChildSessionID(s.ID) {
+		// Top-level: continue by default. Bind the server session id and drop to
+		// phaseIdle so the user can type immediately. No replay stream — the
+		// server replays history to the model on the first prompt
+		// (loadAndReopen). The conversation view starts fresh (the prior
+		// transcript is NOT shown in the TUI scrollback).
+		return m.continueSessionDirect(s)
+	}
+
+	// Child: read-only transcript via the replay stream. Adopt the id, open the
+	// replay, enter phaseReplay.
 	m = m.resetSession()
 	m.sessionID = s.ID
 	m.effectiveModel = client.ResolvedModel{}
@@ -267,14 +360,48 @@ func (m Model) switchToSession(s client.SessionListItem) (tea.Model, tea.Cmd, bo
 	return m, tea.Batch(m.waitReplayCmd(), m.sp.Tick), true
 }
 
-// closeSessionsTranscript is the esc-teardown path from phaseReplay: it stops the
-// replay stream, clears the replay-derived state, resets the session-derived
-// transcript state, and returns to idle with NO live session (read-only
-// inspection ends honestly — the adopted session id is dropped). It does NOT clear
-// the inventory picker state (sessions/filtered/filter) — those are
-// picker/inventory state like models/worktrees, cleared only by closeSessions when
-// the overlay dismisses. Only the replay-derived fields (replayCh/replayStop/
-// transcript/receivedMsgs) are cleared here.
+// continueSessionDirect is the top-level continue-by-default handoff: it adopts
+// the given session id, drops to phaseIdle with the textarea focused, and sets a
+// "continuing session <id>" status. It does NOT open a replay stream and does
+// NOT carry a transcript (there is none — the conversation view starts fresh).
+// The server replays the full history to the model on the first prompt the user
+// sends (loadAndReopen reopens/recovers the session for the live turn). This is
+// the direct-continue path that eliminates the read-only phaseReplay mode for
+// top-level sessions.
+func (m Model) continueSessionDirect(s client.SessionListItem) (tea.Model, tea.Cmd, bool) {
+	m = m.resetSession() // fresh conversation view (no prior transcript carried)
+	m.sessionID = s.ID
+	m.effectiveModel = client.ResolvedModel{}
+	m.caps = client.Capabilities{}
+	m.restartedThisRun = true // suppress the welcome splash for the rest of the run
+	m.stuck = true            // arm auto-follow so the live tail sticks once a new turn starts
+
+	// Dismiss the picker/confirm overlay state (filter/filtered/confirm).
+	m.sessions.view = sessionsNone
+	m.sessions.filter = textinput.Model{}
+	m.sessions.filtered = nil
+	m.sessions.confirm = client.SessionListItem{}
+
+	m.phase = phaseIdle
+	if s.Title != "" {
+		m.statusMsg = "continuing session " + sanitizeTerminal(s.ID) + " — " + sanitizeTerminal(s.Title) + " — type to add a turn"
+	} else {
+		m.statusMsg = "continuing session " + sanitizeTerminal(s.ID) + " — type to add a turn"
+	}
+	cmd := m.ta.Focus()
+	m.refreshView()
+	return m, cmd, true
+}
+
+// closeSessionsTranscript is the esc-teardown path from phaseReplay (now only
+// reached for CHILD sessions opened from the Children tab): it stops the replay
+// stream, clears the replay-derived state, resets the session-derived transcript
+// state, and returns to idle with NO live session (read-only inspection ends
+// honestly — the adopted session id is dropped). It does NOT clear the inventory
+// picker state (sessions/filtered/filter) — those are picker/inventory state like
+// models/worktrees, cleared only by closeSessions when the overlay dismisses.
+// Only the replay-derived fields (replayCh/replayStop/transcript/receivedMsgs)
+// are cleared here.
 func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 	if m.sessions.replayStop != nil {
 		m.sessions.replayStop()
@@ -354,6 +481,49 @@ func isSessionOpenable(state string) bool {
 	return state != "running" && state != "awaiting"
 }
 
+// isChildSessionID reports whether the session id carries a child-session prefix
+// (subagent-/team-/parallel-). A top-level agent session id is a crypto-random
+// hex string with NONE of these prefixes. Pure: consults only the id string, so it
+// is safe to call on any session id (the wire-side prefix convention is documented
+// in engine/agent/childregistry.go and mirrored here as plain string constants).
+func isChildSessionID(id string) bool {
+	return strings.HasPrefix(id, subagentIDPrefix) ||
+		strings.HasPrefix(id, teamIDPrefix) ||
+		strings.HasPrefix(id, parallelIDPrefix)
+}
+
+// childTypeLabel returns a short human-readable type label for a child session's
+// id, shown in the Children tab so subagents, team members, and parallel branches
+// are distinguishable: "subagent", "team", "parallel". A top-level id returns "".
+func childTypeLabel(id string) string {
+	switch {
+	case strings.HasPrefix(id, subagentIDPrefix):
+		return "subagent"
+	case strings.HasPrefix(id, teamIDPrefix):
+		return "team"
+	case strings.HasPrefix(id, parallelIDPrefix):
+		return "parallel"
+	default:
+		return ""
+	}
+}
+
+// switchSessionsTab cycles the active panel tab (Sessions→Children→Sessions) and
+// clamps the cursor to the now-active tab's filtered slice. Mirrors
+// switchAgentsTab: a clean tab switch, no sub-view carryover. It does NOT close the
+// overlay.
+func (m Model) switchSessionsTab() Model {
+	if m.sessions.tab == tabSessions {
+		m.sessions.tab = tabChildren
+	} else {
+		m.sessions.tab = tabSessions
+	}
+	// Re-derive the filtered slice for the new tab and clamp the cursor (the
+	// previous tab's cursor may be past the new slice's end).
+	m = m.syncSessionsFilter()
+	return m
+}
+
 // stateBadge returns the one-glyph state badge for a stored session's state string
 // (the proto SessionSummary.State). Pure: running→"▶", completed→"✓",
 // cancelled/failed→"✗", awaiting→"⏸", idle/""→"·".
@@ -393,10 +563,10 @@ func relativeTime(unixSec int64) string {
 // read-only transcript view. Mirrors renderWorktreesOverlay's centred-card shape.
 // The transcript arm (3b) renders the drained transcript: the viewport content
 // (populated by refreshView from m.sessions.transcript) framed by a header line
-// and an esc hint, falling back to the loading/error card when there is nothing
-// to render yet. sessionID is the adopted session's id (m.sessionID), shown in the
-// transcript header — distinct from st.confirm.ID (the picker candidate, cleared
-// on the switchToSession handoff).
+// and a "c: continue  esc: back" hint, falling back to the loading/error card
+// when there is nothing to render yet. sessionID is the adopted session's id
+// (m.sessionID), shown in the transcript header — distinct from st.confirm.ID
+// (the picker candidate, cleared on the switchToSession handoff).
 func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabilities, sessionID, vpContent string, width, height int) string {
 	switch st.view {
 	case sessionsConfirm:
@@ -408,11 +578,30 @@ func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabil
 	}
 }
 
-// renderSessionsPanel renders the session list card.
+// sessionsTabBar renders the "Sessions | Children" tab strip: the active tab in
+// the title style with a leading "▸" marker, the inactive ones muted. Mirrors
+// agentsTabBar's glyph+style so stripANSI goldens still show which is active.
+func sessionsTabBar(th theme.Theme, tab sessionsTab) string {
+	active := th.Style("askTitle")
+	muted := th.Style("muted")
+	seg := func(t sessionsTab, label string) string {
+		if tab == t {
+			return active.Render("▸ " + label)
+		}
+		return muted.Render("  " + label)
+	}
+	return seg(tabSessions, "Sessions") + muted.Render("  ") +
+		seg(tabChildren, "Children")
+}
+
+// renderSessionsPanel renders the session list card with a tab bar (Sessions |
+// Children) above the rows. The active tab selects which slice shows: Sessions
+// (top-level agent sessions) or Children (subagent/team/parallel). In the Children
+// tab each row carries a one-glyph type badge (S/T/P) + a short type label so the
+// child kinds are distinguishable.
 func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities, _, _ int) string {
 	var b strings.Builder
-	b.WriteString(th.Style("title").Render("sessions") + "\n")
-	b.WriteString(th.Style("muted").Render("select a stored session to open read-only") + "\n\n")
+	b.WriteString(sessionsTabBar(th, st.tab) + "\n\n")
 	if st.loading {
 		b.WriteString(th.Style("muted").Render("loading…"))
 		return b.String()
@@ -425,10 +614,12 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	if len(st.filtered) == 0 {
 		if st.filter.Value() != "" {
 			b.WriteString(th.Style("muted").Render("no matches — clear filter to see all"))
+		} else if st.tab == tabChildren {
+			b.WriteString(th.Style("muted").Render("no child sessions (subagent/team/parallel) found"))
 		} else {
 			b.WriteString(th.Style("muted").Render("no sessions found"))
 		}
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render("tab: switch  esc: close"))
 		return b.String()
 	}
 	for i, s := range st.filtered {
@@ -447,42 +638,70 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		if s.ModelID != "" {
 			line += "  (" + sanitizeTerminal(s.ModelID) + ")"
 		}
+		// In the Children tab, append a short type label so subagents/team-members/
+		// parallel-branches are distinguishable (the one-glyph badge alone is cryptic).
+		if st.tab == tabChildren {
+			if tl := childTypeLabel(s.ID); tl != "" {
+				line += "  [" + tl + "]"
+			}
+		}
 		if i == st.cursor {
 			line = th.Style("accent").Render(line)
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: open read-only  esc: close"))
+	hint := "enter: continue  tab: switch  esc: close"
+	if st.tab == tabChildren {
+		// Children are read-only inspection only.
+		hint = "enter: open read-only  tab: switch  esc: close"
+	}
+	b.WriteString("\n" + th.Style("muted").Render(hint))
 	return b.String()
 }
 
-// renderSessionsConfirm renders the post-Enter confirmation card.
+// renderSessionsConfirm renders the post-Enter confirmation card. The wording
+// branches on whether the chosen session is a top-level agent session (continue
+// by default — the Enter handoff binds the id and drops to a live interactive
+// session) or a child (read-only transcript inspection).
 func renderSessionsConfirm(th theme.Theme, st sessionsState, _, _ int) string {
 	s := st.confirm
 	var b strings.Builder
-	b.WriteString(th.Style("title").Render("open session") + "\n\n")
-	b.WriteString("open a read-only transcript of:\n")
+	if isChildSessionID(s.ID) {
+		b.WriteString(th.Style("title").Render("open session") + "\n\n")
+		b.WriteString("open a read-only transcript of:\n")
+	} else {
+		b.WriteString(th.Style("title").Render("continue session") + "\n\n")
+		b.WriteString("continue the session:\n")
+	}
 	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(s.ID)) + "\n")
 	if s.Title != "" {
 		b.WriteString(th.Style("muted").Render("  title: "+sanitizeTerminal(s.Title)) + "\n")
 	}
-	b.WriteString(th.Style("muted").Render("  state: "+s.State) + "\n")
+	b.WriteString(th.Style("muted").Render("  state: "+sanitizeTerminal(s.State)) + "\n")
 	if s.ModelID != "" {
 		b.WriteString(th.Style("muted").Render("  model: "+sanitizeTerminal(s.ModelID)) + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: open read-only  esc: back"))
+	if isChildSessionID(s.ID) {
+		b.WriteString("\n" + th.Style("muted").Render("enter: open read-only  esc: back"))
+	} else {
+		b.WriteString("\n" + th.Style("muted").Render("enter: continue  esc: back"))
+	}
 	return b.String()
 }
 
-// renderSessionsTranscript renders the read-only replay view. Slice 3b renders
-// the drained transcript: the viewport content (the block renderers' projection of
+// renderSessionsTranscript renders the read-only replay view (now only reached
+// for CHILD sessions opened from the Children tab). Slice 3b renders the drained
+// transcript: the viewport content (the block renderers' projection of
 // m.sessions.transcript, populated by refreshView) framed by a "session <id> ·
 // read-only transcript" header and an "esc: back" hint. While the replay is still
 // loading (no content, not closed, no error) it renders the loading card; on a
 // replay error it renders the error line; once the stream closes (or content has
 // arrived) it renders the transcript. The transcript is a STATIC viewport
 // (read-only, no auto-follow streaming dynamics — the replay is a bounded batch).
+// The "c: continue" hint has been REMOVED: top-level sessions continue by
+// default (never entering phaseReplay), and children cannot be continued.
 func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpContent string, _, _ int) string {
+	hint := "esc: back"
 	// Loading arm: nothing projected yet AND the stream has not closed → the
 	// loading card. Once the first msg lands (transcript non-empty) OR the stream
 	// closes (replayClosed), render the transcript view.
@@ -490,7 +709,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpCon
 		var b strings.Builder
 		b.WriteString(th.Style("title").Render("session transcript") + "\n\n")
 		b.WriteString(th.Style("muted").Render("loading transcript for " + sanitizeTerminal(sessionID) + "…"))
-		b.WriteString("\n" + th.Style("muted").Render("esc: back"))
+		b.WriteString("\n" + th.Style("muted").Render(hint))
 		return b.String()
 	}
 	// Transcript arm: the header line + the projected transcript blocks (which
@@ -505,7 +724,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpCon
 		var b strings.Builder
 		b.WriteString(th.Style("title").Render("session transcript") + "\n\n")
 		b.WriteString(th.Style("errorText").Render("replay error: " + sanitizeTerminal(st.replayErr.Error())))
-		b.WriteString("\n" + th.Style("muted").Render("esc: back"))
+		b.WriteString("\n" + th.Style("muted").Render(hint))
 		return b.String()
 	}
 	var b strings.Builder
@@ -517,6 +736,6 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpCon
 	} else {
 		b.WriteString(vpContent)
 	}
-	b.WriteString(th.Style("muted").Render("esc: back"))
+	b.WriteString(th.Style("muted").Render(hint))
 	return b.String()
 }

@@ -127,14 +127,18 @@ func TestSessionsPickerNoMatchGolden(t *testing.T) {
 // TestSessionsTranscriptLoadingGolden locks the read-only transcript view's loading
 // arm (phaseReplay, replay open, no StreamClosed yet): "loading transcript for <id>…".
 // Driven through the real switchToSession handoff so the state is production-honest.
+// Uses a CHILD session (only children open the replay stream; a top-level session
+// continues by default and never enters phaseReplay).
 func TestSessionsTranscriptLoadingGolden(t *testing.T) {
 	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
-	m := newSessionsGoldenModel(t, sampleSessions())
+	m := newSessionsGoldenModel(t, []client.SessionListItem{
+		{ID: "subagent-call1", ModifiedAt: nowMinusMinutes(4), State: "completed", Turns: 2, ModelID: "gpt-5"},
+	})
 	m.deps.Replayer = fr
-	mm, _, _ := m.switchToSession(sampleSessions()[0])
+	mm, _, _ := m.switchToSession(client.SessionListItem{ID: "subagent-call1"})
 	m = mm.(Model)
 	if m.phase != phaseReplay {
-		t.Fatalf("phase = %v, want phaseReplay", m.phase)
+		t.Fatalf("phase = %v, want phaseReplay (child)", m.phase)
 	}
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "sessions_transcript_loading.golden", got)
@@ -194,6 +198,10 @@ func TestSessionsTranscriptRenderedGolden(t *testing.T) {
 		mm, _ := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: msg})
 		m = mm.(Model)
 	}
+	// The per-event arm coalesces via markDirtyReplay (NOT a per-event refreshView),
+	// so flush the frame-cadence renderTickMsg to settle the final frame before
+	// capturing View().Content — mirroring how the live coalesce tests flush.
+	m = applyAll(m, renderTickMsg{})
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "sessions_transcript_rendered.golden", got)
 }
