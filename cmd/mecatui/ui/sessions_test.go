@@ -277,12 +277,14 @@ func TestSessionsEscCloses(t *testing.T) {
 	}
 }
 
-// TestSelectSessionOpensReplay asserts the continue-by-default handoff for a
-// TOP-LEVEL session: Enter→confirm→Enter binds the session id, drops to
-// phaseIdle (live/interactive), focuses the textarea, and sets a "continuing"
-// status. NO replay stream is opened (the server replays history to the model on
-// the first prompt). The conversation view starts fresh (no prior transcript).
-func TestSelectSessionOpensReplay(t *testing.T) {
+// TestSelectSessionDirectOpenTopLevel asserts the direct-open (no confirm) +
+// load-history-on-continue handoff for a TOP-LEVEL session: Enter on the picker
+// row opens the session directly — it opens the replay stream (loading the prior
+// conversation into m.sessions.transcript while showing a loading view), and on
+// stream close (StreamClosedMsg) carries the transcript into m.conv and
+// transitions to phaseIdle (live/interactive), focusing the textarea and setting
+// a "continuing" status. The prior conversation is loaded into m.conv.
+func TestSelectSessionDirectOpenTopLevel(t *testing.T) {
 	fl := &fakeSessionLister{sessions: sampleSessions()}
 	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
 	conv := newSessionsConv()
@@ -296,30 +298,42 @@ func TestSelectSessionOpensReplay(t *testing.T) {
 		t.Fatalf("view = %v, want sessionsPanel", m.sessions.view)
 	}
 
-	// Cursor on the first row; Enter → confirm; Enter → continue.
+	// Cursor on the first row; Enter → direct open (no confirm step).
 	m.sessions.cursor = 0
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // chooseSession → sessionsConfirm
-	if m.sessions.view != sessionsConfirm {
-		t.Fatalf("after enter: view = %v, want sessionsConfirm", m.sessions.view)
-	}
-	if m.sessions.confirm.ID != "sess-aaa" {
-		t.Fatalf("confirm candidate = %+v, want sess-aaa", m.sessions.confirm)
-	}
-
-	mm, _, _ = m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // continue
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if m.phase != phaseIdle {
-		t.Fatalf("phase = %v, want phaseIdle (continue-by-default)", m.phase)
+	// The replay stream is opened and the model enters phaseReplay (loading)
+	// with continueOnLoad set (top-level → continue on stream close).
+	if m.phase != phaseReplay {
+		t.Fatalf("after enter: phase = %v, want phaseReplay (loading)", m.phase)
+	}
+	if !m.sessions.continueOnLoad {
+		t.Error("continueOnLoad should be true for a top-level session")
 	}
 	if m.sessionID != "sess-aaa" {
 		t.Fatalf("sessionID = %q, want sess-aaa", m.sessionID)
 	}
-	// NO replay stream should be opened for a top-level session.
-	if m.sessions.replayCh != nil {
-		t.Error("replayCh should be nil (no replay stream for top-level continue)")
+	if m.sessions.replayCh == nil {
+		t.Error("replayCh should be set (replay stream opened to load history)")
 	}
-	if fr.calls != 0 {
-		t.Fatalf("StreamSessionEvents calls = %d, want 0 (no replay for top-level)", fr.calls)
+	if fr.calls != 1 || fr.lastID != "sess-aaa" {
+		t.Fatalf("replayer calls=%d lastID=%q, want 1/sess-aaa", fr.calls, fr.lastID)
+	}
+
+	// Stream closes (empty event log) → carry transcript (empty) → phaseIdle.
+	mm, _ = m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("after StreamClosed: phase = %v, want phaseIdle (continue-by-default)", m.phase)
+	}
+	if m.sessionID != "sess-aaa" {
+		t.Fatalf("sessionID = %q, want sess-aaa (kept)", m.sessionID)
+	}
+	if m.sessions.replayCh != nil {
+		t.Error("replayCh should be nil after the stream closed")
+	}
+	if m.sessions.continueOnLoad {
+		t.Error("continueOnLoad should be cleared after the handoff")
 	}
 	if m.sessions.view != sessionsNone {
 		t.Fatalf("view = %v, want sessionsNone (overlay dismissed on continue)", m.sessions.view)
@@ -327,9 +341,143 @@ func TestSelectSessionOpensReplay(t *testing.T) {
 	if !m.ta.Focused() {
 		t.Error("textarea should be focused after continue")
 	}
+	if !m.stuck {
+		t.Error("stuck should be true (auto-follow armed)")
+	}
+	if !m.restartedThisRun {
+		t.Error("restartedThisRun should be true (suppresses the welcome splash)")
+	}
 	got := stripANSIstr(m.statusMsg)
 	if !strings.Contains(got, "continuing") || !strings.Contains(got, "sess-aaa") {
 		t.Errorf("statusMsg = %q, want 'continuing' and 'sess-aaa'", got)
+	}
+}
+
+// TestSelectSessionDirectOpenTopLevelLoadsHistory asserts that when a top-level
+// session WITH replay events is continued, the prior conversation is projected
+// into m.conv on stream close (history loaded) — the user sees the prior
+// transcript and can type immediately.
+func TestSelectSessionDirectOpenTopLevelLoadsHistory(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseReplay {
+		t.Fatalf("after enter: phase = %v, want phaseReplay (loading)", m.phase)
+	}
+
+	// Drive a scripted replay (user prompt + assistant text + tool call/result).
+	for _, msg := range replayScriptMsgs() {
+		mm, _ := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: msg})
+		m = mm.(Model)
+	}
+	// The transcript should now hold the projected blocks.
+	if m.sessions.transcript.isEmpty() {
+		t.Fatal("transcript should be non-empty after projecting replay events")
+	}
+
+	// Stream closes → carry transcript into m.conv → phaseIdle.
+	mm, _ = m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("after StreamClosed: phase = %v, want phaseIdle", m.phase)
+	}
+	if m.conv.isEmpty() {
+		t.Fatal("m.conv should be non-empty (history carried from the transcript)")
+	}
+	// The carried blocks should match the transcript's projection.
+	blocks := m.conv.blocks
+	if len(blocks) < 5 {
+		t.Fatalf("m.conv blocks = %d, want ≥5 (history loaded)", len(blocks))
+	}
+	if blocks[0].kind != blockUser || blocks[0].raw != "read the greeting file" {
+		t.Errorf("block 0 = %+v, want the user prompt", blocks[0])
+	}
+	// The replay transcript should be cleared (it now lives in m.conv).
+	if !m.sessions.transcript.isEmpty() {
+		t.Errorf("sessions.transcript should be cleared after the carry, got %d blocks", len(m.sessions.transcript.blocks))
+	}
+	if !m.ta.Focused() {
+		t.Error("textarea should be focused after continue")
+	}
+}
+
+// TestSelectSessionDirectOpenTopLevelEmptyLogStillContinues asserts that a
+// top-level session with an EMPTY event log still continues to phaseIdle (empty
+// conv, the user can type) — the server holds the history regardless.
+func TestSelectSessionDirectOpenTopLevelEmptyLogStillContinues(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseReplay {
+		t.Fatalf("after enter: phase = %v, want phaseReplay (loading)", m.phase)
+	}
+
+	// Empty event log → clean EOF → phaseIdle with empty conv.
+	mm, _ = m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("after StreamClosed (empty log): phase = %v, want phaseIdle", m.phase)
+	}
+	if !m.conv.isEmpty() {
+		t.Errorf("m.conv should be empty (no prior history), got %d blocks", len(m.conv.blocks))
+	}
+	if !m.ta.Focused() {
+		t.Error("textarea should be focused (user can type)")
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "no prior history") {
+		t.Errorf("statusMsg = %q, want 'no prior history'", got)
+	}
+}
+
+// TestSelectSessionDirectOpenTopLevelReplayErrStillContinues asserts that on a
+// replay error, a top-level continue still goes to phaseIdle with whatever
+// partial transcript loaded (or empty), and the error surfaces in the status —
+// the user can still type (the server holds the history regardless).
+func TestSelectSessionDirectOpenTopLevelReplayErrStillContinues(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseReplay {
+		t.Fatalf("after enter: phase = %v, want phaseReplay (loading)", m.phase)
+	}
+
+	boom := errors.New("rpc gone")
+	mm, _ = m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamErrMsg{Err: boom}})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("after StreamErrMsg: phase = %v, want phaseIdle (continue anyway)", m.phase)
+	}
+	if !m.ta.Focused() {
+		t.Error("textarea should be focused (user can type despite the replay error)")
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "replay error") || !strings.Contains(got, "sess-aaa") {
+		t.Errorf("statusMsg = %q, want 'replay error' and 'sess-aaa'", got)
 	}
 }
 
@@ -702,9 +850,9 @@ func TestReplayApprovalVerdictNotices(t *testing.T) {
 }
 
 // TestSwitchToSessionBlocksRunning asserts the state gate blocks opening a
-// session whose State is "running": Enter→confirm→Enter does NOT switch to
-// phaseReplay, sets a statusMsg naming the state and "cannot open", and leaves
-// the confirm overlay up so the user can esc back to the picker.
+// session whose State is "running": Enter on the picker row does NOT open the
+// replay stream, sets a statusMsg naming the state and "cannot open", and
+// leaves the picker open so the user can pick another.
 func TestSwitchToSessionBlocksRunning(t *testing.T) {
 	fl := &fakeSessionLister{sessions: []client.SessionListItem{
 		{ID: "sess-run", ModifiedAt: nowMinusMinutes(1), State: "running", Turns: 2, ModelID: "gpt-5"},
@@ -717,19 +865,14 @@ func TestSwitchToSessionBlocksRunning(t *testing.T) {
 	m = mm.(Model)
 	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
 	m.sessions.cursor = 0
-	// Enter → confirm
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.sessions.view != sessionsConfirm {
-		t.Fatalf("after enter: view = %v, want sessionsConfirm", m.sessions.view)
-	}
-	// Enter → open (blocked by the state gate)
-	mm, _, _ = m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Enter → blocked by the state gate (picker stays open).
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if m.phase != phaseIdle {
 		t.Fatalf("phase = %v, want phaseIdle (did not switch)", m.phase)
 	}
-	if m.sessions.view != sessionsConfirm {
-		t.Fatalf("view = %v, want sessionsConfirm (confirm overlay still up)", m.sessions.view)
+	if m.sessions.view != sessionsPanel {
+		t.Fatalf("view = %v, want sessionsPanel (picker still up)", m.sessions.view)
 	}
 	if fr.calls != 0 {
 		t.Errorf("replayer should NOT be called, got %d calls", fr.calls)
@@ -754,14 +897,13 @@ func TestSwitchToSessionBlocksAwaiting(t *testing.T) {
 	m = mm.(Model)
 	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
 	m.sessions.cursor = 0
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})                   // → confirm
-	mm, _, _ = m.onSessionsConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // → open (blocked)
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // → open (blocked)
 	m = mm.(Model)
 	if m.phase != phaseIdle {
 		t.Fatalf("phase = %v, want phaseIdle (did not switch)", m.phase)
 	}
-	if m.sessions.view != sessionsConfirm {
-		t.Fatalf("view = %v, want sessionsConfirm (confirm overlay still up)", m.sessions.view)
+	if m.sessions.view != sessionsPanel {
+		t.Fatalf("view = %v, want sessionsPanel (picker still up)", m.sessions.view)
 	}
 	if fr.calls != 0 {
 		t.Errorf("replayer should NOT be called, got %d calls", fr.calls)
@@ -773,11 +915,11 @@ func TestSwitchToSessionBlocksAwaiting(t *testing.T) {
 }
 
 // TestContinueByDefaultTopLevel asserts the continue-by-default handoff for a
-// top-level session: switchToSession binds the session id, drops to phaseIdle
-// (live/interactive), focuses the textarea, arms auto-follow, dismisses the
-// overlay, and sets a "continuing session <id>" status. NO replay stream is
-// opened, and the conversation view starts fresh (no prior transcript carried —
-// the server replays history to the model on the first prompt).
+// top-level session: switchToSession opens the replay stream (loading the prior
+// conversation), binds the session id, sets continueOnLoad, arms auto-follow,
+// and enters phaseReplay (loading) with a "continuing" status. The terminal
+// handoff (on stream close) to phaseIdle is covered by
+// TestSelectSessionDirectOpenTopLevel*; this test pins the LOADING state.
 func TestContinueByDefaultTopLevel(t *testing.T) {
 	fl := &fakeSessionLister{sessions: sampleSessions()}
 	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
@@ -788,30 +930,24 @@ func TestContinueByDefaultTopLevel(t *testing.T) {
 	mm, _, _ := m.switchToSession(top)
 	m = mm.(Model)
 
-	if m.phase != phaseIdle {
-		t.Fatalf("phase = %v, want phaseIdle (continue-by-default)", m.phase)
+	// Loading state: phaseReplay with continueOnLoad set.
+	if m.phase != phaseReplay {
+		t.Fatalf("phase = %v, want phaseReplay (loading)", m.phase)
 	}
 	if m.sessionID != top.ID {
 		t.Errorf("sessionID = %q, want %q (kept)", m.sessionID, top.ID)
 	}
-	if m.sessions.replayCh != nil {
-		t.Errorf("replayCh should be nil (no replay stream for top-level continue), got %v", m.sessions.replayCh)
+	if !m.sessions.continueOnLoad {
+		t.Error("continueOnLoad should be true (top-level continue on stream close)")
 	}
-	if m.sessions.replayStop != nil {
-		t.Error("replayStop should be nil (no replay stream)")
+	if m.sessions.replayCh == nil {
+		t.Error("replayCh should be set (replay stream opened to load history)")
 	}
-	if !m.conv.isEmpty() {
-		t.Errorf("m.conv should be empty (no transcript carried), got %d blocks", len(m.conv.blocks))
+	if m.sessions.replayStop == nil {
+		t.Error("replayStop should be set (replay stream opened)")
 	}
-	if m.sessions.view != sessionsNone {
-		t.Fatalf("sessions.view = %v, want sessionsNone (overlay dismissed)", m.sessions.view)
-	}
-	got := stripANSIstr(m.statusMsg)
-	if !strings.Contains(got, "continuing") || !strings.Contains(got, top.ID) {
-		t.Errorf("statusMsg = %q, want 'continuing' and %q", got, top.ID)
-	}
-	if !m.ta.Focused() {
-		t.Error("textarea should be focused after continue-by-default")
+	if m.sessions.view != sessionsTranscript {
+		t.Fatalf("sessions.view = %v, want sessionsTranscript (loading view)", m.sessions.view)
 	}
 	if !m.stuck {
 		t.Error("stuck should be true (auto-follow armed for the live tail)")
@@ -819,8 +955,12 @@ func TestContinueByDefaultTopLevel(t *testing.T) {
 	if m.restartedThisRun != true {
 		t.Error("restartedThisRun should be true (suppresses the welcome splash)")
 	}
-	if fr.calls != 0 {
-		t.Errorf("replayer should NOT be called for top-level, got %d calls", fr.calls)
+	if fr.calls != 1 || fr.lastID != top.ID {
+		t.Fatalf("replayer calls=%d lastID=%q, want 1/%q", fr.calls, fr.lastID, top.ID)
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "continuing") || !strings.Contains(got, top.ID) {
+		t.Errorf("statusMsg = %q, want 'continuing' and %q", got, top.ID)
 	}
 }
 

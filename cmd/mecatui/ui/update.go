@@ -2071,21 +2071,39 @@ func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := sm.msg.(type) {
 	case client.StreamClosedMsg:
-		// Clean replay EOF: the transcript is loaded. Stay in phaseReplay; the
-		// transcript renders fully. No re-arm (the channel closed). Force-flush
-		// the final state (a boundary, like the live path's afterEvent/endRun).
+		// Clean replay EOF: the transcript is loaded. No re-arm (the channel
+		// closed). Force-flush the final state (a boundary, like the live path's
+		// afterEvent/endRun).
 		m.sessions.replayClosed = true
 		m.sessions.loading = false
+		if m.sessions.continueOnLoad {
+			// TOP-LEVEL continue: carry the projected transcript into m.conv and
+			// transition to phaseIdle (live/interactive). The user sees the prior
+			// conversation and can type immediately. An empty transcript (a clean
+			// EOF over zero events) still continues — the conversation view is
+			// empty and the user can type.
+			return m.continueLoadedSession()
+		}
+		// CHILD read-only: stay in phaseReplay; the transcript renders fully.
 		m.refreshView()
 		return m, nil
 	case client.StreamErrMsg:
-		// A replay error: render the error line IN the transcript (so any partial
-		// projection before the error survives), stay in phaseReplay. No re-arm.
-		// Force-flush the final state (a boundary).
+		// A replay error. No re-arm. Force-flush the final state (a boundary).
 		m.sessions.replayClosed = true
 		m.sessions.replayErr = msg.Err
 		m.sessions.loading = false
+		// Render the error line IN the transcript so any partial projection
+		// before the error survives (the read-only child arm shows it; the
+		// top-level arm carries the partial transcript and shows the error in
+		// the status).
 		m.sessions.transcript.addError("replay error: " + msg.Err.Error())
+		if m.sessions.continueOnLoad {
+			// TOP-LEVEL continue on error: still go to phaseIdle with whatever
+			// partial transcript loaded (or empty). The server holds the history
+			// regardless, so the user can type. The error surfaces in the status.
+			return m.continueLoadedSession()
+		}
+		// CHILD read-only: stay in phaseReplay and render the error line.
 		m.refreshView()
 		return m, nil
 	default:
@@ -2103,6 +2121,58 @@ func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
 		m.sessions.loading = false
 		return m.markDirtyReplay()
 	}
+}
+
+// continueLoadedSession is the TOP-LEVEL terminal handoff: called from
+// updateReplayMsg's StreamClosedMsg / StreamErrMsg arms when continueOnLoad is
+// set (a top-level session opened from the Sessions tab). It carries the
+// projected replay transcript (m.sessions.transcript) into the live conversation
+// (m.conv), clears the replay-derived state, transitions to phaseIdle
+// (live/interactive), focuses the textarea, and sets a "continuing session <id>"
+// status. The renderer's per-block caches were reset on the switchToSession
+// handoff (resetSession), so the transcript's blocks (which become m.conv's
+// blocks at the same indices) populate the caches fresh — no aliasing. If a
+// replay error occurred (m.sessions.replayErr set), the partial transcript is
+// carried and the error surfaces in the status; the user can still type (the
+// server holds the history regardless).
+func (m Model) continueLoadedSession() (tea.Model, tea.Cmd) {
+	id := m.sessionID
+	hadErr := m.sessions.replayErr != nil
+	// Carry the projected transcript into the live conversation. resetSession
+	// (called at switchToSession) already zeroed m.conv and reset the block
+	// caches, so assigning the transcript's blocks here is safe: the transcript's
+	// blocks at indices 0..n become m.conv's blocks at indices 0..n, and the
+	// caches (index-keyed) populate fresh on the next render. Move the whole
+	// conversation value so the subagentFleet/parallelGroups maps travel too.
+	m.conv = m.sessions.transcript
+	// Clear the replay-derived state (the transcript now lives in m.conv).
+	m.sessions.replayCh = nil
+	m.sessions.replayStop = nil
+	m.sessions.replayGen++ // invalidate any stale reader
+	m.sessions.transcript = conversation{}
+	m.sessions.receivedMsgs = 0
+	m.sessions.replayClosed = false
+	m.sessions.replayErr = nil
+	m.sessions.continueOnLoad = false
+	m.sessions.view = sessionsNone
+	// The picker/confirm overlay state (filter/filtered/confirm) was already
+	// cleared in switchToSession before entering phaseReplay; nothing to clear
+	// here.
+	// Transition to live/interactive.
+	m.phase = phaseIdle
+	m.stuck = true // arm auto-follow so the live tail sticks once a new turn starts
+	if hadErr {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(
+			"continuing session " + sanitizeTerminal(id) + " — history partially loaded (replay error) — type to add a turn",
+		)
+	} else if m.conv.isEmpty() {
+		m.statusMsg = "continuing session " + sanitizeTerminal(id) + " — no prior history — type to add a turn"
+	} else {
+		m.statusMsg = "continuing session " + sanitizeTerminal(id) + " — type to add a turn"
+	}
+	cmd := m.ta.Focus()
+	m.refreshView()
+	return m, cmd
 }
 
 // applyReplayEvent projects ONE replayed stream event into m.sessions.transcript
@@ -2277,16 +2347,17 @@ func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
 	return "history compacted — " + plural(n, "turn") + " archived"
 }
 
-// onReplayKey routes keys while a CHILD session's read-only transcript replay is
-// open (phaseReplay — now reached ONLY for child sessions opened from the
-// Children tab; top-level sessions go straight to phaseIdle via
-// continueSessionDirect). Esc closes the transcript view
+// onReplayKey routes keys while a read-only transcript replay is open
+// (phaseReplay — reached for CHILD sessions opened from the Children tab, and
+// transiently for TOP-LEVEL sessions while their history loads before the
+// phaseIdle handoff). Esc closes the transcript view
 // (closeSessionsTranscript): stop the replay, clear replay state, resetSession,
 // return to idle with NO live session — read-only inspection ends honestly.
-// continueSession and the bare `c` key have been REMOVED: top-level sessions no
-// longer pass through phaseReplay (they continue by default), and a child
-// session cannot be continued as a top-level live session (no parent context), so
-// there is no Continue action to offer. Any key other than esc is swallowed.
+// The bare `c` key / continueSession have been REMOVED: top-level sessions
+// continue by default (loading history then transitioning to phaseIdle), and a
+// child session cannot be continued as a top-level live session (no parent
+// context), so there is no Continue action to offer. Any key other than esc is
+// swallowed.
 func (m Model) onReplayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeSessionsTranscript()

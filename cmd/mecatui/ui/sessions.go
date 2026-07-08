@@ -16,17 +16,17 @@ import (
 // sessions.go is the /sessions overlay (issue #245) — the THIRD *selecting*
 // overlay after /models and /worktrees. It lists the stored-session inventory
 // (the durable SessionStore's picker metadata), lets the user filter by
-// id/model, and on Enter confirms + opens the chosen session. Opening a TOP-LEVEL
-// agent session CONTINUES BY DEFAULT: it binds the session id and drops straight
-// to phaseIdle (live/interactive) — the user types immediately, and the server
-// replays the full history to the model on the first prompt (loadAndReopen).
-// The prior transcript is NOT shown in the TUI scrollback (a fresh conversation
-// view binds the existing server session). This eliminates the read-only
-// phaseReplay mode for top-level sessions. CHILD sessions (subagent/team/parallel,
+// id/model, and on Enter opens the chosen session DIRECTLY (no confirm step).
+// Opening a TOP-LEVEL agent session CONTINUES BY DEFAULT: it opens the replay
+// stream, projects the durable event log into the view while loading, and on
+// stream close carries the transcript into m.conv and transitions to phaseIdle
+// (live/interactive) — the user sees the prior conversation and can type
+// immediately. An empty/erroring event log still continues to phaseIdle (the
+// server holds the history regardless). CHILD sessions (subagent/team/parallel,
 // opened from the Children tab) stay READ-ONLY: they open the replay stream and
-// enter phaseReplay (a read-only transcript inspection), since continuing a child
-// as a top-level live session is incoherent (no parent context). Esc from a
-// child's transcript view returns to idle with NO live session — read-only
+// enter phaseReplay (a read-only transcript inspection), since continuing a
+// child as a top-level live session is incoherent (no parent context). Esc from
+// a child's transcript view returns to idle with NO live session — read-only
 // inspection ends honestly.
 
 // Child-session id prefixes (the wire-side convention from
@@ -54,16 +54,16 @@ const (
 	tabChildren                    // child sessions (subagent-/team-/parallel-), read-only
 )
 
-// sessionsView is the active /sessions overlay (none = closed). Like /worktrees it
-// has a real cursor and an enter-to-confirm step; the transcript arm
-// (sessionsTranscript) is the read-only replay view. Slice 3a renders a loading
-// card there; Slice 3b renders the drained transcript.
+// sessionsView is the active /sessions overlay (none = closed). The transcript
+// arm (sessionsTranscript) is the replay view — read-only for child sessions,
+// and a transient loading view for top-level (transitions to phaseIdle on
+// stream close). Slice 3a renders a loading card there; Slice 3b renders the
+// drained transcript.
 type sessionsView int
 
 const (
 	sessionsNone       sessionsView = iota // overlay closed
 	sessionsPanel                          // the flat, type-to-filter picker
-	sessionsConfirm                        // the post-Enter confirmation overlay (open read-only / undo)
 	sessionsTranscript                     // the read-only replay view (3a: loading card; 3b: transcript)
 )
 
@@ -88,7 +88,7 @@ type sessionsState struct {
 	filtered     []client.SessionListItem
 	filter       textinput.Model        // the type-to-filter input; focused while the picker is open
 	cursor       int                    // index into FILTERED (clamped to its bounds)
-	confirm      client.SessionListItem // the candidate session when view==sessionsConfirm
+	confirm      client.SessionListItem // retained for test setup (setupReplayTranscript); the confirm overlay was removed
 	replayCh     chan tea.Msg
 	replayStop   func()
 	replayGen    uint64
@@ -96,6 +96,14 @@ type sessionsState struct {
 	receivedMsgs int  // count of drained replay msgs (3a: loading-card state)
 	replayClosed bool // the replay stream closed (clean EOF or error)
 	replayErr    error
+	// continueOnLoad is set by the TOP-LEVEL open path (switchToSession for a
+	// non-child session): the replay stream is opened to load the prior
+	// conversation into m.sessions.transcript, and on stream close the terminal
+	// handoff (updateReplayMsg) carries the transcript into m.conv and
+	// transitions to phaseIdle (live/interactive) instead of staying in the
+	// read-only phaseReplay. A child session leaves this false (read-only
+	// inspection). It is cleared by closeSessionsTranscript on teardown.
+	continueOnLoad bool
 }
 
 // openSessions opens the picker and fires the ListSessions RPC. Only callable
@@ -123,11 +131,11 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(client.ListSessionsCmd(m.deps.Ctx, m.deps.Sessions), textinput.Blink)
 }
 
-// closeSessions dismisses the picker/confirm overlay and returns focus to the
+// closeSessions dismisses the picker overlay and returns focus to the
 // prompt input. It does NOT touch the replay-stream state (replayCh/replayStop/
 // transcript) — those are cleared by closeSessionsTranscript on the esc-teardown
-// path from phaseReplay, and are otherwise inert when the overlay is at panel/
-// confirm (no replay is open until the Enter→switchToSession handoff).
+// path from phaseReplay, and are otherwise inert when the overlay is at panel
+// (no replay is open until the Enter→switchToSession handoff).
 func (m Model) closeSessions() (tea.Model, tea.Cmd) {
 	m.sessions.view = sessionsNone
 	m.sessions.tab = tabSessions
@@ -148,9 +156,6 @@ func (m Model) closeSessions() (tea.Model, tea.Cmd) {
 func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.sessions.view == sessionsNone {
 		return m, nil, false
-	}
-	if m.sessions.view == sessionsConfirm {
-		return m.onSessionsConfirmKey(msg)
 	}
 	if m.sessions.view == sessionsTranscript {
 		// The phaseReplay arm (onReplayKey) owns the transcript view's keys.
@@ -189,7 +194,7 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.sessions.cursor = clampModelsCursor(len(m.sessions.filtered)-1, len(m.sessions.filtered))
 		return m, nil, true
 	case key.Matches(msg, m.keys.Choose):
-		return m.chooseSession(), nil, true
+		return m.chooseSession()
 	}
 	var cmd tea.Cmd
 	m.sessions.filter, cmd = m.sessions.filter.Update(msg)
@@ -250,89 +255,66 @@ func filterSessions(sessions []client.SessionListItem, q string) []client.Sessio
 	return out
 }
 
-// chooseSession handles Enter on the cursor row: opens the confirmation overlay
-// (sessionsConfirm) offering open-read-only / undo. A cursor past the list end (or
-// an empty list) is a no-op.
-func (m Model) chooseSession() Model {
+// chooseSession handles Enter on the cursor row: opens the chosen session
+// DIRECTLY (no confirm overlay). For a top-level session this continues it
+// interactively (switchToSession → replay-load → phaseIdle on stream close);
+// for a child session it opens the read-only replay transcript. A cursor past
+// the list end (or an empty list) is a no-op. A running/awaiting session is
+// blocked at the UI level (isSessionOpenable): a warning status is shown and
+// the picker stays open so the user can pick another.
+func (m Model) chooseSession() (tea.Model, tea.Cmd, bool) {
 	if m.sessions.cursor < 0 || m.sessions.cursor >= len(m.sessions.filtered) {
-		return m
+		return m, nil, false
 	}
-	m.sessions.confirm = m.sessions.filtered[m.sessions.cursor]
-	m.sessions.view = sessionsConfirm
-	return m
-}
-
-// onSessionsConfirmKey routes keys while the confirmation overlay is open. Two
-// choices:
-//   - enter — OPEN: for a top-level session, continue it interactively
-//     (switchToSession → continueSessionDirect → phaseIdle); for a child
-//     session, open the read-only replay transcript (switchToSession →
-//     phaseReplay).
-//   - esc — UNDO: return to the picker panel without opening.
-//
-// Any other key is swallowed.
-func (m Model) onSessionsConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	chosen := m.sessions.confirm
-	switch {
-	case key.Matches(msg, m.keys.Choose): // enter — open (continue top-level / read-only child)
-		if !isSessionOpenable(chosen.State) {
-			m.statusMsg = m.deps.Theme.Style("warning").Render(
-				"session " + sanitizeTerminal(chosen.ID) + " is currently " + chosen.State +
-					" — cannot open while active",
-			)
-			return m, nil, true // confirm overlay stays open so the user can esc back
-		}
-		return m.switchToSession(chosen)
-	case key.Matches(msg, m.keys.Close): // esc — undo
-		m.sessions.view = sessionsPanel
-		m.sessions.confirm = client.SessionListItem{}
-		return m, nil, true
+	chosen := m.sessions.filtered[m.sessions.cursor]
+	if !isSessionOpenable(chosen.State) {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(
+			"session " + sanitizeTerminal(chosen.ID) + " is currently " + chosen.State +
+				" — cannot open while active",
+		)
+		return m, nil, true // picker stays open so the user can pick another
 	}
-	return m, nil, true
+	return m.switchToSession(chosen)
 }
 
 // switchToSession performs the open handoff for a stored session (issue #245).
 // The path branches on whether the chosen session is a TOP-LEVEL agent session
-// or a CHILD (subagent/team/parallel):
+// or a CHILD (subagent/team/parallel), but BOTH now open the replay stream to
+// load the prior conversation into m.sessions.transcript while a loading/
+// transcript view shows:
 //
-//   - TOP-LEVEL (no child prefix): CONTINUE BY DEFAULT — adopt the session id
-//     and go STRAIGHT to phaseIdle (live/interactive) WITHOUT opening a replay
-//     stream. The user sees no prior transcript in the scrollback (a fresh
-//     conversation view), but the first prompt they send goes to the server,
-//     which loadAndReopens the session and replays the full history to the
-//     model — so the model has the context. This eliminates the read-only
-//     phaseReplay mode for top-level sessions entirely: the user types
-//     immediately. (This is the old continueSession body, minus the
-//     transcript-carry, since there is no transcript to carry — it's a fresh
-//     start that binds the existing server session.)
+//   - TOP-LEVEL (no child prefix): CONTINUE BY DEFAULT — open the replay stream,
+//     set continueOnLoad=true, and enter phaseReplay (read-only while loading).
+//     On stream close (StreamClosedMsg) the terminal handoff in updateReplayMsg
+//     carries the projected transcript into m.conv and transitions to phaseIdle
+//     (live/interactive) — the user sees the prior conversation and can type
+//     immediately. On a replay error it still continues to phaseIdle with
+//     whatever partial transcript loaded (the server holds the history
+//     regardless). An empty event log still continues to phaseIdle (empty conv).
 //
 //   - CHILD (subagent-/team-/parallel- prefix): READ-ONLY TRANSCRIPT — open the
-//     replay stream via client.ReplayStreamCmd, project events into
-//     m.sessions.transcript, and enter phaseReplay (read-only inspection). A
-//     child session has no coherent parent context to continue as a live
-//     top-level session, so it stays read-only. Esc from phaseReplay closes the
-//     transcript view (closeSessionsTranscript).
+//     replay stream with continueOnLoad=false and enter phaseReplay. A child
+//     session has no coherent parent context to continue as a live top-level
+//     session, so it stays read-only on stream close. Esc from phaseReplay
+//     closes the transcript view (closeSessionsTranscript).
 func (m Model) switchToSession(s client.SessionListItem) (tea.Model, tea.Cmd, bool) {
 	// Cancel any in-flight run FIRST (safe when idle). The live session is torn
 	// down — the adopted session owns the screen next.
 	m = m.endRun("")
 
-	if !isChildSessionID(s.ID) {
-		// Top-level: continue by default. Bind the server session id and drop to
-		// phaseIdle so the user can type immediately. No replay stream — the
-		// server replays history to the model on the first prompt
-		// (loadAndReopen). The conversation view starts fresh (the prior
-		// transcript is NOT shown in the TUI scrollback).
-		return m.continueSessionDirect(s)
-	}
-
-	// Child: read-only transcript via the replay stream. Adopt the id, open the
-	// replay, enter phaseReplay.
+	// resetSession clears m.conv (the live conversation) so the transcript-carry
+	// on stream close populates it fresh. It also resets the renderer's per-block
+	// caches so the transcript's blocks (which will become m.conv's blocks) never
+	// alias a stale cache entry.
 	m = m.resetSession()
 	m.sessionID = s.ID
 	m.effectiveModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartedThisRun = true // suppress the welcome splash for the rest of the run
+	m.stuck = true            // arm auto-follow so the live tail sticks once a new turn starts
+
+	topLevel := !isChildSessionID(s.ID)
+	m.sessions.continueOnLoad = topLevel
 
 	// Open the replay stream over the SessionReplayer interface (NOT the concrete
 	// *Client — the ui holds the interface). Bump replayGen so any stale reader from
@@ -347,50 +329,28 @@ func (m Model) switchToSession(s client.SessionListItem) (tea.Model, tea.Cmd, bo
 	m.sessions.transcript = conversation{}
 	m.sessions.view = sessionsTranscript
 	m.phase = phaseReplay
-	m.statusMsg = ""
+	if topLevel {
+		// A top-level continue sets the "continuing" status up front; the
+		// terminal handoff (StreamClosedMsg arm) carries the transcript into
+		// m.conv and transitions to phaseIdle with the textarea focused.
+		if s.Title != "" {
+			m.statusMsg = "continuing session " + sanitizeTerminal(s.ID) + " — " + sanitizeTerminal(s.Title) + " — loading history…"
+		} else {
+			m.statusMsg = "continuing session " + sanitizeTerminal(s.ID) + " — loading history…"
+		}
+	} else {
+		m.statusMsg = ""
+	}
 
 	// Dismiss the picker/confirm overlay state (filter/filtered/confirm) WITHOUT
 	// refocusing the textarea — closeSessions refocuses, but phaseReplay is a
 	// read-only view that does not take input. The view is already
-	// sessionsTranscript (set above), so the panel/confirm arms no longer render.
+	// sessionsTranscript (set above), so the panel arms no longer render.
 	m.sessions.filter = textinput.Model{}
 	m.sessions.filtered = nil
 	m.sessions.confirm = client.SessionListItem{}
 	m.refreshView()
 	return m, tea.Batch(m.waitReplayCmd(), m.sp.Tick), true
-}
-
-// continueSessionDirect is the top-level continue-by-default handoff: it adopts
-// the given session id, drops to phaseIdle with the textarea focused, and sets a
-// "continuing session <id>" status. It does NOT open a replay stream and does
-// NOT carry a transcript (there is none — the conversation view starts fresh).
-// The server replays the full history to the model on the first prompt the user
-// sends (loadAndReopen reopens/recovers the session for the live turn). This is
-// the direct-continue path that eliminates the read-only phaseReplay mode for
-// top-level sessions.
-func (m Model) continueSessionDirect(s client.SessionListItem) (tea.Model, tea.Cmd, bool) {
-	m = m.resetSession() // fresh conversation view (no prior transcript carried)
-	m.sessionID = s.ID
-	m.effectiveModel = client.ResolvedModel{}
-	m.caps = client.Capabilities{}
-	m.restartedThisRun = true // suppress the welcome splash for the rest of the run
-	m.stuck = true            // arm auto-follow so the live tail sticks once a new turn starts
-
-	// Dismiss the picker/confirm overlay state (filter/filtered/confirm).
-	m.sessions.view = sessionsNone
-	m.sessions.filter = textinput.Model{}
-	m.sessions.filtered = nil
-	m.sessions.confirm = client.SessionListItem{}
-
-	m.phase = phaseIdle
-	if s.Title != "" {
-		m.statusMsg = "continuing session " + sanitizeTerminal(s.ID) + " — " + sanitizeTerminal(s.Title) + " — type to add a turn"
-	} else {
-		m.statusMsg = "continuing session " + sanitizeTerminal(s.ID) + " — type to add a turn"
-	}
-	cmd := m.ta.Focus()
-	m.refreshView()
-	return m, cmd, true
 }
 
 // closeSessionsTranscript is the esc-teardown path from phaseReplay (now only
@@ -413,6 +373,7 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 	m.sessions.receivedMsgs = 0
 	m.sessions.replayClosed = false
 	m.sessions.replayErr = nil
+	m.sessions.continueOnLoad = false
 	m.sessions.view = sessionsNone
 	m = m.resetSession() // drop the adopted session id + transcript
 	m.sessionID = ""
@@ -569,8 +530,6 @@ func relativeTime(unixSec int64) string {
 // (the picker candidate, cleared on the switchToSession handoff).
 func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabilities, sessionID, vpContent string, width, height int) string {
 	switch st.view {
-	case sessionsConfirm:
-		return renderSessionsConfirm(th, st, width, height)
 	case sessionsTranscript:
 		return renderSessionsTranscript(th, st, sessionID, vpContent, width, height)
 	default:
@@ -659,49 +618,29 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	return b.String()
 }
 
-// renderSessionsConfirm renders the post-Enter confirmation card. The wording
-// branches on whether the chosen session is a top-level agent session (continue
-// by default — the Enter handoff binds the id and drops to a live interactive
-// session) or a child (read-only transcript inspection).
-func renderSessionsConfirm(th theme.Theme, st sessionsState, _, _ int) string {
-	s := st.confirm
-	var b strings.Builder
-	if isChildSessionID(s.ID) {
-		b.WriteString(th.Style("title").Render("open session") + "\n\n")
-		b.WriteString("open a read-only transcript of:\n")
-	} else {
-		b.WriteString(th.Style("title").Render("continue session") + "\n\n")
-		b.WriteString("continue the session:\n")
-	}
-	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(s.ID)) + "\n")
-	if s.Title != "" {
-		b.WriteString(th.Style("muted").Render("  title: "+sanitizeTerminal(s.Title)) + "\n")
-	}
-	b.WriteString(th.Style("muted").Render("  state: "+sanitizeTerminal(s.State)) + "\n")
-	if s.ModelID != "" {
-		b.WriteString(th.Style("muted").Render("  model: "+sanitizeTerminal(s.ModelID)) + "\n")
-	}
-	if isChildSessionID(s.ID) {
-		b.WriteString("\n" + th.Style("muted").Render("enter: open read-only  esc: back"))
-	} else {
-		b.WriteString("\n" + th.Style("muted").Render("enter: continue  esc: back"))
-	}
-	return b.String()
-}
-
-// renderSessionsTranscript renders the read-only replay view (now only reached
-// for CHILD sessions opened from the Children tab). Slice 3b renders the drained
-// transcript: the viewport content (the block renderers' projection of
-// m.sessions.transcript, populated by refreshView) framed by a "session <id> ·
-// read-only transcript" header and an "esc: back" hint. While the replay is still
-// loading (no content, not closed, no error) it renders the loading card; on a
-// replay error it renders the error line; once the stream closes (or content has
-// arrived) it renders the transcript. The transcript is a STATIC viewport
-// (read-only, no auto-follow streaming dynamics — the replay is a bounded batch).
-// The "c: continue" hint has been REMOVED: top-level sessions continue by
-// default (never entering phaseReplay), and children cannot be continued.
+// renderSessionsTranscript renders the replay view. For a CHILD session this is
+// the read-only transcript inspection (stays in phaseReplay on stream close).
+// For a TOP-LEVEL session this is the transient loading view: continueOnLoad is
+// set, and on stream close the terminal handoff (updateReplayMsg) carries the
+// transcript into m.conv and transitions to phaseIdle, so this renderer is only
+// reached for a top-level session DURING loading (or on a replay error before
+// the handoff). Slice 3b renders the drained transcript: the viewport content
+// (the block renderers' projection of m.sessions.transcript, populated by
+// refreshView) framed by a header line and an "esc: back" hint. While the replay
+// is still loading (no content, not closed, no error) it renders the loading
+// card; on a replay error it renders the error line; once the stream closes (or
+// content has arrived) it renders the transcript. The transcript is a STATIC
+// viewport (read-only, no auto-follow streaming dynamics — the replay is a
+// bounded batch).
 func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpContent string, _, _ int) string {
 	hint := "esc: back"
+	header := "session " + sanitizeTerminal(sessionID) + " · read-only transcript"
+	if st.continueOnLoad {
+		// A top-level continue: this view is transient (transitions to phaseIdle
+		// on stream close), so the header reflects the loading/continue intent
+		// rather than "read-only transcript".
+		header = "continuing session " + sanitizeTerminal(sessionID) + " · loading history"
+	}
 	// Loading arm: nothing projected yet AND the stream has not closed → the
 	// loading card. Once the first msg lands (transcript non-empty) OR the stream
 	// closes (replayClosed), render the transcript view.
@@ -728,7 +667,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpCon
 		return b.String()
 	}
 	var b strings.Builder
-	b.WriteString(th.Style("muted").Render("session " + sanitizeTerminal(sessionID) + " · read-only transcript"))
+	b.WriteString(th.Style("muted").Render(header))
 	b.WriteString("\n")
 	if st.transcript.isEmpty() {
 		b.WriteString(th.Style("muted").Render("(no events in this session)"))
