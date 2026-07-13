@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,13 +39,22 @@ func (callMcpWithQueryTool) Spec() tool.ToolSpec {
 			"when a tool returns a big JSON structure and you only need a subset of fields. The remote " +
 			"tool's full result is fetched and filtered in memory (no disk); only the filtered subset is " +
 			"returned. Fails loud if the remote result isn't JSON or the jq filter is invalid. Prefer " +
-			"narrowing the remote call with its own pagination/filter params when possible.",
+			"narrowing the remote call with its own pagination/filter params when possible.\n\n" +
+			"The remote tool's OWN parameters go INSIDE the \"args\" object — never as top-level fields " +
+			"beside server/tool/jq_filter, and never as a string. Complete example: to filter the " +
+			"\"github\" server's \"list_pull_requests\" tool down to a few fields, call this tool with\n" +
+			"{\n" +
+			"  \"server\": \"github\",\n" +
+			"  \"tool\": \"list_pull_requests\",\n" +
+			"  \"args\": {\"owner\": \"stacklok\", \"repo\": \"toolhive\", \"state\": \"open\", \"perPage\": 30},\n" +
+			"  \"jq_filter\": \"[.[] | {number, title, state, updated_at}]\"\n" +
+			"}",
 		Schema: toolkit.Schema(`{
   "type": "object",
   "properties": {
-    "server": {"type": "string", "description": "The MCP server name that owns the tool."},
-    "tool": {"type": "string", "description": "The remote tool name (NOT the mcp__-prefixed namespaced name)."},
-    "args": {"type": "object", "description": "The remote tool's input arguments, passed verbatim."},
+    "server": {"type": "string", "description": "The MCP server name that owns the tool (e.g. \"github\")."},
+    "tool": {"type": "string", "description": "The remote tool name (NOT the mcp__-prefixed namespaced name), e.g. \"list_pull_requests\"."},
+    "args": {"type": "object", "description": "A JSON object holding the remote tool's OWN input parameters as key/value pairs, e.g. {\"owner\": \"stacklok\", \"repo\": \"toolhive\", \"state\": \"open\"}. This MUST be a JSON object, not a string and not top-level fields. Omit entirely if the remote tool takes no arguments.", "additionalProperties": true},
     "jq_filter": {"type": "string", "description": "A jq expression to apply to the JSON result (e.g. \".items | length\" or \".items[] | {id, name}\")."}
   },
   "required": ["server", "tool", "jq_filter"]
@@ -88,7 +98,22 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 		return session.NewToolError(in.ID, `the "jq_filter" argument is required`), nil
 	}
 
-	result, err := t.provider.CallTool(ctx, server, toolName, args.Args)
+	// Normalize the remote args. The schema asks for a JSON object, but some
+	// models (notably GLM-family, whose native <arg_key>/<arg_value> tool format
+	// does not express nesting) serialize a nested object parameter as a JSON
+	// STRING instead. Passing that string to the remote server yields an opaque
+	// "cannot unmarshal string into map[string]interface{}" from the far side.
+	// normalizeRemoteArgs recovers the common recoverable case (a JSON object
+	// encoded as a string) and turns everything else into a clear, self-correcting
+	// error naming the exact expected shape — instead of a remote 400 the model
+	// can't act on. It is safe to coerce here (unlike the direct namespaced tool
+	// path) because THIS parameter is contractually an object.
+	remoteArgs, msg := normalizeRemoteArgs(args.Args)
+	if msg != "" {
+		return session.NewToolError(in.ID, msg), nil
+	}
+
+	result, err := t.provider.CallTool(ctx, server, toolName, remoteArgs)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return session.ToolResult{}, ctxErr
@@ -165,6 +190,68 @@ func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, 
 	}
 
 	return session.NewToolResult(in.ID, filtered), nil
+}
+
+// normalizeRemoteArgs coerces the model-supplied "args" value into the JSON
+// object the remote MCP tool expects, or returns a model-facing correction
+// message (the second return; empty means success):
+//
+//   - absent / empty / null           -> (nil, "")          no arguments
+//   - a JSON object                    -> (raw, "")          passed through
+//   - a JSON string that is itself a
+//     JSON object                      -> (parsed, "")       double-encoding recovered
+//   - anything else (incl. a garbled
+//     or non-object string)            -> (nil, correction)  self-correcting error
+//
+// The string-recovery arm exists because some models (notably GLM-family, whose
+// native <arg_key>/<arg_value> tool format does not express nesting) serialize a
+// nested object parameter as a JSON string. It recovers the case where that
+// string is itself a JSON object; it deliberately does NOT parse provider-specific
+// tool-call encodings (e.g. raw GLM <arg_key> pairs) — that would couple this
+// provider-agnostic MCP layer to one model's wire format. Unrecoverable shapes
+// become a clear correction naming the exact expected object, so the model retries
+// instead of hitting an opaque remote "cannot unmarshal string into map" 400.
+func normalizeRemoteArgs(raw json.RawMessage) (json.RawMessage, string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, ""
+	}
+	switch trimmed[0] {
+	case '{':
+		// A JSON object: validate it parses so a malformed object surfaces a
+		// clear error here rather than a remote 400.
+		var obj map[string]any
+		if err := json.Unmarshal(trimmed, &obj); err != nil {
+			return nil, remoteArgsError(fmt.Sprintf("the \"args\" object is not valid JSON (%v)", err))
+		}
+		return trimmed, ""
+	case '"':
+		// A JSON string: the model serialized the object as a string. Recover the
+		// inner value when it is itself a JSON object; otherwise correct.
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return nil, remoteArgsError("the \"args\" value could not be decoded")
+		}
+		inner := strings.TrimSpace(s)
+		var obj map[string]any
+		if inner == "" || json.Unmarshal([]byte(inner), &obj) != nil {
+			return nil, remoteArgsError("the \"args\" value arrived as a string, not a JSON object")
+		}
+		return json.RawMessage(inner), ""
+	default:
+		// A JSON array, number, bool, etc. — not an object.
+		return nil, remoteArgsError("the \"args\" value must be a JSON object")
+	}
+}
+
+// remoteArgsError is the model-facing correction shown when the remote "args"
+// value is not (and cannot be recovered into) a JSON object. It names the exact
+// expected shape with an example so the model can self-correct on the next turn.
+func remoteArgsError(detail string) string {
+	return fmt.Sprintf(`CallMcpWithQuery: %s. The "args" value must be a JSON OBJECT holding the remote `+
+		`tool's own parameters, e.g. {"owner":"stacklok","repo":"toolhive","state":"open"} — not a string, `+
+		`and not top-level fields beside server/tool/jq_filter. Retry with "args" as a JSON object (or omit `+
+		`it entirely if the tool takes no arguments).`, detail)
 }
 
 // filteredTooLargeError is the fail-closed message a CallMcpWithQuery filtered

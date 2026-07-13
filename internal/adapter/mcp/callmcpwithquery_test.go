@@ -467,6 +467,124 @@ func TestCallMcpWithQueryFiltersPrimitiveStructuredContent(t *testing.T) {
 	}
 }
 
+// recordingCallProvider captures the args json.RawMessage handed to CallTool so
+// a test can assert what the remote tool actually received after normalization.
+type recordingCallProvider struct {
+	fakeCallProvider
+	gotArgs json.RawMessage
+}
+
+func (r *recordingCallProvider) CallTool(_ context.Context, _, _ string, args json.RawMessage) (CallResult, error) {
+	r.gotArgs = args
+	return r.result, r.err
+}
+
+// TestCallMcpWithQueryArgsAsObject asserts a proper JSON object in "args" is
+// forwarded to the remote tool verbatim.
+func TestCallMcpWithQueryArgsAsObject(t *testing.T) {
+	prov := &recordingCallProvider{fakeCallProvider: fakeCallProvider{result: CallResult{
+		Server: "fake", Tool: "t", StructuredContent: json.RawMessage(`{"ok":1}`),
+	}}}
+	tl := callMcpWithQueryTool{provider: prov}
+	call := session.NewToolCall("c", callMcpWithQueryToolName,
+		json.RawMessage(`{"server":"fake","tool":"t","args":{"owner":"stacklok","repo":"toolhive"},"jq_filter":"."}`))
+	res, err := tl.Execute(context.Background(), call, nil)
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %q", res.Content)
+	}
+	var got, want map[string]any
+	if e := json.Unmarshal(prov.gotArgs, &got); e != nil {
+		t.Fatalf("forwarded args not JSON: %v (%s)", e, prov.gotArgs)
+	}
+	_ = json.Unmarshal([]byte(`{"owner":"stacklok","repo":"toolhive"}`), &want)
+	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
+		t.Fatalf("forwarded args = %v, want %v", got, want)
+	}
+}
+
+// TestCallMcpWithQueryArgsStringEncodedObjectRecovered asserts the deser
+// tolerance recovers an "args" value that arrived as a JSON STRING which itself
+// encodes a JSON object (the double-encoding failure mode) — the remote tool
+// receives the parsed object, not the string.
+func TestCallMcpWithQueryArgsStringEncodedObjectRecovered(t *testing.T) {
+	prov := &recordingCallProvider{fakeCallProvider: fakeCallProvider{result: CallResult{
+		Server: "fake", Tool: "t", StructuredContent: json.RawMessage(`{"ok":1}`),
+	}}}
+	tl := callMcpWithQueryTool{provider: prov}
+	// "args" is the JSON string  "{\"owner\":\"stacklok\"}"  (an object-as-string).
+	call := session.NewToolCall("c", callMcpWithQueryToolName,
+		json.RawMessage(`{"server":"fake","tool":"t","args":"{\"owner\":\"stacklok\"}","jq_filter":"."}`))
+	res, err := tl.Execute(context.Background(), call, nil)
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError (string-encoded object should be recovered): %q", res.Content)
+	}
+	var got map[string]any
+	if e := json.Unmarshal(prov.gotArgs, &got); e != nil {
+		t.Fatalf("forwarded args not a JSON object: %v (%s)", e, prov.gotArgs)
+	}
+	if got["owner"] != "stacklok" {
+		t.Fatalf("forwarded args = %v, want owner=stacklok", got)
+	}
+}
+
+// TestCallMcpWithQueryArgsUnrecoverableString asserts a garbled/non-object
+// string "args" (the GLM <arg_key> / whitespace mangling) yields a clear,
+// self-correcting model-facing error naming the expected object shape — NOT the
+// opaque remote "cannot unmarshal string into map" and NOT a Go error.
+func TestCallMcpWithQueryArgsUnrecoverableString(t *testing.T) {
+	tl := scriptedCallTool(CallResult{Server: "fake", Tool: "t"})
+	for name, argsJSON := range map[string]string{
+		"whitespace": `{"server":"fake","tool":"t","args":"\t\t\t\t","jq_filter":"."}`,
+		"glm_xml":    `{"server":"fake","tool":"t","args":"\t\t\t<arg_key>owner</arg_key>","jq_filter":"."}`,
+		"array":      `{"server":"fake","tool":"t","args":[1,2,3],"jq_filter":"."}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(argsJSON))
+			res, err := tl.Execute(context.Background(), call, nil)
+			if err != nil {
+				t.Fatalf("unexpected Go error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected an IsError correction, got: %q", res.Content)
+			}
+			if !strings.Contains(res.Content, "JSON") || !strings.Contains(res.Content, "args") {
+				t.Fatalf("correction should name the expected JSON args shape: %q", res.Content)
+			}
+		})
+	}
+}
+
+// TestCallMcpWithQueryArgsAbsentOrEmpty asserts an absent, null, or empty-object
+// "args" forwards no/empty arguments without error (tools that take no args).
+func TestCallMcpWithQueryArgsAbsentOrEmpty(t *testing.T) {
+	for name, argsJSON := range map[string]string{
+		"absent":       `{"server":"fake","tool":"t","jq_filter":"."}`,
+		"null":         `{"server":"fake","tool":"t","args":null,"jq_filter":"."}`,
+		"empty_object": `{"server":"fake","tool":"t","args":{},"jq_filter":"."}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			prov := &recordingCallProvider{fakeCallProvider: fakeCallProvider{result: CallResult{
+				Server: "fake", Tool: "t", StructuredContent: json.RawMessage(`{"ok":1}`),
+			}}}
+			tl := callMcpWithQueryTool{provider: prov}
+			call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(argsJSON))
+			res, err := tl.Execute(context.Background(), call, nil)
+			if err != nil {
+				t.Fatalf("unexpected Go error: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected IsError: %q", res.Content)
+			}
+		})
+	}
+}
+
 // quoteJSON returns the JSON string literal for s.
 func quoteJSON(s string) string {
 	b, err := json.Marshal(s)
