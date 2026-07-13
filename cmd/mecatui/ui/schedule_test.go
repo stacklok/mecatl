@@ -790,3 +790,194 @@ func TestScheduleInspectFireCursorNavigation(t *testing.T) {
 		t.Errorf("only the cursor row should be highlighted:\n%s", out)
 	}
 }
+
+// TestScheduleCreateFormOpens asserts 'c' opens the Create form, the name field
+// is focused, and esc returns to the panel.
+func TestScheduleCreateFormOpens(t *testing.T) {
+	fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("nightly")}}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: fs.schedules})
+
+	// c — open create
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	m = mm.(Model)
+	if m.schedule.view != scheduleCreate {
+		t.Fatalf("after c: view = %v, want scheduleCreate", m.schedule.view)
+	}
+	if !m.schedule.form.name.Focused() {
+		t.Error("the name field should be focused on open")
+	}
+	// esc — back to panel
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	if m.schedule.view != schedulePanel {
+		t.Fatalf("after esc: view = %v, want schedulePanel", m.schedule.view)
+	}
+}
+
+// TestScheduleCreateFormTypesAndSubmits asserts typing into the fields, then
+// submitting via the mutating-toggle+enter path, fires CreateScheduleCmd and
+// the new schedule appears on ScheduleMsg.
+func TestScheduleCreateFormTypesAndSubmits(t *testing.T) {
+	fs := &fakeScheduleLister{
+		sched: sampleSchedule("my-sched"),
+	}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: nil})
+
+	// c — open create
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	m = mm.(Model)
+
+	// Type "my-sched" into the name field.
+	for _, r := range "my-sched" {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+	if m.schedule.form.name.Value() != "my-sched" {
+		t.Fatalf("name = %q, want my-sched", m.schedule.form.name.Value())
+	}
+
+	// Tab to prompt field.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+	m = mm.(Model)
+	if m.schedule.form.focusIdx != 1 {
+		t.Fatalf("focusIdx = %d, want 1", m.schedule.form.focusIdx)
+	}
+	// Type "run the tests".
+	for _, r := range "run the tests" {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+
+	// Tab to trigger field.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+	m = mm.(Model)
+	// Type a raw cron expression.
+	for _, r := range "0 9 * * *" {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+
+	// Tab past workspace to the mutating toggle (focusIdx == scheduleFormFieldCount).
+	for i := 0; i < 2; i++ {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+		m = mm.(Model)
+	}
+	if m.schedule.form.focusIdx != scheduleFormFieldCount {
+		t.Fatalf("focusIdx = %d, want %d (mutating toggle)", m.schedule.form.focusIdx, scheduleFormFieldCount)
+	}
+
+	// 'y' — toggle mutating to true.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	m = mm.(Model)
+	if !m.schedule.form.mutating {
+		t.Error("mutating should be true after 'y'")
+	}
+
+	// Enter — submit.
+	mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.schedule.view != schedulePanel {
+		t.Fatalf("after submit: view = %v, want schedulePanel (actionErr=%q)", m.schedule.view, m.schedule.actionErr)
+	}
+	if cmd == nil {
+		t.Fatalf("submit should return the CreateSchedule command (actionErr=%q)", m.schedule.actionErr)
+	}
+
+	// Feed the CreateScheduleCmd result (ScheduleMsg with the new schedule).
+	m = feedCmd(t, m, cmd)
+	if fs.createCalls != 1 {
+		t.Fatalf("create calls = %d, want 1", fs.createCalls)
+	}
+	if len(m.schedule.schedules) != 1 || m.schedule.schedules[0].Spec.Name != "my-sched" {
+		t.Fatalf("schedules = %+v, want [my-sched]", m.schedule.schedules)
+	}
+}
+
+// TestScheduleCreateFormNLTrigger asserts the trigger field compiles a
+// natural-language phrase ("every 30 minutes") to a cron expression before
+// POSTing.
+func TestScheduleCreateFormNLTrigger(t *testing.T) {
+	fs := &fakeScheduleLister{sched: sampleSchedule("nl-sched")}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: nil})
+
+	// c — open create
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	m = mm.(Model)
+	// Name
+	for _, r := range "nl-sched" {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+	// Tab to prompt, type it.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+	m = mm.(Model)
+	for _, r := range "run" {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+	// Tab to trigger, type NL phrase.
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+	m = mm.(Model)
+	for _, r := range "every 30 minutes" {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+
+	// Tab to mutating toggle and submit.
+	for i := 0; i < 2; i++ {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+		m = mm.(Model)
+	}
+	mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatalf("submit should return the CreateSchedule command (actionErr=%q)", m.schedule.actionErr)
+	}
+	feedCmd(t, m, cmd)
+	if fs.createCalls != 1 {
+		t.Fatalf("create calls = %d, want 1", fs.createCalls)
+	}
+}
+
+// TestScheduleCreateFormValidation asserts missing required fields set actionErr
+// and do NOT fire CreateSchedule.
+func TestScheduleCreateFormValidation(t *testing.T) {
+	fs := &fakeScheduleLister{}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: nil})
+
+	// c — open create, submit immediately (all fields empty).
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	m = mm.(Model)
+	// Tab to the mutating toggle and submit.
+	for i := 0; i < scheduleFormFieldCount; i++ {
+		mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"})
+		m = mm.(Model)
+	}
+	mm, _, _ = m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.schedule.view != scheduleCreate {
+		t.Fatalf("should stay in create on validation error, view = %v", m.schedule.view)
+	}
+	if m.schedule.actionErr == "" {
+		t.Error("actionErr should be set on validation failure")
+	}
+	if fs.createCalls != 0 {
+		t.Errorf("create calls = %d, want 0 on validation error", fs.createCalls)
+	}
+}

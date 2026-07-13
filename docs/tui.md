@@ -689,7 +689,7 @@ schedule lister. It fires `ListSchedules` and renders the stored schedules as a
 flat list: each row shows the name, a trigger summary (`cron: */5 * * * *` or
 `one-shot: 2026-07-06 14:00`), the enabled/paused state, the next/last fire
 times, and the fire count. UNLIKE `/worktrees`/`/models`, the filter input is
-**not** focused on open — the panel's bare-rune action keys (`p`/`r`/`f`/`d`)
+**not** focused on open — the panel's bare-rune action keys (`p`/`r`/`f`/`d`/`c`)
 would otherwise be unreachable. `↑`/`↓` move the cursor, `home`/`end` jump,
 **`/`** enters filter mode (focuses the input; matches on name + trigger
 summary), and `esc`/`enter` while filtering exits it back to action mode
@@ -697,8 +697,8 @@ summary), and `esc`/`enter` while filtering exits it back to action mode
 filter, then close). The per-row action keys are bare runes: **`p`** pause,
 **`r`** resume, **`f`** fire-now (forces an immediate fire; the fire id
 surfaces in the status line), **`d`** delete (opens a confirm sub-view: `enter`
-deletes, `esc` backs out). On a successful action the list re-fetches to
-reflect the new state.
+deletes, `esc` backs out), **`c`** create (opens the in-overlay Create form).
+On a successful action the list re-fetches to reflect the new state.
 **`enter`** opens a read-only **inspect** sub-view: the full spec (trigger,
 prompt preview, selector, mode, mutating, singleton, misfire, timezone,
 max_fires) + the durable state (enabled, fire_count, next/last fire,
@@ -710,6 +710,21 @@ fire's read-only transcript (issue #235) — a fire is just a top-level
 jump-to-fire footer hint (`↑↓: select fire  enter/t: open transcript  esc:
 back`) appears only when a session replayer is wired; a fire whose
 `SessionID` is empty reports "fire has no session id" and stays in inspect.
+
+**Create form (Phase 3b).** The **`c`** action key opens an in-overlay Create
+form (peer of the inspect/confirm sub-views): fields for name, prompt, trigger
+(cron OR natural-language), workspace, and a mutating toggle. The trigger
+field accepts EITHER a raw cron expression (`0 9 * * *`) OR a natural-language
+phrase (`every 30 minutes`, `daily at 9am`, `every weekday at 9am`, `next
+monday 3pm`, `in 2 hours`, `tomorrow at noon`) — compiled client-side by
+`cmd/mecatui/schedparse` (a small stdlib-only pattern table, NOT a full NLP
+engine; unmatched input falls back to raw cron). `tab`/`↑`/`↓` cycle focus
+through the fields; on the mutating toggle, `y`/`n` set the value; `enter`
+submits (fires `CreateSchedule`; the new schedule appears in the panel on
+arrival). `esc` returns to the panel without creating. The form is a
+common-path authoring surface — the CLI (`mecated schedules create`) covers the
+full flag surface (provider/model, mode, max-fires, misfire, timezone,
+singleton, limits); the form keeps it simple.
 
 **Row format.** Each `/sessions` picker row renders as
 `<state-badge> <relative-time> <turns>t <label> (<model-id>)`, where `<label>`
@@ -731,16 +746,16 @@ session that transitions to running between the `ListSessions` call and the
 open will still replay successfully (a partial transcript ending at the log's
 current tail).
 
-**v1 limits.** The overlay lists/inspects/manages schedules authored elsewhere
-— there is **no in-overlay Create form** (author via `mecated schedule create`
-or the `settings.yaml` `schedules:` block), and **NL→cron** (a natural-language
-"every weekday at 9am" → `0 9 * * 1-5`) is deferred to v2. Triggers are raw
-cron expressions or one-shot timestamps only. The embedded mecatui server has
-the `ScheduleStore` (the overlay works — create via CLI/settings, then
-pause/resume/fire-now/delete from the TUI) but **NOT** the scheduler tick loop,
-so auto-firing on a cadence requires `mecated --scheduler` (or the
-`settings.yaml` schedules + a mecated with the tick loop running); `FireNow`
-works to trigger a schedule manually regardless.
+**v1 limits.** The overlay lists/inspects/manages schedules and creates them
+in-overlay (the `c` Create form + NL→cron compiler), but the CLI (`mecated
+schedule create`) and the `settings.yaml` `schedules:` block remain the full
+flag surface (provider/model, mode, max-fires, misfire, timezone, singleton,
+limits) — the form covers the common path only. The embedded mecatui server has
+the `ScheduleStore` (the overlay works — create/inspect/pause/resume/fire-now/
+delete from the TUI) but **NOT** the scheduler tick loop, so auto-firing on a
+cadence requires `mecated --scheduler` (or the `settings.yaml` schedules + a
+mecated with the tick loop running); `FireNow` works to trigger a schedule
+manually regardless.
 
 A single layout model (`layout.go`) is the source of truth: `View()` renders
 it, the per-message relayout step sizes the viewport from it, and the mouse

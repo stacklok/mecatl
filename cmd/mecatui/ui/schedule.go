@@ -10,17 +10,19 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/schedparse"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 // schedule.go is the /schedule overlay (issue #234, Phase 3a) — a selecting
 // overlay mirroring /worktrees' cursor+filter+confirm shape, with an added
-// read-only inspect sub-view (full spec + state + fires) and per-row action keys
-// (pause/resume/fire-now/delete). Phase 3a scope: list/inspect/pause/resume/
-// fire-now/delete; no in-overlay Create form (author via CLI or settings.yaml).
+// read-only inspect sub-view (full spec + state + fires), per-row action keys
+// (pause/resume/fire-now/delete), and a Create form (Phase 3b, issue #236). The
+// form's trigger field accepts EITHER raw cron OR a natural-language phrase
+// (compiled client-side via cmd/mecatui/schedparse, stdlib-only).
 //
 // UNLIKE /worktrees and /models, the filter input is NOT focused on open — the
-// panel's own single-letter action keys (p/r/f/d) would otherwise be
+// panel's own single-letter action keys (p/r/f/d/c) would otherwise be
 // unreachable (they'd always hit the focused filter instead of firing).
 // Pressing "/" enters filter mode (focuses the input); esc or enter while
 // filtering exits it (blur, value kept). See onScheduleKey.
@@ -33,6 +35,7 @@ const (
 	schedulePanel                       // the flat, type-to-filter list
 	scheduleConfirm                     // the post-d delete confirmation
 	scheduleInspect                     // the read-only full-spec + fires view
+	scheduleCreate                      // the in-overlay Create form (Phase 3b)
 )
 
 // scheduleState holds the /schedule overlay state on the Model. Value-embedded so
@@ -55,6 +58,25 @@ type scheduleState struct {
 	firesErr     error
 	actionErr    string
 	fireCursor   int // cursor into fires in the inspect sub-view (jump-to-fire, #235)
+	form         scheduleForm
+}
+
+// scheduleForm is the in-overlay Create form (Phase 3b, issue #236): a small,
+// common-path authoring surface mirroring the per-row action keys. The CLI
+// (mecated schedule create) covers the full flag surface; the form keeps it
+// SIMPLE — name, prompt, trigger (cron OR NL), workspace, mutating. The trigger
+// field accepts EITHER a raw cron expression OR a natural-language phrase; on
+// submit, schedparse.Compile is tried first (compile to cron or one-shot), and
+// only on no-match is the value treated verbatim as raw cron. Mode defaults to
+// plan for non-mutating (the server enforces the mode↔mutating invariant);
+// singleton defaults true. focusIdx is the cursor over the fields.
+type scheduleForm struct {
+	name      textinput.Model
+	prompt    textinput.Model
+	trigger   textinput.Model
+	workspace textinput.Model
+	mutating  bool
+	focusIdx  int
 }
 
 // openSchedule opens the picker and fires the ListSchedules RPC. Only callable
@@ -108,6 +130,9 @@ func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.schedule.view == scheduleInspect {
 		return m.onScheduleInspectKey(msg)
 	}
+	if m.schedule.view == scheduleCreate {
+		return m.onScheduleCreateKey(msg)
+	}
 	if m.schedule.filter.Focused() {
 		switch {
 		case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Choose):
@@ -119,6 +144,13 @@ func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m = m.syncScheduleFilter()
 		return m, cmd, true
 	}
+	return m.onSchedulePanelActionKey(msg)
+}
+
+// onSchedulePanelActionKey routes bare-rune action keys while the panel is in
+// action mode (filter not focused). It handles nav, filter-entry, and the
+// per-row action keys (p/r/f/d/c).
+func (m Model) onSchedulePanelActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		if m.schedule.filter.Value() != "" {
@@ -157,6 +189,8 @@ func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m.scheduleAction("fire")
 	case msg.String() == "d":
 		return m.openScheduleConfirm()
+	case msg.String() == "c":
+		return m.openScheduleCreate()
 	}
 	// Swallow anything unmatched — action mode never feeds the filter.
 	return m, nil, true
@@ -189,6 +223,175 @@ func (m Model) openScheduleConfirm() (tea.Model, tea.Cmd, bool) {
 	m.schedule.confirm = m.schedule.filtered[m.schedule.cursor]
 	m.schedule.view = scheduleConfirm
 	return m, nil, true
+}
+
+// openScheduleCreate opens the in-overlay Create form (Phase 3b, issue #236).
+// It mints a fresh scheduleForm with the focus on the name field and default
+// values (singleton=true, mutating=false). The form is a common-path authoring
+// surface — the CLI covers the full flag surface; the form keeps it simple.
+func (m Model) openScheduleCreate() (tea.Model, tea.Cmd, bool) {
+	newInput := func(placeholder string) textinput.Model {
+		ti := textinput.New()
+		ti.Placeholder = placeholder
+		ti.SetWidth(50)
+		return ti
+	}
+	f := scheduleForm{
+		name:      newInput("schedule name"),
+		prompt:    newInput("prompt to run on each fire"),
+		trigger:   newInput("cron (e.g. 0 9 * * *) or NL (e.g. every 30 minutes)"),
+		workspace: newInput("workspace path (empty = default)"),
+		mutating:  false,
+		focusIdx:  0,
+	}
+	f.name.Focus()
+	m.schedule.form = f
+	m.schedule.view = scheduleCreate
+	m.schedule.actionErr = ""
+	return m, nil, true
+}
+
+// scheduleFormFields is the ordered list of editable text fields for focus
+// cycling. The mutating toggle is cycled separately (a bool, not a textinput).
+const scheduleFormFieldCount = 4 // name, prompt, trigger, workspace
+
+// focusScheduleField moves the focus to the field at form.focusIdx, blurring all
+// others. Tab/↑↓ call this after incrementing/decrementing focusIdx.
+func (m Model) focusScheduleField() Model {
+	fields := []*textinput.Model{
+		&m.schedule.form.name,
+		&m.schedule.form.prompt,
+		&m.schedule.form.trigger,
+		&m.schedule.form.workspace,
+	}
+	for i, f := range fields {
+		if i == m.schedule.form.focusIdx {
+			f.Focus()
+		} else {
+			f.Blur()
+		}
+	}
+	return m
+}
+
+// onScheduleCreateKey routes keys while the Create form is open. tab/↑↓ cycle
+// focus through the text fields + the mutating toggle; enter on the last field
+// (the mutating toggle) submits; esc returns to the panel; "y"/"n" toggles
+// mutating when the toggle is focused.
+func (m Model) onScheduleCreateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	// When the mutating toggle (focusIdx == scheduleFormFieldCount) is focused,
+	// handle the toggle keys; enter submits.
+	if m.schedule.form.focusIdx == scheduleFormFieldCount {
+		switch {
+		case key.Matches(msg, m.keys.Close):
+			m.schedule.view = schedulePanel
+			m.schedule.form = scheduleForm{}
+			return m, nil, true
+		case msg.String() == "y":
+			m.schedule.form.mutating = true
+			return m, nil, true
+		case msg.String() == "n":
+			m.schedule.form.mutating = false
+			return m, nil, true
+		case key.Matches(msg, m.keys.Choose):
+			return m.submitScheduleCreate()
+		case msg.String() == "tab", msg.String() == keyMenuDown:
+			m.schedule.form.focusIdx = 0
+			return m.focusScheduleField(), nil, true
+		case msg.String() == keyMenuUp:
+			m.schedule.form.focusIdx = scheduleFormFieldCount - 1
+			return m.focusScheduleField(), nil, true
+		}
+		return m, nil, true
+	}
+	// A text field is focused.
+	switch {
+	case key.Matches(msg, m.keys.Close):
+		m.schedule.view = schedulePanel
+		m.schedule.form = scheduleForm{}
+		return m, nil, true
+	case msg.String() == "tab", msg.String() == keyMenuDown:
+		m.schedule.form.focusIdx++
+		if m.schedule.form.focusIdx > scheduleFormFieldCount {
+			m.schedule.form.focusIdx = 0
+		}
+		return m.focusScheduleField(), nil, true
+	case msg.String() == keyMenuUp:
+		m.schedule.form.focusIdx--
+		if m.schedule.form.focusIdx < 0 {
+			m.schedule.form.focusIdx = scheduleFormFieldCount
+		}
+		return m.focusScheduleField(), nil, true
+	case key.Matches(msg, m.keys.Choose):
+		// enter on a text field advances to the next field; on the last text
+		// field it advances to the mutating toggle.
+		m.schedule.form.focusIdx++
+		if m.schedule.form.focusIdx > scheduleFormFieldCount {
+			m.schedule.form.focusIdx = 0
+		}
+		return m.focusScheduleField(), nil, true
+	}
+	// Feed the textinput.
+	var fields = []*textinput.Model{
+		&m.schedule.form.name,
+		&m.schedule.form.prompt,
+		&m.schedule.form.trigger,
+		&m.schedule.form.workspace,
+	}
+	idx := m.schedule.form.focusIdx
+	if idx >= 0 && idx < len(fields) {
+		var cmd tea.Cmd
+		updated, cmd := fields[idx].Update(msg)
+		*fields[idx] = updated
+		return m, cmd, true
+	}
+	return m, nil, true
+}
+
+// submitScheduleCreate validates the form, compiles the trigger (NL→cron via
+// schedparse when applicable), builds a client.ScheduleSpec, and fires
+// CreateScheduleCmd. On validation failure it sets actionErr and stays in the
+// form. On success it returns to the panel (the ScheduleMsg reducer appends the
+// new schedule on arrival).
+func (m Model) submitScheduleCreate() (tea.Model, tea.Cmd, bool) {
+	f := m.schedule.form
+	m.schedule.actionErr = ""
+	if f.name.Value() == "" {
+		m.schedule.actionErr = "name is required"
+		return m, nil, true
+	}
+	if f.prompt.Value() == "" {
+		m.schedule.actionErr = "prompt is required"
+		return m, nil, true
+	}
+	if f.trigger.Value() == "" {
+		m.schedule.actionErr = "trigger (cron or NL) is required"
+		return m, nil, true
+	}
+	// Try NL→cron first; fall back to raw cron.
+	var trigger client.ScheduleTrigger
+	if res, ok := schedparse.Compile(f.trigger.Value(), time.Now()); ok {
+		if res.Cron != "" {
+			trigger.Cron = res.Cron
+		} else if !res.OneShot.IsZero() {
+			trigger.OneShot = res.OneShot
+		}
+	} else {
+		trigger.Cron = f.trigger.Value()
+	}
+	spec := client.ScheduleSpec{
+		Name:      f.name.Value(),
+		Prompt:    f.prompt.Value(),
+		Trigger:   trigger,
+		Workspace: f.workspace.Value(),
+		Mutating:  f.mutating,
+		Singleton: true,
+		Timezone:  "UTC",
+	}
+	// Return to the panel; the ScheduleMsg reducer appends the new row.
+	m.schedule.view = schedulePanel
+	m.schedule.form = scheduleForm{}
+	return m, client.CreateScheduleCmd(m.deps.Ctx, m.deps.Sched, spec), true
 }
 
 // scheduleAction fires the per-row action RPC (pause/resume/fire) for the cursor
@@ -387,6 +590,8 @@ func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabil
 		return renderScheduleConfirm(th, st, width, height)
 	case scheduleInspect:
 		return renderScheduleInspect(th, st, replayerWired, width, height)
+	case scheduleCreate:
+		return renderScheduleCreate(th, st, width, height)
 	default:
 		return renderSchedulePanel(th, st, caps, width, height)
 	}
@@ -419,7 +624,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		if st.filter.Value() != "" {
 			b.WriteString(th.Style("muted").Render("no matches — clear filter to see all"))
 		} else {
-			b.WriteString(th.Style("muted").Render("no schedules found (create via `mecated schedule create` or settings.yaml)"))
+			b.WriteString(th.Style("muted").Render("no schedules found (press c to create, or use `mecated schedule create` / settings.yaml)"))
 		}
 		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
 		return b.String()
@@ -444,7 +649,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: inspect  p: pause  r: resume  f: fire-now  d: delete  /: filter  esc: close"))
+	b.WriteString("\n" + th.Style("muted").Render("enter: inspect  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  esc: close"))
 	return b.String()
 }
 
@@ -528,6 +733,56 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 		hint = "↑↓: select fire  enter/t: open transcript  esc: back"
 	}
 	b.WriteString("\n" + muted.Render(hint))
+	return b.String()
+}
+
+// renderScheduleCreate renders the in-overlay Create form (Phase 3b, issue #236).
+// The focused field is highlighted with the accent style; the mutating toggle
+// shows y/n when focused. The footer hint advertises the keybindings.
+func renderScheduleCreate(th theme.Theme, st scheduleState, _, _ int) string {
+	var b strings.Builder
+	b.WriteString(th.Style("title").Render("create schedule") + "\n\n")
+	f := st.form
+	muted := th.Style("muted")
+	fields := []struct {
+		label string
+		val   string
+	}{
+		{"name", f.name.View()},
+		{"prompt", f.prompt.View()},
+		{"trigger", f.trigger.View()},
+		{"workspace", f.workspace.View()},
+	}
+	for i, fld := range fields {
+		marker := "  "
+		if i == f.focusIdx {
+			marker = "▶ "
+		}
+		line := marker + muted.Render(fld.label+": ") + fld.val
+		if i == f.focusIdx {
+			line = th.Style("accent").Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	// Mutating toggle (focusIdx == scheduleFormFieldCount).
+	mutMarker := "  "
+	if f.focusIdx == scheduleFormFieldCount {
+		mutMarker = "▶ "
+	}
+	mutLine := mutMarker + muted.Render("mutating: ")
+	if f.mutating {
+		mutLine += "yes"
+	} else {
+		mutLine += "no"
+	}
+	if f.focusIdx == scheduleFormFieldCount {
+		mutLine = th.Style("accent").Render(mutLine)
+	}
+	b.WriteString(mutLine + "\n")
+	if st.actionErr != "" {
+		b.WriteString("\n" + th.Style("errorText").Render(st.actionErr) + "\n")
+	}
+	b.WriteString("\n" + muted.Render("tab/↑↓: next  enter: advance/submit  y/n: toggle mutating  esc: back"))
 	return b.String()
 }
 
