@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,15 +125,19 @@ func TestSchedulerFire(t *testing.T) {
 
 	// (2) A session was persisted for the fire. The schedule's LastFireSessionID
 	// points at it (the FireFunc set it via RecordFire); load it from the session
-	// store. The session id is the Service's random id (CreateSessionWithProfile
-	// mints it); the "sched--" prefix is the FIRE-id / GC-family key (Phase 1g),
-	// not the session id — the two are linked via LastFireSessionID.
+	// store. ADR 0059 decision #7 Phase-2: the fire id IS the session id, and it
+	// is "sched--"-prefixed (the fire path pre-mints it via newFireID and passes
+	// it as the WithSessionID override on CreateSessionWithProfile, so the
+	// persisted session carries the sched-- GC-retention family prefix).
 	sess, err := seedStore.Load(ctx, loaded.State.LastFireSessionID)
 	if err != nil {
 		t.Fatalf("Load fire session %q: %v", loaded.State.LastFireSessionID, err)
 	}
 	if sess.ID != loaded.State.LastFireSessionID {
 		t.Errorf("fire session id %q != schedule's LastFireSessionID %q", sess.ID, loaded.State.LastFireSessionID)
+	}
+	if !strings.HasPrefix(string(sess.ID), "sched--") {
+		t.Errorf("fire session id %q, want a \"sched--\" prefix (Phase-2: the fire id IS the session id)", sess.ID)
 	}
 	if sess.State != session.StateCompleted {
 		t.Errorf("fire session state = %q, want completed", sess.State)

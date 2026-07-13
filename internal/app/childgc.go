@@ -27,7 +27,7 @@ import (
 // sites themselves derive from, so this list cannot drift from what is
 // actually minted; TestChildSessionPrefixesMatchEngineConvention pins the
 // wiring). ANY id outside these prefixes — every operator/service session —
-// is NEVER touched by the sweeper.
+// is NEVER touched by the child sweeper.
 //
 // SCOPE CAVEAT: a deployment that overrides a family's prefix
 // (agent.WithChildSessionPrefix / WithParallelChildSessionPrefix /
@@ -40,6 +40,15 @@ var childSessionPrefixes = []string{
 	agent.TeamSessionPrefix,
 }
 
+// scheduleFireSessionPrefixes are the scheduled-task fire-session id prefixes
+// (ADR 0059 decision #7 Phase-2). A fire mints a "sched--"-prefixed top-level
+// session (the fire id IS the session id), and this family is swept by its OWN
+// age pass (sweepScheduleFires, ScheduleFireRetention) — NOT the main pass and
+// NOT the child pass. The prefix is a composition-owned constant (the fire path
+// mints it in newFireID), not an engine-exported one, so it lives here rather
+// than in engine/agent (the engine never mints a sched-- id).
+var scheduleFireSessionPrefixes = []string{"sched--"}
+
 // isChildSession reports whether id carries one of the delegation families'
 // prefixes, returning the matched prefix (the per-family cap's grouping key).
 func isChildSession(id session.SessionID) (family string, ok bool) {
@@ -51,13 +60,26 @@ func isChildSession(id session.SessionID) (family string, ok bool) {
 	return "", false
 }
 
+// isScheduleFireSession reports whether id carries a scheduled-task fire prefix.
+func isScheduleFireSession(id session.SessionID) bool {
+	for _, p := range scheduleFireSessionPrefixes {
+		if strings.HasPrefix(string(id), p) {
+			return true
+		}
+	}
+	return false
+}
+
 // isMainSession reports whether id is a TOP-LEVEL (operator/service) session —
-// i.e. NOT one of the delegation families' child prefixes. It is the exact
-// complement of isChildSession over the same prefix list, so the child sweep
-// and the main sweep partition the inventory with no overlap.
+// i.e. NOT one of the delegation families' child prefixes AND NOT a schedule-
+// fire prefix. It is the exact complement of (isChildSession ∪
+// isScheduleFireSession), so the child sweep, the schedule-fire sweep, and the
+// main sweep partition the inventory with no overlap.
 func isMainSession(id session.SessionID) bool {
-	_, ok := isChildSession(id)
-	return !ok
+	if _, ok := isChildSession(id); ok {
+		return false
+	}
+	return !isScheduleFireSession(id)
 }
 
 // childGCPolicy is the operator-tunable retention policy.
@@ -79,16 +101,26 @@ type childGCPolicy struct {
 	// <=0 disables it. Unlike maxPerFamily this is a single store-wide cap, not
 	// per-prefix (issue #79).
 	mainMaxTotal int
+	// scheduleFireRetention is the age threshold for the SCHEDULE-FIRE age pass
+	// (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed fire-session
+	// snapshot whose ModifiedAt is older than now-scheduleFireRetention is
+	// deleted. <=0 disables it (fire sessions are never swept). It is a peer of
+	// mainRetention, partitioning the top-level sessions by family: a sched--
+	// session is swept here, NOT by the main pass.
+	scheduleFireRetention time.Duration
 }
 
 // enabled reports whether any pass is active (the all-zero policy is the
 // fully-disabled posture).
 func (p childGCPolicy) enabled() bool {
-	return p.retention > 0 || p.maxPerFamily > 0 || p.mainRetention > 0 || p.mainMaxTotal > 0
+	return p.retention > 0 || p.maxPerFamily > 0 || p.mainRetention > 0 || p.mainMaxTotal > 0 || p.scheduleFireRetention > 0
 }
 
 // mainEnabled reports whether either MAIN pass is active (issue #79).
 func (p childGCPolicy) mainEnabled() bool { return p.mainRetention > 0 || p.mainMaxTotal > 0 }
+
+// scheduleFireEnabled reports whether the schedule-fire age pass is active.
+func (p childGCPolicy) scheduleFireEnabled() bool { return p.scheduleFireRetention > 0 }
 
 // childGC sweeps child-session snapshots out of a prunable store per the
 // policy. Everything is injected (store, clock, liveness, diagnostics) so the
@@ -145,15 +177,22 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 		return 0, 0
 	}
 
-	// Partition the inventory into the per-family child sets and the main set.
-	// Unprefixed ids (operator/service sessions) go to mains, swept ONLY by the
-	// main passes (issue #79); when those passes are disabled they are invisible
+	// Partition the inventory into the per-family child sets, the schedule-fire
+	// set, and the main set. Unprefixed ids (operator/service sessions) go to
+	// mains, swept ONLY by the main passes (issue #79); "sched--"-prefixed ids
+	// (schedule fires, ADR 0059 decision #7 Phase-2) go to fires, swept ONLY by
+	// the schedule-fire pass; when those passes are disabled they are invisible
 	// to the sweeper exactly as before.
 	byFamily := make(map[string][]port.StoredSession, len(childSessionPrefixes))
 	var mains []port.StoredSession
+	var fires []port.StoredSession
 	for _, e := range entries {
 		if isMainSession(e.ID) {
 			mains = append(mains, e)
+			continue
+		}
+		if isScheduleFireSession(e.ID) {
+			fires = append(fires, e)
 			continue
 		}
 		family, _ := isChildSession(e.ID)
@@ -169,6 +208,13 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 		retained += len(kids)
 	}
 	retained -= deleted
+
+	// Schedule-fire (top-level "sched--") sweep (ADR 0059 decision #7 Phase-2).
+	// A disabled schedule-fire policy makes this a no-op, so a "sched--" session
+	// is never touched unless the operator turned the schedule-fire pass on.
+	fireDeleted := g.sweepScheduleFires(ctx, fires, &errs)
+	deleted += fireDeleted
+	retained += len(fires) - fireDeleted
 
 	// Main (top-level) sweep AFTER the family loop (issue #79). A disabled main
 	// policy makes this a no-op, so an UNPREFIXED session is never touched unless
@@ -312,6 +358,38 @@ func (g *childGC) sweepMain(ctx context.Context, mains []port.StoredSession, err
 	return deleted
 }
 
+// sweepScheduleFires runs the age pass over the SCHEDULE-FIRE ("sched--")
+// top-level sessions and returns how many it deleted (ADR 0059 decision #7
+// Phase-2). It mirrors sweepMain's age-pass idiom (oldest-first sort with an ID
+// tiebreak, live-skip, best-effort delete) but has NO count cap — a fire is a
+// one-shot top-level session, not a delegation child, so the age horizon alone
+// is the retention bound. A disabled schedule-fire policy (retention <=0)
+// returns 0 with no deletes — the historical "sched-- sessions are never
+// touched" behaviour when the knob is off. A LIVE fire (one mid-run) is never
+// deleted, via the same isLive seam the main/child passes use.
+func (g *childGC) sweepScheduleFires(ctx context.Context, fires []port.StoredSession, errs *deleteErrors) (deleted int) {
+	if !g.policy.scheduleFireEnabled() {
+		return 0
+	}
+	// Oldest-first, with an ID tiebreak on equal mtimes so the sweep is
+	// deterministic regardless of the store's (map-iteration) List order — same
+	// rationale as sweepFamily/sweepMain.
+	sort.SliceStable(fires, func(i, j int) bool {
+		if fires[i].ModifiedAt.Equal(fires[j].ModifiedAt) {
+			return fires[i].ID < fires[j].ID
+		}
+		return fires[i].ModifiedAt.Before(fires[j].ModifiedAt)
+	})
+
+	cutoff := g.now().Add(-g.policy.scheduleFireRetention)
+	for _, e := range fires {
+		if e.ModifiedAt.Before(cutoff) && !g.isLive(e.ID) && g.remove(ctx, e.ID, errs) {
+			deleted++
+		}
+	}
+	return deleted
+}
+
 // startChildGC wires the child-session retention sweeper: a no-op (with one
 // build-once INFO, the startMemoryConsolidation idiom) when the policy is
 // fully disabled or the store is not prunable; otherwise one startup sweep
@@ -321,10 +399,11 @@ func (g *childGC) sweepMain(ctx context.Context, mains []port.StoredSession, err
 // Build AFTER the Service exists.
 func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool) {
 	policy := childGCPolicy{
-		retention:     cfg.ChildRetention,
-		maxPerFamily:  cfg.ChildRetentionMaxPerFamily,
-		mainRetention: cfg.MainRetention,
-		mainMaxTotal:  cfg.MainRetentionMaxTotal,
+		retention:             cfg.ChildRetention,
+		maxPerFamily:          cfg.ChildRetentionMaxPerFamily,
+		mainRetention:         cfg.MainRetention,
+		mainMaxTotal:          cfg.MainRetentionMaxTotal,
+		scheduleFireRetention: cfg.ScheduleFireRetention,
 	}
 	if !policy.enabled() {
 		cfg.diag().Log(ctx, port.LevelInfo, "session GC DISABLED (no child retention/cap and no main retention/cap)")
@@ -345,6 +424,7 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 	cfg.diag().Log(ctx, port.LevelInfo, "session GC ENABLED",
 		"child_retention", cfg.ChildRetention, "child_max_per_family", cfg.ChildRetentionMaxPerFamily,
 		"main_retention", cfg.MainRetention, "main_max_total", cfg.MainRetentionMaxTotal,
+		"schedule_fire_retention", cfg.ScheduleFireRetention,
 		"interval", cfg.ChildGCInterval)
 	go func() {
 		gc.sweep(ctx)

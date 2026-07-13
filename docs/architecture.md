@@ -306,7 +306,16 @@ the existing run-entry funnel. The pieces:
   top-level session per fire via `Service.CreateSessionWithProfile` +
   `StartRunContent` with subagent-grade defaults (bounded budgets, read-leaning
   posture unless `mutating: true`, headless ask model, fail-closed model
-  pinning).
+  pinning). The fire id IS the session id (ADR 0059 decision #7 Phase-2): the
+  fire path pre-mints a `sched--<name>-<ts>-<rand>` id and passes it as the
+  `WithSessionID` override (a variadic options pattern on
+  `CreateSessionWithProfile`), so the persisted session carries the `sched--`
+  GC-retention family prefix. A distinct `ScheduleFireRetention` GC family
+  (`sweepScheduleFires`, peer of the main/child passes) sweeps per-fire
+  sessions on their own age horizon — never the main or child pass. The
+  `--schedule-fire-retention` flag (operator-tier, peer of
+  `--child-retention`) defaults to 7d when `--scheduler` is on; 0 disables
+  (fire sessions are never swept).
 
 See [ADR 0059](adr/0059-scheduled-tasks.md) for the frozen rationale (the 10
 resolved decisions + the leader-lease decision) and the consequences (one-shot

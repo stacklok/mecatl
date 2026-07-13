@@ -59,6 +59,7 @@ Flags:
 | `--scheduler-tick-interval` | 30s | How often the tick loop polls `ScheduleStore.Due`. |
 | `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-save time (a schedule tighter than this is rejected). |
 | `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
+| `--schedule-fire-retention` | 7d (when `--scheduler` on) | How long persisted `sched--`-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from `--child-retention`/`--main-retention`); a LIVE fire (one mid-run) is never deleted. 0 disables the pass — fire sessions are never swept. Only meaningful when `--scheduler` is enabled and a durable store is configured. |
 
 Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,
 issue #232), the operator-tier **`settings.yaml` `schedules:` block** (Phase 2b,
@@ -116,7 +117,10 @@ without the accessor) honestly reports the schedule RPCs as `Unimplemented`
 
 A scheduled fire mints a fresh `sched--` top-level session per fire with
 subagent-grade defaults (bounded turn/token budgets, read-leaning posture unless
-`mutating: true` is set on the schedule, headless ask model). The at-most-once
+`mutating: true` is set on the schedule, headless ask model). The fire id IS the
+session id (a `sched--<name>-<ts>-<rand>` id, passed as a `WithSessionID`
+override on session create), so a fire's persisted session carries the `sched--`
+GC-retention family prefix swept by `--schedule-fire-retention`. The at-most-once
 firing semantics mean a crash mid-fire skips the slot — a recurring schedule
 self-heals via the fire-once-now misfire policy; a one-shot can be lost.
 

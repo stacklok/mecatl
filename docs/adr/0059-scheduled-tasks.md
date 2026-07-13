@@ -204,6 +204,19 @@ misfire".
   and adds the `--schedule-*` flags. Until then the scheduler is inert (no
   composition wire, byte-identical default).
 
+- **Phase-2 update (fire id + GC retention family).** Decision #7's Phase-1
+  caveat is resolved: the fire path now mints a `sched--`-prefixed session id
+  via a `WithSessionID` override on `CreateSessionWithProfile` (a variadic
+  options pattern, NOT a positional-signature widening), so the fire id IS the
+  session id AND the persisted session carries the `sched--` family prefix. A
+  distinct `ScheduleFireRetention` GC family sweeps per-fire sessions on their
+  OWN schedule (a peer age pass of `MainRetention`/`ChildRetention`, partitioned
+  by the `sched--` prefix — never the main or child pass). The
+  `--schedule-fire-retention` flag (operator-tier, peer of `--child-retention`)
+  defaults to 7d when `--scheduler` is enabled; 0 disables (fire sessions are
+  never swept, byte-identical to pre-Phase-2). The override validates a
+  non-empty id that does not collide with a live per-session engine.
+
 ## See also
 
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md) — the four ports +

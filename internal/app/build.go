@@ -248,6 +248,21 @@ type Config struct {
 	MainRetention         time.Duration
 	MainRetentionMaxTotal int
 
+	// Schedule-fire retention/GC (ADR 0059 decision #7 Phase-2): the durable
+	// session store accumulates a "sched--"-prefixed TOP-LEVEL session per fire
+	// (the fire id IS the session id). This is a DISTINCT family from the
+	// operator/service mains (MainRetention) and the delegation children
+	// (ChildRetention): a sched-- session is swept by its OWN age pass
+	// (sweepScheduleFires), never the main or child pass. The retention is the age
+	// horizon — a fire-session snapshot whose last-modified time is older than
+	// ScheduleFireRetention is deleted, always skipping a LIVE fire (one
+	// mid-run). 0 disables the pass (fire sessions are never swept). Default
+	// applied at the cmd layer: 7*24h (7 days) when scheduling is on, so a
+	// durable store does not grow without bound; 0 (the zero-config default)
+	// leaves fire sessions untouched (byte-identical to pre-Phase-2). A
+	// non-prunable store is never swept.
+	ScheduleFireRetention time.Duration
+
 	// Remote store drivers (Phase B): gRPC driver endpoints that replace the
 	// LOCAL session/memory stores with internal/adapter/grpcdriver clients.
 	// SessionStoreURL is mutually exclusive with StoreDir, MemoryStoreURL with

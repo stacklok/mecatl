@@ -3835,8 +3835,17 @@ pieces, all behind `--scheduler` (byte-identical default when unwired):
   `StartRunContent` with subagent-grade defaults (bounded budgets, read-leaning posture
   unless `mutating: true`, headless ask model, fail-closed model pinning), drives it to
   the terminal `EvResult`, and returns the `ScheduleFire` carrying the stop reason. The
-  OPTIONAL `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`) appends the
-  `EvScheduleFired`/`Skipped`/`Failed` event to the fire session's durable `EventLog`.
+  fire id IS the session id (ADR 0059 decision #7 Phase-2): the fire path pre-mints a
+  `sched--<name>-<ts>-<rand>` id (`newFireID`) and passes it as the `WithSessionID`
+  override on `CreateSessionWithProfile` (a variadic options pattern, NOT a positional
+  widening), so the persisted session carries the `sched--` GC-retention family prefix.
+  A distinct `ScheduleFireRetention` GC family (`internal/app/childgc.go`
+  `sweepScheduleFires`, peer of `sweepMain`) sweeps per-fire sessions on their OWN age
+  horizon — never the main or child pass. The `--schedule-fire-retention` flag
+  (operator-tier) defaults to 7d when `--scheduler` is on; 0 disables (fire sessions
+  never swept). The OPTIONAL `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`)
+  appends the `EvScheduleFired`/`Skipped`/`Failed` event to the fire session's durable
+  `EventLog`.
 - **Wire API (Phase 2a, #232).** `ScheduleService` — 10 gRPC RPCs
   (`CreateSchedule`/`GetSchedule`/`ListSchedules`/`UpdateSchedule`/`DeleteSchedule`/
   `FireNow`/`PauseSchedule`/`ResumeSchedule`/`GetFire`/`ListFires`) in

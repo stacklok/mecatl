@@ -27,11 +27,13 @@ const (
 // makeFireFunc builds the composition-supplied scheduler.FireFunc over the
 // assembled *server.Service. Each fire mints a FRESH top-level "sched--" session
 // (decision #7 — a schedule fire is its own conversation, never a continuation
-// of a prior fire's session) via Service.CreateSessionWithProfile, drives it to
-// a terminal EvResult via Service.StartRunContent, and returns the fire record
-// carrying the stop reason + any error. It applies subagent-grade defaults
-// (bounded MaxTurns/MaxToolCalls when the schedule carries none) and maps the
-// port.ScheduleSpec's neutral selector/profile onto the server adapter's
+// of a prior fire's session) via Service.CreateSessionWithProfile (passing a
+// pre-minted "sched--" id as the WithSessionID override, so the fire id IS the
+// session id and the session carries the sched-- GC-retention family prefix),
+// drives it to a terminal EvResult via Service.StartRunContent, and returns the
+// fire record carrying the stop reason + any error. It applies subagent-grade
+// defaults (bounded MaxTurns/MaxToolCalls when the schedule carries none) and
+// maps the port.ScheduleSpec's neutral selector/profile onto the server adapter's
 // ProviderSelector/SessionProfile. Fail-closed: an error at create or run-start
 // surfaces as a ScheduleFire with Stop=StopError (the at-most-once Claim already
 // advanced NextFireAt, so a failed fire is NOT retried). Model pinning is
@@ -71,7 +73,13 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 			limits.MaxConsecutiveFailures = subagentDefaultMaxConsecFails
 		}
 
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile)
+		// Pre-mint the fire id (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed
+		// id that serves as BOTH the fire id AND the session id. Minting it here
+		// (before CreateSessionWithProfile) and passing it as the WithSessionID
+		// override means the fire's persisted session carries the sched-- family
+		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
+		fireID := newFireID(sched.Spec.Name, now)
+		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile, server.WithSessionID(session.SessionID(fireID)))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
 		}
@@ -105,12 +113,21 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 				break
 			}
 		}
-		// Decision #7: the fire ID IS the session id (the session id is the
+		// Decision #7 Phase-2: the fire ID IS the session id (the session id is the
 		// discoverability key — LastFireSessionID, which RecordFire sets to
-		// f.SessionID, is what a caller hands LoadFire). CreateSessionWithProfile
-		// mints the session id (via the Service's NewID); the fire adopts it.
+		// f.SessionID, is what a caller hands LoadFire). The fire id was pre-minted
+		// as a "sched--"-prefixed id and passed as the WithSessionID override, so
+		// sess.ID carries the sched-- family the GC retention sweep partitions on.
+		// Defensive: if CreateSessionWithProfile ever returns a non-empty sess.ID
+		// that differs from the override (a partial-create edge), prefer the
+		// session's own id so the fire record points at the session that actually
+		// exists.
+		id := fireID
+		if string(sess.ID) != "" {
+			id = string(sess.ID)
+		}
 		return port.ScheduleFire{
-			ID:           string(sess.ID),
+			ID:           id,
 			ScheduleName: sched.Spec.Name,
 			SessionID:    sess.ID,
 			FiredAt:      now,
@@ -121,13 +138,14 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 }
 
 // newFireID mints a per-fire identifier: "sched--<name>-<UTC compact>-<randhex>".
-// It is used ONLY on the create-FAILURE fallback path (fireFailed), so a fire
-// that never minted a session still has a non-empty, unique RecordFire key. On
-// the SUCCESS path the fire id IS the session id minted by
-// CreateSessionWithProfile (decision #7), which in Phase 1 is an ordinary random
-// id — the "sched--" session-id prefix awaits a session-id override on
-// CreateSessionWithProfile (Phase 2). The random suffix keeps two failed fires of
-// the same schedule in the same second distinct.
+// It is pre-minted on the fire path (ADR 0059 decision #7 Phase-2) and passed
+// as the WithSessionID override to CreateSessionWithProfile, so the fire's
+// persisted session carries the "sched--" prefix the GC retention sweep
+// (ScheduleFireRetention) partitions on — and the fire id IS the session id.
+// It is ALSO the fallback on the create-FAILURE path (fireFailed), so a fire
+// that never minted a session still has a non-empty, unique RecordFire key. The
+// random suffix keeps two fires of the same schedule in the same second
+// distinct.
 func newFireID(name string, now time.Time) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])

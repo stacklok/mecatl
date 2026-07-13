@@ -858,13 +858,36 @@ func (s *Service) currentModels() []*mecatlv1.ModelInfo {
 // the original meaning for every state (no live run to cancel).
 var ErrNoActiveRun = errors.New("server: no active run for session")
 
+// CreateSessionOption is a variadic option applied to a CreateSession* call
+// (the Go options idiom — NOT a method-signature widening). The only option
+// today is WithSessionID, which lets a caller (the scheduler fire path) mint a
+// session under a CALLER-chosen id instead of the Service's NewID generator.
+// Unknown options from future callers are a no-op.
+type CreateSessionOption func(*createSessionOpts)
+
+// createSessionOpts is the resolved options struct a CreateSessionOption writes
+// into. The zero value is the byte-identical no-option path.
+type createSessionOpts struct {
+	id session.SessionID
+}
+
+// WithSessionID overrides the session id a CreateSession* call mints. When set,
+// the id MUST be non-empty and MUST NOT collide with a live per-session engine
+// (the sessionEngines map); a collision is rejected with ErrInvalidArgument.
+// An empty id is rejected. When no WithSessionID option is passed, the existing
+// NewID path is byte-identical. It is the seam ADR 0059 decision #7 Phase-2
+// uses to mint "sched--"-prefixed fire-session ids.
+func WithSessionID(id session.SessionID) CreateSessionOption {
+	return func(o *createSessionOpts) { o.id = id }
+}
+
 // CreateSession allocates a new idle session on the SHARED engine, persists it,
 // and returns it. workspace must be non-empty. An unspecified mode falls back to
 // DefaultMode. It is the no-selector, no-MCP fast path: it delegates to the
 // generalized createSession with the zero selector, nil specs and the default
 // profile.
 func (s *Service) CreateSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits) (*session.Session, error) {
-	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, nil, ProfileDefault)
+	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, nil, ProfileDefault, createSessionOpts{})
 }
 
 // CreateSessionWithProvider creates a session bound to a non-default
@@ -884,11 +907,20 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, workspace strin
 // provider id surfaces as ErrInvalidArgument). Setting ModelID with an empty
 // ProviderID is rejected (a bare model on the env-derived default provider is
 // ambiguous). The workspace requirement is PROFILE-AWARE — see createSession.
-func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile) (*session.Session, error) {
+//
+// opts is the variadic options pattern (CreateSessionOption): WithSessionID
+// overrides the minted id (ADR 0059 decision #7 Phase-2 — the scheduler fire
+// path mints a "sched--"-prefixed id). Zero opts is byte-identical to the
+// pre-Phase-2 signature.
+func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
 	if sel.ProviderID == "" && sel.ModelID != "" {
 		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
 	}
-	return s.createSession(ctx, workspace, mode, limits, sel, nil, profile)
+	var o createSessionOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return s.createSession(ctx, workspace, mode, limits, sel, nil, profile, o)
 }
 
 // createSession is the single create path generalizing the shared-engine fast
@@ -926,7 +958,7 @@ func setSessionLabels(sess *session.Session, sel ProviderSelector, profile Sessi
 	sess.ReasoningEffort = sel.ReasoningEffort
 }
 
-func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile) (*session.Session, error) {
+func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	switch profile {
 	case ProfileDefault:
 		if workspace == "" {
@@ -951,13 +983,31 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// the unset caps. A zero field means "unset", not "explicitly unlimited".
 	limits = limits.WithDefaults(s.cfg.DefaultLimits)
 
+	// Resolve the session id: the caller's override (WithSessionID, ADR 0059
+	// decision #7 Phase-2) wins; otherwise the Service's NewID generator mints a
+	// fresh one (the byte-identical pre-Phase-2 path). A caller-chosen id is
+	// validated: non-empty, and not colliding with a LIVE per-session engine
+	// (the sessionEngines map — a collision would shadow an in-flight session).
+	// The collision check is under the SAME lock as the later registration so it
+	// races cleanly against a concurrent create on the same id.
+	mintID := s.cfg.NewID
+	if opts.id != "" {
+		s.mu.Lock()
+		_, collision := s.sessionEngines[opts.id]
+		s.mu.Unlock()
+		if collision {
+			return nil, fmt.Errorf("%w: session id %q already has a live per-session engine", ErrInvalidArgument, opts.id)
+		}
+		mintID = func() session.SessionID { return opts.id }
+	}
+
 	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace)
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
 		// exactly the no-per-session case), so setLabels persists nothing new — the
 		// snapshot stays byte-identical to a pre-Phase-1 default session.
-		sess := session.New(s.cfg.NewID(), mode, workspace, limits, s.cfg.Now())
+		sess := session.New(mintID(), mode, workspace, limits, s.cfg.Now())
 		setSessionLabels(sess, sel, profile)
 		if err := s.cfg.Store.Save(ctx, sess); err != nil {
 			return nil, fmt.Errorf("server: persist session: %w", err)
@@ -987,7 +1037,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		return nil, err
 	}
 	eng, closeFn := res.Engine, res.Close
-	sess := session.New(s.cfg.NewID(), mode, workspace, limits, s.cfg.Now())
+	sess := session.New(mintID(), mode, workspace, limits, s.cfg.Now())
 	// Persist the neutral provider+model selector and the profile as write-once
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
@@ -1107,7 +1157,7 @@ func (s *Service) CreateSessionWithMCP(ctx context.Context, workspace string, mo
 	// per-session engine bound to the DEFAULT provider, matching the pre-S3 MCP
 	// path exactly. (ACP carries no profile in P0 — every ACP session is the
 	// default filesystem profile.)
-	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, specs, ProfileDefault)
+	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
 }
 
 // SetSessionWorkspace registers a per-session Workspace OVERRIDE for id, so a

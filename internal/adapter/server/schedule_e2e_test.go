@@ -2,7 +2,11 @@ package server_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +172,13 @@ func TestScheduleE2E(t *testing.T) {
 	sessID := fireResp.GetSessionId()
 	if fireID == "" || sessID == "" || fireID != sessID {
 		t.Fatalf("FireNow fire_id=%q session_id=%q (want non-empty and equal)", fireID, sessID)
+	}
+	// ADR 0059 decision #7 Phase-2: the fire's session id is "sched--"-prefixed
+	// (the fire path pre-mints it via newFireID and passes it as the
+	// WithSessionID override on CreateSessionWithProfile, so the persisted
+	// session carries the sched-- GC-retention family prefix).
+	if !strings.HasPrefix(sessID, "sched--") {
+		t.Errorf("FireNow session_id=%q, want a \"sched--\" prefix", sessID)
 	}
 
 	// Poll the fire's session to a terminal state (the mockllm drives StopEndTurn).
@@ -443,10 +454,12 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 	return svc, sched, store, cleanup
 }
 
-// fireFuncForTest mirrors internal/app.makeFireFunc over the *Service: it mints a
-// fresh session (default profile, so Workspace must be set — the schedule's own
-// workspace), drives it to the terminal EvResult via StartRunContent, and returns
-// the fire record. Read-leaning schedules run in plan mode (a read-only toolset).
+// fireFuncForTest mirrors internal/app.makeFireFunc over the *Service: it mints
+// a fresh "sched--"-prefixed session (default profile, so Workspace must be set
+// — the schedule's own workspace) via the WithSessionID override, drives it to
+// the terminal EvResult via StartRunContent, and returns the fire record. The
+// fire id IS the session id (ADR 0059 decision #7 Phase-2). Read-leaning
+// schedules run in plan mode (a read-only toolset).
 func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		mode := sched.Spec.Mode
@@ -466,10 +479,12 @@ func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 		if limits.MaxConsecutiveFailures == 0 {
 			limits.MaxConsecutiveFailures = 5
 		}
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, server.ProviderSelector{}, server.ProfileDefault)
+		fireID := newFireIDForTest(sched.Spec.Name, now)
+		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
+			server.WithSessionID(session.SessionID(fireID)))
 		if err != nil {
 			return port.ScheduleFire{
-				ID: string(sess.ID), ScheduleName: sched.Spec.Name,
+				ID: fireID, ScheduleName: sched.Spec.Name,
 				FiredAt: now, Stop: session.StopError, Err: err.Error(),
 			}, err
 		}
@@ -490,8 +505,12 @@ func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 				break
 			}
 		}
+		id := fireID
+		if string(sess.ID) != "" {
+			id = string(sess.ID)
+		}
 		return port.ScheduleFire{
-			ID:           string(sess.ID),
+			ID:           id,
 			ScheduleName: sched.Spec.Name,
 			SessionID:    sess.ID,
 			FiredAt:      now,
@@ -499,6 +518,14 @@ func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 			Err:          runErr,
 		}, nil
 	}
+}
+
+// newFireIDForTest mirrors internal/app.newFireID: "sched--<name>-<UTC compact>-<rand>".
+// It is the test-local copy (this package cannot import internal/app).
+func newFireIDForTest(name string, now time.Time) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("sched--%s-%s-%s", name, now.UTC().Format("20060102-150405"), hex.EncodeToString(b[:]))
 }
 
 // --- small test helpers -----------------------------------------------------

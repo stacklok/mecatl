@@ -331,6 +331,12 @@ type config struct {
 	mainRetention         time.Duration
 	mainRetentionMaxTotal int
 
+	// Schedule-fire retention/GC (ADR 0059 decision #7 Phase-2): age threshold
+	// for persisted "sched--"-prefixed fire-session snapshots. Default 7d when
+	// scheduling is on (applied below); 0 disables (fire sessions never swept).
+	scheduleFireRetention    time.Duration
+	scheduleFireRetentionSet bool // true when --schedule-fire-retention was passed explicitly
+
 	// Slash commands: directory of <name>.md command templates, and an explicit
 	// enable switch. commandsDir set OR enableCommands true wires the
 	// DirCommandExpander; otherwise the default NoopExpander is left in place.
@@ -915,6 +921,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		ChildRetentionMaxPerFamily:   cfg.childRetentionMaxPerFamily,
 		MainRetention:                cfg.mainRetention,
 		MainRetentionMaxTotal:        cfg.mainRetentionMaxTotal,
+		ScheduleFireRetention:        cfg.scheduleFireRetention,
 		ChildGCInterval:              cfg.childGCInterval,
 		SessionStoreURL:              cfg.sessionStoreURL,
 		MemoryStoreURL:               cfg.memoryStoreURL,
@@ -1181,6 +1188,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.childRetentionMaxPerFamily, "child-retention-max-per-family", 500, "max persisted child session snapshots kept per delegation family (subagent/parallel/team); the oldest beyond the cap are deleted, skipping in-flight runs. Durable-store-only, like --child-retention. 0 disables the cap")
 	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "how long persisted MAIN (top-level operator/service) session snapshots are retained before the GC sweep deletes them; child sessions are governed by --child-retention instead. Only meaningful with a durable store (--store-dir or a prunable --session-store-url driver). 0 (default) disables the main age pass entirely, so main sessions are never touched")
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN (top-level) session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight runs. Durable-store-only, like --main-retention. 0 (default) disables the cap, so main sessions are never touched")
+	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. 0 (default) disables the pass — fire sessions are never swept. Only meaningful when --scheduler is enabled and a durable store is configured (--store-dir or a prunable --session-store-url driver). An operator commonly sets 7d (168h) so a durable store does not grow without bound")
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = sweep at startup only. Only meaningful when a child or main retention/cap knob is active")
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.eventLogURL, "event-log-url", "", "host:port of a remote event-log gRPC driver (mecatl.driver.v1.EventLogService) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); INDEPENDENT of the session store. Empty keeps the local default (the --store-dir jsonl log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
@@ -1316,7 +1324,17 @@ func parseFlags(argv []string) (config, error) {
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
 		}
+		if f.Name == "schedule-fire-retention" {
+			cfg.scheduleFireRetentionSet = true
+		}
 	})
+
+	// Default the schedule-fire retention to 7d when scheduling is ON and the
+	// operator did not set it explicitly (ADR 0059 decision #7 Phase-2): a durable
+	// store accumulates a "sched--" session per fire, so a sane default keeps it
+	// bounded. 0 (the flag default / explicit --schedule-fire-retention=0) leaves
+	// fire sessions untouched (byte-identical to pre-Phase-2 / the OFF posture).
+	applyScheduleFireRetentionDefault(&cfg)
 
 	// --perf-mcp rides the admin listener, so it is meaningless without one.
 	if cfg.perfMCP && cfg.metricsAddr == "" {
@@ -1392,6 +1410,16 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, fmt.Errorf("--websearch %q: only \"off\" is accepted (the kill switch); web search is ON by default (Exa anonymous tier). Set SEARXNG_URL or BRAVE_API_KEY to switch backends, or --websearch-url for an explicit endpoint. Leave --websearch unset to keep web search enabled", cfg.websearchMode)
 	}
 	return cfg, nil
+}
+
+// applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days
+// when the scheduler is enabled and the operator did not pass
+// --schedule-fire-retention explicitly. Extracted from parseFlags to keep its
+// cyclomatic complexity under the gate (ADR 0059 decision #7 Phase-2).
+func applyScheduleFireRetentionDefault(cfg *config) {
+	if cfg.schedulerEnabled && !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
+		cfg.scheduleFireRetention = 7 * 24 * time.Hour
+	}
 }
 
 // readAskReviewerPolicy reads the --subagent-ask-reviewer-policy rubric file and

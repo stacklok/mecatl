@@ -159,6 +159,8 @@ type config struct {
 	childGCInterval            time.Duration
 	mainRetention              time.Duration
 	mainRetentionMaxTotal      int
+	scheduleFireRetention      time.Duration
+	scheduleFireRetentionSet   bool
 
 	// Skills/agents/soul/user-model: the discovery knobs. mecak8s is a daemon
 	// over a workspace mount; these default OFF / conventional like mecated.
@@ -291,6 +293,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = startup only")
 	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "how long persisted MAIN session snapshots are retained; 0 (default) disables the main age pass")
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN session snapshots kept store-wide; 0 (default) disables the cap")
+	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. 0 (default) disables the pass — fire sessions are never swept. Only meaningful when --scheduler is enabled (defaults to 7d/168h when scheduler is on and this flag is unset)")
 
 	// Skills / agents / soul / user-model (default OFF / conventional, like mecated).
 	fs.Var(&cfg.skillsDirs, "skills-dir", "directory to discover progressive-disclosure skills from (repeatable; highest precedence). TRUST BOUNDARY: a SKILL.md steers the model — point this only at directories you trust")
@@ -327,7 +330,20 @@ func parseFlags(argv []string) (config, error) {
 		case "subagent-model-router":
 			cfg.subagentModelRouterSet = true
 		}
+		if fl.Name == "schedule-fire-retention" {
+			cfg.scheduleFireRetentionSet = true
+		}
 	})
+
+	// Default the schedule-fire retention to 7d when scheduling is ON and the
+	// operator did not set it explicitly (ADR 0059 decision #7 Phase-2): a durable
+	// store accumulates a "sched--" session per fire, so a sane default keeps it
+	// bounded. mecak8s is the multi-replica scheduling home, so the default is
+	// especially relevant here. 0 (explicit --schedule-fire-retention=0) leaves
+	// fire sessions untouched.
+	if cfg.schedulerEnabled && !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
+		cfg.scheduleFireRetention = 7 * 24 * time.Hour
+	}
 
 	// Read the trusted ask-reviewer policy rubric, if any (an unreadable file
 	// fails startup, mirroring mecated).
@@ -386,6 +402,7 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		ChildGCInterval:              cfg.childGCInterval,
 		MainRetention:                cfg.mainRetention,
 		MainRetentionMaxTotal:        cfg.mainRetentionMaxTotal,
+		ScheduleFireRetention:        cfg.scheduleFireRetention,
 		SkillsDirs:                   cfg.skillsDirs,
 		SkillsConventional:           cfg.skillsConventional,
 		AgentsDirs:                   cfg.agentsDirs,
