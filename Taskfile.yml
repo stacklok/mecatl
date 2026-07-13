@@ -402,8 +402,8 @@ tasks:
       govulncheck has no native allowlist, so the JSON stream is filtered through
       .github/scripts/govulncheck-gate.go (a `go run` filter — no jq/external
       tool): it fails on any NEW reachable vuln while accepting a documented
-      allowlist. The ROOT module allowlists two unfixable-upstream docker CVEs
-      (GO-2026-4887/4883, transitive via toolhive, reachable only in internal/);
+      allowlist. The ROOT module allowlist is EMPTY (the toolhive v0.31.0 bump
+      pulled a fixed docker/docker, clearing GO-2026-4887/4883/5617/5668/5746);
       the ENGINE module is STRICT (no allowlist). `pipefail` + the gate's
       fail-closed checks make a govulncheck error a hard fail, never a vacuous
       pass. Supply-chain hygiene that travels with the engine library when
@@ -413,7 +413,7 @@ tasks:
       # mid-scan govulncheck crash (after the JSON `config` preamble) would let
       # the gate see zero findings and pass green. pipefail propagates the
       # govulncheck failure, matching the CI job.
-      - cmd: set -o pipefail; go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run .github/scripts/govulncheck-gate.go GO-2026-4887 GO-2026-4883 # v1.1.4
+      - cmd: set -o pipefail; go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run .github/scripts/govulncheck-gate.go # v1.1.4 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
       # engine/ is a separate module — `./...` from the root does NOT cross the
       # module boundary, so its scan is a second invocation against engine/go.mod.
       # No allowlist: the engine library's closure is clean and must stay clean.
