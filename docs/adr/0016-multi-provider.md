@@ -706,7 +706,8 @@ Decisions recorded with the feature:
 ## 11. Live model listing (SHIPPED — OpenRouter)
 
 The picker used to show only the curated embedded subset (`providercatalog`, §3) — for
-OpenRouter, a hand-pinned 27 of 336. Live model listing makes a provider whose API can
+OpenRouter, a hand-pinned 27 of 336 (now: all openrouter models are vendored, kept
+fresh by a weekly CI job). Live model listing makes a provider whose API can
 enumerate its real catalog do so, behind a clean **optional capability** so a future
 provider opts in trivially.
 

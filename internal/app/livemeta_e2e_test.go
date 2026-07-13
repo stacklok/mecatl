@@ -64,7 +64,7 @@ func TestAnthropicLiveResolverPicksUpCeiling(t *testing.T) {
 	// Before the swap: the seed (catalog) drives the resolvers. claude-opus-4-8's
 	// catalog output ceiling is 128000 (also the live value) — pick a model whose
 	// LIVE value differs from the catalog to prove the swap. The fixture sets
-	// claude-3-5-haiku-20241022 to out=8192/ctx=200000 matching catalog, so instead
+	// claude-haiku-4-5 to out=64000/ctx=200000 matching catalog, so instead
 	// assert the LIVE thinking descriptor (which the catalog cannot supply at all).
 	if _, _, known := reg.meta.thinkingFor(providerAnthropic, "claude-opus-4-8"); known {
 		t.Fatal("pre-swap: thinking must be unknown (catalog has no thinking bit)")
@@ -132,15 +132,15 @@ func TestBuildProviderRegistrySeedsMetaStore(t *testing.T) {
 func TestAnthropicLiveCeilingOverridesCatalog(t *testing.T) {
 	reg := regWithAnthropicLister(t, anthropicFixtureClient(t))
 
-	// claude-3-5-haiku-20241022: catalog out=8192. Inject a DIFFERENT live ceiling via
+	// claude-haiku-4-5: catalog out=64000. Inject a DIFFERENT live ceiling via
 	// a direct swap (the fixture matches catalog for this id, so we force a divergence
 	// to assert live-wins unambiguously).
-	const liveCeiling = 16384
+	const liveCeiling = 32768
 	reg.meta.Swap(map[string][]modelEntry{
-		providerAnthropic: {{ID: "claude-3-5-haiku-20241022", OutputLimit: liveCeiling, ContextLimit: 200_000}},
+		providerAnthropic: {{ID: "claude-haiku-4-5", OutputLimit: liveCeiling, ContextLimit: 200_000}},
 	})
-	if got := reg.meta.outputLimitFor(providerAnthropic, "claude-3-5-haiku-20241022"); got != liveCeiling {
-		t.Errorf("outputLimitFor = %d, want live %d (live must beat catalog 8192)", got, liveCeiling)
+	if got := reg.meta.outputLimitFor(providerAnthropic, "claude-haiku-4-5"); got != liveCeiling {
+		t.Errorf("outputLimitFor = %d, want live %d (live must beat catalog 64000)", got, liveCeiling)
 	}
 	// A model the live swap dropped still resolves via the catalog floor.
 	if got := reg.meta.outputLimitFor(providerAnthropic, "claude-opus-4-8"); got != 128000 {

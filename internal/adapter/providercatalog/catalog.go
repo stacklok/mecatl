@@ -1,13 +1,13 @@
 // Package providercatalog is a stdlib-only LEAF DATA adapter exposing a pinned,
-// embed-vendored CURATED SUBSET of the models.dev model catalog as a typed,
-// read-only Go API. It carries no behaviour beyond parsing the embedded JSON
-// once and handing out immutable-by-convention value types; nothing here knows
-// about the agent, providers, ports, or the domain.
+// embed-vendored subset of the models.dev model catalog as a typed, read-only Go
+// API. It carries no behaviour beyond parsing the embedded JSON once and handing
+// out immutable-by-convention value types; nothing here knows about the agent,
+// providers, ports, or the domain.
 //
 // # Source, provenance, and license
 //
-// The embedded data in models.dev.curated.json is a hand-curated subset of the
-// community model catalog published at:
+// The embedded data in models.dev.curated.json is a subset of the community model
+// catalog published at:
 //
 //	https://models.dev/api.json
 //
@@ -17,30 +17,30 @@
 // the MIT license requires when redistributing portions of the work.
 //
 // The catalog API exposes NO version field (the upstream endpoint has none), so
-// the fetch date IS the pin. Pinned 2026-06-17.
+// the fetch date IS the pin. Pinned 2026-07-13.
 //
-// # Curation policy (NO silent caps)
+// # Curation policy (full vendor for in-scope providers)
 //
-// The full catalog has 145 providers and thousands of models. We vendor only the
-// three providers in scope for multi-provider Phase 0/1, and within openrouter a
-// hand-pinned flagship allowlist (a regex was rejected: it sweeps in dated pins,
-// :free/-fast variants, and audio/image noise — curation's value is reviewability
-// + determinism). The DROPPED surface, stated plainly:
+// The full catalog has 145+ providers and thousands of models. We vendor ONLY the
+// three providers in scope for multi-provider Phase 0/1 — but for each of them we
+// vendor ALL models (no hand-pinned allowlist). The DROPPED surface, stated plainly:
 //
-//   - 142 providers dropped wholesale (out of P0/P1 scope: Chat-Completions
+//   - 142+ providers dropped wholesale (out of P0/P1 scope: Chat-Completions
 //     providers like Gemini-native / Together are P2 and need their own adapter,
 //     so their catalog entries are not useful yet).
-//   - openai: ALL 50 vendored (modest, P0 native via the Responses adapter).
-//   - anthropic: ALL 25 vendored (P1 native Messages adapter; its model list is
-//     made READY now).
-//   - openrouter: 27 of 336 vendored — an EXPLICIT flagship allowlist of
-//     anthropic/* + openai/* + google/* + leading agent/coding routes; 309 openrouter models dropped.
+//   - openai: ALL models vendored (P0 native via the Responses adapter).
+//   - anthropic: ALL models vendored (P1 native Messages adapter).
+//   - openrouter: ALL models vendored (the OpenRouter flagship+long-tail set —
+//     hundreds of routes across dozens of upstream providers).
 //
-// An unknown provider/model id is an honest (_, false) lookup miss, never a
-// silent substitution. The Go structs deliberately do NOT parse cost /
-// release_date / knowledge etc.; the curated JSON KEEPS those fields (the jq
-// projection copies whole model objects) so a future slice can surface them
-// without re-pinning (encoding/json ignores unmapped fields).
+// The catalog is kept fresh by a weekly CI job
+// (.github/workflows/catalog-refresh.yml) that re-fetches models.dev/api.json,
+// regenerates the curated JSON, and opens a PR if it changed. An unknown
+// provider/model id is an honest (_, false) lookup miss, never a silent
+// substitution. The Go structs deliberately do NOT parse cost / release_date /
+// knowledge etc.; the curated JSON KEEPS those fields (the jq projection copies
+// whole model objects) so a future slice can surface them without re-pinning
+// (encoding/json ignores unmapped fields).
 //
 // # Deterministic regeneration (reproducible re-pin)
 //
@@ -51,25 +51,12 @@
 //	# 1. Re-fetch the pinned source (record the date in the comment above):
 //	curl -s https://models.dev/api.json > .scratch/models.dev.full.json
 //
-//	# 2. Regenerate the curated subset deterministically:
-//	jq -S --argjson orModels '[
-//	  "anthropic/claude-opus-4.8","anthropic/claude-opus-4.5","anthropic/claude-opus-4.1",
-//	  "anthropic/claude-sonnet-4.6","anthropic/claude-sonnet-4.5","anthropic/claude-sonnet-4",
-//	  "anthropic/claude-haiku-4.5","anthropic/claude-3.5-haiku",
-//	  "openai/gpt-5.5","openai/gpt-5.1","openai/gpt-5","openai/gpt-5-mini","openai/gpt-5-codex",
-//	  "openai/gpt-4.1","openai/gpt-4.1-mini","openai/gpt-4o","openai/gpt-4o-mini",
-//	  "openai/o3","openai/o4-mini",
-//	  "google/gemini-2.5-pro","google/gemini-2.5-flash","google/gemini-3.5-flash",
-//	  "z-ai/glm-5.2","moonshotai/kimi-k2.7-code","qwen/qwen3.7-max",
-//	  "deepseek/deepseek-v3.2","x-ai/grok-build-0.1"
-//	]' '
-//	{
+//	# 2. Regenerate the curated subset deterministically (ALL models for the 3
+//	#    in-scope providers — no allowlist):
+//	jq -S '{
 //	  openai:     ( .openai     | {id, env, npm, api, name, doc, models} ),
 //	  anthropic:  ( .anthropic  | {id, env, npm, api, name, doc, models} ),
-//	  openrouter: ( .openrouter | {id, env, npm, api, name, doc,
-//	                  models: ( .models | to_entries
-//	                            | map(select(.key as $k | $orModels | index($k)))
-//	                            | from_entries )} )
+//	  openrouter: ( .openrouter | {id, env, npm, api, name, doc, models} )
 //	}' .scratch/models.dev.full.json > internal/adapter/providercatalog/models.dev.curated.json
 //
 // # Layering

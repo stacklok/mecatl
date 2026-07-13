@@ -23,7 +23,7 @@
 //	supported_parameters ∋ "reasoning"       → Reasoning
 //	supported_parameters ∋ "tools"           → ToolCall
 //
-// Wire shape verified against a live capture pinned 2026-06-17 (336 models). A
+// Wire shape verified against a live capture pinned 2026-07-13 (345 models). A
 // trimmed sample lives in testdata/ for the offline tests; the live endpoint is
 // NEVER contacted in a test.
 //

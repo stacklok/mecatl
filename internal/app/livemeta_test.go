@@ -5,12 +5,12 @@ import (
 )
 
 // catalogued anthropic model with known catalog limits (models.dev.curated.json):
-// claude-3-5-haiku-20241022 → ctx 200000, out 8192. Used as the catalog-floor anchor
+// claude-haiku-4-5 → ctx 200000, out 64000. Used as the catalog-floor anchor
 // so the tests assert on stable embedded data, not a live endpoint.
 const (
-	catAnthropicModel  = "claude-3-5-haiku-20241022"
+	catAnthropicModel  = "claude-haiku-4-5"
 	catAnthropicCtx    = 200_000
-	catAnthropicOutput = 8192
+	catAnthropicOutput = 64000
 )
 
 // TestLiveMetaStoreSeedFromCatalog: a freshly seeded store carries the catalog rows
@@ -240,8 +240,11 @@ func regForResolver(s *liveMetaStore) *providerRegistry {
 }
 
 const (
-	liveOnlyModel = "openai/gpt-5.4" // in the live listing, NOT the curated catalog
-	liveOnlyCtx   = 1_050_000        // below maxLiveContextLimit, so unclamped
+	// A model id that is NOT in the curated catalog (simulates a brand-new model
+	// that appeared in the live listing but hasn't been re-pinned into the embed
+	// yet). The live refresh is the ONLY source for its context window.
+	liveOnlyModel = "openai/gpt-99-future"
+	liveOnlyCtx   = 1_050_000 // below maxLiveContextLimit, so unclamped
 )
 
 // TestEchoResolverProvisionalThenSettled: for an uncatalogued live-only model the ECHO

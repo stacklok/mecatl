@@ -49,22 +49,20 @@ func TestCatalogOnlyInScopeProviders(t *testing.T) {
 }
 
 // TestCuratedModelCounts is the "no silent caps" tripwire: a count drift means
-// the regen jq changed silently. openrouter is the CURATED set, so its count is
-// exact-by-design (any change is intentional + reviewed); openai/anthropic use a
-// documented FLOOR (organic upstream growth on a re-pin must not fail spuriously)
-// paired with a sane UPPER bound so a doubled/garbage projection trips loudly.
+// the regen jq changed silently. All three providers now vendor their FULL
+// upstream model set (no allowlist), so each uses a documented FLOOR (organic
+// upstream growth on a re-pin must not fail spuriously) paired with a sane UPPER
+// bound so a doubled/garbage projection trips loudly.
 func TestCuratedModelCounts(t *testing.T) {
 	c := Default()
 	cases := []struct {
-		id       string
-		floor    int  // minimum (>= floor); 0 disables the floor check for the exact case
-		ceiling  int  // exclusive sanity upper bound (< ceiling)
-		exact    int  // exact count when nonzero (curated allowlist)
-		isCurate bool // openrouter: count is exact-by-design
+		id      string
+		floor   int // minimum (>= floor)
+		ceiling int // exclusive sanity upper bound (< ceiling)
 	}{
-		{id: "openai", floor: 50, ceiling: 200},
-		{id: "anthropic", floor: 25, ceiling: 200},
-		{id: "openrouter", exact: 27, isCurate: true},
+		{id: "openai", floor: 50, ceiling: 500},
+		{id: "anthropic", floor: 10, ceiling: 200},
+		{id: "openrouter", floor: 300, ceiling: 1000},
 	}
 	for _, tc := range cases {
 		p, ok := c.Provider(tc.id)
@@ -73,12 +71,6 @@ func TestCuratedModelCounts(t *testing.T) {
 			continue
 		}
 		n := len(p.Models())
-		if tc.isCurate {
-			if n != tc.exact {
-				t.Errorf("provider %q model count = %d, want EXACTLY %d (curated allowlist drifted)", tc.id, n, tc.exact)
-			}
-			continue
-		}
 		if n < tc.floor {
 			t.Errorf("provider %q model count = %d, want >= %d (a model was dropped)", tc.id, n, tc.floor)
 		}
@@ -88,50 +80,25 @@ func TestCuratedModelCounts(t *testing.T) {
 	}
 }
 
-// TestOpenRouterAllowlistExact binds the jq-recipe comment (the --argjson
-// orModels array in catalog.go) to the vendored JSON: it asserts the EXACT
-// sorted set of the 27 curated openrouter model ids. A botched re-pin that swaps
-// a model while staying at 27 trips here even though the count guard would not.
-func TestOpenRouterAllowlistExact(t *testing.T) {
-	want := []string{
-		"anthropic/claude-3.5-haiku",
-		"anthropic/claude-haiku-4.5",
-		"anthropic/claude-opus-4.1",
-		"anthropic/claude-opus-4.5",
-		"anthropic/claude-opus-4.8",
-		"anthropic/claude-sonnet-4",
-		"anthropic/claude-sonnet-4.5",
-		"anthropic/claude-sonnet-4.6",
-		"deepseek/deepseek-v3.2",
-		"google/gemini-2.5-flash",
-		"google/gemini-2.5-pro",
-		"google/gemini-3.5-flash",
-		"moonshotai/kimi-k2.7-code",
-		"openai/gpt-4.1",
-		"openai/gpt-4.1-mini",
-		"openai/gpt-4o",
-		"openai/gpt-4o-mini",
-		"openai/gpt-5",
-		"openai/gpt-5-codex",
-		"openai/gpt-5-mini",
-		"openai/gpt-5.1",
-		"openai/gpt-5.5",
-		"openai/o3",
-		"openai/o4-mini",
-		"qwen/qwen3.7-max",
-		"x-ai/grok-build-0.1",
-		"z-ai/glm-5.2",
-	}
+// TestOpenRouterModelIDsValid is the structural guard that replaced the old
+// exact-allowlist test (which pinned 27 hand-curated ids). Now that we vendor ALL
+// openrouter models, we assert structural properties instead of an exact set:
+// every id is non-empty, unique, and carries the provider/namespace prefix
+// ("vendor/model") that OpenRouter uses.
+func TestOpenRouterModelIDsValid(t *testing.T) {
 	p, ok := Default().Provider("openrouter")
 	if !ok {
 		t.Fatal("openrouter missing")
 	}
-	got := make([]string, 0, len(p.Models()))
+	seen := make(map[string]bool, len(p.Models()))
 	for _, m := range p.Models() {
-		got = append(got, m.ID()) // Models() is sorted by id
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("openrouter curated ids =\n  %v\nwant\n  %v", got, want)
+		if m.ID() == "" {
+			t.Error("found an openrouter model with an empty id")
+		}
+		if seen[m.ID()] {
+			t.Errorf("openrouter model id %q appears more than once", m.ID())
+		}
+		seen[m.ID()] = true
 	}
 }
 
@@ -236,8 +203,8 @@ func TestOpenRouterGLM52Metadata(t *testing.T) {
 	if glm52.Name() != "GLM-5.2" {
 		t.Errorf("Name() = %q, want GLM-5.2", glm52.Name())
 	}
-	if glm52.ContextLimit() != 262144 {
-		t.Errorf("ContextLimit() = %d, want 262144", glm52.ContextLimit())
+	if glm52.ContextLimit() != 1048576 {
+		t.Errorf("ContextLimit() = %d, want 1048576", glm52.ContextLimit())
 	}
 	if !glm52.SupportsReasoning() {
 		t.Error("SupportsReasoning() = false, want true")

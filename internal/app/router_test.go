@@ -22,8 +22,8 @@ import (
 // delegation mints the child on the classifier-chosen model.
 
 const (
-	routerLarge = "claude-3-5-haiku-20241022" // catalogued (catAnthropicModel); the "large" category target
-	routerSmall = "gpt-5-mini"                // the "small" category target
+	routerLarge = "claude-haiku-4-5" // catalogued (catAnthropicModel); the "large" category target
+	routerSmall = "gpt-5-mini"       // the "small" category target
 )
 
 func routerTaxonomyCfg() Config {

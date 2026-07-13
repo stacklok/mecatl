@@ -1,0 +1,119 @@
+# Weekly catalog refresh — keeps the embedded models.dev catalog (vendored in
+# internal/adapter/providercatalog/models.dev.curated.json) up to date.
+#
+# WHY A DEDICATED WORKFLOW: this job needs `contents: write` + `pull-requests: write`
+# to open a PR with the regenerated file. ci.yml is uniformly `contents: read`, and
+# mixing a write job into it would over-grant the whole file. Keeping this separate
+# keeps each job at least privilege.
+#
+# The job re-fetches https://models.dev/api.json, regenerates the curated JSON via
+# the deterministic jq -S filter documented in catalog.go, and opens a PR if the
+# file changed. The jq -S (sort keys) makes the embedded bytes stable across
+# re-pins so a diff shows only real model changes — no churn from key ordering.
+#
+# The PR is human-reviewed before merge: the diff is the review surface, and the
+# providercatalog tests (TestCuratedModelCounts floor/ceiling guards +
+# TestOpenRouterModelIDsValid structural checks) gate it under ci.yml.
+#
+# No `pull_request_target` (the pwn-request pattern): this is a scheduled job that
+# runs against the main branch only, never against untrusted PR code. The only
+# secret used is the automatic GITHUB_TOKEN, scoped by the permissions block.
+name: catalog-refresh
+
+on:
+  schedule:
+    # 07:00 UTC every Monday — a weekly cadence catches new model releases without
+    # flooding the PR queue. Adjust if a faster/slower cadence is wanted.
+    - cron: '0 7 * * 1'
+  # Allow a manual trigger for an immediate re-pin (e.g. a new flagship just
+  # dropped and we want it now, not next Monday).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    name: Re-pin models.dev catalog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Fetch models.dev catalog
+        run: |
+          set -euo pipefail
+          curl -sf --max-time 30 https://models.dev/api.json > models.dev.full.json
+          echo "fetched $(wc -c < models.dev.full.json) bytes"
+
+      - name: Regenerate curated subset
+        run: |
+          set -euo pipefail
+          jq -S '{
+            openai:     ( .openai     | {id, env, npm, api, name, doc, models} ),
+            anthropic:  ( .anthropic  | {id, env, npm, api, name, doc, models} ),
+            openrouter: ( .openrouter | {id, env, npm, api, name, doc, models} )
+          }' models.dev.full.json > internal/adapter/providercatalog/models.dev.curated.json
+          rm models.dev.full.json
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet -- internal/adapter/providercatalog/models.dev.curated.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "catalog is up to date; nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "catalog has drifted; a PR will be opened."
+            # Summarise the diff for the PR body (model count deltas per provider).
+            {
+              echo "## models.dev catalog refresh"
+              echo ""
+              echo "Automated re-pin of \`models.dev.curated.json\` from [models.dev/api.json](https://models.dev/api.json)."
+              echo ""
+              echo "**Model counts (new vs old):**"
+              echo ""
+              echo "| Provider | New | Old |"
+              echo "|----------|-----|-----|"
+            } > pr-body.md
+          fi
+
+      - name: Build PR body
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          # Stash the new file, checkout the old, count, then restore.
+          cp internal/adapter/providercatalog/models.dev.curated.json /tmp/new.json
+          git checkout -- internal/adapter/providercatalog/models.dev.curated.json
+          for p in openai anthropic openrouter; do
+            old=$(jq --arg p "$p" '.[$p].models | length' internal/adapter/providercatalog/models.dev.curated.json)
+            new=$(jq --arg p "$p" '.[$p].models | length' /tmp/new.json)
+            echo "| $p | $new | $old |" >> pr-body.md
+          done
+          cp /tmp/new.json internal/adapter/providercatalog/models.dev.curated.json
+          {
+            echo ""
+            echo "The deterministic \`jq -S\` filter keeps the diff reviewable — it shows only real model changes (added/removed/updated), never key-ordering churn."
+            echo ""
+            echo "Review the diff, then merge. The \`providercatalog\` tests (floor/ceiling count guards + structural ID checks) gate this under CI."
+          } >> pr-body.md
+
+      - name: Open PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          branch="bot/catalog-refresh-$(date -u +%Y%m%d)"
+          git checkout -b "$branch"
+          git add internal/adapter/providercatalog/models.dev.curated.json
+          git commit -m "chore(catalog): refresh models.dev curated subset"
+          git push origin "$branch"
+          gh pr create \
+            --title "chore(catalog): refresh models.dev curated subset" \
+            --body-file pr-body.md \
+            --base main \
+            --head "$branch" || true

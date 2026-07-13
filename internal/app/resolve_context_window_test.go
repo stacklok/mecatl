@@ -5,16 +5,17 @@ import "testing"
 // TestResolveContextWindowClosureLiveFirst exercises the exact mechanism issue #66
 // fixes: the ResolveContextWindow closure Build injects into server.Config closes
 // over reg.meta (a liveMetaStore). A DEFAULT-session model that the LIVE listing
-// carries but the curated catalog does NOT (e.g. OpenRouter openai/gpt-5.4) has a
-// catalog floor of 0, so before the background live swap lands the closure returns 0
-// (the t=0 seed) and the resolved_model echo degrades to no footer bar; AFTER the
-// swap the closure returns the live window, so a subsequent GetSession self-heals.
+// carries but the curated catalog does NOT (e.g. a brand-new model not yet
+// re-pinned into the embed) has a catalog floor of 0, so before the background
+// live swap lands the closure returns 0 (the t=0 seed) and the resolved_model
+// echo degrades to no footer bar; AFTER the swap the closure returns the live
+// window, so a subsequent GetSession self-heals.
 //
 // The closure under test is byte-for-byte the one in build.go's svcCfg literal:
 //
 //	func(p, m string) int64 { return int64(reg.meta.contextWindowFor(p, m)) }
 func TestResolveContextWindowClosureLiveFirst(t *testing.T) {
-	const liveOnlyModel = "openai/gpt-5.4"
+	const liveOnlyModel = "openai/gpt-99-future"
 	const liveCtx = 1_050_000 // below maxLiveContextLimit (2_000_000), so unclamped
 
 	s := newLiveMetaStore()

@@ -2506,17 +2506,20 @@ user-model is FACTS not rules, never a governance scope.
 
 ### `providercatalog` (multi-provider Phase 0 S2)
 
-A pinned `go:embed`-vendored CURATED SUBSET of the models.dev catalog — DATA leaf,
+A pinned `go:embed`-vendored subset of the models.dev catalog — DATA leaf,
 stdlib+`embed`+`encoding/json` ONLY, no domain/port/app/adapter import, no live refresh; typed
 read-only `Catalog`/`Provider`/`Model` value types parsed once in `Default()` with a
 **panic-on-parse** posture — compiled-in data ⇒ a parse failure is a build bug, not a runtime
 fail-safe; composition reads per-provider `EnvVars()` for availability + exposes
 `Models()`/`ContextLimit()`/modalities/`SupportsImageInput`/`SupportsReasoning` for S3
-ListModels + S5 cap-intersection. Curation is documented + count-guard-tested — all openai (50)
-+ all anthropic (25) + a hand-pinned 27-id openrouter flagship allowlist, with the deterministic
-`jq -S` regen recipe + MIT attribution (`MODELS_DEV_LICENSE`) vendored alongside; it is now the
-**FALLBACK FLOOR**, not the only source — a provider with a live `modelLister` (openrouter) has
-its real catalog fetched and REPLACES the curated subset, with the embedded subset shown on any
+ListModels + S5 cap-intersection. ALL models for the three in-scope providers (openai,
+anthropic, openrouter) are vendored — no hand-pinned allowlist — kept fresh by a weekly CI
+job (`.github/workflows/catalog-refresh.yml`) that re-fetches models.dev/api.json and opens a
+PR if the deterministic `jq -S` regen produces a diff; MIT attribution
+(`MODELS_DEV_LICENSE`) vendored alongside. Count-guard-tested with floor+ceiling bounds.
+It is now the **FALLBACK FLOOR**, not the only source — a provider with a live
+`modelLister` (openrouter) has its real catalog fetched and REPLACES the embedded subset,
+with the embedded subset shown on any
 live error/empty/offline.
 
 ### `openrouter` (LIVE model listing leaf)
