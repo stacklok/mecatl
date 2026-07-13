@@ -180,6 +180,16 @@ message ScheduleSpec {
   string timezone = 14;
   // created_at is the schedule's creation timestamp.
   google.protobuf.Timestamp created_at = 15;
+  // one_shot_retry is the opt-in at-least-once retry for a one-shot. Default
+  // false (at-most-once). One-shot-only: rejected on a cron trigger.
+  bool one_shot_retry = 16;
+  // one_shot_max_retries bounds the re-arm budget when one_shot_retry is true.
+  // 0 means off (the create-seam applies a default of 3 when one_shot_retry is
+  // true and this is 0).
+  int32 one_shot_max_retries = 17;
+  // carry_context renders the prior fire's conversation as a fenced untrusted
+  // preamble (NOT seeded history — carried context is untrusted). Default false.
+  bool carry_context = 18;
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half
@@ -204,6 +214,10 @@ message ScheduleState {
   // singleton check. The port.PendingFireSessionID sentinel ("pending") marks a
   // Claim that has not yet been RecordFire'd.
   string last_fire_session_id = 5;
+  // one_shot_retry_count is the durable counter of one-shot re-arms
+  // (one_shot_retry). Incremented atomically on each re-arm; when it exceeds
+  // one_shot_max_retries the schedule stays disabled.
+  int32 one_shot_retry_count = 6;
 }
 
 // Schedule is the aggregate value object: the immutable Spec plus the durable

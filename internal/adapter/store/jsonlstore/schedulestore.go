@@ -90,6 +90,10 @@ type scheduleStore struct {
 // compile-time assertion that scheduleStore satisfies the port.
 var _ port.ScheduleStore = (*scheduleStore)(nil)
 
+// compile-time assertion that scheduleStore satisfies the OPTIONAL
+// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
+
 // Save upserts the schedule by Spec.Name. A schedule with the same name is
 // overwritten on the Spec half; the State half is PRESERVED on overwrite (a
 // Save with a fresh zero State does not reset firing progress — call Delete +
@@ -529,4 +533,23 @@ func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 		copy(out.Parts, spec.Parts)
 	}
 	return out
+}
+
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
+// (ADR 0059 Phase 2). It atomically (under the shared mutex): re-enables the
+// schedule (Enabled=true), sets NextFireAt to nextFire, and increments
+// OneShotRetryCount, then writes the record atomically (temp file + rename). The
+// not-found case wraps ErrScheduleNotFound. The retry-budget gate is the CALLER's
+// responsibility. One-shot-only.
+func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil {
+		return err
+	}
+	rec.Schedule.State.Enabled = true
+	rec.Schedule.State.NextFireAt = nextFire
+	rec.Schedule.State.OneShotRetryCount++
+	return s.writeScheduleLocked(name, rec)
 }

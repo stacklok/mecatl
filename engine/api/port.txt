@@ -15,6 +15,7 @@
     ifacemethod func (PermissionStore).Rules(sessionID session.SessionID) []governance.Rule
     ifacemethod func (PrunableStore).Delete(ctx context.Context, id session.SessionID) error
     ifacemethod func (PrunableStore).List(ctx context.Context) ([]StoredSession, error)
+    ifacemethod func (ScheduleOneShotReArmer).ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error
     ifacemethod func (ScheduleStore).Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error)
     ifacemethod func (ScheduleStore).ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error)
     ifacemethod func (ScheduleStore).Delete(ctx context.Context, name string) error
@@ -76,9 +77,10 @@ type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}
 type PrunableStore interface{Delete(ctx context.Context, id session.SessionID) error; List(ctx context.Context) ([]StoredSession, error)}
 type Schedule struct{Spec ScheduleSpec; State ScheduleState}
 type ScheduleFire struct{ID string; ScheduleName string; SessionID session.SessionID; FiredAt time.Time; Stop session.StopReason; Err string}
+type ScheduleOneShotReArmer interface{ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error}
 type ScheduleProviderSelector struct{ProviderID string; ModelID string}
-type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; Workspace string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time}
-type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; LastFireSessionID session.SessionID}
+type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; Workspace string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool}
+type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; LastFireSessionID session.SessionID; OneShotRetryCount int}
 type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); Delete(ctx context.Context, name string) error; Due(ctx context.Context, now time.Time) ([]Schedule, error); List(ctx context.Context) ([]Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); Load(ctx context.Context, name string) (Schedule, error); LoadFire(ctx context.Context, fireID string) (ScheduleFire, error); RecordFire(ctx context.Context, f ScheduleFire) error; Save(ctx context.Context, s Schedule) error; SetEnabled(ctx context.Context, name string, enabled bool) error}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
 type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string}

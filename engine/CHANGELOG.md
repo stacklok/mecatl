@@ -27,6 +27,30 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`port.ScheduleSpec.OneShotRetry` + `OneShotMaxRetries` +
+  `port.ScheduleState.OneShotRetryCount` + `port.ScheduleOneShotReArmer`** —
+  an OPT-IN at-least-once retry for one-shot schedules that cannot tolerate
+  the at-most-once crash-loss trade-off (ADR 0059 consequence). `OneShotRetry`
+  (default false) enables the retry; `OneShotMaxRetries` (default 0 = off;
+  the create-seam applies 3 when `OneShotRetry=true` and the field is 0)
+  bounds the retry count; `OneShotRetryCount` is the durable counter. The
+  optional `ScheduleOneShotReArmer` interface (type-asserted on the store,
+  the same pattern as `PrunableStore`) provides the atomic re-arm
+  (`ReArmOneShot` re-enables + advances `NextFireAt` + increments the count).
+  Rejected on cron triggers (a cron self-heals via misfire). Classified Added
+  per COMPATIBILITY.md (new struct fields + a new optional interface are a
+  minor bump; `ScheduleStore` itself is unchanged). (#236)
+
+- **`port.ScheduleSpec.CarryContext`** — an OPT-IN carried-context toggle
+  (default false = fresh per fire, unchanged). When true, the fire path loads
+  the prior fire's session and renders its conversation as a FENCED untrusted
+  preamble prepended to the fire's prompt (via `agent.FenceUntrusted` +
+  `NeutraliseFraming`), NOT as seeded history — carried context is untrusted
+  (a prior fire may have been prompt-injected) and must not become live
+  instructions. A re-armed one-shot does NOT carry context on the retry.
+  Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
+  (#236)
+
 - **`port.MetaLister` + `port.SessionMeta`** — a new OPTIONAL cheap-listing seam
   a `SessionStore` adapter may additionally implement, discovered by type
   assertion (the same pattern as `PrunableStore`). `MetaList(ctx) ([]SessionMeta, error)`

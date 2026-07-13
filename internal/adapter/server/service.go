@@ -1320,6 +1320,16 @@ func (s *Service) HasScheduler() bool {
 	return s.scheduler != nil
 }
 
+// Diagnostics returns the operational diagnostics sink the Service was
+// configured with. It is the read-side accessor composition (the scheduler's
+// FireFunc) uses to WARN on a non-fatal degradation (e.g. a carried-context
+// prior-session-load failure that degrades to fresh-context). A NopDiagnostics
+// is returned when none was wired (the constructor guarantees non-nil, so this
+// is belt-and-suspenders).
+func (s *Service) Diagnostics() port.Diagnostics {
+	return s.cfg.Diagnostics
+}
+
 // IsDraining reports whether the drain gate is armed. It is the read-side
 // companion to Drain: a cmd binary's dynamic ReadyFunc (mecak8s /readyz)
 // closes over it so readiness flips to not-ready the moment Drain is armed,

@@ -1221,6 +1221,325 @@ func TestRenewLeaderTransientFaultKeepsTicking(t *testing.T) {
 	}
 }
 
+// TestOneShotReArmOnPendingCrash: a one-shot with OneShotRetry=true whose prior
+// fire crashed (LastFireSessionID == PendingFireSessionID — Claim happened but
+// RecordFire never did) is re-armed up to OneShotMaxRetries by the tick loop's
+// post-fire scan (maybeReArmOneShots). After a tick, the schedule is re-enabled
+// (Enabled=true), NextFireAt advanced to now+backoff, and OneShotRetryCount=1.
+//
+// The re-arm scan runs AFTER the due-fire batch (it is a post-fire pass, not a
+// separate tick), so the tick must process at least one due schedule to reach
+// it. A harmless due cron ("sparker") drives the tick past the no-due-work
+// early return; the sparker's own fire is incidental to the re-arm assertion.
+func TestOneShotReArmOnPendingCrash(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	// A due cron that drives the tick past the no-due-work early return so the
+	// post-fire re-arm scan runs. It fires (recorded) but is not under test.
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "sparker", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save sparker: %v", err)
+	}
+
+	// A one-shot that was Claim'd (Enabled=false, FireCount=1) but never
+	// RecordFire'd — LastFireSessionID is still the pending sentinel. This is
+	// the crash-mid-fire shape (sub-case 1).
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:              "retry-pending",
+			Prompt:            "x",
+			Trigger:           port.TriggerSpec{OneShot: clk.Now()},
+			OneShotRetry:      true,
+			OneShotMaxRetries: 3,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        time.Time{}, // disabled (Claim zeroed it)
+			Enabled:           false,
+			FireCount:         1,
+			LastFireSessionID: port.PendingFireSessionID,
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s.RunOnceForTest(context.Background())
+
+	// The re-arm scan re-enabled the one-shot for a retry.
+	loaded, err := store.Load(context.Background(), "retry-pending")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !loaded.State.Enabled {
+		t.Fatalf("Enabled = false, want true (re-armed)")
+	}
+	if loaded.State.OneShotRetryCount != 1 {
+		t.Fatalf("OneShotRetryCount = %d, want 1 (incremented on re-arm)", loaded.State.OneShotRetryCount)
+	}
+	// NextFireAt is now + backoff (the re-arm set it).
+	if !loaded.State.NextFireAt.After(clk.Now()) {
+		t.Fatalf("NextFireAt = %v, want after now (re-arm advanced it)", loaded.State.NextFireAt)
+	}
+	// Only the sparker fired on this tick — the re-arm only re-enabled the
+	// one-shot; the actual retry fire happens on a LATER tick once the backoff
+	// elapses (Due returns it once NextFireAt <= now).
+	if got := fire.count(); got != 1 {
+		t.Fatalf("fires = %d, want 1 (only the sparker; the retry fire is a later tick)", got)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestOneShotReArmOnStopError: a one-shot with OneShotRetry=true whose prior
+// fire ended in StopError (RecordFire recorded Stop==StopError) is re-armed.
+// This is crash sub-case 2: the fire ran but ended in error.
+func TestOneShotReArmOnStopError(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	const fireID = "sched--retry-err-1"
+	// A due cron that drives the tick past the no-due-work early return so the
+	// post-fire re-arm scan runs.
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "sparker", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save sparker: %v", err)
+	}
+	// Save the schedule first (RecordFire looks it up by ScheduleName).
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:              "retry-err",
+			Prompt:            "x",
+			Trigger:           port.TriggerSpec{OneShot: clk.Now()},
+			OneShotRetry:      true,
+			OneShotMaxRetries: 3,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        time.Time{},
+			Enabled:           false,
+			FireCount:         1,
+			LastFireSessionID: session.SessionID(fireID),
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// Record a prior fire that ended in StopError under the LastFireSessionID
+	// the state points at, so LoadFire returns Stop==StopError.
+	if err := store.RecordFire(context.Background(), port.ScheduleFire{
+		ID:           fireID,
+		ScheduleName: "retry-err",
+		SessionID:    session.SessionID(fireID),
+		FiredAt:      clk.Now(),
+		Stop:         session.StopError,
+		Err:          "boom",
+	}); err != nil {
+		t.Fatalf("RecordFire prior: %v", err)
+	}
+
+	s.RunOnceForTest(context.Background())
+
+	loaded, err := store.Load(context.Background(), "retry-err")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !loaded.State.Enabled {
+		t.Fatalf("Enabled = false, want true (re-armed after StopError)")
+	}
+	if loaded.State.OneShotRetryCount != 1 {
+		t.Fatalf("OneShotRetryCount = %d, want 1", loaded.State.OneShotRetryCount)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestOneShotNoRetryNotReArmed: a one-shot with OneShotRetry=false (the default,
+// at-most-once) is NOT re-armed, even if its prior fire crashed (pending). This
+// pins the pre-Phase-2 behavior is unchanged for a non-opted-in one-shot.
+func TestOneShotNoRetryNotReArmed(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	// A due cron that drives the tick past the no-due-work early return so the
+	// post-fire re-arm scan runs (and proves it does NOT re-arm this one-shot).
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "sparker", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save sparker: %v", err)
+	}
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:         "noretry",
+			Prompt:       "x",
+			Trigger:      port.TriggerSpec{OneShot: clk.Now()},
+			OneShotRetry: false, // at-most-once (default)
+		},
+		State: port.ScheduleState{
+			NextFireAt:        time.Time{},
+			Enabled:           false,
+			FireCount:         1,
+			LastFireSessionID: port.PendingFireSessionID, // crashed mid-fire
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s.RunOnceForTest(context.Background())
+
+	loaded, err := store.Load(context.Background(), "noretry")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.State.Enabled {
+		t.Fatalf("Enabled = true, want false (OneShotRetry=false: NOT re-armed)")
+	}
+	if loaded.State.OneShotRetryCount != 0 {
+		t.Fatalf("OneShotRetryCount = %d, want 0 (not re-armed)", loaded.State.OneShotRetryCount)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestOneShotReArmBudgetExhausted: beyond OneShotMaxRetries, the one-shot stays
+// disabled (NOT re-armed). The retry-budget gate (OneShotRetryCount >=
+// OneShotMaxRetries) prevents a permanent crash-loop.
+func TestOneShotReArmBudgetExhausted(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	// A due cron that drives the tick past the no-due-work early return so the
+	// post-fire re-arm scan runs (and proves the budget gate fires).
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "sparker", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save sparker: %v", err)
+	}
+
+	// A crashed one-shot already at its retry budget (3 >= 3).
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:              "exhausted",
+			Prompt:            "x",
+			Trigger:           port.TriggerSpec{OneShot: clk.Now()},
+			OneShotRetry:      true,
+			OneShotMaxRetries: 3,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        time.Time{},
+			Enabled:           false,
+			FireCount:         1,
+			LastFireSessionID: port.PendingFireSessionID,
+			OneShotRetryCount: 3, // budget exhausted
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s.RunOnceForTest(context.Background())
+
+	loaded, err := store.Load(context.Background(), "exhausted")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.State.Enabled {
+		t.Fatalf("Enabled = true, want false (retry budget exhausted — permanently done)")
+	}
+	if loaded.State.OneShotRetryCount != 3 {
+		t.Fatalf("OneShotRetryCount = %d, want 3 (budget NOT incremented past the limit)", loaded.State.OneShotRetryCount)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// TestOneShotReArmStoreWithoutInterface: a store that does NOT implement
+// ScheduleOneShotReArmer degrades gracefully — the re-arm scan is a nil-safe
+// type-assertion no-op (no panic, no re-arm). This pins the byte-identical
+// pre-Phase-2 fallback for a store that opted out of the re-arm seam.
+func TestOneShotReArmStoreWithoutInterface(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	// Wrap memschedulestore so the optional ScheduleOneShotReArmer method is
+	// NOT forwarded — the type assertion in maybeReArmOneShots yields ok=false.
+	store := &noReArmStore{ScheduleStore: memschedulestore.New()}
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	// A due cron that drives the tick past the no-due-work early return so the
+	// post-fire re-arm scan runs (and proves it degrades to a no-op).
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "sparker", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save sparker: %v", err)
+	}
+
+	// Sanity: the wrapped store really does NOT satisfy the re-arm interface.
+	if _, ok := any(store).(port.ScheduleOneShotReArmer); ok {
+		t.Fatalf("noReArmStore unexpectedly satisfies ScheduleOneShotReArmer — test fixture is broken")
+	}
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:              "norearmer",
+			Prompt:            "x",
+			Trigger:           port.TriggerSpec{OneShot: clk.Now()},
+			OneShotRetry:      true,
+			OneShotMaxRetries: 3,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        time.Time{},
+			Enabled:           false,
+			FireCount:         1,
+			LastFireSessionID: port.PendingFireSessionID,
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// RunOnceForTest must NOT panic and must NOT re-arm (the scan is skipped).
+	s.RunOnceForTest(context.Background())
+
+	loaded, err := store.Load(context.Background(), "norearmer")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.State.Enabled {
+		t.Fatalf("Enabled = true, want false (no re-arm — store lacks the seam)")
+	}
+	if loaded.State.OneShotRetryCount != 0 {
+		t.Fatalf("OneShotRetryCount = %d, want 0 (no re-arm)", loaded.State.OneShotRetryCount)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // runtimeYield yields the goroutine to let the fan-out reach steady state.

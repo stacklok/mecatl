@@ -318,8 +318,48 @@ the existing run-entry funnel. The pieces:
   (fire sessions are never swept).
 
 See [ADR 0059](adr/0059-scheduled-tasks.md) for the frozen rationale (the 10
-resolved decisions + the leader-lease decision) and the consequences (one-shot
-loss on mid-fire crash; fresh-context-per-fire v1; carried-context deferred).
+resolved decisions + the leader-lease decision) and the consequences. The two
+documented v1 trade-offs — one-shot loss on a mid-fire crash, and
+fresh-context-per-fire — are mitigated by the opt-in Phase-2 fields below.
+
+### One-shot crash-loss retry + carried context (Phase 2c, issue #236)
+
+Two opt-in `ScheduleSpec` fields close the documented v1 trade-offs. Both are
+composition/scheduler-layer (no `engine/agent` change) and default OFF (the
+pre-Phase-2 path is byte-identical when neither field is set):
+
+- **`OneShotRetry` / `OneShotMaxRetries`** — at-least-once retry for a one-shot
+  that cannot tolerate crash-loss. The tick loop's post-fire scan
+  (`maybeReArmOneShots`, run after the due-fire batch) re-enables a crashed
+  one-shot — one whose prior fire ended in `StopError`, or whose
+  `LastFireSessionID` is still the `pending` sentinel (Claim happened but
+  RecordFire did not) — up to `OneShotMaxRetries` times, via the OPTIONAL
+  `port.ScheduleOneShotReArmer` interface (`ReArmOneShot` re-enables + advances
+  `NextFireAt` with a small backoff + increments the durable
+  `OneShotRetryCount`). The interface is type-asserted on the store exactly like
+  `PrunableStore`/`SessionLease` — a store that does not implement it degrades to
+  the byte-identical at-most-once path. All three store adapters implement it.
+  The budget gate (`OneShotRetryCount >= OneShotMaxRetries`) makes an exhausted
+  one-shot permanently done (no crash-loop). One-shot-ONLY: the create-seam
+  rejects `OneShotRetry` on a cron trigger fail-closed, and applies a default
+  `OneShotMaxRetries=3` when `OneShotRetry=true` and the field is 0. A re-armed
+  one-shot starts FRESH (the crashed fire's context is untrusted AND incomplete
+  — the re-arm path ignores `CarryContext`).
+- **`CarryContext`** — carried-context across fires. The fire path
+  (`makeFireFunc` + `renderCarriedContext`, `internal/app/scheduler_fire.go`)
+  loads the prior fire's session and renders its conversation as a FENCED
+  UNTRUSTED preamble prepended to the prompt — NOT as seeded history. Carried
+  context is UNTRUSTED (model-authored + tool-result-laden; a prior fire may
+  have been prompt-injected), so it must NOT become replayable
+  `Conversation.Messages` (which would carry injection forward as live
+  instructions). The fence (`agent.FenceUntrusted` + `NeutraliseFraming`,
+  `engine/agent/fence.go`) quarantines it: a forged `<<<UNTRUSTED` closing marker
+  or harness section header in the prior content is neutralised, so it cannot
+  break out of its block. The summary is clamped to the last 20 turns and a 10000-
+  rune budget. On prior-session-load failure (not found, decode error) the fire
+  degrades to fresh-context (WARN, never fails the fire). The gate is
+  `CarryContext && LastFireSessionID != "" && LastFireSessionID != pending` — so
+  a re-armed one-shot does NOT carry context on the retry.
 
 ### ScheduleService API surface (Phase 2a, issue #232)
 

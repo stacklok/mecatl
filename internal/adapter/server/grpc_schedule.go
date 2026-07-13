@@ -193,17 +193,20 @@ func (h *ScheduleServer) ListFires(ctx context.Context, req *mecatlv1.ListFiresR
 // need not set it — an honest overwrite, not a silent default).
 func protoToScheduleSpec(in *mecatlv1.ScheduleSpec) (port.ScheduleSpec, error) {
 	out := port.ScheduleSpec{
-		Name:      in.GetName(),
-		Prompt:    in.GetPrompt(),
-		Profile:   in.GetProfile(),
-		Workspace: in.GetWorkspace(),
-		Mode:      modeFromProto(in.GetMode()),
-		Limits:    limitsFromProto(in.GetLimits()),
-		Mutating:  in.GetMutating(),
-		MaxFires:  int(in.GetMaxFires()),
-		Singleton: in.GetSingleton(),
-		Timezone:  in.GetTimezone(),
-		Misfire:   misfireFromProto(in.GetMisfire()),
+		Name:              in.GetName(),
+		Prompt:            in.GetPrompt(),
+		Profile:           in.GetProfile(),
+		Workspace:         in.GetWorkspace(),
+		Mode:              modeFromProto(in.GetMode()),
+		Limits:            limitsFromProto(in.GetLimits()),
+		Mutating:          in.GetMutating(),
+		MaxFires:          int(in.GetMaxFires()),
+		Singleton:         in.GetSingleton(),
+		Timezone:          in.GetTimezone(),
+		Misfire:           misfireFromProto(in.GetMisfire()),
+		OneShotRetry:      in.GetOneShotRetry(),
+		OneShotMaxRetries: int(in.GetOneShotMaxRetries()),
+		CarryContext:      in.GetCarryContext(),
 	}
 	if sel := in.GetSelector(); sel != nil {
 		out.Selector = port.ScheduleProviderSelector{
@@ -249,18 +252,21 @@ func scheduleToProto(in port.Schedule) *mecatlv1.Schedule {
 // scheduleSpecToProto maps port.ScheduleSpec → proto ScheduleSpec.
 func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 	out := &mecatlv1.ScheduleSpec{
-		Name:      in.Name,
-		Prompt:    in.Prompt,
-		Parts:     contentToProto(in.Parts),
-		Profile:   in.Profile,
-		Workspace: in.Workspace,
-		Mode:      modeToProto(in.Mode),
-		Limits:    limitsToProto(in.Limits),
-		Mutating:  in.Mutating,
-		MaxFires:  clampInt32(in.MaxFires),
-		Misfire:   misfireToProto(in.Misfire),
-		Singleton: in.Singleton,
-		Timezone:  in.Timezone,
+		Name:              in.Name,
+		Prompt:            in.Prompt,
+		Parts:             contentToProto(in.Parts),
+		Profile:           in.Profile,
+		Workspace:         in.Workspace,
+		Mode:              modeToProto(in.Mode),
+		Limits:            limitsToProto(in.Limits),
+		Mutating:          in.Mutating,
+		MaxFires:          clampInt32(in.MaxFires),
+		Misfire:           misfireToProto(in.Misfire),
+		Singleton:         in.Singleton,
+		Timezone:          in.Timezone,
+		OneShotRetry:      in.OneShotRetry,
+		OneShotMaxRetries: clampInt32(in.OneShotMaxRetries),
+		CarryContext:      in.CarryContext,
 	}
 	if in.Trigger.Cron != "" || !in.Trigger.OneShot.IsZero() {
 		out.Trigger = &mecatlv1.TriggerSpec{
@@ -288,6 +294,7 @@ func scheduleStateToProto(in port.ScheduleState) *mecatlv1.ScheduleState {
 		FireCount:         clampInt32(in.FireCount),
 		Enabled:           in.Enabled,
 		LastFireSessionId: string(in.LastFireSessionID),
+		OneShotRetryCount: clampInt32(in.OneShotRetryCount),
 	}
 	if !in.NextFireAt.IsZero() {
 		out.NextFireAt = timestamppb.New(in.NextFireAt)

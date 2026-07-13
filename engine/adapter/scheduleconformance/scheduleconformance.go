@@ -968,6 +968,116 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Fatalf("Claim after ClaimNow at same now = %v, want ErrScheduleNotFound (cross-primitive at-most-once)", err)
 		}
 	})
+
+	// ScheduleOneShotReArmer is an OPTIONAL interface (type-asserted on the
+	// store, like PrunableStore). A store that does not implement it degrades to
+	// at-most-once (byte-identical pre-Phase-2); a store that DOES implement it
+	// must make ReArmOneShot atomic (two concurrent re-arms don't
+	// double-increment OneShotRetryCount or double-enable). The suite runs this
+	// only against stores that opt in.
+	t.Run("rearm one-shot is atomic and increments the counter", func(t *testing.T) {
+		s := newStore(t)
+		reArmer, ok := s.(port.ScheduleOneShotReArmer)
+		if !ok {
+			t.Skip("store does not implement ScheduleOneShotReArmer (at-most-once — byte-identical pre-Phase-2)")
+		}
+		const name = "conf-sched-rearm"
+		now := time.Unix(1_700_000_000, 0)
+		if err := s.Save(ctx, port.Schedule{
+			Spec: port.ScheduleSpec{
+				Name:              name,
+				Prompt:            "once",
+				Trigger:           port.TriggerSpec{OneShot: now},
+				Mutating:          true,
+				OneShotRetry:      true,
+				OneShotMaxRetries: 3,
+			},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		// Claim the one-shot (Claim disables it — the at-most-once advance).
+		if _, err := s.Claim(ctx, name, now, time.Time{}); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		// ReArmOneShot re-enables + advances NextFireAt + increments the counter.
+		nextFire := now.Add(time.Minute)
+		if err := reArmer.ReArmOneShot(ctx, name, nextFire); err != nil {
+			t.Fatalf("ReArmOneShot: %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after ReArmOneShot: %v", err)
+		}
+		if !got.State.Enabled {
+			t.Errorf("Enabled = false, want true (ReArmOneShot re-enabled)")
+		}
+		if !got.State.NextFireAt.Equal(nextFire) {
+			t.Errorf("NextFireAt = %v, want %v (ReArmOneShot advanced)", got.State.NextFireAt, nextFire)
+		}
+		if got.State.OneShotRetryCount != 1 {
+			t.Errorf("OneShotRetryCount = %d, want 1 (incremented)", got.State.OneShotRetryCount)
+		}
+		// ReArmOneShot on an unknown name wraps ErrScheduleNotFound.
+		if err := reArmer.ReArmOneShot(ctx, "conf-sched-rearm-missing", nextFire); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ReArmOneShot(unknown) = %v, want ErrScheduleNotFound", err)
+		}
+	})
+
+	t.Run("rearm one-shot concurrent calls do not double-increment", func(t *testing.T) {
+		// THE ATOMICITY PROOF. Two callers ReArmOneShot the same name
+		// "simultaneously". The store MUST serialize them so the counter advances
+		// by exactly 2 (one per call), NOT a torn double-increment that loses an
+		// update or double-counts. This is the at-most-once fence for the RE-ARM:
+		// a concurrent re-arm must not double-enable or double-increment. Run with
+		// -race to surface a torn update.
+		s := newStore(t)
+		reArmer, ok := s.(port.ScheduleOneShotReArmer)
+		if !ok {
+			t.Skip("store does not implement ScheduleOneShotReArmer (at-most-once — byte-identical pre-Phase-2)")
+		}
+		const name = "conf-sched-rearm-concurrent"
+		now := time.Unix(1_700_000_000, 0)
+		if err := s.Save(ctx, port.Schedule{
+			Spec: port.ScheduleSpec{
+				Name:              name,
+				Prompt:            "once",
+				Trigger:           port.TriggerSpec{OneShot: now},
+				Mutating:          true,
+				OneShotRetry:      true,
+				OneShotMaxRetries: 10,
+			},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, time.Time{}); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		// Two concurrent re-arms. Each must succeed and increment the counter by 1;
+		// the final counter must be exactly 2 (no lost updates, no
+		// double-increments).
+		nextFire := now.Add(time.Minute)
+		done := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			go func() { done <- reArmer.ReArmOneShot(ctx, name, nextFire) }()
+		}
+		for i := 0; i < 2; i++ {
+			if err := <-done; err != nil {
+				t.Fatalf("ReArmOneShot %d: %v", i, err)
+			}
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after concurrent ReArmOneShot: %v", err)
+		}
+		if got.State.OneShotRetryCount != 2 {
+			t.Errorf("OneShotRetryCount = %d, want 2 (two concurrent re-arms must each increment once — atomicity)", got.State.OneShotRetryCount)
+		}
+		if !got.State.Enabled {
+			t.Errorf("Enabled = false, want true (re-enabled)")
+		}
+	})
 }
 
 // assertScheduleEqual compares the spec + state fields the suite cares about

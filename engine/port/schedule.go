@@ -233,6 +233,36 @@ const (
 //     finished fire (lease released/expired) yields a free trial-acquire, so the
 //     next fire is NOT skipped — a crashed fire self-heals by being treated as done.
 //   - CreatedAt is the schedule's creation timestamp.
+//   - OneShotRetry is the opt-in at-least-once retry for a one-shot (ADR 0059
+//     Phase 2). The DEFAULT is false: a one-shot is at-most-once (a crash
+//     mid-fire SKIPS the slot — the claim-before-fire advance already happened,
+//     so a retry does not re-fire). A one-shot that cannot tolerate crash-loss
+//     sets this true: the tick loop's re-arm path re-enables the schedule (up
+//     to OneShotMaxRetries times) when it observes the prior fire crashed before
+//     recording an outcome (LastFireSessionID still pending) or recorded a
+//     StopError. It is one-shot-ONLY: setting it on a cron trigger is rejected
+//     at the create-seam (a cron self-heals via misfire already). A re-armed
+//     one-shot starts FRESH (the crashed fire's context is untrusted AND
+//     incomplete — the re-arm path ignores CarryContext).
+//   - OneShotMaxRetries bounds the re-arm budget when OneShotRetry is true. The
+//     DEFAULT is 0 (off); the create-seam applies a default of 3 when
+//     OneShotRetry is true and OneShotMaxRetries is 0. OneShotRetryCount on the
+//     State is incremented on each re-arm; when it exceeds OneShotMaxRetries
+//     the schedule stays disabled (the one-shot is permanently done).
+//   - CarryContext is the opt-in carried-context toggle (ADR 0059 Phase 2).
+//     The DEFAULT is false: each fire is a FRESH context (no prior fire's
+//     history is carried). When true, the fire path loads the prior fire's
+//     session and renders its conversation as a FENCED UNTRUSTED PREAMBLE
+//     prepended to the fire's prompt — NOT as seeded history. The carried
+//     context is UNTRUSTED (model-authored + tool-result-laden; a prior fire
+//     may have been prompt-injected), so it MUST NOT become replayable
+//     Conversation.Messages (which would carry injection forward as live
+//     instructions). The fence (agent.FenceUntrusted + NeutraliseFraming)
+//     quarantines it so a forged closing marker or harness section header in
+//     the prior content cannot break out of its block. On prior-session-load
+//     failure (not found, decode error) the fire degrades to fresh-context
+//     (WARN, never fails the fire). A re-armed one-shot does NOT carry context
+//     on the retry.
 type ScheduleSpec struct {
 	Name      string
 	Prompt    string
@@ -256,6 +286,17 @@ type ScheduleSpec struct {
 	// time.Time).
 	Timezone  string
 	CreatedAt time.Time
+	// OneShotRetry is the opt-in at-least-once retry for a one-shot (see the
+	// field-by-field contract above). Default false (at-most-once).
+	OneShotRetry bool
+	// OneShotMaxRetries bounds the re-arm budget when OneShotRetry is true. 0
+	// means off (the create-seam applies a default of 3 when OneShotRetry is
+	// true and this is 0). One-shot-only; ignored for cron.
+	OneShotMaxRetries int
+	// CarryContext renders the prior fire's conversation as a fenced untrusted
+	// preamble (NOT seeded history — carried context is untrusted). See the
+	// field-by-field contract above.
+	CarryContext bool
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half that
@@ -294,6 +335,14 @@ type ScheduleState struct {
 	// Claim sets this to port.PendingFireSessionID; RecordFire overwrites it with
 	// the real fire's session id.
 	LastFireSessionID session.SessionID
+	// OneShotRetryCount is the durable counter of one-shot re-arms (ADR 0059
+	// Phase 2). It is incremented atomically by ScheduleOneShotReArmer.ReArmOneShot
+	// on each re-arm. When it exceeds ScheduleSpec.OneShotMaxRetries the schedule
+	// stays disabled (the one-shot is permanently done — the retry budget is
+	// exhausted). The DEFAULT is 0 (no re-arms yet). It is one-shot-only: a cron
+	// schedule never re-arms (a cron self-heals via misfire) so the counter stays
+	// 0 for cron.
+	OneShotRetryCount int
 }
 
 // Schedule is the aggregate value object a ScheduleStore returns from Load/List:
@@ -481,4 +530,39 @@ type ScheduleStore interface {
 	// successful empty slice (not an error). An implementation that cannot store
 	// schedules returns ErrScheduleUnsupported (wrapped).
 	ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error)
+}
+
+// ScheduleOneShotReArmer is the OPTIONAL at-least-once re-arm seam for one-shot
+// schedules (ADR 0059 Phase 2). It is discovered by type assertion on a
+// ScheduleStore exactly like PrunableStore / SessionLease / MetaLister are on a
+// SessionStore: a store that does not implement it is simply never consulted, and
+// the tick loop's one-shot re-arm path degrades to at-most-once (byte-identical to
+// the pre-Phase-2 path) — a one-shot that crashed mid-fire stays lost, the
+// documented pre-Phase-2 trade-off.
+//
+// Why an OPTIONAL interface, NOT a method on ScheduleStore: adding a method to an
+// existing interface is BREAKING for external implementers (a ScheduleStore
+// implementation outside this repo would fail to compile). The optional-interface
+// type-assertion pattern (PrunableStore / SessionLease / MetaLister) adds the seam
+// without widening the required surface — a store opts in by implementing the
+// method, and the caller type-asserts before calling.
+//
+// ReArmOneShot atomically: re-enables the schedule (Enabled=true), sets NextFireAt
+// to nextFire, and increments OneShotRetryCount. It is the re-arm primitive the
+// tick loop calls when it observes a one-shot that crashed mid-fire (Claim
+// disabled it; the fire never recorded a successful outcome). The atomicity is the
+// at-most-once fence for the RE-ARM: two concurrent re-arms must not
+// double-increment OneShotRetryCount or double-enable. The not-found case wraps
+// ErrScheduleNotFound. A re-arm past OneShotMaxRetries is the CALLER's gate (the
+// tick loop checks the budget before calling); the store does NOT enforce the
+// budget — it only atomically advances the counter.
+//
+// It is one-shot-ONLY: a cron schedule never re-arms (a cron self-heals via
+// misfire). The caller never calls ReArmOneShot on a cron schedule.
+type ScheduleOneShotReArmer interface {
+	// ReArmOneShot re-enables the named one-shot schedule, sets its NextFireAt to
+	// nextFire, and increments OneShotRetryCount — atomically. It is the re-arm
+	// primitive the tick loop calls for a crashed one-shot retry. The not-found
+	// case wraps ErrScheduleNotFound.
+	ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error
 }

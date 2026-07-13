@@ -67,6 +67,11 @@ type Store struct {
 // compile-time assertion that Store satisfies the port.
 var _ port.ScheduleStore = (*Store)(nil)
 
+// compile-time assertion that Store satisfies the OPTIONAL ScheduleOneShotReArmer
+// seam (ADR 0059 Phase 2 — the at-least-once one-shot re-arm). A store that does
+// not implement it degrades to at-most-once (byte-identical pre-Phase-2).
+var _ port.ScheduleOneShotReArmer = (*Store)(nil)
+
 // New constructs an in-memory ScheduleStore. Every port.ScheduleStore method
 // takes `now` as an explicit argument, so the store needs no injected clock of
 // its own — time is caller-supplied. (An earlier draft injected a port.Clock
@@ -314,6 +319,29 @@ func (s *Store) ListFires(_ context.Context, scheduleName string) ([]port.Schedu
 		out = append(out, cloneFire(f))
 	}
 	return out, nil
+}
+
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
+// (ADR 0059 Phase 2). It atomically: re-enables the schedule (Enabled=true),
+// sets NextFireAt to nextFire, and increments OneShotRetryCount. The atomicity
+// (the single mutex) is the re-arm fence: two concurrent re-arms cannot
+// double-increment the counter or double-enable. The not-found case wraps
+// ErrScheduleNotFound. The retry-budget gate (OneShotRetryCount <
+// OneShotMaxRetries) is the CALLER's responsibility — the store does NOT enforce
+// the budget, it only atomically advances the counter. One-shot-only; the caller
+// never calls this on a cron schedule.
+func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.scheds[name]
+	if !ok {
+		return ErrNotFound
+	}
+	rec.state.Enabled = true
+	rec.state.NextFireAt = nextFire
+	rec.state.OneShotRetryCount++
+	s.scheds[name] = rec
+	return nil
 }
 
 // cloneSpec returns a copy of spec whose Parts slice is independent of the

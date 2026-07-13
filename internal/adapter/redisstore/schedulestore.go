@@ -41,6 +41,10 @@ const (
 	fieldEnabled           = "enabled"
 	fieldLastFireSessionID = "last_fire_session_id"
 	fieldCreatedAt         = "created_at"
+	// fieldOneShotRetryCount is the durable counter of one-shot re-arms (ADR
+	// 0059 Phase 2). Absent on pre-Phase-2 records (treated as 0 by the script
+	// and scheduleFromHash).
+	fieldOneShotRetryCount = "one_shot_retry_count"
 )
 
 // ErrScheduleNotFound is returned by Load/Delete/Claim/RecordFire/LoadFire when
@@ -184,6 +188,30 @@ redis.call('HSET', KEYS[1], 'enabled', ARGV[1])
 return 'OK'
 `)
 
+// reArmOneShotScript is the at-least-once re-arm primitive for a one-shot
+// schedule (ADR 0059 Phase 2). Under Redis's single-threaded execution it
+// atomically: checks the key exists, re-enables the schedule (enabled=1), sets
+// next_fire_at to nextFire, and increments one_shot_retry_count. The atomicity
+// (the EVAL) is the re-arm fence: two concurrent re-arms cannot double-increment
+// the counter or double-enable. The retry-budget gate is the CALLER's
+// responsibility — the script does NOT enforce the budget. One-shot-only.
+//
+// KEYS[1] = mecatl:schedule:<name>
+// ARGV[1] = nextFire (unix nano, string; "0" means zero time = no further fire)
+// Returns "NOT_FOUND" if the key does not exist, "OK" on success.
+var reArmOneShotScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'NOT_FOUND'
+end
+local fc = redis.call('HGET', KEYS[1], 'one_shot_retry_count')
+if fc == false then fc = '0' end
+redis.call('HSET', KEYS[1],
+  'enabled', '1',
+  'next_fire_at', ARGV[1],
+  'one_shot_retry_count', tostring(tonumber(fc) + 1))
+return 'OK'
+`)
+
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent *Store's
 // *redis.Client. It is the MULTI-REPLICA production schedule backend
 // (scheduled-tasks issue #189, Phase 1d): the SAME logic as
@@ -201,6 +229,10 @@ type scheduleStore struct {
 
 // compile-time assertion that scheduleStore satisfies the port.
 var _ port.ScheduleStore = (*scheduleStore)(nil)
+
+// compile-time assertion that scheduleStore satisfies the OPTIONAL
+// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
 // Save upserts the schedule by Spec.Name. A schedule with the same name is
 // overwritten on the Spec half; the State half is PRESERVED on overwrite (a
@@ -247,6 +279,7 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 			fieldEnabled, boolStr(enabled),
 			fieldLastFireSessionID, string(in.State.LastFireSessionID),
 			fieldCreatedAt, nanoStr(in.Spec.CreatedAt),
+			fieldOneShotRetryCount, strconv.Itoa(in.State.OneShotRetryCount),
 		).Err(); err != nil {
 			return fmt.Errorf("redisstore: save schedule %q (new): %w", in.Spec.Name, err)
 		}
@@ -274,6 +307,26 @@ func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled boo
 	res, err := setEnabledScript.Run(ctx, s.client, []string{key}, boolStr(enabled)).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: set enabled %q: %w", name, err)
+	}
+	if s, ok := res.(string); ok && s == "NOT_FOUND" {
+		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	}
+	return nil
+}
+
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
+// (ADR 0059 Phase 2). It EVALs reArmOneShotScript, which — under Redis's
+// single-threaded execution — atomically re-enables the schedule (enabled=1),
+// sets next_fire_at to nextFire, and increments one_shot_retry_count. The
+// atomicity (the EVAL) is the re-arm fence: two concurrent re-arms cannot
+// double-increment or double-enable (the concurrent-claim test proves it). The
+// not-found case (key missing → NOT_FOUND) wraps ErrScheduleNotFound. The
+// retry-budget gate is the CALLER's responsibility. One-shot-only.
+func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error {
+	key := scheduleKey(name)
+	res, err := reArmOneShotScript.Run(ctx, s.client, []string{key}, nanoStr(nextFire)).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: re-arm one-shot %q: %w", name, err)
 	}
 	if s, ok := res.(string); ok && s == "NOT_FOUND" {
 		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
@@ -630,6 +683,7 @@ func scheduleFromHash(fields map[string]string) (port.Schedule, error) {
 			FireCount:         parseIntOr(fields[fieldFireCount], 0),
 			Enabled:           fields[fieldEnabled] == "1",
 			LastFireSessionID: session.SessionID(fields[fieldLastFireSessionID]),
+			OneShotRetryCount: parseIntOr(fields[fieldOneShotRetryCount], 0),
 		},
 	}, nil
 }

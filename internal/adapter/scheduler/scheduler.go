@@ -546,6 +546,17 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		})
 	}
 	_ = g.Wait()
+	// One-shot crash-loss retry (ADR 0059 Phase 2). A one-shot with
+	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
+	// recorded a successful outcome (a crash mid-fire, or a fire that ended
+	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
+	// ALL schedules (List) — a disabled one-shot is NOT returned by Due (Due
+	// filters Enabled=true), so this is a separate scan. The re-arm check is in
+	// the tick loop's scan, NOT in the fire path itself (the fire path knows
+	// nothing of re-arm — it only fires what Claim advanced). A store that does
+	// not implement ScheduleOneShotReArmer degrades to at-most-once
+	// (byte-identical pre-Phase-2).
+	s.maybeReArmOneShots(ctx, now)
 }
 
 // fireOne applies the misfire policy, the singleton overlap check, Claims the
@@ -872,6 +883,119 @@ func (s *Scheduler) Drain() {
 // IsDraining reports whether the drain gate is armed.
 func (s *Scheduler) IsDraining() bool {
 	return s.draining.Load()
+}
+
+// oneShotReArmBackoff is the delay applied before a crashed one-shot is re-armed.
+// It is a small backoff so a crash-loop does not hammer the provider: the re-arm
+// sets NextFireAt to now + this backoff, and Due returns it on the next tick
+// after the backoff elapses.
+const oneShotReArmBackoff = 1 * time.Minute
+
+// maybeReArmOneShots is the one-shot crash-loss retry path (ADR 0059 Phase 2).
+// It scans ALL schedules (List) for a disabled one-shot with OneShotRetry=true
+// that did not record a successful outcome, and re-arms it (up to
+// OneShotMaxRetries). The re-arm lives in the tick loop's scan, NOT in the fire
+// path itself. Two crash sub-cases trigger a re-arm:
+//  1. LastFireSessionID == PendingFireSessionID (crash before RecordFire — the
+//     session may or may not exist; the sentinel means Claim happened but
+//     RecordFire did not).
+//  2. LoadFire(LastFireSessionID) returns Stop==StopError (the fire ran but
+//     ended in error).
+//
+// If neither condition (the fire succeeded), the one-shot is NOT re-armed (it was
+// a successful one-shot, now done). If OneShotRetryCount >= OneShotMaxRetries the
+// re-arm is NOT attempted (the retry budget is exhausted; the one-shot is
+// permanently done). A store that does not implement ScheduleOneShotReArmer
+// degrades to at-most-once (byte-identical pre-Phase-2) — the scan is skipped.
+func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
+	reArmer, ok := s.cfg.Store.(port.ScheduleOneShotReArmer)
+	if !ok {
+		return // store does not implement the re-arm seam — at-most-once.
+	}
+	all, err := s.cfg.Store.List(ctx)
+	if err != nil {
+		if errors.Is(err, port.ErrScheduleUnsupported) {
+			return // the same sticky-disable tickOnce already applied.
+		}
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: List for one-shot re-arm failed", "err", err.Error())
+		return
+	}
+	for _, sched := range all {
+		if !s.shouldReArmOneShot(sched) {
+			continue
+		}
+		// The re-arm backoff. A crashed one-shot is re-armed with NextFireAt =
+		// now + backoff so a crash-loop does not hammer the provider.
+		nextFire := now.Add(oneShotReArmBackoff)
+		if err := reArmer.ReArmOneShot(ctx, sched.Spec.Name, nextFire); err != nil {
+			// ErrScheduleNotFound: the schedule was deleted between List and
+			// ReArmOneShot — the fence worked, not an error.
+			if errors.Is(err, port.ErrScheduleNotFound) {
+				continue
+			}
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: re-arm one-shot failed",
+				"schedule", sched.Spec.Name, "err", err.Error())
+			continue
+		}
+		s.diag.Log(ctx, port.LevelInfo, "scheduler: re-armed one-shot (crash-loss retry)",
+			"schedule", sched.Spec.Name,
+			"retry_count", sched.State.OneShotRetryCount+1,
+			"max_retries", sched.Spec.OneShotMaxRetries,
+			"next_fire", nextFire)
+	}
+}
+
+// shouldReArmOneShot reports whether the given schedule is a crashed one-shot
+// that should be re-armed. It encodes the two crash sub-cases and the
+// retry-budget gate.
+func (s *Scheduler) shouldReArmOneShot(sched port.Schedule) bool {
+	// Only a one-shot with OneShotRetry=true is a candidate.
+	if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry {
+		return false
+	}
+	// A schedule that is still Enabled was NOT disabled by Claim (it is either
+	// pending its first fire, or mid-fire). The re-arm path targets a DISABLED
+	// one-shot (Claim disabled it — the at-most-once advance). An Enabled
+	// one-shot is Due's concern, not the re-arm path's.
+	if sched.State.Enabled {
+		return false
+	}
+	// The retry-budget gate: if OneShotRetryCount already exceeds the budget, the
+	// one-shot is permanently done (the retry budget is exhausted).
+	if sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries {
+		return false
+	}
+	// Crash sub-case 1: LastFireSessionID is still the pending sentinel (crash
+	// before RecordFire). Claim stamped the sentinel; RecordFire never
+	// overwrote it with a real session id. Re-arm.
+	if sched.State.LastFireSessionID == port.PendingFireSessionID {
+		return true
+	}
+	// Crash sub-case 2: the fire recorded a StopError (the fire ran but ended
+	// in error). LoadFire probes the prior fire's outcome. A not-found fire
+	// record (RecordFire never ran, but the sentinel was overwritten — an edge
+	// case) is treated as a crash → re-arm (fail-safe toward retry, not silent
+	// loss). A fire with Stop==StopError → re-arm. A fire with any other stop
+	// (the fire succeeded) → do NOT re-arm.
+	if sched.State.LastFireSessionID == "" {
+		// No prior fire at all (the one-shot was disabled without a Claim —
+		// e.g. paused). Not a re-arm candidate.
+		return false
+	}
+	fire, err := s.cfg.Store.LoadFire(context.Background(), string(sched.State.LastFireSessionID))
+	if err != nil {
+		// A not-found fire record: RecordFire never ran. The sentinel was
+		// overwritten with a real session id that has no fire record — treat as
+		// a crash → re-arm (fail-safe toward retry).
+		if errors.Is(err, port.ErrScheduleNotFound) {
+			return true
+		}
+		// An infra error probing the fire: do NOT re-arm (fail-safe toward
+		// at-most-once — a transient fault should not trigger a retry). The
+		// next tick's List will re-probe.
+		return false
+	}
+	return fire.Stop == session.StopError
 }
 
 // Stop cancels the tick loop, waits for in-flight fires to drain (with a grace

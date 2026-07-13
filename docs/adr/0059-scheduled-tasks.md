@@ -197,6 +197,28 @@ misfire".
   (via the memory store or a file) and re-load it in its prompt. Carried-context
   is a v2 concern, deferred.
 
+- **Phase-2 amendment (one-shot retry):** an opt-in `OneShotRetry` field mitigates
+  the one-shot crash-loss trade-off above for one-shots that cannot tolerate loss.
+  The tick loop re-arms a crashed one-shot (prior fire ended in `StopError` or
+  `LastFireSessionID == PendingFireSessionID`) up to `OneShotMaxRetries`, via the
+  optional `ScheduleOneShotReArmer` interface (type-asserted on the store, exactly
+  like `PrunableStore`/`SessionLease`; a store that does not implement it degrades
+  to the byte-identical at-most-once path). A re-arm re-enables the schedule,
+  advances `NextFireAt` with a small backoff, and increments the durable
+  `OneShotRetryCount`; once the budget is exhausted the one-shot stays disabled
+  (permanently done, not a crash-loop). It is one-shot-ONLY — a cron self-heals
+  via misfire already, so the create-seam rejects `OneShotRetry` on a cron trigger.
+
+- **Phase-2 amendment (carried context):** an opt-in `CarryContext` field renders
+  the prior fire's conversation as a fenced untrusted preamble (via
+  `agent.FenceUntrusted` + `NeutraliseFraming`), NOT as seeded history — carried
+  context is untrusted (a prior fire may have been prompt-injected) and must not
+  become live instructions. The fence quarantines it so a forged closing marker or
+  harness section header in the prior content cannot break out of its block. On
+  prior-session-load failure (not found, decode error) the fire degrades to
+  fresh-context (WARN, never fails the fire). A re-armed one-shot does NOT carry
+  context on the retry — the crashed fire's context is untrusted AND incomplete.
+
 - **The composition wiring (`buildScheduler`) lands in Phase 1f.** This ADR
   records the decision; the `internal/adapter/scheduler` package (Phase 1e)
   ships the storage-agnostic tick loop + the `FireFunc` seam. Phase 1f wires
