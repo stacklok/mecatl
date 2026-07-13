@@ -412,7 +412,7 @@ jobs:
       # and check-rendered fails the build if
       # docs/architecture/mecatl.modelith.md has drifted from its .yaml
       # source.
-      - uses: stacklok/modelith@83d153c15584f90d0b4def2a7405b5f34efbefdf # post-v0.4.0
+      - uses: stacklok/modelith@01f4ce6487fe237a374540fc521d825bb1295cef # post-v0.4.0
         with:
           files: docs/architecture/mecatl.modelith.yaml
           completeness: error
