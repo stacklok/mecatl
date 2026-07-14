@@ -1,5 +1,11 @@
 // Package openai implements port.LLMProvider over the OpenAI Responses API
-// (POST /v1/responses) using github.com/openai/openai-go/v3.
+// (POST /v1/responses) using github.com/openai/openai-go/v3. It names the
+// PROTOCOL, not a single vendor: this one adapter serves the composition
+// registry's "openai", "openrouter", AND (issue #262) the intent-driven
+// ToolHive LLM gateway registry entries — each is the same Responses-API
+// wire protocol with a different base URL + credential, so registering one
+// more OpenAI-compatible endpoint here never touches the OpenAI/Anthropic SDK
+// boundary.
 //
 // The harness owns its own conversation state (the brief's "strategy B"): every
 // request is stateless (Store:false, no previous_response_id) and resends the

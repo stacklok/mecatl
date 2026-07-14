@@ -197,6 +197,19 @@ func TestModelProvenanceFlag(t *testing.T) {
 	}
 }
 
+// TestModelProvenanceToolhiveAutoSelected: issue #262 R2.4 — a toolhive
+// effective model (no key, no --default-model chose it; it was resolved from
+// the FIRST model the gateway credential listed) reads "auto-selected", NOT
+// "server default" (which would imply a deliberate operator choice).
+func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "auto-selected" {
+		t.Fatalf("provenance = %q, want auto-selected", got)
+	}
+}
+
 // --- ●/★ markers -----------------------------------------------------------
 
 // TestModelRowMarkers asserts the fixed-width 2-marker column: ● on the pending

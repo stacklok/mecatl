@@ -63,12 +63,17 @@ type flags struct {
 	// keys (OPENAI/OPENROUTER/ANTHROPIC_API_KEY) and registers all three base-URL flags
 	// rather than the OpenAI-only subset it had. Applied onto app.Config in appConfig.
 	providerFlags *cliconfig.ProviderFlags
-	useMock       bool
-	storeDir      string
-	shell         string
-	noBash        bool
-	maxRunTokens  int
-	maxTeamTokens int
+	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
+	// #262). A CI runner pod naturally has no ToolHive config file, so this is
+	// inert by default (register-on-intent finds nothing to register) —
+	// --toolhive-llm=false is still recommended on a SHARED host.
+	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
+	useMock          bool
+	storeDir         string
+	shell            string
+	noBash           bool
+	maxRunTokens     int
+	maxTeamTokens    int
 	// maxTurns caps the session's model calls (the StopMaxTurns terminal). 0
 	// (default/unset) inherits the composition default (internal/app build.go), so
 	// it is NOT mapped onto app.Config — it is a per-SESSION limit threaded to
@@ -152,6 +157,10 @@ func parseFlags(argv []string) (flags, error) {
 	// (ANTHROPIC_API_KEY + --default-provider anthropic) and OpenRouter explicitly,
 	// like its siblings. Default (mecated) help wording.
 	f.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{})
+	// ToolHive LLM gateway (issue #262): a CI runner pod naturally has no
+	// ToolHive config file, so this is inert unless the operator explicitly
+	// points --toolhive-llm-base-url at a reachable proxy.
+	f.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
 	fs.BoolVar(&f.useMock, "mock", false, "use a canned offline mock provider (no network; smoke tests only)")
 	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash")
@@ -363,6 +372,7 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}
+	f.toolhiveLLMFlags.Apply(&out)
 	return out
 }
 

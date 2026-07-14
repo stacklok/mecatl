@@ -557,19 +557,20 @@ func (f *fakeUserModel) GetUserModel(_ context.Context) (client.UserModel, error
 }
 
 // fakeModels is a scripted client.ModelLister for the /models picker tests:
-// ListModels returns the canned list, or err when set.
+// ListModels returns the canned list (+ statuses), or err when set.
 type fakeModels struct {
-	models []client.ModelInfo
-	err    error
-	calls  int
+	models   []client.ModelInfo
+	statuses []client.ProviderStatus
+	err      error
+	calls    int
 }
 
-func (f *fakeModels) ListModels(_ context.Context) ([]client.ModelInfo, error) {
+func (f *fakeModels) ListModels(_ context.Context) ([]client.ModelInfo, []client.ProviderStatus, error) {
 	f.calls++
 	if f.err != nil {
-		return nil, f.err
+		return nil, nil, f.err
 	}
-	return f.models, nil
+	return f.models, f.statuses, nil
 }
 
 // fakeStore is a spy client SelectionStore (ui.SelectionStore) for the /models

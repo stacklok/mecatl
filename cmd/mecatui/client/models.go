@@ -51,28 +51,43 @@ func (s ModelSelection) Matches(m ModelInfo) bool {
 	return s.ProviderID == m.ProviderID && s.ModelID == m.ID
 }
 
+// ProviderStatus is one provider's last live-listing outcome (issue #262: the
+// ToolHive LLM gateway), the proto-free mirror of mecatlv1.ProviderStatus.
+// State is "ok" | "unreachable" | "unauthorized" | "empty"; Hint is a short
+// human remediation string, empty for "ok".
+type ProviderStatus struct {
+	ProviderID string
+	State      string
+	Hint       string
+}
+
 // ModelsMsg carries a ListModels result for the /models picker. Err is set on
-// failure; the picker surfaces it rather than silently degrading.
+// failure; the picker surfaces it rather than silently degrading. Statuses is
+// the (possibly empty) per-provider live-listing outcome list — empty for
+// every deployment without an intent-driven provider (byte-identical to
+// before issue #262).
 type ModelsMsg struct {
-	Models []ModelInfo
-	Err    error
+	Models   []ModelInfo
+	Statuses []ProviderStatus
+	Err      error
 }
 
 // ModelLister is the subset of *Client the ui's /models picker needs. Splitting
 // it out keeps the ui injectable with a fake for offline tests; *Client satisfies
 // it.
 type ModelLister interface {
-	ListModels(ctx context.Context) ([]ModelInfo, error)
+	ListModels(ctx context.Context) ([]ModelInfo, []ProviderStatus, error)
 }
 
 // ListModels fetches the selectable-model inventory across AVAILABLE providers,
-// (provider_id, id)-sorted (the server sorts; the client preserves that order).
-func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
+// (provider_id, id)-sorted (the server sorts; the client preserves that order),
+// plus (issue #262) the per-provider live-listing status.
+func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, []ProviderStatus, error) {
 	resp, err := c.svc.ListModels(ctx, &mecatlv1.ListModelsRequest{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return mapModels(resp), nil
+	return mapModels(resp), mapProviderStatuses(resp), nil
 }
 
 // mapModels maps a proto ListModelsResponse (nil-safe) to the plain structs.
@@ -84,6 +99,23 @@ func mapModels(in *mecatlv1.ListModelsResponse) []ModelInfo {
 	out := make([]ModelInfo, 0, len(models))
 	for _, m := range models {
 		out = append(out, mapModelInfo(m))
+	}
+	return out
+}
+
+// mapProviderStatuses maps a proto ListModelsResponse's provider_status
+// (nil-safe) to the plain structs.
+func mapProviderStatuses(in *mecatlv1.ListModelsResponse) []ProviderStatus {
+	if in == nil {
+		return nil
+	}
+	rows := in.GetProviderStatus()
+	out := make([]ProviderStatus, 0, len(rows))
+	for _, r := range rows {
+		if r == nil {
+			continue
+		}
+		out = append(out, ProviderStatus{ProviderID: r.GetProviderId(), State: r.GetState(), Hint: r.GetHint()})
 	}
 	return out
 }
@@ -107,10 +139,10 @@ func mapModelInfo(m *mecatlv1.ModelInfo) ModelInfo {
 // (success or error) arrives as a ModelsMsg.
 func ListModelsCmd(ctx context.Context, l ModelLister) tea.Cmd {
 	return func() tea.Msg {
-		ms, err := l.ListModels(ctx)
+		ms, statuses, err := l.ListModels(ctx)
 		if err != nil {
 			return ModelsMsg{Err: err}
 		}
-		return ModelsMsg{Models: ms}
+		return ModelsMsg{Models: ms, Statuses: statuses}
 	}
 }

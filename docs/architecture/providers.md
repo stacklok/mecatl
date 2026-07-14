@@ -91,6 +91,25 @@ before (the default path is byte-identical). A composition-only `providerConstru
 seam (mirroring `envDetector`) lets the offline e2e back two real provider ids with
 mocks; production leaves it nil.
 
+**Intent-driven availability (issue #262, ADR 0064).** Every provider above is
+**key-driven** — available iff a credential resolves. The ToolHive LLM gateway proxy
+entry (`providerToolhive`, id `"toolhive"`) is **intent-driven** instead: it is
+registered when `resolveToolhiveIntent` detects ToolHive's own config file (or an
+explicit `--toolhive-llm-base-url`) — no credential required, and NEVER gated by
+reachability (register-on-intent; a session persisting `provider_id: "toolhive"` must
+survive a restart with the proxy down, never rejected as "unknown or unavailable
+provider"). Each `providerEntry` carries an `intentDriven` bit that
+`preferredDefaultProvider` reads to place intent-driven providers at an explicit
+LOWEST-preference tier (any key-driven provider always wins the default) and that the
+`ListModels` `provider_status` projection reads to scope its wire surface to
+intent-driven entries only. A BOUNDED (≤1.5s) Build-time probe runs immediately after
+registration and drives ONLY the startup diagnostic, the initial live-model snapshot,
+and default-model eligibility for a SOLE intent-driven provider — never registration
+itself. See `docs/adr/0064-toolhive-llm-gateway-provider.md` for the full design
+(including the accepted sole+probe-down boot deviation) and
+`internal/adapter/openaicompat` / `internal/adapter/toolhivellm` for the two-layer leaf
+split (protocol-generic lister + the one ToolHive-aware config reader).
+
 **Per-session routing (`sessionEngineFactory`).** `CreateSession` carries an OPTIONAL
 `provider_id`/`model_id` selector, expressed at the server boundary as the NEUTRAL
 `server.ProviderSelector` (the server adapter imports neither the registry nor the

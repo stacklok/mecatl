@@ -40,6 +40,7 @@ an editor that spawned it.
 | 15. Running mecatequi from GitHub Actions | [mecatequi-ci.md](usage/mecatequi-ci.md) |
 | 16. Live e2e suite | [e2e.md](usage/e2e.md) |
 | 17. Troubleshooting / FAQ | [troubleshooting.md](usage/troubleshooting.md) |
+| 18. ToolHive LLM gateway | [§ below](#toolhive-llm-gateway) |
 
 ## Scheduled tasks
 
@@ -240,3 +241,66 @@ mecated schedules fire nightly-review
 ```
 
 A bare `mecated schedules` or an unknown verb prints the usage banner and exits 2.
+
+## ToolHive LLM gateway
+
+If you already run [ToolHive](https://github.com/stacklok/toolhive)'s LLM gateway
+proxy, mecatl auto-detects it — **no API key, no flag, no config edit**. This is
+UNRELATED to `--toolhive` (ToolHive MCP workload discovery, documented elsewhere) —
+the two features share a vendor name and nothing else.
+
+### Walkthrough
+
+```sh
+# 1. Set up the gateway credential once (per ToolHive's own docs).
+thv llm setup
+
+# 2. Start the local proxy (listens on 127.0.0.1:14000 by default).
+thv llm proxy start
+
+# 3. Run mecatui (or mecated) as usual — no --openai/--anthropic/--model needed.
+go run ./cmd/mecatui
+
+# 4. Open the model picker and confirm the gateway's models are listed.
+#    (inside mecatui) /models
+```
+
+If step 4 shows your gateway's models with a `●` marker on the auto-selected
+default, you're done — every session now talks to your organization's gateway
+over the OpenAI-compatible protocol, with the header showing a persistent
+"via ToolHive gateway" segment as a reminder.
+
+### Flags
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--toolhive-llm` | `true` | Auto-detect a locally-running ToolHive LLM proxy by reading ToolHive's own config file and probing `127.0.0.1`; registers it as provider id `toolhive`. Pass `=false` on a shared host where you don't want this. |
+| `--toolhive-llm-base-url` | `""` | An EXPLICIT proxy base URL (must resolve to loopback — `127.0.0.0/8`, `[::1]`, or `localhost`). Skips the config-file auto-detect entirely but keeps the startup probe. No environment-variable twin (this is a deliberate, visible flag). |
+
+Registration happens on **detected intent alone** — the proxy does not need to be
+running yet, and a later restart with the proxy temporarily down never bricks the
+session: mecatl always knows about the "toolhive" provider once ToolHive's config
+says it should exist, and a down proxy just means a request-time connection error
+(exactly like any other transient provider outage) instead of a rejected session.
+
+### Troubleshooting
+
+`/models` renders the current state for the `toolhive` provider whenever it isn't
+healthy:
+
+| State | What you see | Remediation |
+| --- | --- | --- |
+| `unreachable` | `` toolhive: proxy not reachable — start it with `thv llm proxy start` `` | The proxy isn't running (or its port changed). Start it. |
+| `unauthorized` | `` toolhive: gateway rejected the credential — re-auth with `thv llm setup` `` | Your gateway credential expired or was revoked. Re-run setup. |
+| `empty` | "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`" (replaces the generic empty-picker note) | The proxy is reachable and your credential is valid, but it advertises zero models — this is an ORGANIZATIONAL problem (ask your platform admin), not a local one. |
+
+The proxy comes back up? The very next `/models` open (or the background live
+refresh) picks it up automatically — no mecatl restart needed.
+
+Diagnostics for this feature ride mecatui's usual log file
+(`$XDG_STATE_HOME/mecatl/mecatui.log`, fallback `~/.local/state/mecatl/mecatui.log`);
+mecated logs to stderr/journald as usual.
+
+**Shared-host recommendation:** if you run `mecated`/`mecatui` on a host other
+operators also use, pass `--toolhive-llm=false` — a per-user ToolHive config
+detected by one operator's process should not surprise another.

@@ -77,6 +77,10 @@ type config struct {
 	// (cliconfig), applied onto app.Config in appConfig so the mains cannot drift
 	// on which keys/base-urls they wire.
 	providerFlags *cliconfig.ProviderFlags
+	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
+	// #262). A k8s pod naturally has no ToolHive config file, so this is
+	// inert by default; --toolhive-llm=false is recommended on a shared node.
+	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
 	// modelAliases/modelSlots are the repeatable --model-alias/--model-slot
 	// bindings (cliconfig.RegisterModelFlags), threaded onto app.Config.
 	modelAliases *cliconfig.KeyValueList
@@ -229,6 +233,10 @@ func parseFlags(argv []string) (config, error) {
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
 	// use, so mecak8s shares the three-mains wiring.
 	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{})
+	// ToolHive LLM gateway (issue #262): a k8s pod naturally has no ToolHive
+	// config file, so this is inert unless an operator mounts one or passes
+	// --toolhive-llm-base-url explicitly.
+	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
 	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
@@ -450,6 +458,7 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}
+	cfg.toolhiveLLMFlags.Apply(&out)
 	return out
 }
 

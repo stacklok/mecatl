@@ -64,7 +64,10 @@ func clampEffortForProvider(providerID, effort string) (string, bool) {
 		return "", false
 	}
 	switch providerID {
-	case providerOpenAI, providerOpenRouter:
+	case providerOpenAI, providerOpenRouter, providerToolhive:
+		// The ToolHive LLM gateway (issue #262) fronts MIXED upstreams over the
+		// OpenAI protocol — the same conservative clamp applies since we cannot
+		// know which upstream model backs a given selector.
 		if effort == effortXHigh || effort == effortMax {
 			return effortHigh, true
 		}

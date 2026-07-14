@@ -499,6 +499,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	// off the resolved key.
 	keys := cfg.providerFlags.Apply(&out)
 	out.UseOpenAI = keys.OpenAI != ""
+	cfg.toolhiveLLMFlags.Apply(&out)
 	return out
 }
 

@@ -644,3 +644,188 @@ func TestRefreshNotCompletedOnShutdownCancel(t *testing.T) {
 		t.Fatal("cancel-mid-fetch marked the refresh completed (a shutdown is not a settle)")
 	}
 }
+
+// --- D3 last-known-good (issue #262) -----------------------------------------
+
+// TestResolveProviderModels_LastKnownGood_EmptyEmbeddedCatalog: a provider with
+// an EMPTY embedded catalog (toolhive — no per-credential catalog to embed)
+// falls back to the LAST successful live snapshot on a subsequent error,
+// instead of going empty on a transient outage.
+func TestResolveProviderModels_LastKnownGood_EmptyEmbeddedCatalog(t *testing.T) {
+	lister := &fakeLister{models: []modelEntry{{ID: "m1"}, {ID: "m2"}}}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			providerToolhive: {id: providerToolhive, intentDriven: true, lister: lister, available: true},
+		},
+		outcomes: newLiveOutcomeStore(),
+	}
+
+	got := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerToolhive)
+	if len(got) != 2 {
+		t.Fatalf("first fetch: got %d models, want 2", len(got))
+	}
+	if status, ok := reg.outcomes.getStatus(providerToolhive); !ok || status.State != statusOK {
+		t.Fatalf("status after success = %+v", status)
+	}
+
+	lister.err = errors.New("connection refused")
+	got = resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerToolhive)
+	if len(got) != 2 {
+		t.Fatalf("after error: got %d models, want the retained last-known-good 2, got %+v", len(got), got)
+	}
+	if status, ok := reg.outcomes.getStatus(providerToolhive); !ok || status.State != statusUnreachable {
+		t.Fatalf("status after failure = %+v, want unreachable", status)
+	}
+}
+
+// TestResolveProviderModels_HonestEmptyReplaces: for a provider with no
+// embedded floor, an honest (200, []) live response REPLACES to empty (R3.1) —
+// it is a genuine successful listing, not a failure to paper over.
+func TestResolveProviderModels_HonestEmptyReplaces(t *testing.T) {
+	lister := &fakeLister{models: nil}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			providerToolhive: {id: providerToolhive, intentDriven: true, lister: lister, available: true},
+		},
+		outcomes: newLiveOutcomeStore(),
+	}
+	got := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerToolhive)
+	if len(got) != 0 {
+		t.Fatalf("got %d models, want 0 (honest empty)", len(got))
+	}
+	if status, ok := reg.outcomes.getStatus(providerToolhive); !ok || status.State != statusEmpty {
+		t.Fatalf("status = %+v, want empty", status)
+	}
+}
+
+// TestResolveProviderModels_NeverListedSuccessfully_YieldsNil: a provider that
+// has NEVER listed successfully (no embedded floor, no last-known-good yet)
+// yields a genuinely empty list — never a fabrication.
+func TestResolveProviderModels_NeverListedSuccessfully_YieldsNil(t *testing.T) {
+	lister := &fakeLister{err: errors.New("down")}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			providerToolhive: {id: providerToolhive, intentDriven: true, lister: lister, available: true},
+		},
+		outcomes: newLiveOutcomeStore(),
+	}
+	if got := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerToolhive); got != nil {
+		t.Fatalf("got %v, want nil (never listed successfully)", got)
+	}
+}
+
+// TestRefreshStaleModels_Cooldown proves the on-demand /models-open refresh
+// (R1.4) is cooldown-gated: two calls in quick succession trigger only ONE
+// actual lister fetch.
+func TestRefreshStaleModels_Cooldown(t *testing.T) {
+	lister := &fakeLister{models: []modelEntry{{ID: "m1"}}}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			providerToolhive: {id: providerToolhive, intentDriven: true, lister: lister, available: true},
+		},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.outcomes.recordFailure(providerToolhive, statusUnreachable, "hint") // stale, so it IS a refresh candidate
+	st := &refreshStaleModelsState{}
+	swap := newFakeSwapper()
+
+	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, swap, st)
+	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, swap, st)
+
+	if got := lister.calls.Load(); got != 1 {
+		t.Fatalf("lister calls = %d, want 1 (the second call should be cooldown-gated)", got)
+	}
+}
+
+// TestRefreshStaleModels_CooldownExpiryRefetches is the cooldown test's
+// necessary complement: once the cooldown window has genuinely ELAPSED, a
+// subsequent call DOES re-fetch — proving refreshStaleModels does not wedge
+// permanently after its first call (a bug the cooldown-only test above cannot
+// catch, since it never advances time).
+func TestRefreshStaleModels_CooldownExpiryRefetches(t *testing.T) {
+	// The lister keeps failing across both calls (unlike the success case)
+	// so the provider stays a "stale" (non-ok) refresh candidate on the
+	// second call too — a lister that SUCCEEDED on the first call would
+	// mark the provider "ok" and the second call would (correctly) skip a
+	// now-healthy provider, which would defeat this test's purpose.
+	lister := &fakeLister{err: errors.New("still down")}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			providerToolhive: {id: providerToolhive, intentDriven: true, lister: lister, available: true},
+		},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.outcomes.recordFailure(providerToolhive, statusUnreachable, "hint")
+	st := &refreshStaleModelsState{}
+	swap := newFakeSwapper()
+
+	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, swap, st)
+	if got := lister.calls.Load(); got != 1 {
+		t.Fatalf("lister calls after first refresh = %d, want 1", got)
+	}
+
+	// Force the cooldown to have elapsed (never sleep in a test): back-date
+	// st.last past refreshStaleModelsCooldown. The provider is still
+	// unreachable (recordFailure keeps status non-ok), so it remains a
+	// refresh candidate.
+	st.mu.Lock()
+	st.last = time.Now().Add(-refreshStaleModelsCooldown - time.Second)
+	st.mu.Unlock()
+
+	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, swap, st)
+	if got := lister.calls.Load(); got != 2 {
+		t.Fatalf("lister calls after cooldown expiry = %d, want 2 (a re-fetch should fire)", got)
+	}
+}
+
+// TestRefreshStaleModels_SkipsHealthyAndNonIntentDriven proves the on-demand
+// refresh re-fetches ONLY a stale intent-driven provider: a healthy toolhive
+// entry and a non-intent-driven (openrouter) entry are both skipped.
+func TestRefreshStaleModels_SkipsHealthyAndNonIntentDriven(t *testing.T) {
+	toolhiveLister := &fakeLister{models: []modelEntry{{ID: "m1"}}}
+	orLister := &fakeLister{models: []modelEntry{{ID: "should-never-be-fetched-here"}}}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			providerToolhive:   {id: providerToolhive, intentDriven: true, lister: toolhiveLister, available: true},
+			providerOpenRouter: {id: providerOpenRouter, lister: orLister, available: true}, // not intentDriven
+		},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.outcomes.recordSuccess(providerToolhive, []modelEntry{{ID: "already-ok"}}) // healthy, not stale
+	st := &refreshStaleModelsState{}
+
+	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st)
+
+	if got := toolhiveLister.calls.Load(); got != 0 {
+		t.Fatalf("healthy toolhive lister calls = %d, want 0", got)
+	}
+	if got := orLister.calls.Load(); got != 0 {
+		t.Fatalf("non-intent-driven openrouter lister calls = %d, want 0 (must never be re-fetched here)", got)
+	}
+}
+
+// TestResolveProviderModels_OpenRouterRegressionPin: a KEYED provider with a
+// non-empty embedded catalog (openrouter) must keep falling back to embedded
+// on error — the D3 last-known-good fallback must NEVER divert it, even when
+// a last-known-good snapshot happens to be recorded. Byte-identical to
+// pre-#262 behaviour.
+func TestResolveProviderModels_OpenRouterRegressionPin(t *testing.T) {
+	lister := &fakeLister{err: errors.New("boom")}
+	reg := regWithLister(lister)
+	reg.outcomes = newLiveOutcomeStore()
+	reg.outcomes.recordSuccess(providerOpenRouter, []modelEntry{{ID: "should-never-win"}})
+
+	got := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenRouter)
+	curated := orEmbeddedIDs(t)
+	if len(got) != len(curated) {
+		t.Fatalf("got %d models, want the embedded floor (%d)", len(got), len(curated))
+	}
+	for _, m := range got {
+		if m.ID == "should-never-win" {
+			t.Fatal("last-known-good leaked into a provider with a non-empty embedded floor")
+		}
+	}
+}

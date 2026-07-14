@@ -100,11 +100,15 @@ type config struct {
 	// app.Config when the embedded server is built. The resolved credential keys below
 	// are read via cliconfig too (one definition of the env-var names across the mains).
 	providerFlags *cliconfig.ProviderFlags
-	openAIKey     string
-	openRouterKey string
-	anthropicKey  string
-	mock          bool
-	noBash        bool
+	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
+	// #262), applied onto app.Config alongside providerFlags when the
+	// embedded server is built.
+	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
+	openAIKey        string
+	openRouterKey    string
+	anthropicKey     string
+	mock             bool
+	noBash           bool
 
 	// Embedded-server LLM resilience timeouts (used only when hosting an
 	// in-process server; ignored when dialling an external --server). They mirror
@@ -299,6 +303,12 @@ func parseFlags(args []string) (config, error) {
 		OpenAIBaseURL:     "override the OpenAI API base URL for the embedded server (compatible endpoints)",
 		OpenRouterBaseURL: "embedded server only: override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 		AnthropicBaseURL:  "embedded server only: override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
+	})
+	// ToolHive LLM gateway (issue #262): embedded-server-only, like every other
+	// provider knob on this main.
+	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.ToolhiveLLMFlagHelp{
+		Enable:  "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Enable,
+		BaseURL: "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.BaseURL,
 	})
 	fs.BoolVar(&cfg.mock, "mock", false, "embedded server only: use the canned offline mock provider instead of OpenAI (no network)")
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "embedded server only: disable the Bash tool (shell-less mode)")

@@ -285,6 +285,14 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 		}
 		parts = append(parts, seg)
 	}
+	// ToolHive gateway disclosure (issue #262, R6.3): a persistent, muted "via
+	// ToolHive gateway" segment whenever the ACTIVE session's provider is
+	// toolhive — disclosure-only (no acknowledgment required), riding the same
+	// segment slice so the EXISTING width-shedding/fitHeader math applies
+	// unchanged (it sheds like any other low-priority segment under pressure).
+	if m.effectiveModel.ProviderID == "toolhive" {
+		parts = append(parts, m.deps.Theme.Style("muted").Render("via ToolHive gateway"))
+	}
 	if withNext != "" {
 		parts = append(parts, withNext)
 	}

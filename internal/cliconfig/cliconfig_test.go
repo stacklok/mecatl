@@ -2,6 +2,7 @@ package cliconfig
 
 import (
 	"flag"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/app"
@@ -240,5 +241,78 @@ func TestKeyValueListSatisfiesFlagValue(t *testing.T) {
 	}
 	if got := v.String(); got != "k=v" {
 		t.Errorf("String = %q, want k=v", got)
+	}
+}
+
+// TestRegisterToolhiveLLMFlags_Defaults pins issue #262's R4.1/R4.2: --toolhive-llm
+// defaults to true (auto-detect is ON by default), --toolhive-llm-base-url
+// defaults to "" (no explicit override), and the help text disambiguates from
+// the unrelated --toolhive (MCP workload discovery) flag.
+func TestRegisterToolhiveLLMFlags_Defaults(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	_ = RegisterToolhiveLLMFlags(fs, ToolhiveLLMFlagHelp{})
+
+	enableFlag := fs.Lookup("toolhive-llm")
+	if enableFlag == nil {
+		t.Fatal("flag --toolhive-llm not registered")
+	}
+	if enableFlag.DefValue != "true" {
+		t.Errorf("--toolhive-llm default = %q, want true", enableFlag.DefValue)
+	}
+	if !strings.Contains(enableFlag.Usage, "unrelated to --toolhive") {
+		t.Errorf("--toolhive-llm help missing the --toolhive disambiguation: %q", enableFlag.Usage)
+	}
+
+	baseURLFlag := fs.Lookup("toolhive-llm-base-url")
+	if baseURLFlag == nil {
+		t.Fatal("flag --toolhive-llm-base-url not registered")
+	}
+	if baseURLFlag.DefValue != "" {
+		t.Errorf("--toolhive-llm-base-url default = %q, want empty", baseURLFlag.DefValue)
+	}
+}
+
+// TestRegisterToolhiveLLMFlags_HelpOverride proves a supplied help string wins,
+// mirroring RegisterProviderFlags/RegisterModelFlags (mecatui prefixes "embedded
+// server only:").
+func TestRegisterToolhiveLLMFlags_HelpOverride(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	_ = RegisterToolhiveLLMFlags(fs, ToolhiveLLMFlagHelp{Enable: "CUSTOM HELP"})
+	if got := fs.Lookup("toolhive-llm").Usage; got != "CUSTOM HELP" {
+		t.Errorf("toolhive-llm help = %q, want CUSTOM HELP", got)
+	}
+	if got := fs.Lookup("toolhive-llm-base-url").Usage; got != DefaultToolhiveLLMFlagHelp.BaseURL {
+		t.Errorf("toolhive-llm-base-url help = %q, want the default (unspecified field falls back)", got)
+	}
+}
+
+// TestToolhiveLLMFlags_ApplyMapsBothFields proves parsed flag values land on
+// app.Config.
+func TestToolhiveLLMFlags_ApplyMapsBothFields(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	tf := RegisterToolhiveLLMFlags(fs, ToolhiveLLMFlagHelp{})
+	if err := fs.Parse([]string{"-toolhive-llm=false", "-toolhive-llm-base-url=http://127.0.0.1:9999/v1"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var cfg app.Config
+	tf.Apply(&cfg)
+	if cfg.ToolhiveLLM {
+		t.Error("ToolhiveLLM = true, want false (explicit -toolhive-llm=false)")
+	}
+	if cfg.ToolhiveLLMBaseURL != "http://127.0.0.1:9999/v1" {
+		t.Errorf("ToolhiveLLMBaseURL = %q, want the parsed override", cfg.ToolhiveLLMBaseURL)
+	}
+}
+
+// TestToolhiveLLMFlags_ApplyNilReceiver mirrors ProviderFlags.Apply's
+// nil-receiver discipline: a config built WITHOUT
+// RegisterToolhiveLLMFlags leaves app.Config's two fields at their zero
+// value (ToolhiveLLM=false, ToolhiveLLMBaseURL="") rather than panicking.
+func TestToolhiveLLMFlags_ApplyNilReceiver(t *testing.T) {
+	var tf *ToolhiveLLMFlags
+	var cfg app.Config
+	tf.Apply(&cfg) // must not panic
+	if cfg.ToolhiveLLM || cfg.ToolhiveLLMBaseURL != "" {
+		t.Errorf("nil-receiver Apply mutated cfg: %+v", cfg)
 	}
 }

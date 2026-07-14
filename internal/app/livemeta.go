@@ -159,6 +159,32 @@ func (s *liveMetaStore) lookup(providerID, modelID string) (modelEntry, bool) {
 	return m, ok
 }
 
+// entriesByProvider reconstructs the store's CURRENT per-provider
+// []modelEntry (issue #262: the shape refreshStaleModels needs to merge a
+// PARTIAL re-fetch — only the stale providers — with whatever the providers
+// it did NOT re-fetch already hold). Order is UNSPECIFIED (map iteration):
+// every consumer either re-sorts (sortModelInfos) or only cares about
+// "first-listed" from a FRESH lister result, never from this
+// reconstruction. nil-safe; returns nil for a nil/unseeded store.
+func (s *liveMetaStore) entriesByProvider() map[string][]modelEntry {
+	if s == nil {
+		return nil
+	}
+	cur := s.models.Load()
+	if cur == nil {
+		return nil
+	}
+	out := make(map[string][]modelEntry, len(*cur))
+	for pid, byID := range *cur {
+		list := make([]modelEntry, 0, len(byID))
+		for _, m := range byID {
+			list = append(list, m)
+		}
+		out[pid] = list
+	}
+	return out
+}
+
 // Upper bounds on LIVE-sourced metadata before it drives the request hot path. The
 // >0 check is the lower floor; these are the symmetric UPPER clamp (Security LOW):
 // a hostile / MITM'd / buggy live endpoint must not flow a huge value verbatim into

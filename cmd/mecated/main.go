@@ -91,10 +91,14 @@ type config struct {
 	// (cliconfig), applied onto app.Config in appConfig so the three mains cannot
 	// drift on which keys/base-urls they wire.
 	providerFlags *cliconfig.ProviderFlags
-	useMock       bool
-	storeDir      string
-	shell         string
-	noBash        bool
+	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
+	// #262: auto-detecting the ToolHive LLM gateway proxy), applied onto
+	// app.Config in appConfig alongside providerFlags.
+	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
+	useMock          bool
+	storeDir         string
+	shell            string
+	noBash           bool
 
 	// Context management: the compaction strategy and the token counter. Both
 	// default to the current behaviour exactly (heuristic compactor + heuristic
@@ -1041,6 +1045,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}
+	cfg.toolhiveLLMFlags.Apply(&out)
 	return out
 }
 
@@ -1151,6 +1156,11 @@ func parseFlags(argv []string) (config, error) {
 		OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 		AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	})
+	// ToolHive LLM gateway (issue #262): registered adjacent to the provider
+	// flags above (the credential-source family) AND grouped near --toolhive/
+	// --toolhive-group below in --help (the vendor-name family) — it straddles
+	// both, so mecated's help text disambiguates it from --toolhive explicitly.
+	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network; for smoke tests only)")
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&cfg.sessionStoreURL, "session-store-url", "", "host:port of a remote session-store gRPC driver (mecatl.driver.v1.SessionStoreService); replaces the local store, so it is mutually exclusive with --store-dir. Loopback may ride plaintext; pair a non-loopback target with --driver-tls (and --driver-auth-token as needed)")

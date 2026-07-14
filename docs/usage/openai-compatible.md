@@ -44,6 +44,8 @@ before suspecting the harness.
 
 ---
 
-See also: [model routing](model-routing.md) (slots, aliases, the router), or
+See also: [model routing](model-routing.md) (slots, aliases, the router); the
+[ToolHive LLM gateway](../usage.md#toolhive-llm-gateway) section (a zero-config,
+auto-detected OpenAI-compatible endpoint — no `--openai-base-url` needed); or
 the [operator guide index](../usage.md).
 

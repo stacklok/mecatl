@@ -57,6 +57,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0034 — Extend the model router to team members and Parallel branches](./0034-team-parallel-model-routing.md)
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
+- [0064 — Auto-detect the ToolHive LLM gateway proxy as a native provider](./0064-toolhive-llm-gateway-provider.md)
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)

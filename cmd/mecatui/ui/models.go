@@ -65,6 +65,11 @@ type modelsState struct {
 	// block (drives the ★ marker + the "global default" provenance label).
 	confirm       modelsConfirmState
 	globalDefault client.ModelSelection
+	// statuses is the (possibly empty) per-provider live-listing status list
+	// (issue #262: the ToolHive LLM gateway) relayed alongside models. Empty
+	// for every deployment without an intent-driven provider — the render
+	// path is then byte-identical to before this feature.
+	statuses []client.ProviderStatus
 }
 
 // modelsConfirmState is the modelsConfirm overlay's data: the candidate model the
@@ -471,6 +476,7 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.models.err = nil
 		m.models.models = msg.Models
+		m.models.statuses = msg.Statuses
 		// Derive the filtered slice (+ clamp the cursor) from the current filter
 		// value; on a fresh open the filter is empty, so filtered == models.
 		m = m.syncModelsFilter()
@@ -610,6 +616,12 @@ func (m Model) modelProvenance(eff client.ModelSelection) string {
 		return "workspace default"
 	case !m.deps.GlobalDefault.IsZero() && m.deps.GlobalDefault == eff:
 		return "global default"
+	case eff.ProviderID == "toolhive":
+		// Issue #262, R2.4: a ToolHive-gateway default was never operator-chosen
+		// (no key, no --default-model) — it was resolved from the FIRST model the
+		// gateway's credential happened to list. "server default" would imply a
+		// deliberate operator choice; "auto-selected" is the honest label.
+		return "auto-selected"
 	default:
 		return "server default"
 	}
@@ -641,13 +653,82 @@ func (m Model) modelsRowBudget() int {
 const modelsDisabledNote = "Model selection is not available on this server.\n" +
 	"Set OPENAI_API_KEY or OPENROUTER_API_KEY and reconnect."
 
+// modelsGatewayEmptyNote is the issue #262 R6.2 empty-state copy for a
+// provider whose live-listing status is "empty" (a reachable, authorized
+// credential that simply lists zero models) — distinct from the generic
+// "No selectable models advertised." (which reads as "nothing is configured
+// at all") and from modelsDisabledNote (which reads as "you haven't set a
+// key"): here a gateway IS configured and reachable, so the remedy is
+// organizational, not a local flag/key fix. Kept word-for-word in sync with
+// the server's toolhiveStatusHints[statusEmpty] (internal/app/registry.go) —
+// the two surfaces must never drift apart on the same remediation.
+const modelsGatewayEmptyNote = "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`"
+
 // modelsEmptyCopy returns the empty-state line: the "not available" note (with
-// remedy) when caps.ModelSelection is false, else the "enabled but empty" note.
-func modelsEmptyCopy(caps client.Capabilities) string {
+// remedy) when caps.ModelSelection is false; the gateway-specific note when a
+// status reports "empty" (issue #262 R6.2); else the generic "enabled but
+// empty" note. statuses is checked FIRST among the two "something is
+// configured" branches so a reachable-but-empty gateway never reads as a
+// generic advertising failure.
+func modelsEmptyCopy(caps client.Capabilities, statuses []client.ProviderStatus) string {
+	for _, s := range statuses {
+		if s.State == "empty" {
+			return modelsGatewayEmptyNote
+		}
+	}
 	if !caps.ModelSelection {
 		return modelsDisabledNote
 	}
 	return "No selectable models advertised."
+}
+
+// toolhiveStatusCopy maps a non-ok provider_status state to the short
+// human-readable clause rendered before the hint (issue #262 R6.2). "empty"
+// IS included here (unlike the original cut): when the OVERALL model
+// inventory is non-empty (other providers have models), a reachable-but-empty
+// toolhive would otherwise be invisible in the picker — modelsEmptyCopy's
+// replacement note only fires when the WHOLE list is empty. See
+// renderProviderStatusLines for the suppression rule that keeps the two from
+// double-stating the same remediation when the inventory IS empty.
+var toolhiveStatusCopy = map[string]string{
+	"unreachable":  "proxy not reachable",
+	"unauthorized": "gateway rejected the credential",
+	"empty":        "credential lists no models",
+}
+
+// renderProviderStatusLines renders one muted line per non-ok status:
+// "<provider_id>: <short copy> — <hint>" (issue #262 R6.2). inventoryEmpty
+// reports whether the OVERALL model list (across every provider) is empty:
+// when it IS, an "empty" status is suppressed here because modelsEmptyCopy's
+// replacement note already states the same remediation for the whole picker
+// (rendering both would double-state it); when the inventory is NON-empty
+// (issue: a mixed deployment where OTHER providers have models), an "empty"
+// toolhive status would otherwise be invisible, so it renders here instead.
+// Returns nil when statuses is empty (or every entry is ok, or empty-but-
+// suppressed) — the byte-identical no-op for every deployment without an
+// intent-driven provider's trouble to report. A state absent from
+// toolhiveStatusCopy (a future addition) still renders using the raw state
+// string, so a new state is never silently dropped.
+func renderProviderStatusLines(statuses []client.ProviderStatus, inventoryEmpty bool) []string {
+	var lines []string
+	for _, s := range statuses {
+		if s.State == "" || s.State == "ok" {
+			continue
+		}
+		if s.State == "empty" && inventoryEmpty {
+			continue // modelsEmptyCopy's replacement note already covers this
+		}
+		clause := toolhiveStatusCopy[s.State]
+		if clause == "" {
+			clause = s.State
+		}
+		line := s.ProviderID + ": " + clause
+		if s.Hint != "" {
+			line += " — " + s.Hint
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // renderModelsPanel renders the flat type-to-filter picker: a title, the filter
@@ -690,7 +771,7 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 	case len(st.models) == 0:
 		// Server-side empty/disabled (no inventory at all) — distinct from a filter
 		// that matched nothing.
-		b.WriteString(th.Style("muted").Render(modelsEmptyCopy(caps)) + "\n")
+		b.WriteString(th.Style("muted").Render(modelsEmptyCopy(caps, st.statuses)) + "\n")
 	case len(st.filtered) == 0:
 		// The filter matched nothing (the inventory is non-empty). A clear, distinct
 		// note with a recovery hint; the cursor is safe (clamped to 0) and enter is a
@@ -702,6 +783,17 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 			mi := st.filtered[i]
 			b.WriteString(renderRow(th, modelRowText(st.active, st.globalDefault, mi), i == st.cursor) + "\n")
 		}
+	}
+
+	// Provider-status remediation lines (issue #262 R6.2): one muted line per
+	// non-ok status, under the list/empty state — an "empty" status is
+	// suppressed ONLY when the OVERALL inventory is also empty (modelsEmptyCopy
+	// already states that remediation); a mixed deployment (other providers
+	// have models) still surfaces toolhive's "empty" here, or it would be
+	// invisible. No statuses (or all ok) renders NOTHING — the byte-identical
+	// no-op every existing golden pins.
+	for _, line := range renderProviderStatusLines(st.statuses, len(st.models) == 0) {
+		b.WriteString(th.Style("muted").Render(sanitizeTerminal(line)) + "\n")
 	}
 
 	b.WriteString("\n" + th.Style("muted").Render(

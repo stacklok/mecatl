@@ -2531,6 +2531,108 @@ its OWN `openrouter.Model` (composition maps it to `modelEntry` — no import cy
 `id`/`name`/`context_length`/`top_provider.max_completion_tokens`→OutputLimit (the output
 ceiling, captured for the resolvers)/`architecture.input_modalities`/`supported_parameters∋{reasoning,tools}`.
 
+### `openaicompat` + `toolhivellm` — ToolHive LLM gateway provider (issue #262, ADR 0064)
+
+Two-layer leaf split, mirroring the `providercatalog`/`openrouter` shape but for a
+config-detected (not credential-detected) provider. `internal/adapter/openaicompat`
+is PROTOCOL-generic (stdlib-only, no ToolHive awareness): `NewLister(baseURL,
+bearerToken, client)` GETs `<baseURL>/models`, decoding only `{data:[{id,
+display_name}]}` (pinned to stacklok-enterprise-platform#2270's wire shape) with a
+1 MiB `io.LimitReader` cap (CWE-770) and per-field C0/DEL control-byte stripping +
+rune truncation (CWE-117/116) BEFORE the id/display_name ever reach a picker row;
+non-2xx returns `*StatusError{Code}` (`errors.As`-classified by composition into
+`unauthorized` on 401/403, `unreachable` otherwise). `internal/adapter/toolhivellm`
+is the ONLY ToolHive-aware code: `DetectConfig(path)` reads ToolHive's own
+`toolhive/config.yaml` (XDG-resolved) with the full hardening stack — `os.Stat` →
+`Mode().IsRegular()` → size ≤ 1 MiB → same-uid ownership (`statOwner`, an unexported
+package-seam a wrong-owner unit test overrides — a root-less test can't chown a
+fixture) → `io.LimitReader` read → typed `go.yaml.in/yaml/v3` decode into a struct
+with EXACTLY `llm.gateway_url` + `llm.proxy.listen_port` (no `KnownFields`; unknown
+keys ignored so a config-schema evolution never breaks detection) — there is
+LITERALLY NO field for `tls_skip_verify`/`oidc`, so a config setting either has
+nowhere to land, provably. `Config.BaseURL()` is the ONE security invariant this
+whole package exists to enforce: `"http://127.0.0.1:" + port + "/v1"`, HARDCODED —
+`GatewayURL` (the upstream the proxy forwards to) is captured for DIAGNOSTIC DISPLAY
+ONLY and never touches request construction.
+
+Composition (`internal/app/registry.go`): `resolveToolhiveIntent` decides
+REGISTRATION from intent alone (an explicit `--toolhive-llm-base-url`, pre-validated
+loopback-only by `validateToolhiveBaseURL` — literal `127.0.0.0/8`/`[::1]`/
+`localhost` via `net.ParseIP`, NEVER a DNS lookup, TOCTOU-safe — or a config-file
+detect) — the network probe that follows NEVER gates whether the "toolhive" entry
+exists, only its diagnostics/default-model eligibility (D1's whole point: a
+persisted `provider_id:"toolhive"` session must rehydrate even when the proxy is
+down, never the `ErrInvalidArgument` "unknown or unavailable provider" class of
+error). `newGatewayEntry` delegates to `newOpenAICompatEntry` (the renamed
+`newOpenAIEntry` — shared by openai/openrouter/toolhive, so all three cannot drift
+on resilience wrapping) with `toolhivellm.PlaceholderToken` (`"thv-proxy"`) as the
+credential. `providerEntry.intentDriven`/`intentGatewayURL`/`intentExplicit` are the
+three new fields: `intentDriven` tiers `preferredDefaultProvider` STRICTLY below
+every key-driven provider (any resolved API key always wins the default,
+alphabetics be damned — pinned by an anthropic-keyed-beats-toolhive test, since
+"toolhive" sorts after "anthropic" and a naive sorted-pick would pass by accident)
+and filters `providerStatusProto` to intent-driven entries only (v1 is deliberately
+toolhive-scoped: an ordinary openrouter/anthropic blip never grows the client-facing
+`provider_status` wire list).
+
+`probeToolhive` is the BOUNDED (1.5s) Build-time probe, run once per Build
+immediately after registration: ok(N) → INFO + (if sole+unset) fills
+`reg.defaultModel` from the first-listed id and RE-RUNS the T7 caps fixup;
+ok(0 models) on a SOLE/DEFAULT toolhive → `errToolhiveNoModels`, Build FAILS (R2.3 —
+there's genuinely nothing to default to); probe-down → INFO (WARN if
+`intentExplicit` or the classified state is `unauthorized`) and `reg.defaultModel`
+stays `""` — the §1 ACCEPTED DEVIATION: sole+probe-down still boots (unconditional
+default, never "no provider resolves ⇒ Build can't construct the engine"), and
+`reg.healDefaultModel` (called from EVERY subsequent live-model swap — the sync AND
+async `startLiveModelRefresh` paths, plus the on-demand `refreshStaleModels`) fills
+the still-empty default the moment a live snapshot lands, mutex-guarded
+(`providerRegistry.healMu`) against the async refresh and the on-demand refresh
+racing each other.
+
+D3 (model-list resilience) generalizes `resolveProviderModels`'s existing
+success/fail merge into an OUTCOME-AWARE one via the new `liveOutcomeStore`
+(mutex-guarded `lastGood map[string][]modelEntry` + `status
+map[string]providerStatus`, held on `providerRegistry.outcomes`, nil-tolerant like
+`liveMetaStore`): a live SUCCESS always records `lastGood` (even an honest empty —
+it IS a successful list) and a derived `ok`/`empty` status (`empty` fires ONLY when
+the live list AND the embedded catalog are BOTH empty); a live FAILURE classifies
+via the SAME `classifyToolhiveError` (`errors.As` on `*openaicompat.StatusError`)
+composition uses at probe time, then falls back to the embedded catalog when
+non-empty (BYTE-IDENTICAL to pre-#262 for openrouter/anthropic — pinned by a
+regression test) or, only when the embedded catalog is empty (toolhive has none),
+to the retained `lastGood` snapshot — so a transient gateway outage never blanks a
+picker that was populated moments ago; only a provider that has NEVER listed
+successfully yields a genuinely empty list. `refreshStaleModels`
+(`internal/app/modellister.go`) is the on-demand `/models`-open refresher (R1.4):
+scoped to INTENT-DRIVEN, non-`ok` providers ONLY (re-fetching a keyed provider here
+on every picker open would be a NEW request-path network call `#262` must not
+introduce — openrouter/anthropic already have their own async background refresh),
+cooldown-gated (`refreshStaleModelsState`, 10s) so a burst of `/models` opens
+against a down gateway can't hammer it; wired via `server.Service.SetModelsRefresher`
+(a closure `ListModels` calls before returning its snapshot) + `SetProviderStatus`/
+`ProviderStatuses` (mirroring the existing `SetModels` seam exactly).
+
+`clampEffortForProvider` (`internal/app/reasoning_effort.go`) folds `providerToolhive`
+into the SAME openai/openrouter low/medium/high clamp case (a gateway fronts mixed
+upstreams over the OpenAI protocol, so the conservative clamp is the right default
+regardless of which model actually answers).
+
+mecatui: `client.ProviderStatus` mirrors the proto message; `ModelsMsg.Statuses`
+threads it through `ListModelsCmd`; `modelsState.statuses` holds it on the Model.
+`renderProviderStatusLines` renders ONE muted line per non-`ok`, non-`empty` status
+under the list/empty state (`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive:
+proxy not reachable — start it with `thv llm proxy start`"`); `modelsEmptyCopy`
+gains a THIRD branch (checked FIRST among the "something is configured" cases) that
+REPLACES the generic "No selectable models advertised." with a gateway-specific note
+when a status reports `empty`. `modelProvenance` gains an `eff.ProviderID ==
+"toolhive"` branch reading `"auto-selected"` (never "server default" — nobody
+chose it, it was resolved from whatever the credential happened to list first).
+`view.go`'s `headerIdentityParts` appends a muted `"via ToolHive gateway"` segment
+whenever `m.effectiveModel.ProviderID == "toolhive"`, riding the SAME segment slice
+every other header segment sheds from under width pressure — disclosure-only, no
+acknowledgment gate. All four render paths are a NO-OP when `statuses` is empty (the
+existing goldens are the proof: unchanged byte-for-byte by this feature).
+
 ### `openai` tool schemas — NON-STRICT (shared by openai + openrouter)
 
 `openai.buildTools` sends function tools **non-strict** (`FunctionToolParam.Strict` left unset

@@ -49,7 +49,7 @@ func TestListModelsMapping(t *testing.T) {
 	}}
 	cl := newFakeClient(fake)
 
-	ms, err := cl.ListModels(context.Background())
+	ms, _, err := cl.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
@@ -76,12 +76,15 @@ func TestListModelsMapping(t *testing.T) {
 
 func TestListModelsNilSafe(t *testing.T) {
 	cl := newFakeClient(&fakeModelsClient{listResp: nil})
-	ms, err := cl.ListModels(context.Background())
+	ms, statuses, err := cl.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
 	if len(ms) != 0 {
 		t.Fatalf("models = %d, want 0 (nil response → empty)", len(ms))
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("statuses = %d, want 0 (nil response → empty)", len(statuses))
 	}
 	// mapModelInfo(nil) is zero.
 	if got := mapModelInfo(nil); got != (ModelInfo{}) {
@@ -91,8 +94,30 @@ func TestListModelsNilSafe(t *testing.T) {
 
 func TestListModelsError(t *testing.T) {
 	cl := newFakeClient(&fakeModelsClient{listErr: errors.New("boom")})
-	if _, err := cl.ListModels(context.Background()); err == nil {
+	if _, _, err := cl.ListModels(context.Background()); err == nil {
 		t.Fatal("ListModels should propagate the RPC error")
+	}
+}
+
+// TestListModelsProviderStatusMapping proves ListModelsResponse.provider_status
+// (issue #262) maps nil-safely to []ProviderStatus.
+func TestListModelsProviderStatusMapping(t *testing.T) {
+	fake := &fakeModelsClient{listResp: &mecatlv1.ListModelsResponse{
+		ProviderStatus: []*mecatlv1.ProviderStatus{
+			{ProviderId: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+			nil, // defensive: a nil row must never panic the mapper
+		},
+	}}
+	cl := newFakeClient(fake)
+	_, statuses, err := cl.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1 (the nil row skipped)", len(statuses))
+	}
+	if statuses[0].ProviderID != "toolhive" || statuses[0].State != "unreachable" || statuses[0].Hint == "" {
+		t.Fatalf("statuses[0] = %+v", statuses[0])
 	}
 }
 

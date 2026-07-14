@@ -1126,9 +1126,13 @@ func (h *HTTPHandler) listSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(r.Context())})
 }
 
-// listModels handles GET /v1/models.
+// listModels handles GET /v1/models. Threads (issue #262) the per-provider
+// live-listing status alongside the model list; ListModels itself triggers
+// the on-demand refresh (when installed), so ProviderStatuses is read AFTER
+// it to reflect the just-completed refresh.
 func (h *HTTPHandler) listModels(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, &mecatlv1.ListModelsResponse{Models: h.svc.ListModels(r.Context())})
+	models := h.svc.ListModels(r.Context())
+	writeJSON(w, http.StatusOK, &mecatlv1.ListModelsResponse{Models: models, ProviderStatus: h.svc.ProviderStatuses()})
 }
 
 // getSoul handles GET /v1/soul.

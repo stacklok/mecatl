@@ -1,0 +1,30 @@
+ mecatui  ·  session sess-test-00  ·  GPT-5  ·  mode default  ·  127.0.0.1:8080
+────────────────────────────────────────────────────────────────────────────────────────────────────
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                     ┃
+┃  Models  (4)                                                                                        ┃
+┃  current: GPT-5 (server default)                                                                    ┃
+┃  > filter models…                                                                                   ┃
+┃                                                                                                     ┃
+┃  ╭────────────────────────────────────────╮                                                         ┃
+┃  │  › ●  openai · GPT-5  img reason 200K  │                                                         ┃
+┃  ╰────────────────────────────────────────╯                                                         ┃
+┃       openai · GPT-5 mini  reason 128K                                                              ┃
+┃       openai · text-embed                                                                           ┃
+┃       openrouter · Claude  img reason 1M                                                            ┃
+┃  toolhive: proxy not reachable — start it with `thv llm proxy start`                                ┃
+┃                                                                                                     ┃
+┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
+┃  ● current  ★ global default                                                                        ┃
+┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
+┃                                                                                                     ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

@@ -1715,6 +1715,15 @@ message ModelInfo {
 // ListModelsRequest requests the selectable-model inventory.
 message ListModelsRequest {}
 
+// ProviderStatus is one provider's last live-listing outcome, for client
+// surfacing (issue #262). state is a STRING passthrough (no enum — the
+// EvNoProgress/StopBudget discipline): "ok" | "unreachable" | "unauthorized" | "empty".
+message ProviderStatus {
+  string provider_id = 1;
+  string state = 2;
+  string hint = 3; // short human remediation, e.g. "start it with `thv llm proxy start`"
+}
+
 // ListModelsResponse carries the selectable models across AVAILABLE providers
 // only (a provider with no resolved credentials is omitted entirely — its
 // availability is itself sensitive, CWE-200). Sorted by (provider_id, id) for a
@@ -1723,6 +1732,10 @@ message ListModelsRequest {}
 message ListModelsResponse {
   // models are the (possibly empty) selectable models, (provider_id, id)-sorted.
   repeated ModelInfo models = 1;
+  // provider_status surfaces live-listing outcomes for intent-driven providers
+  // (issue #262: e.g. the ToolHive LLM gateway) so a client can render a
+  // remediation hint even when the provider contributes zero models.
+  repeated ProviderStatus provider_status = 2;
 }
 
 // --- Agent team messages ----------------------------------------------------

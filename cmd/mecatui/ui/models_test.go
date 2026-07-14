@@ -989,6 +989,120 @@ func TestModelsPickerNoActiveMarkerWhenSelectionAbsent(t *testing.T) {
 	}
 }
 
+// --- provider status (issue #262) -------------------------------------------
+
+// TestModelsEmptyCopy_Default proves the three-way branch: disabled note when
+// caps.ModelSelection is false, the gateway-specific note when a status is
+// "empty", else the generic "enabled but empty" note.
+func TestModelsEmptyCopy_Default(t *testing.T) {
+	if got := modelsEmptyCopy(client.Capabilities{ModelSelection: false}, nil); got != modelsDisabledNote {
+		t.Errorf("disabled copy = %q, want the disabled note", got)
+	}
+	if got := modelsEmptyCopy(client.Capabilities{ModelSelection: true}, nil); got != "No selectable models advertised." {
+		t.Errorf("generic empty copy = %q", got)
+	}
+}
+
+// TestModelsEmptyCopy_GatewayEmpty proves an "empty" status REPLACES the
+// generic note (issue #262 R6.2) — even when caps.ModelSelection is true.
+func TestModelsEmptyCopy_GatewayEmpty(t *testing.T) {
+	statuses := []client.ProviderStatus{{ProviderID: "toolhive", State: "empty", Hint: "ask your admin"}}
+	got := modelsEmptyCopy(client.Capabilities{ModelSelection: true}, statuses)
+	if got != modelsGatewayEmptyNote {
+		t.Errorf("gateway-empty copy = %q, want %q", got, modelsGatewayEmptyNote)
+	}
+}
+
+// TestRenderProviderStatusLines_EmptyIsNoOp proves an empty statuses slice (or
+// one containing only ok rows, or an "empty" row when the OVERALL inventory
+// is ALSO empty) renders NOTHING — the byte-identical no-op invariant every
+// existing golden depends on, and the no-double-state rule with
+// modelsEmptyCopy.
+func TestRenderProviderStatusLines_EmptyIsNoOp(t *testing.T) {
+	if got := renderProviderStatusLines(nil, true); got != nil {
+		t.Errorf("nil statuses rendered %v, want nil", got)
+	}
+	okOnly := []client.ProviderStatus{{ProviderID: "toolhive", State: "ok"}}
+	if got := renderProviderStatusLines(okOnly, true); got != nil {
+		t.Errorf("ok-only statuses rendered %v, want nil", got)
+	}
+	emptyOnly := []client.ProviderStatus{{ProviderID: "toolhive", State: "empty", Hint: "x"}}
+	if got := renderProviderStatusLines(emptyOnly, true); got != nil {
+		t.Errorf("empty-state status rendered %v with an EMPTY overall inventory, want nil (handled by modelsEmptyCopy instead)", got)
+	}
+}
+
+// TestRenderProviderStatusLines_MixedDeploymentSurfacesEmpty is the issue
+// #262 mixed-deployment gap fix: when the OVERALL inventory is NON-empty
+// (other providers have models), a reachable-but-empty toolhive status must
+// still surface here — modelsEmptyCopy's replacement note only fires for a
+// wholly-empty picker, so without this the state would be invisible.
+func TestRenderProviderStatusLines_MixedDeploymentSurfacesEmpty(t *testing.T) {
+	statuses := []client.ProviderStatus{{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin"}}
+	lines := renderProviderStatusLines(statuses, false) // inventory NON-empty
+	if len(lines) != 1 || lines[0] != "toolhive: credential lists no models — ask your platform admin" {
+		t.Fatalf("mixed-deployment empty line = %v", lines)
+	}
+}
+
+// TestRenderProviderStatusLines_UnreachableAndUnauthorized pins the exact
+// remediation copy (issue #262 R6.2), regardless of overall inventory state.
+func TestRenderProviderStatusLines_UnreachableAndUnauthorized(t *testing.T) {
+	lines := renderProviderStatusLines([]client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+	}, false)
+	if len(lines) != 1 || lines[0] != "toolhive: proxy not reachable — start it with `thv llm proxy start`" {
+		t.Fatalf("unreachable line = %v", lines)
+	}
+	lines = renderProviderStatusLines([]client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `thv llm setup`"},
+	}, false)
+	if len(lines) != 1 || lines[0] != "toolhive: gateway rejected the credential — re-auth with `thv llm setup`" {
+		t.Fatalf("unauthorized line = %v", lines)
+	}
+}
+
+// TestModelsPickerStatuses_ThreadedFromMsg proves updateModelsMsg captures
+// ModelsMsg.Statuses onto modelsState (the plumbing between the RPC result and
+// the render path).
+func TestModelsPickerStatuses_ThreadedFromMsg(t *testing.T) {
+	statuses := []client.ProviderStatus{{ProviderID: "toolhive", State: "unreachable", Hint: "x"}}
+	m := newModelsModel(t, &fakeModels{models: sampleModels().models, statuses: statuses}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	if len(m.models.statuses) != 1 || m.models.statuses[0].ProviderID != "toolhive" {
+		t.Fatalf("models.statuses = %+v, want the threaded status", m.models.statuses)
+	}
+	rendered := stripANSI([]byte(m.View().Content))
+	if !strings.Contains(string(rendered), "toolhive: proxy not reachable") {
+		t.Fatalf("rendered picker missing the status line:\n%s", rendered)
+	}
+}
+
+// TestHeaderToolhiveSegment proves the persistent "via ToolHive gateway"
+// header segment (issue #262 R6.3) appears ONLY when the active session's
+// provider is toolhive, and sheds under width pressure like any other
+// low-priority segment.
+func TestHeaderToolhiveSegment(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	if strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
+		t.Fatal("non-toolhive session must NOT show the gateway segment")
+	}
+
+	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
+	if !strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
+		t.Fatal("a toolhive session must show the gateway segment at a wide width")
+	}
+
+	// At a narrow width the segment sheds along with the other low-priority
+	// segments; the header must not panic/overflow.
+	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 30})
+	_ = m.renderHeader()
+}
+
 // --- goldens ---------------------------------------------------------------
 
 // TestModelsPickerGolden locks the populated, grouped picker with an active marker
@@ -1057,6 +1171,52 @@ func TestModelsPickerNoMatchGolden(t *testing.T) {
 	m = typeFilter(t, m, "zzzzz")
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_nomatch.golden", got)
+}
+
+// TestModelsPickerToolhiveUnreachableGolden locks the picker rendering a
+// non-ok provider_status remediation line under a non-empty list (issue #262
+// R6.2).
+func TestModelsPickerToolhiveUnreachableGolden(t *testing.T) {
+	fm := sampleModels()
+	fm.statuses = []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+	}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	got := stripANSI([]byte(m.View().Content))
+	compareGolden(t, "models_toolhive_unreachable.golden", got)
+}
+
+// TestModelsPickerGatewayEmptyGolden locks the gateway-specific empty-state
+// copy REPLACING the generic "No selectable models advertised." note (issue
+// #262 R6.2) when the model list is empty AND a status reports "empty".
+func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
+	fm := &fakeModels{statuses: []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `thv llm setup`"},
+	}}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	got := stripANSI([]byte(m.View().Content))
+	compareGolden(t, "models_gateway_empty.golden", got)
+}
+
+// TestModelsPickerMixedDeploymentEmptyGolden locks the mixed-deployment fix:
+// OTHER providers have models (a non-empty overall inventory), so
+// modelsEmptyCopy's replacement note does NOT fire, yet a reachable-but-empty
+// toolhive status must STILL surface as a remediation line — otherwise it
+// would be invisible in a picker that otherwise looks healthy.
+func TestModelsPickerMixedDeploymentEmptyGolden(t *testing.T) {
+	fm := sampleModels()
+	fm.statuses = []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `thv llm setup`"},
+	}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	got := stripANSI([]byte(m.View().Content))
+	compareGolden(t, "models_mixed_deployment_empty.golden", got)
 }
 
 // TestModelsPickerGlobalDefaultGolden locks a picker where a DIFFERENT row carries

@@ -520,7 +520,7 @@ func TestRegistryOpenRouterBaseURLOverrideRoutes(t *testing.T) {
 }
 
 // TestRegistryOpenRouterDefaultBaseURL asserts that WITHOUT an override the openrouter
-// entry carries the public OpenRouter base URL (the same value newOpenAIEntry passes
+// entry carries the public OpenRouter base URL (the same value newOpenAICompatEntry passes
 // to openai.WithBaseURL — the override-routing test above proves that same field is
 // the one wired into the adapter). (Should-add #3, default branch.)
 func TestRegistryOpenRouterDefaultBaseURL(t *testing.T) {

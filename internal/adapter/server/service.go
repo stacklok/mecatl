@@ -563,6 +563,26 @@ type Service struct {
 	// projected []*mecatlv1.ModelInfo crosses this seam.
 	models atomic.Pointer[[]*mecatlv1.ModelInfo]
 
+	// providerStatus carries the LIVE-LISTING outcome per intent-driven provider
+	// (issue #262: the ToolHive LLM gateway) — ok/unreachable/unauthorized/empty
+	// plus a short remediation hint. SEEDED empty at construction, atomically
+	// SWAPPED by SetProviderStatus (the composition-layer twin of SetModels: the
+	// Build-time probe sets the initial value, and every subsequent live-model
+	// refresh — background or on-demand — re-projects it). Never nil after
+	// NewService.
+	providerStatus atomic.Pointer[[]*mecatlv1.ProviderStatus]
+
+	// modelsRefresher is the OPTIONAL composition-supplied closure ListModels
+	// calls before returning its snapshot (issue #262, R1.4: a proxy started
+	// after boot must appear on the NEXT /models open, no restart). nil (the
+	// default — no intent-driven provider registered) makes ListModels a pure
+	// snapshot read, byte-identical to before this feature. The refresher owns
+	// its own self-guarding (which providers are stale, cooldown); this seam
+	// only decides WHETHER to call it. Set at most once, in Build, before the
+	// service starts serving — the atomic.Pointer is defensive-safe, not
+	// load-bearing for a race that cannot occur in practice.
+	modelsRefresher atomic.Pointer[func(context.Context)]
+
 	mu    sync.Mutex
 	runs  map[session.SessionID]*runState
 	teams map[string]*teamState
@@ -828,6 +848,11 @@ func NewService(cfg Config) (*Service, error) {
 	// never nil.
 	seed := cfg.Models
 	svc.models.Store(&seed)
+	// providerStatus starts empty — no intent-driven provider has been probed
+	// yet at construction time; Build's post-construction SetProviderStatus
+	// call (from the Build-time probe) supplies the initial value.
+	var statusSeed []*mecatlv1.ProviderStatus
+	svc.providerStatus.Store(&statusSeed)
 	return svc, nil
 }
 
@@ -854,6 +879,39 @@ func (s *Service) currentModels() []*mecatlv1.ModelInfo {
 		return *p
 	}
 	return nil
+}
+
+// SetProviderStatus atomically swaps the per-provider live-listing status
+// (issue #262). It is the composition layer's seam: the Build-time probe
+// supplies the initial value, and the background + on-demand live-model
+// refreshes re-project it on every re-fetch. Mirrors SetModels exactly (a nil
+// argument stores an empty, non-nil slice so the pointer is never nil).
+func (s *Service) SetProviderStatus(status []*mecatlv1.ProviderStatus) {
+	if status == nil {
+		status = []*mecatlv1.ProviderStatus{}
+	}
+	s.providerStatus.Store(&status)
+}
+
+// ProviderStatuses returns the current per-provider live-listing status
+// snapshot (never nil after NewService). ListModels' gRPC/HTTP callers thread
+// it onto ListModelsResponse.provider_status alongside the model list.
+func (s *Service) ProviderStatuses() []*mecatlv1.ProviderStatus {
+	if p := s.providerStatus.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// SetModelsRefresher installs the OPTIONAL on-demand model-list refresher
+// (issue #262, R1.4: "proxy started after boot ⇒ models appear on next
+// /models open, no restart"). ListModels calls it (bounded — the refresher
+// owns its own timeout/cooldown/which-providers-are-stale logic) before
+// returning its snapshot. nil (the default — set once in Build, only when at
+// least one intent-driven provider exists) makes ListModels a pure snapshot
+// read, byte-identical to every deployment without this feature.
+func (s *Service) SetModelsRefresher(fn func(context.Context)) {
+	s.modelsRefresher.Store(&fn)
 }
 
 // ErrNoActiveRun is returned by Approve/Cancel when the session exists (possibly
@@ -2754,9 +2812,16 @@ func (s *Service) ListSkills(_ context.Context) []*mecatlv1.SkillInfo {
 }
 
 // ListModels returns the resolved selectable-model inventory snapshot (possibly
-// empty) — every available provider's catalog models, secret-free. It is a pure
-// read of the injected snapshot; no live discovery (multi-provider Phase 0, S3).
-func (s *Service) ListModels(_ context.Context) []*mecatlv1.ModelInfo {
+// empty) — every available provider's catalog models, secret-free. When an
+// on-demand refresher is installed (issue #262, R1.4) it is invoked FIRST
+// (self-guarded: it decides which providers are stale and enforces its own
+// cooldown) so a provider that just came back up is reflected on THIS call,
+// with no restart; with no refresher installed (the byte-identical default)
+// this is a pure read of the injected snapshot, exactly as before.
+func (s *Service) ListModels(ctx context.Context) []*mecatlv1.ModelInfo {
+	if p := s.modelsRefresher.Load(); p != nil && *p != nil {
+		(*p)(ctx)
+	}
 	return s.currentModels()
 }
 

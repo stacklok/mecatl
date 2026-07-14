@@ -1,0 +1,25 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-sonnet-4-6",
+      "object": "model",
+      "created": 1752000000,
+      "owned_by": "toolhive",
+      "display_name": "Claude Sonnet 4.6"
+    },
+    {
+      "id": "gpt-5",
+      "object": "model",
+      "created": 1752000000,
+      "owned_by": "toolhive",
+      "display_name": "GPT-5"
+    },
+    {
+      "id": "no-display-name",
+      "object": "model",
+      "created": 1752000000,
+      "owned_by": "toolhive"
+    }
+  ]
+}

@@ -146,6 +146,65 @@ func (h ProviderFlagHelp) withDefaults() ProviderFlagHelp {
 	return h
 }
 
+// ToolhiveLLMFlagHelp carries the per-main help text for the two ToolHive LLM
+// gateway flags (issue #262). mecatui prefixes "embedded server only:" (it
+// only matters when mecatui hosts its OWN in-process server); the other three
+// mains use DefaultToolhiveLLMFlagHelp verbatim.
+type ToolhiveLLMFlagHelp struct {
+	Enable  string
+	BaseURL string
+}
+
+// DefaultToolhiveLLMFlagHelp is the shared wording every consumer starts from.
+// It explicitly disambiguates from the UNRELATED --toolhive flag (ToolHive MCP
+// workload discovery) — the two features share a vendor name and nothing
+// else, and issue #262's own review flagged the naming collision as the #1
+// confusion risk.
+var DefaultToolhiveLLMFlagHelp = ToolhiveLLMFlagHelp{
+	Enable: "auto-detect a locally-running ToolHive LLM proxy by reading ToolHive's config and probing " +
+		"127.0.0.1, and register it as a model provider (id \"toolhive\", no API key needed); unrelated to " +
+		"--toolhive (MCP workload discovery). Set =false on shared hosts",
+	BaseURL: "explicit ToolHive LLM proxy base URL (must resolve to loopback); skips the config-file " +
+		"auto-detect but keeps the startup probe",
+}
+
+// ToolhiveLLMFlags holds the values bound by RegisterToolhiveLLMFlags.
+type ToolhiveLLMFlags struct {
+	enable  *bool
+	baseURL *string
+}
+
+// RegisterToolhiveLLMFlags registers --toolhive-llm (default true) and
+// --toolhive-llm-base-url (default "") on fs. A zero ToolhiveLLMFlagHelp field
+// falls back to DefaultToolhiveLLMFlagHelp, mirroring RegisterProviderFlags.
+func RegisterToolhiveLLMFlags(fs *flag.FlagSet, help ToolhiveLLMFlagHelp) *ToolhiveLLMFlags {
+	if help.Enable == "" {
+		help.Enable = DefaultToolhiveLLMFlagHelp.Enable
+	}
+	if help.BaseURL == "" {
+		help.BaseURL = DefaultToolhiveLLMFlagHelp.BaseURL
+	}
+	tf := &ToolhiveLLMFlags{enable: new(bool), baseURL: new(string)}
+	fs.BoolVar(tf.enable, "toolhive-llm", true, help.Enable)
+	fs.StringVar(tf.baseURL, "toolhive-llm-base-url", "", help.BaseURL)
+	return tf
+}
+
+// Apply writes the two resolved values onto cfg. A nil receiver (a config
+// built WITHOUT RegisterToolhiveLLMFlags — e.g. a test that constructs the
+// cmd config struct directly) leaves both app.Config fields at their zero
+// value (ToolhiveLLM=false, ToolhiveLLMBaseURL=""), mirroring
+// ProviderFlags.Apply's nil-receiver discipline — so app.Config's
+// byte-identical-when-unset invariant holds for a caller that never wires
+// this flag set.
+func (tf *ToolhiveLLMFlags) Apply(cfg *app.Config) {
+	if tf == nil {
+		return
+	}
+	cfg.ToolhiveLLM = *tf.enable
+	cfg.ToolhiveLLMBaseURL = *tf.baseURL
+}
+
 // KeyValueList is a repeatable "key=value" flag.Value collecting into a
 // last-write-wins map. It backs --model-alias (e.g.
 // --model-alias fast=gpt-4o-mini --model-alias smart=gpt-5) and --model-slot
