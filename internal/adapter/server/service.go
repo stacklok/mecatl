@@ -586,6 +586,17 @@ type Service struct {
 	// surfaces never register an override, so their behavior is unchanged.
 	sessionWorkspaces map[session.SessionID]tool.Workspace
 
+	// reservedIDs holds caller-chosen session ids (WithSessionID) that are
+	// mid-create: reserved under s.mu at the top of createSession and released
+	// (defer) once the session is registered (per-session path) or persisted
+	// (shared-engine path). It closes the WithSessionID collision TOCTOU — two
+	// concurrent creates with the same id would both pass a check that only read
+	// sessionEngines and released the lock before the slow factory call and the
+	// separate registration. A create checks (and reserves) against BOTH
+	// sessionEngines (live) AND reservedIDs (in-flight) under a single lock hold.
+	// Guarded by s.mu.
+	reservedIDs map[session.SessionID]struct{}
+
 	// resumeMu serializes the awaiting-approval resume DECISION per session id
 	// (cloud-native Phase 2): ApproveRun holds the per-session lock across the whole
 	// (LookupRun-miss check → ResumeApproval → register) sequence, so two concurrent
@@ -806,6 +817,7 @@ func NewService(cfg Config) (*Service, error) {
 		teams:             make(map[string]*teamState),
 		sessionEngines:    make(map[session.SessionID]*sessionEngine),
 		sessionWorkspaces: make(map[session.SessionID]tool.Workspace),
+		reservedIDs:       make(map[session.SessionID]struct{}),
 		replayedApprovals: make(map[session.SessionID]struct{}),
 		heldLeases:        make(map[session.SessionID]*heldLease),
 		scheduler:         cfg.Scheduler,
@@ -866,9 +878,12 @@ var ErrNoActiveRun = errors.New("server: no active run for session")
 type CreateSessionOption func(*createSessionOpts)
 
 // createSessionOpts is the resolved options struct a CreateSessionOption writes
-// into. The zero value is the byte-identical no-option path.
+// into. The zero value is the byte-identical no-option path. idSet distinguishes
+// "WithSessionID was called (possibly with an empty id, which is rejected)" from
+// "WithSessionID was never called" — both leave id == "".
 type createSessionOpts struct {
-	id session.SessionID
+	id    session.SessionID
+	idSet bool
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -878,7 +893,7 @@ type createSessionOpts struct {
 // NewID path is byte-identical. It is the seam ADR 0059 decision #7 Phase-2
 // uses to mint "sched--"-prefixed fire-session ids.
 func WithSessionID(id session.SessionID) CreateSessionOption {
-	return func(o *createSessionOpts) { o.id = id }
+	return func(o *createSessionOpts) { o.id, o.idSet = id, true }
 }
 
 // CreateSession allocates a new idle session on the SHARED engine, persists it,
@@ -958,6 +973,53 @@ func setSessionLabels(sess *session.Session, sel ProviderSelector, profile Sessi
 	sess.ReasoningEffort = sel.ReasoningEffort
 }
 
+// reserveSessionID validates a caller-chosen session id (WithSessionID, ADR 0059
+// decision #7 Phase-2) against THREE collision sources and reserves it for the
+// duration of the create, returning a release func the caller MUST defer:
+//
+//  1. a LIVE per-session engine (sessionEngines — a collision would shadow an
+//     in-flight session);
+//  2. an in-flight create holding the id (reservedIDs — closes the old TOCTOU:
+//     the prior check released s.mu before the slow factory call and the separate
+//     registration, so two concurrent creates on the same id both passed);
+//  3. a PERSISTED session already in the store (a completed prior create is NOT
+//     in sessionEngines — e.g. the shared-engine fast path never registers there).
+//
+// The in-memory reservation (1)+(2) is taken under a single s.mu hold; the store
+// probe (3) runs after (no I/O under the mutex). On a collision or an infra probe
+// fault the reservation is released before returning the error. Once the session
+// is registered (per-session) or persisted (shared) the durable collision sources
+// take over, so the reservation only needs to live for the create.
+func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID) (release func(), err error) {
+	s.mu.Lock()
+	_, liveEngine := s.sessionEngines[id]
+	_, reserved := s.reservedIDs[id]
+	if liveEngine || reserved {
+		s.mu.Unlock()
+		// Accurate for BOTH cases: a live per-session engine (liveEngine) OR a
+		// concurrent in-flight create holding the id (reserved).
+		return nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
+	}
+	s.reservedIDs[id] = struct{}{}
+	s.mu.Unlock()
+	release = func() {
+		s.mu.Lock()
+		delete(s.reservedIDs, id)
+		s.mu.Unlock()
+	}
+	// Probe the store for a persisted session under this id. A not-found error
+	// means the id is clear; any other error is an infra fault that must not
+	// silently pass, so it is propagated.
+	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
+		release()
+		return nil, fmt.Errorf("%w: session id %q already exists", ErrInvalidArgument, id)
+	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
+		release()
+		return nil, fmt.Errorf("server: probe session id %q: %w", id, lerr)
+	}
+	return release, nil
+}
+
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	switch profile {
 	case ProfileDefault:
@@ -985,19 +1047,21 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 
 	// Resolve the session id: the caller's override (WithSessionID, ADR 0059
 	// decision #7 Phase-2) wins; otherwise the Service's NewID generator mints a
-	// fresh one (the byte-identical pre-Phase-2 path). A caller-chosen id is
-	// validated: non-empty, and not colliding with a LIVE per-session engine
-	// (the sessionEngines map — a collision would shadow an in-flight session).
-	// The collision check is under the SAME lock as the later registration so it
-	// races cleanly against a concurrent create on the same id.
+	// fresh one (the byte-identical pre-Phase-2 path). WithSessionID with an EMPTY
+	// id is rejected (the doc promises it), distinguished from "never called" by
+	// idSet. A caller-chosen id is validated + reserved by reserveSessionID (see
+	// its doc for the three collision sources); the reservation is released on
+	// EVERY exit path.
 	mintID := s.cfg.NewID
-	if opts.id != "" {
-		s.mu.Lock()
-		_, collision := s.sessionEngines[opts.id]
-		s.mu.Unlock()
-		if collision {
-			return nil, fmt.Errorf("%w: session id %q already has a live per-session engine", ErrInvalidArgument, opts.id)
+	if opts.idSet {
+		if opts.id == "" {
+			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
 		}
+		release, err := s.reserveSessionID(ctx, opts.id)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 		mintID = func() session.SessionID { return opts.id }
 	}
 

@@ -816,6 +816,69 @@ func TestScheduleFireGCSkipsLive(t *testing.T) {
 	}
 }
 
+// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (ADR 0059
+// Phase-2, the symmetric peer of the main cap): with more sched-- fire sessions than
+// scheduleFireMaxTotal, the OLDEST fire snapshots go first, the cap is store-wide,
+// and a LIVE fire keeps its slot (the next-oldest non-live is deleted in its
+// stead). Mirrors TestChildGCMainSessionCountCap.
+func TestScheduleFireGCCountCap(t *testing.T) {
+	f := newGCFixture(t, childGCPolicy{scheduleFireMaxTotal: 2})
+	live := map[session.SessionID]bool{"sched--a": true}
+	f.gc.isLive = func(id session.SessionID) bool { return live[id] }
+	for i, id := range []session.SessionID{"sched--a", "sched--b", "sched--c", "sched--d"} {
+		f.save(t, id)
+		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
+	}
+
+	// 4 fires > cap 2, oldest-first with the live sched--a skipped => sched--b and
+	// sched--c deleted (sched--a kept though oldest; sched--d newest).
+	deleted, retained := f.gc.sweep(context.Background())
+	if deleted != 2 || retained != 2 {
+		t.Errorf("sweep = (deleted %d, retained %d), want (2, 2)", deleted, retained)
+	}
+	got := f.ids(t)
+	if !got["sched--a"] {
+		t.Error("LIVE fire was deleted — the liveness exclusion is broken for the schedule-fire cap")
+	}
+	if got["sched--b"] || got["sched--c"] {
+		t.Errorf("cap pass kept the oldest non-live fires (b=%v c=%v), want them deleted", got["sched--b"], got["sched--c"])
+	}
+	if !got["sched--d"] {
+		t.Error("newest fire was deleted under the schedule-fire cap pass")
+	}
+}
+
+// TestScheduleFireGCAgeThenCap pins that the age pass runs BEFORE the cap and the
+// cap trims the SURVIVORS down to scheduleFireMaxTotal — the same age→cap
+// plumbing sweepMain exercises, now shared by the schedule-fire pass.
+func TestScheduleFireGCAgeThenCap(t *testing.T) {
+	f := newGCFixture(t, childGCPolicy{scheduleFireRetention: 24 * time.Hour, scheduleFireMaxTotal: 2})
+	// Two ancient fires (age pass deletes both) + three recent (cap trims to 2).
+	f.save(t, "sched--ancient-1")
+	f.save(t, "sched--ancient-2")
+	f.now = f.now.Add(48 * time.Hour)
+	for i, id := range []session.SessionID{"sched--recent-1", "sched--recent-2", "sched--recent-3"} {
+		f.save(t, id)
+		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
+	}
+
+	deleted, retained := f.gc.sweep(context.Background())
+	// 2 aged out + 1 over the cap of 2 => 3 deleted, 2 retained.
+	if deleted != 3 || retained != 2 {
+		t.Errorf("sweep = (deleted %d, retained %d), want (3, 2)", deleted, retained)
+	}
+	got := f.ids(t)
+	if got["sched--ancient-1"] || got["sched--ancient-2"] {
+		t.Error("an aged-out fire survived the age pass")
+	}
+	if got["sched--recent-1"] {
+		t.Error("the oldest survivor was kept over the cap — cap should evict oldest-first")
+	}
+	if !got["sched--recent-2"] || !got["sched--recent-3"] {
+		t.Error("the two newest survivors were not kept under the cap")
+	}
+}
+
 // TestScheduleFireSessionNeverEntersMainOrChildPass is the partition guard: a
 // "sched--" session is swept ONLY by the schedule-fire pass. With the child and
 // main passes ENABLED (which would otherwise delete ancient sessions) and the

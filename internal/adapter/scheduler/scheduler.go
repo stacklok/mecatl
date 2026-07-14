@@ -517,6 +517,22 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		s.diag.Log(ctx, port.LevelWarn, "schedule store Due failed", "err", err.Error())
 		return
 	}
+	// One-shot crash-loss retry (ADR 0059 Phase 2). A one-shot with
+	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
+	// recorded a successful outcome (a crash mid-fire, or a fire that ended
+	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
+	// ALL schedules (List) — a disabled one-shot is NOT returned by Due (Due
+	// filters Enabled=true), so this is a separate scan. The re-arm check is in
+	// the tick loop's scan, NOT in the fire path itself (the fire path knows
+	// nothing of re-arm — it only fires what Claim advanced). A store that does
+	// not implement ScheduleOneShotReArmer degrades to at-most-once
+	// (byte-identical pre-Phase-2).
+	//
+	// This runs on EVERY tick, BEFORE the len(due)==0 early return — a quiet
+	// one-shot-only deployment (no due cron to "spark" the tick past the early
+	// return) must still re-arm a crashed one-shot. Without this ordering a
+	// crashed one-shot in a quiet deployment stalls indefinitely.
+	s.maybeReArmOneShots(ctx, now)
 	if len(due) == 0 {
 		return
 	}
@@ -546,17 +562,6 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		})
 	}
 	_ = g.Wait()
-	// One-shot crash-loss retry (ADR 0059 Phase 2). A one-shot with
-	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
-	// recorded a successful outcome (a crash mid-fire, or a fire that ended
-	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
-	// ALL schedules (List) — a disabled one-shot is NOT returned by Due (Due
-	// filters Enabled=true), so this is a separate scan. The re-arm check is in
-	// the tick loop's scan, NOT in the fire path itself (the fire path knows
-	// nothing of re-arm — it only fires what Claim advanced). A store that does
-	// not implement ScheduleOneShotReArmer degrades to at-most-once
-	// (byte-identical pre-Phase-2).
-	s.maybeReArmOneShots(ctx, now)
 }
 
 // fireOne applies the misfire policy, the singleton overlap check, Claims the
@@ -921,7 +926,7 @@ func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, sched := range all {
-		if !s.shouldReArmOneShot(sched) {
+		if !s.shouldReArmOneShot(ctx, sched) {
 			continue
 		}
 		// The re-arm backoff. A crashed one-shot is re-armed with NextFireAt =
@@ -948,7 +953,7 @@ func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
 // shouldReArmOneShot reports whether the given schedule is a crashed one-shot
 // that should be re-armed. It encodes the two crash sub-cases and the
 // retry-budget gate.
-func (s *Scheduler) shouldReArmOneShot(sched port.Schedule) bool {
+func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule) bool {
 	// Only a one-shot with OneShotRetry=true is a candidate.
 	if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry {
 		return false
@@ -982,7 +987,9 @@ func (s *Scheduler) shouldReArmOneShot(sched port.Schedule) bool {
 		// e.g. paused). Not a re-arm candidate.
 		return false
 	}
-	fire, err := s.cfg.Store.LoadFire(context.Background(), string(sched.State.LastFireSessionID))
+	loadCtx, cancel := context.WithTimeout(ctx, singletonTrialTimeout)
+	defer cancel()
+	fire, err := s.cfg.Store.LoadFire(loadCtx, string(sched.State.LastFireSessionID))
 	if err != nil {
 		// A not-found fire record: RecordFire never ran. The sentinel was
 		// overwritten with a real session id that has no fire record — treat as

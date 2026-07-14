@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -183,7 +184,27 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 func newFireID(name string, now time.Time) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("sched--%s-%s-%s", name, now.UTC().Format("20060102-150405"), hex.EncodeToString(b[:]))
+	return fmt.Sprintf("sched--%s-%s-%s", sanitizeFireIDName(name), now.UTC().Format("20060102-150405"), hex.EncodeToString(b[:]))
+}
+
+// sanitizeFireIDName collapses control characters (newlines, tabs, and any other
+// non-printable rune) and path-separator runes ('/', '\') in a schedule name to
+// '-'. Schedule names are only validated non-empty (validateScheduleSpec), so a
+// name with a slash, space, or newline would otherwise land in the session id →
+// a multi-line fire id in logs / LastFireSessionID. This is a non-breaking
+// localized sanitization of the DERIVED id, not a constraint on the name itself
+// (adding one to validateScheduleSpec would reject existing schedule names).
+func sanitizeFireIDName(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\':
+			return '-'
+		case unicode.IsControl(r) || unicode.IsSpace(r):
+			return '-'
+		default:
+			return r
+		}
+	}, name)
 }
 
 // fireFailed builds a ScheduleFire for a create/run-start failure: StopError +
@@ -272,16 +293,16 @@ func renderCarriedContext(priorSess *session.Session) string {
 			b.WriteString(truncateForSummary(m.ToolResult.Content))
 			b.WriteString("\n")
 		}
-		// Clamp to the rune budget.
-		if b.Len() > carriedContextMaxRunes {
-			// Truncate and mark. The clampRunes helper does the final clamp.
-			break
-		}
 	}
 	body := b.String()
 	if strings.TrimSpace(body) == "" {
 		return ""
 	}
+	// Clamp to the RUNE budget. The loop is bounded to carriedContextMaxTurns
+	// turns (each tool result already truncated via truncateForSummary), so
+	// worst-case memory is bounded; clampRunes is the single rune-accurate cap
+	// (a prior in-loop b.Len() byte check overshot by up to one message on
+	// multi-byte UTF-8 and disagreed with this rune clamp).
 	body = clampRunes(body, carriedContextMaxRunes)
 	// Wrap with a provenance header so the model knows what this block is, then
 	// fence the whole thing as untrusted. NeutraliseFraming (called inside

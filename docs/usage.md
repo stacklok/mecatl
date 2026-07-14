@@ -60,6 +60,7 @@ Flags:
 | `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-save time (a schedule tighter than this is rejected). |
 | `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
 | `--schedule-fire-retention` | 7d (when `--scheduler` on) | How long persisted `sched--`-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from `--child-retention`/`--main-retention`); a LIVE fire (one mid-run) is never deleted. 0 disables the pass — fire sessions are never swept. Only meaningful when `--scheduler` is enabled and a durable store is configured. |
+| `--schedule-fire-retention-max-total` | 0 (off) | Max persisted `sched--`-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of `--main-retention-max-total`: the age horizon (`--schedule-fire-retention`) bounds the tail, this cap bounds the head (a per-minute cron accumulates ~10k sessions/week the horizon never trims). Durable-store-only. |
 
 Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,
 issue #232), the operator-tier **`settings.yaml` `schedules:` block** (Phase 2b,

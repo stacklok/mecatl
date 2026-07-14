@@ -263,6 +263,17 @@ type Config struct {
 	// non-prunable store is never swept.
 	ScheduleFireRetention time.Duration
 
+	// ScheduleFireRetentionMaxTotal is the GLOBAL count cap over "sched--" fire
+	// sessions (the symmetric peer of MainRetentionMaxTotal; ADR 0059 Phase-2): the
+	// newest ScheduleFireRetentionMaxTotal fire snapshots survive, oldest-first
+	// past it deleted, always skipping a LIVE fire. The age horizon
+	// (ScheduleFireRetention) bounds the tail but a per-minute cron accumulates
+	// ~10k sessions/week the horizon never trims from the head; the cap is the
+	// head bound. 0 disables it (the zero-config default; byte-identical when
+	// off). Default applied at the cmd layer alongside ScheduleFireRetention. A
+	// non-prunable store is never swept.
+	ScheduleFireRetentionMaxTotal int
+
 	// Remote store drivers (Phase B): gRPC driver endpoints that replace the
 	// LOCAL session/memory stores with internal/adapter/grpcdriver clients.
 	// SessionStoreURL is mutually exclusive with StoreDir, MemoryStoreURL with

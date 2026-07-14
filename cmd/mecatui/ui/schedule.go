@@ -518,6 +518,11 @@ func (m Model) updateScheduleMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case client.ScheduleMsg:
 		if msg.Err != nil {
+			// A Create/Get failure (bad cron, duplicate name, validation error).
+			// Surface it in the panel — the form has already closed to
+			// schedulePanel on submit, so a silent discard would leave the user
+			// with no feedback. Mirrors the ScheduleActionMsg error path.
+			m.schedule.actionErr = msg.Err.Error()
 			return m, nil, true
 		}
 		// A Get-driven refresh: update the matching row, or append if new (Create).
@@ -780,7 +785,9 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, _, _ int) string {
 	}
 	b.WriteString(mutLine + "\n")
 	if st.actionErr != "" {
-		b.WriteString("\n" + th.Style("errorText").Render(st.actionErr) + "\n")
+		// sanitizeTerminal for defense-in-depth parity with the panel sink — a
+		// server-sourced actionErr (e.g. a rejected cron) could carry control runes.
+		b.WriteString("\n" + th.Style("errorText").Render(sanitizeTerminal(st.actionErr)) + "\n")
 	}
 	b.WriteString("\n" + muted.Render("tab/↑↓: next  enter: advance/submit  y/n: toggle mutating  esc: back"))
 	return b.String()

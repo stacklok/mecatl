@@ -3841,9 +3841,14 @@ pieces, all behind `--scheduler` (byte-identical default when unwired):
   widening), so the persisted session carries the `sched--` GC-retention family prefix.
   A distinct `ScheduleFireRetention` GC family (`internal/app/childgc.go`
   `sweepScheduleFires`, peer of `sweepMain`) sweeps per-fire sessions on their OWN age
-  horizon — never the main or child pass. The `--schedule-fire-retention` flag
-  (operator-tier) defaults to 7d when `--scheduler` is on; 0 disables (fire sessions
-  never swept). The OPTIONAL `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`)
+  horizon AND a GLOBAL count cap — never the main or child pass. The
+  `--schedule-fire-retention` flag (operator-tier) defaults to 7d when `--scheduler` is
+  on; 0 disables (fire sessions never swept). `--schedule-fire-retention-max-total`
+  (peer of `--main-retention-max-total`; 0 disables) is the symmetric head bound —
+  `sweepScheduleFires` runs the age pass then the store-wide cap over the survivors
+  (oldest-first, live-skip), exactly as `sweepMain` does. `newFireID` sanitizes the
+  schedule name (control/space/path-separator runes → `-`) so a name with a newline or
+  slash cannot produce a multi-line fire id. The OPTIONAL `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`)
   appends the `EvScheduleFired`/`Skipped`/`Failed` event to the fire session's durable
   `EventLog`.
 - **Wire API (Phase 2a, #232).** `ScheduleService` — 10 gRPC RPCs

@@ -1297,6 +1297,64 @@ func TestOneShotReArmOnPendingCrash(t *testing.T) {
 	}
 }
 
+// TestOneShotReArmNoDueWork: a quiet one-shot-only deployment (NO sparker cron,
+// nothing due on the tick) must still re-arm a crashed one-shot. This is the
+// gap the reviewer flagged: the re-arm scan runs BEFORE the len(due)==0 early
+// return, so a tick with zero due schedules still re-arms. Without the correct
+// ordering the crashed one-shot would stall indefinitely (there is no due work
+// to "spark" the tick past the early return).
+func TestOneShotReArmNoDueWork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	s := newTestScheduler(t, store, clk, fire)
+
+	// The ONLY schedule is a crashed one-shot — nothing is Due on this tick.
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:              "retry-pending",
+			Prompt:            "x",
+			Trigger:           port.TriggerSpec{OneShot: clk.Now()},
+			OneShotRetry:      true,
+			OneShotMaxRetries: 3,
+		},
+		State: port.ScheduleState{
+			NextFireAt:        time.Time{}, // disabled (Claim zeroed it)
+			Enabled:           false,
+			FireCount:         1,
+			LastFireSessionID: port.PendingFireSessionID,
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s.RunOnceForTest(context.Background())
+
+	// The re-arm scan re-enabled the one-shot even though nothing was due.
+	loaded, err := store.Load(context.Background(), "retry-pending")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !loaded.State.Enabled {
+		t.Fatalf("Enabled = false, want true (re-armed on a no-due-work tick)")
+	}
+	if loaded.State.OneShotRetryCount != 1 {
+		t.Fatalf("OneShotRetryCount = %d, want 1 (incremented on re-arm)", loaded.State.OneShotRetryCount)
+	}
+	if !loaded.State.NextFireAt.After(clk.Now()) {
+		t.Fatalf("NextFireAt = %v, want after now (re-arm advanced it)", loaded.State.NextFireAt)
+	}
+	// Nothing fired — the re-arm only re-enabled; the retry fire is a later tick.
+	if got := fire.count(); got != 0 {
+		t.Fatalf("fires = %d, want 0 (nothing due; re-arm only re-enables)", got)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 // TestOneShotReArmOnStopError: a one-shot with OneShotRetry=true whose prior
 // fire ended in StopError (RecordFire recorded Stop==StopError) is re-armed.
 // This is crash sub-case 2: the fire ran but ended in error.

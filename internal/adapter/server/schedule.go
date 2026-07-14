@@ -76,6 +76,18 @@ func (s *Service) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	if err != nil {
 		return port.Schedule{}, err
 	}
+	// Collision guard: ScheduleStore.Save is an UPSERT-by-name, so a Create whose
+	// name already exists would SILENTLY CLOBBER the existing schedule's spec. A
+	// "Create" must never destroy an existing task — reject a duplicate name here
+	// (the edit path is UpdateSchedule, a distinct method). There is a tiny
+	// check-then-Save TOCTOU window (the store has no atomic create-if-absent),
+	// but Create is a low-frequency human action, so the racing-duplicate risk is
+	// acceptable and not worth store-level locking.
+	if _, lerr := store.Load(ctx, spec.Name); lerr == nil {
+		return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, spec.Name)
+	} else if !errors.Is(lerr, port.ErrScheduleNotFound) {
+		return port.Schedule{}, lerr
+	}
 	applyScheduleDefaults(&spec)
 	// Compute the first NextFireAt. A cron trigger's next fire was ALREADY
 	// computed by validateScheduleSpec (it must parse the expression to

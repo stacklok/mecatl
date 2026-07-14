@@ -236,8 +236,14 @@ misfire".
   by the `sched--` prefix — never the main or child pass). The
   `--schedule-fire-retention` flag (operator-tier, peer of `--child-retention`)
   defaults to 7d when `--scheduler` is enabled; 0 disables (fire sessions are
-  never swept, byte-identical to pre-Phase-2). The override validates a
-  non-empty id that does not collide with a live per-session engine.
+  never swept, byte-identical to pre-Phase-2). The fire pass is now SYMMETRIC
+  with the main pass: alongside the age horizon it has a GLOBAL count cap,
+  `--schedule-fire-retention-max-total` (peer of `--main-retention-max-total`;
+  0 disables) — the age horizon bounds the tail, the cap bounds the head (a
+  per-minute cron accumulates ~10k sessions/week the horizon never trims from the
+  head). The override validates a non-empty id that does not collide with a live
+  per-session engine, an in-flight create holding the same id, OR a session
+  already persisted under that id.
 
 ## See also
 

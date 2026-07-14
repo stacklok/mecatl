@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,5 +140,141 @@ func TestCreateSessionWithSessionIDCollisionRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), live) {
 		t.Errorf("collision err = %v, want it to name the colliding id %q", err, live)
+	}
+}
+
+// TestCreateSessionWithSessionIDSharedEngineCollisionRejected: a SHARED-engine
+// session (empty selector, default profile, default workspace) does NOT register
+// in sessionEngines — it is only persisted in the store. A second create under
+// the same id must still be rejected via the store-probe collision source, not
+// silently succeed and clobber the persisted session. This closes the
+// fast-path-no-op gap: the pre-fix check only read sessionEngines.
+func TestCreateSessionWithSessionIDSharedEngineCollisionRejected(t *testing.T) {
+	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), nil)
+
+	const id = "sched--shared-5678"
+	first, err := svc.CreateSessionWithProfile(
+		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		server.ProviderSelector{}, server.ProfileDefault,
+		server.WithSessionID(session.SessionID(id)),
+	)
+	if err != nil {
+		t.Fatalf("first CreateSessionWithProfile: %v", err)
+	}
+	if string(first.ID) != id {
+		t.Fatalf("first session id = %q, want %q", first.ID, id)
+	}
+
+	// A second create with the SAME id must be rejected — the first create took
+	// the shared-engine fast path (never entered sessionEngines) but IS persisted,
+	// so the store probe detects the collision.
+	_, err = svc.CreateSessionWithProfile(
+		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		server.ProviderSelector{}, server.ProfileDefault,
+		server.WithSessionID(session.SessionID(id)),
+	)
+	if err == nil {
+		t.Fatal("second CreateSessionWithProfile with a colliding persisted id succeeded, want ErrInvalidArgument")
+	}
+	if !errors.Is(err, server.ErrInvalidArgument) {
+		t.Errorf("collision err = %v, want ErrInvalidArgument", err)
+	}
+	if !strings.Contains(err.Error(), id) {
+		t.Errorf("collision err = %v, want it to name the colliding id %q", err, id)
+	}
+}
+
+// TestCreateSessionWithSessionIDConcurrentTOCTOU is the headline TOCTOU guard:
+// two concurrent creates with the SAME WithSessionID id must resolve to EXACTLY
+// ONE success and one ErrInvalidArgument rejection — never two successes (the
+// old race passed a check that read only sessionEngines and released s.mu before
+// the factory call + registration). The reservedIDs in-flight map (or the store
+// probe, if the winner already persisted) rejects the loser deterministically.
+// Run under -race.
+func TestCreateSessionWithSessionIDConcurrentTOCTOU(t *testing.T) {
+	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), nil)
+	const id = "sched--race-9999"
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			defer wg.Done()
+			_, err := svc.CreateSessionWithProfile(
+				context.Background(), "/ws", session.ModeDefault, session.Limits{},
+				server.ProviderSelector{}, server.ProfileDefault,
+				server.WithSessionID(session.SessionID(id)),
+			)
+			errs[i] = err
+		}(i)
+	}
+	wg.Wait()
+
+	nSuccess, nReject := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			nSuccess++
+		case errors.Is(err, server.ErrInvalidArgument):
+			nReject++
+		default:
+			t.Fatalf("unexpected error from concurrent create: %v", err)
+		}
+	}
+	if nSuccess != 1 || nReject != 1 {
+		t.Fatalf("concurrent creates = %d success, %d reject; want exactly 1 and 1 (errs=%v)", nSuccess, nReject, errs)
+	}
+}
+
+// TestCreateSessionWithSessionIDEmptyRejected pins that WithSessionID("") is
+// REJECTED (the option's doc promises it) rather than silently minting a random
+// id. idSet distinguishes "called with empty" from "never called".
+func TestCreateSessionWithSessionIDEmptyRejected(t *testing.T) {
+	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), nil)
+	_, err := svc.CreateSessionWithProfile(
+		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		server.ProviderSelector{}, server.ProfileDefault,
+		server.WithSessionID(""),
+	)
+	if err == nil {
+		t.Fatal("WithSessionID(\"\") succeeded, want ErrInvalidArgument")
+	}
+	if !errors.Is(err, server.ErrInvalidArgument) {
+		t.Errorf("err = %v, want ErrInvalidArgument", err)
+	}
+}
+
+// loadErrStore wraps a memstore so Load returns a synthetic INFRA fault (a
+// non-ErrSessionNotFound error), exercising the reserveSessionID probe branch
+// that must PROPAGATE the fault rather than silently treat the id as clear.
+type loadErrStore struct {
+	*memstore.Store
+	loadErr error
+}
+
+func (s *loadErrStore) Load(context.Context, session.SessionID) (*session.Session, error) {
+	return nil, s.loadErr
+}
+
+// TestCreateSessionWithSessionIDLoadProbeInfraFault: when the store's Load
+// returns an infra fault (not ErrSessionNotFound) during the collision probe,
+// createSession PROPAGATES it — it must not be swallowed (a silent pass could
+// clobber a persisted session) nor mislabelled ErrInvalidArgument.
+func TestCreateSessionWithSessionIDLoadProbeInfraFault(t *testing.T) {
+	infra := errors.New("boom: store backend unreachable")
+	store := &loadErrStore{Store: memstore.New(), loadErr: infra}
+	svc := newServiceWithStore(t, store)
+
+	_, err := svc.CreateSessionWithProfile(
+		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		server.ProviderSelector{}, server.ProfileDefault,
+		server.WithSessionID("sched--probe-1"),
+	)
+	if !errors.Is(err, infra) {
+		t.Fatalf("err = %v, want the infra fault propagated", err)
+	}
+	if errors.Is(err, server.ErrInvalidArgument) {
+		t.Errorf("infra fault must NOT be classified ErrInvalidArgument: %v", err)
 	}
 }

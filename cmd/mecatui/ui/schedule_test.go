@@ -533,6 +533,35 @@ func TestScheduleActionErrorRender(t *testing.T) {
 	}
 }
 
+// TestScheduleCreateErrorRender: a Create that fails server-side (bad cron,
+// duplicate name, validation) surfaces the error in the panel instead of
+// silently closing the form. The form has already closed to schedulePanel on
+// submit, so the ScheduleMsg error path must set actionErr for the user to see
+// any feedback. Mirrors TestScheduleActionErrorRender.
+func TestScheduleCreateErrorRender(t *testing.T) {
+	fs := &fakeScheduleLister{}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: nil})
+
+	// Simulate the CreateScheduleCmd result arriving as a ScheduleMsg carrying a
+	// server rejection.
+	m = applyAll(m, client.ScheduleMsg{Err: errors.New("invalid cron expression")})
+
+	if m.schedule.actionErr == "" {
+		t.Fatal("actionErr should be set after a failed Create")
+	}
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "action failed") {
+		t.Errorf("panel should render the action-failed line:\n%s", out)
+	}
+	if !strings.Contains(out, "invalid cron expression") {
+		t.Errorf("panel should render the create error text:\n%s", out)
+	}
+}
+
 // TestRunScheduleNotIdle: opening mid-run is a no-op — the phaseIdle guard at the
 // top of openSchedule keeps the overlay closed and fires no RPC. Mirrors
 // TestRunWorktreesNotIdle.

@@ -10,9 +10,10 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,19 +109,21 @@ type childGCPolicy struct {
 	// mainRetention, partitioning the top-level sessions by family: a sched--
 	// session is swept here, NOT by the main pass.
 	scheduleFireRetention time.Duration
+	// scheduleFireMaxTotal is the GLOBAL count cap over schedule-fire sessions:
+	// the newest scheduleFireMaxTotal "sched--" snapshots survive, the rest are
+	// deleted oldest-first. <=0 disables it. It is the peer of mainMaxTotal (ADR
+	// 0059 decision #7 Phase-2): the age horizon bounds the tail, but a cron
+	// firing every minute at a 7d retention accumulates ~10k sessions the horizon
+	// never trims from the HEAD, so the count cap is the symmetric bound.
+	scheduleFireMaxTotal int
 }
 
 // enabled reports whether any pass is active (the all-zero policy is the
 // fully-disabled posture).
 func (p childGCPolicy) enabled() bool {
-	return p.retention > 0 || p.maxPerFamily > 0 || p.mainRetention > 0 || p.mainMaxTotal > 0 || p.scheduleFireRetention > 0
+	return p.retention > 0 || p.maxPerFamily > 0 || p.mainRetention > 0 || p.mainMaxTotal > 0 ||
+		p.scheduleFireRetention > 0 || p.scheduleFireMaxTotal > 0
 }
-
-// mainEnabled reports whether either MAIN pass is active (issue #79).
-func (p childGCPolicy) mainEnabled() bool { return p.mainRetention > 0 || p.mainMaxTotal > 0 }
-
-// scheduleFireEnabled reports whether the schedule-fire age pass is active.
-func (p childGCPolicy) scheduleFireEnabled() bool { return p.scheduleFireRetention > 0 }
 
 // childGC sweeps child-session snapshots out of a prunable store per the
 // policy. Everything is injected (store, clock, liveness, diagnostics) so the
@@ -201,7 +204,7 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 
 	var errs deleteErrors
 	for _, kids := range byFamily {
-		deleted += g.sweepFamily(ctx, kids, &errs)
+		deleted += g.sweepPartition(ctx, kids, g.policy.retention, g.policy.maxPerFamily, &errs)
 	}
 
 	for _, kids := range byFamily {
@@ -210,16 +213,16 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 	retained -= deleted
 
 	// Schedule-fire (top-level "sched--") sweep (ADR 0059 decision #7 Phase-2).
-	// A disabled schedule-fire policy makes this a no-op, so a "sched--" session
-	// is never touched unless the operator turned the schedule-fire pass on.
-	fireDeleted := g.sweepScheduleFires(ctx, fires, &errs)
+	// A disabled schedule-fire policy (both knobs <=0) makes this a no-op, so a
+	// "sched--" session is never touched unless the operator turned it on.
+	fireDeleted := g.sweepPartition(ctx, fires, g.policy.scheduleFireRetention, g.policy.scheduleFireMaxTotal, &errs)
 	deleted += fireDeleted
 	retained += len(fires) - fireDeleted
 
 	// Main (top-level) sweep AFTER the family loop (issue #79). A disabled main
-	// policy makes this a no-op, so an UNPREFIXED session is never touched unless
-	// the operator turned the main passes on.
-	mainDeleted := g.sweepMain(ctx, mains, &errs)
+	// policy (both knobs <=0) makes this a no-op, so an UNPREFIXED session is
+	// never touched unless the operator turned the main passes on.
+	mainDeleted := g.sweepPartition(ctx, mains, g.policy.mainRetention, g.policy.mainMaxTotal, &errs)
 	deleted += mainDeleted
 	retained += len(mains) - mainDeleted
 
@@ -253,26 +256,36 @@ func (g *childGC) remove(ctx context.Context, id session.SessionID, errs *delete
 	return true
 }
 
-// sweepFamily runs the age pass then the count-cap pass over ONE family's
-// entries and returns how many it deleted.
-func (g *childGC) sweepFamily(ctx context.Context, kids []port.StoredSession, errs *deleteErrors) (deleted int) {
-	// Oldest-first within the family: the age pass deletes a prefix of this
-	// order and the cap pass keeps a suffix of it. Equal ModifiedAt (coarse
-	// file mtimes, batch saves) tie-breaks on ID so the cap pass evicts
-	// DETERMINISTICALLY — store List order is unspecified (map iteration),
-	// and without the tiebreak which sibling survives would be random.
-	sort.SliceStable(kids, func(i, j int) bool {
-		if kids[i].ModifiedAt.Equal(kids[j].ModifiedAt) {
-			return kids[i].ID < kids[j].ID
-		}
-		return kids[i].ModifiedAt.Before(kids[j].ModifiedAt)
+// sweepPartition runs the age pass then a count-cap pass over ONE partition of
+// the inventory (a child family, the mains, or the schedule fires) and returns
+// how many it deleted. It is the SINGLE retention algorithm the three partitions
+// share (issue #38 / #79 / ADR 0059 Phase-2): they differ ONLY in the two scalar
+// knobs, so the sweep logic lives here and each call site passes its own
+// retention + cap:
+//
+//   - sort oldest-first (ModifiedAt, then ID tiebreak) — store List order is
+//     unspecified (map iteration), and the tiebreak makes cap eviction and age
+//     ordering DETERMINISTIC (coarse file mtimes / batch saves collide);
+//   - age pass (retention>0): delete entries older than now-retention, skipping
+//     LIVE ids, best-effort (a failed delete stays retained, retried next sweep);
+//   - cap pass (maxTotal>0): evict the oldest NON-live survivors down to maxTotal
+//     (a live id keeps its slot; the next-oldest non-live is evicted in its stead).
+//
+// Both passes self-disable on a zero knob, so a fully-disabled partition (both
+// knobs <=0) returns 0 with no deletes — the historical "never touched" posture.
+// The cap is over the partition passed in: for the mains and the fires that is a
+// single store-wide set; for a child family it is per-prefix (the caller loops
+// per family).
+func (g *childGC) sweepPartition(ctx context.Context, entries []port.StoredSession, retention time.Duration, maxTotal int, errs *deleteErrors) (deleted int) {
+	slices.SortStableFunc(entries, func(a, b port.StoredSession) int {
+		return cmp.Or(a.ModifiedAt.Compare(b.ModifiedAt), cmp.Compare(a.ID, b.ID))
 	})
 
-	survivors := kids
-	if g.policy.retention > 0 {
-		survivors = kids[:0]
-		cutoff := g.now().Add(-g.policy.retention)
-		for _, e := range kids {
+	survivors := entries
+	if retention > 0 {
+		survivors = entries[:0]
+		cutoff := g.now().Add(-retention)
+		for _, e := range entries {
 			if e.ModifiedAt.Before(cutoff) && !g.isLive(e.ID) && g.remove(ctx, e.ID, errs) {
 				deleted++
 				continue
@@ -281,66 +294,10 @@ func (g *childGC) sweepFamily(ctx context.Context, kids []port.StoredSession, er
 		}
 	}
 
-	if g.policy.maxPerFamily <= 0 || len(survivors) <= g.policy.maxPerFamily {
+	if maxTotal <= 0 || len(survivors) <= maxTotal {
 		return deleted
 	}
-	over := len(survivors) - g.policy.maxPerFamily
-	for _, e := range survivors {
-		if over == 0 {
-			break
-		}
-		if g.isLive(e.ID) {
-			// A live id keeps its slot; the next-oldest NON-live id is
-			// deleted in its stead (the loop keeps scanning).
-			continue
-		}
-		// Best-effort: a failed delete still consumes the attempt — the
-		// family stays above cap until the next sweep retries it.
-		if g.remove(ctx, e.ID, errs) {
-			deleted++
-		}
-		over--
-	}
-	return deleted
-}
-
-// sweepMain runs the MAIN age pass then a single GLOBAL count cap over the
-// top-level (operator/service) sessions and returns how many it deleted (issue
-// #79). It mirrors sweepFamily's idioms (oldest-first sort with an ID tiebreak,
-// live-skip, best-effort delete) but the cap is store-wide, not per-prefix. A
-// disabled main policy (both knobs <=0) returns 0 with no deletes — the
-// historical "main sessions are never touched" behaviour.
-func (g *childGC) sweepMain(ctx context.Context, mains []port.StoredSession, errs *deleteErrors) (deleted int) {
-	if !g.policy.mainEnabled() {
-		return 0
-	}
-	// Oldest-first, with an ID tiebreak on equal mtimes so the cap evicts
-	// deterministically (store List order is unspecified) — same rationale as
-	// sweepFamily.
-	sort.SliceStable(mains, func(i, j int) bool {
-		if mains[i].ModifiedAt.Equal(mains[j].ModifiedAt) {
-			return mains[i].ID < mains[j].ID
-		}
-		return mains[i].ModifiedAt.Before(mains[j].ModifiedAt)
-	})
-
-	survivors := mains
-	if g.policy.mainRetention > 0 {
-		survivors = mains[:0]
-		cutoff := g.now().Add(-g.policy.mainRetention)
-		for _, e := range mains {
-			if e.ModifiedAt.Before(cutoff) && !g.isLive(e.ID) && g.remove(ctx, e.ID, errs) {
-				deleted++
-				continue
-			}
-			survivors = append(survivors, e)
-		}
-	}
-
-	if g.policy.mainMaxTotal <= 0 || len(survivors) <= g.policy.mainMaxTotal {
-		return deleted
-	}
-	over := len(survivors) - g.policy.mainMaxTotal
+	over := len(survivors) - maxTotal
 	for _, e := range survivors {
 		if over == 0 {
 			break
@@ -354,38 +311,6 @@ func (g *childGC) sweepMain(ctx context.Context, mains []port.StoredSession, err
 			deleted++
 		}
 		over--
-	}
-	return deleted
-}
-
-// sweepScheduleFires runs the age pass over the SCHEDULE-FIRE ("sched--")
-// top-level sessions and returns how many it deleted (ADR 0059 decision #7
-// Phase-2). It mirrors sweepMain's age-pass idiom (oldest-first sort with an ID
-// tiebreak, live-skip, best-effort delete) but has NO count cap — a fire is a
-// one-shot top-level session, not a delegation child, so the age horizon alone
-// is the retention bound. A disabled schedule-fire policy (retention <=0)
-// returns 0 with no deletes — the historical "sched-- sessions are never
-// touched" behaviour when the knob is off. A LIVE fire (one mid-run) is never
-// deleted, via the same isLive seam the main/child passes use.
-func (g *childGC) sweepScheduleFires(ctx context.Context, fires []port.StoredSession, errs *deleteErrors) (deleted int) {
-	if !g.policy.scheduleFireEnabled() {
-		return 0
-	}
-	// Oldest-first, with an ID tiebreak on equal mtimes so the sweep is
-	// deterministic regardless of the store's (map-iteration) List order — same
-	// rationale as sweepFamily/sweepMain.
-	sort.SliceStable(fires, func(i, j int) bool {
-		if fires[i].ModifiedAt.Equal(fires[j].ModifiedAt) {
-			return fires[i].ID < fires[j].ID
-		}
-		return fires[i].ModifiedAt.Before(fires[j].ModifiedAt)
-	})
-
-	cutoff := g.now().Add(-g.policy.scheduleFireRetention)
-	for _, e := range fires {
-		if e.ModifiedAt.Before(cutoff) && !g.isLive(e.ID) && g.remove(ctx, e.ID, errs) {
-			deleted++
-		}
 	}
 	return deleted
 }
@@ -404,6 +329,7 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		mainRetention:         cfg.MainRetention,
 		mainMaxTotal:          cfg.MainRetentionMaxTotal,
 		scheduleFireRetention: cfg.ScheduleFireRetention,
+		scheduleFireMaxTotal:  cfg.ScheduleFireRetentionMaxTotal,
 	}
 	if !policy.enabled() {
 		cfg.diag().Log(ctx, port.LevelInfo, "session GC DISABLED (no child retention/cap and no main retention/cap)")
@@ -425,6 +351,7 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		"child_retention", cfg.ChildRetention, "child_max_per_family", cfg.ChildRetentionMaxPerFamily,
 		"main_retention", cfg.MainRetention, "main_max_total", cfg.MainRetentionMaxTotal,
 		"schedule_fire_retention", cfg.ScheduleFireRetention,
+		"schedule_fire_max_total", cfg.ScheduleFireRetentionMaxTotal,
 		"interval", cfg.ChildGCInterval)
 	go func() {
 		gc.sweep(ctx)

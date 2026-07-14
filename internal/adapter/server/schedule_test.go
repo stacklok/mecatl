@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +82,56 @@ func TestCreateScheduleCron(t *testing.T) {
 	}
 	if loaded.Spec.Prompt != "rotate keys" {
 		t.Errorf("persisted Prompt = %q, want %q", loaded.Spec.Prompt, "rotate keys")
+	}
+}
+
+// TestCreateScheduleRejectsDuplicateName: ScheduleStore.Save is an
+// UPSERT-by-name, so a second Create with an existing name would SILENTLY
+// CLOBBER the original spec. The create-seam rejects the duplicate
+// (ErrInvalidArgument, naming the schedule) and leaves the ORIGINAL spec intact
+// — the edit path is UpdateSchedule, a distinct method.
+func TestCreateScheduleRejectsDuplicateName(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc, schedStore := newScheduleService(t, now)
+	ctx := context.Background()
+
+	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
+		Name:      "dup",
+		Prompt:    "original prompt",
+		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
+		Mutating:  true,
+		Workspace: "/tmp",
+	}); err != nil {
+		t.Fatalf("first CreateSchedule: %v", err)
+	}
+
+	// A second create with the SAME name but a DIFFERENT spec must be rejected.
+	_, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
+		Name:      "dup",
+		Prompt:    "CLOBBERING prompt",
+		Trigger:   port.TriggerSpec{Cron: "0 0 * * *"},
+		Mutating:  true,
+		Workspace: "/other",
+	})
+	if err == nil {
+		t.Fatal("second CreateSchedule with a duplicate name succeeded, want ErrInvalidArgument")
+	}
+	if !errors.Is(err, server.ErrInvalidArgument) {
+		t.Errorf("duplicate-name err = %v, want ErrInvalidArgument", err)
+	}
+	if !strings.Contains(err.Error(), "dup") {
+		t.Errorf("duplicate-name err = %v, want it to name the schedule %q", err, "dup")
+	}
+	// The ORIGINAL spec is unchanged (not clobbered by the rejected create).
+	loaded, lerr := schedStore.Load(ctx, "dup")
+	if lerr != nil {
+		t.Fatalf("Load after rejected create: %v", lerr)
+	}
+	if loaded.Spec.Prompt != "original prompt" {
+		t.Errorf("persisted Prompt = %q, want %q (original NOT clobbered)", loaded.Spec.Prompt, "original prompt")
+	}
+	if loaded.Spec.Workspace != "/tmp" {
+		t.Errorf("persisted Workspace = %q, want %q (original NOT clobbered)", loaded.Spec.Workspace, "/tmp")
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
@@ -375,5 +377,91 @@ func TestRenderCarriedContextDisabledByDefault(t *testing.T) {
 	}
 	if prompt != sched.Spec.Prompt {
 		t.Errorf("prompt = %q, want %q (no preamble prepended when CarryContext=false)", prompt, sched.Spec.Prompt)
+	}
+}
+
+// TestNewFireIDSanitizesName pins that a schedule name containing control
+// characters (newline/tab), path separators ('/', '\'), or spaces must not land
+// verbatim in the fire id (the session id) — a multi-line fire id corrupts logs
+// and LastFireSessionID. Schedule names are only validated non-empty, so the
+// derived id sanitizes rather than the name being constrained.
+func TestNewFireIDSanitizesName(t *testing.T) {
+	now := time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC)
+	id := newFireID("bad\nname/with\ttabs and spaces\\back", now)
+
+	if !strings.HasPrefix(id, "sched--") {
+		t.Fatalf("fire id = %q, want a sched-- prefix", id)
+	}
+	// No control runes (incl. newline/tab), no path separators, no spaces.
+	for _, r := range id {
+		if unicode.IsControl(r) {
+			t.Errorf("fire id %q contains a control rune %q", id, r)
+		}
+		if r == '/' || r == '\\' {
+			t.Errorf("fire id %q contains a path-separator rune %q", id, r)
+		}
+		if unicode.IsSpace(r) {
+			t.Errorf("fire id %q contains a space rune %q", id, r)
+		}
+	}
+	// It is single-line.
+	if strings.Contains(id, "\n") {
+		t.Errorf("fire id %q is multi-line", id)
+	}
+	// A clean name is preserved verbatim in the name segment.
+	clean := newFireID("nightly-report", now)
+	if !strings.Contains(clean, "nightly-report") {
+		t.Errorf("fire id %q dropped the clean name", clean)
+	}
+}
+
+// TestRenderCarriedContextRespectsRuneBudget pins that carried-context clamping
+// is RUNE-accurate, not byte-based (ADR 0059 Phase-2). The removed in-loop
+// early-exit compared b.Len() (BYTES) against carriedContextMaxRunes, so for
+// multi-byte UTF-8 it broke out after only ~budget/bytes-per-rune runes —
+// UNDER-filling the intended rune budget. The final clampRunes is now the single
+// cap, so the body fills CLOSE TO the true rune budget.
+//
+// The content is 3-byte runes ('世') totalling far more BYTES than
+// carriedContextMaxRunes but a RUNE count far larger than the budget, so:
+//   - UPPER bound: the body is clamped to ~carriedContextMaxRunes runes (never
+//     the full input), and the output is valid UTF-8 (no split multi-byte rune);
+//   - LOWER bound (the regression guard): the body FILLS close to the rune
+//     budget. The old byte-break would have fired after ~2 messages (~4k runes),
+//     far below the budget, so this assertion FAILS if the byte-break is restored.
+func TestRenderCarriedContextRespectsRuneBudget(t *testing.T) {
+	// Each assistant message is a 2000-rune ('世', 3 bytes) run. With the OLD
+	// byte-break (b.Len() > carriedContextMaxRunes=10000 BYTES), the loop stops
+	// after ~2 messages (~12k bytes ≈ 4k runes) — well under the 10k-RUNE budget.
+	// With the fix, all carriedContextMaxTurns messages are written (40k+ runes),
+	// then clampRunes trims to exactly the rune budget.
+	var msgs []session.Message
+	for i := 0; i < carriedContextMaxTurns; i++ {
+		msgs = append(msgs, session.NewAssistantMessage(strings.Repeat("世", 2000), "", nil))
+	}
+	prior := &session.Session{Conversation: &session.Conversation{Messages: msgs}}
+
+	out := renderCarriedContext(prior)
+	if out == "" {
+		t.Fatal("renderCarriedContext = empty, want a fenced preamble")
+	}
+	// UPPER bound + UTF-8 validity: clamped to the rune budget (+ fixed header/
+	// fence overhead), never the full multibyte input, and no split '世'.
+	if !utf8.ValidString(out) {
+		t.Errorf("preamble is not valid UTF-8 (a rune was split)")
+	}
+	const overhead = 512
+	got := utf8.RuneCountInString(out)
+	if got > carriedContextMaxRunes+overhead {
+		t.Errorf("preamble rune count = %d, want <= %d (budget %d + overhead %d)",
+			got, carriedContextMaxRunes+overhead, carriedContextMaxRunes, overhead)
+	}
+	// LOWER bound — the regression guard. The clamped body alone is ~budget runes
+	// when filled, and out only ADDS header+fence on top, so out must reach the
+	// budget. With the byte-break bug the body under-fills to ~4k runes and out
+	// falls well short of carriedContextMaxRunes → this FAILS.
+	if got < carriedContextMaxRunes {
+		t.Errorf("preamble rune count = %d, want >= %d — the body under-filled the rune budget (byte-break not fully removed?)",
+			got, carriedContextMaxRunes)
 	}
 }
