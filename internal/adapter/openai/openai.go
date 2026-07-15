@@ -22,6 +22,7 @@ package openai
 import (
 	"context"
 	"iter"
+	"net/http"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -106,6 +107,19 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 	return func(c *config) {
 		cc := caps
 		c.caps = &cc
+	}
+}
+
+// WithHTTPClient sets the *http.Client the SDK issues requests through (e.g. a
+// redirect-refusing client for a loopback gateway endpoint, CWE-918). nil is
+// ignored (SDK default). NOTE for callers: do NOT set Client.Timeout here — a
+// streaming turn runs for minutes; establishment/idle bounds live in
+// llmresilience, not the transport's blanket deadline.
+func WithHTTPClient(c *http.Client) Option {
+	return func(cfg *config) {
+		if c != nil {
+			cfg.extra = append(cfg.extra, option.WithHTTPClient(c))
+		}
 	}
 }
 

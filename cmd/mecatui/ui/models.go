@@ -465,6 +465,12 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.models.loading = false
 		if msg.Err != nil {
 			m.models.err = msg.Err
+			// A failed ListModels carries no statuses — keeping stale ones would
+			// render a PRIOR (possibly unrelated) provider remediation line
+			// (e.g. "toolhive: proxy not reachable…") beneath THIS error, which
+			// is dishonest: this error may be a transient RPC failure that has
+			// nothing to do with that provider (review finding 5).
+			m.models.statuses = nil
 			// A connect-time ListModels error must NOT strand the UI at "connecting…":
 			// proceed to create with the seeded (unreconciled) selection. The picker
 			// still surfaces the error when opened. This is rare (the lister is the
@@ -616,15 +622,32 @@ func (m Model) modelProvenance(eff client.ModelSelection) string {
 		return "workspace default"
 	case !m.deps.GlobalDefault.IsZero() && m.deps.GlobalDefault == eff:
 		return "global default"
-	case eff.ProviderID == "toolhive":
-		// Issue #262, R2.4: a ToolHive-gateway default was never operator-chosen
-		// (no key, no --default-model) — it was resolved from the FIRST model the
-		// gateway's credential happened to list. "server default" would imply a
-		// deliberate operator choice; "auto-selected" is the honest label.
+	case statusAutoSelected(m.models.statuses, eff.ProviderID):
+		// Issue #262 review finding 7: the vendor-name check ("toolhive") could
+		// never see a server-side --default-model, so an operator-configured
+		// toolhive default was ALSO mislabeled "auto-selected". The server-side
+		// DefaultModelAutoSelected bit (wire: default_model_auto_selected) is the
+		// honest, vendor-neutral signal — set ONLY when the server itself
+		// resolved this provider's default model from a first-listed
+		// heal/probe pick, never when an operator chose it.
 		return "auto-selected"
 	default:
 		return "server default"
 	}
+}
+
+// statusAutoSelected reports whether statuses carries a row for providerID
+// with DefaultModelAutoSelected set — the ONE place modelProvenance's
+// "auto-selected" branch reads the server-side provenance bit, so a future
+// non-toolhive intent-driven provider is labeled correctly with no code
+// change here.
+func statusAutoSelected(statuses []client.ProviderStatus, providerID string) bool {
+	for _, s := range statuses {
+		if s.ProviderID == providerID {
+			return s.DefaultModelAutoSelected
+		}
+	}
+	return false
 }
 
 // modelsRowBudgetFor converts an available card height into the number of model
@@ -653,33 +676,68 @@ func (m Model) modelsRowBudget() int {
 const modelsDisabledNote = "Model selection is not available on this server.\n" +
 	"Set OPENAI_API_KEY or OPENROUTER_API_KEY and reconnect."
 
+// modelsErrorHint is the next-action line rendered beneath a raw ListModels
+// RPC error (review UX finding: a bare "✗ list models: <error>" was a dead
+// end — it names neither a likely cause nor where to look). It is
+// deliberately generic (the RPC can fail for many reasons — a crashed
+// mecated, a network blip, a stale session) rather than guessing a specific
+// provider's remediation, which belongs to the provider_status lines instead.
+const modelsErrorHint = "the model service may be unavailable — check mecated is running " +
+	"(log: $XDG_STATE_HOME/mecatl/mecatui.log)"
+
 // modelsGatewayEmptyNote is the issue #262 R6.2 empty-state copy for a
 // provider whose live-listing status is "empty" (a reachable, authorized
 // credential that simply lists zero models) — distinct from the generic
 // "No selectable models advertised." (which reads as "nothing is configured
 // at all") and from modelsDisabledNote (which reads as "you haven't set a
 // key"): here a gateway IS configured and reachable, so the remedy is
-// organizational, not a local flag/key fix. Kept word-for-word in sync with
-// the server's toolhiveStatusHints[statusEmpty] (internal/app/registry.go) —
-// the two surfaces must never drift apart on the same remediation.
+// organizational, not a local flag/key fix. This is DERIVED FROM, not kept
+// word-for-word identical to, the server's toolhiveStatusHints[statusEmpty]
+// (internal/app/registry.go): the server names ToolHive explicitly, while
+// this client copy is DELIBERATELY vendor-neutral ("your gateway", not "your
+// ToolHive gateway") — a future non-ToolHive intent-driven provider must read
+// naturally here without a client change. Do not "fix" this by re-syncing the
+// wording verbatim.
 const modelsGatewayEmptyNote = "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`"
 
-// modelsEmptyCopy returns the empty-state line: the "not available" note (with
-// remedy) when caps.ModelSelection is false; the gateway-specific note when a
-// status reports "empty" (issue #262 R6.2); else the generic "enabled but
-// empty" note. statuses is checked FIRST among the two "something is
-// configured" branches so a reachable-but-empty gateway never reads as a
-// generic advertising failure.
+// modelsEmptyCopy returns the empty-state line. It is checked in THIS order
+// (issue #262 review finding 6): (1) ANY promoted non-ok status — not just
+// "empty" — is the empty-state CAUSE, checked FIRST, so a sole
+// unreachable/unauthorized provider never lands on the generic "not
+// available"/"nothing advertised" copy (which is contradictory alongside a
+// remediation line naming the real cause); (2) the "not available" note (with
+// remedy) when caps.ModelSelection is false; (3) else the generic "enabled
+// but empty" note.
 func modelsEmptyCopy(caps client.Capabilities, statuses []client.ProviderStatus) string {
-	for _, s := range statuses {
+	if s, ok := promotedStatus(statuses); ok {
 		if s.State == "empty" {
+			// The gateway-specific note (issue #262 R6.2): a reachable, authorized
+			// credential that simply lists zero models — an organizational fix,
+			// not a local flag/key fix.
 			return modelsGatewayEmptyNote
 		}
+		// unreachable/unauthorized (and any future state): the SAME line
+		// renderProviderStatusLines would build for this status — single-
+		// sourced via providerStatusLine so the two surfaces cannot drift.
+		return providerStatusLine(s)
 	}
 	if !caps.ModelSelection {
 		return modelsDisabledNote
 	}
 	return "No selectable models advertised."
+}
+
+// promotedStatus returns the FIRST status entry whose State is neither ""
+// (unset) nor "ok" — the ONE cause modelsEmptyCopy promotes to the top-level
+// empty-state line (issue #262 review finding 6). ok is false when every
+// entry is empty-State/"ok" (or statuses itself is empty).
+func promotedStatus(statuses []client.ProviderStatus) (client.ProviderStatus, bool) {
+	for _, s := range statuses {
+		if s.State != "" && s.State != "ok" {
+			return s, true
+		}
+	}
+	return client.ProviderStatus{}, false
 }
 
 // toolhiveStatusCopy maps a non-ok provider_status state to the short
@@ -696,37 +754,49 @@ var toolhiveStatusCopy = map[string]string{
 	"empty":        "credential lists no models",
 }
 
-// renderProviderStatusLines renders one muted line per non-ok status:
-// "<provider_id>: <short copy> — <hint>" (issue #262 R6.2). inventoryEmpty
-// reports whether the OVERALL model list (across every provider) is empty:
-// when it IS, an "empty" status is suppressed here because modelsEmptyCopy's
-// replacement note already states the same remediation for the whole picker
-// (rendering both would double-state it); when the inventory is NON-empty
-// (issue: a mixed deployment where OTHER providers have models), an "empty"
-// toolhive status would otherwise be invisible, so it renders here instead.
-// Returns nil when statuses is empty (or every entry is ok, or empty-but-
-// suppressed) — the byte-identical no-op for every deployment without an
-// intent-driven provider's trouble to report. A state absent from
-// toolhiveStatusCopy (a future addition) still renders using the raw state
-// string, so a new state is never silently dropped.
+// providerStatusLine builds the one-line remediation clause for a non-ok
+// status: "<provider_id>: <short copy> — <hint>" (issue #262 R6.2). Extracted
+// (review finding 6) so modelsEmptyCopy's promoted-cause line and
+// renderProviderStatusLines' per-status lines are SINGLE-SOURCED and cannot
+// drift on wording. A state absent from toolhiveStatusCopy (a future
+// addition) still renders using the raw state string, so a new state is
+// never silently dropped.
+func providerStatusLine(s client.ProviderStatus) string {
+	clause := toolhiveStatusCopy[s.State]
+	if clause == "" {
+		clause = s.State
+	}
+	line := s.ProviderID + ": " + clause
+	if s.Hint != "" {
+		line += " — " + s.Hint
+	}
+	return line
+}
+
+// renderProviderStatusLines renders one muted line per non-ok status (issue
+// #262 R6.2, generalized by review finding 6). inventoryEmpty reports
+// whether the OVERALL model list (across every provider) is empty: when it
+// IS, the ONE status modelsEmptyCopy PROMOTED to the top-level empty-state
+// line is suppressed here (rendering both would double-state the same
+// cause) — generalized from the original "empty-state suppressed" special
+// case to ANY promoted state, since modelsEmptyCopy itself now promotes any
+// non-ok status, not just "empty". When the inventory is NON-empty (a mixed
+// deployment where OTHER providers have models), every non-ok status renders
+// here — including "empty" — or it would otherwise be invisible. Returns nil
+// when statuses is empty (or every entry is ok, or the sole non-ok entry was
+// suppressed as the promoted cause) — the byte-identical no-op for every
+// deployment without an intent-driven provider's trouble to report.
 func renderProviderStatusLines(statuses []client.ProviderStatus, inventoryEmpty bool) []string {
+	promoted, hasPromoted := promotedStatus(statuses)
 	var lines []string
 	for _, s := range statuses {
 		if s.State == "" || s.State == "ok" {
 			continue
 		}
-		if s.State == "empty" && inventoryEmpty {
-			continue // modelsEmptyCopy's replacement note already covers this
+		if inventoryEmpty && hasPromoted && s == promoted {
+			continue // modelsEmptyCopy's promoted-cause line already covers this
 		}
-		clause := toolhiveStatusCopy[s.State]
-		if clause == "" {
-			clause = s.State
-		}
-		line := s.ProviderID + ": " + clause
-		if s.Hint != "" {
-			line += " — " + s.Hint
-		}
-		lines = append(lines, line)
+		lines = append(lines, providerStatusLine(s))
 	}
 	return lines
 }
@@ -768,6 +838,9 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")
 	case st.err != nil:
 		b.WriteString(th.Style("errorText").Render("✗ list models: "+sanitizeTerminal(st.err.Error())) + "\n")
+		// UX: a bare error is a dead end — name the likely cause + where to look,
+		// so the operator isn't left staring at an unexplained RPC failure.
+		b.WriteString(th.Style("muted").Render(modelsErrorHint) + "\n")
 	case len(st.models) == 0:
 		// Server-side empty/disabled (no inventory at all) — distinct from a filter
 		// that matched nothing.
@@ -791,9 +864,15 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 	// already states that remediation); a mixed deployment (other providers
 	// have models) still surfaces toolhive's "empty" here, or it would be
 	// invisible. No statuses (or all ok) renders NOTHING — the byte-identical
-	// no-op every existing golden pins.
-	for _, line := range renderProviderStatusLines(st.statuses, len(st.models) == 0) {
-		b.WriteString(th.Style("muted").Render(sanitizeTerminal(line)) + "\n")
+	// no-op every existing golden pins. Gated on st.err == nil (review finding
+	// 5, defense in depth alongside the updateModelsMsg-side clear): a
+	// remediation line for a PRIOR provider outcome must never render beneath
+	// an unrelated ListModels error, incl. the loading/stale-while-loading
+	// frame before a fresh statuses list lands.
+	if st.err == nil {
+		for _, line := range renderProviderStatusLines(st.statuses, len(st.models) == 0) {
+			b.WriteString(th.Style("muted").Render(sanitizeTerminal(line)) + "\n")
+		}
 	}
 
 	b.WriteString("\n" + th.Style("muted").Render(

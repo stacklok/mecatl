@@ -295,7 +295,13 @@ healthy:
 | `empty` | "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`" (replaces the generic empty-picker note) | The proxy is reachable and your credential is valid, but it advertises zero models — this is an ORGANIZATIONAL problem (ask your platform admin), not a local one. |
 
 The proxy comes back up? The very next `/models` open (or the background live
-refresh) picks it up automatically — no mecatl restart needed.
+refresh) picks it up automatically, AND — if the gateway was the sole provider and
+had no default model yet — the very next new session (or a resume after a restart)
+also picks up the healed default automatically. No mecatl restart needed. A session
+already created BEFORE the proxy came back up **keeps failing every turn**, even
+after the proxy is up — its model never resolved to a real id, so every request
+it sends is rejected by the gateway; it does not self-heal mid-session. Open a
+fresh session (or restart mecated/mecatui) to get a session that actually works.
 
 Diagnostics for this feature ride mecatui's usual log file
 (`$XDG_STATE_HOME/mecatl/mecatui.log`, fallback `~/.local/state/mecatl/mecatui.log`);

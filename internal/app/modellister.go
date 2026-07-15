@@ -30,22 +30,51 @@ type modelSwapper interface {
 
 // publishSnapshot is the SHARED post-fetch publish tail every live-model
 // refresh path ends with (startLiveModelRefresh's sync AND async branches,
-// and the on-demand refreshStaleModels) — extracted so the four-step sequence
-// (swap the picker proto slice, swap the resolver-feeding meta store, heal a
-// still-empty intent-driven default model, re-project provider_status when
-// the swapper supports it) can never drift between the three call sites.
-// models/byProvider are the SAME modelEntry-derived pair every caller already
-// projects from one merge, so the picker and the resolvers never disagree.
-func publishSnapshot(d port.Diagnostics, reg *providerRegistry, swap modelSwapper, models []*mecatlv1.ModelInfo, byProvider map[string][]modelEntry) {
-	swap.SetModels(models)
-	reg.meta.Swap(byProvider)
+// and the on-demand refreshStaleModels) — extracted so the sequence (merge
+// fresh into the resolver-feeding meta store, project + swap the picker proto
+// slice, heal a still-empty intent-driven default model, re-project
+// provider_status when the swapper supports it) can never drift between the
+// three call sites. fresh is ONLY the providers this call actually re-fetched
+// — the FULL available set for the background refresh, or a PARTIAL
+// stale-only set for refreshStaleModels — never a whole-map snapshot of
+// EVERYTHING, so a partial refresh can only ever touch the providers it
+// fetched (mergeSwap, issue #262 review finding 2: the lost-update race a
+// whole-map replace caused when this call interleaved with the other
+// refresh path). The whole sequence runs under reg.publishMu so the two
+// refresh paths cannot interleave their merge-then-swap.
+func publishSnapshot(d port.Diagnostics, reg *providerRegistry, swap modelSwapper, fresh map[string][]modelEntry) {
+	reg.publishMu.Lock()
+	defer reg.publishMu.Unlock()
+	merged := reg.meta.mergeSwap(fresh)
+	swap.SetModels(projectAll(reg, merged))
 	// Issue #262 §1 deviation: heals a still-empty intent-driven default model
 	// (toolhive sole+probe-down at Build) the moment a live snapshot lands —
 	// a no-op when defaultModel is already set or the default isn't intent-driven.
-	reg.healDefaultModel(d, byProvider)
+	// FRESH lists only — "first-listed" must come from a REAL lister result for
+	// THIS call, never a carried-over provider from a previous refresh.
+	reg.healDefaultModel(d, fresh)
 	if setter, ok := swap.(providerStatusSetter); ok {
 		setter.SetProviderStatus(providerStatusProto(reg))
 	}
+}
+
+// projectAll projects EVERY available provider's []modelEntry (excluding the
+// mock, which never advertises selectable models) from byProvider into the
+// sorted proto slice the picker consumes. Extracted from liveModelSnapshot so
+// publishSnapshot can re-run the SAME projection over mergeSwap's merged view
+// without duplicating the loop at each of the three call sites.
+func projectAll(reg *providerRegistry, byProvider map[string][]modelEntry) []*mecatlv1.ModelInfo {
+	var out []*mecatlv1.ModelInfo
+	for _, pid := range reg.Available() {
+		if pid == providerMock {
+			continue
+		}
+		for _, m := range byProvider[pid] {
+			out = append(out, projectModelEntry(reg, pid, m))
+		}
+	}
+	sortModelInfos(out)
+	return out
 }
 
 // startLiveModelRefresh kicks the ONE-SHOT background live-catalog refresh and
@@ -76,8 +105,8 @@ func startLiveModelRefresh(d port.Diagnostics, reg *providerRegistry, swap model
 	if runSync {
 		ctx, cancel := context.WithTimeout(context.Background(), liveModelRefreshTimeout)
 		defer cancel()
-		models, byProvider := liveModelSnapshot(ctx, d, reg)
-		publishSnapshot(d, reg, swap, models, byProvider)
+		byProvider := liveModelSnapshot(ctx, d, reg)
+		publishSnapshot(d, reg, swap, byProvider)
 		reg.meta.markRefreshCompleted() // sync path SETTLES after the swap.
 		return func() {}
 	}
@@ -99,7 +128,7 @@ func startLiveModelRefresh(d port.Diagnostics, reg *providerRegistry, swap model
 		}
 		fetchCtx, fetchCancel := context.WithTimeout(ctx, liveModelRefreshTimeout)
 		defer fetchCancel()
-		models, byProvider := liveModelSnapshot(fetchCtx, d, reg)
+		byProvider := liveModelSnapshot(fetchCtx, d, reg)
 		// If the refresh ctx was cancelled (the closer ran — a shutdown — before the
 		// fetch finished), the fetch was interrupted and its result is untrustworthy
 		// (the embedded floor at best), so DO NOT overwrite the seed. Only swap when the
@@ -110,7 +139,7 @@ func startLiveModelRefresh(d port.Diagnostics, reg *providerRegistry, swap model
 		}
 		// Both sinks are fed from the ONE modelEntry list per provider, so the picker
 		// proto slice and the resolver-feeding meta store cannot drift.
-		publishSnapshot(d, reg, swap, models, byProvider)
+		publishSnapshot(d, reg, swap, byProvider)
 		// SETTLED: the live answer is in (success OR a fetch-fail/empty that fell back
 		// to the embedded floor inside resolveProviderModels — either way the Swap above
 		// is the authoritative result). Flip the flag so the echo resolver stops
@@ -386,29 +415,21 @@ func sortModelInfos(out []*mecatlv1.ModelInfo) {
 // The fetch is attempted at most once per provider here; the CALLER (the
 // background refresh in Build) owns concurrency/lifecycle. This function is pure
 // w.r.t. composition state — it reads the registry and the network (through the
-// listers) and returns BOTH the fresh proto slice (the picker sink) AND the
-// per-provider []modelEntry map (the resolver-feeding meta-store sink). Both sinks
-// project from the SAME modelEntry list per provider so the picker and the resolvers
-// cannot drift. It REUSES projectModelEntry + sortModelInfos so the live floor and
-// the embedded seed cannot drift.
-func liveModelSnapshot(ctx context.Context, d port.Diagnostics, reg *providerRegistry) ([]*mecatlv1.ModelInfo, map[string][]modelEntry) {
+// listers) and returns the per-provider []modelEntry map (the resolver-feeding
+// meta-store sink AND, via projectAll in publishSnapshot, the picker proto sink) —
+// the ONE modelEntry list per provider both project from, so they cannot drift.
+func liveModelSnapshot(ctx context.Context, d port.Diagnostics, reg *providerRegistry) map[string][]modelEntry {
 	if reg == nil {
-		return nil, nil
+		return nil
 	}
-	var out []*mecatlv1.ModelInfo
 	byProvider := make(map[string][]modelEntry)
 	for _, pid := range reg.Available() { // available (keyed) providers ONLY
 		if pid == providerMock {
 			continue // the mock never advertises selectable models
 		}
-		entries := resolveProviderModels(ctx, d, reg, pid)
-		byProvider[pid] = entries
-		for _, m := range entries {
-			out = append(out, projectModelEntry(reg, pid, m))
-		}
+		byProvider[pid] = resolveProviderModels(ctx, d, reg, pid)
 	}
-	sortModelInfos(out)
-	return out, byProvider
+	return byProvider
 }
 
 // resolveProviderModels returns the per-provider model list applying the merge
@@ -434,7 +455,8 @@ func resolveProviderModels(ctx context.Context, d port.Diagnostics, reg *provide
 	embedded := embeddedModels(pid)
 	live, err := entry.lister.ListModels(ctx)
 	if err != nil {
-		state, hint := classifyListError(err)
+		state := classifyLiveListError(err)
+		hint := statusHintFor(pid, state)
 		reg.outcomes.recordFailure(pid, state, hint)
 		d.Log(ctx, port.LevelWarn, "live model fetch failed", "provider", pid, "err", err, "state", state)
 		if len(embedded) > 0 {
@@ -458,15 +480,6 @@ func resolveProviderModels(ctx context.Context, d port.Diagnostics, reg *provide
 		return embedded
 	}
 	return live
-}
-
-// classifyListError maps a lister failure to a v1 provider_status state via
-// the SAME classification probeToolhive uses (errors.As over
-// *openaicompat.StatusError), so the Build-time probe and the ongoing
-// refresh path can never disagree on ok/unreachable/unauthorized wording.
-func classifyListError(err error) (state, hint string) {
-	s := classifyLiveListError(err)
-	return s, toolhiveStatusHints[s]
 }
 
 // providerStatus is one provider's last live-listing outcome (issue #262,
@@ -509,7 +522,7 @@ func (s *liveOutcomeStore) recordSuccess(pid string, live []modelEntry) {
 	s.lastGood[pid] = live
 	state, hint := statusOK, ""
 	if len(live) == 0 && len(embeddedModels(pid)) == 0 {
-		state, hint = statusEmpty, toolhiveStatusHints[statusEmpty]
+		state, hint = statusEmpty, statusHintFor(pid, statusEmpty)
 	}
 	s.status[pid] = providerStatus{State: state, Hint: hint}
 }
@@ -570,7 +583,17 @@ func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 		if !ok {
 			continue
 		}
-		out = append(out, &mecatlv1.ProviderStatus{ProviderId: pid, State: status.State, Hint: status.Hint})
+		// default_model_auto_selected (issue #262 review finding 7) is set ONLY
+		// for the DEFAULT provider whose model was auto-selected — never a
+		// non-default intent-driven provider, and never an operator-configured
+		// default.
+		autoSelected := pid == reg.Default() && reg.DefaultModelAutoSelected()
+		out = append(out, &mecatlv1.ProviderStatus{
+			ProviderId:               pid,
+			State:                    status.State,
+			Hint:                     status.Hint,
+			DefaultModelAutoSelected: autoSelected,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GetProviderId() < out[j].GetProviderId() })
 	return out
@@ -615,10 +638,12 @@ type refreshStaleModelsState struct {
 // deployment with no intent-driven provider costs nothing beyond the map
 // scan. Each stale provider's fetch is bounded to 2s; the whole call is
 // cooldown-gated via st so a burst of /models opens against a persistently-
-// down gateway doesn't hammer it. On a re-fetch it merges into the CURRENT
-// per-provider meta snapshot (liveMetaStore.entriesByProvider), rebuilds the
-// picker proto slice, swaps both sinks, re-projects provider_status, and
-// heals a still-empty intent-driven default model.
+// down gateway doesn't hammer it. It builds `fresh` from ONLY the re-fetched
+// stale providers (never a pre-read whole-map snapshot — that was the lost-
+// update race, issue #262 review finding 2) and hands it to publishSnapshot,
+// which MERGES it into the current per-provider meta snapshot, rebuilds the
+// picker proto slice, re-projects provider_status, and heals a still-empty
+// intent-driven default model.
 func refreshStaleModels(ctx context.Context, d port.Diagnostics, reg *providerRegistry, swap modelSwapper, st *refreshStaleModelsState) {
 	if reg == nil || st == nil {
 		return
@@ -646,26 +671,12 @@ func refreshStaleModels(ctx context.Context, d port.Diagnostics, reg *providerRe
 		return
 	}
 
-	byProvider := reg.meta.entriesByProvider()
-	if byProvider == nil {
-		byProvider = make(map[string][]modelEntry)
-	}
+	fresh := make(map[string][]modelEntry, len(stale))
 	for _, pid := range stale {
 		fetchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		byProvider[pid] = resolveProviderModels(fetchCtx, d, reg, pid)
+		fresh[pid] = resolveProviderModels(fetchCtx, d, reg, pid)
 		cancel()
 	}
 
-	var out []*mecatlv1.ModelInfo
-	for _, pid := range reg.Available() {
-		if pid == providerMock {
-			continue
-		}
-		for _, m := range byProvider[pid] {
-			out = append(out, projectModelEntry(reg, pid, m))
-		}
-	}
-	sortModelInfos(out)
-
-	publishSnapshot(d, reg, swap, out, byProvider)
+	publishSnapshot(d, reg, swap, fresh)
 }

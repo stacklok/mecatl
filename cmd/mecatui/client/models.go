@@ -59,6 +59,13 @@ type ProviderStatus struct {
 	ProviderID string
 	State      string
 	Hint       string
+	// DefaultModelAutoSelected is true ONLY when this row's provider is the
+	// DEFAULT provider AND the server AUTO-selected its default model (a
+	// first-listed heal/probe pick, issue #262 review finding 7) — never true
+	// when an operator configured --model/--default-model. Named to match the
+	// wire field (default_model_auto_selected) and the server-side accessor
+	// (providerRegistry.DefaultModelAutoSelected) verbatim.
+	DefaultModelAutoSelected bool
 }
 
 // ModelsMsg carries a ListModels result for the /models picker. Err is set on
@@ -115,7 +122,12 @@ func mapProviderStatuses(in *mecatlv1.ListModelsResponse) []ProviderStatus {
 		if r == nil {
 			continue
 		}
-		out = append(out, ProviderStatus{ProviderID: r.GetProviderId(), State: r.GetState(), Hint: r.GetHint()})
+		out = append(out, ProviderStatus{
+			ProviderID:               r.GetProviderId(),
+			State:                    r.GetState(),
+			Hint:                     r.GetHint(),
+			DefaultModelAutoSelected: r.GetDefaultModelAutoSelected(),
+		})
 	}
 	return out
 }

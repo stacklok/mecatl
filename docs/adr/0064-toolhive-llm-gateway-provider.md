@@ -60,11 +60,27 @@ one line earlier.
 for a legitimately-registered sole provider); the probe-succeeded gate governs only the auto-picked
 default MODEL and the celebratory startup INFO. Sole + probe-down boots with `defaultModel = ""` and
 a WARN naming the remediation (`thv llm proxy start`); the model **heals** the moment a later live
-refresh succeeds (the swap path calls `healDefaultModel`), and a session created before that heal —
-with no client-side selector — fails at request time exactly like any other mid-session provider
-outage. The empty-list case (probe succeeds, credential lists zero models) is NOT covered by this
+refresh succeeds (the swap path calls `healDefaultModel`), and — per the R2 fix below — that heal now
+reaches a **zero-selector session created at ANY time after the heal**, not only the picker/accessor.
+The empty-list case (probe succeeds, credential lists zero models) is NOT covered by this
 deviation and still fails Build loudly (`errToolhiveNoModels`) — there is genuinely nothing useful to
 default to there, and the operator needs to know NOW, not after a confusing first request.
+
+**R2 addendum — the heal now reaches zero-selector sessions (post-review fix).** The v1 heal-path
+review found the healed default reached `reg.ResolvedDefaultModel()` and the `/models` picker but
+NOT actual session creation: a zero-selector session's engine was built once, at Build time, from the
+then-frozen `cfg.Model` (`""`), and nothing re-read the registry afterward. The fix is a **pending-
+default posture**: `Config.defaultModelPending` (set once, at Build, from the exact condition
+`healDefaultModel` itself guards on — an intent-driven default provider with no resolved model) routes
+EVERY zero-selector session through the per-session engine factory (`sessionNeedsPerFactory`) instead
+of the shared-engine fast path, and through rehydration (`needsRehydration`) for a session persisted
+before a restart into a still-down proxy. The factory resolves the CURRENT
+`reg.ResolvedDefaultModel()` at session-build time (resolve-at-use, mirroring the `Deps.ContextWindow`
+precedent, but at session granularity — "Provider is FIXED per session" still holds: resolved once at
+engine build, then fixed for that session's lifetime). The NARROWED residual: a session built BEFORE
+the heal lands still carries the frozen `""` model and fails at request time — only a NEW session (or
+a restart-then-run, via the `needsRehydration` arm) picks up the heal. This residual is now scoped to
+"before this specific heal", not "for the life of the process".
 
 ## Decision
 
@@ -108,19 +124,38 @@ name could resolve differently between the check and the request). `tls_skip_ver
 decoded (the wire struct has no field for it — there is nowhere for the value to land) and
 `InsecureSkipVerify` appears nowhere in this feature. The config-file read is hardened: a 1 MiB
 `LimitReader`, a regular-file check, and a same-uid-as-the-calling-process ownership check before a
-single byte is trusted. The live model list is bounded and C0/DEL-stripped at the `openaicompat` leaf
-— a hostile or buggy gateway response can neither OOM the process nor smuggle a terminal escape
-sequence into a picker row.
+single byte is trusted. The live model list is bounded and C0/C1/DEL/bidi-control/line-separator-
+stripped at the `openaicompat` leaf — a hostile or buggy gateway response can neither OOM the process
+nor smuggle a terminal escape sequence or a bidi-override spoof into a picker row.
+
+**D5 addendum — redirect refusal now covers the INFERENCE path too (post-review fix).** The v1
+listing probe (`openaicompat.NewLister`) already refused redirects (`CheckRedirect` ⇒
+`http.ErrUseLastResponse`), but the INFERENCE request — the one carrying the actual conversation body
++ `Authorization` header — rode the `openai` adapter's own client, which by SDK default follows up to
+10 redirects. A hostile/misconfigured process squatting the loopback port could answer the inference
+request with a redirect and bounce that body off-loopback (CWE-918). The fix shares ONE policy,
+`openaicompat.RefuseRedirects`, between both surfaces: the listing lister's default client (unchanged)
+and a NEW `openai.WithHTTPClient` option wired ONLY onto the toolhive gateway registry entry
+(`newGatewayEntry`) via a redirect-refusing `*http.Client`. Neither openai nor openrouter get this
+option — they talk to a real, TLS-terminated, non-loopback endpoint where following a redirect is
+ordinary and expected.
 
 **D6 — surfacing.** An additive proto message, `ProviderStatus` (`provider_id`, `state` — a STRING
-passthrough, no enum, matching the `EvNoProgress`/`StopBudget` precedent — `hint`), rides on
-`ListModelsResponse.provider_status`, scoped to INTENT-DRIVEN providers only (v1 deliberately never
-surfaces an ordinary openrouter/anthropic live-listing blip through this channel). mecatui's
-`/models` picker renders one muted remediation line per non-ok status under the list, and replaces
-the generic "No selectable models advertised." with a gateway-specific note when the state is
-`empty`. The header carries a persistent, muted "via ToolHive gateway" segment whenever the active
-session's provider is `toolhive` — disclosure-only, no acknowledgment gate, riding the same
-segment-shedding machinery every other header segment already uses.
+passthrough, no enum, matching the `EvNoProgress`/`StopBudget` precedent — `hint`, and a fourth
+additive field `default_model_auto_selected`), rides on `ListModelsResponse.provider_status`, scoped
+to INTENT-DRIVEN providers only (v1 deliberately never surfaces an ordinary openrouter/anthropic
+live-listing blip through this channel). mecatui's `/models` picker renders one muted remediation
+line per non-ok status under the list, and replaces the generic "No selectable models advertised."
+with a gateway-specific note when the state is `empty`. The header carries a persistent, muted "via
+ToolHive gateway" segment whenever the active session's provider is `toolhive` — disclosure-only, no
+acknowledgment gate, riding the same segment-shedding machinery every other header segment already
+uses. **`default_model_auto_selected` (post-review fix)** is true ONLY when `provider_id` is the
+DEFAULT provider AND the server AUTO-selected its default model (a first-listed heal/probe pick) —
+never when an operator configured `--model`/`--default-model`. It replaces a client-side
+`ProviderID == "toolhive"` vendor-name check the picker's "(auto-selected)" provenance label used
+(which wrongly labeled an operator-configured toolhive default as auto-selected, and could never
+label a future non-ToolHive intent-driven provider correctly): the label is now vendor-neutral and
+honest for any provider that carries the bit.
 
 **D7 — testing.** Every composition test is offline/hermetic via the existing `toolhiveConfigPath` +
 `liveModelHTTPClient` + `envDetector` seams (mirroring the OpenRouter/Anthropic live-lister
@@ -139,6 +174,14 @@ abstraction** — the two-layer split (`openaicompat` + `toolhivellm`) is delibe
 behind an interface with a single consumer; extract one at the SECOND gateway-shaped provider, not
 before (a documented trip-wire, not a deferred TODO to forget).
 
+**D8 addendum — the favored direction for the deferred direct/off-host mode (review feedback).**
+Rather than extending always-on proxy-config auto-detection off-host, the favored future design is a
+**`thv llm token` credential-helper model** — mecatl execs ToolHive for a short-lived token on demand
+(the git-credential-helper / kubectl exec-auth pattern), combined with **explicit gateway endpoint
+config** (an operator-supplied remote base URL, not auto-detected). This keeps the loopback-only
+auto-detection invariant intact for v1 while recording the shape a future off-host mode should take;
+`--toolhive-llm-allow-remote` remains NOT built here.
+
 ## Consequences
 
 **Easier:** a ToolHive user gets a working coding-agent session with zero configuration — no key, no
@@ -151,10 +194,11 @@ file `Stat` (the config-detection probe) even for an operator who has never hear
 accepted as negligible (a single syscall) against the zero-config payoff. The registry now carries a
 "tier" concept (`intentDriven`) that every future provider-ordering decision must remember to respect
 — `preferredDefaultProvider` and `providerStatusProto` are the two places this is pinned by test.
-The sole+probe-down boot-with-empty-model path is a genuine (if narrow) UX rough edge: a zero-selector
-session created in that exact window gets the server's un-resolved default until the next live
-refresh heals it — documented, tested, and judged strictly better than the alternative (Build
-refusing to boot at all).
+The sole+probe-down boot-with-empty-model path is a genuine (if narrow) UX rough edge, NARROWED by the
+R2 pending-default posture: a zero-selector session created BEFORE the heal lands gets the server's
+un-resolved default until the next live refresh heals it (a session created AFTER the heal — or a
+restart-then-run — now picks it up automatically, per the D1/R2 addendum above) — documented, tested,
+and judged strictly better than the alternative (Build refusing to boot at all).
 
 ## See also
 

@@ -71,8 +71,8 @@ func TestAnthropicLiveResolverPicksUpCeiling(t *testing.T) {
 	}
 
 	// Run the live snapshot + swap (the same two-sink path the background refresh uses).
-	models, byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	if len(models) == 0 {
+	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+	if len(byProvider[providerAnthropic]) == 0 {
 		t.Fatal("live snapshot empty")
 	}
 	reg.meta.Swap(byProvider)
@@ -182,7 +182,7 @@ func TestOpenRouterOutputLimitSurvivesSwapIntoStore(t *testing.T) {
 	meta.seedFromCatalog(reg.Available())
 
 	// Run the real snapshot + swap (the two-sink path the background refresh uses).
-	_, byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
 	meta.Swap(byProvider)
 
 	// qwen/qwen3.7-plus has top_provider.max_completion_tokens = 65536 in the fixture.
@@ -234,8 +234,9 @@ func TestOpenRouterLiveModalitiesGateSessionEcho(t *testing.T) {
 	meta.seedFromCatalog(reg.Available())
 
 	// Run the real snapshot + swap (the two-sink path the background refresh uses).
-	picker, byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
 	meta.Swap(byProvider)
+	picker := projectAll(reg, byProvider)
 
 	const (
 		textOnly = "nvidia/nemotron-3-ultra-550b-a55b:free" // input_modalities ["text"]

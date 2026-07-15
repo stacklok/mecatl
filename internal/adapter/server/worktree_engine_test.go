@@ -12,7 +12,6 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -41,18 +40,7 @@ func worktreeEngineService(t *testing.T, defaultWorkspace string, factoryCalled 
 		DefaultWorkspace: defaultWorkspace,
 	}
 	if factoryCalled != nil {
-		cfg.SessionEngine = func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
-			*factoryCalled = true
-			return server.SessionEngineResult{
-				Engine: agent.NewEngine(agent.Deps{
-					LLM:     mockllm.New(),
-					Catalog: tool.NewCatalog(),
-					Policy:  permpolicy.NewPolicy(allowRules(), nil),
-					Model:   "test-model",
-				}),
-				Close: func() error { return nil },
-			}, nil
-		}
+		cfg.SessionEngine = fakeSessionEngineFactory(factoryCalled)
 	}
 	svc, err := server.NewService(cfg)
 	if err != nil {

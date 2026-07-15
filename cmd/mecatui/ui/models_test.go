@@ -571,8 +571,52 @@ func TestModelsErrorRenders(t *testing.T) {
 	if m.models.err == nil {
 		t.Fatal("a ListModels error should be recorded")
 	}
-	if !strings.Contains(m.View().Content, "boom") {
-		t.Errorf("error not surfaced in the picker:\n%s", m.View().Content)
+	rendered := m.View().Content
+	if !strings.Contains(rendered, "boom") {
+		t.Errorf("error not surfaced in the picker:\n%s", rendered)
+	}
+	// UX finding: a bare error is a dead end — a next-action hint must render
+	// alongside it (naming a likely cause + where to look).
+	if !strings.Contains(rendered, "mecated is running") {
+		t.Errorf("error rendering missing the next-action hint:\n%s", rendered)
+	}
+}
+
+// TestModelsErrorClearsStaleProviderStatuses is the issue #262 review finding
+// 5 pin: a successful ListModels carrying a non-ok status (e.g. toolhive
+// unreachable), followed by a LATER failed ListModels (an unrelated transient
+// RPC error), must NOT keep rendering the stale status's remediation line
+// beneath the new, unrelated error — a failed ListModels carries no
+// statuses. Both the state-clear (updateModelsMsg) and the render-time
+// defense (renderModelsPanel gated on st.err == nil) are exercised by
+// asserting the FINAL rendered view.
+func TestModelsErrorClearsStaleProviderStatuses(t *testing.T) {
+	statuses := []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+	}
+	m := newModelsModel(t, &fakeModels{models: sampleModels().models, statuses: statuses}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	if len(m.models.statuses) != 1 {
+		t.Fatalf("precondition: expected the status to be threaded, got %+v", m.models.statuses)
+	}
+
+	// A later, unrelated ListModels failure.
+	mm2, _, handled := m.updateModelsMsg(client.ModelsMsg{Err: errors.New("transient rpc error")})
+	if !handled {
+		t.Fatal("ModelsMsg should be handled")
+	}
+	m = mm2.(Model)
+	if m.models.statuses != nil {
+		t.Fatalf("stale statuses survived a failed ListModels: %+v", m.models.statuses)
+	}
+
+	rendered := stripANSIstr(m.View().Content)
+	if !strings.Contains(rendered, "✗ list models") {
+		t.Errorf("rendered picker missing the error line:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "thv llm proxy start") {
+		t.Errorf("rendered picker still shows the STALE toolhive remediation line beneath an unrelated error:\n%s", rendered)
 	}
 }
 
@@ -1013,6 +1057,72 @@ func TestModelsEmptyCopy_GatewayEmpty(t *testing.T) {
 	}
 }
 
+// TestModelsEmptyCopy_PromotesAnyNonOkStatus is the issue #262 review finding
+// 6 fix: a SOLE unreachable/unauthorized provider (not just "empty") must
+// promote its own remediation line to the empty-state cause — never the
+// generic "No selectable models advertised." (which reads as "nothing is
+// configured") nor the disabled note (which reads as "you haven't set a
+// key"), both of which contradict a status line naming the real cause.
+func TestModelsEmptyCopy_PromotesAnyNonOkStatus(t *testing.T) {
+	unreachable := []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+	}
+	got := modelsEmptyCopy(client.Capabilities{ModelSelection: true}, unreachable)
+	want := "toolhive: proxy not reachable — start it with `thv llm proxy start`"
+	if got != want {
+		t.Errorf("unreachable empty copy = %q, want %q", got, want)
+	}
+	if got == modelsDisabledNote || got == "No selectable models advertised." {
+		t.Errorf("unreachable empty copy fell back to a contradictory generic note: %q", got)
+	}
+
+	unauthorized := []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `thv llm setup`"},
+	}
+	got = modelsEmptyCopy(client.Capabilities{ModelSelection: true}, unauthorized)
+	want = "toolhive: gateway rejected the credential — re-auth with `thv llm setup`"
+	if got != want {
+		t.Errorf("unauthorized empty copy = %q, want %q", got, want)
+	}
+
+	// The SAME promotion applies even when caps.ModelSelection is false (the
+	// "reality is slightly worse than the finding" case the review noted): the
+	// promoted cause still wins over modelsDisabledNote.
+	got = modelsEmptyCopy(client.Capabilities{ModelSelection: false}, unreachable)
+	if got == modelsDisabledNote {
+		t.Errorf("unreachable + ModelSelection=false empty copy wrongly fell back to the disabled note: %q", got)
+	}
+}
+
+// TestModelsPickerSoleUnreachableEmptyRenders is the F6 full-render pin: a
+// sole toolhive provider that is unreachable, with an EMPTY overall
+// inventory, must render EXACTLY ONE line naming the cause — never both the
+// generic empty note AND a separate remediation line (the double-statement
+// the review flagged is avoided by renderProviderStatusLines suppressing the
+// promoted status), and never the disabled note.
+func TestModelsPickerSoleUnreachableEmptyRenders(t *testing.T) {
+	fm := &fakeModels{statuses: []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+	}}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	rendered := stripANSIstr(m.View().Content)
+
+	if got, want := strings.Count(rendered, "toolhive:"), 1; got != want {
+		t.Fatalf("rendered picker names the toolhive cause %d times, want exactly %d:\n%s", got, want, rendered)
+	}
+	if strings.Contains(rendered, "No selectable models advertised.") {
+		t.Errorf("rendered picker still shows the generic empty note alongside the named cause:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Model selection is not available") {
+		t.Errorf("rendered picker shows the disabled note alongside the named cause:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "thv llm proxy start") {
+		t.Errorf("rendered picker missing the unreachable remediation hint:\n%s", rendered)
+	}
+}
+
 // TestRenderProviderStatusLines_EmptyIsNoOp proves an empty statuses slice (or
 // one containing only ok rows, or an "empty" row when the OVERALL inventory
 // is ALSO empty) renders NOTHING — the byte-identical no-op invariant every
@@ -1029,6 +1139,22 @@ func TestRenderProviderStatusLines_EmptyIsNoOp(t *testing.T) {
 	emptyOnly := []client.ProviderStatus{{ProviderID: "toolhive", State: "empty", Hint: "x"}}
 	if got := renderProviderStatusLines(emptyOnly, true); got != nil {
 		t.Errorf("empty-state status rendered %v with an EMPTY overall inventory, want nil (handled by modelsEmptyCopy instead)", got)
+	}
+}
+
+// TestRenderProviderStatusLines_SuppressesAnyPromotedStatus is the issue #262
+// review finding 6 generalization: with an EMPTY overall inventory, an
+// unreachable/unauthorized sole status (not just "empty") is ALSO suppressed
+// here — modelsEmptyCopy already promoted it to the top-level cause line, so
+// duplicating it here would double-state the same remediation.
+func TestRenderProviderStatusLines_SuppressesAnyPromotedStatus(t *testing.T) {
+	unreachable := []client.ProviderStatus{{ProviderID: "toolhive", State: "unreachable", Hint: "x"}}
+	if got := renderProviderStatusLines(unreachable, true); got != nil {
+		t.Errorf("unreachable status rendered %v with an EMPTY overall inventory, want nil (promoted to modelsEmptyCopy instead)", got)
+	}
+	unauthorized := []client.ProviderStatus{{ProviderID: "toolhive", State: "unauthorized", Hint: "x"}}
+	if got := renderProviderStatusLines(unauthorized, true); got != nil {
+		t.Errorf("unauthorized status rendered %v with an EMPTY overall inventory, want nil (promoted to modelsEmptyCopy instead)", got)
 	}
 }
 

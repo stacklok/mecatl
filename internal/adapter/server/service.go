@@ -293,6 +293,26 @@ type Config struct {
 	// no provider; a client maps it to a no-model-segment header.
 	DefaultResolvedModel ResolvedModel
 
+	// DefaultModelPending is true when the DEFAULT/shared engine booted with an
+	// UNRESOLVED default model (issue #262 review finding 1: the sole
+	// intent-driven — ToolHive gateway — provider probed down at Build, so
+	// cfg.Model stayed ""). It routes EVERY zero-selector session through the
+	// per-session engine factory (sessionNeedsPerFactory) and, for a session
+	// persisted before a restart into a still-down proxy, through rehydration
+	// (needsRehydration) too — so the model is resolved AT SESSION-BUILD TIME
+	// (resolve-at-use, mirroring the Deps.ContextWindow precedent, but at
+	// session granularity) instead of being frozen at the shared engine's
+	// Build-time construction. Without this, a post-boot heal
+	// (registry.healDefaultModel) updates the registry's resolved default but
+	// never reaches a zero-selector session, which keeps sending an empty
+	// model id to the provider (the R1.4 "no-restart" promise silently broken
+	// for the flagship sole-provider case). Static for the process lifetime
+	// (set once in composition from the SAME condition healDefaultModel guards
+	// on: an intent-driven default provider with no resolved model at Build);
+	// false everywhere else (a keyed default, or an operator-configured
+	// --model/--default-model) — byte-identical to today.
+	DefaultModelPending bool
+
 	// Skills is the resolved skills-inventory snapshot taken at startup. It backs
 	// ListSkills and is a pure read of this snapshot (no live discovery — skills
 	// are discovered once at build time and immutable for the process lifetime).
@@ -1913,9 +1933,14 @@ func (s *Service) engineAndWorkspaceFor(ctx context.Context, sess *session.Sessi
 // worktree arm (issue #102): a session whose workspace DIFFERS from the server's
 // launch root routes through the factory so children pin their resolver to the
 // session root. When DefaultWorkspace == "" (a child/member/cloud service) the
-// arm never fires (a non-empty workspace can't differ from "").
+// arm never fires (a non-empty workspace can't differ from ""). The
+// DefaultModelPending arm (issue #262 review finding 1) routes EVERY
+// zero-selector session through the factory when the shared engine booted
+// with an unresolved intent-driven default model, so the per-session build
+// resolves it at session-build time instead of freezing "".
 func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string) bool {
 	return sel != (ProviderSelector{}) || len(specs) > 0 || profile == ProfileNoFS ||
+		s.cfg.DefaultModelPending ||
 		(workspace != "" && s.cfg.DefaultWorkspace != "" && workspace != s.cfg.DefaultWorkspace)
 }
 
@@ -1939,11 +1964,20 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // cloud deployment) this arm never fires (a non-empty workspace can't differ
 // from ""), so the cloud/no-root posture is byte-identical. A default FS session
 // (Workspace == DefaultWorkspace) does NOT rehydrate, exactly as before.
+//
+// The DefaultModelPending arm (issue #262 review finding 1) rehydrates a
+// PERSISTED zero-selector session too: setSessionLabels persists the
+// SELECTOR (ProviderID/ModelID/ReasoningEffort), which stays empty for a
+// zero-selector session, so none of the arms above would otherwise fire for
+// it — a session created before a restart into a still-down proxy would
+// keep riding whatever engine gets (re)built for it without ever picking up
+// a heal that lands after the restart.
 func (s *Service) needsRehydration(sess *session.Session) bool {
 	return sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
 		sess.Workspace == "" ||
+		s.cfg.DefaultModelPending ||
 		(sess.Workspace != "" && s.cfg.DefaultWorkspace != "" && sess.Workspace != s.cfg.DefaultWorkspace)
 }
 

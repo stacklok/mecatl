@@ -42,6 +42,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -93,26 +94,34 @@ type Lister struct {
 	httpClient  *http.Client
 }
 
+// RefuseRedirects is the shared CheckRedirect policy (CWE-918): a loopback
+// gateway endpoint must never be allowed to bounce a request off-loopback via
+// a redirect response. It is exported so the INFERENCE path (the openai
+// adapter's WithHTTPClient, wired for the ToolHive gateway registry entry
+// only — see internal/app/registry.go's newGatewayEntry) and this LISTING
+// path share the exact same policy and cannot drift on wording/behaviour.
+func RefuseRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 // NewLister constructs a Lister against baseURL (already ending in "/v1")
 // with an optional bearerToken (sent as `Authorization: Bearer <token>` when
 // non-empty). NOTE the argument order — (baseURL, bearerToken, client) —
 // deliberately differs from the sibling internal/adapter/anthropic.NewLister's
 // (key, baseURL, client): don't copy-paste call sites between the two without
-// checking. A nil client yields a default client with defaultTimeout AND a
-// CheckRedirect that refuses to follow (CWE-918): baseURL is a loopback
-// address the CALLER already validated (composition never lets an operator
-// point this at a remote host in v1), so a hostile/misconfigured listener on
-// that port answering with a redirect must never be allowed to bounce the
-// request off-loopback — production wiring may pass nil and tests inject a
-// mock transport (which bypasses CheckRedirect entirely, so tests exercising
-// the redirect gate use a real httptest server).
+// checking. A nil client yields a default client with defaultTimeout AND
+// RefuseRedirects (CWE-918): baseURL is a loopback address the CALLER already
+// validated (composition never lets an operator point this at a remote host
+// in v1), so a hostile/misconfigured listener on that port answering with a
+// redirect must never be allowed to bounce the request off-loopback —
+// production wiring may pass nil and tests inject a mock transport (which
+// bypasses CheckRedirect entirely, so tests exercising the redirect gate use
+// a real httptest server).
 func NewLister(baseURL, bearerToken string, client *http.Client) *Lister {
 	if client == nil {
 		client = &http.Client{
-			Timeout: defaultTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			Timeout:       defaultTimeout,
+			CheckRedirect: RefuseRedirects,
 		}
 	}
 	return &Lister{baseURL: baseURL, bearerToken: bearerToken, httpClient: client}
@@ -184,15 +193,22 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 }
 
 // stripControl removes every C0 control character (0x00-0x1F, including ESC),
-// DEL (0x7F), AND the C1 control range (0x80-0x9F — e.g. U+009B CSI, a
+// DEL (0x7F), the C1 control range (0x80-0x9F — e.g. U+009B CSI, a
 // terminal-escape equivalent reachable via a UTF-8-encoded byte sequence, not
-// just the 0x1B ESC lead-in) from s (CWE-117/116 at the source — a hostile
-// gateway response must never smuggle a terminal escape sequence or a
-// log-injection newline into a picker row via id/display_name). Applied
-// BEFORE rune-truncation.
+// just the 0x1B ESC lead-in), the Unicode line/paragraph separators (U+2028,
+// U+2029 — a log-injection/line-splitting equivalent of \n outside the C0
+// range), and every Bidi_Control code point (U+061C, U+200E/F, U+202A-202E,
+// U+2066-2069 — CWE-116: a bidi-override can visually reorder/spoof a picker
+// row's rendered text without changing its bytes) from s. Applied BEFORE
+// rune-truncation.
 func stripControl(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F) {
+		switch {
+		case r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F):
+			return -1
+		case r == 0x2028 || r == 0x2029:
+			return -1
+		case unicode.Is(unicode.Bidi_Control, r):
 			return -1
 		}
 		return r

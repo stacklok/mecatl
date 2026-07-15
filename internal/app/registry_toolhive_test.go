@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 )
 
@@ -260,6 +261,11 @@ func TestToolhiveSole_ProbeDown_BootsThenHeals(t *testing.T) {
 	// re-pointing the entry (buildProviderRegistry already wired the lister
 	// over the ORIGINAL client) — instead, exercise healDefaultModel directly
 	// the way the live-refresh swap path calls it.
+	preHeal, ok := reg.Lookup(providerToolhive)
+	if !ok {
+		t.Fatal("toolhive entry missing before heal")
+	}
+
 	reg.healDefaultModel(diag, map[string][]modelEntry{
 		providerToolhive: {{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6"}},
 	})
@@ -268,6 +274,23 @@ func TestToolhiveSole_ProbeDown_BootsThenHeals(t *testing.T) {
 	}
 	if !diag.has("auto-selected") {
 		t.Error("expected an 'auto-selected' INFO after healing")
+	}
+
+	// Issue #262 review finding 4: the runtime heal must re-mint the entry's
+	// caps/provider exactly like the Build-time auto-select does — a stale
+	// defaultCaps baseline (computed for model="") would make the per-session
+	// factory's capsDiff comparison wrong for every session against the
+	// healed default.
+	postHeal, ok := reg.Lookup(providerToolhive)
+	if !ok {
+		t.Fatal("toolhive entry missing after heal")
+	}
+	wantCaps := modelCapability(reg, providerToolhive, "claude-sonnet-4-6")
+	if postHeal.defaultCaps != wantCaps {
+		t.Errorf("defaultCaps after heal = %+v, want %+v (modelCapability for the healed model)", postHeal.defaultCaps, wantCaps)
+	}
+	if preHeal.provider == postHeal.provider {
+		t.Error("provider unchanged after heal — the caps/effort re-mint did not run (review finding 4)")
 	}
 }
 
@@ -334,10 +357,23 @@ func TestToolhiveSole_ProbeDown_HealsThroughRealRefresh(t *testing.T) {
 // be read from any request-handling goroutine at any time post-Build. This
 // hammers a healDefaultModel writer against concurrent ResolvedDefaultModel
 // readers AND concurrent healDefaultModel callers (simulating both real
-// racers) — it must pass under `go test -race`.
+// racers) — it must pass under `go test -race`. The entry carries a remint
+// closure (issue #262 review finding 4) so healDefaultModel's remintEntry
+// actually WRITES the entries map on every heal — the entriesMu `-race` pin
+// this test exists for would be a no-op against a remint-less entry (the
+// write branch never fires). Concurrent Lookup/Available readers are added
+// alongside ResolvedDefaultModel to hammer entriesMu directly, not just
+// defaultModelMu.
 func TestHealDefaultModel_ConcurrentWithResolvedDefaultModel(t *testing.T) {
 	reg := &providerRegistry{
-		entries:   map[string]providerEntry{providerToolhive: {id: providerToolhive, intentDriven: true}},
+		entries: map[string]providerEntry{
+			providerToolhive: {
+				id: providerToolhive, intentDriven: true,
+				remint: func(string, port.ProviderCapabilities) port.LLMProvider {
+					return mockllm.New(mockllm.TextTurn("x"))
+				},
+			},
+		},
 		defaultID: providerToolhive,
 	}
 	byProvider := map[string][]modelEntry{providerToolhive: {{ID: "claude-sonnet-4-6"}}}
@@ -350,6 +386,15 @@ func TestHealDefaultModel_ConcurrentWithResolvedDefaultModel(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			reg.healDefaultModel(diag, byProvider)
+		}()
+	}
+	// Many concurrent Lookup/Available readers (entriesMu — review finding 4).
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = reg.Lookup(providerToolhive)
+			_ = reg.Available()
 		}()
 	}
 	// Many concurrent readers (simulating request-handling goroutines).
@@ -526,6 +571,48 @@ func TestProviderStatusProto_AllFourStates(t *testing.T) {
 	if got := providerStatusProto(reg)[0]; got.GetState() != statusEmpty || got.GetHint() == "" {
 		t.Errorf("row = %+v, want empty with a hint", got)
 	}
+}
+
+// TestProviderStatusProto_AutoSelectedBit is the F7 (issue #262 review
+// finding 7) server-side pin: probeToolhive's Build-time auto-pick sets
+// default_model_auto_selected on the toolhive status row; a Build with an
+// operator-configured model (cfg.Model, tier 1 — the same precedence a
+// --default-model would occupy, without validateDefaultModel's catalog gate
+// toolhive can never satisfy) does NOT set it, even though toolhive is still
+// the default provider.
+func TestProviderStatusProto_AutoSelectedBit(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
+	client := toolhiveModelsClient(t, toolhiveFixtureJSON)
+
+	t.Run("auto-pick sets the bit", func(t *testing.T) {
+		reg, err := buildProviderRegistry(Config{
+			ToolhiveLLM: true, toolhiveConfigPath: cfgPath, liveModelHTTPClient: client,
+		}, fakeEnv(nil))
+		if err != nil {
+			t.Fatalf("buildProviderRegistry: %v", err)
+		}
+		rows := providerStatusProto(reg)
+		if len(rows) != 1 || !rows[0].GetDefaultModelAutoSelected() {
+			t.Fatalf("rows = %+v, want exactly one toolhive row with DefaultModelAutoSelected=true", rows)
+		}
+	})
+
+	t.Run("operator-configured model does not set the bit", func(t *testing.T) {
+		reg, err := buildProviderRegistry(Config{
+			ToolhiveLLM: true, toolhiveConfigPath: cfgPath, liveModelHTTPClient: client,
+			Model: "gpt-5", // an explicit tier-1 operator choice
+		}, fakeEnv(nil))
+		if err != nil {
+			t.Fatalf("buildProviderRegistry: %v", err)
+		}
+		if reg.Default() != providerToolhive {
+			t.Fatalf("Default() = %q, want toolhive (still the sole provider)", reg.Default())
+		}
+		rows := providerStatusProto(reg)
+		if len(rows) != 1 || rows[0].GetDefaultModelAutoSelected() {
+			t.Fatalf("rows = %+v, want exactly one toolhive row with DefaultModelAutoSelected=false (operator-configured)", rows)
+		}
+	})
 }
 
 // TestProbeToolhive_Unauthorized_WarnsAndClassifies pins the 401/403 ⇒

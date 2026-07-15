@@ -47,7 +47,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"syscall"
 
 	yaml "go.yaml.in/yaml/v3"
 )
@@ -115,16 +114,12 @@ type wireConfig struct {
 // Sys() value. It is an unexported package-level SEAM (not a public API) so
 // the wrong-owner unit test can override it — a root-less test process can't
 // chown a fixture to a different uid to exercise the ownership-mismatch
-// branch for real. Production uses the real syscall.Stat_t assertion; a
-// failed type-assert (a non-unix Sys() value) is treated as "unknown" and
-// fails CLOSED (ok=false), never as "trust it".
-var statOwner = func(fi os.FileInfo) (uid uint32, ok bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, false
-	}
-	return st.Uid, true
-}
+// branch for real. Its production implementation is split by build tag
+// (detect_unix.go / detect_other.go, mirroring hookexec's `_unix.go`
+// convention): the unix implementation asserts the real syscall.Stat_t and
+// fails CLOSED (ok=false) on a failed type-assert (an exotic Sys() value);
+// the non-unix implementation fails CLOSED unconditionally (ok=false always)
+// since there is no uid concept to check — never "trust it" either way.
 
 // DetectConfig reads ToolHive's config file at path and reports whether an
 // `llm:` block with a non-empty gateway_url was found. It is two-value, no

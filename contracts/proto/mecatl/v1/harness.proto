@@ -1722,6 +1722,13 @@ message ProviderStatus {
   string provider_id = 1;
   string state = 2;
   string hint = 3; // short human remediation, e.g. "start it with `thv llm proxy start`"
+  // default_model_auto_selected is true ONLY when provider_id is the DEFAULT
+  // provider AND the server AUTO-selected its default model (a first-listed
+  // heal/probe pick, issue #262 R2.4) — never true when an operator
+  // configured --model/--default-model. A client uses this (rather than a
+  // vendor-name check) to label the current model "(auto-selected)" honestly
+  // for ANY intent-driven provider, present or future.
+  bool default_model_auto_selected = 4;
 }
 
 // ListModelsResponse carries the selectable models across AVAILABLE providers

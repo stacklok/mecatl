@@ -323,4 +323,14 @@ func TestStripControl(t *testing.T) {
 	if got := stripControl(c1); got != "abcd" {
 		t.Errorf("stripControl(%q) = %q, want %q (C1 range not stripped)", c1, got, "abcd")
 	}
+	// Bidi_Control (CWE-116): U+202E (RIGHT-TO-LEFT OVERRIDE) can visually
+	// reorder a picker row's rendered text without changing its bytes.
+	if got := stripControl("a\u202eb"); got != "ab" {
+		t.Errorf("stripControl(%q) = %q, want %q (U+202E bidi override not stripped)", "a\u202eb", got, "ab")
+	}
+	// Unicode line/paragraph separators (U+2028/U+2029) — a log-injection/
+	// line-splitting equivalent of \n outside the C0 range.
+	if got := stripControl("a b c"); got != "abc" {
+		t.Errorf("stripControl(%q) = %q, want %q (U+2028/U+2029 not stripped)", "a b c", got, "abc")
+	}
 }

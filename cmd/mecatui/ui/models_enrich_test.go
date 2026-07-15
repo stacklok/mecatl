@@ -197,16 +197,51 @@ func TestModelProvenanceFlag(t *testing.T) {
 	}
 }
 
-// TestModelProvenanceToolhiveAutoSelected: issue #262 R2.4 — a toolhive
-// effective model (no key, no --default-model chose it; it was resolved from
-// the FIRST model the gateway credential listed) reads "auto-selected", NOT
-// "server default" (which would imply a deliberate operator choice).
+// TestModelProvenanceToolhiveAutoSelected: issue #262 review finding 7 — a
+// toolhive effective model whose provider_status row carries the
+// server-side AutoSelected bit (no key, no --default-model chose it; it was
+// resolved from the FIRST model the gateway credential listed) reads
+// "auto-selected", NOT "server default" (which would imply a deliberate
+// operator choice). The label is now vendor-neutral: it is gated on the WIRE
+// bit (statusAutoSelected over m.models.statuses), never a bare
+// ProviderID=="toolhive" check.
 func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: true}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "auto-selected" {
 		t.Fatalf("provenance = %q, want auto-selected", got)
+	}
+}
+
+// TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected pins the fix
+// itself (issue #262 review finding 7): a toolhive default the OPERATOR
+// configured (--default-model) carries NO AutoSelected bit on the wire, so
+// the vendor-neutral label must fall through to "server default" — the bare
+// vendor-name check this replaces would have wrongly claimed "auto-selected"
+// for every toolhive session, including this deliberately-configured one.
+func TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "gpt-5"}
+	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: false}}
+	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "gpt-5"}); got != "server default" {
+		t.Fatalf("provenance = %q, want server default (operator-configured, no AutoSelected bit)", got)
+	}
+}
+
+// TestModelProvenanceNoStatusRow_NotAutoSelected: a toolhive effective model
+// with NO matching status row (e.g. a deployment that never wired
+// provider_status) must not spuriously claim "auto-selected" either —
+// statusAutoSelected's miss branch returns false, falling through to "server
+// default".
+func TestModelProvenanceNoStatusRow_NotAutoSelected(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "server default" {
+		t.Fatalf("provenance = %q, want server default (no status row)", got)
 	}
 }
 

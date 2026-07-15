@@ -2538,22 +2538,30 @@ config-detected (not credential-detected) provider. `internal/adapter/openaicomp
 is PROTOCOL-generic (stdlib-only, no ToolHive awareness): `NewLister(baseURL,
 bearerToken, client)` GETs `<baseURL>/models`, decoding only `{data:[{id,
 display_name}]}` (pinned to stacklok-enterprise-platform#2270's wire shape) with a
-1 MiB `io.LimitReader` cap (CWE-770) and per-field C0/DEL control-byte stripping +
-rune truncation (CWE-117/116) BEFORE the id/display_name ever reach a picker row;
-non-2xx returns `*StatusError{Code}` (`errors.As`-classified by composition into
-`unauthorized` on 401/403, `unreachable` otherwise). `internal/adapter/toolhivellm`
-is the ONLY ToolHive-aware code: `DetectConfig(path)` reads ToolHive's own
-`toolhive/config.yaml` (XDG-resolved) with the full hardening stack — `os.Stat` →
-`Mode().IsRegular()` → size ≤ 1 MiB → same-uid ownership (`statOwner`, an unexported
-package-seam a wrong-owner unit test overrides — a root-less test can't chown a
-fixture) → `io.LimitReader` read → typed `go.yaml.in/yaml/v3` decode into a struct
-with EXACTLY `llm.gateway_url` + `llm.proxy.listen_port` (no `KnownFields`; unknown
-keys ignored so a config-schema evolution never breaks detection) — there is
-LITERALLY NO field for `tls_skip_verify`/`oidc`, so a config setting either has
-nowhere to land, provably. `Config.BaseURL()` is the ONE security invariant this
-whole package exists to enforce: `"http://127.0.0.1:" + port + "/v1"`, HARDCODED —
-`GatewayURL` (the upstream the proxy forwards to) is captured for DIAGNOSTIC DISPLAY
-ONLY and never touches request construction.
+1 MiB `io.LimitReader` cap (CWE-770) and per-field control-byte stripping + rune
+truncation (CWE-117/116) BEFORE the id/display_name ever reach a picker row —
+`stripControl` (cleanup) covers C0/C1/DEL, the Unicode line/paragraph separators
+(U+2028/U+2029), and every `unicode.Bidi_Control` code point (U+061C, U+200E/F,
+U+202A-202E, U+2066-2069 — CWE-116: a bidi-override can visually reorder a picker
+row without changing its bytes); non-2xx returns `*StatusError{Code}`
+(`errors.As`-classified by composition into `unauthorized` on 401/403,
+`unreachable` otherwise). `internal/adapter/toolhivellm` is the ONLY ToolHive-aware
+code: `DetectConfig(path)` reads ToolHive's own `toolhive/config.yaml` (XDG-resolved)
+with the full hardening stack — `os.Stat` → `Mode().IsRegular()` → size ≤ 1 MiB →
+same-uid ownership (`statOwner`, an unexported package-seam a wrong-owner unit test
+overrides — a root-less test can't chown a fixture; SPLIT BY BUILD TAG (F8 fix) into
+`detect_unix.go` (`//go:build unix`, the real `syscall.Stat_t` assertion) and
+`detect_other.go` (`//go:build !unix`, an unconditional `(0, false)` fail-closed
+stub) — the prior unconstrained `syscall.Stat_t` use broke a `GOOS=windows` build
+outright, mirroring `hookexec`'s `_unix.go` convention) → `io.LimitReader` read →
+typed `go.yaml.in/yaml/v3` decode into a struct with EXACTLY `llm.gateway_url` +
+`llm.proxy.listen_port` (no `KnownFields`; unknown keys ignored so a config-schema
+evolution never breaks detection) — there is LITERALLY NO field for
+`tls_skip_verify`/`oidc`, so a config setting either has nowhere to land, provably.
+`Config.BaseURL()` is the ONE security invariant this whole package exists to
+enforce: `"http://127.0.0.1:" + port + "/v1"`, HARDCODED — `GatewayURL` (the
+upstream the proxy forwards to) is captured for DIAGNOSTIC DISPLAY ONLY and never
+touches request construction.
 
 Composition (`internal/app/registry.go`): `resolveToolhiveIntent` decides
 REGISTRATION from intent alone (an explicit `--toolhive-llm-base-url`, pre-validated
@@ -2577,17 +2585,55 @@ toolhive-scoped: an ordinary openrouter/anthropic blip never grows the client-fa
 
 `probeToolhive` is the BOUNDED (1.5s) Build-time probe, run once per Build
 immediately after registration: ok(N) → INFO + (if sole+unset) fills
-`reg.defaultModel` from the first-listed id and RE-RUNS the T7 caps fixup;
-ok(0 models) on a SOLE/DEFAULT toolhive → `errToolhiveNoModels`, Build FAILS (R2.3 —
-there's genuinely nothing to default to); probe-down → INFO (WARN if
-`intentExplicit` or the classified state is `unauthorized`) and `reg.defaultModel`
-stays `""` — the §1 ACCEPTED DEVIATION: sole+probe-down still boots (unconditional
-default, never "no provider resolves ⇒ Build can't construct the engine"), and
-`reg.healDefaultModel` (called from EVERY subsequent live-model swap — the sync AND
-async `startLiveModelRefresh` paths, plus the on-demand `refreshStaleModels`) fills
-the still-empty default the moment a live snapshot lands, mutex-guarded
-(`providerRegistry.healMu`) against the async refresh and the on-demand refresh
-racing each other.
+`reg.defaultModel` from the first-listed id, stamps `defaultModelAutoSelected`, and
+RE-RUNS the T7 caps fixup via the shared `remintEntry` helper; ok(0 models) on a
+SOLE/DEFAULT toolhive → `errToolhiveNoModels`, Build FAILS (R2.3 — there's genuinely
+nothing to default to); probe-down → INFO (WARN if `intentExplicit` or the
+classified state is `unauthorized`) and `reg.defaultModel` stays `""` — the §1
+ACCEPTED DEVIATION: sole+probe-down still boots (unconditional default, never "no
+provider resolves ⇒ Build can't construct the engine"), and `reg.healDefaultModel`
+(called from EVERY subsequent live-model swap — the sync AND async
+`startLiveModelRefresh` paths, plus the on-demand `refreshStaleModels`) fills the
+still-empty default the moment a live snapshot lands, mutex-guarded
+(`providerRegistry.defaultModelMu`) against the async refresh and the on-demand
+refresh racing each other.
+
+**`remintEntry` — the ONE re-mint path (review finding 4).** The caps/effort
+re-mint that `probeToolhive`'s auto-pick and the Build-time T7 fixup loop each
+performed inline was a THIRD re-mint site once `healDefaultModel` needed the same
+logic — extracted to `providerRegistry.remintEntry(pid, model)`: Lookup the entry
+(RLock), compute `modelCapability` OUTSIDE any write lock, call
+`entry.remint(entry.defaultEffort, defCaps)`, then take `entriesMu.Lock()` ONLY to
+swap `.provider`/`.defaultCaps` into the map. `entry.defaultEffort` (stamped once at
+Build, before any re-mint runs) means `healDefaultModel` — reached long after Build,
+off the request path, with no `cfg` in scope — can share the helper byte-for-byte
+with the two build-time call sites. `providerRegistry.entriesMu` (a `sync.RWMutex`)
+is the companion fix: `Lookup`/`Available` take the read lock so a concurrent
+`remintEntry` write (from a post-Build heal) can never race a reader — the same
+class of fix `defaultModelMu` already applied to `defaultModel` itself, now
+extended to the `entries` map. `healDefaultModel` sets `defaultModel` (+
+`defaultModelAutoSelected`) under `defaultModelMu`, UNLOCKS, then calls
+`remintEntry` OUTSIDE that lock (no nested-lock ordering to reason about; only the
+one winning filler ever reaches the re-mint, since a loser sees `defaultModel`
+already set and returns early).
+
+**Pending-default posture — the heal reaching zero-selector sessions (review
+finding 1).** `Config.defaultModelPending` (`internal/app/build.go`, computed once
+right after the model-fold chain settles `cfg.Model`, from the SAME condition
+`healDefaultModel` guards on) threads onto `server.Config.DefaultModelPending` and
+widens two predicates: `sessionNeedsPerFactory` (so a zero-selector CreateSession
+routes through the per-session engine factory instead of the shared-engine fast
+path) and `needsRehydration` (so a PERSISTED zero-selector session — whose selector
+labels are all empty, so none of the other rehydration arms fire — also rebuilds at
+run entry after a restart). `sessionEngineFactory`'s heal-adoption branch (extracted
+into `adoptHealedDefault` to keep the factory's cyclomatic complexity under the lint
+cap) resolves `reg.ResolvedDefaultModel()` at SESSION-BUILD time when the selector
+is zero and the Build-time default was empty; the FRESH `reg.Lookup` (not the
+Build-captured `provider` param) is LOAD-BEARING — it picks up `remintEntry`'s
+re-minted provider/caps, so the factory's own capsDiff re-mint check doesn't
+redundantly fire. The residual: a session BUILT before the heal lands still carries
+the frozen `""` model and fails at request time — only a session created (or
+rehydrated) AFTER the heal picks it up.
 
 D3 (model-list resilience) generalizes `resolveProviderModels`'s existing
 success/fail merge into an OUTCOME-AWARE one via the new `liveOutcomeStore`
@@ -2596,7 +2642,7 @@ map[string]providerStatus`, held on `providerRegistry.outcomes`, nil-tolerant li
 `liveMetaStore`): a live SUCCESS always records `lastGood` (even an honest empty —
 it IS a successful list) and a derived `ok`/`empty` status (`empty` fires ONLY when
 the live list AND the embedded catalog are BOTH empty); a live FAILURE classifies
-via the SAME `classifyToolhiveError` (`errors.As` on `*openaicompat.StatusError`)
+via the SAME `classifyLiveListError` (`errors.As` on `*openaicompat.StatusError`)
 composition uses at probe time, then falls back to the embedded catalog when
 non-empty (BYTE-IDENTICAL to pre-#262 for openrouter/anthropic — pinned by a
 regression test) or, only when the embedded catalog is empty (toolhive has none),
@@ -2612,25 +2658,93 @@ against a down gateway can't hammer it; wired via `server.Service.SetModelsRefre
 (a closure `ListModels` calls before returning its snapshot) + `SetProviderStatus`/
 `ProviderStatuses` (mirroring the existing `SetModels` seam exactly).
 
+**`mergeSwap` + `publishMu` — the lost-update race fix (review finding 2).** The
+publish tail every live-model refresh path ends with (`startLiveModelRefresh`'s
+sync AND async branches, and `refreshStaleModels`) used to whole-map `Swap` the
+resolver-feeding `liveMetaStore`, built from whatever the CALLER pre-read as its
+baseline. `refreshStaleModels` (a PARTIAL refresh — it re-fetches only the stale
+intent-driven providers) pre-read the CURRENT meta snapshot, updated only the stale
+entries, and Swapped the whole thing back; if the one-shot background refresh (a
+FULL refresh over every available provider) landed its OWN whole-map Swap in
+between the pre-read and that Swap-back, the partial refresh's stale pre-read
+silently REVERTED the background refresh's fresher data for every OTHER provider —
+permanently, since the background refresh is one-shot. The fix: `publishSnapshot`
+(`internal/app/modellister.go`) now takes ONLY `fresh` — the providers THIS call
+actually re-fetched (the full available set for the background refresh, or the
+stale-only subset for `refreshStaleModels`) — and calls `liveMetaStore.mergeSwap`
+(`internal/app/livemeta.go`) instead of `Swap`: it copies forward every provider
+ABSENT from `fresh` from the CURRENT snapshot (read at merge time, not pre-read by
+the caller) and REPLACES wholesale (`put`, a no-op on an empty list) every provider
+PRESENT in `fresh` — so a partial refresh can only ever touch the providers it
+fetched, never clobber one it didn't. `providerRegistry.publishMu` serializes the
+whole merge-then-project-then-heal sequence across the two refresh paths (fetches
+stay OUTSIDE the mutex — only the cheap, no-network publish tail is serialized);
+`projectAll` (extracted from the old `liveModelSnapshot`) re-runs the picker
+projection over `mergeSwap`'s returned merged view. `Swap` itself is UNCHANGED and
+still used directly by tests to seed fixtures; only the THREE publish call sites
+switched to the merge.
+
 `clampEffortForProvider` (`internal/app/reasoning_effort.go`) folds `providerToolhive`
 into the SAME openai/openrouter low/medium/high clamp case (a gateway fronts mixed
 upstreams over the OpenAI protocol, so the conservative clamp is the right default
 regardless of which model actually answers).
 
-mecatui: `client.ProviderStatus` mirrors the proto message; `ModelsMsg.Statuses`
-threads it through `ListModelsCmd`; `modelsState.statuses` holds it on the Model.
-`renderProviderStatusLines` renders ONE muted line per non-`ok`, non-`empty` status
-under the list/empty state (`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive:
-proxy not reachable — start it with `thv llm proxy start`"`); `modelsEmptyCopy`
-gains a THIRD branch (checked FIRST among the "something is configured" cases) that
-REPLACES the generic "No selectable models advertised." with a gateway-specific note
-when a status reports `empty`. `modelProvenance` gains an `eff.ProviderID ==
-"toolhive"` branch reading `"auto-selected"` (never "server default" — nobody
-chose it, it was resolved from whatever the credential happened to list first).
-`view.go`'s `headerIdentityParts` appends a muted `"via ToolHive gateway"` segment
-whenever `m.effectiveModel.ProviderID == "toolhive"`, riding the SAME segment slice
-every other header segment sheds from under width pressure — disclosure-only, no
-acknowledgment gate. All four render paths are a NO-OP when `statuses` is empty (the
+**Redirect refusal now covers the inference path too (review finding 3).** The
+listing probe's lister (`openaicompat.NewLister`'s default client) already refused
+redirects; the policy is now exported as `openaicompat.RefuseRedirects` so the
+INFERENCE path can share it byte-for-byte. `internal/adapter/openai` gains
+`WithHTTPClient(*http.Client)` (an adapter-construction `Option`, threading an
+arbitrary client into the SDK via `option.WithHTTPClient` — deliberately WITHOUT a
+`Timeout`, since a streaming turn runs for minutes and establishment/idle bounds
+already live in `llmresilience`). `newOpenAICompatEntry` grows a variadic
+`extra ...openai.Option` parameter appended to EVERY `construct()` call (the default
+AND every per-session/heal re-mint), so a caller-supplied option rides every
+re-mint, not just the initial build; openai/openrouter call sites pass none
+(byte-identical). `newGatewayEntry` is the ONLY caller that passes
+`openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})` —
+a hostile/misconfigured listener squatting the loopback port can no longer bounce
+the inference request (conversation body + `Authorization` header) off-loopback via
+a redirect response (CWE-918).
+
+**`statusHintFor` — provider-scoped remediation hints (cleanup).** `toolhiveStatusHints`
+had become the de-facto remediation map for ALL providers via the shared classifier,
+so an ordinary openrouter outage could record the ToolHive-specific
+"start it with `thv llm proxy start`" hint (latent-wrong-vendor, masked only because
+`providerStatusProto` is `intentDriven`-scoped). `statusHintFor(pid, state)`
+(`internal/app/registry.go`) returns `toolhiveStatusHints[state]` ONLY for
+`pid == providerToolhive`, else `""`; `resolveProviderModels`'s failure branch and
+`liveOutcomeStore.recordSuccess`'s empty-state hint both route through it.
+`probeToolhive` already keyed toolhive directly, so it needed no change. TRIP-WIRE:
+a SECOND gateway-shaped intent-driven provider needs a per-vendor hint table here,
+not a second `pid ==` branch.
+
+mecatui: `client.ProviderStatus` mirrors the proto message (now with an
+`AutoSelected bool`); `ModelsMsg.Statuses` threads it through `ListModelsCmd`;
+`modelsState.statuses` holds it on the Model, and is CLEARED (`nil`) on a failed
+ListModels (review finding 5 — a failed fetch carries no statuses, so a stale
+remediation line from a PRIOR success must never render beneath an unrelated
+error); `renderModelsPanel`'s status-line loop is additionally gated on
+`st.err == nil` as render-time defense in depth. `renderProviderStatusLines`
+renders ONE muted line per non-`ok` status under the list/empty state
+(`"<provider_id>: <copy> — <hint>"`, e.g. `"toolhive: proxy not reachable — start
+it with `thv llm proxy start`"`), extracted into the shared `providerStatusLine`
+helper. `modelsEmptyCopy` (review finding 6) now calls `promotedStatus` FIRST —
+the first entry whose state is neither `""` nor `"ok"` — and promotes ANY such
+status (not just `"empty"`) to the top-level empty-state cause line via
+`providerStatusLine`, ahead of the disabled note and the generic "No selectable
+models advertised."; `renderProviderStatusLines` suppresses that SAME promoted
+status when the overall inventory is empty (generalized from the old
+`state=="empty"`-only special case), so the two never double-state the same
+cause. `modelProvenance`'s "auto-selected" branch (review finding 7) no longer
+keys on `eff.ProviderID == "toolhive"` (which wrongly labeled an
+operator-configured toolhive default, and could never label a future
+non-ToolHive gateway); it reads the wire `AutoSelected` bit via the new
+`statusAutoSelected` helper over `m.models.statuses`. `view.go`'s
+`headerIdentityParts` still appends a muted `"via ToolHive gateway"` segment
+whenever `m.effectiveModel.ProviderID == "toolhive"` (this ONE surface stays
+vendor-named deliberately — it is disclosure, not provenance), riding the SAME
+segment slice every other header segment sheds from under width pressure — no
+acknowledgment gate. All render paths are a NO-OP when `statuses` is empty (the
 existing goldens are the proof: unchanged byte-for-byte by this feature).
 
 ### `openai` tool schemas — NON-STRICT (shared by openai + openrouter)

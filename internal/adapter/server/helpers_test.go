@@ -9,9 +9,14 @@ import (
 	"testing"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // scriptTool is a minimal Tool for the server tests: it records whether (and how
@@ -53,6 +58,33 @@ func blockingChunks() []port.Chunk {
 	}
 	chunks = append(chunks, port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn})
 	return chunks
+}
+
+// fakeSessionEngineFactory builds a server.SessionEngineFactory that records
+// (into called, when non-nil) that it was invoked and always returns a fresh
+// minimal engine over a canned mockllm reply. It names the boilerplate the
+// per-session-routing tests (worktree_engine_test.go,
+// default_model_pending_test.go) otherwise repeat verbatim — the SIX-param
+// SessionEngineFactory signature is easy to typo and adds nothing once the
+// body itself is this uniform. Tests that need a DIFFERENT engine per call
+// (or to assert on the args) still build their own closure inline — this
+// helper is only for "any per-session call routes here, and I just need to
+// observe THAT it was called."
+func fakeSessionEngineFactory(called *bool) server.SessionEngineFactory {
+	return func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+		if called != nil {
+			*called = true
+		}
+		return server.SessionEngineResult{
+			Engine: agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(),
+				Catalog: tool.NewCatalog(),
+				Policy:  permpolicy.NewPolicy(allowRules(), nil),
+				Model:   "test-model",
+			}),
+			Close: func() error { return nil },
+		}, nil
+	}
 }
 
 // recvAll drains a Converse server stream until EOF.

@@ -770,6 +770,17 @@ type Config struct {
 	// internal composition detail, not an operator knob.
 	gitStatus string
 
+	// defaultModelPending is true when the shared engine booted with an
+	// UNRESOLVED default model — the sole intent-driven (ToolHive gateway)
+	// provider probed down at Build, so cfg.Model stayed "" (issue #262 §1
+	// deviation, review finding 1). It is computed once, right after the
+	// model-fold chain settles cfg.Model, and threaded verbatim onto
+	// server.Config.DefaultModelPending so every zero-selector session routes
+	// through the per-session engine factory, which resolves the (possibly
+	// later-healed) default model at session-build time instead of freezing
+	// "". Unexported: an internal composition detail, not an operator knob.
+	defaultModelPending bool
+
 	// envDetector is the injectable environment-lookup seam the provider registry
 	// uses for credential-availability detection (multi-provider S1). It defaults
 	// to os.Getenv (set in Build); tests inject a fake map-backed lookup so registry
@@ -1151,6 +1162,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// narration all see the final merged maps). No-op (byte-identical) when there is no
 	// operator allowlist, an untrusted workspace, or no project models block.
 	cfg = foldProjectModelBindings(cfg, cliModelKeys)
+	// issue #262 §1 deviation, review finding 1: the shared engine booted with
+	// an UNRESOLVED default model (sole intent-driven provider, probe down —
+	// none of the folds above filled cfg.Model either). Route every
+	// zero-selector session through the per-session factory so the possibly
+	// later-healed default model is resolved at session-build time. Gated on
+	// the SAME condition healDefaultModel itself guards on (an intent-driven
+	// default provider with no resolved model) so this can never fire for a
+	// keyed default or an operator-configured --model/--default-model.
+	cfg.defaultModelPending = cfg.Model == ""
+	if e, ok := reg.Lookup(reg.Default()); !ok || !e.intentDriven {
+		cfg.defaultModelPending = false
+	}
 	// Subagent model router taxonomy (ADR 0031, Phase 5; enable model per ADR 0042): fold
 	// the OPERATOR-TIER `models.router:` categories/default/classifier-slot onto cfg, plus
 	// the YAML `disabled:` kill-switch (OR'd into cfg.RouterDisabled). OPERATOR-TIER ONLY
@@ -1343,6 +1366,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			// honest post-swap.
 			ContextWindow: int64(reg.echoWindowResolver(cfg, reg.Default(), cfg.Model)()),
 		},
+		// DefaultModelPending (issue #262 review finding 1): routes every
+		// zero-selector session through the per-session factory / rehydration
+		// path so a post-boot heal of the sole intent-driven default reaches
+		// it. See Config.defaultModelPending above for the exact gate.
+		DefaultModelPending: cfg.defaultModelPending,
 		// ListSkills snapshot: the skills resolved once at build time (the skills
 		// seam — FS or driver), projected into the proto form (metadata only).
 		// Skills are immutable for the process lifetime, so this is a startup
@@ -1621,6 +1649,36 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 // (client specs + per-def inline managers) — the shared assets.globalMgr is NEVER
 // in that Close. Wired into server.Config.SessionEngine in Build, so neither the
 // registry nor mcp/agent wiring leaks into the server or acp layers.
+// adoptHealedDefault resolves the ZERO-selector, still-unresolved-at-Build
+// default model at SESSION-BUILD TIME (issue #262 review finding 1): the
+// shared engine booted with cfg.Model=="" (the sole intent-driven — ToolHive
+// gateway — provider probed down at Build), which is the reason a
+// zero-selector session is routed through the per-session factory at all
+// (Config.defaultModelPending). It resolves the registry's CURRENT default —
+// a no-op (fallbackProvider, "") when the proxy is still down, so the
+// session fails at request time exactly as before (the ADR-documented
+// residual for a session built before the heal lands). Extracted out of
+// sessionEngineFactory to keep its cyclomatic complexity under the lint cap;
+// it has no other caller.
+func adoptHealedDefault(reg *providerRegistry, providerID string, fallbackProvider port.LLMProvider) (port.LLMProvider, string) {
+	healed := reg.ResolvedDefaultModel()
+	if healed == "" {
+		return fallbackProvider, ""
+	}
+	resolvedProvider := fallbackProvider
+	if entry, ok := reg.Lookup(providerID); ok {
+		// The fresh Lookup is LOAD-BEARING given F4 (registry review finding
+		// 4): healDefaultModel's remintEntry re-mints the entry's shared
+		// .provider/.defaultCaps for the healed model, so entry.provider
+		// carries the honest healed-model caps — reusing the Build-captured
+		// provider param (minted for model "") would silently skip that
+		// re-mint's benefit and the caller's capsDiff re-mint check would
+		// never fire (since entry.defaultCaps now equals sessionCaps).
+		resolvedProvider = entry.provider
+	}
+	return resolvedProvider, healed
+}
+
 func sessionEngineFactory(
 	cfg Config,
 	reg *providerRegistry,
@@ -1658,6 +1716,9 @@ func sessionEngineFactory(
 		// on the right provider — the zero selector uses the registry default.
 		resolvedProvider, resolvedModel := provider, cfg.Model
 		resolvedProviderID := reg.Default()
+		if sel.ProviderID == "" && resolvedModel == "" {
+			resolvedProvider, resolvedModel = adoptHealedDefault(reg, resolvedProviderID, resolvedProvider)
+		}
 		if sel.ProviderID != "" {
 			entry, ok := reg.Lookup(sel.ProviderID)
 			if !ok {

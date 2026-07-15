@@ -166,6 +166,14 @@ type providerEntry struct {
 	// unreachable diagnostic from INFO to WARN on this path (the operator
 	// asked for this endpoint directly).
 	intentExplicit bool
+	// defaultEffort is the OPERATOR-DEFAULT reasoning-effort token (ADR 0055,
+	// already normalised + per-provider clamped by operatorDefaultEffortFor) this
+	// entry was built with. Stamped by buildProviderRegistry's fixup loop
+	// BEFORE the T7 re-mint so remintEntry (the shared re-mint helper, issue
+	// #262 review finding 4) can re-derive an entry's caps WITHOUT threading
+	// cfg through to the runtime heal path (healDefaultModel runs long after
+	// Build, off the request path, and has no cfg in scope).
+	defaultEffort string
 }
 
 // providerRegistry holds the N configured providers. It is built once in Build
@@ -196,6 +204,17 @@ type providerRegistry struct {
 	// /models-open refresh). nil-tolerant like meta (a hand-built test
 	// registry that never sets it behaves as a permanently-empty store).
 	outcomes *liveOutcomeStore
+	// defaultModelAutoSelected is true when defaultModel was AUTO-SELECTED (a
+	// first-listed heal/probe pick, issue #262 review finding 7/R2.4) rather
+	// than operator-configured (--model/--default-model). Set ONLY at the two
+	// sites that fill an EMPTY defaultModel from a live listing —
+	// probeToolhive's Build-time auto-pick and healDefaultModel's runtime
+	// heal — both already gated on `defaultModel == ""`, which a configured
+	// model precludes (resolveDefaultModel would have taken tier (1) or (2)
+	// instead), so this can never be true alongside an operator choice. Guarded
+	// by defaultModelMu like defaultModel itself; read via the locked
+	// DefaultModelAutoSelected accessor.
+	defaultModelAutoSelected bool
 	// defaultModelMu guards EVERY post-construction access to defaultModel:
 	// healDefaultModel's check-and-set (the async live-refresh goroutine and
 	// the on-demand refreshStaleModels — reached off the ListModels request
@@ -207,18 +226,45 @@ type providerRegistry struct {
 	// a reference to the registry, so they stay unlocked — this mutex exists
 	// only for the concurrent post-Build window.
 	defaultModelMu sync.Mutex
+	// publishMu serializes every post-Build snapshot publish (publishSnapshot,
+	// issue #262 review finding 2): the merge-then-swap-then-heal-then-project
+	// sequence must not interleave between the one-shot background refresh and
+	// the on-demand refreshStaleModels, or two concurrent merges could each read
+	// the same pre-merge snapshot and one publish's result would be lost. Fetches
+	// (the network calls) stay OUTSIDE this mutex — only the cheap, no-network
+	// publish tail is serialized. Lock order: publishMu may acquire
+	// defaultModelMu/entriesMu (inside healDefaultModel/remintEntry); NEVER the
+	// reverse — nothing holding defaultModelMu or entriesMu may acquire publishMu.
+	publishMu sync.Mutex
+	// entriesMu guards EVERY post-construction access to entries (issue #262
+	// review finding 4): healDefaultModel's re-mint (remintEntry) mutates a
+	// SINGLE entry's .provider/.defaultCaps post-Build, concurrently with
+	// Lookup/Available reads from any request-handling goroutine. Lookup and
+	// Available take an RLock (cheap, concurrent-reader-friendly); remintEntry's
+	// write takes the write lock ONLY around the map mutation itself (the
+	// re-mint construction runs BEFORE the lock — see remintEntry). Construction-
+	// time reads/writes (buildProviderRegistry, probeToolhive) run BEFORE any
+	// goroutine or request handler holds a reference to the registry, so they
+	// stay unlocked — mirroring defaultModelMu's discipline. Lock order: this
+	// mutex is a LEAF (never acquires publishMu/defaultModelMu while held).
+	entriesMu sync.RWMutex
 }
 
 // Lookup returns the entry for id and whether it exists (and is therefore
-// available — the registry only holds available entries).
+// available — the registry only holds available entries). RLock-guarded
+// (entriesMu): a concurrent remintEntry write must never race a reader.
 func (r *providerRegistry) Lookup(id string) (providerEntry, bool) {
+	r.entriesMu.RLock()
+	defer r.entriesMu.RUnlock()
 	e, ok := r.entries[id]
 	return e, ok
 }
 
 // Available returns the available provider ids, sorted, for ListModels (S3) and
-// the zero-keys diagnostic.
+// the zero-keys diagnostic. RLock-guarded (entriesMu), matching Lookup.
 func (r *providerRegistry) Available() []string {
+	r.entriesMu.RLock()
+	defer r.entriesMu.RUnlock()
 	ids := make([]string, 0, len(r.entries))
 	for id := range r.entries {
 		ids = append(ids, id)
@@ -228,7 +274,14 @@ func (r *providerRegistry) Available() []string {
 }
 
 // Default returns the default provider id, or "" when zero providers are
-// available (the zero-keys case).
+// available (the zero-keys case). Deliberately LOCK-FREE, unlike its siblings
+// (ResolvedDefaultModel/DefaultModelAutoSelected use defaultModelMu, Lookup/
+// Available use entriesMu): defaultID is set ONCE in buildProviderRegistry and
+// is IMMUTABLE for the life of the registry — nothing post-Build ever
+// reassigns it (the healed/auto-selected MODEL can change; the default
+// PROVIDER identity never does). If a future change ever makes defaultID
+// mutable after Build, it MUST add locking here too — this comment is the
+// trip-wire.
 func (r *providerRegistry) Default() string { return r.defaultID }
 
 // ResolvedDefaultModel returns the resolved EFFECTIVE default model for the
@@ -244,6 +297,16 @@ func (r *providerRegistry) ResolvedDefaultModel() string {
 	r.defaultModelMu.Lock()
 	defer r.defaultModelMu.Unlock()
 	return r.defaultModel
+}
+
+// DefaultModelAutoSelected reports whether the default provider's resolved
+// model was AUTO-SELECTED (issue #262 review finding 7) rather than
+// operator-configured. Lock-guarded (defaultModelMu), matching
+// ResolvedDefaultModel.
+func (r *providerRegistry) DefaultModelAutoSelected() bool {
+	r.defaultModelMu.Lock()
+	defer r.defaultModelMu.Unlock()
+	return r.defaultModelAutoSelected
 }
 
 // DefaultModelFor returns the builtin default model for a given provider id (the
@@ -265,12 +328,20 @@ func (*providerRegistry) DefaultModelFor(id string) string { return builtinDefau
 //
 // It is a no-op when defaultModel is already non-empty (NEVER overwrites an
 // operator/session choice), when the default provider isn't intentDriven, or
-// when byProvider has nothing for it. The ENTIRE check-and-set runs under
+// when byProvider has nothing for it. The check-and-set itself runs under
 // defaultModelMu (issue found by review: an unlocked fast-path read raced
 // against a concurrent writer once this could be reached from BOTH the async
 // live-refresh goroutine AND refreshStaleModels, itself reachable off the
-// ListModels request path) — no unlocked pre-check. Logs ONE "(auto-selected)"
-// INFO the first time it fills.
+// ListModels request path) — no unlocked pre-check. The re-mint (issue #262
+// review finding 4: the runtime auto-select was skipping the caps/effort
+// re-mint the Build-time auto-select performs, leaving the per-session
+// factory comparing against a stale defaultCaps baseline) runs via the
+// SHARED remintEntry helper AFTER defaultModelMu is released — remintEntry
+// takes its own entriesMu write lock for the map mutation, and nesting that
+// under defaultModelMu would add a lock-ordering constraint nothing else
+// needs (only the ONE winning filler ever reaches this branch, since a
+// subsequent call sees defaultModel already set and returns above). Logs ONE
+// "(auto-selected)" INFO the first time it fills.
 func (r *providerRegistry) healDefaultModel(d port.Diagnostics, byProvider map[string][]modelEntry) {
 	if r == nil {
 		return
@@ -284,19 +355,54 @@ func (r *providerRegistry) healDefaultModel(d port.Diagnostics, byProvider map[s
 		return
 	}
 	r.defaultModelMu.Lock()
-	defer r.defaultModelMu.Unlock()
 	if r.defaultModel != "" {
+		r.defaultModelMu.Unlock()
 		return // already set (a prior heal, or an operator/session pin)
 	}
-	r.defaultModel = live[0].ID
+	model := live[0].ID
+	r.defaultModel = model
+	r.defaultModelAutoSelected = true // issue #262 review finding 7
+	r.defaultModelMu.Unlock()
+
+	r.remintEntry(r.defaultID, model)
 	d.Log(context.Background(), port.LevelInfo,
 		"provider default model (auto-selected) after live refresh",
 		// R2.6: name the proxy base URL + upstream gateway_url on the SAME
 		// event that makes toolhive the default model, not only via the
 		// separate "registered and reachable" line (which may have logged an
 		// unreachable/empty outcome at Build time, before this heal fires).
-		"provider", r.defaultID, "model", r.defaultModel,
+		"provider", r.defaultID, "model", model,
 		"base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL)
+}
+
+// remintEntry RE-MINTS pid's shared .provider/.defaultCaps for model — the ONE
+// re-mint path shared by the build-time T7 fixup, probeToolhive's auto-pick,
+// and healDefaultModel (issue #262 review finding 4: the third re-mint site,
+// extracted so the three cannot drift on the caps/effort computation). It
+// reads entry.defaultEffort (stamped by buildProviderRegistry BEFORE the
+// registry is handed out) rather than taking a cfg parameter, so a caller
+// reached long after Build (healDefaultModel, off the request path, with no
+// cfg in scope) can share it byte-for-byte with the two build-time sites. A
+// missing entry or one with no remint closure (mock / a providerConstructor
+// test seam) is a silent no-op. The write is entriesMu-guarded (a concurrent
+// Lookup/Available must never observe a torn entry); the (Lookup + caps
+// compute) that PRECEDE the write happen WITHOUT the write lock held, so a
+// concurrent reader is never blocked behind a live-listing round-trip — there
+// is none here, but the discipline matters because modelCapability may itself
+// Lookup.
+func (r *providerRegistry) remintEntry(pid, model string) {
+	entry, ok := r.Lookup(pid) // RLock — never nested under the write lock below
+	if !ok || entry.remint == nil {
+		return
+	}
+	defCaps := modelCapability(r, pid, model) // may Lookup internally — compute BEFORE the write lock
+	p := entry.remint(entry.defaultEffort, defCaps)
+	r.entriesMu.Lock()
+	e := r.entries[pid]
+	e.provider = p
+	e.defaultCaps = defCaps
+	r.entries[pid] = e
+	r.entriesMu.Unlock()
 }
 
 // errNoProvider is the named, actionable zero-keys error: when no provider's
@@ -411,6 +517,17 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 		return nil, errNoProvider
 	}
 
+	// Stamp each entry's OPERATOR-DEFAULT effort BEFORE the registry is handed
+	// out (issue #262 review finding 4): remintEntry (below) reads
+	// entry.defaultEffort rather than re-deriving it from cfg, so the runtime
+	// heal path (healDefaultModel, reached long after Build with no cfg in
+	// scope) can share the exact same re-mint helper as the two build-time
+	// call sites.
+	for id, entry := range entries {
+		entry.defaultEffort = operatorDefaultEffortFor(cfg, id)
+		entries[id] = entry
+	}
+
 	reg := &providerRegistry{entries: entries, meta: meta, outcomes: newLiveOutcomeStore()}
 	reg.defaultID, reg.defaultModel = resolveDefaultModel(cfg, reg)
 	// Seed the live-metadata store from the embedded catalog for every available
@@ -424,11 +541,9 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	// (the registry wasn't assembled yet, so modelCapability couldn't run); this
 	// re-mint replaces that placeholder with the honest default-model intersection.
 	// Mock / providerConstructor-seam entries have no remint closure and are
-	// skipped (they ignore caps; defaultCaps stays zero = "match anything").
-	for id, entry := range entries {
-		if entry.remint == nil {
-			continue
-		}
+	// skipped by remintEntry itself (they ignore caps; defaultCaps stays zero =
+	// "match anything").
+	for id := range entries {
 		// The shared .provider serves the operator-default model for the DEFAULT
 		// provider (reg.defaultModel — the resolved cfg.Model), and the provider's
 		// builtin default for a non-default provider (its .provider is only ever a
@@ -438,10 +553,7 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 		if id == reg.defaultID {
 			model = reg.defaultModel
 		}
-		defCaps := modelCapability(reg, id, model)
-		entry.provider = entry.remint(operatorDefaultEffortFor(cfg, id), defCaps)
-		entry.defaultCaps = defCaps
-		entries[id] = entry
+		reg.remintEntry(id, model)
 	}
 	// Build-time probe (issue #262, R1.2): only runs when a toolhive entry
 	// exists (a single map lookup otherwise). It NEVER gates registration
@@ -474,8 +586,12 @@ func providerKey(cfgKey, providerID string, detect envDetector) string {
 // entry. It is shared by the openai, openrouter, and (issue #262) toolhive-gateway
 // ids (each is the SAME adapter with a different base URL + key/token), so they
 // cannot drift on resilience wrapping. It logs the provider id and base URL ONLY —
-// never the key.
-func newOpenAICompatEntry(cfg Config, id, key, baseURL string) providerEntry {
+// never the key. extra carries additional openai.Options appended to EVERY
+// construct() call (default AND per-session/heal re-mints), so a caller-supplied
+// option (e.g. the gateway entry's redirect-refusing HTTP client, F3) rides every
+// re-mint too, never just the initial build. openai/openrouter call sites pass
+// none — byte-identical.
+func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.Option) providerEntry {
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", id, "model", cfg.Model, "base_url", baseURL)
 	// Composition-only test seam (S3 e2e): when a providerConstructor is injected,
 	// it builds the provider (e.g. a distinct mock per id) instead of the real
@@ -489,7 +605,11 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string) providerEntry {
 	// (T7). It is the SINGLE construction path: the default .provider is
 	// construct(defaultEffort, defaultCaps) and the per-session re-mint is
 	// construct(sessionEffort, sessionCaps), so the two cannot drift on resilience
-	// wrapping.
+	// wrapping. It also closes over `extra` (this func's variadic parameter, F3) —
+	// so EVERY mint (the default build AND every per-session/heal re-mint via
+	// remintEntry) carries whatever options the caller passed newOpenAICompatEntry
+	// (e.g. the gateway entry's redirect-refusing WithHTTPClient), never just the
+	// initial one.
 	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
 		opts := []openai.Option{openai.WithAPIKey(key)}
 		if baseURL != "" {
@@ -499,6 +619,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string) providerEntry {
 			opts = append(opts, openai.WithReasoningEffort(effort))
 		}
 		opts = append(opts, openai.WithProviderCapabilities(caps))
+		opts = append(opts, extra...)
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -704,7 +825,7 @@ func resolveDefaultModel(cfg Config, reg *providerRegistry) (providerID, modelID
 // zero-API-key operator still gets a usable default); else "" (zero
 // available).
 func preferredDefaultProvider(reg *providerRegistry) string {
-	if _, ok := reg.entries[providerOpenAI]; ok {
+	if _, ok := reg.Lookup(providerOpenAI); ok {
 		return providerOpenAI
 	}
 	var firstIntentDriven string
@@ -764,9 +885,18 @@ func resolveToolhiveIntent(cfg Config) (baseURL, gatewayURL string, explicit, ok
 // openrouter — the two cannot drift) using toolhivellm.PlaceholderToken as
 // the credential (the ToolHive LLM gateway proxy's documented inbound-auth
 // convention), then stamps the intent-driven metadata (R2.1/R2.6/R6.2) and
-// the live lister.
+// the live lister. It ALSO wires a redirect-refusing HTTP client onto the
+// INFERENCE request path (F3/CWE-918): the listing probe already refuses
+// redirects via openaicompat.RefuseRedirects, but the request that carries
+// the actual conversation body + Authorization header rides the openai
+// adapter's own client, which by SDK default follows up to 10 redirects — a
+// hostile/misconfigured listener squatting the loopback port could otherwise
+// bounce that body off-loopback. Only the gateway entry gets this: openai
+// and openrouter talk to a real, TLS-terminated, non-loopback endpoint where
+// following a redirect is ordinary and expected.
 func newGatewayEntry(cfg Config, id, baseURL, gatewayURL string, explicit bool, lister modelLister) providerEntry {
-	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, baseURL)
+	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, baseURL,
+		openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
 	entry.lister = lister
 	entry.intentDriven = true
 	entry.intentGatewayURL = gatewayURL
@@ -795,6 +925,22 @@ var toolhiveStatusHints = map[string]string{
 	statusUnreachable:  "start it with `thv llm proxy start`",
 	statusUnauthorized: "re-auth with `thv llm setup`",
 	statusEmpty:        "your ToolHive gateway credential lists no models — ask your platform admin or re-run `thv llm setup`",
+}
+
+// statusHintFor returns the ToolHive remediation hint for state, scoped to
+// pid == providerToolhive ONLY — every other provider (e.g. an openrouter
+// outage) gets "" (cleanup: toolhiveStatusHints had become the generic
+// remediation map for ALL providers via the pre-cleanup classifyListError,
+// so an openrouter outage recorded the "start it with `thv llm proxy start`"
+// hint — latent-wrong-vendor, currently masked only because the v1 wire
+// projection (providerStatusProto) filters to intentDriven entries). TRIP-
+// WIRE: a SECOND gateway-shaped intent-driven provider needs a per-vendor
+// hint table here, not a second `pid ==` branch bolted on.
+func statusHintFor(pid, state string) string {
+	if pid != providerToolhive {
+		return ""
+	}
+	return toolhiveStatusHints[state]
 }
 
 // errToolhiveNoModels is the actionable Build-fail error (D2 R2.3): toolhive
@@ -877,15 +1023,13 @@ func probeToolhive(reg *providerRegistry, cfg Config) error {
 			"provider", providerToolhive, "base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL, "models", len(models))
 		if reg.defaultID == providerToolhive && reg.defaultModel == "" {
 			reg.defaultModel = models[0].ID
+			reg.defaultModelAutoSelected = true // issue #262 review finding 7
 			// Re-run the T7 caps fixup for the toolhive entry now that a real
-			// default model is known — mirrors buildProviderRegistry's own
-			// post-assembly fixup loop above.
-			if e, ok := reg.entries[providerToolhive]; ok && e.remint != nil {
-				defCaps := modelCapability(reg, providerToolhive, reg.defaultModel)
-				e.provider = e.remint(operatorDefaultEffortFor(cfg, providerToolhive), defCaps)
-				e.defaultCaps = defCaps
-				reg.entries[providerToolhive] = e
-			}
+			// default model is known — via the SAME shared remintEntry helper
+			// buildProviderRegistry's post-assembly fixup loop and
+			// healDefaultModel use (issue #262 review finding 4: the three
+			// re-mint sites cannot drift on the caps/effort computation).
+			reg.remintEntry(providerToolhive, reg.defaultModel)
 			diag.Log(ctx, port.LevelInfo, "toolhive LLM gateway: default model (auto-selected)",
 				"provider", providerToolhive, "model", reg.defaultModel,
 				"base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL)
