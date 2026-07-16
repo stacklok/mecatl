@@ -53,11 +53,12 @@ type flags struct {
 	timeout time.Duration
 
 	// Engine-build knobs mapped onto app.Config (see appConfig).
-	workspace       string
-	model           string
-	defaultProvider string
-	defaultModel    string
-	useOpenAI       bool
+	workspace              string
+	model                  string
+	defaultProvider        string
+	defaultModel           string
+	defaultProviderFlagSet bool
+	useOpenAI              bool
 	// providerFlags holds the shared provider base-URL flags + credential reads
 	// (cliconfig) — the SAME helper mecated/mecatui use, so mecatequi reads ALL three
 	// keys (OPENAI/OPENROUTER/ANTHROPIC_API_KEY) and registers all three base-URL flags
@@ -206,6 +207,9 @@ func parseFlags(argv []string) (flags, error) {
 		if fl.Name == "reasoning-effort" {
 			f.reasoningEffortFlagSet = true
 		}
+		if fl.Name == "default-provider" {
+			f.defaultProviderFlagSet = true
+		}
 	})
 
 	// Provider credentials are read from the environment by providerFlags.Apply
@@ -325,13 +329,16 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 		Model:           f.model,
 		DefaultProvider: f.defaultProvider,
 		DefaultModel:    f.defaultModel,
-		UseOpenAI:       f.useOpenAI,
-		UseMock:         f.useMock,
-		StoreDir:        f.storeDir,
-		Shell:           f.shell,
-		NoBash:          f.noBash,
-		MaxRunTokens:    f.maxRunTokens,
-		MaxTeamTokens:   f.maxTeamTokens,
+		// defaultProviderFlagSet lets CLI out-rank the operator-global settings.yaml
+		// models.default_provider: key (folded by foldOperatorDefaultProvider in app.Build).
+		DefaultProviderFlagSet: f.defaultProviderFlagSet,
+		UseOpenAI:              f.useOpenAI,
+		UseMock:                f.useMock,
+		StoreDir:               f.storeDir,
+		Shell:                  f.shell,
+		NoBash:                 f.noBash,
+		MaxRunTokens:           f.maxRunTokens,
+		MaxTeamTokens:          f.maxTeamTokens,
 
 		GuardrailsModel:    f.guardrailsModel,
 		GuardrailsDisabled: f.guardrailsOff,

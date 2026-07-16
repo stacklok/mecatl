@@ -150,6 +150,14 @@ type Config struct {
 	DefaultProvider string
 	DefaultModel    string
 
+	// DefaultProviderFlagSet records whether the operator passed an explicit
+	// --default-provider flag. When true, foldOperatorDefaultProvider leaves the
+	// operator-YAML models.default_provider: value alone (CLI out-ranks YAML, mirroring
+	// posture/output-economy/reasoning-effort). Set by the cmd mains alongside
+	// DefaultProvider. The YAML value folds onto DefaultProvider so an operator can
+	// declare "toolhive is my default despite my API key" persistently in settings.yaml.
+	DefaultProviderFlagSet bool
+
 	// OpenRouter (multi-provider Phase 0, S1): the OpenRouter provider rides the
 	// SAME stateless openai adapter (it speaks the Responses API) with the
 	// OpenRouter base URL substituted. OpenRouterKey is the credential (the cmd
@@ -1117,6 +1125,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err := validateToolhiveBaseURL(cfg); err != nil {
 		return nil, err
 	}
+
+	// Operator-YAML models.default_provider (Wave 2b): an operator's settings.yaml
+	// `models.default_provider:` folds onto cfg.DefaultProvider BEFORE the registry is
+	// built so resolveDefaultModel (inside buildProvider) sees it, and BEFORE
+	// validateDefaultModel so the fail-fast gate catches an unknown provider. CLI
+	// --default-provider (DefaultProviderFlagSet) OUT-RANKS the YAML value. The value
+	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override; it
+	// does NOT lower the precedence of key-driven providers. No-op when absent.
+	cfg = foldOperatorDefaultProvider(cfg)
 
 	reg, provider, err := buildProvider(cfg)
 	if err != nil {

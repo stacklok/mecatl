@@ -61,10 +61,13 @@ type config struct {
 	// defaultProvider/defaultModel are the server-configured deployment-wide
 	// default (--default-provider/--default-model), mapped onto
 	// app.Config.DefaultProvider/DefaultModel exactly like mecated's flags.
-	model           string
-	subagentModel   string
-	defaultProvider string
-	defaultModel    string
+	// defaultProviderFlagSet records an explicit --default-provider so CLI out-ranks
+	// the operator-global settings.yaml models.default_provider: key.
+	model                  string
+	subagentModel          string
+	defaultProvider        string
+	defaultModel           string
+	defaultProviderFlagSet bool
 	// modelAliases / modelSlots mirror the mecated flags for the embedded server
 	// (ADR 0030): modelAliases maps a short alias to a concrete id; modelSlots binds
 	// an internal lightweight call (compaction/ask-reviewer/guardrail) or a tier
@@ -368,6 +371,9 @@ func parseFlags(args []string) (config, error) {
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
+		}
+		if f.Name == "default-provider" {
+			cfg.defaultProviderFlagSet = true
 		}
 	})
 

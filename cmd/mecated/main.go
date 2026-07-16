@@ -86,7 +86,11 @@ type config struct {
 	model           string
 	defaultProvider string
 	defaultModel    string
-	useOpenAI       bool
+	// defaultProviderFlagSet is true when --default-provider was passed explicitly
+	// (set after parse via fs.Visit), so composition lets CLI out-rank the
+	// operator-global settings.yaml models.default_provider: key.
+	defaultProviderFlagSet bool
+	useOpenAI              bool
 	// providerFlags holds the shared provider base-URL flags + credential reads
 	// (cliconfig), applied onto app.Config in appConfig so the three mains cannot
 	// drift on which keys/base-urls they wire.
@@ -905,6 +909,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
 		DefaultModel:                  cfg.defaultModel,
+		DefaultProviderFlagSet:        cfg.defaultProviderFlagSet,
 		UseOpenAI:                     cfg.useOpenAI,
 		UseMock:                       cfg.useMock,
 		StoreDir:                      cfg.storeDir,
@@ -1339,6 +1344,9 @@ func parseFlags(argv []string) (config, error) {
 		}
 		if f.Name == "schedule-fire-retention" {
 			cfg.scheduleFireRetentionSet = true
+		}
+		if f.Name == "default-provider" {
+			cfg.defaultProviderFlagSet = true
 		}
 	})
 

@@ -138,6 +138,18 @@ type ModelsSection struct {
 	// project-overridable session default (ADR 0030 Phase 4) — within the operator
 	// allowlist; the operator's own Default is uncapped. Empty = absent.
 	Default string `yaml:"default"`
+	// DefaultProvider is the OPERATOR-TIER deployment-wide default provider id (e.g.
+	// openai, openrouter, anthropic, toolhive). It mirrors the --default-provider flag
+	// (app.Config.DefaultProvider) so an operator can declare "toolhive is my default
+	// despite my API key" persistently in settings.yaml without unsetting the key. It
+	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override — it
+	// does NOT lower the precedence of key-driven providers. Operator-tier only: a
+	// project-tier default_provider: is IGNORED with a WARN (the same operator-only
+	// captureModels discipline as posture/guardrails/allowlist). Validated FAIL-FAST at
+	// Build (validateDefaultModel): an unknown/unavailable provider is a startup error.
+	// Empty = absent (the ladder's preferred default wins). The name pair
+	// (default = model, default_provider = provider) mirrors the wire grammar exactly.
+	DefaultProvider string `yaml:"default_provider"`
 	// Allowlist is the OPERATOR-TIER, non-wideable cap (ADR 0030 Phase 4): the set of
 	// model selectors (alias names and/or concrete ids) a PROJECT-tier models: block
 	// may bind to. An empty/absent allowlist means project models stay WARN-ignored
@@ -231,11 +243,12 @@ func (c *RouterCategory) UnmarshalYAML(node *yaml.Node) error {
 
 func (m *ModelsSection) strictFields() map[string]any {
 	return map[string]any{
-		"slots":     &m.Slots,
-		"aliases":   &m.Aliases,
-		"default":   &m.Default,
-		"allowlist": &m.Allowlist,
-		"router":    &m.Router,
+		"slots":            &m.Slots,
+		"aliases":          &m.Aliases,
+		"default":          &m.Default,
+		"default_provider": &m.DefaultProvider,
+		"allowlist":        &m.Allowlist,
+		"router":           &m.Router,
 	}
 }
 

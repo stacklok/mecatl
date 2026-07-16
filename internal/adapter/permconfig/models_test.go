@@ -192,3 +192,36 @@ models:
 		t.Fatalf("error should name the models subtree; got %v", err)
 	}
 }
+
+// TestModelsDefaultProviderParsed pins that models.default_provider (Wave 2b) parses
+// faithfully from the operator tier and rides the SAME ModelsSection as models.default,
+// exposed via OperatorModelPolicy().DefaultProvider. An unknown key inside models:
+// (e.g. default_providr) is a strict-parse error, so a typo cannot silently disable
+// the operator's default-provider override.
+func TestModelsDefaultProviderParsed(t *testing.T) {
+	const yamlCfg = `
+models:
+  default_provider: toolhive
+`
+	env := envWithExplicit("/etc/mecatl/dp.yaml", yamlCfg)
+	r := newWithEnv(Options{ExplicitFiles: []string{"/etc/mecatl/dp.yaml"}}, env)
+	if r == nil {
+		t.Fatal("resolver should be non-nil with an explicit file")
+	}
+	m := r.OperatorModelPolicy()
+	if m == nil {
+		t.Fatal("operator-tier models must be honoured from the CLI/explicit tier")
+	}
+	if m.DefaultProvider != "toolhive" {
+		t.Fatalf("models.default_provider not parsed faithfully: got %q, want %q", m.DefaultProvider, "toolhive")
+	}
+
+	// A typo'd key inside models: is a strict-parse error (the strictFields guard).
+	const bad = `
+models:
+  default_providr: toolhive
+`
+	if _, err := parseYAML([]byte(bad)); err == nil {
+		t.Fatal("an unknown key (default_providr) inside models: must be a strict parse error")
+	}
+}

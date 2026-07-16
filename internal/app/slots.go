@@ -317,6 +317,42 @@ func foldOperatorModelDefault(cfg Config, cliKeys cliModelKeys) Config {
 	return cfg
 }
 
+// foldOperatorDefaultProvider merges the OPERATOR-TIER `models.default_provider:`
+// YAML scalar (read by the permconfig resolver from the user-global + CLI tiers ONLY —
+// never the project file, which is IGNORED with a WARN by the existing operator-only
+// captureModels discipline) onto cfg.DefaultProvider. A CLI --default-provider
+// (cfg.DefaultProviderFlagSet) OUT-RANKS the YAML value. It is a no-op when no
+// operator-tier models.default_provider: key was configured. Mirrors
+// foldOperatorModelDefault / foldOperatorPosture / foldOperatorOutputEconomy. cfg is
+// taken and returned by value.
+//
+// The value feeds the UNCHANGED preferredDefaultProvider ladder as an explicit
+// operator override — it does NOT lower the precedence of key-driven providers. The
+// ladder is unchanged; this is the operator saying "I want toolhive (or any provider)
+// to be the default despite my key." The existing validateDefaultModel fail-fast gate
+// still fires if the named provider is unavailable. It MUST run in Build BEFORE
+// buildProviderRegistry/resolveDefaultModel (so the registry sees the YAML value) and
+// BEFORE validateDefaultModel (so the fail-fast gate catches an unknown provider).
+func foldOperatorDefaultProvider(cfg Config) Config {
+	if cfg.DefaultProviderFlagSet {
+		return cfg // CLI wins; YAML cannot override an explicit flag.
+	}
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	policy := res.OperatorModelPolicy()
+	if policy == nil {
+		return cfg
+	}
+	yamlProvider := strings.TrimSpace(policy.DefaultProvider)
+	if yamlProvider == "" {
+		return cfg
+	}
+	cfg.DefaultProvider = yamlProvider
+	return cfg
+}
+
 // foldProjectModelBindings merges a TRUSTED project's `.mecatl/settings.yaml` models:
 // bindings (slots/aliases/default) onto cfg, CAPPED by the operator allowlist (ADR 0030
 // Phase 4). It runs in Build ONCE, AFTER foldOperatorModelSlots (so it overrides the

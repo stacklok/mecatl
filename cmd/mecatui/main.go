@@ -357,7 +357,10 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		Model:           cfg.model,
 		DefaultProvider: cfg.defaultProvider,
 		DefaultModel:    cfg.defaultModel,
-		SubagentModel:   cfg.subagentModel,
+		// defaultProviderFlagSet lets CLI out-rank the operator-global settings.yaml
+		// models.default_provider: key (folded by foldOperatorDefaultProvider in app.Build).
+		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
+		SubagentModel:          cfg.subagentModel,
 		// Per-slot models (ADR 0030): the mecated flags mirror, mapped verbatim.
 		// The *cliconfig.KeyValueList flag bindings are converted to the plain
 		// map[string]string app.Config expects (nil for an unset flag).

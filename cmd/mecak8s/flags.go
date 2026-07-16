@@ -66,13 +66,14 @@ const gracefulStopTimeout = 30 * time.Second
 // knobs (listeners, TLS, auth, drain). It deliberately drops mecated's
 // telemetry/metrics/admin surface and its subcommands.
 type config struct {
-	grpcAddr        string
-	httpAddr        string
-	workspace       string
-	model           string
-	defaultProvider string
-	defaultModel    string
-	useOpenAI       bool
+	grpcAddr               string
+	httpAddr               string
+	workspace              string
+	model                  string
+	defaultProvider        string
+	defaultModel           string
+	defaultProviderFlagSet bool
+	useOpenAI              bool
 	// providerFlags holds the shared provider base-URL flags + credential reads
 	// (cliconfig), applied onto app.Config in appConfig so the mains cannot drift
 	// on which keys/base-urls they wire.
@@ -343,6 +344,9 @@ func parseFlags(argv []string) (config, error) {
 		if fl.Name == "schedule-fire-retention" {
 			cfg.scheduleFireRetentionSet = true
 		}
+		if fl.Name == "default-provider" {
+			cfg.defaultProviderFlagSet = true
+		}
 	})
 
 	// Default the schedule-fire retention to 7d when scheduling is ON and the
@@ -388,6 +392,7 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
 		DefaultModel:                  cfg.defaultModel,
+		DefaultProviderFlagSet:        cfg.defaultProviderFlagSet,
 		UseOpenAI:                     cfg.useOpenAI,
 		UseMock:                       cfg.useMock,
 		Shell:                         cfg.shell,

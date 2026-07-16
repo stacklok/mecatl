@@ -547,3 +547,55 @@ func TestCanonicalAllowlistFailClosedEntry(t *testing.T) {
 		t.Fatalf("an unresolvable bare token must NOT widen the cap; set = %v", set)
 	}
 }
+
+// --- Wave 2b: operator-YAML models.default_provider fold ---
+
+// opDefaultProviderYAML is an operator-tier models: block carrying default_provider
+// (the --default-provider YAML twin) so foldOperatorDefaultProvider can be exercised
+// against a real permconfig.Resolver (the SAME path Build reads it through).
+const opDefaultProviderYAML = `
+models:
+  default_provider: toolhive
+`
+
+// TestFoldOperatorDefaultProviderCLIWins pins the CLI-wins precedence: when
+// DefaultProviderFlagSet is true the YAML value is NOT read (the explicit flag wins).
+func TestFoldOperatorDefaultProviderCLIWins(t *testing.T) {
+	cfg, _ := projectFoldHarness(t, opDefaultProviderYAML, "", true)
+	cfg.DefaultProvider = "openrouter"
+	cfg.DefaultProviderFlagSet = true
+	got := foldOperatorDefaultProvider(cfg)
+	if got.DefaultProvider != "openrouter" {
+		t.Fatalf("CLI --default-provider must win over the YAML value; got %q, want %q", got.DefaultProvider, "openrouter")
+	}
+}
+
+// TestFoldOperatorDefaultProviderAppliesYAML pins the YAML-applies path: with no
+// explicit flag, the operator-YAML models.default_provider: folds onto
+// cfg.DefaultProvider.
+func TestFoldOperatorDefaultProviderAppliesYAML(t *testing.T) {
+	cfg, _ := projectFoldHarness(t, opDefaultProviderYAML, "", true)
+	got := foldOperatorDefaultProvider(cfg)
+	if got.DefaultProvider != "toolhive" {
+		t.Fatalf("operator-YAML models.default_provider must fold onto cfg.DefaultProvider; got %q, want %q", got.DefaultProvider, "toolhive")
+	}
+}
+
+// TestFoldOperatorDefaultProviderNoOpWhenAbsent pins the no-op: with no
+// models.default_provider key (and no flag), the fold is byte-identical (the
+// zero-value default, "" — the ladder's preferred default wins).
+func TestFoldOperatorDefaultProviderNoOpWhenAbsent(t *testing.T) {
+	cfg, _ := projectFoldHarness(t, opAllowlistYAML, "", true) // no default_provider key
+	got := foldOperatorDefaultProvider(cfg)
+	if got.DefaultProvider != "" {
+		t.Fatalf("with no YAML default_provider and no flag, the fold must be a no-op; got %q, want empty", got.DefaultProvider)
+	}
+}
+
+// TestFoldOperatorDefaultProviderNoResolverNoOp pins the nil-resolver fast path.
+func TestFoldOperatorDefaultProviderNoResolverNoOp(t *testing.T) {
+	got := foldOperatorDefaultProvider(Config{DefaultProvider: "openai"})
+	if got.DefaultProvider != "openai" {
+		t.Fatalf("nil-resolver fold must be a no-op; got %q, want %q", got.DefaultProvider, "openai")
+	}
+}
