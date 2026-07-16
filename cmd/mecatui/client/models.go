@@ -66,6 +66,15 @@ type ProviderStatus struct {
 	// wire field (default_model_auto_selected) and the server-side accessor
 	// (providerRegistry.DefaultModelAutoSelected) verbatim.
 	DefaultModelAutoSelected bool
+	// ModelCount is the count of models this intent-driven provider's last
+	// successful live listing returned. 0 on empty/unreachable/unrecorded.
+	// Named to match the wire field (model_count) verbatim.
+	ModelCount int32
+	// AvailableNotDefault is true ONLY when this intent-driven provider is
+	// registered, reachable (State == "ok"), AND is NOT the active default
+	// provider. Named to match the wire field (available_not_default) verbatim,
+	// per the DefaultModelAutoSelected naming discipline.
+	AvailableNotDefault bool
 }
 
 // ModelsMsg carries a ListModels result for the /models picker. Err is set on
@@ -127,6 +136,8 @@ func mapProviderStatuses(in *mecatlv1.ListModelsResponse) []ProviderStatus {
 			State:                    r.GetState(),
 			Hint:                     r.GetHint(),
 			DefaultModelAutoSelected: r.GetDefaultModelAutoSelected(),
+			ModelCount:               r.GetModelCount(),
+			AvailableNotDefault:      r.GetAvailableNotDefault(),
 		})
 	}
 	return out

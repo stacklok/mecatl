@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -177,5 +178,81 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 	}
 	if rm.ProviderID != providerToolhive {
 		t.Fatalf("post-heal resolved provider = %q, want %q", rm.ProviderID, providerToolhive)
+	}
+}
+
+// TestToolhiveAvailableNotDefault_E2E is the WAVE-1 wire-path e2e (this wave):
+// it drives the FULL composition (app.Build → server.Service → gRPC handler)
+// with a toolhive entry probed-ok via the liveModelHTTPClient offline seam AND a
+// keyed openrouter entry (so openrouter outranks toolhive on the precedence
+// ladder and becomes the default — the precedence ladder UNCHANGED), then
+// asserts the ListModels gRPC handler returns one provider_status row for
+// toolhive with available_not_default==true AND model_count==N (the live
+// listing's length).
+//
+// NOTE: this e2e lives in internal/app (not internal/adapter/server, where the
+// TestGRPCListModelsCarriesProviderStatus sibling lives) because the
+// liveModelHTTPClient + toolhiveConfigPath composition-only test seams are
+// unexported Config fields reachable only from within package app; the server
+// package cannot import app (composition→adapter layering, never the reverse —
+// an import cycle). It drives the SAME gRPC ListModels handler
+// (HarnessServer.ListModels, grpc.go) a real gRPC client hits, which builds the
+// ListModelsResponse from svc.ProviderStatuses() — the snapshot
+// providerStatusProto(reg) populates — so it proves the wire projection
+// end-to-end. The wire SERIALIZATION round-trip (proto marshal/unmarshal of
+// the two new fields) is covered by the server_test companion assertions.
+func TestToolhiveAvailableNotDefault_E2E(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
+
+	built, err := Build(ctx, Config{
+		Workspace: workspace,
+		NoSoul:    true,
+		// toolhive auto-detected + probed-ok offline (2 models in the fixture).
+		ToolhiveLLM:         true,
+		toolhiveConfigPath:  cfgPath,
+		liveModelHTTPClient: toolhiveModelsClient(t, toolhiveFixtureJSON),
+		// A keyed openrouter ⇒ openrouter outranks toolhive and is the default
+		// (the precedence ladder is UNCHANGED by this wave).
+		envDetector: fakeEnv(map[string]string{"OPENROUTER_API_KEY": "sk-or"}),
+		// Mock the openrouter provider so the keyed entry constructs offline.
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("ok"))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	// Drive the REAL gRPC ListModels handler — the wire projection path a gRPC
+	// client hits (it assembles ListModelsResponse from svc.ProviderStatuses()).
+	resp, err := server.NewHarnessServer(built.Service).ListModels(ctx, &mecatlv1.ListModelsRequest{})
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	status := resp.GetProviderStatus()
+	if len(status) != 1 {
+		t.Fatalf("provider_status = %d rows, want 1 (toolhive only — v1 intent-driven-scoped): %+v", len(status), status)
+	}
+	row := status[0]
+	if row.GetProviderId() != providerToolhive {
+		t.Fatalf("provider_status[0].provider_id = %q, want %q", row.GetProviderId(), providerToolhive)
+	}
+	if row.GetState() != statusOK {
+		t.Errorf("provider_status[0].state = %q, want ok", row.GetState())
+	}
+	// available_not_default==true SELF-PROVES toolhive is NOT the default (if it
+	// were, the field would be false) — so the precedence ladder held: the keyed
+	// openrouter outranked the intent-driven toolhive.
+	if !row.GetAvailableNotDefault() {
+		t.Errorf("provider_status[0].available_not_default = false, want true (toolhive ok but a keyed provider is the default)")
+	}
+	if want := int32(2); row.GetModelCount() != want { // toolhiveFixtureJSON has 2 models
+		t.Errorf("provider_status[0].model_count = %d, want %d", row.GetModelCount(), want)
+	}
+	if row.GetDefaultModelAutoSelected() {
+		t.Errorf("provider_status[0].default_model_auto_selected = true, want false (toolhive is NOT the default provider)")
 	}
 }

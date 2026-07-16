@@ -1718,6 +1718,12 @@ message ListModelsRequest {}
 // ProviderStatus is one provider's last live-listing outcome, for client
 // surfacing (issue #262). state is a STRING passthrough (no enum — the
 // EvNoProgress/StopBudget discipline): "ok" | "unreachable" | "unauthorized" | "empty".
+//
+// model_count and available_not_default are scoped to INTENT-DRIVEN providers
+// ONLY (the v1 invariant: a key-driven openrouter/anthropic live-listing blip
+// never grows this list). They are additive (fields 5/6) and carry 0/false for
+// every deployment without an intent-driven provider — byte-identical to before
+// this wave.
 message ProviderStatus {
   string provider_id = 1;
   string state = 2;
@@ -1729,6 +1735,23 @@ message ProviderStatus {
   // vendor-name check) to label the current model "(auto-selected)" honestly
   // for ANY intent-driven provider, present or future.
   bool default_model_auto_selected = 4;
+  // model_count is the count of models this intent-driven provider's last
+  // successful live listing returned (derived from the outcome store's
+  // last-known-good snapshot). 0 on empty/unreachable/unrecorded — so a client
+  // cannot distinguish "0 models" from "never probed" by this field alone
+  // (state disambiguates: state=="empty" with model_count==0 is a genuine
+  // empty list; state=="unreachable" with model_count==0 is a probe failure).
+  int32 model_count = 5;
+  // available_not_default is true ONLY when this intent-driven provider is
+  // registered, reachable (state == "ok"), AND is NOT the active default
+  // provider (a key-driven provider outranks it on the precedence ladder).
+  // Named for the CONDITION (vendor-neutral, matching the
+  // default_model_auto_selected discipline) so a client can surface "the
+  // gateway is available, set a key to use it" for ANY intent-driven provider,
+  // present or future — without a vendor-name check. False whenever the
+  // provider IS the default (so the sole-provider case does not advertise
+  // itself as "available but not default").
+  bool available_not_default = 6;
 }
 
 // ListModelsResponse carries the selectable models across AVAILABLE providers

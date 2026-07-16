@@ -100,11 +100,13 @@ func TestListModelsError(t *testing.T) {
 }
 
 // TestListModelsProviderStatusMapping proves ListModelsResponse.provider_status
-// (issue #262) maps nil-safely to []ProviderStatus.
+// (issue #262) maps nil-safely to []ProviderStatus, and (this wave) that the
+// model_count + available_not_default fields survive the proto→struct mapping.
 func TestListModelsProviderStatusMapping(t *testing.T) {
 	fake := &fakeModelsClient{listResp: &mecatlv1.ListModelsResponse{
 		ProviderStatus: []*mecatlv1.ProviderStatus{
 			{ProviderId: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+			{ProviderId: "toolhive2", State: "ok", Hint: "", ModelCount: 3, AvailableNotDefault: true},
 			nil, // defensive: a nil row must never panic the mapper
 		},
 	}}
@@ -113,11 +115,19 @@ func TestListModelsProviderStatusMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
-	if len(statuses) != 1 {
-		t.Fatalf("statuses = %d, want 1 (the nil row skipped)", len(statuses))
+	if len(statuses) != 2 {
+		t.Fatalf("statuses = %d, want 2 (the nil row skipped)", len(statuses))
 	}
 	if statuses[0].ProviderID != "toolhive" || statuses[0].State != "unreachable" || statuses[0].Hint == "" {
 		t.Fatalf("statuses[0] = %+v", statuses[0])
+	}
+	// The two new fields default to zero/false on a row that doesn't set them.
+	if statuses[0].ModelCount != 0 || statuses[0].AvailableNotDefault {
+		t.Errorf("statuses[0] new fields = count:%d avail:%v, want 0/false (unset on the proto)",
+			statuses[0].ModelCount, statuses[0].AvailableNotDefault)
+	}
+	if statuses[1].ProviderID != "toolhive2" || statuses[1].ModelCount != 3 || !statuses[1].AvailableNotDefault {
+		t.Fatalf("statuses[1] = %+v, want {toolhive2 count:3 avail:true}", statuses[1])
 	}
 }
 

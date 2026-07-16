@@ -12,12 +12,15 @@ import (
 
 func cannedProviderStatus() []*mecatlv1.ProviderStatus {
 	return []*mecatlv1.ProviderStatus{
-		{ProviderId: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`"},
+		{ProviderId: "toolhive", State: "unreachable", Hint: "start it with `thv llm proxy start`", ModelCount: 5, AvailableNotDefault: true},
 	}
 }
 
 // TestGRPCListModelsCarriesProviderStatus proves ListModelsResponse.provider_status
-// (issue #262) is threaded through the gRPC surface alongside models.
+// (issue #262) is threaded through the gRPC surface alongside models, AND (this
+// wave) that the model_count + available_not_default fields survive the wire
+// round-trip (the companion to internal/app's composition e2e, which proves the
+// projection; this proves the SERIALIZATION).
 func TestGRPCListModelsCarriesProviderStatus(t *testing.T) {
 	svc := modelsService(t, cannedModels())
 	svc.SetProviderStatus(cannedProviderStatus())
@@ -34,6 +37,12 @@ func TestGRPCListModelsCarriesProviderStatus(t *testing.T) {
 	}
 	if status[0].GetProviderId() != "toolhive" || status[0].GetState() != "unreachable" || status[0].GetHint() == "" {
 		t.Fatalf("provider_status[0] = %+v", status[0])
+	}
+	if got := status[0].GetModelCount(); got != 5 {
+		t.Errorf("provider_status[0].model_count = %d, want 5 (field did not survive the gRPC round-trip)", got)
+	}
+	if !status[0].GetAvailableNotDefault() {
+		t.Errorf("provider_status[0].available_not_default = false, want true (field did not survive the gRPC round-trip)")
 	}
 }
 

@@ -615,6 +615,104 @@ func TestProviderStatusProto_AutoSelectedBit(t *testing.T) {
 	})
 }
 
+// TestProviderStatusProto_AvailableNotDefault_TrueWhenKeyedProviderIsDefault
+// (this wave) pins available_not_default: when toolhive is registered +
+// probed-ok + openrouter is keyed (so openrouter outranks it on the
+// precedence ladder and becomes default), the toolhive status row carries
+// available_not_default==true AND model_count==N (the live listing's length).
+func TestProviderStatusProto_AvailableNotDefault_TrueWhenKeyedProviderIsDefault(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
+	client := toolhiveModelsClient(t, toolhiveFixtureJSON) // 2 models in the fixture
+	reg, err := buildProviderRegistry(Config{
+		ToolhiveLLM:         true,
+		toolhiveConfigPath:  cfgPath,
+		liveModelHTTPClient: client,
+	}, fakeEnv(map[string]string{"OPENROUTER_API_KEY": "sk-or"})) // keyed ⇒ openrouter is default
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	if reg.Default() != providerOpenRouter {
+		t.Fatalf("Default() = %q, want %q (keyed provider must outrank intent-driven)", reg.Default(), providerOpenRouter)
+	}
+	rows := providerStatusProto(reg)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (toolhive only): %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.GetProviderId() != providerToolhive {
+		t.Fatalf("row provider = %q, want %q", row.GetProviderId(), providerToolhive)
+	}
+	if row.GetState() != statusOK {
+		t.Errorf("state = %q, want ok", row.GetState())
+	}
+	if !row.GetAvailableNotDefault() {
+		t.Errorf("available_not_default = false, want true (toolhive ok but openrouter is default)")
+	}
+	if want := int32(2); row.GetModelCount() != want { // toolhiveFixtureJSON has 2 models
+		t.Errorf("model_count = %d, want %d", row.GetModelCount(), want)
+	}
+	if row.GetDefaultModelAutoSelected() {
+		t.Errorf("default_model_auto_selected = true, want false (toolhive is NOT the default provider)")
+	}
+}
+
+// TestProviderStatusProto_AvailableNotDefault_FalseWhenSoleProviderIsDefault
+// is the inverse pin: toolhive sole + probed-ok ⇒ it IS the default, so
+// available_not_default==false (the condition is "available AND not default",
+// and the sole-provider case is the default by definition).
+func TestProviderStatusProto_AvailableNotDefault_FalseWhenSoleProviderIsDefault(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
+	client := toolhiveModelsClient(t, toolhiveFixtureJSON)
+	reg, err := buildProviderRegistry(Config{
+		ToolhiveLLM:         true,
+		toolhiveConfigPath:  cfgPath,
+		liveModelHTTPClient: client,
+	}, fakeEnv(nil)) // no keyed provider ⇒ toolhive sole ⇒ default
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	if reg.Default() != providerToolhive {
+		t.Fatalf("Default() = %q, want %q (sole provider)", reg.Default(), providerToolhive)
+	}
+	rows := providerStatusProto(reg)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.GetAvailableNotDefault() {
+		t.Errorf("available_not_default = true, want false (toolhive IS the default)")
+	}
+	if want := int32(2); row.GetModelCount() != want {
+		t.Errorf("model_count = %d, want %d", row.GetModelCount(), want)
+	}
+}
+
+// TestProviderStatusProto_AvailableNotDefault_FalseWhenUnreachable pins that a
+// probe-down toolhive (state != "ok") never advertises available_not_default
+// even when it is NOT the default — the condition requires reachability.
+func TestProviderStatusProto_AvailableNotDefault_FalseWhenUnreachable(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
+	reg, err := buildProviderRegistry(Config{
+		ToolhiveLLM:         true,
+		toolhiveConfigPath:  cfgPath,
+		liveModelHTTPClient: offlineHTTPClient(), // probe fails
+	}, fakeEnv(map[string]string{"OPENROUTER_API_KEY": "sk-or"})) // openrouter default
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	rows := providerStatusProto(reg)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.GetAvailableNotDefault() {
+		t.Errorf("available_not_default = true, want false (toolhive unreachable)")
+	}
+	if row.GetModelCount() != 0 {
+		t.Errorf("model_count = %d, want 0 (never listed successfully)", row.GetModelCount())
+	}
+}
+
 // TestProbeToolhive_Unauthorized_WarnsAndClassifies pins the 401/403 ⇒
 // unauthorized classification + the WARN level (always WARN regardless of
 // explicit/detected source).
