@@ -611,6 +611,10 @@ func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 		// model_count is the live listing length (a slice len), clamped to the
 		// int32 wire type's max — a provider never lists >2B models, so the clamp
 		// is purely overflow-safe (mirrors server/mapper.go's clampInt32 discipline).
+		// NOTE: written as the if-assign idiom, not `min(count, math.MaxInt32)`,
+		// because gosec's G115 range analysis tracks this bound but does NOT
+		// propagate it through the `min` builtin (the min form trips G115 on the
+		// int32 cast below). The `math` import stays (math.MaxInt32).
 		count := reg.outcomes.getModelCount(pid)
 		if count > math.MaxInt32 {
 			count = math.MaxInt32

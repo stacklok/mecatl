@@ -1609,12 +1609,16 @@ func TestModelFreeTagRenderedInPicker(t *testing.T) {
 
 // TestProvenanceHintAppendedWhenGatewayAvailable: an openrouter (default) session
 // with a toolhive AvailableNotDefault status appends the muted hint naming the
-// gateway outranked by the default provider key.
+// gateway outranked by the default provider key. The default (openrouter) is
+// key-driven (NOT in intentProviders), so the key-driven guard holds and the hint
+// fires.
 func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	m.models.statuses = gatewayStatuses()
+	// toolhive is intent-driven; openrouter is NOT (key-driven) — the guard's premise.
+	m.models.intentProviders = map[string]bool{"toolhive": true}
 	got := m.modelProvenanceLine()
 	if !strings.Contains(got, "current:") {
 		t.Fatalf("provenance line missing the base current: line, got %q", got)
@@ -1638,6 +1642,27 @@ func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
 	got := m.modelProvenanceLine()
 	if strings.Contains(got, "gateway also available") {
 		t.Errorf("provenance hint should be suppressed when the gateway IS the default, got %q", got)
+	}
+}
+
+// TestProvenanceHintSuppressedWhenDefaultIsIntentDriven: when the default provider is
+// ITSELF intent-driven (in intentProviders), the "outranked by your … key" wording would
+// mislead (an intent-driven default has no key), so the hint is suppressed even though a
+// different gateway row is AvailableNotDefault.
+func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	// A second intent-driven provider is the default; toolhive is AvailableNotDefault.
+	m.effectiveModel = client.ResolvedModel{ProviderID: "other-gateway", ModelID: "some-model"}
+	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: true}}
+	// The default (other-gateway) IS intent-driven — the key-driven guard must suppress.
+	m.models.intentProviders = map[string]bool{"toolhive": true, "other-gateway": true}
+	got := m.modelProvenanceLine()
+	if strings.Contains(got, "gateway also available") {
+		t.Errorf("provenance hint must be suppressed when the default is intent-driven (no key), got %q", got)
+	}
+	if strings.Contains(got, "outranked by your") {
+		t.Errorf("provenance hint must not claim a key for an intent-driven default, got %q", got)
 	}
 }
 

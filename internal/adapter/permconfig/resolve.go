@@ -555,6 +555,18 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 			"file", file, "root", ws.Root())
 	}
 
+	// (1c) A project-tier default_provider: is OPERATOR-TIER ONLY (the SAME operator-only
+	// captureModels discipline as the allowlist/router) — strip + WARN, but keep the rest.
+	// The deployment-wide default provider id is an operator decision (it mirrors the
+	// --default-provider flag); a project must not declare its own default provider.
+	// captureProjectModels never copies DefaultProvider onto acc, so the strip is the WARN
+	// — the field is structurally dropped.
+	if block.DefaultProvider != "" {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models: IGNORING project-tier models.default_provider (operator-tier only — the deployment-wide default provider is an operator decision; set it in your user-global settings.yaml or pass --default-provider)",
+			"file", file, "root", ws.Root())
+	}
+
 	// (2) Opt-in by operator allowlist, then trust-gated.
 	op := r.operatorModels
 	if op == nil || len(op.Allowlist) == 0 {

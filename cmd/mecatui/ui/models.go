@@ -645,9 +645,11 @@ func (m Model) modelProvenanceLine() string {
 	// outranked by the current default provider (key-driven). The gateway name comes
 	// from the status row's ProviderID (vendor-neutral); the default provider is the
 	// live session's provider (m.effectiveModel.ProviderID). Suppressed when the
-	// gateway IS the default (no outranking) or no available_not_default row exists.
+	// gateway IS the default (no outranking), when no available_not_default row exists,
+	// or when the default IS itself intent-driven (intentProviders[eff.ProviderID]) —
+	// an intent-driven default has no key, so "outranked by your … key" would mislead.
 	if row, ok := availableNotDefaultStatus(m.models.statuses); ok {
-		if row.ProviderID != eff.ProviderID {
+		if row.ProviderID != eff.ProviderID && !m.models.intentProviders[eff.ProviderID] {
 			line += " · " + sanitizeTerminal(row.ProviderID) +
 				" gateway also available — outranked by your " + sanitizeTerminal(eff.ProviderID) + " key"
 		}
