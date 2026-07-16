@@ -270,6 +270,32 @@ default, you're done — every session now talks to your organization's gateway
 over the OpenAI-compatible protocol, with the header showing a persistent
 "via ToolHive gateway" segment as a reminder.
 
+### When you have an API key set (the disclosure surface)
+
+If you also have an OpenAI/Anthropic/OpenRouter API key configured, the gateway
+is detected but is NOT your default (the precedence ladder ranks a key-driven
+provider above the intent-driven gateway). mecatl surfaces that the gateway is
+*available* through three disclosure affordances — none of which reroute your
+session:
+
+- **Idle footer notice.** Once per process, when the gateway is detected-and-
+  reachable but not your default, the idle footer-left shows a muted, dismissable
+  notice:
+  `ToolHive gateway available (N models, free) — /models to use it, or --default-provider toolhive`
+  It fires only at idle (never during a run/approval/connect). Dismiss it with any
+  keypress, or by opening `/models`; either dismisses it for the rest of the
+  process (it won't re-fire).
+- **Picker "free" tag.** In the `/models` picker, every model row served by the
+  gateway carries a `free` segment beside the capability tokens (matching the
+  existing `img`/`reason` glyph style) — so you can tell at a glance which rows
+  are gateway-served (no key, no per-token spend) vs. key-driven.
+- **Provenance hint.** The picker's `current:` provenance line appends, when the
+  gateway is available-but-not-default and your session runs on a key-driven
+  default:
+  ` · toolhive gateway also available — outranked by your openai key`
+  (the gateway id and your default-provider id are read from the live status, so
+  the hint is vendor-neutral and accurate for any provider pair.)
+
 ### Flags
 
 | Flag | Default | What it does |
@@ -283,6 +309,28 @@ session: mecatl always knows about the "toolhive" provider once ToolHive's confi
 says it should exist, and a down proxy just means a request-time connection error
 (exactly like any other transient provider outage) instead of a rejected session.
 
+### Making the gateway your default persistently
+
+By default a key-driven provider (OpenAI/Anthropic/OpenRouter) outranks the
+intent-driven gateway on the precedence ladder, so the gateway is available but
+not your default. To make `toolhive` the default **without unsetting your API
+key**, set `models.default_provider` in your operator-tier `settings.yaml`:
+
+```yaml
+# ~/.config/mecatl/settings.yaml  (operator-tier — NOT a project file)
+models:
+  default_provider: toolhive
+```
+
+This is the `--default-provider` flag's YAML twin: a CLI `--default-provider
+toolhive` OUT-RANKS the YAML value (CLI-wins fold), and either feeds the UNCHANGED
+precedence ladder as an explicit operator override — it does not lower the
+precedence of key-driven providers, it declares "I want toolhive to be the default
+despite my key." It is validated fail-fast at startup: an unknown or unavailable
+provider refuses to boot. Operator-tier only (a project-tier `default_provider:`
+is ignored with a WARN). See the
+[configuration reference](configuration-reference.md#models) for the full entry.
+
 ### Troubleshooting
 
 `/models` renders the current state for the `toolhive` provider whenever it isn't
@@ -293,6 +341,7 @@ healthy:
 | `unreachable` | `` toolhive: proxy not reachable — start it with `thv llm proxy start` `` | The proxy isn't running (or its port changed). Start it. |
 | `unauthorized` | `` toolhive: gateway rejected the credential — re-auth with `thv llm setup` `` | Your gateway credential expired or was revoked. Re-run setup. |
 | `empty` | "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`" (replaces the generic empty-picker note) | The proxy is reachable and your credential is valid, but it advertises zero models — this is an ORGANIZATIONAL problem (ask your platform admin), not a local one. |
+| available, not default | idle footer notice "ToolHive gateway available (N models, free) — /models to use it, or `--default-provider toolhive`"; picker rows carry a `free` tag; provenance line names the outranking key | This is expected when a key-driven provider outranks the gateway. To make the gateway your default without unsetting the key, set `models.default_provider: toolhive` in settings.yaml (or pass `--default-provider toolhive`). |
 
 The proxy comes back up? The very next `/models` open (or the background live
 refresh) picks it up automatically, AND — if the gateway was the sole provider and

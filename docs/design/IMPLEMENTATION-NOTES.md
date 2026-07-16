@@ -2747,6 +2747,50 @@ segment slice every other header segment sheds from under width pressure — no
 acknowledgment gate. All render paths are a NO-OP when `statuses` is empty (the
 existing goldens are the proof: unchanged byte-for-byte by this feature).
 
+**Discoverability additions (the disclosure surface).** The common operator posture
+is "I have a key set, so the gateway is detected but not my default" — without
+surfacing that the gateway is *available*, detection is invisible. Four
+disclosure affordances (ADR 0064 D9), all NO-OP for a deployment with no
+intent-driven provider, NONE of which change the precedence ladder (an explicit
+credential still wins; this is disclosure, not routing):
+
+- **Two additive `ProviderStatus` proto fields** (`contracts/proto/mecatl/v1/harness.proto`,
+  fields 5/6), intent-driven-scoped: `model_count` (the last-known-good live-listing
+  length from `liveOutcomeStore.getModelCount` in `internal/app/modellister.go`; 0 on
+  empty/unreachable/unrecorded, `state` disambiguates) and `available_not_default`
+  (true ONLY when an intent-driven provider is registered, `state=="ok"`, AND not the
+  active default — vendor-neutral, matching the `default_model_auto_selected`
+  discipline). Both projected in the SAME `providerStatusProto`
+  (`internal/app/modellister.go`) pass that already projected the first four fields,
+  so count + availability can never drift from the status the picker renders. The
+  client mirror is `cmd/mecatui/client/models.go` (`ProviderStatus.ModelCount`/
+  `ProviderStatus.AvailableNotDefault`).
+- **Idle footer notice** (`cmd/mecatui/ui/model.go` `gatewayNotice`/
+  `gatewayNoticeShown`): fires ONCE per process at idle when an
+  `available_not_default` row lands (`cmd/mecatui/ui/models.go`
+  `availableNotDefaultStatus`), naming the model count + the two remediations
+  (`/models`, `--default-provider toolhive`); dismissed by any idle keypress OR
+  opening `/models`; the latch prevents re-firing; rendered `muted`.
+- **Picker "free" tag** (`cmd/mecatui/ui/models.go` `modelRowText`/
+  `intentProviderSet`): rows served by an intent-driven provider carry a `free`
+  ASCII segment (matching `img`/`reason`); nil map ⇒ no tag (byte-identical
+  no-gateway path).
+- **Provenance hint** (`cmd/mecatui/ui/models.go` `modelProvenanceLine`): appends
+  `" · <gateway-id> gateway also available — outranked by your <default-id> key"`
+  when the session's default is key-driven AND an intent-driven alternative is
+  `available_not_default`; vendor-neutral (reads the status row's `ProviderID`);
+  suppressed when the gateway IS the default.
+
+A FIFTH, operator-config surface: `models.default_provider` (the
+`--default-provider` YAML twin). `foldOperatorDefaultProvider`
+(`internal/app/slots.go`) folds it in `Build` BEFORE
+`buildProviderRegistry`/`validateDefaultModel` (CLI `--default-provider`
+out-ranks the YAML value via `Config.DefaultProviderFlagSet`); operator-tier only
+(a project-tier `default_provider:` is WARN-ignored by the `captureModels`
+discipline). It feeds the UNCHANGED `preferredDefaultProvider` ladder as an
+explicit operator override — it does NOT lower the precedence of key-driven
+providers. See ADR 0064 D9.
+
 ### `openai` tool schemas — NON-STRICT (shared by openai + openrouter)
 
 `openai.buildTools` sends function tools **non-strict** (`FunctionToolParam.Strict` left unset

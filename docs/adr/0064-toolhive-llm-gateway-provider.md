@@ -182,6 +182,78 @@ config** (an operator-supplied remote base URL, not auto-detected). This keeps t
 auto-detection invariant intact for v1 while recording the shape a future off-host mode should take;
 `--toolhive-llm-allow-remote` remains NOT built here.
 
+**D9 — discoverability (the disclosure surface).** The common operator posture is "I have an API key
+set, and the gateway is detected but not my default" — without surfacing that the gateway is *available*
+the detection is invisible. D9 adds four disclosure affordances across the wire + the TUI + settings,
+NONE of which change the precedence ladder (an explicit credential still wins; this is disclosure, not
+routing):
+
+1. **Two additive `ProviderStatus` proto fields** (`contracts/proto/mecatl/v1/harness.proto`,
+   `ProviderStatus`), scoped to INTENT-DRIVEN providers only (the v1 invariant: a key-driven
+   openrouter/anthropic live-listing blip never grows the `provider_status` list):
+   - `model_count` (field 5): the count of models this intent-driven provider's last successful live
+     listing returned, derived from the outcome store's last-known-good snapshot
+     (`internal/app/modellister.go`, `liveOutcomeStore.getModelCount`). 0 on empty/unreachable/
+     unrecorded — a client cannot distinguish "0 models" from "never probed" by this field alone
+     (`state` disambiguates: `state=="empty"` with `model_count==0` is a genuine empty list;
+     `state=="unreachable"` with `model_count==0` is a probe failure).
+   - `available_not_default` (field 6): true ONLY when this intent-driven provider is registered,
+     reachable (`state == "ok"`), AND is NOT the active default provider (a key-driven provider
+     outranks it on the precedence ladder). Vendor-neutral (no `toolhive`-name check), matching the
+     `default_model_auto_selected` discipline — named for the CONDITION so a client can surface
+     "the gateway is available" for ANY intent-driven provider, present or future. False whenever the
+     provider IS the default (so the sole-provider case does not advertise itself as "available but not
+     default").
+   Both are additive (fields 5/6) and carry 0/false for every deployment without an intent-driven
+   provider — byte-identical to before this wave. Composition projects both from the registry's outcome
+   store + the lock-free `Default()` in the SAME `providerStatusProto` pass that already projected
+   the first four fields, so the count and the availability bit can never drift from the status the
+   picker already renders. The client mirror lives at `cmd/mecatui/client/models.go`
+   (`ProviderStatus.ModelCount`/`ProviderStatus.AvailableNotDefault`).
+
+2. **The idle footer notice** (`cmd/mecatui/ui/model.go`, `gatewayNotice`/`gatewayNoticeShown`):
+   when an intent-driven provider is detected-and-reachable but NOT the active default, mecatui fires
+   a dismissable footer-left notice ONCE per process:
+   `ToolHive gateway available (N models, free) — /models to use it, or --default-provider toolhive`
+   It fires only at idle (the `connecting`/`running`/`awaiting-approval` arms own the footer-left in
+   their phases), is dismissed by ANY keypress at idle OR by opening `/models`, and a latch
+   (`gatewayNoticeShown`) prevents re-firing across repeated `ModelsMsg` landings (a re-open, a live
+   refresh). Rendered via the `muted` theme slot so it reads as a notice, not an error. The model count
+   comes from the `available_not_default` row's `ModelCount` (`cmd/mecatui/ui/models.go`,
+   `availableNotDefaultStatus`).
+
+3. **The picker "free" tag** (`cmd/mecatui/ui/models.go`, `modelRowText`/`intentProviderSet`): model
+   rows served by an intent-driven provider carry a `free` ASCII segment in the `/models` picker
+   (matching the existing `img`/`reason` token style, fixed-width after ANSI strip for golden
+   stability). Derived from the `provider_status` set — every row in `provider_status` is
+   intent-driven by the server-side filter, so membership ⇒ the "free" tier. A nil map (no statuses)
+   produces no tag, so the no-gateway render path stays byte-identical.
+
+4. **The provenance hint** (`cmd/mecatui/ui/models.go`, `modelProvenanceLine`): when the session's
+   default provider is key-driven AND an intent-driven alternative is `available_not_default`, the
+   picker's provenance line appends:
+   ` · <gateway-id> gateway also available — outranked by your <default-id> key`
+   Vendor-neutral (the gateway name is the status row's `ProviderID`, never a hardcoded vendor
+   string); suppressed when the gateway IS the default (no outranking) or no `available_not_default`
+   row exists.
+
+The four surfaces are **disclosure-only**: they tell an operator with a key set that the org gateway
+is available and how to make it the default, but they never reroute a session. Making toolhive the
+default persistently is an explicit operator choice via `models.default_provider` (see below) or
+`--default-provider`, both of which feed the UNCHANGED `preferredDefaultProvider` ladder.
+
+**`models.default_provider` (settings.yaml).** A FIFTH, operator-config surface: the
+`models.default_provider` YAML key (the `--default-provider` flag twin) lets an operator declare
+"toolhive is my default despite my API key" persistently in `settings.yaml` without unsetting the key.
+It is folded by `foldOperatorDefaultProvider` (`internal/app/slots.go`) in `Build` BEFORE
+`buildProviderRegistry`/`validateDefaultModel` so the registry sees the YAML value and the fail-fast
+gate catches an unknown provider; a CLI `--default-provider` OUT-RANKS the YAML value (the CLI-wins
+fold, `Config.DefaultProviderFlagSet`). Operator-tier only (a project-tier `default_provider:` is
+ignored with a WARN, the existing `captureModels` discipline); the name pair
+(`default = model`, `default_provider = provider`) mirrors the wire grammar's `provider_id`/`model_id`
+split exactly. It feeds the UNCHANGED ladder as an explicit override — it does NOT lower the
+precedence of key-driven providers.
+
 ## Consequences
 
 **Easier:** a ToolHive user gets a working coding-agent session with zero configuration — no key, no
