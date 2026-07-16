@@ -9,6 +9,8 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 `prompt`, `port`, `team`, `agent`); their committed API snapshots live in
 [`engine/api/`](./api/).
 
+## [Unreleased]
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
@@ -23,7 +25,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
   (#213)
 
-## [Unreleased]
+## [0.5.0] - 2026-07-16
 
 ### Added
 

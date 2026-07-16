@@ -44,7 +44,7 @@
 # Inside a workflow called as `uses: owner/repo/.github/workflows/X.yml@ref`, a
 # `uses: ./.github/actions/Y` would resolve to the CALLER's checkout, NOT mecatl's — so the
 # three sibling actions below are referenced by FULL path
-# `stacklok/mecatl/.github/actions/<name>@v0.0.13`. GitHub AUTO-FETCHES a `uses:` action from
+# `stacklok/mecatl/.github/actions/<name>@v0.0.14`. GitHub AUTO-FETCHES a `uses:` action from
 # mecatl at that ref (no consumer vendoring, no mecatl checkout in the consumer). Expressions
 # are ILLEGAL in `uses:`, so the ref is a HARDCODED literal tag.
 #
@@ -333,7 +333,7 @@ jobs:
       # to the caller's checkout, not mecatl's, so this must be the @v0.0.4-pinned full path.
       - name: Extract prompt
         id: prompt
-        uses: stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v0.0.13
+        uses: stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v0.0.14
         with:
           out-file: ${{ runner.temp }}/prompt.txt
 
@@ -343,7 +343,7 @@ jobs:
       # sibling-action ref, @v0.0.4-pinned.
       - name: mecatequi
         id: mecatequi
-        uses: stacklok/mecatl/.github/actions/mecatequi@v0.0.13
+        uses: stacklok/mecatl/.github/actions/mecatequi@v0.0.14
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
@@ -475,7 +475,7 @@ jobs:
       # the step above (a job-scoped write, the only delivery that reaches a composite's
       # internal step). FULL-PATH sibling-action ref, @v0.0.4.
       - name: Publish
-        uses: stacklok/mecatl/.github/actions/mecatequi-publish@v0.0.13
+        uses: stacklok/mecatl/.github/actions/mecatequi-publish@v0.0.14
         with:
           issue-number: ${{ github.event.issue.number }}
           patch-path: ${{ runner.temp }}/mecatequi-run/mecatequi.patch
