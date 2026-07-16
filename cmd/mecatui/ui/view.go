@@ -292,6 +292,15 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	// unchanged (it sheds like any other low-priority segment under pressure).
 	if m.effectiveModel.ProviderID == "toolhive" {
 		parts = append(parts, m.deps.Theme.Style("muted").Render("via ToolHive gateway"))
+	} else if row, ok := availableNotDefaultStatus(m.models.statuses); ok {
+		// Sibling (N1): when an intent-driven provider is detected-and-reachable
+		// but NOT the active default, show a muted "<provider-id> gateway
+		// available" segment. Mutually exclusive with the active-case branch
+		// above by construction: availableNotDefaultStatus is false when the
+		// gateway IS the default, so the two never both render. Vendor-neutral —
+		// the provider id comes from the status row, not a hardcoded "toolhive".
+		parts = append(parts, m.deps.Theme.Style("muted").
+			Render(sanitizeTerminal(row.ProviderID)+" gateway available"))
 	}
 	if withNext != "" {
 		parts = append(parts, withNext)

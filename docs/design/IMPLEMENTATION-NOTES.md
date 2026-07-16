@@ -2749,7 +2749,7 @@ existing goldens are the proof: unchanged byte-for-byte by this feature).
 
 **Discoverability additions (the disclosure surface).** The common operator posture
 is "I have a key set, so the gateway is detected but not my default" — without
-surfacing that the gateway is *available*, detection is invisible. Four
+surfacing that the gateway is *available*, detection is invisible. Six
 disclosure affordances (ADR 0064 D9), all NO-OP for a deployment with no
 intent-driven provider, NONE of which change the precedence ladder (an explicit
 credential still wins; this is disclosure, not routing):
@@ -2769,10 +2769,30 @@ credential still wins; this is disclosure, not routing):
   `gatewayNoticeShown`): fires ONCE per process at idle when an
   `available_not_default` row lands (`cmd/mecatui/ui/models.go`
   `availableNotDefaultStatus`), naming the model count + the two remediations
-  (`/models`, `--default-provider toolhive`); dismissed by any idle keypress OR
-  opening `/models`; the latch prevents re-firing; rendered `muted`.
-- **Picker "free" tag** (`cmd/mecatui/ui/models.go` `modelRowText`/
-  `intentProviderSet`): rows served by an intent-driven provider carry a `free`
+  (`/models`, `--default-provider toolhive`) in a
+  `"ToolHive gateway available (N models, no API key needed) — /models …"` notice;
+  dismissed by any idle keypress OR opening `/models`; the latch prevents
+  re-firing; rendered `muted`.
+- **Header "available" segment (N1)** (`cmd/mecatui/ui/view.go`
+  `headerIdentityParts`): a muted `"<provider-id> gateway available"` segment
+  renders as the sibling of the existing `"via ToolHive gateway"` segment (the
+  active-case segment), showing when an intent-driven provider is
+  detected-and-reachable but NOT the active default. Mutually exclusive with the
+  active-case branch by construction — `availableNotDefaultStatus` is false when
+  the gateway IS the default, so the two never both render. Vendor-neutral (the
+  provider id comes from the status row); neither segment renders when no gateway
+  is present (byte-identical no-gateway path).
+- **Welcome splash gateway line (N2)** (`cmd/mecatui/ui/help.go`
+  `zeroStateGatewayNote` + `cmd/mecatui/ui/welcome/welcome.go` `GatewayNote`): the
+  first-run splash renders a muted
+  `"<provider-id> gateway detected (no API key needed) — /models"` line when an
+  intent-driven provider is available-but-not-default. The splash renders at
+  `phaseIdle` (post-connect), by which point the first `ModelsMsg` has landed and
+  `m.models.statuses` is populated — so the line catches a new operator at the
+  moment they're most attentive. Vendor-neutral; suppressed when the gateway is
+  the default or absent (byte-identical no-gateway path).
+- **Picker "org" tag** (`cmd/mecatui/ui/models.go` `modelRowText`/
+  `intentProviderSet`): rows served by an intent-driven provider carry an `org`
   ASCII segment (matching `img`/`reason`); nil map ⇒ no tag (byte-identical
   no-gateway path).
 - **Provenance hint** (`cmd/mecatui/ui/models.go` `modelProvenanceLine`): appends
@@ -2781,7 +2801,7 @@ credential still wins; this is disclosure, not routing):
   `available_not_default`; vendor-neutral (reads the status row's `ProviderID`);
   suppressed when the gateway IS the default.
 
-A FIFTH, operator-config surface: `models.default_provider` (the
+A SEVENTH, operator-config surface: `models.default_provider` (the
 `--default-provider` YAML twin). `foldOperatorDefaultProvider`
 (`internal/app/slots.go`) folds it in `Build` BEFORE
 `buildProviderRegistry`/`validateDefaultModel` (CLI `--default-provider`

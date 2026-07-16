@@ -72,8 +72,8 @@ type modelsState struct {
 	statuses []client.ProviderStatus
 	// intentProviders is the set of provider ids that appear in statuses —
 	// every row in provider_status is intent-driven by the providerStatusProto
-	// filter, so membership ⇒ intent-driven (the "free" tier). A model row
-	// whose ProviderID is in this set carries a "free" segment. nil when there
+	// filter, so membership ⇒ intent-driven (the "org" tier). A model row
+	// whose ProviderID is in this set carries a "org" segment. nil when there
 	// are no statuses (byte-identical to the pre-feature render path).
 	intentProviders map[string]bool
 }
@@ -495,7 +495,7 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.models.statuses = msg.Statuses
 		// Derive the intent-driven provider set (every row in provider_status is
 		// intent-driven by the providerStatusProto filter) — membership ⇒ the
-		// "free" tier glyph on a model row. nil when there are no statuses, so the
+		// "org" tier glyph on a model row. nil when there are no statuses, so the
 		// no-gateway render path stays byte-identical.
 		m.models.intentProviders = intentProviderSet(msg.Statuses)
 		// Derive the filtered slice (+ clamp the cursor) from the current filter
@@ -511,7 +511,7 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if row, ok := availableNotDefaultStatus(msg.Statuses); ok {
 				m.gatewayNotice = "ToolHive gateway available (" +
 					strconv.Itoa(int(row.ModelCount)) +
-					" models, free) — /models to use it, or --default-provider toolhive"
+					" models, no API key needed) — /models to use it, or --default-provider toolhive"
 				m.gatewayNoticeShown = true
 			}
 		}
@@ -700,7 +700,7 @@ func statusAutoSelected(statuses []client.ProviderStatus, providerID string) boo
 
 // intentProviderSet builds the set of provider ids that appear in statuses —
 // every row in provider_status is intent-driven by the providerStatusProto
-// filter, so membership ⇒ intent-driven (the "free" tier). Returns nil for an
+// filter, so membership ⇒ intent-driven (the "org" tier). Returns nil for an
 // empty slice so the no-gateway render path stays byte-identical (a nil map
 // reads as "not present" for every key).
 func intentProviderSet(statuses []client.ProviderStatus) map[string]bool {
@@ -985,7 +985,7 @@ func modelsPositionLabel(start, end, total int) string {
 //
 // intentProviders is the set of provider ids that appear in provider_status (every
 // such row is intent-driven by the providerStatusProto filter); a model row whose
-// ProviderID is in it carries a "free" segment (Proposal 2 — ASCII, 4 chars, matching
+// ProviderID is in it carries a "org" segment (Proposal 2 — ASCII, 3 chars, matching
 // the img/reason token style; fixed-width after ANSI strip per the golden-stability
 // comment). nil ⇒ no row carries it (the no-gateway render path stays byte-identical).
 func modelRowText(active, globalDefault client.ModelSelection, intentProviders map[string]bool, mi client.ModelInfo) string {
@@ -1000,7 +1000,7 @@ func modelRowText(active, globalDefault client.ModelSelection, intentProviders m
 	marker := activeMark + defMark + " "
 	segs := modelCapSegments(mi)
 	if intentProviders != nil && intentProviders[mi.ProviderID] {
-		segs = append([]string{"free"}, segs...)
+		segs = append([]string{"org"}, segs...)
 	}
 	line := marker + sanitizeTerminal(mi.ProviderID) + " · " + sanitizeTerminal(modelLabel(mi))
 	if len(segs) > 0 {

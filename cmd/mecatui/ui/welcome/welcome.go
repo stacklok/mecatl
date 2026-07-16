@@ -33,6 +33,11 @@ type Info struct {
 	// memory is off — the single caps-conditional content the card carries.
 	MemoryNote string
 
+	// GatewayNote is the pre-rendered "gateway detected" line (already themed), or
+	// "" when no intent-driven provider is available-but-not-default. It surfaces a
+	// no-API-key alternative at the moment a new operator is most attentive.
+	GatewayNote string
+
 	// FullColor is true on a truecolor terminal: the wordmark then gets the
 	// jade→gold gradient; otherwise it collapses to the single accent colour.
 	FullColor bool
@@ -201,6 +206,9 @@ func splashOptional(th theme.Theme, in Info) []splashSection {
 	}
 	if in.Version != "" {
 		optional = append(optional, splashSection{text: muted.Render("  mecatui " + in.Version), keep: 4})
+	}
+	if in.GatewayNote != "" {
+		optional = append(optional, splashSection{text: in.GatewayNote, keep: 4})
 	}
 	if in.Tagline != "" {
 		optional = append(optional, splashSection{text: th.Style("toolArgs").Render("  " + in.Tagline), keep: 5})

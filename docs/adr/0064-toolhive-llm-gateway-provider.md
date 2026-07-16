@@ -184,7 +184,7 @@ auto-detection invariant intact for v1 while recording the shape a future off-ho
 
 **D9 — discoverability (the disclosure surface).** The common operator posture is "I have an API key
 set, and the gateway is detected but not my default" — without surfacing that the gateway is *available*
-the detection is invisible. D9 adds four disclosure affordances across the wire + the TUI + settings,
+the detection is invisible. D9 adds six disclosure affordances across the wire + the TUI + settings,
 NONE of which change the precedence ladder (an explicit credential still wins; this is disclosure, not
 routing):
 
@@ -214,7 +214,7 @@ routing):
 2. **The idle footer notice** (`cmd/mecatui/ui/model.go`, `gatewayNotice`/`gatewayNoticeShown`):
    when an intent-driven provider is detected-and-reachable but NOT the active default, mecatui fires
    a dismissable footer-left notice ONCE per process:
-   `ToolHive gateway available (N models, free) — /models to use it, or --default-provider toolhive`
+   `ToolHive gateway available (N models, no API key needed) — /models to use it, or --default-provider toolhive`
    It fires only at idle (the `connecting`/`running`/`awaiting-approval` arms own the footer-left in
    their phases), is dismissed by ANY keypress at idle OR by opening `/models`, and a latch
    (`gatewayNoticeShown`) prevents re-firing across repeated `ModelsMsg` landings (a re-open, a live
@@ -222,11 +222,11 @@ routing):
    comes from the `available_not_default` row's `ModelCount` (`cmd/mecatui/ui/models.go`,
    `availableNotDefaultStatus`).
 
-3. **The picker "free" tag** (`cmd/mecatui/ui/models.go`, `modelRowText`/`intentProviderSet`): model
-   rows served by an intent-driven provider carry a `free` ASCII segment in the `/models` picker
+3. **The picker "org" tag** (`cmd/mecatui/ui/models.go`, `modelRowText`/`intentProviderSet`): model
+   rows served by an intent-driven provider carry a `org` ASCII segment in the `/models` picker
    (matching the existing `img`/`reason` token style, fixed-width after ANSI strip for golden
    stability). Derived from the `provider_status` set — every row in `provider_status` is
-   intent-driven by the server-side filter, so membership ⇒ the "free" tier. A nil map (no statuses)
+   intent-driven by the server-side filter, so membership ⇒ the "org" tier. A nil map (no statuses)
    produces no tag, so the no-gateway render path stays byte-identical.
 
 4. **The provenance hint** (`cmd/mecatui/ui/models.go`, `modelProvenanceLine`): when the session's
@@ -237,12 +237,34 @@ routing):
    string); suppressed when the gateway IS the default (no outranking) or no `available_not_default`
    row exists.
 
-The four surfaces are **disclosure-only**: they tell an operator with a key set that the org gateway
+5. **The header "available" segment (N1)** (`cmd/mecatui/ui/view.go`, `headerIdentityParts`): a muted
+   `<provider-id> gateway available` segment renders in the header as a sibling of the existing
+   `via ToolHive gateway` segment (item D6 above, the active-case segment). It shows when an
+   intent-driven provider is detected-and-reachable but NOT the active default
+   (`availableNotDefaultStatus` over `m.models.statuses`). Mutually exclusive with the active-case
+   branch by construction: `availableNotDefaultStatus` is false when the gateway IS the default, so
+   the two segments never both render. Vendor-neutral — the provider id comes from the status row,
+   not a hardcoded `toolhive`, so a future non-ToolHive intent-driven provider reads naturally. A nil
+   `statuses` (no gateway) renders neither segment, keeping the no-gateway path byte-identical.
+
+6. **The welcome splash gateway line (N2)** (`cmd/mecatui/ui/help.go` `zeroStateGatewayNote` +
+   `cmd/mecatui/ui/welcome/welcome.go` `GatewayNote`): the first-run splash renders a muted
+   `<provider-id> gateway detected (no API key needed) — /models` line when an intent-driven
+   provider is available-but-not-default, surfacing a no-API-key alternative at the moment a new
+   operator is most attentive. The splash renders at `phaseIdle` (post-connect), by which point the
+   first `ModelsMsg` has landed and `m.models.statuses` is populated — so the line catches the
+   operator after the gateway is known-reachable but before they've typed a prompt. Vendor-neutral
+   (the provider id comes from the status row); suppressed when the gateway IS the default or when
+   no `available_not_default` row exists (the no-gateway render path stays byte-identical). The
+   pre-rendered line rides the splash's `optional` section list and is shed like any other
+   low-priority section on short terminals.
+
+The six surfaces are **disclosure-only**: they tell an operator with a key set that the org gateway
 is available and how to make it the default, but they never reroute a session. Making toolhive the
 default persistently is an explicit operator choice via `models.default_provider` (see below) or
 `--default-provider`, both of which feed the UNCHANGED `preferredDefaultProvider` ladder.
 
-**`models.default_provider` (settings.yaml).** A FIFTH, operator-config surface: the
+**`models.default_provider` (settings.yaml).** A SEVENTH, operator-config surface: the
 `models.default_provider` YAML key (the `--default-provider` flag twin) lets an operator declare
 "toolhive is my default despite my API key" persistently in `settings.yaml` without unsetting the key.
 It is folded by `foldOperatorDefaultProvider` (`internal/app/slots.go`) in `Build` BEFORE

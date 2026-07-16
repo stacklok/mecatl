@@ -1229,6 +1229,50 @@ func TestHeaderToolhiveSegment(t *testing.T) {
 	_ = m.renderHeader()
 }
 
+// TestHeaderGatewayAvailableSegment (N1): a muted "<provider-id> gateway
+// available" segment renders when an AvailableNotDefault status exists and the
+// active provider is NOT the gateway. It is the mutually-exclusive sibling of
+// the "via ToolHive gateway" segment (active case): when the gateway IS the
+// active default, availableNotDefaultStatus returns false so ONLY the "via"
+// segment renders — never both.
+func TestHeaderGatewayAvailableSegment(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
+
+	// Active provider is openai (key-driven); toolhive is available-but-not-default.
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.models.statuses = gatewayStatuses()
+	header := stripANSIstr(m.renderHeader())
+	if !strings.Contains(header, "toolhive gateway available") {
+		t.Errorf("header should show the 'gateway available' segment when an AvailableNotDefault status exists and the active provider is not the gateway, got:\n%s", header)
+	}
+	// The active-case "via ToolHive gateway" segment must NOT also render.
+	if strings.Contains(header, "via ToolHive gateway") {
+		t.Errorf("the 'via ToolHive gateway' segment must NOT render alongside the 'available' segment, got:\n%s", header)
+	}
+
+	// Now make the gateway the ACTIVE default: AvailableNotDefault flips false, so
+	// the 'available' segment disappears and the 'via' segment renders instead.
+	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
+	header = stripANSIstr(m.renderHeader())
+	if strings.Contains(header, "gateway available") {
+		t.Errorf("the 'available' segment must NOT render when the gateway IS the active default, got:\n%s", header)
+	}
+	if !strings.Contains(header, "via ToolHive gateway") {
+		t.Errorf("the 'via ToolHive gateway' segment should render when the gateway is active, got:\n%s", header)
+	}
+
+	// No statuses (byte-identical pre-feature path): neither segment renders.
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.models.statuses = nil
+	header = stripANSIstr(m.renderHeader())
+	if strings.Contains(header, "gateway available") || strings.Contains(header, "via ToolHive gateway") {
+		t.Errorf("neither gateway segment should render with no statuses, got:\n%s", header)
+	}
+}
+
 // --- goldens ---------------------------------------------------------------
 
 // TestModelsPickerGolden locks the populated, grouped picker with an active marker
@@ -1423,7 +1467,7 @@ func initLeafMsgs(cmd tea.Cmd) []tea.Msg {
 //
 // These tests consume the two new client.ProviderStatus fields (ModelCount,
 // AvailableNotDefault) in three TUI surfaces: the idle footer notice (M1), the
-// picker "free" tag (S1), and the provenance hint (S2). All are client-only.
+// picker "org" tag (S1), and the provenance hint (S2). All are client-only.
 
 // gatewayStatuses is a 2-provider status list for the gateway-available tests:
 // openai is the (keyed) default; toolhive is reachable, has 5 models, and is NOT
@@ -1434,7 +1478,7 @@ func gatewayStatuses() []client.ProviderStatus {
 	}
 }
 
-// gatewayModels is sampleModels plus a toolhive model row so the "free" tag and
+// gatewayModels is sampleModels plus a toolhive model row so the "org" tag and
 // the provenance hint have a toolhive MODEL row to render against.
 func gatewayModels() *fakeModels {
 	return &fakeModels{
@@ -1552,55 +1596,55 @@ func TestGatewayNoticeClearedOnOpenModels(t *testing.T) {
 	}
 }
 
-// --- Proposal 2: picker "free" tag (S1) ----------------------------------------
+// --- Proposal 2: picker "org" tag (S1) ----------------------------------------
 
-// TestModelRowFreeTagForIntentProvider: a model row whose provider is in
-// intentProviders carries a "free" segment; a key-driven provider's row does not.
-func TestModelRowFreeTagForIntentProvider(t *testing.T) {
+// TestModelRowOrgTagForIntentProvider: a model row whose provider is in
+// intentProviders carries a "org" segment; a key-driven provider's row does not.
+func TestModelRowOrgTagForIntentProvider(t *testing.T) {
 	intent := map[string]bool{"toolhive": true}
 	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
 	openrouter := client.ModelInfo{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"}
 
 	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, toolhive)
-	if !strings.Contains(got, "free") {
-		t.Errorf("toolhive row should carry the free tag, got %q", got)
+	if !strings.Contains(got, "org") {
+		t.Errorf("toolhive row should carry the org tag, got %q", got)
 	}
-	// "free" must appear BEFORE the cap segments (it's prepended).
-	if !strings.Contains(got, "toolhive · Claude Sonnet 4.6  free") {
-		t.Errorf("free tag should lead the segment list, got %q", got)
+	// "org" must appear BEFORE the cap segments (it's prepended).
+	if !strings.Contains(got, "toolhive · Claude Sonnet 4.6  org") {
+		t.Errorf("org tag should lead the segment list, got %q", got)
 	}
 
 	got = modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, openrouter)
-	if strings.Contains(got, "free") {
-		t.Errorf("openrouter row must NOT carry the free tag, got %q", got)
+	if strings.Contains(got, "org") {
+		t.Errorf("openrouter row must NOT carry the org tag, got %q", got)
 	}
 }
 
-// TestModelRowFreeTagNilIntentProviders: a nil intentProviders map (no gateway)
-// means no row carries the "free" tag — the byte-identical pre-feature path.
-func TestModelRowFreeTagNilIntentProviders(t *testing.T) {
+// TestModelRowOrgTagNilIntentProviders: a nil intentProviders map (no gateway)
+// means no row carries the "org" tag — the byte-identical pre-feature path.
+func TestModelRowOrgTagNilIntentProviders(t *testing.T) {
 	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
 	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, nil, toolhive)
-	if strings.Contains(got, "free") {
-		t.Errorf("nil intentProviders must not produce a free tag, got %q", got)
+	if strings.Contains(got, "org") {
+		t.Errorf("nil intentProviders must not produce an org tag, got %q", got)
 	}
 }
 
-// TestModelFreeTagRenderedInPicker: a picker fed a toolhive model + a toolhive
-// status renders the "free" tag on the toolhive row, and NOT on the openai row.
-func TestModelFreeTagRenderedInPicker(t *testing.T) {
+// TestModelOrgTagRenderedInPicker: a picker fed a toolhive model + a toolhive
+// status renders the "org" tag on the toolhive row, and NOT on the openai row.
+func TestModelOrgTagRenderedInPicker(t *testing.T) {
 	fm := gatewayModels()
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "toolhive · Claude Sonnet 4.6  free") {
-		t.Errorf("picker should render the free tag on the toolhive row, got:\n%s", out)
+	if !strings.Contains(out, "toolhive · Claude Sonnet 4.6  org") {
+		t.Errorf("picker should render the org tag on the toolhive row, got:\n%s", out)
 	}
-	// The openai row must NOT carry "free".
+	// The openai row must NOT carry "org".
 	for _, ln := range strings.Split(out, "\n") {
-		if strings.Contains(ln, "openai · GPT-5") && strings.Contains(ln, "free") {
-			t.Errorf("openai row must NOT carry the free tag, got %q", ln)
+		if strings.Contains(ln, "openai · GPT-5") && strings.Contains(ln, "org") {
+			t.Errorf("openai row must NOT carry the org tag, got %q", ln)
 		}
 	}
 }

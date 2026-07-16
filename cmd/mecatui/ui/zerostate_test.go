@@ -121,3 +121,40 @@ func TestZeroStateCapsTailoring(t *testing.T) {
 		t.Errorf("bare zero-state should not advertise memory:\n%s", bare)
 	}
 }
+
+// TestZeroStateGatewayNote (N2): the welcome splash renders a
+// "<provider-id> gateway detected (no API key needed) — /models" line when an
+// intent-driven provider is available-but-not-default. The splash renders at
+// phaseIdle (post-connect), by which point the first ModelsMsg has landed and
+// m.models.statuses is populated — so the line catches a new operator at the
+// moment they're most attentive. Suppressed when the gateway is the default
+// (availableNotDefaultStatus returns false) or when no statuses are present.
+func TestZeroStateGatewayNote(t *testing.T) {
+	m := zeroStateModel(t, embeddedCaps())
+	// Deliver a ModelsMsg carrying an AvailableNotDefault status (mirrors a
+	// post-connect live refresh / the connect-time ListModels landing).
+	fm := gatewayModels()
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	if !m.conv.isEmpty() {
+		t.Fatalf("precondition: conversation should still be empty for the zero-state")
+	}
+	plain := stripANSIstr(m.renderZeroState())
+	if !strings.Contains(plain, "toolhive gateway detected (no API key needed) — /models") {
+		t.Errorf("splash should render the gateway-detected line when an AvailableNotDefault status exists, got:\n%s", plain)
+	}
+
+	// Suppressed when the gateway IS the default (AvailableNotDefault false).
+	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
+	plain = stripANSIstr(m.renderZeroState())
+	if strings.Contains(plain, "gateway detected") {
+		t.Errorf("splash should NOT render the gateway line when the gateway is the default, got:\n%s", plain)
+	}
+
+	// Suppressed with no statuses (byte-identical pre-feature path).
+	m.models.statuses = nil
+	plain = stripANSIstr(m.renderZeroState())
+	if strings.Contains(plain, "gateway detected") {
+		t.Errorf("splash should NOT render the gateway line with no statuses, got:\n%s", plain)
+	}
+}

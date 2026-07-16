@@ -210,6 +210,7 @@ func (m Model) renderZeroState() string {
 		Tagline:     "your local agentic coding harness",
 		Affordances: m.zeroStateAffordanceRows(),
 		MemoryNote:  m.zeroStateMemoryNote(),
+		GatewayNote: m.zeroStateGatewayNote(),
 		FullColor:   m.fullColor,
 		Kitty:       m.kittyActive,
 	}
@@ -250,6 +251,23 @@ func (m Model) zeroStateMemoryNote() string {
 	}
 	return m.deps.Theme.Style("muted").Render(
 		"  Cross-session memory is on — I'll remember context across runs.")
+}
+
+// zeroStateGatewayNote is the gateway-detected welcome line (N2): a muted
+// "ToolHive gateway detected (no API key needed) — /models" when an
+// intent-driven provider is available-but-not-default, or "" otherwise. The
+// splash only renders at phaseIdle (post-connect), by which point the first
+// ModelsMsg has landed and m.models.statuses is populated — so this catches a
+// new operator at the moment they're most attentive. Vendor-neutral: the
+// provider id comes from the status row, so a future non-ToolHive
+// intent-driven provider reads naturally without a code change here.
+func (m Model) zeroStateGatewayNote() string {
+	row, ok := availableNotDefaultStatus(m.models.statuses)
+	if !ok {
+		return ""
+	}
+	return m.deps.Theme.Style("muted").Render(
+		"  " + sanitizeTerminal(row.ProviderID) + " gateway detected (no API key needed) — /models")
 }
 
 // zeroStateModelName picks the model id shown on the splash: the picker's active
