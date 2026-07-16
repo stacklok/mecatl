@@ -1565,13 +1565,13 @@ func TestGatewayNoticeRenderedAtIdle(t *testing.T) {
 	m = mm.(Model)
 	m.sel = selection{} // no active selection: notice arm wins over statusMsg/"ready"
 	got := stripANSIstr(m.renderFooter())
-	if !strings.Contains(got, "ToolHive gateway available") {
+	if !strings.Contains(got, "toolhive gateway available") {
 		t.Errorf("idle footer should render the notice, got:\n%s", got)
 	}
 	// At running the spinner arm owns the footer-left; the notice must NOT appear.
 	m.phase = phaseRunning
 	got = stripANSIstr(m.renderFooter())
-	if strings.Contains(got, "ToolHive gateway available") {
+	if strings.Contains(got, "toolhive gateway available") {
 		t.Errorf("running footer must NOT render the notice (the running arm owns the slot), got:\n%s", got)
 	}
 }

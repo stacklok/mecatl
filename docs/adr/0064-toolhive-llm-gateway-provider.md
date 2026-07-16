@@ -214,7 +214,7 @@ routing):
 2. **The idle footer notice** (`cmd/mecatui/ui/model.go`, `gatewayNotice`/`gatewayNoticeShown`):
    when an intent-driven provider is detected-and-reachable but NOT the active default, mecatui fires
    a dismissable footer-left notice ONCE per process:
-   `ToolHive gateway available (N models, no API key needed) — /models to use it, or --default-provider toolhive`
+   `<provider-id> gateway available (N models, no API key needed) — /models to use it, or --default-provider <provider-id>`
    It fires only at idle (the `connecting`/`running`/`awaiting-approval` arms own the footer-left in
    their phases), is dismissed by ANY keypress at idle OR by opening `/models`, and a latch
    (`gatewayNoticeShown`) prevents re-firing across repeated `ModelsMsg` landings (a re-open, a live

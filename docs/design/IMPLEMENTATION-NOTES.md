@@ -2770,7 +2770,7 @@ credential still wins; this is disclosure, not routing):
   `available_not_default` row lands (`cmd/mecatui/ui/models.go`
   `availableNotDefaultStatus`), naming the model count + the two remediations
   (`/models`, `--default-provider toolhive`) in a
-  `"ToolHive gateway available (N models, no API key needed) — /models …"` notice;
+  `"<provider-id> gateway available (N models, no API key needed) — /models …"` notice;
   dismissed by any idle keypress OR opening `/models`; the latch prevents
   re-firing; rendered `muted`.
 - **Header "available" segment (N1)** (`cmd/mecatui/ui/view.go`

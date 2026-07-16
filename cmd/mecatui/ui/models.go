@@ -509,9 +509,10 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// a post-connect ModelsMsg (re-open / live refresh) arms it at idle.
 		if !m.gatewayNoticeShown {
 			if row, ok := availableNotDefaultStatus(msg.Statuses); ok {
-				m.gatewayNotice = "ToolHive gateway available (" +
+				pid := sanitizeTerminal(row.ProviderID)
+				m.gatewayNotice = pid + " gateway available (" +
 					strconv.Itoa(int(row.ModelCount)) +
-					" models, no API key needed) — /models to use it, or --default-provider toolhive"
+					" models, no API key needed) — /models to use it, or --default-provider " + pid
 				m.gatewayNoticeShown = true
 			}
 		}
