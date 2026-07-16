@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"math"
 	"os"
 	"sort"
 	"sync"
@@ -608,23 +607,16 @@ func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 		// provider is reachable (state == "ok") AND is NOT the active default.
 		// reg.Default() is lock-free and immutable post-Build (see Default()).
 		availableNotDefault := entry.intentDriven && status.State == statusOK && pid != reg.Default()
-		// model_count is the live listing length (a slice len), clamped to the
-		// int32 wire type's max — a provider never lists >2B models, so the clamp
-		// is purely overflow-safe (mirrors server/mapper.go's clampInt32 discipline).
-		// NOTE: written as the if-assign idiom, not `min(count, math.MaxInt32)`,
-		// because gosec's G115 range analysis tracks this bound but does NOT
-		// propagate it through the `min` builtin (the min form trips G115 on the
-		// int32 cast below). The `math` import stays (math.MaxInt32).
-		count := reg.outcomes.getModelCount(pid)
-		if count > math.MaxInt32 {
-			count = math.MaxInt32
-		}
+		// model_count is the live listing length (a slice len); a provider
+		// never lists >2B models, so this reuses server.ClampInt32 (the same
+		// overflow-safe int32 narrowing already used 15+ times in that
+		// package) rather than hand-rolling the clamp again here.
 		out = append(out, &mecatlv1.ProviderStatus{
 			ProviderId:               pid,
 			State:                    status.State,
 			Hint:                     status.Hint,
 			DefaultModelAutoSelected: autoSelected,
-			ModelCount:               int32(count),
+			ModelCount:               server.ClampInt32(reg.outcomes.getModelCount(pid)),
 			AvailableNotDefault:      availableNotDefault,
 		})
 	}

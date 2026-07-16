@@ -260,12 +260,12 @@ func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 		Mode:              modeToProto(in.Mode),
 		Limits:            limitsToProto(in.Limits),
 		Mutating:          in.Mutating,
-		MaxFires:          clampInt32(in.MaxFires),
+		MaxFires:          ClampInt32(in.MaxFires),
 		Misfire:           misfireToProto(in.Misfire),
 		Singleton:         in.Singleton,
 		Timezone:          in.Timezone,
 		OneShotRetry:      in.OneShotRetry,
-		OneShotMaxRetries: clampInt32(in.OneShotMaxRetries),
+		OneShotMaxRetries: ClampInt32(in.OneShotMaxRetries),
 		CarryContext:      in.CarryContext,
 	}
 	if in.Trigger.Cron != "" || !in.Trigger.OneShot.IsZero() {
@@ -291,10 +291,10 @@ func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 // scheduleStateToProto maps port.ScheduleState → proto ScheduleState.
 func scheduleStateToProto(in port.ScheduleState) *mecatlv1.ScheduleState {
 	out := &mecatlv1.ScheduleState{
-		FireCount:         clampInt32(in.FireCount),
+		FireCount:         ClampInt32(in.FireCount),
 		Enabled:           in.Enabled,
 		LastFireSessionId: string(in.LastFireSessionID),
-		OneShotRetryCount: clampInt32(in.OneShotRetryCount),
+		OneShotRetryCount: ClampInt32(in.OneShotRetryCount),
 	}
 	if !in.NextFireAt.IsZero() {
 		out.NextFireAt = timestamppb.New(in.NextFireAt)

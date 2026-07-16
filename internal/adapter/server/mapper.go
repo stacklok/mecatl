@@ -79,11 +79,18 @@ func contentToProto(parts []session.Content) []*mecatlv1.Content {
 	return out
 }
 
-// clampInt32 narrows a Go int (counter/index) to the proto int32 wire type,
-// saturating at the int32 bounds rather than wrapping. These values (turn
-// indices, counters) never realistically approach the limit; the clamp exists
-// only so the conversion is provably overflow-safe.
-func clampInt32(v int) int32 {
+// ClampInt32 narrows a Go int (counter/index/count) to the proto int32 wire
+// type, saturating at the int32 bounds rather than wrapping. These values
+// (turn indices, counters, model counts) never realistically approach the
+// limit; the clamp exists only so the conversion is provably overflow-safe.
+// Exported so internal/app (e.g. the ProviderStatus model_count clamp) can
+// reuse it instead of hand-rolling the same gosec G115 dance.
+//
+// Written as the if-assign idiom, not `min(v, math.MaxInt32)`, because
+// gosec's G115 range analysis tracks this bound but does NOT propagate it
+// through the `min` builtin (the min form trips G115 on the int32 cast
+// below).
+func ClampInt32(v int) int32 {
 	switch {
 	case v > math.MaxInt32:
 		return math.MaxInt32
@@ -103,7 +110,7 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	out := &mecatlv1.Event{
 		Type: string(ev.Type),
 		Seq:  ev.Seq,
-		Turn: clampInt32(ev.Turn),
+		Turn: ClampInt32(ev.Turn),
 		Text: ev.Text,
 	}
 	if ev.ToolCall != nil {
@@ -161,8 +168,8 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		ParentCallId:    p.ParentCallID,
 		Kind:            string(p.Kind),
 		Join:            p.Join,
-		BranchCount:     clampInt32(p.BranchCount),
-		BranchIndex:     clampInt32(p.BranchIndex),
+		BranchCount:     ClampInt32(p.BranchCount),
+		BranchIndex:     ClampInt32(p.BranchIndex),
 		ChildId:         p.ChildID,
 		BranchLabel:     p.BranchLabel,
 		Goal:            p.Goal,
@@ -171,13 +178,13 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		Model:           p.Model,
 		ToolName:        p.ToolName,
 		IsError:         p.IsError,
-		ToolCount:       clampInt32(p.ToolCount),
+		ToolCount:       ClampInt32(p.ToolCount),
 		Failed:          p.Failed,
 		Workspace:       p.Workspace,
 		Stop:            string(p.Stop),
 		Usage:           toProtoUsage(p.Usage),
 		DurationMs:      p.DurationMs,
-		Winner:          clampInt32(p.Winner),
+		Winner:          ClampInt32(p.Winner),
 		WinnerWorkspace: p.WinnerWorkspace,
 	}
 }
@@ -318,7 +325,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 		ToolName:        p.ToolName,
 		Detail:          p.Detail,
 		IsError:         p.IsError,
-		Rounds:          clampInt32(p.Rounds),
+		Rounds:          ClampInt32(p.Rounds),
 		Stop:            string(p.Stop),
 		Usage:           toProtoUsage(p.Usage),
 		ContextUsed:     p.ContextUsed,
@@ -349,7 +356,7 @@ func toProtoTeamOutcome(o agent.TeamOutcome) *mecatlv1.TeamOutcome {
 		findings = append(findings, &mecatlv1.TeamFinding{Member: f.Member, Body: f.Body})
 	}
 	return &mecatlv1.TeamOutcome{
-		Rounds:          clampInt32(o.Rounds),
+		Rounds:          ClampInt32(o.Rounds),
 		Quiescent:       o.Quiescent,
 		BudgetExhausted: o.BudgetExhausted,
 		Stop:            string(agent.TeamStop(o)),
@@ -408,7 +415,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		Model:          p.Model,
 		ToolName:       p.ToolName,
 		IsError:        p.IsError,
-		ToolCount:      clampInt32(p.ToolCount),
+		ToolCount:      ClampInt32(p.ToolCount),
 		Usage:          toProtoUsage(p.Usage),
 		Stop:           string(p.Stop),
 		DurationMs:     p.DurationMs,
@@ -651,8 +658,8 @@ func toProtoSession(s *session.Session, rm ResolvedModel) *mecatlv1.Session {
 		Mode:          modeToProto(s.Mode),
 		Workspace:     s.Workspace,
 		Limits:        limitsToProto(s.Limits),
-		Turns:         clampInt32(s.Counters.Turns),
-		ToolCalls:     clampInt32(s.Counters.ToolCalls),
+		Turns:         ClampInt32(s.Counters.Turns),
+		ToolCalls:     ClampInt32(s.Counters.ToolCalls),
 		CreatedAtUnix: s.CreatedAt.Unix(),
 		ResolvedModel: resolvedModelToProto(rm),
 		Title:         s.Title,
@@ -679,9 +686,9 @@ func resolvedModelToProto(rm ResolvedModel) *mecatlv1.ResolvedModel {
 // limitsToProto maps session.Limits to the proto Limits message.
 func limitsToProto(l session.Limits) *mecatlv1.Limits {
 	return &mecatlv1.Limits{
-		MaxTurns:               clampInt32(l.MaxTurns),
-		MaxToolCalls:           clampInt32(l.MaxToolCalls),
-		MaxConsecutiveFailures: clampInt32(l.MaxConsecutiveFailures),
+		MaxTurns:               ClampInt32(l.MaxTurns),
+		MaxToolCalls:           ClampInt32(l.MaxToolCalls),
+		MaxConsecutiveFailures: ClampInt32(l.MaxConsecutiveFailures),
 	}
 }
 
@@ -846,7 +853,7 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		SessionId:      s.SessionID,
 		ModifiedAtUnix: s.ModifiedAtUnix,
 		State:          s.State,
-		Turns:          clampInt32(s.Turns),
+		Turns:          ClampInt32(s.Turns),
 		ModelId:        s.ModelID,
 		CreatedAtUnix:  s.CreatedAtUnix,
 		Title:          s.Title,
