@@ -70,6 +70,12 @@ type modelsState struct {
 	// for every deployment without an intent-driven provider — the render
 	// path is then byte-identical to before this feature.
 	statuses []client.ProviderStatus
+	// intentProviders is the set of provider ids that appear in statuses —
+	// every row in provider_status is intent-driven by the providerStatusProto
+	// filter, so membership ⇒ intent-driven (the "free" tier). A model row
+	// whose ProviderID is in this set carries a "free" segment. nil when there
+	// are no statuses (byte-identical to the pre-feature render path).
+	intentProviders map[string]bool
 }
 
 // modelsConfirmState is the modelsConfirm overlay's data: the candidate model the
@@ -88,6 +94,9 @@ func (m Model) openModels() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Models == nil {
 		return m, nil
 	}
+	// Opening the picker is the operator acting on the gateway notice (Proposal 1):
+	// dismiss it so the footer-left reverts to the status/ready line on close.
+	m.gatewayNotice = ""
 	m.ta.Blur() // overlay owns the keyboard while open
 	m.models.view = modelsPanel
 	m.models.loading = true
@@ -471,6 +480,7 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			// is dishonest: this error may be a transient RPC failure that has
 			// nothing to do with that provider (review finding 5).
 			m.models.statuses = nil
+			m.models.intentProviders = nil
 			// A connect-time ListModels error must NOT strand the UI at "connecting…":
 			// proceed to create with the seeded (unreconciled) selection. The picker
 			// still surfaces the error when opened. This is rare (the lister is the
@@ -483,10 +493,28 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.models.err = nil
 		m.models.models = msg.Models
 		m.models.statuses = msg.Statuses
+		// Derive the intent-driven provider set (every row in provider_status is
+		// intent-driven by the providerStatusProto filter) — membership ⇒ the
+		// "free" tier glyph on a model row. nil when there are no statuses, so the
+		// no-gateway render path stays byte-identical.
+		m.models.intentProviders = intentProviderSet(msg.Statuses)
 		// Derive the filtered slice (+ clamp the cursor) from the current filter
 		// value; on a fresh open the filter is empty, so filtered == models.
 		m = m.syncModelsFilter()
 		m = m.reconcileSelection()
+		// Idle footer notice (Proposal 1): when an intent-driven provider is
+		// detected-and-reachable but NOT the active default, fire a dismissable
+		// notice ONCE per process. At connect (phaseConnecting) the footer owns the
+		// "connecting…" line, so the notice is only armed for the idle phase here;
+		// a post-connect ModelsMsg (re-open / live refresh) arms it at idle.
+		if !m.gatewayNoticeShown {
+			if row, ok := availableNotDefaultStatus(msg.Statuses); ok {
+				m.gatewayNotice = "ToolHive gateway available (" +
+					strconv.Itoa(int(row.ModelCount)) +
+					" models, free) — /models to use it, or --default-provider toolhive"
+				m.gatewayNoticeShown = true
+			}
+		}
 		if m.phase == phaseConnecting {
 			// Reconcile done; now create the session with the validated selection.
 			return m, m.createSessionCmd(), true
@@ -600,13 +628,31 @@ func renderModelsConfirm(th theme.Theme, c modelsConfirmState) string {
 //   - workspace default — it equals the per-workspace state-file entry loaded at launch.
 //   - global default — it equals the global default block.
 //   - server default — none of the above matched (the server's own default).
+//
+// Provenance hint (Proposal 3): when an intent-driven provider is
+// available_not_default AND the current session's default provider is key-driven,
+// a muted hint is appended naming the gateway (vendor-neutral, from the status row's
+// ProviderID) outranked by the session's default provider. This fires ONLY when the
+// outranking condition holds, so a toolhive-default session shows nothing.
 func (m Model) modelProvenanceLine() string {
 	eff := client.ModelSelection{ProviderID: m.effectiveModel.ProviderID, ModelID: m.effectiveModel.ModelID}
 	if eff.ModelID == "" {
 		return ""
 	}
 	label := m.liveModelLabel()
-	return "current: " + sanitizeTerminal(label) + " (" + m.modelProvenance(eff) + ")"
+	line := "current: " + sanitizeTerminal(label) + " (" + m.modelProvenance(eff) + ")"
+	// Provenance hint (Proposal 3): an available intent-driven alternative is
+	// outranked by the current default provider (key-driven). The gateway name comes
+	// from the status row's ProviderID (vendor-neutral); the default provider is the
+	// live session's provider (m.effectiveModel.ProviderID). Suppressed when the
+	// gateway IS the default (no outranking) or no available_not_default row exists.
+	if row, ok := availableNotDefaultStatus(m.models.statuses); ok {
+		if row.ProviderID != eff.ProviderID {
+			line += " · " + sanitizeTerminal(row.ProviderID) +
+				" gateway also available — outranked by your " + sanitizeTerminal(eff.ProviderID) + " key"
+		}
+	}
+	return line
 }
 
 // modelProvenance returns the best-effort provenance word for the effective
@@ -648,6 +694,36 @@ func statusAutoSelected(statuses []client.ProviderStatus, providerID string) boo
 		}
 	}
 	return false
+}
+
+// intentProviderSet builds the set of provider ids that appear in statuses —
+// every row in provider_status is intent-driven by the providerStatusProto
+// filter, so membership ⇒ intent-driven (the "free" tier). Returns nil for an
+// empty slice so the no-gateway render path stays byte-identical (a nil map
+// reads as "not present" for every key).
+func intentProviderSet(statuses []client.ProviderStatus) map[string]bool {
+	if len(statuses) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(statuses))
+	for _, s := range statuses {
+		out[s.ProviderID] = true
+	}
+	return out
+}
+
+// availableNotDefaultStatus returns the FIRST status row with
+// AvailableNotDefault==true (a reachable intent-driven provider that is NOT the
+// active default) — the trigger for the idle footer notice + the provenance hint.
+// ok is false when no such row exists (no gateway, gateway unreachable, or the
+// gateway IS the default — all of which correctly suppress both surfaces).
+func availableNotDefaultStatus(statuses []client.ProviderStatus) (client.ProviderStatus, bool) {
+	for _, s := range statuses {
+		if s.AvailableNotDefault {
+			return s, true
+		}
+	}
+	return client.ProviderStatus{}, false
 }
 
 // modelsRowBudgetFor converts an available card height into the number of model
@@ -854,7 +930,7 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 		start, end := scrollWindow(st.cursor, len(st.filtered), rowBudget)
 		for i := start; i < end; i++ {
 			mi := st.filtered[i]
-			b.WriteString(renderRow(th, modelRowText(st.active, st.globalDefault, mi), i == st.cursor) + "\n")
+			b.WriteString(renderRow(th, modelRowText(st.active, st.globalDefault, st.intentProviders, mi), i == st.cursor) + "\n")
 		}
 	}
 
@@ -904,7 +980,13 @@ func modelsPositionLabel(start, end, total int) string {
 // regardless of which markers a row carries: cell 1 is "●" on the ACTIVE/pending
 // selection (else " "), cell 2 is "★" on the GLOBAL-DEFAULT row (else " "). A row
 // that is both pending AND the global default shows "●★".
-func modelRowText(active, globalDefault client.ModelSelection, mi client.ModelInfo) string {
+//
+// intentProviders is the set of provider ids that appear in provider_status (every
+// such row is intent-driven by the providerStatusProto filter); a model row whose
+// ProviderID is in it carries a "free" segment (Proposal 2 — ASCII, 4 chars, matching
+// the img/reason token style; fixed-width after ANSI strip per the golden-stability
+// comment). nil ⇒ no row carries it (the no-gateway render path stays byte-identical).
+func modelRowText(active, globalDefault client.ModelSelection, intentProviders map[string]bool, mi client.ModelInfo) string {
 	activeMark := " "
 	if active.Matches(mi) {
 		activeMark = "●"
@@ -915,6 +997,9 @@ func modelRowText(active, globalDefault client.ModelSelection, mi client.ModelIn
 	}
 	marker := activeMark + defMark + " "
 	segs := modelCapSegments(mi)
+	if intentProviders != nil && intentProviders[mi.ProviderID] {
+		segs = append([]string{"free"}, segs...)
+	}
 	line := marker + sanitizeTerminal(mi.ProviderID) + " · " + sanitizeTerminal(modelLabel(mi))
 	if len(segs) > 0 {
 		line += "  " + strings.Join(segs, " ")

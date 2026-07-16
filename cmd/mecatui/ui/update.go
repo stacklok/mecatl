@@ -966,6 +966,16 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Any keypress at idle dismisses the once-per-process gateway notice (Proposal 1)
+	// — the operator has seen it and is now doing something. gatewayNoticeShown stays
+	// latched so it never re-fires this process. Placed in the top-level key handler
+	// (gated on idle) so every idle key clears it before per-phase routing; at other
+	// phases the notice is not rendered (the running/approval/connecting arms own the
+	// footer-left), so clearing it is unnecessary there.
+	if m.phase == phaseIdle && m.gatewayNotice != "" {
+		m.gatewayNotice = ""
+	}
+
 	// esc clears an ACTIVE text selection FIRST — before every other esc meaning
 	// (cancel run / close overlay / clear input/queue). This consumes the key ONLY
 	// when a selection is active; with no selection it falls through untouched, so

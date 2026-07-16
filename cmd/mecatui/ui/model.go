@@ -548,6 +548,17 @@ type Model struct {
 	// geometry is undisturbed (matching the old in-place highlight). Empty when no
 	// selection is active.
 	selBase string
+
+	// gatewayNotice is the rendered idle footer-left notice fired ONCE per process
+	// when an intent-driven provider (the ToolHive LLM gateway) is detected-and-
+	// reachable but NOT the active default. Empty = not shown. Dismissed by any
+	// keypress at idle or by opening /models. Rendered via the "muted" theme slot so
+	// it reads as a notice, not an error. See updateModelsMsg (the latch site).
+	gatewayNotice string
+	// gatewayNoticeShown latches true once the notice has fired, so it fires at most
+	// ONCE per process even across repeated ModelsMsg landings (a re-open, a live
+	// refresh). Survives the dismissal of gatewayNotice (which only clears the text).
+	gatewayNoticeShown bool
 }
 
 // New builds the root model from deps. It wires the widgets but does not connect;

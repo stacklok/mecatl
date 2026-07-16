@@ -1418,3 +1418,253 @@ func initLeafMsgs(cmd tea.Cmd) []tea.Msg {
 	walk(cmd)
 	return out
 }
+
+// --- Wave 3: gateway-available TUI surfaces (Proposals 1–3) -------------------
+//
+// These tests consume the two new client.ProviderStatus fields (ModelCount,
+// AvailableNotDefault) in three TUI surfaces: the idle footer notice (M1), the
+// picker "free" tag (S1), and the provenance hint (S2). All are client-only.
+
+// gatewayStatuses is a 2-provider status list for the gateway-available tests:
+// openai is the (keyed) default; toolhive is reachable, has 5 models, and is NOT
+// the default (AvailableNotDefault==true) — the trigger for all three surfaces.
+func gatewayStatuses() []client.ProviderStatus {
+	return []client.ProviderStatus{
+		{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: true},
+	}
+}
+
+// gatewayModels is sampleModels plus a toolhive model row so the "free" tag and
+// the provenance hint have a toolhive MODEL row to render against.
+func gatewayModels() *fakeModels {
+	return &fakeModels{
+		models: []client.ModelInfo{
+			{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Image: true, Reasoning: true, ContextLimit: 200000},
+			{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6", Image: true, Reasoning: true, ContextLimit: 200000},
+		},
+		statuses: gatewayStatuses(),
+	}
+}
+
+// TestGatewayNoticeFiresOnce: a ModelsMsg carrying an AvailableNotDefault status
+// sets gatewayNotice; a second ModelsMsg does NOT re-fire (the latch holds).
+func TestGatewayNoticeFiresOnce(t *testing.T) {
+	fm := gatewayModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	// newModelsModel is idle + already has the effective model; deliver a ModelsMsg
+	// with the gateway status (mirrors a post-connect live refresh / re-open).
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	if m.gatewayNotice == "" {
+		t.Fatalf("gatewayNotice should be set after an AvailableNotDefault ModelsMsg, got empty")
+	}
+	if !m.gatewayNoticeShown {
+		t.Fatalf("gatewayNoticeShown should latch true after firing")
+	}
+	if !strings.Contains(m.gatewayNotice, "5 models") {
+		t.Errorf("gatewayNotice should name the model count, got %q", m.gatewayNotice)
+	}
+	first := m.gatewayNotice
+
+	// A second ModelsMsg must NOT re-fire (the latch holds; the text is unchanged).
+	mm, _, _ = m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	if m.gatewayNotice != first {
+		t.Errorf("second ModelsMsg should not re-fire the notice, got %q want %q", m.gatewayNotice, first)
+	}
+}
+
+// TestGatewayNoticeNotFiredWhenNoAvailableNotDefault: a ModelsMsg with NO
+// available_not_default row (gateway is the default, or unreachable, or absent)
+// leaves gatewayNotice empty and the latch unset.
+func TestGatewayNoticeNotFiredWhenNoAvailableNotDefault(t *testing.T) {
+	fm := sampleModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models})
+	m = mm.(Model)
+	if m.gatewayNotice != "" {
+		t.Errorf("gatewayNotice should be empty with no available_not_default row, got %q", m.gatewayNotice)
+	}
+	if m.gatewayNoticeShown {
+		t.Errorf("gatewayNoticeShown should be false when the notice never fired")
+	}
+}
+
+// TestGatewayNoticeClearedOnKeypress: any keypress at idle clears the notice text
+// (the latch stays true so it never re-fires).
+func TestGatewayNoticeClearedOnKeypress(t *testing.T) {
+	fm := gatewayModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	if m.gatewayNotice == "" {
+		t.Fatalf("precondition: notice should be set")
+	}
+	// Drive a real idle key through the top-level Update (onKey → onIdleKey).
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m = updated.(Model)
+	if m.gatewayNotice != "" {
+		t.Errorf("a keypress at idle should clear gatewayNotice, got %q", m.gatewayNotice)
+	}
+	if !m.gatewayNoticeShown {
+		t.Errorf("gatewayNoticeShown should stay latched after dismissal")
+	}
+}
+
+// TestGatewayNoticeRenderedAtIdle: the footer renders the notice at idle; at running
+// the running arm owns the footer-left and the notice is NOT shown (even if it were
+// still set, which it is here for the assertion).
+func TestGatewayNoticeRenderedAtIdle(t *testing.T) {
+	fm := gatewayModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	m.sel = selection{} // no active selection: notice arm wins over statusMsg/"ready"
+	got := stripANSIstr(m.renderFooter())
+	if !strings.Contains(got, "ToolHive gateway available") {
+		t.Errorf("idle footer should render the notice, got:\n%s", got)
+	}
+	// At running the spinner arm owns the footer-left; the notice must NOT appear.
+	m.phase = phaseRunning
+	got = stripANSIstr(m.renderFooter())
+	if strings.Contains(got, "ToolHive gateway available") {
+		t.Errorf("running footer must NOT render the notice (the running arm owns the slot), got:\n%s", got)
+	}
+}
+
+// TestGatewayNoticeClearedOnOpenModels: opening the /models picker dismisses the
+// notice (the operator is acting on it).
+func TestGatewayNoticeClearedOnOpenModels(t *testing.T) {
+	fm := gatewayModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	if m.gatewayNotice == "" {
+		t.Fatalf("precondition: notice should be set")
+	}
+	mm, _ = m.openModels()
+	m = mm.(Model)
+	if m.gatewayNotice != "" {
+		t.Errorf("openModels should clear gatewayNotice, got %q", m.gatewayNotice)
+	}
+	if !m.gatewayNoticeShown {
+		t.Errorf("gatewayNoticeShown should stay latched after openModels")
+	}
+}
+
+// --- Proposal 2: picker "free" tag (S1) ----------------------------------------
+
+// TestModelRowFreeTagForIntentProvider: a model row whose provider is in
+// intentProviders carries a "free" segment; a key-driven provider's row does not.
+func TestModelRowFreeTagForIntentProvider(t *testing.T) {
+	intent := map[string]bool{"toolhive": true}
+	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
+	openrouter := client.ModelInfo{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"}
+
+	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, toolhive)
+	if !strings.Contains(got, "free") {
+		t.Errorf("toolhive row should carry the free tag, got %q", got)
+	}
+	// "free" must appear BEFORE the cap segments (it's prepended).
+	if !strings.Contains(got, "toolhive · Claude Sonnet 4.6  free") {
+		t.Errorf("free tag should lead the segment list, got %q", got)
+	}
+
+	got = modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, openrouter)
+	if strings.Contains(got, "free") {
+		t.Errorf("openrouter row must NOT carry the free tag, got %q", got)
+	}
+}
+
+// TestModelRowFreeTagNilIntentProviders: a nil intentProviders map (no gateway)
+// means no row carries the "free" tag — the byte-identical pre-feature path.
+func TestModelRowFreeTagNilIntentProviders(t *testing.T) {
+	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
+	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, nil, toolhive)
+	if strings.Contains(got, "free") {
+		t.Errorf("nil intentProviders must not produce a free tag, got %q", got)
+	}
+}
+
+// TestModelFreeTagRenderedInPicker: a picker fed a toolhive model + a toolhive
+// status renders the "free" tag on the toolhive row, and NOT on the openai row.
+func TestModelFreeTagRenderedInPicker(t *testing.T) {
+	fm := gatewayModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "toolhive · Claude Sonnet 4.6  free") {
+		t.Errorf("picker should render the free tag on the toolhive row, got:\n%s", out)
+	}
+	// The openai row must NOT carry "free".
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "openai · GPT-5") && strings.Contains(ln, "free") {
+			t.Errorf("openai row must NOT carry the free tag, got %q", ln)
+		}
+	}
+}
+
+// --- Proposal 3: provenance hint (S2) ------------------------------------------
+
+// TestProvenanceHintAppendedWhenGatewayAvailable: an openrouter (default) session
+// with a toolhive AvailableNotDefault status appends the muted hint naming the
+// gateway outranked by the default provider key.
+func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
+	m.models.statuses = gatewayStatuses()
+	got := m.modelProvenanceLine()
+	if !strings.Contains(got, "current:") {
+		t.Fatalf("provenance line missing the base current: line, got %q", got)
+	}
+	if !strings.Contains(got, "toolhive gateway also available") {
+		t.Errorf("provenance line missing the gateway hint, got %q", got)
+	}
+	if !strings.Contains(got, "outranked by your openrouter key") {
+		t.Errorf("provenance hint missing the outranking clause, got %q", got)
+	}
+}
+
+// TestProvenanceHintSuppressedWhenGatewayIsDefault: a toolhive-default session
+// (the gateway IS the default) shows NO hint — the outranking condition does not hold.
+func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	// toolhive is the default here, so AvailableNotDefault is false on its row.
+	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
+	got := m.modelProvenanceLine()
+	if strings.Contains(got, "gateway also available") {
+		t.Errorf("provenance hint should be suppressed when the gateway IS the default, got %q", got)
+	}
+}
+
+// TestProvenanceHintSuppressedWhenNoStatus: no statuses ⇒ no hint (byte-identical
+// to the pre-feature line).
+func TestProvenanceHintSuppressedWhenNoStatus(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	got := m.modelProvenanceLine()
+	if strings.Contains(got, "gateway also available") {
+		t.Errorf("provenance hint should be suppressed with no statuses, got %q", got)
+	}
+}
+
+// --- golden: idle footer gateway notice ---------------------------------------
+
+// TestFooterGatewayNoticeGolden locks the idle footer-left rendering of the
+// once-per-process gateway notice (Proposal 1): an AvailableNotDefault status fires
+// the notice, and at idle (no selection, no statusMsg) the footer-left renders it
+// muted. The snapshot is the stripped full renderFooter at a wide width.
+func TestFooterGatewayNoticeGolden(t *testing.T) {
+	fm := gatewayModels()
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
+	m = mm.(Model)
+	m.sel = selection{} // no selection: the notice arm wins over statusMsg/"ready"
+	got := stripANSIstr(m.renderFooter())
+	compareGolden(t, "footer_gateway_notice.golden", []byte(got+"\n"))
+}

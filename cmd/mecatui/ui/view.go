@@ -509,11 +509,15 @@ func (m Model) renderFooter() string {
 		// shows a live "N chars · M lines" count (→ "copied · …" after a copy). This
 		// arm is the ONLY phase the count can appear in — the running/approval/
 		// connecting arms above own the footer-left in those phases — so the count is
-		// never shown mid-run by construction (Req 5). With no selection the existing
-		// statusMsg / "ready" is shown unchanged.
+		// never shown mid-run by construction (Req 5). With no selection the gateway
+		// notice (Proposal 1, once-per-process) takes precedence over the bare
+		// statusMsg / "ready" — but ONLY here, at idle/default phase (the arms above
+		// own the slot in their phases).
 		switch {
 		case m.sel.active && !m.sel.empty():
 			left = m.selectionStatus()
+		case m.gatewayNotice != "":
+			left = m.deps.Theme.Style("muted").Render(m.gatewayNotice)
 		default:
 			left = m.statusMsg
 			if left == "" {
