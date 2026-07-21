@@ -84,7 +84,12 @@ non-zero defaults. Three derived predicates:
   loop's pre-turn guard. Its godoc explicitly warns it conflates the two and is
   not a faithful witness — persistence must use `RecordedStopReason()`.
 
-`PermissionMode`: `default`, `plan` (read-only toolset enforced), `acceptEdits`.
+`PermissionMode`: `default`, `plan` (read-only toolset enforced), `acceptEdits`. A
+plan-mode run gains a structured approval gate (ADR 0069): once the model has presented a
+complete plan it calls the `PresentPlan` signalling tool, which the dispatcher intercepts
+and surfaces as a `PlanOriginated` permission ask; the operator approves (→ flip to
+`default`/`acceptEdits` and execute) or iterates (→ stay in `plan`). See
+[agent-loop.md](agent-loop.md#plan-approval-gate).
 
 ### Conversation / Message / Turn (`engine/session/conversation.go`)
 

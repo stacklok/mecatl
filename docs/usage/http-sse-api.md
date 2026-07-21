@@ -15,6 +15,7 @@ share one event shape.
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events |
 | `POST /v1/sessions/{id}/approve` | `{ask_id, allow}` | `204` |
+| `POST /v1/sessions/{id}/plan:approve` | `{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}` | `200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](../adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session |
 | `POST /v1/sessions/{id}/cancel` | — | `204` |
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for an unknown / already-finished child |
 | `POST /v1/sessions/{id}/fork` | `{"title": "...", "reasoning_effort": "..."}` (both optional; empty/absent inherits the source's) | `201` `{session_id}` — create a peer session from `{id}`'s conversation history snapshot (ADR 0065); same provider/model only, with the ONE optional selector delta a reasoning-effort override (ADR 0068); `412` if `{id}` is running/awaiting |
@@ -149,6 +150,37 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/approve \
 Set `"allow":false` to deny (the model receives the denial reason and adapts).
 If there is no in-flight run for the session you get `404`
 `{"error":"no in-flight run for session"}`.
+
+### Approve a presented plan (`plan:approve`)
+
+In plan mode, once the model has presented a complete plan it calls the
+`PresentPlan` signalling tool, which parks the run `awaiting` on a
+**plan-approval** ask (`ask.tool == "PresentPlan"` — the tool name is the
+discriminator; no provenance field on the proto). Resolve it atomically with
+`POST /v1/sessions/{id}/plan:approve` ([ADR 0069](../adr/0069-plan-approval-gate.md)):
+
+```console
+$ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/plan:approve \
+       -d '{"target_mode":"default","note":"looks good, proceed"}'
+# 200 text/event-stream — the resumed run's events, then (on allow) the
+# continuation run's events carrying the proceed message, ending with a
+# terminal result {stop: "plan_approved"} then the continuation's result.
+```
+
+`target_mode` selects the verdict and the resulting posture:
+
+- `"default"` → allow-once: flip to `default` mode (deny→ask→allow) and execute.
+- `"accept_edits"` → allow-always: flip to `acceptEdits` mode (auto-accept
+  edits for the execution phase).
+- `"plan"` or `""` → deny/iterate: stay in plan mode, NO continuation run
+  starts (the model re-plans on the next prompt).
+
+A `409` means a precondition failed: the session has a live run (use the
+`Converse` `resume_approval` frame for an in-flight run), is not `awaiting`,
+or is awaiting a non-plan ask. A `404` means an unknown session. An
+in-flight `Converse` run that parked on the plan ask may ALSO be resolved by
+the `resume_approval` frame on its own stream; the `plan:approve` RPC is the
+headless/cross-process composition of resume + continuation into one stream.
 
 ### Cancel a run
 

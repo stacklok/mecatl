@@ -166,6 +166,51 @@ land on `Run.Approve`. The `Service` keeps a registry of in-flight `*agent.Run`
 keyed by session id so the verdict reaches the right run
 (`server/service.go`: `LookupRun`).
 
+## Plan-approval gate
+
+Plan mode (`session.ModePlan`) gains a structured approval gate
+([ADR 0069](../adr/0069-plan-approval-gate.md)) that reuses the permission-ask
+machinery above. The shape is the same as the guardrail approve-once
+([ADR 0062](../adr/0062-guardrails-approve-once.md)): a tool call refined into an
+askable ask, a serialized provenance marker, and a verdict tail.
+
+- **The PresentPlan signalling tool** (`engine/agent/presentplan.go`
+  (`NewPresentPlanTool`)) is read-only and signaling-only. Once the model has
+  presented a complete plan in its preceding assistant text it calls `PresentPlan`
+  to hand control to the operator. The tool implements `engine/tool/tool.go`
+  (`PlanOnly`), so the catalog's mode projection (`Available`) advertises
+  it ONLY in plan mode (registered everywhere so shared/per-session name-sets stay
+  equal; hidden outside plan mode).
+- **The dispatcher intercepts by name+mode.** `engine/agent/dispatch.go`
+  (`surfacePlanAsk`) — a sibling of `askHookApproval` over the shared `surfaceAsk`
+  spine — mints a `session.PendingAsk{PlanOriginated: true}`, parks the run
+  `StateAwaiting`, and emits `EvPermissionAsk`. It is sequenced one-at-a-time in
+  dispatch Phase 1 (never the parallel fan-out). The headless guard
+  (`!Interactive && !PlanModeAutoApprove`) synthesizes a deny result (fail-safe —
+  no silent mode flip); the opt-in `PlanModeAutoApprove` surfaces the ask even
+  headless so the composition observer can resolve it.
+- **Verdict → mode.** Allow-once → flip to `ModeDefault`; allow-always → flip to
+  `ModeAccept`; deny → stay in `plan` (the model iterates). On Allow the run
+  terminates with the clean `engine/session/session.go` (`StopPlanApproved`)
+  terminal; `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the
+  terminal boundary (after `Stop` → `StateCompleted`, where `SetMode` is legal —
+  the `Running`/`Awaiting` rejection invariant is preserved). The plan→execute
+  model swap rides the existing ADR 0030 Layer 3 run-entry rebuild.
+- **Cross-process resume.** `PendingAsk.PlanOriginated` is serialized
+  (`json:"plan_originated,omitempty"`, sibling of `HookOriginated`); the
+  awaiting-resume path (`resolvePendingCall`) keys the plan-flip branch on it —
+  an Allow does NOT re-present the plan. The read-time
+  `engine/session/session.go` (`Origin`) accessor derives the single
+  provenance (`AskOriginPlan`/`AskOriginHook`/`AskOriginNone`) from the two
+  serialized bools.
+- **The atomic `ApprovePlan` RPC** (`internal/adapter/server/service.go`
+  (`ApprovePlan`), `POST /v1/sessions/{id}/plan:approve`,
+  `rpc ApprovePlan`) resolves a parked plan-ask and — on Allow — starts a FRESH
+  continuation run carrying `agent.PlanApprovedProceedText` + an optional note,
+  streaming BOTH runs' events. The opt-in `--plan-mode-auto-approve` observer
+  (`MaybeAutoApprovePlan`) auto-resolves a parked plan-ask headless
+  (DEFAULT OFF, OPERATOR-TIER ONLY, loud "NO HUMAN REVIEW" diagnostic).
+
 ## Related
 
 - [The ports the loop consumes](ports.md)

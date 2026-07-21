@@ -375,3 +375,49 @@ mecated logs to stderr/journald as usual.
 **Shared-host recommendation:** if you run `mecated`/`mecatui` on a host other
 operators also use, pass `--toolhive-llm=false` — a per-user ToolHive config
 detected by one operator's process should not surprise another.
+
+## Plan approval
+
+In **plan mode** (`--mode plan` / `session/set_mode PLAN`), once the model has
+presented a complete plan in its assistant text it calls the `PresentPlan`
+signalling tool. That parks the run `awaiting` on a **plan-approval** ask — a
+distinct gate from an ordinary permission ask, though it reuses the same
+permission-ask machinery ([ADR 0069](adr/0069-plan-approval-gate.md)). The
+operator then approves (→ execute) or iterates (→ re-plan).
+
+**mecatui:** a `PresentPlan` ask renders a distinct "Plan ready for review"
+modal (the tool name is the discriminator — no proto provenance field). Three
+buttons: **`[A]pprove & run`** (→ `default` mode, deny→ask→allow execution),
+**`[W] auto-accept edits`** (→ `acceptEdits` mode, auto-accept every edit in the
+execution phase), **`[D] iterate`** (stay in plan mode; the model revises and
+re-presents). The footer labels a `plan_approved` stop as the approval terminal.
+
+**gRPC:** the `ApprovePlan(ApprovePlanRequest) → stream Event` RPC
+([§9](usage/grpc-api.md)) resolves a parked plan-ask atomically: on an ALLOW
+verdict it resumes the parked run AND starts a FRESH continuation run carrying
+the proceed message, streaming BOTH runs' events on the one response stream.
+`target_mode` (`DEFAULT` / `ACCEPT_EDITS` / `PLAN`) selects the verdict and the
+resulting posture (`PLAN`/`UNSPECIFIED` → deny/iterate, no continuation).
+
+**HTTP:** `POST /v1/sessions/{id}/plan:approve` with a
+`{"target_mode":"default"|"accept_edits"|"plan","note":"..."}` body — see
+[§10](usage/http-sse-api.md#approve-a-presented-plan-planapprove). `409` on a
+precondition failure (live run / not awaiting / not a plan ask).
+
+**ACP:** the ACP adapter has NO bespoke `ApprovePlan` method — it composes the
+flow from the two EXISTING primitives the editor speaks natively:
+`session/set_mode` (the operator picks default / accept-edits / plan) +
+`session/prompt` (the proceed message). A presented-plan `permission.ask` over
+ACP is resolved by the editor's existing `session/request_permission` reply;
+the subsequent mode flip + continuation prompt are ordinary `session/set_mode`
++ `session/prompt` calls.
+
+**Headless / autonomous:** by DEFAULT a headless plan ask is auto-denied (the
+model iterates; no silent mode flip). The opt-in **`--plan-mode-auto-approve`**
+flag (DEFAULT OFF, OPERATOR-TIER ONLY) auto-approves a parked plan ask via
+`ApprovePlan(ModeDefault)` when the deployment is headless — a deliberate
+autonomous-approval capability, NEVER load-bearing for safety. It does NOT fire
+when interactive, NOT in non-plan modes, NOT for non-plan asks. A LOUD startup
+diagnostic (`plan_mode_auto_approve: ON (NO HUMAN REVIEW)`) + a per-approval
+`WARN` name the session. The YAML twin is the user-global `settings.yaml`
+`plan-mode-auto-approve:` key; a project-tier block is WARN-ignored.

@@ -91,6 +91,16 @@ OPERATOR-TIER reasoning-effort scalar (ADR 0055): "" / "auto" (unset — the pro
 | --- | --- | --- | --- |
 | `reasoning-effort` | `string` | `(empty)` | ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (ADR 0055: the neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max"). Like Posture/OutputEconomy it is honoured ONLY from the user-global + CLI tiers; a project-tier file's reasoning-effort: key is IGNORED with a WARN (operator-tier only, for consistency — a project cannot raise the model's reasoning spend). Empty = absent (the resolver returns "" and composition uses the provider default). The composition layer interprets + clamps the token; permconfig only reads the scalar. |
 
+## `plan-mode-auto-approve`
+
+Tier: **operator**
+
+OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode session that parks awaiting a plan-approval ask is auto-approved (flip to default mode and execute) WITHOUT a human reviewing the plan. DEFAULT OFF. A project-tier plan-mode-auto-approve: is IGNORED with a WARN (a project cannot grant an autonomous approval capability).
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `plan-mode-auto-approve` | `bool` | `false` | PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue #206 Wave 6a). Like Posture/OutputEconomy/ReasoningEffort it is honoured ONLY from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve: key is IGNORED with a WARN (operator-tier only — a project repo enabling autonomous plan approval is a security DOWNGRADE). false = absent (the resolver returns false and composition keeps the default OFF). The composition layer interprets the bool; permconfig only reads the scalar. |
+
 ## `models`
 
 Tier: **operator + project**
