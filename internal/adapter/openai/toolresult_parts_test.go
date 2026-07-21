@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -145,5 +146,75 @@ func TestToolResultWithPartsAllDroppedFallsBackToString(t *testing.T) {
 	}
 	if out != "the image only" {
 		t.Errorf("fallback output = %q, want the Content string", out)
+	}
+}
+
+// TestToolResultEmptyContentPoisonHealsToPlaceholder is the regression for the
+// real bricked session: an MCP fetch past the end of a document returned a tool
+// result with Content:"" and a single empty-text Part. The openai adapter
+// serialized the part as a Responses input_text with text:"" on EVERY subsequent
+// replay, and Moonshot (via OpenRouter, POST /responses) rejected the whole
+// request with 400 "Invalid request: text content is empty" — permanently
+// bricking the session. RouteToolResultParts drops the empty block, the adapter
+// falls back to the single-string path, and the empty Content is substituted with
+// the deterministic placeholder. The marshaled request JSON must contain NO
+// "text":"" anywhere (the poison the provider rejected). Two input shapes hit the
+// SAME adapter branch: the real poison (empty Content + one empty-text Part) and
+// the legacy no-Parts variant (empty Content, no typed Parts).
+func TestToolResultEmptyContentPoisonHealsToPlaceholder(t *testing.T) {
+	cases := []struct {
+		name string
+		tr   session.ToolResult
+	}{
+		{
+			// The EXACT poison shape from the real session: empty Content, one empty
+			// text Part.
+			name: "empty-content-and-empty-text-part",
+			tr: session.NewToolResultWithParts("call_1", "", []session.Content{
+				session.NewTextBlock(""),
+			}),
+		},
+		{
+			// Legacy no-Parts variant: empty Content, no typed Parts — same branch.
+			name: "empty-content-no-parts",
+			tr:   session.NewToolResult("call_1", ""),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := New(WithAPIKey("sk-test"), WithProviderCapabilities(port.ProviderCapabilities{Image: true}))
+			items := toolResultInputItems(t, p, tc.tr)
+			if len(items) != 1 {
+				t.Fatalf("items = %d, want 1: %v", len(items), items)
+			}
+			item := items[0]
+			if item["type"] != "function_call_output" {
+				t.Fatalf("type = %v, want function_call_output", item["type"])
+			}
+			out, ok := item["output"].(string)
+			if !ok {
+				t.Fatalf("output = %T %v, want the single-string fallback", item["output"], item["output"])
+			}
+			if out != emptyToolOutputPlaceholder {
+				t.Errorf("output = %q, want the placeholder %q", out, emptyToolOutputPlaceholder)
+			}
+
+			// Belt-and-suspenders: the WHOLE marshaled request carries no empty text
+			// content field — the exact string the provider 400'd on.
+			params, err := p.buildParams(port.LLMRequest{
+				Model:    "gpt-5.2",
+				Messages: []session.Message{session.NewToolMessage(tc.tr)},
+			})
+			if err != nil {
+				t.Fatalf("buildParams: %v", err)
+			}
+			raw, err := json.Marshal(params)
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
+			if bytes.Contains(raw, []byte(`"text":""`)) {
+				t.Fatalf("marshaled request contains an empty text field (Moonshot/OpenRouter 400 poison): %s", raw)
+			}
+		})
 	}
 }

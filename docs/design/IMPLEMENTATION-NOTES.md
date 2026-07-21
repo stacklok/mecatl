@@ -3059,13 +3059,39 @@ type**, with every untrusted-server defense in composition and the adapter:
   subset of `tr.Parts` the (provider, model) — described by `caps`, the SINGLE
   composition-computed capability intersection (`modelCapability` = catalog ∩
   adapter) — may receive as typed blocks: image iff `caps.Image`, audio iff
-  `caps.Audio`, text/resource-link/embedded-resource/structured-content always
-  survive. It builds a FRESH slice and never mutates the recorded
-  `*session.ToolResult` (recorded-history == client-stream == model-view). It lives
-  in `engine/port` (not `internal/app`) so the provider adapters may call it
-  without importing composition. Nil/empty `Parts` (or a projection that drops
-  every block) returns nil so the caller degrades to the recorded model-facing
-  `Content` string.
+  `caps.Audio`, text/resource-link/embedded-resource/structured-content survive
+  UNLESS they render to empty text (the empty-render rule below). It builds a FRESH
+  slice and never mutates the recorded `*session.ToolResult` (recorded-history ==
+  client-stream == model-view). It lives in `engine/port` (not `internal/app`) so
+  the provider adapters may call it without importing composition. Nil/empty
+  `Parts` (or a projection that drops every block) returns nil so the caller
+  degrades to the recorded model-facing `Content` string.
+- **INVARIANT: no empty text content block on the wire — strict providers reject
+  it, and stateless full-replay makes the rejection PERMANENT.** Moonshot via
+  OpenRouter (POST /responses) 400s the whole request with "Invalid request: text
+  content is empty"; the Anthropic Messages API rejects "text content blocks must
+  be non-empty". Because the adapters resend the full history every turn (§stateless
+  replay), one empty-text tool-result block — e.g. an MCP fetch past the end of a
+  document that returned a single empty text block — poisons EVERY subsequent
+  request and permanently bricks a persisted session. Enforced at request-time
+  (serialization), NEVER by rewriting recorded history, so an already-poisoned
+  session HEALS on replay. Three enforcement points: (1)
+  `engine/port/toolresult_route.go` (`RouteToolResultParts`) DROPS any
+  text-summarised block whose `session.ToolBlockText(b)` is empty — if all drop,
+  the nil return degrades to the single-string fallback (the caller must then
+  substitute a placeholder for an empty `Content` — the CALLER CONTRACT in the doc
+  comment); (2) `internal/adapter/openai/request.go` (`toolOutputItem`) and
+  `internal/adapter/anthropic/request.go` (`toolResultBlock`) substitute the
+  deterministic `emptyToolOutputPlaceholder` (`"(tool returned no output)"`) for an
+  empty single-string `Content` via `cmp.Or` (non-empty stays byte-identical); (3)
+  the anthropic adapter's degenerate empty system/user/assistant turns
+  (`buildMessages`/`userBlocks`/`assistantBlocks`, the empty assistant turn
+  reachable via the no-progress-nudge path) and its malformed-image branch emit a
+  non-empty placeholder (`"(empty message)"` / `"(image block with no data)"`)
+  instead of an empty text block. Regression tests:
+  `TestRouteToolResultPartsEmptyTextDropped`,
+  `TestToolResultEmptyContentPoisonHealsToPlaceholder` (openai + anthropic),
+  `TestDegenerateEmptySystemTurnGetsPlaceholder` (+ the user/assistant turn tests).
 - **`audience` is advisory display routing ONLY — it NEVER suppresses
   model-facing content** (CWE-345). The MCP server is an untrusted supply-chain
   surface; trusting `audience:["user"]` to *suppress* the model copy inverts the

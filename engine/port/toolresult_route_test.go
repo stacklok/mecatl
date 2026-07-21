@@ -220,6 +220,35 @@ func TestRouteToolResultPartsUnknownBlockKindDropped(t *testing.T) {
 	}
 }
 
+// TestRouteToolResultPartsEmptyTextDropped is the regression for the Moonshot /
+// OpenRouter 400 "text content is empty" brick: a tool result whose only Part is
+// a single empty-text BlockText renders to no surviving block, so the projection
+// returns nil and the caller degrades to the (placeholder-guarded) Content
+// string. A mixed empty + non-empty result keeps only the non-empty blocks.
+func TestRouteToolResultPartsEmptyTextDropped(t *testing.T) {
+	// Sole empty-text block → nil (degrade to the single-string fallback).
+	emptyOnly := session.ToolResult{
+		Content: "fallback",
+		Parts:   []session.Content{session.NewTextBlock("")},
+	}
+	if got := RouteToolResultParts(emptyOnly, ProviderCapabilities{Image: true, Audio: true}); got != nil {
+		t.Fatalf("sole empty-text block not dropped (would put an empty text block on the wire): %v", got)
+	}
+
+	// Mixed: an empty text block, an empty structured block, and a non-empty text
+	// block → only the non-empty one survives.
+	nonEmpty := session.NewTextBlock("real output")
+	mixed := session.ToolResult{Parts: []session.Content{
+		session.NewTextBlock(""),
+		session.NewStructuredContentBlock(""),
+		nonEmpty,
+	}}
+	got := RouteToolResultParts(mixed, ProviderCapabilities{})
+	if len(got) != 1 || !reflect.DeepEqual(got[0], nonEmpty) {
+		t.Fatalf("mixed empty/non-empty projection = %v, want only the non-empty block", got)
+	}
+}
+
 func contains(haystack []session.Content, needle session.Content) bool {
 	for _, h := range haystack {
 		if reflect.DeepEqual(h, needle) {

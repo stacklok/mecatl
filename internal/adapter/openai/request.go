@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,18 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+// emptyToolOutputPlaceholder is the deterministic stand-in the single-string
+// function_call_output fallback sends when a tool result's model-facing Content
+// is empty. A strict Responses upstream (Moonshot via OpenRouter) rejects an
+// empty text output ("Invalid request: text content is empty"), and because the
+// adapter replays full history statelessly the rejection is PERMANENT once such a
+// result is recorded. The placeholder keeps the wire well-formed without
+// rewriting recorded history. Its value coincides with the anthropic adapter's
+// const of the same name, but that byte-equality is NOT a contract: provider is
+// fixed per session, so no replay crosses adapters. Each adapter carries its own
+// copy (not an engine export) and either may diverge its wording freely.
+const emptyToolOutputPlaceholder = "(tool returned no output)"
 
 // buildParams translates a provider-neutral LLMRequest into a
 // responses.ResponseNewParams for a stateless, client-owned Responses call.
@@ -234,8 +247,12 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities) (respons
 func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) responses.ResponseInputItemUnionParam {
 	blocks := port.RouteToolResultParts(tr, caps)
 	if len(blocks) == 0 {
+		// Single-string fallback. Substitute a deterministic placeholder for an
+		// EMPTY Content (see emptyToolOutputPlaceholder's doc for the
+		// permanent-brick rationale). Non-empty Content stays BYTE-IDENTICAL
+		// (prompt-cache byte-stability + existing fixtures).
 		return responses.ResponseInputItemParamOfFunctionCallOutput(
-			string(tr.CallID), tr.Content)
+			string(tr.CallID), cmp.Or(tr.Content, emptyToolOutputPlaceholder))
 	}
 	list := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(blocks))
 	for _, b := range blocks {

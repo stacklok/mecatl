@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -166,5 +167,125 @@ func TestToolResultWithPartsAllDroppedFallsBackToString(t *testing.T) {
 	txt := inner[0].(map[string]any)
 	if txt["type"] != "text" || txt["text"] != "the image only" {
 		t.Errorf("fallback = %v, want text \"the image only\"", txt)
+	}
+}
+
+// messagesJSON drives an arbitrary message list through buildParams and returns
+// both the decoded messages and the raw marshaled bytes (for empty-text scans).
+func messagesJSON(t *testing.T, p *Provider, msgs []session.Message) ([]map[string]any, []byte) {
+	t.Helper()
+	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	raw, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal messages: %v", err)
+	}
+	return decoded, raw
+}
+
+// firstContentBlock extracts msg["content"][0] as a JSON object, failing (not
+// panicking) with a shape-naming message if the decoded message drifts from the
+// expected {content: [ {...} ]} shape.
+func firstContentBlock(t *testing.T, msg map[string]any) map[string]any {
+	t.Helper()
+	list, ok := msg["content"].([]any)
+	if !ok || len(list) == 0 {
+		t.Fatalf("message content = %T %v, want a non-empty block list", msg["content"], msg["content"])
+	}
+	blk, ok := list[0].(map[string]any)
+	if !ok {
+		t.Fatalf("content[0] = %T %v, want a JSON object", list[0], list[0])
+	}
+	return blk
+}
+
+// TestToolResultEmptyContentPoisonHealsToPlaceholder mirrors the openai regression
+// for the Anthropic Messages API: an MCP fetch past the end of a document returned
+// a tool result with Content:"" and a single empty-text Part. Anthropic rejects an
+// empty text content block ("text content blocks must be non-empty"), and
+// stateless full-replay makes the rejection permanent. The empty block is dropped
+// upstream, the adapter falls back to the single-string path, and the empty
+// Content becomes the deterministic placeholder — no "text":"" on the wire.
+func TestToolResultEmptyContentPoisonHealsToPlaceholder(t *testing.T) {
+	tr := session.NewToolResultWithParts("toolu_1", "", []session.Content{
+		session.NewTextBlock(""),
+	})
+	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
+		WithProviderCapabilities(port.ProviderCapabilities{Image: true}))
+	msgs, raw := messagesJSON(t, p, []session.Message{session.NewToolMessage(tr)})
+	blk := firstContentBlock(t, msgs[0])
+	if blk["type"] != "tool_result" {
+		t.Fatalf("block type = %v, want tool_result", blk["type"])
+	}
+	// The legacy single-string tool_result serializes content as a one-text-block
+	// list carrying the placeholder.
+	inner, ok := blk["content"].([]any)
+	if !ok || len(inner) != 1 {
+		t.Fatalf("tool_result content = %T %v, want a one-text-block list", blk["content"], blk["content"])
+	}
+	txt, ok := inner[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_result inner[0] = %T %v, want a JSON object", inner[0], inner[0])
+	}
+	if txt["type"] != "text" || txt["text"] != emptyToolOutputPlaceholder {
+		t.Errorf("tool_result inner block = %v, want text %q", txt, emptyToolOutputPlaceholder)
+	}
+	if bytes.Contains(raw, []byte(`"text":""`)) {
+		t.Fatalf("marshaled messages contain an empty text field (Anthropic 400 poison): %s", raw)
+	}
+}
+
+// TestDegenerateEmptySystemTurnGetsPlaceholder: an in-history system message with
+// empty Text (folded to a user turn by buildMessages) serializes to a NON-EMPTY
+// text block — the fourth empty-text emitter, the same permanent-brick poison
+// class as the user/assistant turns.
+func TestDegenerateEmptySystemTurnGetsPlaceholder(t *testing.T) {
+	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
+		WithProviderCapabilities(port.ProviderCapabilities{}))
+	msgs, raw := messagesJSON(t, p, []session.Message{{Role: session.RoleSystem, Text: ""}})
+	blk := firstContentBlock(t, msgs[0])
+	if blk["type"] != "text" || blk["text"] != emptyMessagePlaceholder {
+		t.Errorf("empty system turn block = %v, want text %q", blk, emptyMessagePlaceholder)
+	}
+	if bytes.Contains(raw, []byte(`"text":""`)) {
+		t.Fatalf("empty system turn put an empty text block on the wire: %s", raw)
+	}
+}
+
+// TestDegenerateEmptyUserTurnGetsPlaceholder: an empty user turn (no text, no
+// parts) serializes to a NON-EMPTY text block, not an empty one Anthropic would
+// 400.
+func TestDegenerateEmptyUserTurnGetsPlaceholder(t *testing.T) {
+	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
+		WithProviderCapabilities(port.ProviderCapabilities{}))
+	msgs, raw := messagesJSON(t, p, []session.Message{session.NewUserMessage("")})
+	blk := firstContentBlock(t, msgs[0])
+	if blk["type"] != "text" || blk["text"] != emptyMessagePlaceholder {
+		t.Errorf("empty user turn block = %v, want text %q", blk, emptyMessagePlaceholder)
+	}
+	if bytes.Contains(raw, []byte(`"text":""`)) {
+		t.Fatalf("empty user turn put an empty text block on the wire: %s", raw)
+	}
+}
+
+// TestDegenerateEmptyAssistantTurnGetsPlaceholder: an empty assistant turn (no
+// text, no tool calls, no reasoning — reachable via the no-progress-nudge path)
+// serializes to a NON-EMPTY text block.
+func TestDegenerateEmptyAssistantTurnGetsPlaceholder(t *testing.T) {
+	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
+		WithProviderCapabilities(port.ProviderCapabilities{}))
+	msgs, raw := messagesJSON(t, p, []session.Message{session.NewAssistantMessage("", "", nil)})
+	blk := firstContentBlock(t, msgs[0])
+	if blk["type"] != "text" || blk["text"] != emptyMessagePlaceholder {
+		t.Errorf("empty assistant turn block = %v, want text %q", blk, emptyMessagePlaceholder)
+	}
+	if bytes.Contains(raw, []byte(`"text":""`)) {
+		t.Fatalf("empty assistant turn put an empty text block on the wire: %s", raw)
 	}
 }

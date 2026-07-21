@@ -11,6 +11,33 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ## [Unreleased]
 
+### Fixed
+
+- **`port.RouteToolResultParts` now drops empty-render text-summarised blocks**
+  (behavioral fix, no API change). A text-summarised block (`BlockText`,
+  `BlockStructuredContent`, `BlockEmbeddedResource`, `BlockResourceLink`) whose
+  `session.ToolBlockText(b)` renders to the empty string is now dropped from the
+  projection (image/audio gating is unchanged). If every block drops, the existing
+  `len(out)==0 → nil` return routes the caller to the single-string `Content`
+  fallback. WHY: strict providers reject an empty text content block on the wire —
+  Moonshot via OpenRouter (POST /responses) 400s the whole request with "Invalid
+  request: text content is empty", and the Anthropic Messages API rejects "text
+  content blocks must be non-empty". Because the LLM adapters replay full history
+  statelessly, a single empty-text tool-result block (e.g. an MCP fetch past the
+  end of a document returning one empty text block) poisons every subsequent
+  request and permanently bricks the session. The fix is request-time
+  (serialization), never a history rewrite, so an already-poisoned persisted
+  session heals on replay. No exported signature change, so `engine/api/*.txt` is
+  unchanged. Classified as a behavioral bug fix per COMPATIBILITY.md (no
+  guarded-surface change). CALLER CONTRACT: when the projection returns nil and a
+  caller degrades to `tr.Content`, and that string is itself empty, the caller
+  must substitute a non-empty deterministic placeholder — an empty string on the
+  wire reproduces the strict-provider rejection this fix prevents. The provider
+  adapters (`internal/adapter/openai`, `internal/adapter/anthropic`) carry matching
+  belt-and-suspenders guards that substitute a deterministic
+  `"(tool returned no output)"` placeholder for an empty single-string tool
+  output.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added

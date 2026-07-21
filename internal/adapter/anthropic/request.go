@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,26 @@ import (
 func encodeBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
+
+// emptyToolOutputPlaceholder / emptyMessagePlaceholder / emptyImageMarker are the
+// deterministic stand-ins this adapter substitutes wherever a content block would
+// otherwise render to the empty string. This is the EMPTY-TEXT RATIONALE ANCHOR
+// for this file: the Anthropic Messages API rejects an empty text content block
+// ("text content blocks must be non-empty"), and because the adapter replays full
+// history STATELESSLY the rejection is PERMANENT once such a message is recorded —
+// a single empty text block bricks the session. Every substitution below keeps the
+// wire well-formed without rewriting recorded history; the sites reference this
+// anchor rather than repeating the rationale.
+//
+// emptyToolOutputPlaceholder's value coincides with the openai adapter's const of
+// the same name, but that byte-equality is NOT a contract: provider is fixed per
+// session, so no replay ever crosses adapters. Each adapter carries its own copy
+// (not an engine export) and either may diverge its wording freely.
+const (
+	emptyToolOutputPlaceholder = "(tool returned no output)"
+	emptyMessagePlaceholder    = "(empty message)"
+	emptyImageMarker           = "(image block with no data)"
+)
 
 // minThinkingBudget is the API floor for budget_tokens on the manual
 // (type:"enabled") thinking config.
@@ -346,8 +367,10 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 	for _, m := range msgs {
 		switch m.Role {
 		case session.RoleSystem:
-			// No system role inside messages; fold to a user text turn.
-			out = append(out, sdk.NewUserMessage(sdk.NewTextBlock(m.Text)))
+			// No system role inside messages; fold to a user text turn. An empty
+			// system Text gets the placeholder (see the const-block anchor comment):
+			// an empty text block on the wire is the same permanent-brick poison.
+			out = append(out, sdk.NewUserMessage(sdk.NewTextBlock(cmp.Or(m.Text, emptyMessagePlaceholder))))
 		case session.RoleUser:
 			blocks, err := userBlocks(m)
 			if err != nil {
@@ -388,8 +411,10 @@ func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.
 	if len(blocks) == 0 {
 		// Legacy single-string form — byte-identical to the pre-T7 path, which
 		// hard-coded is_error=false (it did not project tr.IsError). Preserved
-		// verbatim so the legacy/mock/mecademo path is unchanged.
-		return sdk.NewToolResultBlock(string(tr.CallID), tr.Content, false)
+		// verbatim so the legacy/mock/mecademo path is unchanged, EXCEPT an empty
+		// Content is substituted with a deterministic placeholder (see the const-block
+		// anchor comment for the empty-text-brick rationale).
+		return sdk.NewToolResultBlock(string(tr.CallID), cmp.Or(tr.Content, emptyToolOutputPlaceholder), false)
 	}
 	content := make([]sdk.ToolResultBlockParamContentUnion, 0, len(blocks))
 	for _, b := range blocks {
@@ -417,14 +442,23 @@ func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.
 				})
 			default:
 				// An image block with neither bytes nor a URL is malformed; render an
-				// honest empty-text marker rather than drop the block silently.
+				// honest non-empty marker rather than drop the block silently. Its
+				// ToolBlockText is almost always "" (an image block carries no Text),
+				// so fall back to the marker when the render is empty (see the
+				// const-block anchor comment).
 				content = append(content, sdk.ToolResultBlockParamContentUnion{
-					OfText: &sdk.TextBlockParam{Text: session.ToolBlockText(b)},
+					OfText: &sdk.TextBlockParam{Text: cmp.Or(session.ToolBlockText(b), emptyImageMarker)},
 				})
 			}
 		default:
+			// Text-summarised block. RouteToolResultParts (a separately-versioned
+			// engine module) drops empty-render blocks upstream, so this branch's
+			// empty-guard is DELIBERATELY REDUNDANT cross-module defense — kept, not
+			// dead: the drop and this guard live in independently-releasable modules
+			// and the failure mode is a permanently bricked session (anchor comment).
+			// This is a tool result, so the placeholder is the tool-output wording.
 			content = append(content, sdk.ToolResultBlockParamContentUnion{
-				OfText: &sdk.TextBlockParam{Text: session.ToolBlockText(b)},
+				OfText: &sdk.TextBlockParam{Text: cmp.Or(session.ToolBlockText(b), emptyToolOutputPlaceholder)},
 			})
 		}
 	}
@@ -464,9 +498,12 @@ func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
 		}
 	}
 	if len(blocks) == 0 {
-		// An empty user turn is invalid; send a single empty text block so the
-		// shape is well-formed (mirrors the string fast path producing "").
-		blocks = append(blocks, sdk.NewTextBlock(m.Text))
+		// A degenerate empty user turn: send a single NON-EMPTY placeholder text
+		// block. Anthropic rejects an empty text content block ("text content blocks
+		// must be non-empty"), and stateless full-replay makes that rejection
+		// permanent — an empty sdk.NewTextBlock(m.Text) here (m.Text is "" on this
+		// path) is a latent 400.
+		blocks = append(blocks, sdk.NewTextBlock(emptyMessagePlaceholder))
 	}
 	return blocks, nil
 }
@@ -495,9 +532,12 @@ func assistantBlocks(m session.Message) []sdk.ContentBlockParamUnion {
 		out = append(out, sdk.NewTextBlock(m.Text))
 	}
 	if len(out) == 0 {
-		// A degenerate empty assistant turn: send an empty text block so the
-		// message is well-formed.
-		out = append(out, sdk.NewTextBlock(""))
+		// A degenerate empty assistant turn (reachable via the no-progress-nudge
+		// path, which records an empty assistant turn): send a NON-EMPTY placeholder
+		// text block. Anthropic rejects an empty text content block ("text content
+		// blocks must be non-empty"), and stateless full-replay makes that rejection
+		// permanent — an empty sdk.NewTextBlock("") here is a latent 400.
+		out = append(out, sdk.NewTextBlock(emptyMessagePlaceholder))
 	}
 	return out
 }

@@ -31,7 +31,33 @@ import "github.com/stacklok/mecatl/engine/session"
 //   - BlockImage      survives iff caps.Image
 //   - BlockAudio      survives iff caps.Audio
 //   - BlockText, BlockResourceLink, BlockEmbeddedResource,
-//     BlockStructuredContent always survive (text-summarised, no modality gate)
+//     BlockStructuredContent survive (text-summarised, no modality gate) UNLESS
+//     they render to EMPTY text — see the empty-render rule below.
+//
+// EMPTY-RENDER RULE. A text-summarised block whose rendered text
+// (session.ToolBlockText) is the empty string is DROPPED. Strict providers reject
+// an empty text content block on the wire: Moonshot via OpenRouter (POST
+// /responses) 400s the WHOLE request with "Invalid request: text content is
+// empty", and the Anthropic Messages API rejects "text content blocks must be
+// non-empty". Because the LLM adapters replay full history STATELESSLY, a single
+// empty-text tool-result block (e.g. an MCP fetch past the end of a document that
+// returned one empty text block) poisons EVERY subsequent request and permanently
+// bricks the session. Dropping it here — a REQUEST-TIME projection, never a
+// history rewrite — heals an already-poisoned persisted session on replay while
+// leaving the recorded history untouched (the read-only-projection discipline
+// above). If ALL blocks drop, the len(out)==0 → nil return routes the caller to
+// the single-string Content fallback.
+//
+// CALLER CONTRACT. When you degrade to tr.Content (this returns nil) and that
+// string is ITSELF empty, you MUST substitute a non-empty deterministic
+// placeholder before putting it on the wire — an empty string on the wire
+// reproduces the exact strict-provider rejection this rule exists to prevent. The
+// in-tree adapters use "(tool returned no output)".
+//
+// The rule is EXACT-EMPTY (session.ToolBlockText(b) == ""): a whitespace-only
+// block is deliberately NOT dropped. Widening to whitespace-trimming would be a
+// second behavior change on this published surface and waits for evidence a
+// provider actually rejects whitespace-only text.
 //
 // A legacy media part (BlockKind == "", the user-message media shape that never
 // rides on a tool result) is left to the user-message media path and dropped here
@@ -63,7 +89,14 @@ func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []se
 			// (a tool result never carries legacy media).
 			continue
 		case session.BlockText, session.BlockResourceLink, session.BlockEmbeddedResource, session.BlockStructuredContent:
-			// Text-summarised blocks always survive — no modality gate.
+			// Text-summarised blocks survive — no modality gate — UNLESS they render
+			// to empty text: a strict provider (Moonshot via OpenRouter, Anthropic)
+			// rejects an empty text content block, and stateless full-replay makes
+			// that rejection permanent, so drop the block rather than put "" on the
+			// wire. See the EMPTY-RENDER RULE in the doc comment.
+			if session.ToolBlockText(b) == "" {
+				continue
+			}
 		default:
 			// Fail CLOSED on an unrecognised BlockKind: skip it rather than pass it
 			// ungated to the provider. This is a second-line guard — the only
