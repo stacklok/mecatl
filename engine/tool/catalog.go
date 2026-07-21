@@ -55,7 +55,10 @@ func (c *Catalog) Tools() []Tool {
 
 // Specs returns the ToolSpecs of the tools available under the given permission
 // mode, ordered by name. In ModePlan only read-only tools are exposed, enforcing
-// plan-mode read-only gating at the catalog level before dispatch.
+// plan-mode read-only gating at the catalog level before dispatch. In non-plan
+// modes a tool implementing PlanOnly (issue #206's PresentPlan signalling tool) is
+// EXCLUDED — a plan-only tool is registered everywhere but advertised only in plan
+// mode (see PlanOnly's doc-comment for the projection gate rationale).
 func (c *Catalog) Specs(mode session.PermissionMode) []ToolSpec {
 	tools := c.Available(mode)
 	specs := make([]ToolSpec, len(tools))
@@ -70,7 +73,10 @@ func (c *Catalog) Specs(mode session.PermissionMode) []ToolSpec {
 // the tool's Advertised() metadata spec when the tool implements Disclosable,
 // otherwise its full Spec(). Because a tool that does not implement Disclosable
 // falls back to its full Spec(), a catalog of only non-disclosable tools yields a
-// result identical to Specs(mode) — making full-spec disclosure the default.
+// result identical to Specs(mode) — making full-spec disclosure the default. The
+// mode filter (plan-only exclusion in non-plan modes; read-only in plan mode) is
+// applied first, so a PlanOnly tool is never advertised outside plan mode here
+// either.
 func (c *Catalog) AdvertisedSpecs(mode session.PermissionMode) []ToolSpec {
 	tools := c.Available(mode)
 	specs := make([]ToolSpec, len(tools))
@@ -85,12 +91,22 @@ func (c *Catalog) AdvertisedSpecs(mode session.PermissionMode) []ToolSpec {
 }
 
 // Available returns the tools usable under the given permission mode, ordered by
-// name. In ModePlan, non-read-only tools are filtered out.
+// name. In ModePlan, non-read-only tools are filtered out (plan-mode read-only
+// gating). In non-plan modes, a tool implementing PlanOnly (issue #206's
+// PresentPlan signalling tool) is filtered OUT: it is registered everywhere so the
+// shared and per-session catalog name-sets stay equal, but advertised/callable
+// only in plan mode — the catalog projection is the gate, and the dispatcher's
+// name+mode check is defense-in-depth on top of it.
 func (c *Catalog) Available(mode session.PermissionMode) []Tool {
 	if mode == session.ModePlan {
 		return c.sorted(func(t Tool) bool { return t.ReadOnly() })
 	}
-	return c.sorted(func(Tool) bool { return true })
+	return c.sorted(func(t Tool) bool {
+		if _, ok := t.(PlanOnly); ok {
+			return false
+		}
+		return true
+	})
 }
 
 // sorted returns the tools matching keep, ordered by name.

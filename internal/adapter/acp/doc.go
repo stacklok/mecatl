@@ -45,4 +45,17 @@
 // wired-but-provider-gated (OpenAI Responses has no audio input member, so
 // advertised false). A resource_link, an unsupported block type, or a media part
 // the provider cannot consume is REJECTED loudly — never silently dropped.
+//
+// PLAN APPROVAL (issue #206, Wave 4) — the ACP adapter has NO bespoke
+// ApprovePlan method. ACP already composes the plan-approval flow from the two
+// EXISTING primitives the editor speaks natively: session/set_mode (the operator
+// picks default / accept-edits / plan) + session/prompt (the proceed message).
+// The native gRPC ApprovePlan RPC and HTTP POST /v1/sessions/{id}/plan:approve
+// are the headless COMPOSITION of those same two steps (resume the parked plan
+// ask, flip the mode, start the continuation run) into one streamed response — a
+// convenience an ACP editor does NOT need because it drives each step itself over
+// its own session/* surface. A presented-plan permission.ask over ACP is resolved
+// by the editor's existing session/request_permission reply, exactly as any other
+// permission ask is; the subsequent mode flip + continuation prompt are ordinary
+// session/set_mode + session/prompt calls. No new ACP method, no new capability.
 package acp

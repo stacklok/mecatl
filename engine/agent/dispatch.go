@@ -152,6 +152,22 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 		// failure (a deny result or a PreToolUse veto) lands on a card the client has
 		// already seen — see openCard.
 		e.openCard(r, turnIdx, c)
+		// Plan-approval gate (issue #206, Wave 2): in plan mode a PresentPlan call is
+		// intercepted by name BEFORE the permission/hook gate and surfaced as a
+		// plan-approval ask (PlanOriginated). It must be sequenced one-at-a-time here
+		// in Phase 1 — NEVER raised from the parallel fan-out (Phase 2) — exactly like
+		// a permission/hook ask. Outside plan mode the tool is invisible via
+		// Catalog.Available, so this branch is inert; the name+mode check is the
+		// honest guard. The result is recorded now and the call is excluded from the
+		// concurrent execution batch.
+		if sess.Mode == session.ModePlan && c.Name == presentPlanToolName {
+			res, cancelled := e.surfacePlanAsk(ctx, r, sess, turnIdx, c)
+			if cancelled {
+				return nil, true
+			}
+			out[c.ID] = res
+			continue
+		}
 		decision, cancelled := e.authorize(ctx, r, sess, ws, turnIdx, c)
 		if cancelled {
 			return nil, true
@@ -451,6 +467,24 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		return e.execute(ctx, r, sess, ws, turnIdx, pendingCall, t, enqueue), false
 	}
 
+	// PLAN-ORIGINATED resume (issue #206, Wave 2): a plan-approval ask that the
+	// human authorized while parked AWAITING must NOT re-present the plan or run any
+	// tool — the serialized PlanOriginated marker is the durable signal that this
+	// PresentPlan call was already approved. On Allow we synthesize the allow result
+	// (mirroring surfacePlanAsk's live-path allow tail) and set r.planApprovedTarget
+	// (AllowOnce→ModeDefault, AllowAlways→ModeAccept); driveFromAwaiting's subsequent
+	// runLoop sees planApprovedTarget != "" at its early check and terminates with
+	// StopPlanApproved, and terminateComplete flips the session mode at the boundary.
+	// A deny was handled by the deny arm above. We do NOT re-run preHook (the human
+	// already authorized this plan; PresentPlan is signalling-only, so there is
+	// nothing to execute). This mirrors surfacePlanAsk's live-path allow tail.
+	if ask.PlanOriginated {
+		r.planApprovedTarget = planApprovedTargetForVerdict(verdict)
+		res := session.NewToolResult(pendingCall.ID, "plan approved by operator: proceeding to execution")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
+
 	pre, herr := e.preHook(ctx, r, sess, turnIdx, pendingCall)
 	if herr != nil {
 		return session.ToolResult{}, true // ctx cancelled while running the hook
@@ -496,6 +530,17 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, ws t
 	// (a deny result or a PreToolUse veto) lands on a card the client has already
 	// seen.
 	e.openCard(r, turnIdx, c)
+
+	// Plan-approval gate (issue #206, Wave 2): in plan mode a PresentPlan call is
+	// intercepted by name BEFORE the permission/hook gate and surfaced as a
+	// plan-approval ask. PresentPlan is read-only so it normally batches in
+	// runReadBatch Phase 1; this runOne branch is the defensive mirror so a
+	// PresentPlan call flushed alone (or alongside a mutating sibling) is sequenced
+	// correctly and never reaches authorize/execute. Outside plan mode the branch
+	// is inert (the tool is invisible via Catalog.Available).
+	if sess.Mode == session.ModePlan && c.Name == presentPlanToolName {
+		return e.surfacePlanAsk(ctx, r, sess, turnIdx, c)
+	}
 
 	decision, cancelled := e.authorize(ctx, r, sess, ws, turnIdx, c)
 	if cancelled {
@@ -835,6 +880,102 @@ func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Sess
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false
 	}
+}
+
+// surfacePlanAsk surfaces a plan-approval ask (the operator is asked to approve a
+// presented plan) to the human, mirroring askHookApproval but keyed on the
+// PresentPlan signalling tool rather than a PreToolUse hook block. It mints an
+// askID, builds a PlanOriginated PendingAsk, registers the resolution channel,
+// PauseForApproval → StateAwaiting, emits EvPermissionAsk, and blocks on the
+// verdict. On Allow it does NOT execute anything (PresentPlan is a signalling
+// affordance, not a mutating tool): it sets r.planApprovedTarget (AllowOnce →
+// ModeDefault, AllowAlways → ModeAccept) and synthesizes an allow result; the
+// runLoop then terminates the run with StopPlanApproved and terminateComplete
+// flips the session mode at the terminal boundary. On Deny it synthesizes a deny
+// result and the loop CONTINUES in plan mode (the model iterates on the plan).
+// On cancel it returns a zero result + cancelled=true.
+//
+// It takes no Workspace/Tool param (unlike askHookApproval): PresentPlan is
+// signalling-only, so nothing is executed and there is no tool handle to run. It
+// is sequenced one-at-a-time exactly like a policy/hook ask (runReadBatch resolves
+// it in Phase 1, runOne on the mutate-serial path), never from the parallel
+// fan-out, so two asks never surface at once. The tool card is opened by the
+// CALLER before routing here (the card-before-the-gate invariant), exactly as
+// askHookApproval relies on its caller's openCard. It emits NO diagnostics line
+// (the loop's "exactly THREE lines" invariant holds).
+func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall) (session.ToolResult, bool) {
+	// Headless degrade (mirrors preHook's askable-block degrade, ADR 0062): a
+	// non-interactive engine has NO human to approve a plan, so it must NOT surface
+	// an ask (a headless run never emits EvPermissionAsk). Fail safe: synthesize a
+	// deny result teaching the model the plan was not approved, and do NOT flip the
+	// mode or set planApprovedTarget. The loop continues in plan mode so the model
+	// can iterate or end the turn; it must NOT auto-approve (no silent mode flip).
+	//
+	// EXCEPTION (issue #206 Wave 6a): PlanModeAutoApprove SURFACES the plan ask
+	// even when headless so the composition Service layer can auto-approve it
+	// (an operator deployment decision). A non-plan ask is still headless-auto-
+	// denied — this gate ONLY opens for PresentPlan. DEFAULT false keeps the
+	// existing headless deny behaviour byte-identical.
+	if !e.deps.Interactive && !e.deps.PlanModeAutoApprove {
+		res := session.NewToolError(c.ID, "plan not approved: plan approval requires an interactive operator")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
+	ask := session.PendingAsk{
+		AskID:          newAskID(sess.ID, sess.Counters.ToolCalls, c.ID, r.askDiscriminator),
+		Tool:           presentPlanToolName,
+		Args:           c.Args,
+		Reason:         "plan ready for operator approval",
+		Call:           c.ID,
+		PlanOriginated: true,
+	}
+
+	// Run the SHARED ask spine (register → pause → emit → await → resume → EvApproval);
+	// only the verdict→action tail below is plan-specific.
+	verdictResult, ok, paused := e.surfaceAsk(ctx, r, sess, turnIdx, ask)
+	if !paused {
+		return session.NewToolError(c.ID, "internal: cannot pause for plan approval"), false
+	}
+	if !ok {
+		// ctx cancelled while awaiting.
+		return session.ToolResult{}, true
+	}
+	verdict := verdictResult.verdict
+
+	switch verdict {
+	case session.VerdictAllowAlways, session.VerdictAllowOnce:
+		// Flip to the verdict's target mode (AllowAlways→ModeAccept,
+		// AllowOnce→ModeDefault) at the terminal boundary; the run ends with
+		// StopPlanApproved and the loop does NOT re-call the model.
+		r.planApprovedTarget = planApprovedTargetForVerdict(verdict)
+		res := session.NewToolResult(c.ID, "plan approved by operator: proceeding to execution")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	default:
+		// VerdictDeny (incl. the zero value / fail-safe): the operator asked for
+		// edits. Do NOT set planApprovedTarget — the run CONTINUES in plan mode and
+		// the model iterates on the plan. The deny result teaches the model what to
+		// do (revise and re-present).
+		res := session.NewToolError(c.ID, "plan not approved by operator: revise the plan and present it again")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
+}
+
+// planApprovedTargetForVerdict maps a plan-approval verdict to the permission
+// mode the session flips into at the terminal boundary:
+// VerdictAllowAlways → ModeAccept, VerdictAllowOnce → ModeDefault. It is the
+// shared verdict→mode mapping used by BOTH the live plan-ask surface
+// (surfacePlanAsk) and the cross-process plan-ask resume
+// (resolvePendingCall's PlanOriginated branch), so the target_mode an operator
+// picks (or the auto-approve default) drives the EXACT mode the session lands
+// in on both paths. (The inverse target_mode→verdict mapping lives in
+// composition: service.go's planVerdictForMode — a different direction.)
+func planApprovedTargetForVerdict(v session.ApprovalVerdict) session.PermissionMode {
+	if v == session.VerdictAllowAlways {
+		return session.ModeAccept
+	}
+	return session.ModeDefault
 }
 
 // execute runs the tool against the workspace, times it, runs the PostToolUse

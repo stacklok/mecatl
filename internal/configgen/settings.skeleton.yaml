@@ -109,6 +109,14 @@
 #| (provider default).
 # reasoning-effort: high
 
+#| === plan-mode-auto-approve === (tier: operator)
+#| OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode
+#| session that parks awaiting a plan-approval ask is auto-approved (flip to default
+#| mode and execute) WITHOUT a human reviewing the plan. DEFAULT OFF. A project-tier
+#| plan-mode-auto-approve: is IGNORED with a WARN (a project cannot grant an autonomous
+#| approval capability).
+# plan-mode-auto-approve: true
+
 #| === models === (tier: operator + project)
 #| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the
 #| semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all

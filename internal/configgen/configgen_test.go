@@ -174,13 +174,14 @@ func TestEveryConfigSubtreeHasAModel(t *testing.T) {
 // fails here.
 func TestSubtreeTiersAreAsPinned(t *testing.T) {
 	want := map[string]configgen.Tier{
-		"permissions":      configgen.TierProject,  // allow/ask/deny + subagent: project-settable (allows trust-gated)
-		"guardrails":       configgen.TierOperator, // operator-only: a project cannot weaken a security checker
-		"posture":          configgen.TierOperator, // operator-only: a project cannot raise the automation posture
-		"output-economy":   configgen.TierOperator, // operator-only: a project cannot raise the automation posture (ADR 0041)
-		"reasoning-effort": configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
-		"models":           configgen.TierProject,  // operator + project (project within the operator allowlist)
-		"schedules":        configgen.TierOperator, // operator-only: a project cannot register schedules (issue #233)
+		"permissions":            configgen.TierProject,  // allow/ask/deny + subagent: project-settable (allows trust-gated)
+		"guardrails":             configgen.TierOperator, // operator-only: a project cannot weaken a security checker
+		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
+		"output-economy":         configgen.TierOperator, // operator-only: a project cannot raise the automation posture (ADR 0041)
+		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
+		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
+		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
+		"schedules":              configgen.TierOperator, // operator-only: a project cannot register schedules (issue #233)
 	}
 	got := map[string]configgen.Tier{}
 	for _, st := range configgen.BuildModel(nil).Subtrees {

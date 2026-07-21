@@ -65,6 +65,28 @@ type Disclosable interface {
 	Advertised() ToolSpec
 }
 
+// PlanOnly is the OPTIONAL capability a Tool MAY implement to declare that it is a
+// plan-mode signalling tool: registered everywhere (so the shared and per-session
+// catalog name-sets stay equal — guarded by TestPerSessionCatalogMatchesSharedCatalog)
+// but advertised/callable ONLY in ModePlan. The catalog's mode projection
+// (Available / Specs / AdvertisedSpecs) EXCLUDES a PlanOnly tool from every
+// non-plan mode, so it is never offered to the model in default/acceptEdits.
+//
+// This is the projection gate for PresentPlan (issue #206): the plan-approval
+// signalling tool is registered into every catalog (name-set equality holds) but
+// the projection hides it outside plan mode. The dispatcher's name+mode check
+// (sess.Mode == ModePlan && c.Name == "PresentPlan") is defense-in-depth ON TOP of
+// this gate, not the sole gate. A tool that does NOT implement PlanOnly is
+// advertised in every mode it is otherwise eligible for (read-only tools in plan
+// mode, all tools in default/acceptEdits), so the default catalog view is
+// unchanged for every non-plan-signalling tool.
+type PlanOnly interface {
+	Tool
+	// PlanOnlyTool is the marker method. It carries no behaviour; implementing it
+	// (alongside Tool) opts the tool into plan-mode-only advertisement.
+	PlanOnlyTool()
+}
+
 // FileInfo is the minimal, provider-neutral file metadata the tools need. It is
 // a subset of io/fs.FileInfo carried as plain fields so adapters (osfs, memfs)
 // can populate it without leaking os types into the domain.

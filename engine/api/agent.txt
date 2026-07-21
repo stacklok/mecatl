@@ -60,6 +60,7 @@ const DispositionDone MemberDisposition = "done"
 const DispositionStopped MemberDisposition = "stopped"
 const MinSubagentRunTokens untyped int = 25000
 const ParallelSessionPrefix untyped string = "parallel-"
+const PlanApprovedProceedText untyped string = "Plan approved by operator. Proceed with execution."
 const RouterMissBadVerdict untyped string = "bad-verdict"
 const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
@@ -84,6 +85,7 @@ func NewInspectMemberTool(store port.SessionStore) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool
 func NewLRUForkReaper(capacity int) *LRUForkReaper
 func NewParallelTool(childEngine *Engine, forker tool.WorkspaceForker, opts ...ParallelOption) tool.Tool
+func NewPresentPlanTool() tool.Tool
 func NewSubagentStatusTool() tool.Tool
 func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
 func NewSupervisor(t *team.Team, base tool.Workspace, factory MemberEngine, opts ...SupervisorOption) *Supervisor
@@ -151,7 +153,7 @@ type ChildAskReview struct{Allowed bool; Reason string}
 type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
 type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
-type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool}
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)

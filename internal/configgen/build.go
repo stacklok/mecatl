@@ -25,6 +25,7 @@ func BuildModel(docs Docs) *Model {
 		postureSubtree(docs),
 		outputEconomySubtree(docs),
 		reasoningEffortSubtree(docs),
+		planModeAutoApproveSubtree(docs),
 		modelsSubtree(docs),
 		schedulesSubtree(docs),
 	}}
@@ -201,6 +202,27 @@ func reasoningEffortSubtree(docs Docs) *Subtree {
 			Default:      "(empty)",
 			Doc:          docFor(docs, "Config.ReasoningEffort", "the reasoning-effort tier (auto/low/medium/high/xhigh/max)"),
 			ExampleValue: "high",
+		}},
+	}
+}
+
+func planModeAutoApproveSubtree(docs Docs) *Subtree {
+	return &Subtree{
+		Key:  "plan-mode-auto-approve",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode " +
+			"session that parks awaiting a plan-approval ask is auto-approved (flip to default " +
+			"mode and execute) WITHOUT a human reviewing the plan. DEFAULT OFF. A project-tier " +
+			"plan-mode-auto-approve: is IGNORED with a WARN (a project cannot grant an autonomous " +
+			"approval capability).",
+		CommentedOut: true,
+		Scalar:       true,
+		Fields: []*Field{{
+			Key:          "plan-mode-auto-approve",
+			Type:         "bool",
+			Default:      "false",
+			Doc:          docFor(docs, "Config.PlanModeAutoApprove", "auto-approve a presented plan with NO HUMAN REVIEW (default off)"),
+			ExampleValue: "true",
 		}},
 	}
 }

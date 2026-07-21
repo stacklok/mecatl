@@ -60,48 +60,6 @@ func (m Model) View() tea.View {
 		return v
 	}
 
-	var body string
-	switch {
-	case m.showHelp:
-		// Help wins among the overlays (they don't coexist in practice, but help is
-		// the keyboard-owning one when set).
-		body = renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.agentsKeyMarking(), m.jumpKeyMarking())
-	case m.phase == phaseAwaitingApproval:
-		body = m.rend.renderPermissionModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height())
-	case m.mcp.view != mcpNone:
-		body = renderMCPOverlay(m.deps.Theme, m.mcp, m.caps, m.width, m.vp.Height())
-	case m.team.view != teamNone:
-		body = renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.width, m.vp.Height())
-	case m.agentsInv.view != agentsInvNone:
-		body = renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.width, m.vp.Height())
-	case m.skills.view != skillsNone:
-		body = renderSkillsOverlay(m.deps.Theme, m.skills, m.caps, m.width, m.vp.Height())
-	case m.soul.view != soulNone:
-		body = renderSoulOverlay(m.deps.Theme, m.soul, m.caps, m.width, m.vp.Height())
-	case m.userModel.view != userModelNone:
-		body = renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.width, m.vp.Height())
-	case m.models.view != modelsNone:
-		body = renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.width, m.vp.Height())
-	case m.effort.view != effortNone:
-		body = renderEffortOverlay(m.deps.Theme, m.effort, m.effectiveModel.ReasoningEffort, m.currentModelNoReasoning(), m.width, m.vp.Height())
-	case m.worktrees.view != worktreesNone:
-		body = renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.width, m.vp.Height())
-	case m.schedule.view != scheduleNone:
-		body = renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Replayer != nil, m.width, m.vp.Height())
-	case m.sessions.view != sessionsNone:
-		body = renderSessionsOverlay(m.deps.Theme, m.sessions, m.caps, m.sessionID, m.rend.vpView(m.vp), m.width, m.vp.Height())
-	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
-		// First-run zero-state: a welcome card in the empty viewport. Not an overlay
-		// (claims no keyboard); typing flows over it and it vanishes on the first block.
-		// Suppressed after a /models restart-now handoff (restartedThisRun): the splash
-		// is a first-run affordance, not a per-model-switch one — a restart's empty
-		// conversation must NOT re-fire it. (A genuine first session and /clear are
-		// unchanged.)
-		body = m.renderZeroState()
-	default:
-		body = m.rend.vpView(m.vp)
-	}
-
 	// The full vertical region stack — header, body, the conditional inline
 	// palette/mention/queue regions, then input + footer — is owned by the layout
 	// model (layout.go). assembleLayout mirrors the old hand-joined order and the
@@ -109,8 +67,48 @@ func (m Model) View() tea.View {
 	// chrome() the layout uses also drives onResize/relayout (viewport sizing) and
 	// convTopRow (click→content mapping), so the three can never disagree about where
 	// the body sits or how tall it must be.
-	v.Content = m.assembleLayout(body).join()
+	v.Content = m.assembleLayout(m.renderBody()).join()
 	return v
+}
+
+// renderBody picks the viewport body: an overlay (help/picker/panel), the
+// permission-modal card (generic or plan-specific), or the conversation.
+func (m Model) renderBody() string {
+	switch {
+	case m.showHelp:
+		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.agentsKeyMarking(), m.jumpKeyMarking())
+	case m.phase == phaseAwaitingApproval:
+		if isPlanAsk(m.ask.Tool) {
+			return m.rend.renderPlanApprovalModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height(), m.effectiveModel.ModelID)
+		}
+		return m.rend.renderPermissionModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height())
+	case m.mcp.view != mcpNone:
+		return renderMCPOverlay(m.deps.Theme, m.mcp, m.caps, m.width, m.vp.Height())
+	case m.team.view != teamNone:
+		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.width, m.vp.Height())
+	case m.agentsInv.view != agentsInvNone:
+		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.width, m.vp.Height())
+	case m.skills.view != skillsNone:
+		return renderSkillsOverlay(m.deps.Theme, m.skills, m.caps, m.width, m.vp.Height())
+	case m.soul.view != soulNone:
+		return renderSoulOverlay(m.deps.Theme, m.soul, m.caps, m.width, m.vp.Height())
+	case m.userModel.view != userModelNone:
+		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.width, m.vp.Height())
+	case m.models.view != modelsNone:
+		return renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.width, m.vp.Height())
+	case m.effort.view != effortNone:
+		return renderEffortOverlay(m.deps.Theme, m.effort, m.effectiveModel.ReasoningEffort, m.currentModelNoReasoning(), m.width, m.vp.Height())
+	case m.worktrees.view != worktreesNone:
+		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.width, m.vp.Height())
+	case m.schedule.view != scheduleNone:
+		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Replayer != nil, m.width, m.vp.Height())
+	case m.sessions.view != sessionsNone:
+		return renderSessionsOverlay(m.deps.Theme, m.sessions, m.caps, m.sessionID, m.rend.vpView(m.vp), m.width, m.vp.Height())
+	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
+		return m.renderZeroState()
+	default:
+		return m.rend.vpView(m.vp)
+	}
 }
 
 // renderHeader is the top bar: session id · model · mode · server.
@@ -507,8 +505,11 @@ func (m Model) renderFooter() string {
 		// "(1 of N)" badge as the modal title; the single-ask frame stays
 		// byte-identical.
 		label := "⚠ awaiting approval"
+		if isPlanAsk(m.ask.Tool) {
+			label = "⚙ plan review"
+		}
 		if n := len(m.askQueue); n > 0 {
-			label = fmt.Sprintf("⚠ awaiting approval (1 of %d)", 1+n)
+			label = fmt.Sprintf("%s (1 of %d)", label, 1+n)
 		}
 		left = m.deps.Theme.Style("askTitle").Render(label)
 	case phaseConnecting:
@@ -552,6 +553,9 @@ func (m Model) renderFooter() string {
 	help := "? help · / commands · ctrl+c quit"
 	if m.phase == phaseRunning {
 		help = "enter queue · esc cancel/clear · " + help
+	}
+	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) {
+		help = "A approve & run · W auto-accept · D iterate · " + help
 	}
 	// While the double-ctrl+c guard is armed, prepend a loud "again to quit" cue to
 	// the help line. The footer is the one chrome line present in every phase (the

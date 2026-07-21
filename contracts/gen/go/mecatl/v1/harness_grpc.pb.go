@@ -70,6 +70,7 @@ const (
 	HarnessService_RunTeam_FullMethodName             = "/mecatl.v1.HarnessService/RunTeam"
 	HarnessService_ListTeam_FullMethodName            = "/mecatl.v1.HarnessService/ListTeam"
 	HarnessService_CleanupTeam_FullMethodName         = "/mecatl.v1.HarnessService/CleanupTeam"
+	HarnessService_ApprovePlan_FullMethodName         = "/mecatl.v1.HarnessService/ApprovePlan"
 )
 
 // HarnessServiceClient is the client API for HarnessService service.
@@ -236,6 +237,36 @@ type HarnessServiceClient interface {
 	ListTeam(ctx context.Context, in *ListTeamRequest, opts ...grpc.CallOption) (*ListTeamResponse, error)
 	// CleanupTeam tears down a finished team and releases its resources.
 	CleanupTeam(ctx context.Context, in *CleanupTeamRequest, opts ...grpc.CallOption) (*CleanupTeamResponse, error)
+	// ApprovePlan atomically resolves a parked plan-approval ask (a PresentPlan
+	// call surfaced in plan mode, issue #206) and — on an ALLOW verdict — starts a
+	// fresh continuation run carrying the harness proceed message, streaming BOTH
+	// the resumed run's and the continuation run's events on the one response
+	// stream. It composes EXISTING seams (Service.resumeFromAwaiting +
+	// StartRunContent over the engine's ResumeApproval): the resumed run applies
+	// the verdict, sets the plan-approved target mode, terminates with
+	// StopPlanApproved, and flips the session mode at the terminal boundary; the
+	// continuation run then drives the model on the FLIPPED mode (default /
+	// accept-edits) with the proceed message as ordinary recorded history.
+	//
+	// target_mode → verdict mapping:
+	//   - PERMISSION_MODE_DEFAULT  → allow-once (the session flips to DEFAULT).
+	//   - PERMISSION_MODE_ACCEPT_EDITS → allow-always (the session flips to
+	//     ACCEPT_EDITS).
+	//   - PERMISSION_MODE_PLAN / UNSPECIFIED → deny (the run stays in plan mode;
+	//     no continuation run starts — the model iterates on the plan on the next
+	//     prompt).
+	//
+	// `note` is an OPTIONAL operator remark appended to the proceed message
+	// injected into the continuation run's first user message (allow paths only).
+	//
+	// Preconditions (else FailedPrecondition): the session must NOT have a live
+	// in-flight run (an approve mid-run is rejected — use the Converse
+	// ResumeApproval frame for a live run), and it MUST be in the awaiting state
+	// parked on a PLAN-ORIGINATED ask (not a generic tool-permission ask). An
+	// unknown session yields NotFound. The stream ends with the terminal `result`
+	// event of whichever run ran last (the continuation run on an allow path; the
+	// resumed run on a deny path).
+	ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 }
 
 type harnessServiceClient struct {
@@ -547,6 +578,25 @@ func (c *harnessServiceClient) CleanupTeam(ctx context.Context, in *CleanupTeamR
 	return out, nil
 }
 
+func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[3], HarnessService_ApprovePlan_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ApprovePlanRequest, Event]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_ApprovePlanClient = grpc.ServerStreamingClient[Event]
+
 // HarnessServiceServer is the server API for HarnessService service.
 // All implementations must embed UnimplementedHarnessServiceServer
 // for forward compatibility.
@@ -711,6 +761,36 @@ type HarnessServiceServer interface {
 	ListTeam(context.Context, *ListTeamRequest) (*ListTeamResponse, error)
 	// CleanupTeam tears down a finished team and releases its resources.
 	CleanupTeam(context.Context, *CleanupTeamRequest) (*CleanupTeamResponse, error)
+	// ApprovePlan atomically resolves a parked plan-approval ask (a PresentPlan
+	// call surfaced in plan mode, issue #206) and — on an ALLOW verdict — starts a
+	// fresh continuation run carrying the harness proceed message, streaming BOTH
+	// the resumed run's and the continuation run's events on the one response
+	// stream. It composes EXISTING seams (Service.resumeFromAwaiting +
+	// StartRunContent over the engine's ResumeApproval): the resumed run applies
+	// the verdict, sets the plan-approved target mode, terminates with
+	// StopPlanApproved, and flips the session mode at the terminal boundary; the
+	// continuation run then drives the model on the FLIPPED mode (default /
+	// accept-edits) with the proceed message as ordinary recorded history.
+	//
+	// target_mode → verdict mapping:
+	//   - PERMISSION_MODE_DEFAULT  → allow-once (the session flips to DEFAULT).
+	//   - PERMISSION_MODE_ACCEPT_EDITS → allow-always (the session flips to
+	//     ACCEPT_EDITS).
+	//   - PERMISSION_MODE_PLAN / UNSPECIFIED → deny (the run stays in plan mode;
+	//     no continuation run starts — the model iterates on the plan on the next
+	//     prompt).
+	//
+	// `note` is an OPTIONAL operator remark appended to the proceed message
+	// injected into the continuation run's first user message (allow paths only).
+	//
+	// Preconditions (else FailedPrecondition): the session must NOT have a live
+	// in-flight run (an approve mid-run is rejected — use the Converse
+	// ResumeApproval frame for a live run), and it MUST be in the awaiting state
+	// parked on a PLAN-ORIGINATED ask (not a generic tool-permission ask). An
+	// unknown session yields NotFound. The stream ends with the terminal `result`
+	// event of whichever run ran last (the continuation run on an allow path; the
+	// resumed run on a deny path).
+	ApprovePlan(*ApprovePlanRequest, grpc.ServerStreamingServer[Event]) error
 	mustEmbedUnimplementedHarnessServiceServer()
 }
 
@@ -804,6 +884,9 @@ func (UnimplementedHarnessServiceServer) ListTeam(context.Context, *ListTeamRequ
 }
 func (UnimplementedHarnessServiceServer) CleanupTeam(context.Context, *CleanupTeamRequest) (*CleanupTeamResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CleanupTeam not implemented")
+}
+func (UnimplementedHarnessServiceServer) ApprovePlan(*ApprovePlanRequest, grpc.ServerStreamingServer[Event]) error {
+	return status.Errorf(codes.Unimplemented, "method ApprovePlan not implemented")
 }
 func (UnimplementedHarnessServiceServer) mustEmbedUnimplementedHarnessServiceServer() {}
 func (UnimplementedHarnessServiceServer) testEmbeddedByValue()                        {}
@@ -1305,6 +1388,17 @@ func _HarnessService_CleanupTeam_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_ApprovePlan_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ApprovePlanRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HarnessServiceServer).ApprovePlan(m, &grpc.GenericServerStream[ApprovePlanRequest, Event]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_ApprovePlanServer = grpc.ServerStreamingServer[Event]
+
 // HarnessService_ServiceDesc is the grpc.ServiceDesc for HarnessService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1428,6 +1522,11 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "RunTeam",
 			Handler:       _HarnessService_RunTeam_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ApprovePlan",
+			Handler:       _HarnessService_ApprovePlan_Handler,
 			ServerStreams: true,
 		},
 	},

@@ -46,3 +46,66 @@ func TestPendingAskHookOriginatedOmitemptyWhenFalse(t *testing.T) {
 		t.Fatal("a record missing hook_originated must deserialize to false")
 	}
 }
+
+// PendingAsk.PlanOriginated is the SECOND serialized, cross-process load-bearing
+// provenance bit (issue #206): the awaiting-resume path keys the plan-flip branch on
+// it, and that path runs in a FRESH process that loaded the durable jsonlstore record.
+// These tests pin the JSON contract DIRECTLY (mirroring the HookOriginated pair).
+
+// PlanOriginated must survive a marshal+unmarshal round-trip as true.
+func TestPendingAskPlanOriginatedRoundTrips(t *testing.T) {
+	in := PendingAsk{AskID: "a1", Tool: "PresentPlan", Call: "c1", PlanOriginated: true}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out PendingAsk
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !out.PlanOriginated {
+		t.Fatalf("PlanOriginated must round-trip true; got %+v (json=%s)", out, b)
+	}
+}
+
+// omitempty must keep the field ABSENT from the JSON when false, so an old record (or a
+// policy/hook ask) deserializes PlanOriginated=false without the key being present.
+func TestPendingAskPlanOriginatedOmitemptyWhenFalse(t *testing.T) {
+	b, err := json.Marshal(PendingAsk{AskID: "a1", Tool: "Bash"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "plan_originated") {
+		t.Fatalf("a false PlanOriginated must be omitted (omitempty); json=%s", b)
+	}
+	// And a record with no key deserializes to false.
+	var out PendingAsk
+	if err := json.Unmarshal([]byte(`{"AskID":"a1","Tool":"Bash"}`), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.PlanOriginated {
+		t.Fatal("a record missing plan_originated must deserialize to false")
+	}
+}
+
+// TestPendingAskOriginAccessor pins the read-time Origin() mapping: none / hook /
+// plan, with Hook taking precedence when both bools are (incorrectly) set.
+func TestPendingAskOriginAccessor(t *testing.T) {
+	cases := []struct {
+		name string
+		ask  PendingAsk
+		want AskOrigin
+	}{
+		{"none when neither bit set", PendingAsk{Tool: "Bash"}, AskOriginNone},
+		{"hook when HookOriginated set", PendingAsk{Tool: "Bash", HookOriginated: true}, AskOriginHook},
+		{"plan when PlanOriginated set", PendingAsk{Tool: "PresentPlan", PlanOriginated: true}, AskOriginPlan},
+		{"hook wins when both set (tie-break)", PendingAsk{Tool: "Bash", HookOriginated: true, PlanOriginated: true}, AskOriginHook},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ask.Origin(); got != tc.want {
+				t.Fatalf("Origin() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

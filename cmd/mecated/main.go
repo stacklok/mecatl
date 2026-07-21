@@ -452,6 +452,14 @@ type config struct {
 	// reasoningEffortFlagSet is true when --reasoning-effort was passed explicitly,
 	// so composition lets CLI out-rank the settings.yaml reasoning-effort: key.
 	reasoningEffortFlagSet bool
+
+	// planModeAutoApprove is the OPT-IN, OPERATOR-TIER-ONLY, DEFAULT-OFF flag that
+	// auto-approves a plan-mode PresentPlan ask when the run ends without a human
+	// (issue #206 Wave 6a). It is a deliberate autonomous-approval capability — an
+	// operator deployment decision, NEVER load-bearing for safety. Only meaningful
+	// headless (--headless); an interactive deployment surfaces the plan to the
+	// human instead.
+	planModeAutoApprove bool
 }
 
 // mcpServerList is a repeatable flag.Value collecting --mcp-server name=URL
@@ -1042,6 +1050,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		MetricsRoleScoper:      roleScoper,
 		ScheduleMetricsEmitter: metrics.EmitSchedule,
 		Diagnostics:            diag,
+		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
+		PlanModeAutoApprove: cfg.planModeAutoApprove,
 	}
 	// Apply the shared provider credentials + base URLs (env reads happen here, once).
 	// An OPENAI_API_KEY in the environment implies the user wants the real provider —
@@ -1258,6 +1268,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a TRUSTED policy rubric file for --subagent-ask-reviewer; its CONTENT replaces the built-in read-only/verification rubric the reviewer applies. Empty keeps the built-in rubric. Read once at startup; an unreadable file FAILS STARTUP")
 	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "Semantic model router KILL-SWITCH (ADR 0042, superseding 0031's enable model): the router is ENABLED by configuring a `models.router:` category taxonomy in the OPERATOR-TIER user-global settings.yaml (the guardrails-parity enable model — configure = enable), NOT by this flag. Pass --subagent-model-router=false to force the router OFF despite a taxonomy (the kill-switch; also expressible as models.router.disabled: true in YAML). When ENABLED, a tiny one-turn classifier (on the `router` model slot) reads each plain Subagent delegation's task prompt + the operator taxonomy and picks the child's model BEFORE the child is minted (decide-once, same-provider; only for a plain delegation — no per-call model/agent, no fork/resume). FAIL-SOFT: any classifier failure, unknown category, or the per-run breaker (3 consecutive misses) inherits the default model")
 	fs.BoolVar(&cfg.headless, "headless", false, "run NON-interactive: declare that clients drive sessions but never answer permission prompts (autonomous / CI deployments). A child subagent/member/branch permission ask is then NOT surfaced to the client (nobody would answer it — it would park until run-end) but resolved by the auto-deny path / the opt-in --subagent-ask-reviewer. DEFAULT off: a normal mecated serving an interactive client (mecatui, an IDE) surfaces asks for a human. Setting --subagent-ask-reviewer WITHOUT --headless has no effect (asks surface to the client instead) — a startup WARNING says so")
+	fs.BoolVar(&cfg.planModeAutoApprove, "plan-mode-auto-approve", false, "OPT-IN autonomous plan approval (issue #206 Wave 6a): when a plan-mode run ends HEADLESS (no human to review), auto-approve the plan via ApprovePlan(ModeDefault) instead of leaving it parked. This is a deliberate autonomous-approval capability — an operator deployment decision, NEVER load-bearing for safety. It does NOT fire when interactive (a human can approve), NOT in non-plan modes, NOT for non-plan asks. DEFAULT off: a headless plan ask is auto-denied. Requires --headless to engage (an interactive deployment surfaces the plan to the human). A LOUD diagnostic (plan_mode_auto_approve: ON (NO HUMAN REVIEW)) is emitted at startup")
 	fs.StringVar(&cfg.guardrailsModel, "guardrails-model", "", "GUARDRAILS (issue #27): model id or --model-alias of a tool-less checker that inspects OUTBOUND tool-call args (PreToolUse, data exfil) and INBOUND tool results (PostToolUse, prompt injection) and enforces a verdict per the operator-tier `guardrails:` rule list. Configuring a model here OR via a bound `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) ENABLES guardrails (configure = enable, the router-parity model of ADR 0042; see ADR 0046) — empty + no slot disables them. A value that does not resolve to a usable model id FAILS STARTUP. A bound `guardrail` slot SUPERSEDES this flag's model when both are set (this flag then supplies only the enable gate). The RULE LIST + cost knobs live in the user-global settings.yaml `guardrails:` subtree (operator-tier ONLY — a project repo cannot configure or weaken a checker); --guardrails-model overrides the YAML model")
 	fs.StringVar(&cfg.guardrailsMode, "guardrails", "", "GUARDRAILS master switch (the KILL-SWITCH only): pass `--guardrails=off` to force the issue-#27 content checker OFF regardless of --guardrails-model / the `guardrail` model slot / the guardrails: YAML config. The POSITIVE enable path is configuring a checker model — via `--guardrails-model` OR a bound `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — NOT this flag (configure = enable, ADR 0046). Any other value is a startup error")
 

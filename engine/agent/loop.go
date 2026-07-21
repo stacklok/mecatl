@@ -197,6 +197,18 @@ type Deps struct {
 	// with no declared approver auto-denies a subagent ask rather than hanging).
 	Interactive bool
 
+	// PlanModeAutoApprove is an OPT-IN, OPERATOR-TIER-ONLY, DEFAULT-OFF flag that
+	// tells the engine to SURFACE a plan-approval ask (PresentPlan) even when headless
+	// (no human approver attached), so the composition layer's Service can auto-resolve
+	// it via ApprovePlan without operator interaction. It is DELIBERATELY ONLY the
+	// PresentPlan gate — a non-plan ask (policy/hook) is still headless-auto-denied.
+	// DEFAULT false (fail-safe: a headless plan ask is auto-denied like every other ask).
+	// It is a plain bool — NOT a port.LLMRequest field and never reaches the model.
+	// Child engines inherit it from the parent (so a Subagent/team child's plan ask also
+	// parks rather than auto-denies), allowing composition to auto-approve at the Service
+	// layer.
+	PlanModeAutoApprove bool
+
 	// ChildAskReviewer, when non-nil, reviews a child agent's (subagent / team
 	// member / parallel branch) permission ask that the harness could not resolve
 	// statically and that no attached human can answer — instead of blanket-denying
@@ -518,6 +530,18 @@ type Run struct {
 	// per session" / no-clone-swap discipline applied to run-scoped knobs). The zero
 	// value is the legacy run (no override, no extras), so Run/RunContent are unchanged.
 	opts RunOptions
+	// planApprovedTarget is the permission mode a plan-approval Allow verdict will
+	// flip the session into at the terminal boundary: AllowOnce → ModeDefault,
+	// AllowAlways → ModeAccept. It is RUN-SCOPED (zero/"" = no approval pending),
+	// set ONLY by surfacePlanAsk / the resolvePendingCall PlanOriginated allow
+	// branch, and read ONLY by terminateComplete — which, after the session reaches
+	// StateCompleted, flips the mode out of ModePlan and saves. It is deliberately
+	// NOT serialized: it is a within-run transient that the StopPlanApproved clean
+	// terminal + the serialized PlanOriginated marker already cover cross-process
+	// (a parked plan-ask resumes via resolvePendingCall, which re-sets it on the
+	// resumed run before runLoop sees it). Set before the run goroutine reaches
+	// terminateComplete and only read after, so it needs no synchronisation.
+	planApprovedTarget session.PermissionMode
 	// fragments are the EPHEMERAL turn-0 instruction fragments (project instructions /
 	// soul / memory index / user model, produced by Deps.Instructions) prepended to the
 	// LLMRequest.Messages on EVERY turn of this run (incl. resume) but NEVER persisted into
@@ -961,6 +985,19 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 	var bgPendingNudged bool
 
 	for {
+		// Plan-approval gate (issue #206, Wave 2): if a plan was approved, terminate
+		// immediately with StopPlanApproved. This EARLY check catches the awaiting-resume
+		// path (driveFromAwaiting → runLoop, where resolvePendingCall set
+		// r.planApprovedTarget and the pending call's result was already recorded) so the
+		// resumed run does NOT loop back to the model. The live path hits the post-dispatch
+		// check at Step 6 first and returns there, so this is belt-and-suspenders there;
+		// for the resume path it is the load-bearing gate. CLEAN terminal (completed path,
+		// Reopen-recoverable); terminateComplete flips the mode at the boundary.
+		if r.planApprovedTarget != "" {
+			e.terminateComplete(ctx, r, sess, session.StopPlanApproved, lastText, total)
+			return
+		}
+
 		// Step 2a: background-completion NOTICE injection (A2 — notice-only), BEFORE
 		// the terminal checks so the notice is durable history even when the run ends
 		// at this very boundary. Newly-finished background children that were neither
@@ -1094,6 +1131,18 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 			return
 		}
 		e.save(ctx, sess)
+
+		// Plan-approval gate (issue #206, Wave 2): if a PresentPlan call was approved
+		// this turn, surfacePlanAsk set r.planApprovedTarget. Terminate the run with
+		// StopPlanApproved instead of looping back to the model — the operator has
+		// approved the plan; terminateComplete flips the session mode at the terminal
+		// boundary. A Deny leaves planApprovedTarget empty, so the loop continues and
+		// the model iterates on the plan. This is a CLEAN terminal (completed path,
+		// Reopen-recoverable), parallel to StopBudget/StopNoProgress.
+		if r.planApprovedTarget != "" {
+			e.terminateComplete(ctx, r, sess, session.StopPlanApproved, lastText, total)
+			return
+		}
 	}
 }
 
@@ -1983,6 +2032,18 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	e.drainChildren(ctx, r)
 	if !sess.State.IsTerminal() {
 		_ = sess.Stop(reason)
+	}
+	// Plan-approval gate (issue #206, Wave 2): flip the session out of plan mode
+	// when a plan was approved. r.planApprovedTarget is set only by the
+	// plan-allow branch (AllowOnce→ModeDefault, AllowAlways→ModeAccept); the
+	// session is now StateCompleted, where SetMode is legal (session.go rejects it
+	// only from Running/Awaiting — pinned by TestPlanApprovalDoesNotFlipMidTurn).
+	// The error path (terminate) does NOT flip: an errored plan run stays in plan
+	// mode, honestly. Save the flipped mode so a Reopen/restart continues in the
+	// approved posture.
+	if r.planApprovedTarget != "" {
+		_ = sess.SetMode(r.planApprovedTarget)
+		e.save(ctx, sess)
 	}
 	e.fireStop(ctx, r, sess, reason)
 	e.emitResult(r, sess, reason, text, usage, "")

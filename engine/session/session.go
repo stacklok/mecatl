@@ -133,6 +133,16 @@ const (
 	// verbatim (no proto enum; the wire stop field is a string passthrough, exactly
 	// like StopNoProgress / StopBudget).
 	StopStructuredOutput StopReason = "structured_output"
+	// StopPlanApproved means the operator approved a presented plan (issue #206:
+	// the plan-approval gate). Like StopNoProgress / StopBudget / StopStructuredOutput
+	// it is a CLEAN terminal (not StopError — nothing failed; the approval is a
+	// success outcome), routed through the completed path so the session ends COMPLETED
+	// and stays Reopen-recoverable. It is emitted when an operator approves a plan the
+	// model presented via the PresentPlan tool; the session is typically flipped out of
+	// plan mode and the next run continues the now-approved work. It maps to the proto
+	// stop string verbatim (no proto enum; the wire stop field is a string passthrough,
+	// exactly like StopNoProgress / StopBudget / StopStructuredOutput).
+	StopPlanApproved StopReason = "plan_approved"
 )
 
 // Limits are the configured stop conditions for a session. A zero value in any
@@ -227,9 +237,57 @@ type PendingAsk struct {
 	// it (an Allow must EXECUTE the tool WITHOUT re-running the PreToolUse hook, which
 	// would re-block / re-ask). Collapsing a serialized correctness marker into an
 	// enum with two ephemeral hints would conflate two different lifetimes and
-	// serialization contracts — so it stays its own bool. (If a SECOND serialized
-	// provenance bit ever appears, THEN extract a serialized AskOrigin enum.)
+	// serialization contracts — so it stays its own bool. Its plan-approval sibling
+	// PlanOriginated (issue #206) is the SECOND serialized provenance bit: the two
+	// bools are now the serialized contract, and the read-time Origin() accessor
+	// derives the single provenance from them.
 	HookOriginated bool `json:"hook_originated,omitempty"`
+	// PlanOriginated marks an ask that arose from a plan-approval gate (the
+	// operator was asked to approve a presented plan; issue #206), NOT from the
+	// permission policy or a hook. It is SERIALIZED (json:"plan_originated,omitempty")
+	// and CROSS-PROCESS LOAD-BEARING — the awaiting-resume path
+	// (Engine.ResumeApproval → resolvePendingCall) runs in a FRESH process and keys
+	// the plan-flip branch on it (an Allow flips the session out of plan mode and
+	// drives the turn through the completed path with StopPlanApproved; the resumed
+	// call is NOT re-presented). It is deliberately a bool sibling of HookOriginated
+	// rather than folded into a single enum with ConfiguredAsk/FlooredConfiguredAllow:
+	// those two are RUN-SCOPED policy hints that are never serialized, whereas
+	// PlanOriginated (like HookOriginated) is a serialized correctness marker that
+	// must survive a process restart. The read-time provenance is surfaced via Origin.
+	PlanOriginated bool `json:"plan_originated,omitempty"`
+}
+
+// AskOrigin is the read-time provenance of a PendingAsk, derived from the
+// serialized provenance bools. It is a convenience accessor, NOT a stored field:
+// the two serialized bools (HookOriginated, PlanOriginated) remain the on-disk
+// contract, and Origin is how a reader obtains the single provenance without
+// poking both bools. Hook takes precedence if both were (incorrectly) set;
+// construction is via the loop's ask sites only (a PendingAsk is never built
+// with two origins at once).
+type AskOrigin int
+
+const (
+	// AskOriginNone is the zero value: the ask came from the permission policy
+	// (neither a hook nor a plan gate). It is the common case.
+	AskOriginNone AskOrigin = iota
+	// AskOriginHook marks an ask refined from a PreToolUse hook BLOCK (ADR 0062).
+	AskOriginHook
+	// AskOriginPlan marks an ask presented by the plan-approval gate (issue #206).
+	AskOriginPlan
+)
+
+// Origin returns the provenance of the ask. Hook takes precedence over Plan when
+// both bools are set (a construction invariant violation — only one site ever
+// sets a given ask — but the tie-break is deterministic for the reader).
+func (p PendingAsk) Origin() AskOrigin {
+	switch {
+	case p.HookOriginated:
+		return AskOriginHook
+	case p.PlanOriginated:
+		return AskOriginPlan
+	default:
+		return AskOriginNone
+	}
 }
 
 // Errors returned by the Session state machine.

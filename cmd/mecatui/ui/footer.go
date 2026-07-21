@@ -316,6 +316,8 @@ func stopReasonLabel(stop string) (text, slot string) {
 		// retry budget. Subagent-only today (it does not reach the main footer),
 		// but mapped so the raw token never leaks if it ever does.
 		return "stopped · schema unmet", slotCtxWarn
+	case "plan_approved":
+		return "plan approved · executing", "muted"
 	case stopError:
 		return "error", "errorText"
 	default:

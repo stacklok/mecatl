@@ -11,6 +11,89 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ## [Unreleased]
 
+### Added
+
+- **`session.PendingAsk.PlanOriginated` + `session.AskOrigin` enum +
+  `session.PendingAsk.Origin()`** (issue #206, Wave 1) — a new serialized `bool`
+  field (`json:"plan_originated,omitempty"`, sibling of `HookOriginated`) marking an
+  ask that arose from the plan-approval gate (an operator was asked to approve a
+  presented plan), NOT from the permission policy or a hook. It is CROSS-PROCESS
+  LOAD-BEARING: the awaiting-resume path (`Engine.ResumeApproval` →
+  `resolvePendingCall`) runs in a FRESH process and keys the plan-flip branch on it
+  (an Allow flips the session out of plan mode and drives the turn through the
+  completed path with `StopPlanApproved`). The two serialized bools
+  (`HookOriginated`, `PlanOriginated`) remain the on-disk contract; the new
+  `AskOrigin` enum (`AskOriginNone`/`AskOriginHook`/`AskOriginPlan`) and the
+  `Origin()` read accessor are a convenience derivation over those bools, NOT a
+  stored field (Hook takes precedence if both were incorrectly set).
+  `ConfiguredAsk`/`FlooredConfiguredAllow` stay untouched (run-scoped, never
+  serialized). Classified Added per COMPATIBILITY.md (new struct field + enum type +
+  consts + method are minor bumps; the serialized two-bool contract is additive — a
+  pre-#206 snapshot deserializes to `PlanOriginated=false`, `omitempty` keeps the
+  key absent when false). (#206)
+
+- **`session.StopPlanApproved`** (issue #206, Wave 1) — a new `StopReason = "plan_approved"`
+  const, the CLEAN non-error terminal emitted when an operator approves a presented
+  plan. Like `StopNoProgress` / `StopBudget` / `StopStructuredOutput` it is routed
+  through the completed path (session ends COMPLETED, Reopen-recoverable), NOT
+  `StopError`. It maps to the proto stop string verbatim (no proto enum; the wire
+  stop field is a string passthrough, exactly like its clean-terminal siblings).
+  Classified Added per COMPATIBILITY.md (a new exported const is a minor bump). (#206)
+
+- **`agent.NewPresentPlanTool() tool.Tool`** (issue #206, Wave 1) — the
+  plan-approval gate's signalling affordance. In plan mode, once the model has
+  presented a complete plan in its preceding assistant text, it calls `PresentPlan`
+  to hand control to the operator. The tool is read-only / signaling-only
+  (`ReadOnly() == true`, dispatches read-parallel); `Execute` is VESTIGIAL — it
+  returns `session.NewToolResult(call.ID, "PresentPlan: awaiting operator approval.")`
+  and exists only for honesty on a misroute, since the dispatcher (Wave 2) intercepts
+  a `PresentPlan` call by name in plan mode before execution. No marker interface is
+  introduced (single implementation; the dispatcher name-checks `c.Name ==
+  "PresentPlan"`). Classified Added per COMPATIBILITY.md (a new exported constructor
+  is a minor bump; the `presentPlanTool` struct is unexported). (#206)
+
+- **`agent.PlanApprovedProceedText`** (issue #206, Wave 2) — an exported `const string`
+  ("Plan approved by operator. Proceed with execution.") carrying the harness-framed
+  proceed message the composition/service layer (Wave 4's ApprovePlan seam) injects as
+  ordinary recorded history when an operator approves a presented plan, signalling the
+  model to begin execution. It is event-silent (a recorded user message, NOT a
+  diagnostics line — the loop's "exactly THREE lines" invariant holds). Exported so the
+  service layer references the exact text without re-stringing it; the text is a stable
+  contract the model reads as the proceed signal. Classified Added per COMPATIBILITY.md
+  (a new exported const is a minor bump). Wave 2 also lands the agent-loop
+  plan-approval seam itself (the run-scoped `Run.planApprovedTarget` field, the
+  `surfacePlanAsk` dispatcher sibling of `askHookApproval`, the `runReadBatch`/`runOne`
+  name+mode interception, the `runLoop` `StopPlanApproved` termination, the
+  `terminateComplete` mode flip, and the `resolvePendingCall` `PlanOriginated`
+  cross-process resume branch) — all unexported, so no further API surface changes. (#206)
+
+- **`tool.PlanOnly` interface** (issue #206, Wave 3) — a new OPTIONAL capability
+  interface a `Tool` MAY implement to declare itself a plan-mode signalling tool:
+  registered everywhere (so the shared and per-session catalog name-sets stay equal —
+  guarded by `TestPerSessionCatalogMatchesSharedCatalog`) but advertised/callable
+  ONLY in `ModePlan`. The catalog's mode projection (`Catalog.Available` / `Specs` /
+  `AdvertisedSpecs`) EXCLUDES a `PlanOnly` tool from every non-plan mode, so it is
+  never offered to the model in default/acceptEdits. This is the projection gate for
+  `PresentPlan` (Wave 1): the dispatcher's name+mode check (`sess.Mode == ModePlan &&
+  c.Name == "PresentPlan"`) is defense-in-depth ON TOP of this gate, not the sole
+  gate. A tool that does NOT implement `PlanOnly` is advertised in every mode it is
+  otherwise eligible for, so the default catalog view is unchanged for every
+  non-plan-signalling tool. Classified Added per COMPATIBILITY.md (a new exported
+  interface with a marker method is a minor bump; additive — existing tools are
+  unaffected). (#206)
+
+- **`agent.Deps.PlanModeAutoApprove`** (issue #206, Wave 6a) — a new `bool` field
+  on `Deps` that, when true, loosens the `surfacePlanAsk` headless guard so a
+  plan-approval ask (PresentPlan) is SURFACED (EvPermissionAsk emitted, run parks)
+  even when the engine is headless (`Interactive=false`). This enables the
+  composition layer's auto-approve observer (`Service.MaybeAutoApprovePlan`) to
+  resolve the parked ask without a human operator. It is an OPT-IN, OPERATOR-TIER-
+  ONLY, DEFAULT-OFF flag: when false (the default) the existing headless auto-deny
+  is byte-identical. The engine NEVER auto-approves on its own — it only surfaces
+  the ask; the composition Service layer delivers the verdict. Classified Added per
+  COMPATIBILITY.md (a new exported struct field with a false zero-value is a minor
+  bump; additive — existing code is unaffected). (#206)
+
 <<<<<<< HEAD
 ### Changed
 

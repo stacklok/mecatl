@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -131,22 +133,48 @@ func mkdirProjectSettings(t *testing.T, ws, content string) {
 	}
 }
 
-// slogdiagRecorder wraps a slogdiag sink over a strings.Builder so a test can assert on
-// the FULL structured line (message + args), which capturingDiagnostics drops.
+// slogdiagRecorder wraps a slogdiag sink over a concurrency-safe buffer so a
+// test can assert on the FULL structured line (message + args), which
+// capturingDiagnostics drops.
+//
+// It is concurrency-safe: the slog handler writes from the live-model-refresh
+// background goroutine (and any other engine goroutine) while the test
+// goroutine reads via String/lineContaining. The underlying bytes.Buffer is
+// guarded by a mutex (slog writes through the lockedWriter; the reads take the
+// same lock), because strings.Builder / bytes.Buffer are NOT safe for
+// concurrent use.
 type slogdiagRecorder struct {
-	buf  *strings.Builder
+	mu   sync.Mutex
+	buf  bytes.Buffer
 	diag port.Diagnostics
+}
+
+// lockedWriter is the io.Writer the slog handler writes through; it serializes
+// writes against the recorder's mutex.
+type lockedWriter struct{ r *slogdiagRecorder }
+
+func (w lockedWriter) Write(p []byte) (int, error) {
+	w.r.mu.Lock()
+	defer w.r.mu.Unlock()
+	return w.r.buf.Write(p)
 }
 
 func slogdiagBuffer(t *testing.T) *slogdiagRecorder {
 	t.Helper()
-	var b strings.Builder
-	return &slogdiagRecorder{buf: &b, diag: slogdiag.New(&b, false, port.LevelDebug)}
+	r := &slogdiagRecorder{}
+	r.diag = slogdiag.New(lockedWriter{r}, false, port.LevelDebug)
+	return r
 }
 
-func (r *slogdiagRecorder) String() string { return r.buf.String() }
+func (r *slogdiagRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.String()
+}
 
 func (r *slogdiagRecorder) lineContaining(substr string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, line := range strings.Split(r.buf.String(), "\n") {
 		if strings.Contains(line, substr) {
 			return line

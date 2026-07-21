@@ -194,22 +194,15 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	logCtx := context.WithoutCancel(ctx)
 	var sendErr error
 	for ev := range run.Events() {
-		h.svc.appendEvent(logCtx, id, ev)
 		if sendErr != nil {
-			continue // drain-to-discard: keep the run unwedged after a dead client
-		}
-		// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
-		// consumed by the durable log ONLY — appended above but NOT relayed to the client
-		// wire (the verdict record, the pre-compaction archive, and the user-prompt record
-		// are log/audit history, not client events; the client already holds its own
-		// prompt). Skip the client send AFTER the Append.
-		if ev.Type == session.EvApproval || ev.Type == session.EvCompactionArchive || ev.Type == session.EvUserPrompt {
+			// drain-to-discard: the client is gone. Still append to the durable
+			// log (it must record the post-disconnect tail), but skip Persist /
+			// auto-approve / the client send.
+			h.svc.appendEvent(logCtx, id, ev)
 			continue
 		}
-		// Persist when the run pauses awaiting approval so a restart leaves a
-		// loadable awaiting session a client can re-attach to.
-		if ev.Type == session.EvPermissionAsk {
-			h.svc.Persist(ctx, id)
+		if !h.svc.relayEvent(ctx, logCtx, id, ev, true) {
+			continue // log-only event: consumed by the durable log, not relayed to the client wire
 		}
 		if err := stream.Send(&mecatlv1.ConverseResponse{Event: toProto(ev)}); err != nil {
 			sendErr = err
@@ -431,6 +424,10 @@ func toStatus(err error) error {
 	case errors.Is(err, ErrFailedPrecondition):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrNoActiveRun):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrNotAwaitingPlan):
+		// ApprovePlan precondition (issue #206, Wave 4): the session is not parked
+		// awaiting a plan-originated ask. FailedPrecondition (HTTP 409).
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrSessionLeasedElsewhere):
 		// Cloud-native Phase 4: another replica holds the session's single-writer

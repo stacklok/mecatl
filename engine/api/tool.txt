@@ -12,6 +12,7 @@
     ifacemethod func (MemoryStore).Recall(ctx context.Context, key string) (MemoryEntry, bool, error)
     ifacemethod func (MemoryStore).RememberEntry(ctx context.Context, e MemoryEntry) error
     ifacemethod func (MemoryStore).Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)
+    ifacemethod func (PlanOnly).PlanOnlyTool()
     ifacemethod func (SearchProvider).Search(ctx context.Context, q SearchQuery) ([]SearchResult, error)
     ifacemethod func (SkillSource).ListSkillAssets(ctx context.Context, name string) ([]SkillAsset, error)
     ifacemethod func (SkillSource).ListSkills(ctx context.Context) ([]SkillMeta, error)
@@ -68,6 +69,7 @@ type ForkMerger interface{Merge(ctx context.Context, forkRoot string, parentWS W
 type GrepMatch struct{Path string; Line int; Text string}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
 type MemoryStore interface{Forget(ctx context.Context, key string) error; Index(ctx context.Context) ([]MemoryEntry, error); List(ctx context.Context, prefix string) ([]MemoryEntry, error); Recall(ctx context.Context, key string) (MemoryEntry, bool, error); RememberEntry(ctx context.Context, e MemoryEntry) error; Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)}
+type PlanOnly interface{PlanOnlyTool(); Tool}
 type Search struct{}
 type SearchProvider interface{Search(ctx context.Context, q SearchQuery) ([]SearchResult, error)}
 type SearchQuery struct{Query string; Limit int; Site string; Freshness string}

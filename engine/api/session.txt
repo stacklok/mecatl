@@ -26,10 +26,14 @@
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
     method func (Limits).WithDefaults(d Limits) Limits
+    method func (PendingAsk).Origin() AskOrigin
     method func (State).IsTerminal() bool
     method func (Usage).Add(other Usage) Usage
     method func (Usage).CacheHitRate() float64
     method func (Usage).TotalTokens() int
+const AskOriginHook AskOrigin = 1
+const AskOriginNone AskOrigin = 0
+const AskOriginPlan AskOrigin = 2
 const BlockAudio BlockKind = "audio"
 const BlockEmbeddedResource BlockKind = "embedded_resource"
 const BlockImage BlockKind = "image"
@@ -104,6 +108,7 @@ const StopMaxToolCalls StopReason = "max_tool_calls"
 const StopMaxTurns StopReason = "max_turns"
 const StopNoProgress StopReason = "no_progress"
 const StopNone StopReason = ""
+const StopPlanApproved StopReason = "plan_approved"
 const StopStructuredOutput StopReason = "structured_output"
 const Tier4SummaryMarker untyped string = "[earlier turns summarised]"
 const VerdictAllowAlways ApprovalVerdict = 2
@@ -147,6 +152,7 @@ func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
+type AskOrigin int
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
@@ -161,7 +167,7 @@ type MediaKind string
 type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; Parts []Content}
 type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
-type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""}
+type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
 type Role string

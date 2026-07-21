@@ -23,6 +23,13 @@ type pendingAsk struct {
 	offerAlways bool
 }
 
+// isPlanAsk reports whether a permission ask is a plan-approval gate (the model
+// called PresentPlan in plan mode). The tool name is the sole discriminator —
+// no new proto field is needed.
+func isPlanAsk(tool string) bool {
+	return tool == "PresentPlan"
+}
+
 // renderPermissionModal renders the centred approval card. It is drawn with
 // lipgloss.Place over the available area so it reads as a modal overlay. The
 // warning border + accent on the focused button make it unmissable. It is a
@@ -87,6 +94,68 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 	b.WriteString("\n" + buttons)
 	if ask.offerAlways {
 		b.WriteString("\n" + th.Style("muted").Render("al[w]ays allows this exact command for the rest of this session"))
+	}
+
+	return centerCard(th, b.String(), width, height)
+}
+
+// renderPlanApprovalModal renders the plan-review gate when a PresentPlan ask
+// parks the run. It is a DISTINCT surface from the generic permission modal:
+// "Plan ready for review" title, model info, and plan-specific button copy.
+// effectiveModel is the CURRENT session's resolved model (the plan model, since
+// plan mode runs on the plan provider; the execute model is not separately
+// echoed to the TUI, so the footer line names the session default).
+func (r *renderer) renderPlanApprovalModal(ask pendingAsk, _ bool, queued int,
+	width, height int, effectiveModel string,
+) string {
+	th := r.th
+	titleText := "Plan ready for review"
+	if queued > 0 {
+		titleText = fmt.Sprintf("Plan ready for review (1 of %d)", queued+1)
+	}
+	title := th.Style("askTitle").Render(titleText)
+
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+	b.WriteString(th.Style("toolName").Render(sanitizeTerminal(ask.Tool)) + "\n")
+
+	// Show the plan model. The execute model is not separately echoed to the
+	// TUI — show a graceful line naming the default model when known, or a
+	// generic "session default model" when unknown.
+	modelLine := "execute model: session default model"
+	if effectiveModel != "" {
+		modelLine = fmt.Sprintf("plan model: %s · execute model: session default model", sanitizeTerminal(effectiveModel))
+	}
+	b.WriteString(th.Style("muted").Render(modelLine) + "\n")
+
+	if ask.Reason != "" {
+		b.WriteString("\n" + th.Style("muted").Render(sanitizeTerminal(ask.Reason)) + "\n")
+	}
+
+	// Three buttons: allow-once (approve & run → default mode), always (auto-
+	// accept edits → accept-edits mode), deny (iterate → stay in plan mode).
+	// Always is offered only for the main agent (offerAlways); for a surfaced
+	// child ask (which never reaches plan mode in practice) it is absent and the
+	// button copy strips "auto-accept".
+	btnStyle := func(idx int) string {
+		if ask.focus == idx {
+			return "askButtonActive"
+		}
+		return "askButton"
+	}
+	approve := th.Style(btnStyle(0)).Render("[A]pprove & run")
+	denyBtn := th.Style(btnStyle(2)).Render("[D] iterate")
+	var buttons string
+	if ask.offerAlways {
+		always := th.Style(btnStyle(1)).Render("[W] auto-accept edits")
+		buttons = lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", always, "  ", denyBtn)
+	} else {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", denyBtn)
+	}
+	b.WriteString("\n" + buttons)
+	if ask.offerAlways {
+		b.WriteString("\n" + th.Style("muted").Render(
+			"auto-accept allows every edit in the execution phase for the rest of this session"))
 	}
 
 	return centerCard(th, b.String(), width, height)

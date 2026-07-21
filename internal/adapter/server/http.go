@@ -46,6 +46,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("DELETE /v1/sessions/{id}", h.closeSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/prompt", h.prompt)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/approve", h.approve)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/plan:approve", h.approvePlan)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel", h.cancel)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel-child", h.cancelChild)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/fork", h.forkSession)
@@ -497,22 +498,15 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 		run.Cancel()
 	}
 	for ev := range run.Events() {
-		h.svc.appendEvent(logCtx, id, ev)
 		if failed {
-			continue // drain-to-discard: keep the run unwedged after a dead client
-		}
-		// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
-		// consumed by the durable log ONLY — appended above but NOT relayed to the client
-		// wire (the verdict record, the pre-compaction archive, and the user-prompt record
-		// are log/audit history, not client events; the client already holds its own
-		// prompt). Skip the client write AFTER the Append.
-		if ev.Type == session.EvApproval || ev.Type == session.EvCompactionArchive || ev.Type == session.EvUserPrompt {
+			// drain-to-discard: the client is gone. Still append to the durable
+			// log (it must record the post-disconnect tail), but skip Persist /
+			// auto-approve / the client write.
+			h.svc.appendEvent(logCtx, id, ev)
 			continue
 		}
-		// Persist when the run pauses awaiting approval so a restart leaves a
-		// loadable awaiting session a client can re-attach to.
-		if ev.Type == session.EvPermissionAsk {
-			h.svc.Persist(r.Context(), id)
+		if !h.svc.relayEvent(r.Context(), logCtx, id, ev, true) {
+			continue // log-only event: consumed by the durable log, not relayed to the client wire
 		}
 		if _, err := w.Write([]byte("data: ")); err != nil {
 			fail()
@@ -601,6 +595,122 @@ func verdictFromHTTP(verdict string, allow bool) session.ApprovalVerdict {
 		return session.VerdictDeny
 	default:
 		return session.VerdictDeny
+	}
+}
+
+// planApproveBody is the JSON body for POST /v1/sessions/{id}/plan:approve. The
+// target_mode string mirrors the proto enum names (case-insensitive): "default"
+// → allow-once (flip to default), "accept_edits" → allow-always (flip to
+// accept-edits), "plan"/"" → deny (iterate, no continuation run).
+type planApproveBody struct {
+	TargetMode string `json:"target_mode"`
+	Note       string `json:"note"`
+}
+
+// approvePlan handles POST /v1/sessions/{id}/plan:approve, atomically resolving
+// a parked plan-approval ask and streaming BOTH the resumed run's and (on an
+// allow) the continuation run's events as SSE on this response. See
+// Service.ApprovePlan for the contract. 409 on a precondition failure (live run /
+// not awaiting / not a plan ask), 404 on an unknown session.
+func (h *HTTPHandler) approvePlan(w http.ResponseWriter, r *http.Request) {
+	id := session.SessionID(r.PathValue("id"))
+	var body planApproveBody
+	// An empty body is valid (target_mode "" → deny, no note); only a malformed
+	// non-empty body is an error.
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	// The Service's ctx-watcher cancels the live run when this ctx is cancelled,
+	// so derive a cancellable child we can also trigger on a Send error (a dead
+	// client): cancelling here propagates to the Service, which cancels the run,
+	// ending the stream promptly instead of running on to completion unseen.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	events, err := h.svc.ApprovePlan(ctx, id, planModeFromString(body.TargetMode), body.Note)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	h.relayEventsSSE(w, r, id, events, flusher, cancel)
+}
+
+// relayEventsSSE streams a Service-returned event channel to w as Server-Sent
+// Events until the channel closes. It is the SHARED relay for the ApprovePlan
+// path (a merged event stream the Service owns — distinct from relayRunSSE,
+// which drains a single *agent.Run and owns run.Cancel/deregister). It mirrors
+// relayRunSSE's discipline exactly: SSE framing, dead-client drain-to-discard,
+// the durable event-log Append (decoupled from the client write, cancel-detached
+// so a dead client never stops the log), the EvPermissionAsk Persist, the
+// log-only-kind client-wire skip, and cancel-on-send-error (via the passed
+// cancel, which the Service's ctx-watcher turns into a run cancel).
+func (h *HTTPHandler) relayEventsSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, events <-chan session.Event, flusher http.Flusher, cancel context.CancelFunc) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// appendEvent uses a cancel-detached ctx so a dead client never stops the
+	// durable log (it must record the post-disconnect tail, including the terminal
+	// EvResult) — the same discipline as relayRunSSE.
+	logCtx := context.WithoutCancel(r.Context())
+	enc := json.NewEncoder(w)
+	failed := false
+	fail := func() {
+		failed = true
+		cancel()
+	}
+	for ev := range events {
+		if failed {
+			// drain-to-discard: the client is gone. Still append to the durable
+			// log, but skip Persist / the client write.
+			h.svc.appendEvent(logCtx, id, ev)
+			continue
+		}
+		// autoApprove=false: this path IS the plan-approval resolution — running
+		// the auto-approve observer inside it would recurse.
+		if !h.svc.relayEvent(r.Context(), logCtx, id, ev, false) {
+			continue // log-only event: consumed by the durable log, not relayed to the client wire
+		}
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			fail()
+			continue
+		}
+		if err := enc.Encode(toProto(ev)); err != nil { // Encode appends a newline
+			fail()
+			continue
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			fail()
+			continue
+		}
+		flusher.Flush()
+	}
+}
+
+// planModeFromString maps the HTTP plan:approve body's target_mode string to a
+// session.PermissionMode. It accepts the proto enum names (case-insensitive,
+// with or without the PERMISSION_MODE_ prefix) and the bare mode names
+// ("default"/"plan"/"accept_edits"); an empty or unrecognized value defaults to
+// ModePlan (deny / iterate) — the fail-safe posture that does NOT flip the mode
+// or start a continuation run, mirroring verdictFromHTTP's fail-safe-to-deny.
+func planModeFromString(s string) session.PermissionMode {
+	switch strings.ToLower(strings.TrimPrefix(s, "PERMISSION_MODE_")) {
+	case "default":
+		return session.ModeDefault
+	case "accept_edits", "accept", "acceptedits":
+		return session.ModeAccept
+	default:
+		// "plan", "", or unrecognized → deny / iterate (no flip, no continuation).
+		return session.ModePlan
 	}
 }
 
@@ -1366,6 +1476,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNoActiveRun):
 		// Known session, but its run is not live in this process (e.g. the
 		// stream was lost across a restart): nothing to deliver the control to.
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrNotAwaitingPlan):
+		// ApprovePlan precondition (issue #206, Wave 4): the session is not parked
+		// awaiting a plan-originated ask (it is live, not awaiting, or awaiting a
+		// generic tool ask). 409 Conflict — the session exists and is well-formed,
+		// it is just not in the state this atomic RPC requires.
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrSessionLeasedElsewhere):
 		// Cloud-native Phase 4: another replica holds the session's single-writer

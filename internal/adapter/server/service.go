@@ -509,6 +509,27 @@ type Config struct {
 	// Service, so Build calls SetFire then Start; NewService does NOT start it.
 	// nil = no scheduling (the byte-identical default).
 	Scheduler *scheduler.Scheduler
+
+	// PlanModeAutoApprove is the OPT-IN, OPERATOR-TIER-ONLY, DEFAULT-OFF flag that
+	// auto-approves a plan-mode PresentPlan ask when the run ends without a human
+	// operator. It is a deliberate autonomous-approval capability — an operator
+	// deployment decision, NEVER load-bearing for safety. When true AND the engine
+	// is headless (no interactive client attached), the Service auto-resolves a
+	// parked plan-approval ask via the EXISTING ApprovePlan path (ModeDefault + a
+	// loud note). It does NOT fire when interactive (a human can approve), NOT in
+	// non-plan modes, NOT for non-plan asks. DEFAULT false (the existing safe
+	// default: headless plan ask is auto-denied by the engine). Composition
+	// (internal/app) sets this from Config.PlanModeAutoApprove; the cmd mains wire
+	// the --plan-mode-auto-approve flag.
+	PlanModeAutoApprove bool
+
+	// Interactive reports whether a HUMAN approver is attached to the main engine's
+	// runs (a live Converse / HTTP-SSE client that can answer a permission ask).
+	// It mirrors app.Config.Interactive (threaded onto the engine's Deps.Interactive)
+	// and gates the PlanModeAutoApprove observer: an interactive deployment NEVER
+	// auto-approves (the human answers). DEFAULT false (fail-safe: the observer
+	// treats the deployment as headless).
+	Interactive bool
 }
 
 // defaultMaxTeams is the live-team registry cap applied when Config.MaxTeams is
@@ -2476,6 +2497,186 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	return run, nil
 }
 
+// ApprovePlan is the atomic plan-approval RPC (issue #206, Wave 4). It resolves
+// a parked PLAN-ORIGINATED permission ask (a PresentPlan call surfaced in plan
+// mode) and — on an ALLOW verdict — starts a FRESH continuation run carrying the
+// harness proceed message, streaming BOTH runs' events on the one returned
+// channel. It composes EXISTING seams and adds NO new engine machinery:
+//
+//  1. A live run for the session is rejected (ErrNotAwaitingPlan → 409): an
+//     approve mid-run must use the Converse ResumeApproval frame, not this RPC.
+//  2. The session is loaded and must be StateAwaiting on a PLAN-ORIGINATED ask
+//     (sess.PendingAsk().Origin() == AskOriginPlan); anything else is
+//     ErrNotAwaitingPlan. An unknown session is ErrNotFound (via GetSession).
+//  3. targetMode → verdict: ModeDefault → VerdictAllowOnce (flip to default),
+//     ModeAccept → VerdictAllowAlways (flip to accept-edits), ModePlan/zero →
+//     VerdictDeny (iterate, no flip, no continuation run).
+//  4. resumeFromAwaiting re-enters the loop AT the ask: Engine.ResumeApproval
+//     applies the verdict, the allow paths set r.planApprovedTarget, the run
+//     terminates StopPlanApproved, and terminateComplete flips the session mode
+//     at the terminal boundary. (The deny path synthesises a deny result and the
+//     loop CONTINUES in plan mode — but since this is a fresh resumed run with no
+//     further model turns scripted, it ends at StopPlanApproved-less terminal;
+//     the session stays in plan mode for the next prompt.)
+//  5. ATOMIC CONTINUATION (allow paths only): after the resumed run drains, a
+//     FRESH run is started via the SAME StartRunContent path (loadAndReopen →
+//     engineAndWorkspaceFor CASE 1 rebuild picks up the FLIPPED mode → execute
+//     model) carrying the proceed message agent.PlanApprovedProceedText + an
+//     optional operator note. Both runs' events are relayed on the returned
+//     channel. On deny, NO continuation run starts (the session stays in plan
+//     mode; the model re-plans on the next prompt).
+//
+// The returned channel carries the MERGED event stream of the resumed run and
+// (on allow) the continuation run, closing once both have ended. The caller
+// (gRPC/HTTP relay) owns the wire discipline: appendEvent per event, skip the
+// three log-only kinds on the client wire, Persist on EvPermissionAsk, and —
+// critically — CANCEL ctx on a send error / client disconnect so this method's
+// internal ctx-watcher cancels the LIVE run (the run is registered in s.runs
+// like any other; this method deregisters it after drain). The caller MUST
+// cancel the passed ctx once it stops draining, or the run can wedge behind a
+// dead relay (mirrors the run.Cancel() the live relays call on disconnect).
+func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string) (<-chan session.Event, error) {
+	// (1) A live run means an approve-mid-run: reject. The operator must use the
+	// Converse ResumeApproval frame for a live run, not this atomic RPC.
+	if _, ok := s.LookupRun(id); ok {
+		return nil, fmt.Errorf("%w: session %q has a live run (use the Converse resume_approval frame for an in-flight run)", ErrNotAwaitingPlan, id)
+	}
+	// (2) Load the session to validate the plan-originated precondition and read
+	// the askID. This is a read-only GetSession (NOT loadAndReopen — the session
+	// is awaiting, not completed/cancelled/failed, so there is nothing to drive
+	// idle). ErrNotFound propagates for an unknown session.
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if sess.State != session.StateAwaiting {
+		return nil, fmt.Errorf("%w: session %q is in state %q, not awaiting", ErrNotAwaitingPlan, id, sess.State)
+	}
+	ask, ok := sess.PendingAsk()
+	if !ok || ask.Origin() != session.AskOriginPlan {
+		return nil, fmt.Errorf("%w: session %q is not awaiting a plan-approval ask", ErrNotAwaitingPlan, id)
+	}
+	// (3) targetMode → verdict.
+	verdict, allowContinuation := planVerdictForMode(targetMode)
+
+	// The merged event channel. Buffered to match a Run's own buffer (64) so a
+	// momentarily-slow relay does not block the producer; the relay drains it.
+	out := make(chan session.Event, 64)
+
+	// (4) Resume the awaiting run (registered in s.runs by resumeFromAwaiting).
+	// The askID is read off the snapshot above; resumeFromAwaiting re-validates
+	// state under its resumeMu lock, so a concurrent resume that won the race
+	// returns (nil, nil) — handled below (no run to drain).
+	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict)
+	if rerr != nil {
+		return nil, rerr
+	}
+
+	go func() {
+		defer close(out)
+		// (4a) Drain the resumed run. On the same-process channel path
+		// (resumeFromAwaiting returned nil — a concurrent Approve routed the
+		// verdict to an existing live run), there is nothing to relay here.
+		var resumedStop session.StopReason
+		if resumed != nil {
+			resumedStop = s.forwardRunEvents(ctx, resumed, out)
+			s.deregister(id, resumed)
+		}
+		// (5) Atomic continuation (allow paths only). A deny leaves the session
+		// in plan mode with no continuation run — the model re-plans on the next
+		// prompt. Only continue when the resumed run ended at StopPlanApproved
+		// (the plan-approval clean terminal that flips the mode); a non-allow
+		// terminal (cancel/error) is surfaced honestly and no continuation runs.
+		if !allowContinuation || resumedStop != session.StopPlanApproved {
+			return
+		}
+		proceed := agent.PlanApprovedProceedText
+		if note != "" {
+			proceed = proceed + "\n\nOperator note: " + note
+		}
+		// (5a) Start the continuation run via the SAME path StartRunContent uses
+		// (loadAndReopen → engineAndWorkspaceFor CASE 1 rebuild on the flipped
+		// mode → execute model). The StopPlanApproved-completed session is
+		// reopened to idle by loadAndReopen.
+		cont, cerr := s.StartRunContent(ctx, id, proceed, nil)
+		if cerr != nil {
+			// Surface the continuation-launch failure honestly on the stream as a
+			// synthetic terminal result so the relay's client sees a terminal
+			// (never a silent close). This mirrors how the engine surfaces a run-
+			// entry failure: an EvResult with StopError.
+			res := &session.ResultPayload{
+				Stop:  session.StopError,
+				Error: "continuation run failed to start: " + cerr.Error(),
+			}
+			out <- session.Event{Type: session.EvResult, Result: res}
+			return
+		}
+		s.forwardRunEvents(ctx, cont, out)
+		s.deregister(id, cont)
+	}()
+
+	return out, nil
+}
+
+// forwardRunEvents drains run's Events() into out until the channel closes,
+// returning the terminal StopReason (empty if none). It watches ctx: when ctx
+// is cancelled (the relay stopped draining — client disconnect or a send-error
+// cancel) it cancels the LIVE run so the producer unwedges and the run's
+// terminal EvResult is emitted before close. It does NOT appendEvent / Persist
+// / log-only-filter — those are the RELAY's discipline (the caller of
+// ApprovePlan owns the wire), this only forwards the raw events. It registers
+// nothing (the run is already registered by its producer).
+func (*Service) forwardRunEvents(ctx context.Context, run *agent.Run, out chan<- session.Event) session.StopReason {
+	stopWatch := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			run.Cancel()
+		case <-stopWatch:
+		}
+	}()
+	defer close(stopWatch)
+	var stop session.StopReason
+	for ev := range run.Events() {
+		// Non-blocking forward with ctx-awareness: if the relay has stopped
+		// draining (out would block), drop the event rather than wedging the
+		// producer — the run is already being cancelled by the ctx-watcher above,
+		// which will end it and close Events(). This mirrors the live relays'
+		// drain-to-discard after a dead client.
+		select {
+		case out <- ev:
+		case <-ctx.Done():
+			// Keep draining Events() to completion without forwarding so the run
+			// goroutine can exit; the ctx-watcher already cancelled it.
+			for range run.Events() {
+			}
+		}
+		if ev.Type == session.EvResult && ev.Result != nil {
+			stop = ev.Result.Stop
+		}
+	}
+	return stop
+}
+
+// planVerdictForMode maps an ApprovePlan target_mode to the session verdict and
+// whether an atomic continuation run should follow. ModeDefault → allow-once
+// (flip to default); ModeAccept → allow-always (flip to accept-edits);
+// ModePlan/zero → deny (iterate, no flip, no continuation). This mirrors the
+// engine's surfacePlanAsk verdict tail (engine/agent/dispatch.go) so the
+// target_mode the operator picks drives the EXACT mode the session lands in.
+func planVerdictForMode(m session.PermissionMode) (verdict session.ApprovalVerdict, allowContinuation bool) {
+	switch m {
+	case session.ModeAccept:
+		return session.VerdictAllowAlways, true
+	case session.ModeDefault:
+		return session.VerdictAllowOnce, true
+	default:
+		// ModePlan / zero-value: deny — the operator asked to iterate; no flip,
+		// no continuation run.
+		return session.VerdictDeny, false
+	}
+}
+
 // Cancel cancels the session's in-flight run. The store-fallback semantics match
 // Approve: ErrNotFound when the session is unknown, ErrNoActiveRun when it
 // exists only in the store with no live run.
@@ -2552,6 +2753,219 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 			"session", string(id), "event", string(ev.Type), "err", err.Error())
 	}
 }
+
+// relayEvent applies the SHARED per-event relay discipline (cloud-native Phase
+// 3a/3b + the plan-mode auto-approve observer, issue #206 Wave 6a) that every
+// event-relay loop (gRPC Converse, gRPC ApprovePlan, HTTP relayRunSSE, HTTP
+// relayEventsSSE) must run for EACH observed event, BEFORE the call site's own
+// wire write. It returns forward=true when the event should be sent on the
+// client wire, forward=false when it is log-only (consumed by the durable log
+// ONLY, NOT relayed to the client). It performs, in order:
+//
+//  1. appendEvent on a cancel-detached ctx (logCtx) — the durable log records
+//     EVERY event regardless of client liveness (it must survive a dead client
+//     and record the post-disconnect tail, including the terminal EvResult).
+//  2. skip the client wire for the three log-only kinds (EvApproval,
+//     EvCompactionArchive, EvUserPrompt) — appended above but NOT forwarded.
+//  3. on EvPermissionAsk: Persist (snapshot semantics, gated to the healthy
+//     path — the passed ctx, NOT the cancel-detached one) and — when autoApprove
+//     is true — MaybeAutoApprovePlan (the headless auto-approve observer).
+//
+// The autoApprove flag gates whether MaybeAutoApprovePlan fires: the live
+// Converse/relayRunSSE paths pass true (they observe a fresh parked plan ask);
+// the ApprovePlan/relayEventsSSE paths pass false (they are ALREADY resolving a
+// plan ask — running auto-approve inside the ApprovePlan stream would recurse).
+// Each call site retains its OWN wire framing (gRPC Send vs SSE Write), its
+// cancel-on-error, and its drain-to-discard guard.
+func (s *Service) relayEvent(ctx context.Context, logCtx context.Context, id session.SessionID, ev session.Event, autoApprove bool) (forward bool) {
+	s.appendEvent(logCtx, id, ev)
+	// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
+	// consumed by the durable log ONLY — appended above but NOT relayed to the
+	// client wire (the verdict record, the pre-compaction archive, and the
+	// user-prompt record are log/audit history, not client events; the client
+	// already holds its own prompt). Skip the client send AFTER the Append.
+	if ev.Type == session.EvApproval || ev.Type == session.EvCompactionArchive || ev.Type == session.EvUserPrompt {
+		return false
+	}
+	if ev.Type == session.EvPermissionAsk {
+		s.Persist(ctx, id)
+		if autoApprove {
+			s.MaybeAutoApprovePlan(ctx, id, ev)
+		}
+	}
+	return true
+}
+
+// MaybeAutoApprovePlan fires the plan-mode auto-approve (issue #206 Wave 6a) when
+// the Service observes a parked plan-approval ask on a headless deployment. It is
+// called by the gRPC/HTTP relay loops alongside appendEvent+Persist for every
+// EvPermissionAsk, and by tests simulating the relay. It is a NO-OP unless ALL of
+// the following hold:
+//
+//  1. cfg.PlanModeAutoApprove is true (the OPT-IN operator flag — DEFAULT OFF).
+//  2. The ask is plan-originated (session.AskOriginPlan — a PresentPlan call).
+//  3. The deployment is headless (no interactive human approver — the engine's
+//     Deps.Interactive is false). An interactive deployment surfaces the ask to
+//     the human instead; auto-approve must NOT pre-empt a human.
+//
+// When all three hold it auto-resolves the ask via the EXISTING ApprovePlan path
+// (ModeDefault + a loud note), emitting a LOUD diagnostic so the operator sees
+// that NO HUMAN reviewed the plan. It NEVER fires for a non-plan ask (a policy/
+// hook ask is still the human's/auto-deny's responsibility), NEVER fires
+// interactively, and is NEVER load-bearing for safety (the engine still gates
+// the PresentPlan — this merely resolves the parked ask).
+func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID, ev session.Event) {
+	if !s.cfg.PlanModeAutoApprove || s.cfg.Interactive {
+		return
+	}
+	if ev.Type != session.EvPermissionAsk || ev.Ask == nil {
+		return
+	}
+	if ev.Ask.Origin() != session.AskOriginPlan {
+		return
+	}
+	// Emit the LOUD diagnostic BEFORE the verdict: the operator must see that no
+	// human reviewed this plan. The note is also the operator-visible reason on
+	// the session.
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn,
+		"plan_mode_auto_approve: auto-approving plan (NO HUMAN REVIEW)",
+		"session", string(id), "ask_id", ev.Ask.AskID, "tool", ev.Ask.Tool)
+	// Resolve the parked plan ask. Two cases:
+	//
+	//  1. LIVE RUN (same-process): the run is registered in s.runs and parked on
+	//     the ask. Deliver the verdict directly via run.Approve (the same path the
+	//     gRPC ResumeApproval frame takes) — the run terminates StopPlanApproved and
+	//     the mode flips at the terminal boundary.
+	//  2. CROSS-PROCESS (the run died): no live run; the session is StateAwaiting in
+	//     the store. Use the EXISTING ApprovePlan path (resumeFromAwaiting) which
+	//     re-enters the loop and drives the continuation atomically.
+	//
+	// Case 1 is the common headless path (the run is parked in-process); case 2
+	// covers a restart where the process that parked the ask died.
+	if run, ok := s.LookupRun(id); ok {
+		// Live run: deliver the verdict directly (ModeDefault → allow-once, the
+		// planApprovedTarget flip). The run terminates StopPlanApproved and the
+		// mode flips. A continuation run MUST then proceed — a headless auto-approve
+		// has no operator to re-prompt, so leaving the session idle (completed at
+		// StopPlanApproved) is useless. This mirrors the cross-process path
+		// (ApprovePlan's atomic continuation) so BOTH live and cross-process
+		// auto-approve end with an execution run, not a parked-completed session.
+		// It stays composition-side: the loop only terminates StopPlanApproved +
+		// flips the mode; THIS goroutine drives the continuation via the SAME
+		// StartRunContent path ApprovePlan uses (loadAndReopen → execute model)
+		// carrying agent.PlanApprovedProceedText.
+		run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+		// Drive the continuation run in the background. The relay that owns the
+		// ORIGINAL run's client stream drains the StopPlanApproved terminal; this
+		// goroutine waits for the session to reach a terminal state (the verdict
+		// terminated the live run) then starts the continuation, draining ITS
+		// events to the durable log (appendEvent) so it never wedges. The
+		// continuation's events are NOT relayed to the original client stream
+		// (same discipline as the cross-process path's drain goroutine).
+		go s.autoApproveContinuation(ctx, id)
+		return
+	}
+	// Cross-process: the run is dead, the session is parked in the store. Drive
+	// the EXISTING ApprovePlan path (resumeFromAwaiting → continuation run).
+	events, err := s.ApprovePlan(ctx, id, session.ModeDefault, "auto-approved: no human reviewed this plan")
+	if err != nil {
+		// Fail-safe: log and return. The ask stays parked; the run continues in
+		// plan mode (the model iterates). An error here means the session state
+		// raced (e.g. a concurrent cancel) — not a safety issue.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn,
+			"plan_mode_auto_approve: auto-approve failed (ask stays parked)",
+			"session", string(id), "err", err.Error())
+		return
+	}
+	// Drain the merged event stream in a background goroutine so the relay loop
+	// is not blocked. The auto-approved run's events are forwarded to the same
+	// durable log (appendEvent) and the stream is drained to completion. The
+	// relay that owns the client stream handles the client-wire discipline for
+	// the ORIGINAL run; this goroutine only ensures the auto-approve continuation
+	// is not orphaned.
+	go func() {
+		for range events {
+			// Drain to completion — the continuation run's events are not relayed
+			// to a client here (the client's stream is the original run's), but
+			// the run must not wedge behind a full channel.
+		}
+	}()
+}
+
+// autoApproveContinuation is the LIVE-path continuation half of
+// MaybeAutoApprovePlan (issue #206 Wave 6a). After the live run's verdict
+// terminates it with StopPlanApproved + the mode flip, a headless auto-approve
+// has no operator to re-prompt — so this drives the continuation execution run
+// (the SAME atomic behavior as ApprovePlan's cross-process continuation): it
+// waits for the session to reach a terminal state (the verdict terminated the
+// live run), then starts a fresh run via StartRunContent carrying
+// agent.PlanApprovedProceedText, and drains that run's events to the durable
+// log (appendEvent) so it never wedges. The continuation's events are NOT
+// relayed to the original client stream (the relay that owns the original run's
+// stream handles client-wire discipline; this goroutine only ensures the
+// continuation is not orphaned, mirroring the cross-process drain goroutine).
+//
+// It is bounded: a session that never reaches a terminal state (e.g. a
+// concurrent cancel/error) gives up after autoApproveWaitTimeout and logs a
+// WARN — fail-safe, never a wedge. A session that terminated with anything other
+// than StopPlanApproved (cancel/error) is NOT continued (the plan was not
+// approved); only a StopPlanApproved terminal proceeds, matching
+// ApprovePlan's `resumedStop == StopPlanApproved` gate.
+func (s *Service) autoApproveContinuation(ctx context.Context, id session.SessionID) {
+	logCtx := context.WithoutCancel(ctx)
+	deadline := time.Now().Add(autoApproveWaitTimeout)
+	for {
+		sess, err := s.GetSession(logCtx, id)
+		if err != nil {
+			// Session gone — nothing to continue. Fail safe.
+			return
+		}
+		if sess.State == session.StateCompleted || sess.State == session.StateCancelled || sess.State == session.StateFailed {
+			// Only proceed to a continuation when the run terminated at
+			// StopPlanApproved (the plan-approval clean terminal that flipped
+			// the mode). Any other terminal (cancel/error) means the plan was
+			// NOT approved — do NOT start a continuation run.
+			if reason, ok := sess.RecordedStopReason(); !ok || reason != session.StopPlanApproved {
+				return
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			s.cfg.Diagnostics.Log(logCtx, port.LevelWarn,
+				"plan_mode_auto_approve: continuation not started (session did not reach a terminal state in time)",
+				"session", string(id))
+			return
+		}
+		time.Sleep(autoApprovePollInterval)
+	}
+	// Start the continuation run via the SAME path StartRunContent uses
+	// (loadAndReopen → engineAndWorkspaceFor CASE 1 rebuild on the flipped
+	// mode → execute model). The StopPlanApproved-completed session is reopened
+	// to idle by loadAndReopen.
+	proceed := agent.PlanApprovedProceedText + "\n\nOperator note: auto-approved: no human reviewed this plan"
+	cont, cerr := s.StartRunContent(logCtx, id, proceed, nil)
+	if cerr != nil {
+		s.cfg.Diagnostics.Log(logCtx, port.LevelWarn,
+			"plan_mode_auto_approve: continuation run failed to start",
+			"session", string(id), "err", cerr.Error())
+		return
+	}
+	for ev := range cont.Events() {
+		s.appendEvent(logCtx, id, ev)
+	}
+	s.deregister(id, cont)
+}
+
+// autoApproveWaitTimeout bounds how long autoApproveContinuation waits for the
+// live run to reach a terminal state before giving up (fail-safe, never a
+// wedge). Generous: a plan-approval run terminates promptly after the verdict,
+// but a slow provider/tool turn must not be cut short.
+var autoApproveWaitTimeout = 30 * time.Second
+
+// autoApprovePollInterval is the GetSession poll cadence while waiting for the
+// live run to terminate. Short so the continuation starts promptly after the
+// verdict terminates the run.
+const autoApprovePollInterval = 10 * time.Millisecond
 
 // acquireLease takes (or confirms) the cross-process single-writer lease for id
 // (cloud-native Phase 4). It is called at the run-entry seam AFTER the

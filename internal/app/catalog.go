@@ -130,9 +130,14 @@ type catalogSession struct {
 // canonical order (which preserves the global-wins MCP precedence — mcp.Register
 // is first-wins + skip-and-continue):
 //
-//	core → server-global MCP (+ resource meta-tools) → client MCP →
+//	core → PresentPlan → server-global MCP (+ resource meta-tools) → client MCP →
 //	Subagent/InspectSubagent/SubagentStatus → Parallel → Team/InspectMember →
 //	memory → user-model → Skill → SkillDraft
+//
+// PresentPlan (issue #206) registers right after core so it is present in EVERY
+// catalog (shared + per-session, default + no-FS profiles); it implements
+// tool.PlanOnly, so the catalog's mode projection hides it outside plan mode — it
+// contributes to the name-set equality without being advertised in default/accept.
 //
 // The returned close aggregates ONLY this catalog's own teardown — the Subagent
 // per-def inline-MCP managers and the session's client MCP manager. It NEVER
@@ -142,6 +147,16 @@ type catalogSession struct {
 func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a catalogAssets, s catalogSession) (*tool.Catalog, func() error) {
 	cat := tool.NewCatalog()
 	registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
+
+	// PresentPlan (issue #206, Wave 3) — the plan-approval gate's signalling tool.
+	// Registered in EVERY catalog (shared AND per-session, both no-FS and default
+	// profiles) so TestPerSessionCatalogMatchesSharedCatalog's name-set equality
+	// holds; it is NOT in the no-FS excluded set {Read,Edit,Write,Grep,Glob,Bash,
+	// Parallel,SkillDraft} (it is a signalling affordance, not a filesystem act).
+	// The tool implements tool.PlanOnly, so the catalog's mode projection excludes
+	// it from every non-plan mode (Available/Specs/AdvertisedSpecs); the dispatcher's
+	// name+mode check is defense-in-depth on top of that projection gate.
+	cat.MustRegister(agent.NewPresentPlanTool())
 
 	mountGlobalMCP(ctx, cfg, cat, a, s)
 	clientClose := mountClientMCP(ctx, cfg, cat, s)

@@ -72,6 +72,17 @@ var (
 	// map it to Unavailable / HTTP 503. The gate starts false (byte-identical
 	// default); Service.Drain arms it.
 	ErrUnavailable = errors.New("server: draining, not accepting new runs")
+	// ErrNotAwaitingPlan is returned by ApprovePlan when the session is not parked
+	// awaiting a PLAN-ORIGINATED permission ask (issue #206, Wave 4): either a run
+	// is LIVE for the session (an approve mid-run — use the Converse ResumeApproval
+	// frame for a live run), the session is not in StateAwaiting, or its pending
+	// ask is a generic tool-permission ask rather than the plan-approval gate's
+	// PresentPlan signalling call. It is a PRECONDITION failure (the session exists
+	// and is well-formed, it is just not in the state this atomic RPC requires),
+	// NOT a bad request. Adapters map it to FailedPrecondition / HTTP 409 Conflict
+	// (distinct from ErrNoActiveRun's "known session, no live run" — here the
+	// session may well be live, just not awaiting a plan ask).
+	ErrNotAwaitingPlan = errors.New("server: session is not awaiting a plan approval")
 	// Schedule-surface sentinels (internal/adapter/server/schedule.go). Defined
 	// here so toStatus/writeServiceError map them in the one error-classification
 	// chokepoint alongside the team/session sentinels.

@@ -124,6 +124,14 @@ func TestNoFSParallelAbsent(t *testing.T) {
 			t.Errorf("no-FS catalog is missing %q — only file tools/Bash/Parallel/SkillDraft may be excluded", name)
 		}
 	}
+	// PresentPlan (issue #206 Wave 3) is registered in the no-FS catalog too — it
+	// is a signalling affordance, NOT a filesystem act, so it is NOT in the
+	// noFSExcludedTools set {Read,Edit,Write,Grep,Glob,Bash,Parallel,SkillDraft}.
+	// (It implements tool.PlanOnly, so the mode projection hides it outside plan
+	// mode — but it must be REGISTERED so the no-FS and shared name-sets agree.)
+	if _, ok := toolNameSet(noFSCat.Tools())["PresentPlan"]; !ok {
+		t.Error("no-FS catalog is missing PresentPlan — it is not a filesystem act and must be registered (advertised only in plan mode)")
+	}
 }
 
 // TestApplyNoFSPosture pins the no-FS prompt posture helper: the FS env facts

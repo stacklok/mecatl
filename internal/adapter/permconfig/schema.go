@@ -102,6 +102,14 @@ type Config struct {
 	// the provider default). The composition layer interprets + clamps the token;
 	// permconfig only reads the scalar.
 	ReasoningEffort string `yaml:"reasoning-effort"`
+	// PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue
+	// #206 Wave 6a). Like Posture/OutputEconomy/ReasoningEffort it is honoured ONLY
+	// from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve:
+	// key is IGNORED with a WARN (operator-tier only — a project repo enabling
+	// autonomous plan approval is a security DOWNGRADE). false = absent (the resolver
+	// returns false and composition keeps the default OFF). The composition layer
+	// interprets the bool; permconfig only reads the scalar.
+	PlanModeAutoApprove bool `yaml:"plan-mode-auto-approve"`
 	// Schedules holds the OPERATOR-TIER scheduled-tasks declarations (issue #233,
 	// Phase 2b): a list of schedule declarations the composition layer reconciles
 	// into the durable ScheduleStore at Build time. It is parsed STRICTLY (unknown

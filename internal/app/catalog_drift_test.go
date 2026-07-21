@@ -83,7 +83,9 @@ func fullyLoadedCfg(t *testing.T) Config {
 // assembleCatalog kept the equality green); this list converts "paths agree" into
 // "paths agree AND the agreed set contains every family". The six memory tool
 // names are pinned separately by the factory tests in
-// session_engine_memory_test.go (allMemoryToolNames).
+// session_engine_memory_test.go (allMemoryToolNames). PresentPlan (issue #206) is
+// pinned here too — it is registered unconditionally by assembleCatalog, but
+// without this entry a drop from BOTH paths would keep the equality green.
 var requiredFamilyTools = []string{
 	"Subagent",
 	"InspectSubagent",
@@ -91,6 +93,7 @@ var requiredFamilyTools = []string{
 	"Parallel",
 	"Team",
 	"InspectMember",
+	"PresentPlan",        // issue #206 Wave 3 — registered everywhere, advertised only in plan mode
 	skills.ToolName,      // "Skill"
 	skills.DraftToolName, // "SkillDraft"
 	"ListMcpResources",
@@ -213,4 +216,40 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestPresentPlanInSharedAndPerSessionCatalogs pins issue #206 Wave 3's
+// registration invariant: PresentPlan is registered in EVERY catalog (the shared
+// build-time catalog AND a per-session selector catalog, over the SAME Phase-A
+// assets) so the name-set equality guard above stays green. It is registered for
+// name-set equality but ADVERTISED only in plan mode (the tool implements
+// tool.PlanOnly, so the catalog's mode projection excludes it from non-plan modes).
+// This test pins the registration half — the projection gate is pinned separately
+// in engine/tool/catalog_test.go and engine/agent/presentplan_ask_test.go.
+func TestPresentPlanInSharedAndPerSessionCatalogs(t *testing.T) {
+	ctx := context.Background()
+	cfg := fullyLoadedCfg(t)
+
+	oa := mockllm.New(mockllm.TextTurn("OPENAI"))
+	or := mockllm.New(mockllm.TextTurn("OPENROUTER"))
+	reg := twoProviderReg(oa, providerOpenAI, cfg.Model, or, providerOpenRouter)
+	hooks := hookexec.New(nil)
+
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New())
+	if err != nil {
+		t.Fatalf("buildCatalog: %v", err)
+	}
+	defer mcpClose()
+
+	if _, ok := sharedCat.Lookup("PresentPlan"); !ok {
+		t.Fatal("the shared build-time catalog must register PresentPlan (issue #206 Wave 3)")
+	}
+
+	selCat, selClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, assets, catalogSession{
+		provider: or, providerID: providerOpenRouter, model: "openrouter/other-model", narrate: false,
+	})
+	defer func() { _ = selClose() }()
+	if _, ok := selCat.Lookup("PresentPlan"); !ok {
+		t.Fatal("a per-session selector catalog must register PresentPlan (issue #206 Wave 3) — name-set equality with the shared catalog")
+	}
 }

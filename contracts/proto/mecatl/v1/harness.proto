@@ -223,6 +223,37 @@ service HarnessService {
 
   // CleanupTeam tears down a finished team and releases its resources.
   rpc CleanupTeam(CleanupTeamRequest) returns (CleanupTeamResponse);
+
+  // ApprovePlan atomically resolves a parked plan-approval ask (a PresentPlan
+  // call surfaced in plan mode, issue #206) and — on an ALLOW verdict — starts a
+  // fresh continuation run carrying the harness proceed message, streaming BOTH
+  // the resumed run's and the continuation run's events on the one response
+  // stream. It composes EXISTING seams (Service.resumeFromAwaiting +
+  // StartRunContent over the engine's ResumeApproval): the resumed run applies
+  // the verdict, sets the plan-approved target mode, terminates with
+  // StopPlanApproved, and flips the session mode at the terminal boundary; the
+  // continuation run then drives the model on the FLIPPED mode (default /
+  // accept-edits) with the proceed message as ordinary recorded history.
+  //
+  // target_mode → verdict mapping:
+  //   - PERMISSION_MODE_DEFAULT  → allow-once (the session flips to DEFAULT).
+  //   - PERMISSION_MODE_ACCEPT_EDITS → allow-always (the session flips to
+  //     ACCEPT_EDITS).
+  //   - PERMISSION_MODE_PLAN / UNSPECIFIED → deny (the run stays in plan mode;
+  //     no continuation run starts — the model iterates on the plan on the next
+  //     prompt).
+  //
+  // `note` is an OPTIONAL operator remark appended to the proceed message
+  // injected into the continuation run's first user message (allow paths only).
+  //
+  // Preconditions (else FailedPrecondition): the session must NOT have a live
+  // in-flight run (an approve mid-run is rejected — use the Converse
+  // ResumeApproval frame for a live run), and it MUST be in the awaiting state
+  // parked on a PLAN-ORIGINATED ask (not a generic tool-permission ask). An
+  // unknown session yields NotFound. The stream ends with the terminal `result`
+  // event of whichever run ran last (the continuation run on an allow path; the
+  // resumed run on a deny path).
+  rpc ApprovePlan(ApprovePlanRequest) returns (stream Event);
 }
 
 // PermissionMode is the session-wide permission posture, mirroring
@@ -2040,3 +2071,18 @@ message CleanupTeamRequest {
 
 // CleanupTeamResponse is the empty acknowledgement.
 message CleanupTeamResponse {}
+
+// ApprovePlanRequest resolves a parked plan-approval ask (issue #206). See the
+// ApprovePlan rpc doc above for the target_mode → verdict mapping and the
+// atomic resume + continuation contract.
+message ApprovePlanRequest {
+  // session_id is the session parked awaiting a plan-approval ask.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  // target_mode selects the verdict / resulting posture: DEFAULT → allow-once
+  // (flip to default), ACCEPT_EDITS → allow-always (flip to accept-edits),
+  // PLAN/UNSPECIFIED → deny (iterate, no flip, no continuation run).
+  PermissionMode target_mode = 2;
+  // note is an OPTIONAL operator remark appended to the proceed message
+  // injected into the continuation run's first user message (allow paths only).
+  string note = 3;
+}
