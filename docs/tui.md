@@ -86,6 +86,7 @@ absolute path (the server requires absolute).
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
+| `--auth-file` | – (auto) | **embedded** server: path to a YAML credentials file (`providers.<name>.api_key`); overrides the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml` (a `settings.yaml` sibling). An environment variable always wins over this file for that provider — see [`mecated`'s credentials-file docs](usage/mecated.md#credentials-file-authyaml) for the schema and precedence |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
 | `--no-bash` | off | **embedded** server: disable the Bash tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |

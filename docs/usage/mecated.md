@@ -27,6 +27,7 @@ $ go run ./cmd/mecated --openai --workspace "$PWD"
 | `--openai-base-url` | `""` | override the OpenAI API base URL (compatible endpoints) |
 | `--openrouter-base-url` | `""` | override the OpenRouter API base URL (default `https://openrouter.ai/api/v1`; key from `OPENROUTER_API_KEY`) |
 | `--anthropic-base-url` | `""` | override the native Anthropic API base URL (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
+| `--auth-file` | `""` | path to a YAML credentials file (`providers.<name>.api_key` for `anthropic`/`openai`/`openrouter`/`opencode`); overrides the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`, a `settings.yaml` sibling). See [Credentials file](#credentials-file-authyaml) below — an environment variable always wins over this file for that provider. |
 | `--mock` | `false` | use a canned offline mock provider (no network; smoke tests only) |
 | `--shell` | `/bin/sh` | shell used to execute `Bash`-tool commands; empty disables Bash (shell-less mode). |
 | `--no-bash` | `false` | disable the `Bash` tool entirely (shell-less mode); overrides `--shell`. |
@@ -415,6 +416,55 @@ connected agent knows how to act on the numbers.
 | `MECATL_DRIVER_AUTH_TOKEN` | bearer token for the store/source drivers (`--driver-auth-token`) when the flag is unset. |
 | `MECATL_SANDBOX` / `IS_SANDBOX` | set either to `1` to affirm an isolated, disposable environment so the **allow-all postures** (`auto` and `yolo` — both waive the built-in mutate-ask floor) are permitted while running as root. Root + no prompts is refused otherwise (generalised from the old `--yolo`-only refusal). |
 
+### Credentials file (`auth.yaml`)
+
+If you'd rather not export a provider key into the process environment (any
+other process a shell spawns can read its own environment, and a key exported
+via `export` in a shell profile is inherited by everything that shell starts),
+`mecated`/`mecatui`/`mecatequi` can instead read it from a small YAML file — a
+`settings.yaml` sibling, kept out of that file specifically so `settings.yaml`
+stays safe to share or check into a dotfiles repo:
+
+```yaml
+# ~/.config/mecatl/auth.yaml  (mode 0600 recommended — this file holds secrets)
+providers:
+  anthropic:
+    api_key: sk-ant-...
+  openai:
+    api_key: sk-...
+  openrouter:
+    api_key: sk-or-...
+  opencode:
+    api_key: sk-...
+```
+
+Only the providers you use need an entry. Resolution order per provider,
+**environment always wins**:
+
+1. The matching environment variable (`ANTHROPIC_API_KEY`, etc.), if set —
+   unchanged existing behaviour, so a deployment that only ever used env vars
+   is byte-identical whether or not an `auth.yaml` happens to exist.
+2. The `providers.<name>.api_key` entry in the file at `--auth-file` (if
+   passed) or the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml`
+   (usually `~/.config/mecatl/auth.yaml`).
+3. Empty — the existing "no credential" behaviour.
+
+The file is parsed **strictly**: an unrecognized field (e.g. `apikey` instead
+of `api_key`) or an unrecognized provider name (e.g. `anthropik`) is reported
+as a startup warning rather than silently ignored — a credentials file is
+exactly the place a quiet typo shouldn't degrade into a confusing "provider
+not available" error later. A missing file at the **conventional** default
+path is not an error (most deployments still use env vars, or haven't created
+one yet); a missing file at an **explicit** `--auth-file` path always is,
+since you named that exact path. Neither case is ever fatal to startup — a
+bad or missing file just means that provider's credential falls back to
+whatever the environment already resolved (frequently empty).
+
+There is no write path yet (no `mecated auth set` command) — create the file
+yourself. This is also the anticipated future home for OAuth-based provider
+auth (an access/refresh token pair per provider), which is why it's a
+dedicated file with room to grow rather than a flat per-provider flag.
+
 ### Provider selection
 
 A provider is **required** — the server has nothing to do without one. The server
@@ -425,6 +475,10 @@ builds an N-provider registry and AUTO-DETECTS availability from the environment
   base URL; falls back to `OPENAI_API_KEY` by convention).
 - `ANTHROPIC_API_KEY` set → the native `anthropic` Messages provider (extended
   thinking on, model-aware; default model `claude-sonnet-4-6`).
+- Any of the above also counts as "set" when it comes from
+  [`auth.yaml`](#credentials-file-authyaml) instead of the environment — the
+  file is just a second source for the same credential, checked only when the
+  matching env var is empty.
 - `--mock` → canned offline provider (single text turn; smoke tests only).
 - none of the above → startup error (the daemon refuses to start; mecatui fails the
   same check client-side before hosting an embedded server). The message enumerates

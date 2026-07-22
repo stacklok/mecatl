@@ -1060,6 +1060,9 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}
+	if keys.AuthFileWarning != "" {
+		slog.Warn(keys.AuthFileWarning)
+	}
 	cfg.toolhiveLLMFlags.Apply(&out)
 	return out
 }

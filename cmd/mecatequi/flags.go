@@ -379,6 +379,9 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}
+	if keys.AuthFileWarning != "" {
+		fmt.Fprintln(os.Stderr, "mecatequi: WARNING:", keys.AuthFileWarning)
+	}
 	f.toolhiveLLMFlags.Apply(&out)
 	return out
 }
