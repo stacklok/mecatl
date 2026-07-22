@@ -176,7 +176,8 @@ func Build(cfg Config) Layered {
 			"do not modify files, run mutating commands, or make outward-facing " +
 			"changes; produce a plan instead." +
 			"\nWhen your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE, " +
-			"and STOP — do not continue working after calling it. The plan is NOT approved until the operator approves it " +
+			"and STOP — do not continue working after calling it. Pass the FULL plan text in the PresentPlan `plan` argument " +
+			"so the operator can read it in the approval modal. The plan is NOT approved until the operator approves it " +
 			"THROUGH the PresentPlan gate: an inline 'acceptable', 'looks good', 'approved', or 'go ahead' in chat is NOT " +
 			"approval and must NOT trigger execution. Only the harness proceed message that follows an approved PresentPlan " +
 			"starts execution."

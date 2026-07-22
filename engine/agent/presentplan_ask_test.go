@@ -185,6 +185,37 @@ func TestPlanApprovalDenyContinuesInPlanMode(t *testing.T) {
 	}
 }
 
+// TestPresentPlanAskCarriesPlanArgs pins issue #206 UX fix: surfacePlanAsk copies
+// c.Args into PendingAsk.Args, so a PresentPlan call whose `plan` arg carries the
+// full plan text surfaces that args blob on the wire (EvPermissionAsk.Ask.Args) for
+// the mecatui approval modal to parse + render. The args JSON (incl. a multi-line
+// plan) pass through verbatim — no proto change needed.
+func TestPresentPlanAskCarriesPlanArgs(t *testing.T) {
+	const planText = "1. read foo\n2. edit bar\n3. run tests"
+	args := `{"plan":"` + planText + `","note":"three steps"}`
+	cat := planCatalog(t)
+	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", args)))
+	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
+	sess := newPlanSession(t)
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "plan")
+	var got []byte
+	for ev := range r.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			got = ev.Ask.Args
+			r.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+		}
+	}
+	if len(got) == 0 {
+		t.Fatal("the surfaced plan ask must carry the PresentPlan args (PendingAsk.Args)")
+	}
+	if !strings.Contains(string(got), planText) {
+		t.Fatalf("PendingAsk.Args must contain the full plan text\ngot=%q", string(got))
+	}
+	if !strings.Contains(string(got), `"note":"three steps"`) {
+		t.Fatalf("PendingAsk.Args must retain the note field too\ngot=%q", string(got))
+	}
+}
+
 // TestResumePlanApprovalAfterRestartExecutesAndFlips pins the cross-process resume:
 // drive to StateAwaiting on a plan ask, snapshot-restore (process death), then
 // ResumeApproval(AllowOnce) sets planApprovedTarget, driveFromAwaiting's runLoop sees

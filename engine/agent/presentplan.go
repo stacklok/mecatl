@@ -18,21 +18,37 @@ import (
 // state. Execute exists only for honesty on a misroute — the surfaced path never
 // reaches it (the dispatcher intercepts PresentPlan in plan mode before execution).
 // It is read-only / signaling-only, so it dispatches on the read-parallel path.
+//
+// The plan CONTENT rides the tool's `plan` string argument. surfacePlanAsk copies
+// c.Args into PendingAsk.Args (the existing channel), so the plan reaches the
+// mecatui plan-approval modal via proto `PermissionAsk.args` — the SAME posture as
+// every other permission ask (Write/Bash asks carry their args for operator review).
+// The operator is the intended audience. Gauntlet #7 holds: the EvApproval payload
+// carries ONLY tool NAME + verdict + askID + call id — NO args (ApprovalPayload has
+// no args field); the plan in EvPermissionAsk.Args is the live operator-review
+// channel, the durable log stores ALREADY-REDACTED events, and a child's prompt
+// stays on the child run (a PresentPlan call is plan-mode-only and never surfaces
+// from a read-only subagent).
 
 // presentPlanToolName is the catalog name of the plan-presentation signalling tool.
 // The dispatcher intercepts a tool call whose name equals this constant.
 const presentPlanToolName = "PresentPlan"
 
 // presentPlanSchema is the JSON schema the model sees for PresentPlan's arguments.
-// The plan CONTENT is the preceding assistant text — the tool carries only an
-// optional note, kept minimal so the model is not tempted to re-state the plan in
-// the args instead of in its assistant message.
+// The plan CONTENT rides the `plan` argument so it reaches the plan-approval modal
+// via PendingAsk.Args → proto `PermissionAsk.args` (the operator-review channel);
+// the model should ALSO present the plan in its assistant message text for the
+// transcript. The optional `note` is a one-line aside.
 var presentPlanSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
+    "plan": {
+      "type": "string",
+      "description": "The full plan text you are presenting for approval (the plan you just wrote in your message). The operator reads this in the approval modal, so pass the complete plan here."
+    },
     "note": {
       "type": "string",
-      "description": "Optional one-line note on the presented plan (the plan itself is your preceding message text, not this argument)."
+      "description": "Optional one-line note on the presented plan."
     }
   }
 }`)
@@ -52,7 +68,9 @@ func (*presentPlanTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: presentPlanToolName,
 		Description: "Call this EXACTLY ONCE when your plan is complete and presented in your message text, then " +
-			"STOP and wait for the operator. The operator approves, requests edits, or iterates THROUGH this gate. " +
+			"STOP and wait for the operator. Pass the FULL plan text in the `plan` argument — the operator " +
+			"reads it in the approval modal (also present it in your message text for the transcript). " +
+			"The operator approves, requests edits, or iterates THROUGH this gate. " +
 			"An inline 'acceptable'/'looks good'/'approved' in chat is NOT approval — only an approval via this tool " +
 			"starts execution. Do NOT call any other tool or continue working after calling this.",
 		Schema: presentPlanSchema,

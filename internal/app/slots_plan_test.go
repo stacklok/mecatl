@@ -224,6 +224,7 @@ func TestApplyPlanModePostureAppendsNote(t *testing.T) {
 		"inline",
 		"is NOT approval",
 		"PresentPlan gate",
+		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
 		if !strings.Contains(pc.Role, clause) {
 			t.Errorf("Role missing plan-approval contract clause %q\ngot=%q", clause, pc.Role)
@@ -287,6 +288,7 @@ func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
 		"inline",
 		"is NOT approval",
 		"PresentPlan gate",
+		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
 		if !strings.Contains(capturedSystem, clause) {
 			t.Errorf("plan-mode system prompt missing clause %q\ngot system prompt (first 500):\n%s",

@@ -53,6 +53,29 @@ func TestPresentPlanDescriptionCarriesApprovalContract(t *testing.T) {
 	}
 }
 
+// TestPresentPlanSpecIncludesPlanArg pins issue #206 UX fix: the PresentPlan schema
+// the model sees carries a `plan` string argument so the plan content can ride the
+// tool args through PendingAsk.Args → proto PermissionAsk.args → the mecatui
+// approval modal. The optional `note` field is retained.
+func TestPresentPlanSpecIncludesPlanArg(t *testing.T) {
+	spec := NewPresentPlanTool().Spec()
+	body := string(spec.Schema)
+	if !strings.Contains(body, `"plan"`) {
+		t.Errorf("PresentPlan schema missing the `plan` property\ngot=%s", body)
+	}
+	if !strings.Contains(body, "presenting for approval") {
+		t.Errorf("PresentPlan `plan` description must tell the model to pass the full plan\ngot=%s", body)
+	}
+	// The optional note field is retained.
+	if !strings.Contains(body, `"note"`) {
+		t.Errorf("PresentPlan schema missing the `note` property\ngot=%s", body)
+	}
+	// The Spec().Description must instruct the model to pass the full plan in `plan`.
+	if !strings.Contains(spec.Description, "FULL plan text in the `plan` argument") {
+		t.Errorf("PresentPlan Description must instruct passing the plan in the `plan` arg\ngot=%q", spec.Description)
+	}
+}
+
 // TestPresentPlanExecuteVestigial pins the honest misroute path: Execute (only reached
 // when the dispatcher did NOT intercept the call) returns a non-error ToolResult with
 // the awaiting-approval content and the call's id, never a harness-level error.

@@ -2485,8 +2485,9 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   Read-only / signaling-only; `Spec().Name == "PresentPlan"`. The model calls it once it
   has presented a complete plan in its preceding assistant text. `Execute` is VESTIGIAL
   (returns an "awaiting operator approval" result) — the dispatcher intercepts the call by
-  name in plan mode BEFORE execution. The plan CONTENT is the assistant text; the tool's
-  args carry only an optional note. `PlanApprovedProceedText`
+  name in plan mode BEFORE execution. The plan CONTENT rides the tool's `plan` string
+  argument (the model should ALSO present it in its message text for the transcript); the
+  optional `note` is a one-line aside. `PlanApprovedProceedText`
   ("Plan approved by operator. Proceed with execution.") is the harness-framed proceed
   message the composition layer injects as ordinary recorded history on the continuation
   run (event-silent — a recorded user message, NOT a diagnostics line).
@@ -2518,6 +2519,23 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   mutate-serial mirror). Headless guard: `!e.deps.Interactive && !e.deps.PlanModeAutoApprove`
   → synthesize a deny result (fail-safe, no silent mode flip); the `PlanModeAutoApprove`
   exception surfaces the ask even headless so the composition observer can resolve it.
+  The plan content rides the args through the EXISTING channel: `surfacePlanAsk` copies
+  `c.Args` into `PendingAsk.Args` (the model passes the plan in the PresentPlan `plan`
+  argument), so proto `PermissionAsk.args` carries it to the mecatui plan-approval modal —
+  the SAME posture as every other permission ask (Write/Bash asks carry their args for
+  operator review); the operator is the intended audience. Gauntlet #7 holds: the
+  `EvApproval` payload carries ONLY tool NAME + verdict + askID + call id — NO args.
+- **The scrollable plan-approval modal (`cmd/mecatui/ui/permission.go`
+  (`renderPlanApprovalModal`), `cmd/mecatui/ui/permission.go` (`planBodyFromArgs`)).**
+  The mecatui modal parses the `plan` (falling back to `note`) out of `ask.Args` JSON and
+  renders it between the model line and the buttons so the operator can READ what they are
+  approving (not just "plan ready for operator approval"). A long plan is line-capped to
+  `maxPlanLines` (12) with a "+N more lines · ctrl+t expand" affordance, and the global
+  ctrl+t (`expandTools`) toggle reveals the full plan — the SAME established reveal
+  pattern as Edit/Write diffs and tool-result bodies. The model-authored plan text is
+  terminal-sanitized. Backwards/forwards compat: no `plan` arg → `note`; no note → the
+  reason line; malformed args JSON → the reason line (an older model that put the plan only
+  in message text never breaks the modal).
 - **Verdict → mode (`engine/agent/loop.go` (`planApprovedTarget`)).** Allow-once →
   `ModeDefault`; allow-always → `ModeAccept`; deny → stay in `plan` (iterate). On Allow,
   `surfacePlanAsk` sets the run-scoped `planApprovedTarget` and synthesizes an allow

@@ -248,6 +248,7 @@ func TestBuildPlanModeReminder(t *testing.T) {
 		"inline",
 		"is NOT approval",
 		"PresentPlan gate",
+		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
 		if !strings.Contains(plan.VolatileSuffix, clause) {
 			t.Errorf("plan mode: plan-approval contract clause %q missing from VolatileSuffix\ngot=%q",

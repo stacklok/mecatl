@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -105,7 +106,18 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 // effectiveModel is the CURRENT session's resolved model (the plan model, since
 // plan mode runs on the plan provider; the execute model is not separately
 // echoed to the TUI, so the footer line names the session default).
-func (r *renderer) renderPlanApprovalModal(ask pendingAsk, _ bool, queued int,
+//
+// The plan CONTENT rides PendingAsk.Args → proto `PermissionAsk.args` (the model
+// passes it in the PresentPlan `plan` argument; see engine/agent/presentplan.go).
+// It is parsed out of the args JSON here and rendered between the model line and
+// the buttons so the operator can READ what they are approving. A long plan is
+// line-capped (mirroring renderToolDiff's diffSide / truncateLines) and revealed
+// in full via the global ctrl+t expand toggle — the SAME established reveal
+// mechanism used for Edit/Write diffs and tool-result bodies. Fallbacks (issue
+// #206 backwards-compat): no `plan` arg → the optional `note`; no note → the
+// "plan ready for operator approval" reason line. The model-authored plan text is
+// terminal-sanitized (it crosses the wire from the model, same as tool args).
+func (r *renderer) renderPlanApprovalModal(ask pendingAsk, expand bool, queued int,
 	width, height int, effectiveModel string,
 ) string {
 	th := r.th
@@ -128,7 +140,16 @@ func (r *renderer) renderPlanApprovalModal(ask pendingAsk, _ bool, queued int,
 	}
 	b.WriteString(th.Style("muted").Render(modelLine) + "\n")
 
-	if ask.Reason != "" {
+	// Render the plan content the operator is approving. The plan rides the
+	// PresentPlan `plan` argument (engine/agent/presentplan.go); surfacePlanAsk
+	// copies c.Args into PendingAsk.Args, so it reaches here as ask.Args (the raw
+	// JSON string). Parse it, line-cap + ctrl+t-expand (the established reveal
+	// pattern), and fall back to `note` then the reason line for older models
+	// that put the plan only in message text (issue #206 backwards-compat).
+	if plan := planBodyFromArgs(ask.Args, expand); plan != "" {
+		b.WriteString("\n" + th.Style("muted").Render("plan:") + "\n")
+		b.WriteString(plan + "\n")
+	} else if ask.Reason != "" {
 		b.WriteString("\n" + th.Style("muted").Render(sanitizeTerminal(ask.Reason)) + "\n")
 	}
 
@@ -160,3 +181,44 @@ func (r *renderer) renderPlanApprovalModal(ask pendingAsk, _ bool, queued int,
 
 	return centerCard(th, b.String(), width, height)
 }
+
+// planBodyFromArgs extracts the PresentPlan `plan` (falling back to `note`) from
+// the raw JSON args string and returns a line-capped, terminal-sanitized block
+// the operator reads in the approval modal. It mirrors the diff-side /
+// truncateLines line-cap + ctrl+t-expand reveal pattern: a long plan shows the
+// first maxPlanLines lines plus a "+N more lines · ctrl+t expand" affordance, and
+// expand (ctrl+t) reveals the full plan. Returns "" when neither plan nor note is
+// present (the caller falls back to the reason line). Malformed JSON yields "" so
+// an older model that omitted the `plan` arg degrades gracefully.
+func planBodyFromArgs(rawArgs string, expand bool) string {
+	rawArgs = strings.TrimSpace(rawArgs)
+	if rawArgs == "" {
+		return ""
+	}
+	var args struct {
+		Plan string `json:"plan"`
+		Note string `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return ""
+	}
+	body := args.Plan
+	if body == "" {
+		body = args.Note
+	}
+	if body == "" {
+		return ""
+	}
+	body = sanitizeTerminal(strings.TrimRight(body, "\n"))
+	lines := strings.Split(body, "\n")
+	if expand || len(lines) <= maxPlanLines {
+		return strings.Join(lines, "\n")
+	}
+	extra := len(lines) - maxPlanLines
+	kept := lines[:maxPlanLines]
+	return strings.Join(kept, "\n") + "\n" + collapseMarker(extra)
+}
+
+// maxPlanLines caps how many lines of the plan the approval modal shows before the
+// ctrl+t expand affordance, mirroring maxDiffLines for Edit/Write diffs.
+const maxPlanLines = 12

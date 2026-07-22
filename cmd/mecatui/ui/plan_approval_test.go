@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -223,5 +225,150 @@ func TestPlanAskRendersModelNamesWhenUnknown(t *testing.T) {
 	}
 	if !strings.Contains(got, "execute model: session default model") {
 		t.Errorf("plan modal with no model echo must still name the default model, got %q", got)
+	}
+}
+
+// TestPlanAskRendersPlanFromArgs pins issue #206 UX fix: the plan content the
+// model passed in the PresentPlan `plan` argument rides PendingAsk.Args (raw JSON
+// string) into the plan-approval modal, which parses it and renders it so the
+// operator can READ what they are approving (not just "plan ready for operator
+// approval"). The args JSON is terminal-sanitized (model-authored content).
+func TestPlanAskRendersPlanFromArgs(t *testing.T) {
+	m := planAskModel(t, true)
+	args, err := json.Marshal(map[string]string{
+		"plan": "1. read foo\n2. edit bar\n3. run tests",
+		"note": "three steps",
+	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	m.ask.Args = string(args)
+	got := stripANSIstr(m.View().Content)
+	for _, want := range []string{
+		"plan:",
+		"1. read foo",
+		"2. edit bar",
+		"3. run tests",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan modal must render the plan content; missing %q in: %s", want, got)
+		}
+	}
+}
+
+// TestPlanAskPlanArgsSanitized pins that a control-sequence-laden plan arg is
+// terminal-sanitized (an attacker who controls the model output can't redraw the
+// approval modal via ESC). Mirrors the diff/agents-inventory sanitize guards.
+func TestPlanAskPlanArgsSanitized(t *testing.T) {
+	m := planAskModel(t, true)
+	// JSON-marshall so the ESC (0x1b) is a valid JSON string escape (\u001b).
+	args, err := json.Marshal(map[string]string{"plan": "\x1b[31mfake-red\x1b[0m plan line"})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	m.ask.Args = string(args)
+	// Strip the theme/lipgloss chrome (legitimate ESC) so the assertion targets
+	// the plan text: sanitizeTerminal must have removed the model-injected ESC
+	// (0x1b control byte), leaving the inert "[31m"/"[0m" fragments + the plan
+	// text. No raw ESC remains anywhere in a rendered line.
+	got := stripANSIstr(m.View().Content)
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "\x1b") {
+			t.Errorf("raw ESC leaked into a rendered line (sanitizeTerminal not applied): %q", line)
+		}
+	}
+	// The ESC was stripped; the inert "[31m"/"[0m" fragments + text remain.
+	if !strings.Contains(got, "[31mfake-red[0m plan line") {
+		t.Errorf("plan modal must render the sanitized plan text (ESC stripped, fragments inert), got: %s", got)
+	}
+}
+
+// TestPlanAskLongPlanLineCappedThenExpandable pins the scrollable/expandable
+// behaviour: a plan longer than the line cap shows the first maxPlanLines lines
+// plus a "+N more lines · ctrl+t expand" affordance (the established reveal
+// pattern mirroring renderToolDiff's diffSide / truncateLines), and ctrl+t
+// (expand) reveals the full plan.
+func TestPlanAskLongPlanLineCappedThenExpandable(t *testing.T) {
+	m := planAskModel(t, true)
+	// Build a plan with maxPlanLines+5 lines so the cap + expand fire. The plan
+	// text is JSON-marshalled so the multi-line newlines survive the args parse.
+	var lines []string
+	for i := 1; i <= maxPlanLines+5; i++ {
+		lines = append(lines, fmt.Sprintf("step %d", i))
+	}
+	planText := strings.Join(lines, "\n")
+	args, err := json.Marshal(map[string]string{"plan": planText})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	m.ask.Args = string(args)
+
+	collapsed := stripANSIstr(m.View().Content)
+	// The collapsed modal shows the first maxPlanLines lines.
+	if !strings.Contains(collapsed, "step 1") || !strings.Contains(collapsed, fmt.Sprintf("step %d", maxPlanLines)) {
+		t.Errorf("collapsed plan modal must show the first %d steps, got: %s", maxPlanLines, collapsed)
+	}
+	// It does NOT show the overflow step yet.
+	if strings.Contains(collapsed, fmt.Sprintf("step %d", maxPlanLines+1)) {
+		t.Errorf("collapsed plan modal must NOT show overflow step %d, got: %s", maxPlanLines+1, collapsed)
+	}
+	// The collapse marker points to ctrl+t expand.
+	if !strings.Contains(collapsed, "ctrl+t expand") {
+		t.Errorf("collapsed plan modal must show the 'ctrl+t expand' affordance, got: %s", collapsed)
+	}
+	// The "+N more lines" count is correct (5 hidden).
+	if !strings.Contains(collapsed, "+5 more lines") {
+		t.Errorf("collapsed plan modal must report '+5 more lines', got: %s", collapsed)
+	}
+
+	// Expand (ctrl+t) reveals the full plan, including the overflow step + no marker.
+	m.expandTools = true
+	expanded := stripANSIstr(m.View().Content)
+	if !strings.Contains(expanded, fmt.Sprintf("step %d", maxPlanLines+5)) {
+		t.Errorf("expanded plan modal must show the overflow step %d, got: %s", maxPlanLines+5, expanded)
+	}
+	if strings.Contains(expanded, "ctrl+t expand") {
+		t.Errorf("expanded plan modal must NOT show the collapse affordance, got: %s", expanded)
+	}
+}
+
+// TestPlanAskFallbackToNote pins backwards/forwards compat: an older model that
+// ignores the `plan` arg schema but passes a `note` degrades gracefully — the
+// note is rendered as the plan body (better than the bare reason line).
+func TestPlanAskFallbackToNote(t *testing.T) {
+	m := planAskModel(t, true)
+	m.ask.Args = `{"note":"short aside"}`
+	got := stripANSIstr(m.View().Content)
+	if !strings.Contains(got, "short aside") {
+		t.Errorf("plan modal with no `plan` arg must fall back to `note`, got: %s", got)
+	}
+}
+
+// TestPlanAskFallbackToReason pins backwards/forwards compat: when args have
+// neither `plan` nor `note` (an older model that put the plan only in message
+// text), the modal degrades to the current "plan ready for operator approval"
+// reason line — it never breaks.
+func TestPlanAskFallbackToReason(t *testing.T) {
+	m := planAskModel(t, true)
+	m.ask.Args = `{}`
+	got := stripANSIstr(m.View().Content)
+	// No plan body rendered (the fallback is the reason line).
+	if strings.Contains(got, "plan:") {
+		t.Errorf("plan modal with empty args must not render a plan: label, got: %s", got)
+	}
+	// The reason line still shows.
+	if !strings.Contains(got, "Plan mode requires approval") {
+		t.Errorf("plan modal with empty args must still show the reason line, got: %s", got)
+	}
+}
+
+// TestPlanAskMalformedArgsDegrades pins that malformed args JSON (not an object,
+// or unparseable) degrades to the reason line — never a panic / broken modal.
+func TestPlanAskMalformedArgsDegrades(t *testing.T) {
+	m := planAskModel(t, true)
+	m.ask.Args = `not json at all`
+	got := stripANSIstr(m.View().Content)
+	if !strings.Contains(got, "Plan mode requires approval") {
+		t.Errorf("plan modal with malformed args must fall back to the reason line, got: %s", got)
 	}
 }
