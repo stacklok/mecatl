@@ -247,16 +247,30 @@ func TestApplyPlanModePostureAppendsNote(t *testing.T) {
 	}
 }
 
-// TestPlanModeEngineSystemPromptContainsPlanApprovalContract proves the factory-built
-// plan-mode engine's system prompt (the full Build output) contains the plan-approval
-// workflow contract — PresentPlan gate + inline-is-NOT-approval. It drives a one-turn
-// run through the factory-built engine and captures the LLM request.
+// TestPlanModeEngineSystemPromptContainsPlanApprovalContract is the
+// model-visible-discoverability gate for the plan-approval affordance (ADR 0070): a
+// gate whose correct operation depends on the model CALLING PresentPlan MUST ship with
+// a model-visible prompt instruction telling the model so, AND a test proving that
+// instruction lands in the built engine's system prompt via the REAL factory path — so
+// deleting the `applyPlanModePosture` wiring in `sessionEngineFactory` fails CI.
+//
+// It drives a one-turn run through the factory-built engine and captures the LLM
+// request. It asserts the plan-approval contract lands on the StablePrefix (the Role
+// layer `applyPlanModePosture` owns), NOT merely on the combined Render() — because the
+// same contract is ALSO carried in `engine/prompt/builder.go`'s volatile suffix, so a
+// Render() oracle would stay green if the factory wiring were silently dropped (proven by
+// mutation: commenting out `deps.PromptConfig = applyPlanModePosture(...)` leaves the
+// volatile-suffix clauses intact, so only the StablePrefix-owned "PLAN MODE" sentinel
+// distinguishes the two layers; asserting the full clause set against StablePrefix makes
+// the oracle robust to a future "harmonization" of that sentinel).
 func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
 	const sessionModel = "gpt-5"
 	cfg := Config{Model: sessionModel}
-	var capturedSystem string
+	var captured prompt.Layered
+	var invoked bool
 	observer := func(req port.LLMRequest) {
-		capturedSystem = req.System.Render()
+		captured = req.System
+		invoked = true
 	}
 	provider := mockllm.NewWith([]mockllm.Option{
 		mockllm.WithRequestObserver(observer),
@@ -278,9 +292,14 @@ func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
 	run := plan.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "plan a task", nil)
 	for range run.Events() {
 	}
-	if capturedSystem == "" {
+	if !invoked {
 		t.Fatal("the LLM was not invoked; the mock script may be insufficient")
 	}
+	// The load-bearing clauses live on the StablePrefix — the Role layer
+	// `applyPlanModePosture` appends to in sessionEngineFactory. Asserting here (not
+	// against Render()) is what makes removing the factory wiring fail this test: the
+	// volatile suffix in engine/prompt/builder.go carries the same prose, so a
+	// combined Render() oracle is vacuous against the wiring removal.
 	for _, clause := range []string{
 		"PLAN MODE",
 		"call the PresentPlan tool EXACTLY ONCE",
@@ -290,9 +309,9 @@ func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
 		"PresentPlan gate",
 		"Pass the FULL plan text in the PresentPlan `plan` argument",
 	} {
-		if !strings.Contains(capturedSystem, clause) {
-			t.Errorf("plan-mode system prompt missing clause %q\ngot system prompt (first 500):\n%s",
-				clause, firstN(capturedSystem, 500))
+		if !strings.Contains(captured.StablePrefix, clause) {
+			t.Errorf("plan-mode StablePrefix missing clause %q\ngot StablePrefix (first 500):\n%s",
+				clause, firstN(captured.StablePrefix, 500))
 		}
 	}
 }
