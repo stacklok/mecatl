@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
 // planAskModel builds a connected, awaiting-approval Model with a PresentPlan ask.
@@ -727,5 +728,450 @@ func TestPlanAskResolveClearsPlanView(t *testing.T) {
 	}
 	if strings.Contains(got, "[A]pprove & run") {
 		t.Errorf("view must not show the plan action bar after resolve, got: %s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Interactive plan-approval continuation (issue #206): the proceed prompt
+// ---------------------------------------------------------------------------
+
+// planProceedModel builds a connected Model parked on a plan ask (mirroring
+// planAskModel's direct-state setup) BUT wired through a fakeConv so that
+// submitProceedPrompt — which opens a FRESH stream via m.deps.Conv.OpenConverse
+// — records its Prompt frame on the returned sender. The continuation stream
+// (contRecv) is a clean end_turn so the execution run does not wedge the test.
+//
+// State is set directly (m.ask + m.phase + a live m.stream) rather than driven
+// through a live stream, so the test is deterministic and focuses on the
+// resolveAsk → ResultMsg → submitProceedPrompt transition (the issue #206 fix).
+// The approval (resolveAsk) sends SendApproval on m.stream; the proceed
+// (submitProceedPrompt) opens a fresh stream via the conv and sends SendPrompt.
+func planProceedModel(t *testing.T, offerAlways bool) (Model, *fakeConv, *fakeSender) {
+	t.Helper()
+	contRecv := &fakeRecver{
+		script: []*mecatlv1.ConverseResponse{
+			ev(&mecatlv1.Event{Type: "session.init", Seq: 1}),
+			ev(&mecatlv1.Event{Type: "turn.start", Seq: 2, Turn: 1}),
+			ev(&mecatlv1.Event{Type: "result", Seq: 3, Turn: 1, Result: &mecatlv1.Result{
+				Stop: "end_turn", Text: "executed", Usage: &mecatlv1.Usage{},
+			}}),
+		},
+	}
+	send := &fakeSender{}
+	conv := &fakeConv{recv: contRecv, send: send, recvers: []*fakeRecver{contRecv}}
+	m := New(Deps{
+		Session:     conv,
+		Conv:        conv,
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+	)
+	// Park on a plan ask with a LIVE stream (the approval run's stream). resolveAsk
+	// sends SendApproval on this stream; submitProceedPrompt opens a FRESH stream.
+	m.stream = client.NewStream(&fakeRecver{}, send)
+	m.streamCh = make(chan tea.Msg, 64)
+	m.streamGen++
+	m.phase = phaseAwaitingApproval
+	m.ask = pendingAsk{
+		AskID:       "sess-test-0001:1:presentplan-1",
+		Tool:        "PresentPlan",
+		Reason:      "Plan mode requires approval to execute.",
+		offerAlways: offerAlways,
+	}
+	(&m).openPlanReviewView(m.ask, 0, m.effectiveModel.ModelID)
+	return m, conv, send
+}
+
+// approvalFrames returns the ResumeApproval frames recorded by the sender.
+func approvalFrames(send *fakeSender) []*mecatlv1.ResumeApproval {
+	var out []*mecatlv1.ResumeApproval
+	for _, fr := range send.frames() {
+		if ra := fr.GetResumeApproval(); ra != nil {
+			out = append(out, ra)
+		}
+	}
+	return out
+}
+
+// proceedPromptTexts returns the text of every Prompt frame recorded by the sender.
+func proceedPromptTexts(send *fakeSender) []string {
+	return promptTexts(send)
+}
+
+// TestPlanApprovedResultMsgFiresProceedPrompt is the headline ordering + proceed
+// test: approving a plan ask with allow-once sends the ResumeApproval frame on
+// the approval stream, then — ONLY once the approval run's ResultMsg{Stop:
+// "plan_approved"} arrives — the TUI opens a FRESH stream and sends a Prompt
+// frame carrying the proceed text, so the server starts the execution run. The
+// proceed is NOT sent on the approval frame (the gRPC Converse handler ignores a
+// second Prompt frame on the same stream) and NOT before the approval run
+// terminates (StartRunContent's run-entry funnel requires a terminal session).
+func TestPlanApprovedResultMsgFiresProceedPrompt(t *testing.T) {
+	m, _, send := planProceedModel(t, true)
+
+	// Approve (allow-once). resolveAsk sends the ResumeApproval frame on m.stream.
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	runBatchLeaves(cmd)
+
+	// Immediately after resolveAsk, EXACTLY one approval frame must be recorded and
+	// NO proceed Prompt frame yet — the proceed fires on ResultMsg, not on approval.
+	// (This is the safe-ordering invariant: firing immediately after SendApproval
+	// would race the still-live approval run.)
+	apps := approvalFrames(send)
+	if len(apps) != 1 {
+		t.Fatalf("after resolveAsk: expected exactly 1 ResumeApproval frame, got %d", len(apps))
+	}
+	if apps[0].GetAllow() != true || apps[0].GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
+		t.Fatalf("approval verdict = allow=%v verdict=%v, want allow-once", apps[0].GetAllow(), apps[0].GetVerdict())
+	}
+	if pp := proceedPromptTexts(send); len(pp) != 0 {
+		t.Fatalf("no proceed Prompt must be sent before the plan_approved ResultMsg; got %v", pp)
+	}
+
+	// The approval run's terminal ResultMsg{plan_approved} arrives. applyResult →
+	// endRun (tears down the approval stream) → submitProceedPrompt (opens a FRESH
+	// stream + sends the proceed Prompt). Feed it via the real Update path.
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// The proceed Prompt frame must now be recorded, carrying the proceed text.
+	pp := proceedPromptTexts(send)
+	var proceed string
+	for _, text := range pp {
+		if text == planApprovedProceedText {
+			proceed = text
+		}
+	}
+	if proceed == "" {
+		t.Fatalf("plan_approved ResultMsg must fire a proceed Prompt with the proceed text; prompts sent = %v", pp)
+	}
+	// The model must be phaseRunning (the execution run started).
+	if m.phase != phaseRunning {
+		t.Fatalf("after the proceed, phase = %v, want phaseRunning (execution run started)", m.phase)
+	}
+}
+
+// TestPlanApprovedAllowAlwaysFiresProceedPrompt: an allow-always (auto-accept
+// edits) approval also fires the proceed prompt on the plan_approved ResultMsg.
+func TestPlanApprovedAllowAlwaysFiresProceedPrompt(t *testing.T) {
+	m, _, send := planProceedModel(t, true)
+
+	// Approve with always (the 'w' key = auto-accept edits → allow-always).
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'w', Text: "w"})
+	runBatchLeaves(cmd)
+
+	apps := approvalFrames(send)
+	if len(apps) != 1 {
+		t.Fatalf("after resolveAsk: expected exactly 1 ResumeApproval frame, got %d", len(apps))
+	}
+	if apps[0].GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS {
+		t.Fatalf("approval verdict = %v, want allow-always", apps[0].GetVerdict())
+	}
+	if pp := proceedPromptTexts(send); len(pp) != 0 {
+		t.Fatalf("no proceed Prompt before the plan_approved ResultMsg; got %v", pp)
+	}
+
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	pp := proceedPromptTexts(send)
+	var proceed string
+	for _, text := range pp {
+		if text == planApprovedProceedText {
+			proceed = text
+		}
+	}
+	if proceed == "" {
+		t.Fatalf("allow-always plan_approved must fire a proceed Prompt; prompts sent = %v", pp)
+	}
+	if m.phase != phaseRunning {
+		t.Fatalf("after the proceed, phase = %v, want phaseRunning", m.phase)
+	}
+}
+
+// TestPlanIterateResultMsgDoesNotFireProceed: a deny (iterate) verdict does NOT
+// fire the proceed prompt. The resumed run terminates StopPlanIterate (not
+// plan_approved), so applyResult's plan_approved gate is off — the operator types
+// their own feedback as the next prompt.
+func TestPlanIterateResultMsgDoesNotFireProceed(t *testing.T) {
+	m, _, send := planProceedModel(t, true)
+
+	// Deny (iterate).
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	runBatchLeaves(cmd)
+
+	apps := approvalFrames(send)
+	if len(apps) != 1 || apps[0].GetAllow() != false {
+		t.Fatalf("deny must send exactly one deny ResumeApproval frame; got %+v", apps)
+	}
+	// No proceed before the terminal.
+	if pp := proceedPromptTexts(send); len(pp) != 0 {
+		t.Fatalf("no proceed Prompt before the iterate terminal; got %v", pp)
+	}
+
+	// The resumed run terminates StopPlanIterate — NOT plan_approved.
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_iterate"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// Still NO proceed prompt.
+	pp := proceedPromptTexts(send)
+	for _, text := range pp {
+		if text == planApprovedProceedText {
+			t.Fatalf("iterate (deny) must NOT fire a proceed prompt; prompts sent = %v", pp)
+		}
+	}
+	// The model must be idle (the iterate pause leaves the input usable).
+	if m.phase != phaseIdle {
+		t.Fatalf("after StopPlanIterate, phase = %v, want phaseIdle (operator types feedback)", m.phase)
+	}
+}
+
+// TestNonPlanAskResultDoesNotFireProceed: a NON-plan ask (e.g. Bash) approved
+// does NOT fire the proceed prompt — the gate is the plan_approved stop reason,
+// which a regular tool-approval run never emits (it ends end_turn).
+func TestNonPlanAskResultDoesNotFireProceed(t *testing.T) {
+	m, _, send := planProceedModel(t, true)
+	// Replace the plan ask with a BASH ask (non-plan). A fresh continuation stream
+	// is still wired so submitProceedPrompt COULD fire if the gate were wrong —
+	// proving the gate (the stop reason), not the wiring, suppresses it.
+	m.ask = pendingAsk{
+		AskID: "sess-test-0001:1:bash-1", Tool: "Bash",
+		Args: `{"command":"ls"}`, Reason: "Bash requires approval", offerAlways: true,
+	}
+	m.phase = phaseAwaitingApproval
+	m.refreshView()
+
+	// Approve the Bash ask.
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	runBatchLeaves(cmd)
+	if len(approvalFrames(send)) != 1 {
+		t.Fatalf("expected one approval frame, got %d", len(approvalFrames(send)))
+	}
+
+	// The run ends end_turn (a regular tool-approval run, not plan_approved).
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "end_turn"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// NO proceed prompt must have fired (the stop was end_turn, not plan_approved).
+	pp := proceedPromptTexts(send)
+	for _, text := range pp {
+		if text == planApprovedProceedText {
+			t.Fatalf("a non-plan ask approved must NOT fire a proceed prompt; prompts sent = %v", pp)
+		}
+	}
+	if m.phase != phaseIdle {
+		t.Fatalf("after end_turn, phase = %v, want phaseIdle", m.phase)
+	}
+}
+
+// TestPlanApprovedProceedFiresOnResultMsgNotImmediatelyOnApproval pins the
+// ordering decision directly: immediately after resolveAsk (SendApproval), NO
+// proceed Prompt frame exists; only after the ResultMsg{plan_approved} does the
+// proceed fire. This is the deterministic guard against the unsafe
+// "send-approval-then-immediately-send-prompt" variant that would race the
+// still-live approval run.
+func TestPlanApprovedProceedFiresOnResultMsgNotImmediatelyOnApproval(t *testing.T) {
+	m, _, send := planProceedModel(t, true)
+
+	// No prompts recorded yet (the approval stream is live but no Prompt was sent).
+	beforeApprove := len(proceedPromptTexts(send))
+
+	// Approve.
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	runBatchLeaves(cmd)
+
+	// Immediately after approval: the prompt count is UNCHANGED (no proceed sent).
+	if got := len(proceedPromptTexts(send)); got != beforeApprove {
+		t.Fatalf("proceed must NOT fire on approval (only on ResultMsg): prompt count went %d → %d", beforeApprove, got)
+	}
+
+	// Now the ResultMsg{plan_approved} arrives — the proceed fires (count +1).
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+	pp := proceedPromptTexts(send)
+	if got := len(pp); got != beforeApprove+1 {
+		t.Fatalf("proceed must fire exactly once on plan_approved ResultMsg: prompt count went %d → %d", beforeApprove, got)
+	}
+	last := pp[len(pp)-1]
+	if last != planApprovedProceedText {
+		t.Fatalf("the fired proceed prompt = %q, want %q", last, planApprovedProceedText)
+	}
+	_ = m
+}
+
+// ---------------------------------------------------------------------------
+// Plan-approval header mode+model refresh (issue #206 follow-up)
+// ---------------------------------------------------------------------------
+
+// TestPlanApprovedFiresModeModelRefresh asserts that plan_approved fires a
+// RefreshResolvedModelCmd (GetSession refetch) alongside the proceed prompt.
+// The refetch carries the server's flipped mode + execute model so the header
+// updates from the session snapshot.
+func TestPlanApprovedFiresModeModelRefresh(t *testing.T) {
+	m, conv, _ := planProceedModel(t, true)
+
+	// Approve.
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	runBatchLeaves(cmd)
+
+	// The plan_approved ResultMsg must fire both the proceed prompt AND the
+	// RefreshResolvedModelCmd (GetSession refetch).
+	beforeGet := conv.getSessionCalls()
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// The refetch must have fired (GetSession called at least once).
+	if got := conv.getSessionCalls(); got <= beforeGet {
+		t.Fatalf("plan_approved must fire a GetSession refetch; calls = %d (was %d)", got, beforeGet)
+	}
+
+	// The execution run must be running.
+	if m.phase != phaseRunning {
+		t.Fatalf("after the proceed, phase = %v, want phaseRunning", m.phase)
+	}
+}
+
+// TestPlanApprovedRefreshUpdatesModeAndModel proves the ResolvedModelMsg
+// refetch result updates both m.activeMode and m.effectiveModel when the
+// server returns a flipped mode + new execute model. This is the end-to-end
+// reducer path: the ResolvedModelMsg lands after plan_approved and the header
+// updates in-place while the execution run is in progress.
+func TestPlanApprovedRefreshUpdatesModeAndModel(t *testing.T) {
+	m, _, _ := planProceedModel(t, true)
+
+	// Approve and let plan_approved fire.
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	runBatchLeaves(cmd)
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// Before the refetch lands: mode is still the create-time default
+	// (SessionReadyMsg didn't set a Mode, so activeMode is the deps.Mode).
+	// effectiveModel still shows the plan model (from SessionReadyMsg).
+	planModel := m.effectiveModel
+
+	// Simulate the refetch result: the server's session snapshot returns a
+	// flipped mode AND a new execute model.
+	mm, _ = m.Update(client.ResolvedModelMsg{
+		SessionID: "sess-test-0001",
+		Mode:      "accept-edits",
+		Resolved: client.ResolvedModel{
+			ProviderID:    "openai",
+			ModelID:       "gpt-5-execute",
+			ContextWindow: 200000,
+		},
+	})
+	m = mm.(Model)
+
+	// Mode must be flipped to accept-edits (ModeString canonicalises to "accept-edits").
+	if m.activeMode != "accept-edits" {
+		t.Fatalf("activeMode = %q, want accept-edits after the refetch", m.activeMode)
+	}
+
+	// effectiveModel must be the execute model, not the plan model.
+	if m.effectiveModel.ModelID == planModel.ModelID && planModel.ModelID != "" {
+		t.Fatalf("effectiveModel.ModelID = %q, want the execute model (not the plan model %q)", m.effectiveModel.ModelID, planModel.ModelID)
+	}
+	if m.effectiveModel.ModelID != "gpt-5-execute" {
+		t.Fatalf("effectiveModel.ModelID = %q, want gpt-5-execute", m.effectiveModel.ModelID)
+	}
+	if m.effectiveModel.ContextWindow != 200000 {
+		t.Fatalf("effectiveModel.ContextWindow = %d, want 200000", m.effectiveModel.ContextWindow)
+	}
+}
+
+// TestPlanIterateDoesNotFireModeModelRefresh asserts that a deny (iterate)
+// terminal does NOT fire the GetSession refetch.
+func TestPlanIterateDoesNotFireModeModelRefresh(t *testing.T) {
+	m, conv, _ := planProceedModel(t, true)
+
+	// Deny (iterate).
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	runBatchLeaves(cmd)
+
+	beforeGet := conv.getSessionCalls()
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "plan_iterate"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// No refetch must have fired on iterate.
+	if got := conv.getSessionCalls(); got != beforeGet {
+		t.Fatalf("plan_iterate must NOT fire a GetSession refetch; calls = %d (was %d)", got, beforeGet)
+	}
+
+	_ = m
+}
+
+// TestNonPlanResultDoesNotFireModeModelRefresh asserts that a non-plan
+// ResultMsg (e.g. end_turn) does NOT trigger the GetSession refetch.
+func TestNonPlanResultDoesNotFireModeModelRefresh(t *testing.T) {
+	m, conv, _ := planProceedModel(t, true)
+
+	// Replace the plan ask with a non-plan Bash ask.
+	m.ask = pendingAsk{
+		AskID: "sess-test-0001:1:bash-1", Tool: "Bash",
+		Args: `{"command":"ls"}`, Reason: "Bash requires approval", offerAlways: true,
+	}
+	m.phase = phaseAwaitingApproval
+	m.refreshView()
+
+	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	runBatchLeaves(cmd)
+
+	beforeGet := conv.getSessionCalls()
+	mm, rcmd := m.Update(client.ResultMsg{Stop: "end_turn"})
+	m = mm.(Model)
+	runBatchLeaves(rcmd)
+
+	// No refetch on end_turn.
+	if got := conv.getSessionCalls(); got != beforeGet {
+		t.Fatalf("end_turn must NOT fire a GetSession refetch; calls = %d (was %d)", got, beforeGet)
+	}
+
+	_ = m
+}
+
+// TestResolvedModelMsgModeUpdateBenignOnFooterHeal proves that the footer-heal
+// path (ResolvedModelMsg with no Mode set) does NOT touch m.activeMode or the
+// model identity — only the ContextWindow is raised, preserving the existing
+// RAISE-ONLY contract.
+func TestResolvedModelMsgModeUpdateBenignOnFooterHeal(t *testing.T) {
+	m, _, _ := planProceedModel(t, true)
+	// Set a known mode and model before the heal lands.
+	m.activeMode = "plan"
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 128000}
+
+	// The footer-heal ResolvedModelMsg: same model identity, a raised window,
+	// and NO Mode (the footer-heal path doesn't carry mode).
+	mm, _ := m.Update(client.ResolvedModelMsg{
+		SessionID: "sess-test-0001",
+		Resolved:  client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 256000},
+	})
+	m = mm.(Model)
+
+	// Mode must be untouched (the heal didn't carry a mode).
+	if m.activeMode != "plan" {
+		t.Fatalf("activeMode = %q, want plan (untouched by the footer heal)", m.activeMode)
+	}
+
+	// Model identity must be untouched.
+	if m.effectiveModel.ProviderID != "openai" || m.effectiveModel.ModelID != "gpt-5" {
+		t.Fatalf("effectiveModel identity = %+v, want openai/gpt-5 (untouched by the footer heal)", m.effectiveModel)
+	}
+
+	// ContextWindow must be RAISED (the heal's only mutation).
+	if m.effectiveModel.ContextWindow != 256000 {
+		t.Fatalf("effectiveModel.ContextWindow = %d, want 256000 (raised by the heal)", m.effectiveModel.ContextWindow)
 	}
 }

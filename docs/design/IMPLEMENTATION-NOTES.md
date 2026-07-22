@@ -2604,6 +2604,29 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   (`Config.PlanModeAutoApprove`, `foldOperatorPlanModeAutoApprove`) +
   `cmd/mecated/main.go` (`--plan-mode-auto-approve`). ACP composes it from
   `session/set_mode` + `session/prompt` (NO new ACP method — see `internal/adapter/acp/doc.go`).
+- **Interactive plan-approval continuation (issue #206 mecatui fix).** The ApprovePlan
+  RPC + the headless auto-approve path BOTH start an atomic continuation run carrying
+  `agent.PlanApprovedProceedText`; the INTERACTIVE mecatui path did NOT — it resolved
+  the ask over the plain gRPC `ResumeApproval` frame on the existing Converse stream,
+  which flips the mode + ends the run `StopPlanApproved` but starts NO execution run, so
+  the session sat idle. The fix: `cmd/mecatui/ui/update.go` (`submitProceedPrompt`) fires
+  the proceed prompt from the `ResultMsg{Stop:"plan_approved"}` handler (`applyResult`),
+  opening a FRESH Converse stream (like `submitPrompt`) and sending `SendPrompt(sessionID,
+  planApprovedProceedText, nil)` so `StartRunContent` reopens the `StopPlanApproved`-completed
+  session and the CASE-1 mode→model rebuild picks up the flipped mode → the agent executes.
+  The proceed text is a STABLE WIRE CONTRACT duplicated as `cmd/mecatui/ui/permission.go`
+  (`planApprovedProceedText`) because `ui`/`client` CANNOT import `engine/agent` (the
+  layering rule); it MUST stay byte-identical to `engine/agent.PlanApprovedProceedText`.
+  ORDERING: it fires post-terminal (on `ResultMsg`), NEVER immediately after `SendApproval`
+  — the gRPC `Converse` handler IGNORES a second Prompt frame on the same stream
+  (`internal/adapter/server/grpc.go` `readControl` default arm), and `StartRunContent`'s
+  run-entry funnel requires the approval run to have terminated; `ResultMsg` is the
+  client-side guarantee (mirroring the server's own `autoApproveContinuation` poll for the
+  terminal `StopPlanApproved` state). A deny (`StopPlanIterate`) and a non-plan ask
+  (`end_turn`/etc.) never trip the `plan_approved` gate. KNOWN GAP: the TUI header mode
+  echo is NOT refreshed by a continuation run (it reuses the session, so no new
+  `SessionReadyMsg` carries the flipped mode) — cosmetic; the execute run proceeds
+  correctly regardless.
 - **Cloud-native (ADR 0027): NO new inventory row.** `Run.planApprovedTarget` is
   run-scoped (deliberately NOT serialized); `ApprovePlan` reuses `resumeFromAwaiting` +
   `StartRunContent` (both already inventoried); `PendingAsk.PlanOriginated` is a serialized

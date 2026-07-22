@@ -434,30 +434,53 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd := m.syncPalette()
 		return mm, cmd, true
 	case client.ResolvedModelMsg:
-		// Footer context-meter self-heal refetch result (issue #66). The ui refetched
-		// the server's eventually-consistent live-first resolved model because the
-		// meter's denominator was still unknown; this lands the result. The heal is:
-		//   - SESSION-CORRELATED: a refetch in flight when a /models switch rebinds the
-		//     session to a new id must not land its STALE window on the new session, so
-		//     a msg whose SessionID no longer matches the current one is dropped.
-		//   - benign on error: a failed refetch keeps the current denominator (the next
-		//     turn boundary retries while the window is still unknown).
-		//   - RAISE-ONLY: only ever raise the window (the healed live value > the 0 /
-		//     floor echo); never lower it (a transient smaller value must not shrink a
-		//     known window) and never touch ProviderID/ModelID (the model is FIXED per
-		//     session — only the denominator self-corrects). Once raised, contextWindow()
-		//     is non-zero so the turn-end gate stops firing the refetch — bounded.
-		if msg.Err != nil || msg.SessionID != m.sessionID {
-			return m, nil, true
-		}
-		if msg.Resolved.ContextWindow > m.effectiveModel.ContextWindow {
-			m.effectiveModel.ContextWindow = msg.Resolved.ContextWindow
-			m.refreshView()
-		}
-		return m, nil, true
+		return m.onResolvedModelMsg(msg)
 	default:
 		return m, nil, false
 	}
+}
+
+// onResolvedModelMsg handles the ResolvedModelMsg from a GetSession refetch
+// (footer context-meter heal, issue #66) and the plan-approval mode+model
+// refresh (issue #206). Extracted from updateLifecycle to keep its cyclomatic
+// complexity under the cap.
+//
+//nolint:unparam // tea.Cmd is always nil; the (Model, tea.Cmd, bool) shape matches the caller's switch.
+func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, bool) {
+	// Heal invariants:
+	//   - SESSION-CORRELATED: a refetch in flight when a /models switch rebinds
+	//     the session to a new id must not land its STALE window on the new
+	//     session, so a msg whose SessionID no longer matches the current one
+	//     is dropped.
+	//   - benign on error: a failed refetch keeps the current denominator (the
+	//     next turn boundary retries while the window is still unknown).
+	// The plan-approval path (issue #206): after a plan_approved terminal, the
+	// server has flipped the mode and switched the session to the execute model.
+	// The refetch carries the new Mode + the new ResolvedModel; the reducer
+	// applies both so the header reflects the flipped state before the execution
+	// run starts.
+	if msg.Err != nil || msg.SessionID != m.sessionID {
+		return m, nil, true
+	}
+	// Mode update: apply when the refetch carries a mode (the plan-approval
+	// refresh path). On the footer-heal path Mode is the same as m.activeMode
+	// (or empty from an older server), so this is a benign no-op.
+	if msg.Mode != "" {
+		m.activeMode = client.ModeString(client.ModeFromString(msg.Mode))
+	}
+	// Model identity changed (e.g. plan model → execute model): full replace.
+	// The model is normally fixed per session, so this only fires on a
+	// server-driven mode transition (plan approval). When identity is unchanged
+	// (the footer-heal path), fall through to the RAISE-ONLY ContextWindow path
+	// so the denominator self-corrects without touching ProviderID/ModelID.
+	if msg.Resolved.ModelID != "" && msg.Resolved.ModelID != m.effectiveModel.ModelID {
+		m.effectiveModel = msg.Resolved
+		m.refreshView()
+	} else if msg.Resolved.ContextWindow > m.effectiveModel.ContextWindow {
+		m.effectiveModel.ContextWindow = msg.Resolved.ContextWindow
+		m.refreshView()
+	}
+	return m, nil, true
 }
 
 // onRenderTick is the frame-cadence flush of coalesced deltas. The one-shot tick
@@ -723,6 +746,31 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m = m.endRun(msg.Stop)
 	modeCmd := m.retryPendingModeCmd()
+	// Interactive plan-approval continuation (issue #206). A plan_approved
+	// terminal means the operator APPROVED the plan over the Converse
+	// ResumeApproval frame (resolveAsk → SendApproval). Unlike the ApprovePlan
+	// RPC (service.go:2593) and the headless auto-approve continuation
+	// (service.go:2945), the interactive ResumeApproval path does NOT start a
+	// continuation run — so the TUI fires the proceed prompt HERE to start the
+	// execution run (StartRunContent reopens the StopPlanApproved-completed
+	// session; the CASE-1 mode→model rebuild picks up the flipped mode → execute
+	// model). See submitProceedPrompt for why this fires post-terminal (on
+	// ResultMsg), never immediately after SendApproval. A deny ends
+	// StopPlanIterate (not plan_approved), so the proceed is gated off the
+	// iterate path; a non-plan run never emits plan_approved. A staged queue, if
+	// any, drains after the execution run (drainQueue below no-ops while the
+	// proceed has set phase==running).
+	if msg.Stop == "plan_approved" {
+		pm, proceedCmd := m.submitProceedPrompt()
+		// Refetch the session snapshot so the header reflects the server's
+		// flipped mode (plan→default/acceptEdits) AND the execute model.
+		// The result lands as a ResolvedModelMsg on the update goroutine
+		// while the execution run is in progress; the ResolvedModelMsg arm
+		// applies both mode + model from the session snapshot (issue #206).
+		refresh := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+		dm, drainCmd := pm.drainQueue(msg.Stop, msg.Transient)
+		return dm, tea.Batch(pm.refreshCmd(), modeCmd, proceedCmd, drainCmd, refresh)
+	}
 	mm, drainCmd := m.drainQueue(msg.Stop, msg.Transient)
 	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd)
 }
@@ -2062,6 +2110,71 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 
 	send := func() tea.Msg {
 		if err := stream.SendPrompt(m.sessionID, text, media.Parts); err != nil {
+			return client.StreamErrMsg{Err: err}
+		}
+		return nil
+	}
+	return m, tea.Batch(send, m.waitCmd(), m.sp.Tick)
+}
+
+// submitProceedPrompt opens a fresh Converse run carrying the plan-approved
+// proceed message, mirroring submitPrompt's run-open tail (stream-open +
+// SendPrompt + reader + spinner) WITHOUT the builtin/media/textarea logic. It is
+// the INTERACTIVE counterpart to the server-side ApprovePlan RPC's atomic
+// continuation (service.go:2593) and the headless auto-approve continuation
+// (service.go:2945): the TUI sends the proceed text as an ordinary prompt so
+// StartRunContent reopens the StopPlanApproved-completed session (loadAndReopen)
+// and the CASE-1 mode→model rebuild picks up the FLIPPED mode → the agent begins
+// executing on the execute model.
+//
+// ORDERING (issue #206 root cause): this MUST fire from the ResultMsg{Stop:
+// "plan_approved"} handler (applyResult), NOT immediately after SendApproval in
+// resolveAsk. The gRPC Converse handler IGNORES a second Prompt frame on the same
+// stream (grpc.go readControl default arm), so the proceed cannot ride the
+// approval's stream; it opens a FRESH stream. And StartRunContent's run-entry
+// funnel requires the approval run to have fully TERMINATED (loadAndReopen drives
+// the session idle; a still-registered live run blocks a new one) — ResultMsg is
+// the client-side guarantee the approval run ended (endRun has cancelled/nilled
+// the stream and settled phaseIdle). Firing earlier races the live approval run;
+// firing here is provably post-terminal, exactly the gate the server's own
+// autoApproveContinuation polls for (it waits for the terminal StopPlanApproved
+// state before starting the continuation).
+//
+// The proceed text is recorded as an ordinary user turn (the execution driver),
+// matching the ApprovePlan RPC path which records it server-side. It renders in
+// the transcript so the operator sees what drove execution. The session's mode
+// was flipped server-side at the approval terminal; the TUI header mode+model
+// echo is refreshed by a concurrent RefreshResolvedModelCmd (also fired from
+// applyResult on the same gate) whose ResolvedModelMsg result updates
+// m.activeMode and m.effectiveModel from the server's session snapshot.
+func (m Model) submitProceedPrompt() (Model, tea.Cmd) {
+	if m.sessionID == "" {
+		return m, nil
+	}
+	// Record the proceed text as the user turn driving execution (ordinary
+	// recorded history — same as the ApprovePlan RPC path records server-side).
+	m.conv.addUser(planApprovedProceedText)
+	m.queuePaused = ""
+	m.phase = phaseRunning
+	m.statusMsg = "running…"
+	m.refreshView()
+
+	runCtx, cancel := context.WithCancel(m.deps.Ctx)
+	stream, err := m.deps.Conv.OpenConverse(runCtx)
+	if err != nil {
+		cancel()
+		m.conv.addError("open run: " + err.Error())
+		return m.endRun(stopError), nil
+	}
+	ch := make(chan tea.Msg, 64)
+	m.stream = stream
+	m.streamCh = ch
+	m.cancelRun = cancel
+	m.streamGen++ // fresh reader generation; readers of the approval run go stale
+	go stream.ReadLoop(runCtx, ch)
+
+	send := func() tea.Msg {
+		if err := stream.SendPrompt(m.sessionID, planApprovedProceedText, nil); err != nil {
 			return client.StreamErrMsg{Err: err}
 		}
 		return nil

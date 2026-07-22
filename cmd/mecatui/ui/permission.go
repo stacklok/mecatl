@@ -31,6 +31,22 @@ func isPlanAsk(tool string) bool {
 	return tool == "PresentPlan"
 }
 
+// planApprovedProceedText is the harness-framed proceed message the TUI sends as
+// the follow-up prompt when an operator APPROVES a plan ask interactively, so the
+// server starts the execution run (mirroring the ApprovePlan RPC's atomic
+// continuation, service.go:2593, and the headless auto-approve continuation,
+// service.go:2945).
+//
+// The ui/client layer CANNOT import engine/agent (the layering rule), so the
+// literal is DUPLICATED here. It is a STABLE WIRE CONTRACT: it MUST stay
+// byte-identical to engine/agent.PlanApprovedProceedText
+// ("Plan approved by operator. Proceed with execution.") — the server RECORDS it
+// as the user turn driving execution (ordinary recorded history the model reads),
+// and both server-side continuation paths send the SAME constant. A change here
+// is a coordinated change in both places (and an engine/CHANGELOG.md note per
+// the engine contract).
+const planApprovedProceedText = "Plan approved by operator. Proceed with execution."
+
 // renderPermissionModal renders the centred approval card. It is drawn with
 // lipgloss.Place over the available area so it reads as a modal overlay. The
 // warning border + accent on the focused button make it unmissable. It is a

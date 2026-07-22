@@ -66,14 +66,20 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 }
 
 // ResolvedModelMsg carries the result of a GetSession refetch (the footer
-// context-meter heal, issue #66). SessionID is STAMPED on every result — success
-// AND error — so the reducer can drop a result that landed AFTER a /models switch
-// rebound the ui to a new session (a stale window must never clobber the new
-// session's denominator). Err set ⇒ the refetch failed; the reducer keeps the
-// current denominator (benign — the heal simply retries on the next turn boundary).
+// context-meter heal, issue #66, and the plan-approval mode+model refresh,
+// issue #206). SessionID is STAMPED on every result — success AND error — so
+// the reducer can drop a result that landed AFTER a /models switch rebound the
+// ui to a new session (a stale window must never clobber the new session's
+// denominator). Err set ⇒ the refetch failed; the reducer keeps the current
+// denominator (benign — the heal simply retries on the next turn boundary).
+//
+// Mode carries the server-confirmed permission posture from the session snapshot.
+// When non-empty (the plan-approval refresh path) the reducer applies it to the
+// header mode echo; the footer-heal path may leave it empty (the mode is unchanged).
 type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel
+	Mode      string
 	Err       error
 }
 
@@ -107,13 +113,21 @@ func SetModeCmd(ctx context.Context, s ModeSetter, id, mode string) tea.Cmd {
 
 // RefreshResolvedModelCmd refetches the resolved model for session id off the
 // update goroutine; the result (success or error) arrives as a ResolvedModelMsg
-// with SessionID stamped so the reducer can correlate/drop it. It backs the footer
-// context-meter heal: the ui fires it on a turn boundary while the meter's
-// denominator is still unknown, and the ResolvedModelMsg arm raises the window once
-// the server's live-first resolution heals it.
+// with SessionID stamped so the reducer can correlate/drop it. It backs two paths:
+//
+//  1. The footer context-meter heal: the ui fires it on a turn boundary while the
+//     meter's denominator is still unknown, and the ResolvedModelMsg arm raises the
+//     window once the server's live-first resolution heals it.
+//  2. The plan-approval mode+model refresh (issue #206): after a plan_approved
+//     terminal, the ui fires it to refetch the server's flipped mode (plan→default/
+//     acceptEdits) and the execute model, so the header updates from the session
+//     snapshot.
+//
+// Mode is carried alongside ResolvedModel so the reducer can update both the mode
+// echo and the effective model in one refetch (reusing the ResolvedModelMsg arm).
 func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) tea.Cmd {
 	return func() tea.Msg {
 		snap, err := g.GetSession(ctx, id)
-		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Err: err}
+		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode, Err: err}
 	}
 }
