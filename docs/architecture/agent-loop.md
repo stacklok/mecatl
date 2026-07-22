@@ -195,7 +195,11 @@ askable ask, a serialized provenance marker, and a verdict tail.
   no silent mode flip); the opt-in `PlanModeAutoApprove` surfaces the ask even
   headless so the composition observer can resolve it.
 - **Verdict → mode.** Allow-once → flip to `ModeDefault`; allow-always → flip to
-  `ModeAccept`; deny → stay in `plan` (the model iterates). On Allow the run
+  `ModeAccept`; deny → terminate CLEANLY with `engine/session/session.go`
+  (`StopPlanIterate`) (the iterate pause — issue #206 UX fix: the run ENDS so the
+  operator's next typed prompt drives the revision; the model does NOT continue
+  iterating in-turn with no operator input). The session stays `ModePlan` on Deny
+  (no mode flip). On Allow the run
   terminates with the clean `engine/session/session.go` (`StopPlanApproved`)
   terminal; `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the
   terminal boundary (after `Stop` → `StateCompleted`, where `SetMode` is legal —
@@ -204,7 +208,9 @@ askable ask, a serialized provenance marker, and a verdict tail.
 - **Cross-process resume.** `PendingAsk.PlanOriginated` is serialized
   (`json:"plan_originated,omitempty"`, sibling of `HookOriginated`); the
   awaiting-resume path (`resolvePendingCall`) keys the plan-flip branch on it —
-  an Allow does NOT re-present the plan. The read-time
+  an Allow does NOT re-present the plan; a Deny sets `planIterateRequested` so the
+  resumed run terminates `StopPlanIterate` (the iterate pause, cross-process twin
+  of the live-path deny). The read-time
   `engine/session/session.go` (`Origin`) accessor derives the single
   provenance (`AskOriginPlan`/`AskOriginHook`/`AskOriginNone`) from the two
   serialized bools.
@@ -212,8 +218,10 @@ askable ask, a serialized provenance marker, and a verdict tail.
   (`ApprovePlan`), `POST /v1/sessions/{id}/plan:approve`,
   `rpc ApprovePlan`) resolves a parked plan-ask and — on Allow — starts a FRESH
   continuation run carrying `agent.PlanApprovedProceedText` + an optional note,
-  streaming BOTH runs' events. The opt-in `--plan-mode-auto-approve` observer
-  (`MaybeAutoApprovePlan`) auto-resolves a parked plan-ask headless
+  streaming BOTH runs' events. On Deny (`ModePlan`) NO continuation runs — the
+  resumed run terminates `StopPlanIterate` (the iterate pause), so the operator's
+  next typed prompt drives the revision. The opt-in `--plan-mode-auto-approve`
+  observer (`MaybeAutoApprovePlan`) auto-resolves a parked plan-ask headless
   (DEFAULT OFF, OPERATOR-TIER ONLY, loud "NO HUMAN REVIEW" diagnostic).
 
 ## Related

@@ -253,11 +253,17 @@ func TestApprovePlanAllowAlwaysFlipsToAcceptEdits(t *testing.T) {
 }
 
 // TestApprovePlanDenyIterates asserts that ApprovePlan(ModePlan) keeps the session
-// in plan mode, does NOT start a continuation run, and records a deny result.
+// in plan mode, does NOT start a continuation run, and the resumed run terminates
+// CLEANLY with StopPlanIterate (issue #206 iterate UX fix: the run ENDS so the
+// operator's next typed prompt drives the revision — the model does NOT continue
+// iterating with no operator input). A follow-up StartRunContent then drives the
+// revision on the operator's typed feedback (the operator-types-feedback path).
 func TestApprovePlanDenyIterates(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"note":"x"}`)),
-		mockllm.TextTurn("revised after deny"),
+		// Reached by the follow-up StartRunContent below (the operator-types-feedback
+		// path), NOT by the resumed run (which terminates StopPlanIterate).
+		mockllm.TextTurn("revised after operator feedback"),
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
@@ -283,9 +289,17 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 		t.Fatalf("mode after ApprovePlan(deny) = %q, want %q (no flip)", sess.Mode, session.ModePlan)
 	}
 
-	// The stream must NOT contain StopPlanApproved (deny path does not terminate there).
+	// The resumed run must terminate with StopPlanIterate (the iterate pause), NOT
+	// StopPlanApproved (no approval happened) and NOT StopEndTurn (the model did NOT
+	// continue iterating in-turn — the run ends so the operator types feedback).
+	if !hasResultWithStop(evs, session.StopPlanIterate) {
+		t.Fatalf("deny path must emit StopPlanIterate (pause for operator feedback); stops seen = %v", stopReasonsOf(evs))
+	}
 	if hasResultWithStop(evs, session.StopPlanApproved) {
 		t.Fatal("deny path must NOT emit StopPlanApproved — no approval happened")
+	}
+	if hasResultWithStop(evs, session.StopEndTurn) {
+		t.Fatal("deny path must NOT emit StopEndTurn — the model must NOT continue iterating in-turn (the run pauses for operator feedback)")
 	}
 
 	// A deny tool result for "c1" (PresentPlan) must be present in the session
@@ -303,17 +317,47 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 		t.Fatal("deny must have recorded an error tool result for the PresentPlan call")
 	}
 
-	// FIX 6 (QA must-add): the deny-path run must reach a CLEAN terminal
-	// (StateCompleted + a result event), not just "no StopPlanApproved". A deny
-	// resolves the ask and the loop CONTINUES in plan mode (the model iterates),
-	// so the run drives to an ordinary completion — it must not wedge or end in
-	// an error/cancelled state.
+	// The deny-path run must reach a CLEAN terminal (StateCompleted), not wedge or
+	// end in an error/cancelled state.
 	if sess.State != session.StateCompleted {
-		t.Fatalf("deny-path session state = %q, want %q (clean terminal after the model iterates)", sess.State, session.StateCompleted)
+		t.Fatalf("deny-path session state = %q, want %q (clean terminal — pause for operator feedback)", sess.State, session.StateCompleted)
 	}
-	if !hasResultWithStop(evs, session.StopEndTurn) {
-		t.Fatal("deny-path run must reach a clean terminal (StopEndTurn) after the model iterates on the denied plan")
+
+	// The operator-types-feedback path: a follow-up StartRunContent (the operator's
+	// typed message) drives the revision. The session was StopPlanIterate-completed
+	// (Reopen-recoverable), so loadAndReopen reopens it to idle and the model runs on
+	// the operator's feedback. The llm's second scripted turn ("revised after operator
+	// feedback") is consumed here, ending StopEndTurn.
+	cont, cerr := svc.StartRunContent(context.Background(), sess.ID, "the plan needs to handle the edge case", nil)
+	if cerr != nil {
+		t.Fatalf("follow-up StartRunContent (operator feedback): %v", cerr)
 	}
+	var contEvs []session.Event
+	for ev := range cont.Events() {
+		contEvs = append(contEvs, ev)
+	}
+	if !hasResultWithStop(contEvs, session.StopEndTurn) {
+		t.Fatalf("follow-up run must reach StopEndTurn (the operator's feedback drove the revision); stops seen = %v", stopReasonsOf(contEvs))
+	}
+	// The session must still be in plan mode (the follow-up did not flip it).
+	sess, err = svc.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession after follow-up: %v", err)
+	}
+	if sess.Mode != session.ModePlan {
+		t.Fatalf("mode after follow-up = %q, want %q (still plan mode)", sess.Mode, session.ModePlan)
+	}
+}
+
+// stopReasonsOf returns the set of stop reasons carried by EvResult events in evs.
+func stopReasonsOf(evs []session.Event) []session.StopReason {
+	var out []session.StopReason
+	for _, ev := range evs {
+		if ev.Type == session.EvResult && ev.Result != nil {
+			out = append(out, ev.Result.Stop)
+		}
+	}
+	return out
 }
 
 // TestApprovePlanMidRunFailsPrecondition asserts that ApprovePlan returns an error

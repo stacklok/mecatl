@@ -211,7 +211,8 @@ func run(ctx context.Context, svc *server.Service, workspace string, limits sess
 //	no_progress / budget /
 //	max_turns / max_tool_calls /
 //	max_consecutive_failures /
-//	structured_output             -> 0  (CLEAN terminals; the reason is honest)
+//	structured_output /
+//	plan_approved / plan_iterate  -> 0  (CLEAN terminals; the reason is honest)
 //	error                         -> 1
 //	cancelled                     -> 1
 //	(anything else, incl. empty)  -> 1  (fail-safe: an unrecognised/absent terminal)
@@ -226,7 +227,9 @@ func exitCode(s Summary) int {
 		session.StopMaxTurns,
 		session.StopMaxToolCalls,
 		session.StopMaxConsecutiveFailures,
-		session.StopStructuredOutput:
+		session.StopStructuredOutput,
+		session.StopPlanApproved,
+		session.StopPlanIterate:
 		return 0
 	default:
 		// StopError, StopCancelled, StopNone (no terminal observed), and any

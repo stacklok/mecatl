@@ -282,6 +282,11 @@ const (
 // and the non-error LIMIT stop labels (turn/tool-call/repeated-failure/no-progress).
 const slotCtxWarn = "ctxWarn"
 
+// slotMuted is the themed muted slot name for the unobtrusive clean stops (end_turn,
+// cancelled, plan_approved, plan_iterate) and the unknown-reason fallback. Named once
+// so the literal does not trip goconst's min-occurrences across the switch arms.
+const slotMuted = "muted"
+
 // stopReasonLabel maps a run's terminal stop reason (client.ResultMsg.Stop, the
 // proto Result.stop / session.StopReason vocabulary) to the human footer status
 // text and the theme style slot it should carry. The non-error LIMIT stops
@@ -296,7 +301,7 @@ const slotCtxWarn = "ctxWarn"
 func stopReasonLabel(stop string) (text, slot string) {
 	switch stop {
 	case "end_turn", "":
-		return "done", "muted"
+		return "done", slotMuted
 	case "max_turns":
 		return "stopped · turn limit", slotCtxWarn
 	case "max_tool_calls":
@@ -306,7 +311,7 @@ func stopReasonLabel(stop string) (text, slot string) {
 	case "budget":
 		return "stopped · token budget", slotCtxWarn
 	case "cancelled":
-		return "cancelled", "muted"
+		return "cancelled", slotMuted
 	case "no_progress":
 		// The model went silent (no tool call, no text) across the nudge budget. Not a
 		// failure, but worth noticing — styled like the limit stops.
@@ -317,11 +322,16 @@ func stopReasonLabel(stop string) (text, slot string) {
 		// but mapped so the raw token never leaks if it ever does.
 		return "stopped · schema unmet", slotCtxWarn
 	case "plan_approved":
-		return "plan approved · executing", "muted"
+		return "plan approved · executing", slotMuted
+	case "plan_iterate":
+		// The operator chose to iterate on the plan (a deny verdict). The run ends
+		// cleanly so the operator's next typed prompt drives the revision — a
+		// muted/transient "awaiting your feedback" cue, not a warning.
+		return "plan iterate · awaiting your feedback", slotMuted
 	case stopError:
 		return "error", "errorText"
 	default:
-		return sanitizeTerminal(stop), "muted"
+		return sanitizeTerminal(stop), slotMuted
 	}
 }
 

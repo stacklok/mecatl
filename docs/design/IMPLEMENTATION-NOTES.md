@@ -2537,18 +2537,26 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   reason line; malformed args JSON → the reason line (an older model that put the plan only
   in message text never breaks the modal).
 - **Verdict → mode (`engine/agent/loop.go` (`planApprovedTarget`)).** Allow-once →
-  `ModeDefault`; allow-always → `ModeAccept`; deny → stay in `plan` (iterate). On Allow,
-  `surfacePlanAsk` sets the run-scoped `planApprovedTarget` and synthesizes an allow
-  result; `runLoop` terminates with `engine/session/session.go` (`StopPlanApproved`) (a
+  `ModeDefault`; allow-always → `ModeAccept`; deny → terminate CLEANLY with
+  `engine/session/session.go` (`StopPlanIterate`) (the iterate pause — issue #206
+  UX fix). On Allow, `surfacePlanAsk` sets the run-scoped `planApprovedTarget` and
+  synthesizes an allow result; `runLoop` terminates with `StopPlanApproved` (a
   CLEAN terminal — `completed`, Reopen-recoverable) at TWO sites (an EARLY check
-  load-bearing for the awaiting-resume path, and a post-dispatch check for the live path).
+  load-bearing for the awaiting-resume path, and a post-dispatch check for the live
+  path). On Deny, `surfacePlanAsk` sets the run-scoped `planIterateRequested` and
+  synthesizes a deny result teaching the model the turn is pausing for operator
+  feedback; `runLoop` terminates with `StopPlanIterate` at the SAME two sites (EARLY
+  + post-dispatch) — the run ENDS so the operator's next typed prompt drives the
+  revision (the model does NOT continue iterating in-turn with no operator input,
+  the old behaviour the operator reported). The session stays `ModePlan` on Deny (no
+  mode flip — `terminateComplete` only flips when `planApprovedTarget != ""`).
   `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the terminal boundary:
   AFTER `sess.Stop(reason)` → `StateCompleted`, `sess.SetMode(planApprovedTarget)` is legal
   (the `engine/session/session.go` (`SetMode`) invariant — rejected from
   `Running`/`Awaiting` — is preserved, pinned by `TestPlanApprovalDoesNotFlipMidTurn`).
   The error path does NOT flip (an errored plan run stays in plan mode, honestly).
-  `planApprovedTarget` is RUN-SCOPED and NOT serialized (the serialized `PlanOriginated`
-  marker is the cross-process contract).
+  `planApprovedTarget`/`planIterateRequested` are RUN-SCOPED and NOT serialized (the
+  serialized `PlanOriginated` marker is the cross-process contract).
 - **Resume skip (the serialized marker).** `engine/session/session.go`
   (`PlanOriginated`) (`json:"plan_originated,omitempty"`, sibling of
   `HookOriginated`) survives a snapshot. The awaiting-resume path
@@ -2556,7 +2564,11 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   Allow does NOT re-present the plan or run any tool — it synthesizes the allow result and
   re-sets `r.planApprovedTarget` (AllowOnce→`ModeDefault`, AllowAlways→`ModeAccept`), so
   `driveFromAwaiting`'s `runLoop` sees it at the EARLY check and terminates
-  `StopPlanApproved`. The read-time `engine/session/session.go` (`Origin`)
+  `StopPlanApproved`; a Deny sets `r.planIterateRequested` in the shared deny arm (guarded
+  on `ask.PlanOriginated`), so the resumed run terminates `StopPlanIterate` (the iterate
+  pause — the cross-process twin of the live-path deny, so a plan ask denied via
+  ResumeApproval ALSO pauses for operator feedback rather than continuing in-turn). The
+  read-time `engine/session/session.go` (`Origin`)
   accessor + `engine/session/session.go` (`AskOrigin`) enum
   (`AskOriginNone`/`AskOriginHook`/`AskOriginPlan`) derive the single provenance from the
   two serialized bools (Hook takes precedence on a construction-invariant violation); this
@@ -2572,7 +2584,9 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   AT the ask; on Allow a FRESH continuation run starts via `StartRunContent`
   (`loadAndReopen` → `engineAndWorkspaceFor` CASE 1 rebuild on the flipped mode → execute
   model) carrying `PlanApprovedProceedText` + an optional note. `forwardRunEvents` relays
-  BOTH runs' events on the one channel. On deny, NO continuation runs. Wire:
+  BOTH runs' events on the one channel. On deny, NO continuation runs — the resumed run
+  terminates `StopPlanIterate` (the iterate pause), so the operator's next typed
+  `StartRunContent` prompt drives the revision. Wire:
   `contracts/proto/mecatl/v1/harness.proto` (`ApprovePlanRequest`) + `rpc ApprovePlan`,
   `internal/adapter/server/grpc_approveplan.go`, `POST /v1/sessions/{id}/plan:approve` in
   `internal/adapter/server/http.go`. The `PermissionAsk` proto is UNCHANGED (the tool name

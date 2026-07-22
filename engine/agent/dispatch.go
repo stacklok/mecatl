@@ -437,6 +437,14 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		AllowAlways: verdict == session.VerdictAllowAlways,
 	}})
 	if verdict == session.VerdictDeny {
+		// PLAN-ORIGINATED resume deny (issue #206): a cross-process resumed plan ask
+		// denied via ResumeApproval must ALSO set r.planIterateRequested so the
+		// resumed run terminates StopPlanIterate at runLoop's EARLY check (the live
+		// path sets it in surfacePlanAsk's deny branch). The serialized
+		// PlanOriginated marker is the durable signal that this was a plan ask.
+		if ask.PlanOriginated {
+			r.planIterateRequested = true
+		}
 		e.openCard(r, turnIdx, pendingCall)
 		res := denyResult(pendingCall, fmt.Sprintf("denied by user: %s", ask.Reason))
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
@@ -475,7 +483,8 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 	// (AllowOnce→ModeDefault, AllowAlways→ModeAccept); driveFromAwaiting's subsequent
 	// runLoop sees planApprovedTarget != "" at its early check and terminates with
 	// StopPlanApproved, and terminateComplete flips the session mode at the boundary.
-	// A deny was handled by the deny arm above. We do NOT re-run preHook (the human
+	// A deny was handled by the deny arm above (it sets r.planIterateRequested so the
+	// resumed run terminates StopPlanIterate). We do NOT re-run preHook (the human
 	// already authorized this plan; PresentPlan is signalling-only, so there is
 	// nothing to execute). This mirrors surfacePlanAsk's live-path allow tail.
 	if ask.PlanOriginated {
@@ -891,9 +900,11 @@ func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Sess
 // affordance, not a mutating tool): it sets r.planApprovedTarget (AllowOnce →
 // ModeDefault, AllowAlways → ModeAccept) and synthesizes an allow result; the
 // runLoop then terminates the run with StopPlanApproved and terminateComplete
-// flips the session mode at the terminal boundary. On Deny it synthesizes a deny
-// result and the loop CONTINUES in plan mode (the model iterates on the plan).
-// On cancel it returns a zero result + cancelled=true.
+// flips the session mode at the terminal boundary. On Deny it sets
+// r.planIterateRequested and synthesizes a deny result; the runLoop then
+// terminates the run CLEANLY with StopPlanIterate so the operator's next typed
+// prompt drives the revision (the model does NOT continue in-turn). On cancel it
+// returns a zero result + cancelled=true.
 //
 // It takes no Workspace/Tool param (unlike askHookApproval): PresentPlan is
 // signalling-only, so nothing is executed and there is no tool handle to run. It
@@ -952,11 +963,16 @@ func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Sessi
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false
 	default:
-		// VerdictDeny (incl. the zero value / fail-safe): the operator asked for
-		// edits. Do NOT set planApprovedTarget — the run CONTINUES in plan mode and
-		// the model iterates on the plan. The deny result teaches the model what to
-		// do (revise and re-present).
-		res := session.NewToolError(c.ID, "plan not approved by operator: revise the plan and present it again")
+		// VerdictDeny (incl. the zero value / fail-safe): the operator chose to
+		// iterate. Set r.planIterateRequested so the runLoop Step 6 check (or the
+		// EARLY check on the resume path) terminates the run CLEANLY with
+		// StopPlanIterate — the run ENDS so the operator's next typed prompt drives
+		// the revision (the model does NOT keep iterating with no operator input).
+		// The session stays ModePlan (terminateComplete only flips when
+		// planApprovedTarget != ""). The deny result teaches the model the turn is
+		// pausing for operator feedback.
+		r.planIterateRequested = true
+		res := session.NewToolError(c.ID, "plan not approved by operator: the operator will provide feedback; end this turn and wait for it")
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false
 	}

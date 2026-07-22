@@ -94,6 +94,18 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   COMPATIBILITY.md (a new exported struct field with a false zero-value is a minor
   bump; additive — existing code is unaffected). (#206)
 
+- **`session.StopPlanIterate`** (issue #206) — a new `StopReason = "plan_iterate"`
+  const, the CLEAN non-error terminal emitted when an operator chooses to iterate
+  on a presented plan (a deny verdict). It is the iterate sibling of
+  `StopPlanApproved`: a deny of a plan ask TERMINATES the plan run CLEANLY instead
+  of continuing in-turn (the old behaviour kept the model iterating with NO
+  operator input), so the run ends and the operator's next typed prompt drives the
+  revision. Like `StopPlanApproved` it is routed through the completed path (session
+  ends COMPLETED, Reopen-recoverable), NOT `StopError`, and the session stays
+  `ModePlan` (no mode flip). It maps to the proto stop string verbatim (no proto
+  enum; the wire stop field is a string passthrough, exactly like `StopPlanApproved`).
+  Classified Added per COMPATIBILITY.md (a new exported const is a minor bump). (#206)
+
 <<<<<<< HEAD
 ### Changed
 

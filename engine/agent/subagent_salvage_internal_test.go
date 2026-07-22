@@ -29,6 +29,8 @@ func TestIsEmptyTerminalStop(t *testing.T) {
 		session.StopError,
 		session.StopCancelled,
 		session.StopStructuredOutput,
+		session.StopPlanApproved,
+		session.StopPlanIterate,
 		session.StopNone,
 	}
 	for _, stop := range out {

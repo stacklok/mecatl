@@ -18,7 +18,9 @@ import (
 // plan-approval gate's ask seam (issue #206, Wave 2). The PresentPlan tool is
 // intercepted by name in plan mode and surfaced as a PlanOriginated ask; the
 // verdict flips the mode (AllowOnce→ModeDefault, AllowAlways→ModeAccept) and
-// terminates the run with StopPlanApproved, or continues in plan mode on Deny.
+// terminates the run with StopPlanApproved, or on Deny terminates CLEANLY with
+// StopPlanIterate so the operator's next prompt drives the revision (the model
+// does NOT continue in-turn — issue #206 iterate UX fix).
 
 // newPlanSession returns a session in ModePlan (the gate is inert outside plan
 // mode — Catalog.Available hides PresentPlan under ModeDefault/ModeAccept).
@@ -38,8 +40,9 @@ func planCatalog(t *testing.T) *tool.Catalog {
 // drivePlanAsk runs ONE prompt issuing a single PresentPlan call under plan mode,
 // resolving the FIRST plan-originated permission ask with verdict. It returns the
 // captured ask (if any) and the drained events. The model emits one PresentPlan
-// call then a follow-up text turn (the latter is only reached on a Deny, where the
-// loop continues; on Allow the run terminates at StopPlanApproved before it).
+// call then a follow-up text turn; the follow-up is only reached on neither
+// verdict (on Allow the run terminates StopPlanApproved before it; on Deny the run
+// terminates StopPlanIterate before it — issue #206 iterate UX fix).
 func drivePlanAsk(t *testing.T, interactive bool, verdict session.ApprovalVerdict) (ask *session.PendingAsk, evs []session.Event) {
 	t.Helper()
 	cat := planCatalog(t)
@@ -148,11 +151,18 @@ func TestPlanApprovalAllowAlwaysFlipsToAcceptEdits(t *testing.T) {
 	}
 }
 
-// TestPlanApprovalDenyContinuesInPlanMode pins the Deny tail: the deny result is
-// recorded, the run CONTINUES (the model iterates — the follow-up text turn is
-// reached), the mode stays ModePlan, and planApprovedTarget is NOT set (so no
-// StopPlanApproved terminal). The deny result teaches the model to revise.
-func TestPlanApprovalDenyContinuesInPlanMode(t *testing.T) {
+// TestPlanApprovalDenyPausesForIteration pins the Deny tail (issue #206 iterate
+// UX fix): a deny of a plan ask TERMINATES the run CLEANLY with StopPlanIterate
+// (the run ENDS so the operator's next typed prompt drives the revision — the
+// model does NOT continue iterating with no operator input). The session stays
+// ModePlan (no mode flip — terminateComplete only flips when planApprovedTarget
+// != ""), the session is StateCompleted, and the model is NOT re-called after
+// the deny (the LLM script has only the PresentPlan turn — a second turn would
+// prove the loop continued; it never fires). The deny result teaches the model
+// the turn is pausing for operator feedback. Replaces the old
+// TestPlanApprovalDenyContinuesInPlanMode (the behaviour changed from
+// continue-in-turn → pause).
+func TestPlanApprovalDenyPausesForIteration(t *testing.T) {
 	ask, evs := drivePlanAsk(t, true, session.VerdictDeny)
 	if ask == nil {
 		t.Fatal("the plan ask must surface before the deny")
@@ -161,17 +171,18 @@ func TestPlanApprovalDenyContinuesInPlanMode(t *testing.T) {
 	var sawDenyResult bool
 	for _, ev := range evs {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "c1" &&
-			ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "plan not approved") {
+			ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "plan not approved by operator") {
 			sawDenyResult = true
 		}
 	}
 	if !sawDenyResult {
-		t.Fatal("a deny must surface a 'plan not approved' error result for the PresentPlan call")
+		t.Fatal("a deny must surface a 'plan not approved by operator' error result for the PresentPlan call")
 	}
-	// The run CONTINUED: the model's follow-up text turn ran (StopEndTurn, NOT StopPlanApproved).
+	// The run PAUSED: it terminated with StopPlanIterate, NOT StopPlanApproved, and
+	// NOT StopEndTurn (the model's follow-up text turn must NOT have run).
 	res := lastResult(t, evs)
-	if res.Stop == session.StopPlanApproved {
-		t.Fatal("a Deny must NOT terminate with StopPlanApproved (the loop continues in plan mode)")
+	if res.Stop != session.StopPlanIterate {
+		t.Fatalf("a Deny must terminate with StopPlanIterate (pause for operator feedback); got stop = %q", res.Stop)
 	}
 	// An EvApproval must have fired for the deny.
 	var sawApproval bool
@@ -275,6 +286,71 @@ func TestResumePlanApprovalAfterRestartExecutesAndFlips(t *testing.T) {
 	}
 	if restored.Mode != session.ModeDefault {
 		t.Fatalf("mode after resume AllowOnce = %q, want %q", restored.Mode, session.ModeDefault)
+	}
+}
+
+// TestResumePlanApprovalDenyIteratesTerminates pins the cross-process resume
+// iterate path (issue #206): drive to StateAwaiting on a plan ask, snapshot-restore
+// (process death), then ResumeApproval(Deny) sets r.planIterateRequested in the
+// resolvePendingCall PlanOriginated deny arm, driveFromAwaiting's runLoop sees it at
+// the early check, and the resumed run terminates CLEANLY with StopPlanIterate (the
+// operator pauses to type feedback — the model is NOT re-called). The session stays
+// ModePlan (no mode flip). This mirrors the live-path deny pause but on a FRESH
+// process, pinning the serialized PlanOriginated marker as cross-process
+// load-bearing for the iterate verdict too.
+func TestResumePlanApprovalDenyIteratesTerminates(t *testing.T) {
+	cat := planCatalog(t)
+	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", `{"note":"x"}`)))
+	sess := newPlanSession(t)
+	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
+
+	// Drive to the awaiting ask, snapshot, then cancel (process death).
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "plan")
+	var askID string
+	var snap sessnap.Snapshot
+	var snapErr error
+	for ev := range r.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
+			askID = ev.Ask.AskID
+			if !ev.Ask.PlanOriginated {
+				t.Fatal("the awaiting plan ask must be PlanOriginated")
+			}
+			snap, snapErr = sessnap.Of(sess)
+			r.Cancel()
+		}
+	}
+	if askID == "" {
+		t.Fatal("no plan ask surfaced")
+	}
+	if snapErr != nil {
+		t.Fatalf("snapshot: %v", snapErr)
+	}
+	restored, err := snap.Restore()
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	ra, ok := restored.PendingAsk()
+	if !ok || !ra.PlanOriginated {
+		t.Fatalf("PlanOriginated must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
+	}
+
+	// Fresh engine (a new process): resume the ask with Deny. The run must
+	// terminate with StopPlanIterate and stay in ModePlan, WITHOUT re-calling the
+	// model (the pending call is NOT re-presented; the operator's next prompt drives
+	// the revision).
+	cat2 := planCatalog(t)
+	e2 := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("should not be reached")), Catalog: cat2, Interactive: true})
+	rr := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), askID, session.VerdictDeny)
+	evs := drain(rr)
+	res := lastResult(t, evs)
+	if res.Stop != session.StopPlanIterate {
+		t.Fatalf("resume stop = %q, want %q (pause for operator feedback)", res.Stop, session.StopPlanIterate)
+	}
+	if restored.Mode != session.ModePlan {
+		t.Fatalf("mode after resume Deny = %q, want %q (no flip — operator iterates)", restored.Mode, session.ModePlan)
+	}
+	if restored.State != session.StateCompleted {
+		t.Fatalf("state after resume Deny = %q, want %q (clean terminal)", restored.State, session.StateCompleted)
 	}
 }
 

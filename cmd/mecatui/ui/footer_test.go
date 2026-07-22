@@ -376,6 +376,8 @@ func TestStopReasonLabel(t *testing.T) {
 		{"cancelled", "cancelled", "muted"},
 		{"no_progress", "stopped · no progress", "ctxWarn"},
 		{"structured_output", "stopped · schema unmet", "ctxWarn"},
+		{"plan_approved", "plan approved · executing", "muted"},
+		{"plan_iterate", "plan iterate · awaiting your feedback", "muted"},
 		{"error", "error", "errorText"},
 		{"some_future_reason", "some_future_reason", "muted"},
 	}
@@ -406,6 +408,7 @@ func TestResultMsgStopReachesFooter(t *testing.T) {
 		{"budget", "stopped · token budget"},
 		{"error", "error"},
 		{"structured_output", "stopped · schema unmet"},
+		{"plan_iterate", "plan iterate · awaiting your feedback"},
 		{"some_future_reason", "some_future_reason"},
 	}
 	for _, c := range cases {

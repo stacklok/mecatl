@@ -109,6 +109,7 @@ const StopMaxTurns StopReason = "max_turns"
 const StopNoProgress StopReason = "no_progress"
 const StopNone StopReason = ""
 const StopPlanApproved StopReason = "plan_approved"
+const StopPlanIterate StopReason = "plan_iterate"
 const StopStructuredOutput StopReason = "structured_output"
 const Tier4SummaryMarker untyped string = "[earlier turns summarised]"
 const VerdictAllowAlways ApprovalVerdict = 2

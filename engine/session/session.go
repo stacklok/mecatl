@@ -143,6 +143,17 @@ const (
 	// stop string verbatim (no proto enum; the wire stop field is a string passthrough,
 	// exactly like StopNoProgress / StopBudget / StopStructuredOutput).
 	StopPlanApproved StopReason = "plan_approved"
+	// StopPlanIterate means the operator chose to iterate on a presented plan
+	// (issue #206: the plan-approval gate). It is the iterate/deny sibling of
+	// StopPlanApproved: a deny of a plan ask TERMINATES the plan run CLEANLY instead
+	// of continuing in-turn, so the operator's NEXT typed prompt drives the
+	// revision (the old behaviour kept the model working with no operator input).
+	// Like StopPlanApproved it is a CLEAN non-error terminal (not StopError — the
+	// operator asked for edits, nothing failed), routed through the completed path
+	// so the session ends COMPLETED and stays Reopen-recoverable. It maps to the
+	// proto stop string verbatim (no proto enum; the wire stop field is a string
+	// passthrough, exactly like StopPlanApproved).
+	StopPlanIterate StopReason = "plan_iterate"
 )
 
 // Limits are the configured stop conditions for a session. A zero value in any

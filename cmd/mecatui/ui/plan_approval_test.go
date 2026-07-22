@@ -149,6 +149,37 @@ func TestPlanAskDenyIterates(t *testing.T) {
 	}
 }
 
+// TestPlanAskDenyThenIterateTerminalReturnsToIdle pins issue #206 iterate UX: after
+// the operator presses [D] (iterate/deny), the resumed run terminates with
+// StopPlanIterate, and the terminal ResultMsg drives endRun → phaseIdle so the input
+// box is USABLE (the operator types the revision). This mirrors the approve path's
+// StopPlanApproved → phaseIdle handoff but for the iterate pause: the run ENDS so
+// the operator's next prompt drives the revision (vs the old behaviour where the
+// model kept working in-turn).
+func TestPlanAskDenyThenIterateTerminalReturnsToIdle(t *testing.T) {
+	m := planAskModel(t, true)
+	// Press [D] iterate — the verdict is sent and the run stays phaseRunning (the
+	// resumed run is streaming toward its StopPlanIterate terminal).
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	if m.phase != phaseRunning {
+		t.Fatalf("deny must return to phaseRunning (run still streaming), got %v", m.phase)
+	}
+	// The resumed run terminates StopPlanIterate — the terminal ResultMsg lands.
+	m = applyAll(m, client.ResultMsg{Stop: "plan_iterate"})
+	if m.phase != phaseIdle {
+		t.Fatalf("after StopPlanIterate the phase must be phaseIdle (input usable), got %v", m.phase)
+	}
+	// The footer must show the iterate label (muted/transient — awaiting feedback).
+	got := stripANSIstr(m.renderFooter())
+	if !strings.Contains(got, "plan iterate · awaiting your feedback") {
+		t.Errorf("footer after StopPlanIterate = %q, want it to contain 'plan iterate · awaiting your feedback'", got)
+	}
+	// The textarea is focused (input usable): the cursor-blink state is on.
+	if !m.ta.Focused() {
+		t.Errorf("textarea must be focused after StopPlanIterate (operator types the revision)")
+	}
+}
+
 func TestStopPlanApprovedFooterLabel(t *testing.T) {
 	text, slot := stopReasonLabel("plan_approved")
 	if text != "plan approved · executing" {
