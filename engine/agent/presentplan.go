@@ -51,8 +51,10 @@ func NewPresentPlanTool() tool.Tool { return &presentPlanTool{} }
 func (*presentPlanTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: presentPlanToolName,
-		Description: "Signal that the plan is ready for operator approval. Call this once you have " +
-			"presented a complete plan; the operator will approve, request edits, or iterate.",
+		Description: "Call this EXACTLY ONCE when your plan is complete and presented in your message text, then " +
+			"STOP and wait for the operator. The operator approves, requests edits, or iterates THROUGH this gate. " +
+			"An inline 'acceptable'/'looks good'/'approved' in chat is NOT approval — only an approval via this tool " +
+			"starts execution. Do NOT call any other tool or continue working after calling this.",
 		Schema: presentPlanSchema,
 	}
 }

@@ -2490,6 +2490,19 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   ("Plan approved by operator. Proceed with execution.") is the harness-framed proceed
   message the composition layer injects as ordinary recorded history on the continuation
   run (event-silent — a recorded user message, NOT a diagnostics line).
+- **The model-visible plan-approval contract (discoverability — the gate only fires if
+  the model KNOWS to call `PresentPlan`).** Three reinforcing layers make the workflow
+  explicit so the model does not improvise it (the reported bug: a model treated an
+  inline "acceptable" as approval and kept executing, never surfacing the gate): (1)
+  `Spec().Description` (`engine/agent/presentplan.go` (`Spec`)) — call EXACTLY ONCE when
+  the plan is complete, then STOP; an inline "acceptable"/"looks good"/"approved" in chat
+  is NOT approval. (2) `internal/app/build.go` (`applyPlanModePosture` /
+  `planModePostureNote`) — appended to a plan-mode session engine's Role in
+  `sessionEngineFactory` on create-in-plan AND on the CASE-1 rebuild when the session
+  flips into plan mode. (3) `engine/prompt/builder.go` — the plan-mode volatile suffix
+  carries the same contract per-turn, so a plan session on the SHARED engine (no plan
+  slot) is covered too. This mirrors the "plan mode is a reinforced system-reminder, not
+  a one-shot instruction" posture (docs/adr/0024-system-prompt-research.md).
 - **The `PlanOnly` catalog gate (`engine/tool/tool.go` (`PlanOnly`)).** A new OPTIONAL
   marker interface; the catalog's mode projection (`engine/tool/catalog.go`
   (`Available`) / `Specs` / `AdvertisedSpecs`) EXCLUDES a `PlanOnly` tool from

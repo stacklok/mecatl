@@ -174,7 +174,12 @@ func Build(cfg Config) Layered {
 		// session mode) — never the cache-stable prefix.
 		suffix += "\n\nPlan mode is active: this is a read-only planning phase — " +
 			"do not modify files, run mutating commands, or make outward-facing " +
-			"changes; produce a plan instead."
+			"changes; produce a plan instead." +
+			"\nWhen your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE, " +
+			"and STOP — do not continue working after calling it. The plan is NOT approved until the operator approves it " +
+			"THROUGH the PresentPlan gate: an inline 'acceptable', 'looks good', 'approved', or 'go ahead' in chat is NOT " +
+			"approval and must NOT trigger execution. Only the harness proceed message that follows an approved PresentPlan " +
+			"starts execution."
 	}
 
 	return Layered{

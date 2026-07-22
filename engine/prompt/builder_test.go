@@ -225,7 +225,9 @@ func TestToolDisciplineHintsFixedEmitOrder(t *testing.T) {
 
 // TestBuildPlanModeReminder asserts the plan-mode reminder rides the VOLATILE
 // suffix (it varies with the session mode) and never leaks into the cache-stable
-// prefix; non-plan modes emit no reminder.
+// prefix; non-plan modes emit no reminder. It ALSO asserts the plan-approval
+// workflow contract (issue #206 follow-up): the PresentPlan gate language + the
+// inline-is-NOT-approval clause are present in the plan-mode suffix.
 func TestBuildPlanModeReminder(t *testing.T) {
 	const marker = "Plan mode is active"
 
@@ -237,9 +239,33 @@ func TestBuildPlanModeReminder(t *testing.T) {
 		t.Errorf("plan mode: reminder leaked into StablePrefix\ngot=%q", plan.StablePrefix)
 	}
 
+	// Issue #206 follow-up: the plan-approval workflow contract must be in the
+	// plan-mode volatile suffix — it tells the model to call PresentPlan and
+	// that inline "acceptable" is NOT approval.
+	for _, clause := range []string{
+		"call the PresentPlan tool EXACTLY ONCE",
+		"and STOP",
+		"inline",
+		"is NOT approval",
+		"PresentPlan gate",
+	} {
+		if !strings.Contains(plan.VolatileSuffix, clause) {
+			t.Errorf("plan mode: plan-approval contract clause %q missing from VolatileSuffix\ngot=%q",
+				clause, plan.VolatileSuffix)
+		}
+	}
+	// The contract must NOT leak into the stable prefix (same discipline as the
+	// general reminder — this is per-turn volatile content).
+	if strings.Contains(plan.StablePrefix, "PresentPlan") {
+		t.Errorf("plan mode: plan-approval contract leaked into StablePrefix\ngot=%q", plan.StablePrefix)
+	}
+
 	def := prompt.Build(prompt.Config{Tools: sampleTools(), Env: prompt.Env{Mode: "default"}})
 	if strings.Contains(def.VolatileSuffix, marker) {
 		t.Errorf("default mode: unexpected plan reminder\ngot=%q", def.VolatileSuffix)
+	}
+	if strings.Contains(def.VolatileSuffix, "PresentPlan") {
+		t.Errorf("default mode: unexpected plan-approval contract\ngot=%q", def.VolatileSuffix)
 	}
 }
 

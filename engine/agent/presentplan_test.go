@@ -29,6 +29,30 @@ func TestPresentPlanSpecName(t *testing.T) {
 	}
 }
 
+// TestPresentPlanDescriptionCarriesApprovalContract pins issue #206 follow-up: the
+// Spec().Description carries the three load-bearing workflow clauses the model must
+// see even without the system-prompt note — (1) "EXACTLY ONCE" so it cannot call it
+// repeatedly, (2) "STOP" so it waits after calling, (3) "inline ... is NOT approval"
+// so it does not treat a chat "acceptable" as the green light.
+func TestPresentPlanDescriptionCarriesApprovalContract(t *testing.T) {
+	desc := NewPresentPlanTool().Spec().Description
+	for _, clause := range []string{
+		"EXACTLY ONCE",
+		"STOP",
+		"inline",
+		"is NOT approval",
+		"wait for the operator",
+	} {
+		if !strings.Contains(desc, clause) {
+			t.Errorf("PresentPlan Spec().Description missing clause %q\ngot=%q", clause, desc)
+		}
+	}
+	// It must also tell the model NOT to continue working after calling.
+	if !strings.Contains(desc, "Do NOT call any other tool or continue working after calling this") {
+		t.Errorf("PresentPlan Spec().Description missing post-call stop directive\ngot=%q", desc)
+	}
+}
+
 // TestPresentPlanExecuteVestigial pins the honest misroute path: Execute (only reached
 // when the dispatcher did NOT intercept the call) returns a non-error ToolResult with
 // the awaiting-approval content and the call's id, never a harness-level error.

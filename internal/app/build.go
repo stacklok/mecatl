@@ -1914,6 +1914,14 @@ func sessionEngineFactory(
 		// provider never contaminates compaction/counting.
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		deps.Catalog = cat
+		// MODEL-VISIBLE plan-approval contract (issue #206): the gate only fires
+		// when the model CALLS PresentPlan, and nothing else tells it to — an
+		// uninstructed model treats an inline "acceptable" as approval and keeps
+		// going (the observed bug). Tell it the workflow up front, on the Role,
+		// like applyNoFSPosture does for the no-FS profile. Fires on creation AND
+		// on the CASE-1 rebuild when the session flips into plan mode. When mode
+		// is not ModePlan the helper returns the Config unchanged.
+		deps.PromptConfig = applyPlanModePosture(deps.PromptConfig, mode)
 		// Guardrails (issue #27), RE-DERIVED per session so a FRESH per-session checker
 		// budget is built: decorate THIS session's main hooks with the LLM-backed
 		// content checker, over the session's resolved provider/model. OFF-by-default
@@ -5822,6 +5830,38 @@ func applyNoFSPosture(pc prompt.Config, note string) prompt.Config {
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + note
+	return pc
+}
+
+// planModePostureNote is the system-prompt suffix a plan-mode session's Role
+// carries (issue #206). It makes the plan-approval workflow EXPLICIT so the
+// model does not improvise it: explore/read freely, and when the plan is
+// complete call PresentPlan EXACTLY ONCE and STOP. Two load-bearing clauses:
+// (1) an inline "acceptable"/"looks good"/"approved" in chat is NOT approval —
+// the ONLY approval channel is the PresentPlan tool gate; (2) after calling
+// PresentPlan the model must STOP and wait, not continue executing. Without
+// these the model treats any affirmative user word as the green light and
+// proceeds (the bug reported in #206's first real-world use).
+const planModePostureNote = "You are in PLAN MODE: explore, read, and reason, but make NO changes. " +
+	"When your plan is complete, present it in your message text and then call the PresentPlan tool EXACTLY ONCE, " +
+	"and STOP — do not continue working after calling it. The plan is NOT approved until the operator approves it " +
+	"THROUGH the PresentPlan gate: an inline 'acceptable', 'looks good', 'approved', or 'go ahead' in chat is NOT " +
+	"approval and must NOT trigger execution. Only the harness proceed message that follows an approved PresentPlan " +
+	"starts execution."
+
+// applyPlanModePosture appends the plan-approval contract to a plan-mode
+// session's Role (DefaultRole fallback first — the applyNoFSPosture idiom). It
+// does NOT touch Env (plan mode has a normal filesystem for reads). When mode is
+// NOT ModePlan the Config is returned unchanged — the caller may call it
+// unconditionally.
+func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.Config {
+	if mode != session.ModePlan {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + planModePostureNote
 	return pc
 }
 

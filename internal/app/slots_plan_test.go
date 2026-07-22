@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
@@ -203,4 +207,140 @@ func TestSessionEngineFactoryNoPlanSlotByteIdentical(t *testing.T) {
 	if plan.ModelID != sessionModel {
 		t.Fatalf("plan-mode engine ModelID = %q with NO plan slot, want the unchanged session model %q (byte-identical)", plan.ModelID, sessionModel)
 	}
+}
+
+// TestApplyPlanModePostureAppendsNote proves the helper appends the plan-approval
+// workflow contract (the PresentPlan gate + inline-is-NOT-approval) to the Role
+// and falls back to DefaultRole when Role is empty — the applyNoFSPosture idiom.
+func TestApplyPlanModePostureAppendsNote(t *testing.T) {
+	pc := applyPlanModePosture(prompt.Config{}, session.ModePlan)
+	if pc.Role == "" {
+		t.Fatal("applyPlanModePosture on an empty Config must fall back to DefaultRole")
+	}
+	for _, clause := range []string{
+		"PLAN MODE",
+		"call the PresentPlan tool EXACTLY ONCE",
+		"and STOP",
+		"inline",
+		"is NOT approval",
+		"PresentPlan gate",
+	} {
+		if !strings.Contains(pc.Role, clause) {
+			t.Errorf("Role missing plan-approval contract clause %q\ngot=%q", clause, pc.Role)
+		}
+	}
+
+	// An explicit Role is preserved; the note is appended.
+	custom := applyPlanModePosture(prompt.Config{Role: "custom-role"}, session.ModePlan)
+	if !strings.HasPrefix(custom.Role, "custom-role") {
+		t.Fatalf("explicit Role was not preserved; got %q", custom.Role)
+	}
+	if !strings.Contains(custom.Role, "PresentPlan") {
+		t.Fatal("plan note was not appended to the explicit Role")
+	}
+
+	// Non-plan mode must be a no-op: the Config is returned unchanged.
+	nonPlan := applyPlanModePosture(prompt.Config{Role: "just-role"}, session.ModeDefault)
+	if nonPlan.Role != "just-role" {
+		t.Fatalf("non-plan applyPlanModePosture must be a no-op; got Role=%q", nonPlan.Role)
+	}
+}
+
+// TestPlanModeEngineSystemPromptContainsPlanApprovalContract proves the factory-built
+// plan-mode engine's system prompt (the full Build output) contains the plan-approval
+// workflow contract — PresentPlan gate + inline-is-NOT-approval. It drives a one-turn
+// run through the factory-built engine and captures the LLM request.
+func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
+	const sessionModel = "gpt-5"
+	cfg := Config{Model: sessionModel}
+	var capturedSystem string
+	observer := func(req port.LLMRequest) {
+		capturedSystem = req.System.Render()
+	}
+	provider := mockllm.NewWith([]mockllm.Option{
+		mockllm.WithRequestObserver(observer),
+	}, mockllm.TextTurn("ok"))
+	reg := regForTest(provider, providerOpenAI, sessionModel)
+	factory := sessionEngineFactory(cfg, reg, provider, memstore.New(),
+		permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
+		prompt.RootAssembler{}, catalogAssets{}, nil)
+	ctx := context.Background()
+
+	plan, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModePlan)
+	if err != nil {
+		t.Fatalf("factory(plan): %v", err)
+	}
+	defer func() { _ = plan.Close() }()
+
+	// Drive a one-turn run to trigger buildRequest → prompt.Build → captured system.
+	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	run := plan.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "plan a task", nil)
+	for range run.Events() {
+	}
+	if capturedSystem == "" {
+		t.Fatal("the LLM was not invoked; the mock script may be insufficient")
+	}
+	for _, clause := range []string{
+		"PLAN MODE",
+		"call the PresentPlan tool EXACTLY ONCE",
+		"and STOP",
+		"inline",
+		"is NOT approval",
+		"PresentPlan gate",
+	} {
+		if !strings.Contains(capturedSystem, clause) {
+			t.Errorf("plan-mode system prompt missing clause %q\ngot system prompt (first 500):\n%s",
+				clause, firstN(capturedSystem, 500))
+		}
+	}
+}
+
+// TestDefaultModeEngineSystemPromptLacksPlanApprovalContract proves the factory-built
+// DEFAULT-mode engine's system prompt does NOT contain the plan-approval workflow
+// contract — the note is plan-mode only.
+func TestDefaultModeEngineSystemPromptLacksPlanApprovalContract(t *testing.T) {
+	const sessionModel = "gpt-5"
+	cfg := Config{Model: sessionModel}
+	var capturedSystem string
+	observer := func(req port.LLMRequest) {
+		capturedSystem = req.System.Render()
+	}
+	provider := mockllm.NewWith([]mockllm.Option{
+		mockllm.WithRequestObserver(observer),
+	}, mockllm.TextTurn("ok"))
+	reg := regForTest(provider, providerOpenAI, sessionModel)
+	factory := sessionEngineFactory(cfg, reg, provider, memstore.New(),
+		permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
+		prompt.RootAssembler{}, catalogAssets{}, nil)
+	ctx := context.Background()
+
+	defEng, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("factory(default): %v", err)
+	}
+	defer func() { _ = defEng.Close() }()
+
+	sess := session.New("s2", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	run := defEng.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "do something", nil)
+	for range run.Events() {
+	}
+	if capturedSystem == "" {
+		t.Fatal("the LLM was not invoked")
+	}
+	// The factory-applied plan note must NOT be present — default mode is not plan.
+	if strings.Contains(capturedSystem, "call the PresentPlan tool EXACTLY ONCE") {
+		t.Error("default-mode system prompt must NOT contain the plan-approval contract\n" +
+			"got system prompt (first 500):\n" + firstN(capturedSystem, 500))
+	}
+	// The volatile plan reminder (from prompt.Build) must also NOT be present.
+	if strings.Contains(capturedSystem, "Plan mode is active") {
+		t.Error("default-mode system prompt must NOT contain the volatile plan reminder")
+	}
+}
+
+func firstN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

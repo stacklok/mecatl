@@ -180,7 +180,12 @@ askable ask, a serialized provenance marker, and a verdict tail.
   to hand control to the operator. The tool implements `engine/tool/tool.go`
   (`PlanOnly`), so the catalog's mode projection (`Available`) advertises
   it ONLY in plan mode (registered everywhere so shared/per-session name-sets stay
-  equal; hidden outside plan mode).
+  equal; hidden outside plan mode). The model is told to use it — the gate is not
+  opt-in from the model's side: the tool description, the plan-mode Role suffix
+  (`internal/app/build.go` (`applyPlanModePosture`)), and the per-turn plan-mode
+  prompt reminder (`engine/prompt/builder.go`) all state the contract — present the
+  plan, call `PresentPlan` once, and STOP; an inline "acceptable" in chat is NOT
+  approval.
 - **The dispatcher intercepts by name+mode.** `engine/agent/dispatch.go`
   (`surfacePlanAsk`) — a sibling of `askHookApproval` over the shared `surfaceAsk`
   spine — mints a `session.PendingAsk{PlanOriginated: true}`, parks the run
