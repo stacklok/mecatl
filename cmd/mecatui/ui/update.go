@@ -569,45 +569,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toolProgress = msg.Text
 		return m.afterEvent()
 	case client.PermissionAskMsg:
-		// Defensive same-stream dedupe: an askID already visible, queued, or
-		// answered/retracted this run is dropped (the streamGen guard already kills
-		// stale-reader duplicates; this kills same-stream ones).
-		if m.askKnown(msg.AskID) {
-			return m.afterEvent()
-		}
-		next := pendingAsk{
-			AskID:       msg.AskID,
-			Tool:        msg.Tool,
-			Args:        msg.Args,
-			Reason:      msg.Reason,
-			focus:       0,
-			offerAlways: !isChildAsk(msg.AskID, m.sessionID),
-		}
-		if m.phase == phaseAwaitingApproval {
-			// A modal is already open: concurrent subagents (team members, parallel
-			// Subagent calls) surface asks concurrently, and each parks its child
-			// server-side until answered — so a second ask ENQUEUES FIFO behind the
-			// visible head instead of clobbering it. The visible ask and the phase
-			// are untouched; the (1 of N) badge in the modal title and footer
-			// advertises the queue.
-			m.askQueue = append(m.askQueue, next)
-			return m.afterEvent()
-		}
-		m.phase = phaseAwaitingApproval
-		m.activeTool = ""
-		m.toolProgress = ""
-		m.ask = next
-		// Force-flush via afterEvent (refreshView + reader re-arm), like every other
-		// non-delta boundary: any pending coalesced assistant tail must be rendered
-		// into the viewport BEFORE the modal opens, so the transcript behind the modal
-		// is current the moment it closes (the same "content flushes before a gate"
-		// value as the toolcall-card-before-gate invariant). refreshView updating m.vp
-		// underneath the centred modal overlay is harmless — View() shows the modal for
-		// phaseAwaitingApproval regardless. Without this, the tail's flush would depend
-		// on an already-armed one-shot tick happening to survive the phase change — the
-		// one boundary that previously did NOT flush, breaking the "only deltas defer"
-		// invariant.
-		return m.afterEvent()
+		return m.applyPermissionAsk(msg)
 	case client.HookMsg:
 		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
 		return m.afterEvent()
@@ -622,6 +584,61 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// be added there, not here. Unknown msgs are a no-op.
 		return m.updateStreamSecondary(msg)
 	}
+}
+
+// applyPermissionAsk reduces a PermissionAskMsg, extracted from updateStreamEvent
+// to keep that dispatcher under the cyclomatic-complexity bound. It dedupes a
+// known askID, enqueues a second ask behind an already-open modal (concurrent
+// subagents park their child server-side), or opens the modal as the head — and,
+// for a plan ask (isPlanAsk), populates the dedicated scrollable plan-review
+// viewport (openPlanReviewView) instead of relying on the centered card.
+func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.Cmd) {
+	// Defensive same-stream dedupe: an askID already visible, queued, or
+	// answered/retracted this run is dropped (the streamGen guard already kills
+	// stale-reader duplicates; this kills same-stream ones).
+	if m.askKnown(msg.AskID) {
+		return m.afterEvent()
+	}
+	next := pendingAsk{
+		AskID:       msg.AskID,
+		Tool:        msg.Tool,
+		Args:        msg.Args,
+		Reason:      msg.Reason,
+		focus:       0,
+		offerAlways: !isChildAsk(msg.AskID, m.sessionID),
+	}
+	if m.phase == phaseAwaitingApproval {
+		// A modal is already open: concurrent subagents (team members, parallel
+		// Subagent calls) surface asks concurrently, and each parks its child
+		// server-side until answered — so a second ask ENQUEUES FIFO behind the
+		// visible head instead of clobbering it. The visible ask and the phase
+		// are untouched; the (1 of N) badge in the modal title and footer
+		// advertises the queue.
+		m.askQueue = append(m.askQueue, next)
+		return m.afterEvent()
+	}
+	m.phase = phaseAwaitingApproval
+	m.activeTool = ""
+	m.toolProgress = ""
+	m.ask = next
+	// If the front ask is a plan ask, populate the dedicated scrollable
+	// plan-review viewport (it fills the conversation region, not a centered
+	// card). Done at the reducer seam so the render path is a pure read of
+	// planVP.View(); a queued successor does the same in advanceAsk.
+	if isPlanAsk(next.Tool) {
+		(&m).openPlanReviewView(next, len(m.askQueue), m.effectiveModel.ModelID)
+	}
+	// Force-flush via afterEvent (refreshView + reader re-arm), like every other
+	// non-delta boundary: any pending coalesced assistant tail must be rendered
+	// into the viewport BEFORE the modal opens, so the transcript behind the modal
+	// is current the moment it closes (the same "content flushes before a gate"
+	// value as the toolcall-card-before-gate invariant). refreshView updating m.vp
+	// underneath the centred modal overlay is harmless — View() shows the modal for
+	// phaseAwaitingApproval regardless. Without this, the tail's flush would depend
+	// on an already-armed one-shot tick happening to survive the phase change — the
+	// one boundary that previously did NOT flush, breaking the "only deltas defer"
+	// invariant.
+	return m.afterEvent()
 }
 
 // updateStreamSecondary is the back half of updateStreamEvent: the delegation
@@ -948,6 +965,16 @@ func (m *Model) relayout() {
 	bodyHeight := m.height - sumHeight(above) - sumHeight(below)
 	if bodyHeight < 1 {
 		bodyHeight = 1
+	}
+	// A plan-ask is the front ask: keep the dedicated plan-review viewport sized
+	// to the CURRENT body region (its height is the body minus the pinned action
+	// bar) so a resize / transient toggle re-flows the scrollable plan. The plan
+	// content itself is re-wrapped by openPlanReviewView (width-keyed glamour),
+	// so re-populate on any geometry change (height OR width). Done BEFORE the
+	// m.vp height-equality early-return below so a plan-ask resize still re-flows
+	// even when the conversation viewport's height happens to match.
+	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) {
+		m.openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
 	}
 	if bodyHeight == m.vp.Height() {
 		return
@@ -1296,7 +1323,25 @@ func isChildAsk(askID, sessionID string) bool {
 // focused button (over {allow, deny} or {allow, always, deny} per offerAlways);
 // allow/always/deny keys send ResumeApproval with the exact ask_id. The always
 // key (w) is ignored unless always-allow is offered for this ask.
+//
+// While the front ask is a PLAN ask (isPlanAsk), scroll keys (pgup/pgdn,
+// up/down, home/end) route to the dedicated plan-review viewport (planVP) so the
+// operator can scroll through the full plan — mirroring exactly how the
+// conversation viewport (m.vp) receives these in the running phase. The action
+// keys (A/W/D/enter/left/right/tab) stay routed to the approval action so the
+// operator can act after reading. up/down scroll the plan; left/right/tab move
+// the button focus (documented in the plan-review footer hint).
 func (m Model) onApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// A plan ask owns the keyboard for SCROLL keys: route them to planVP. This
+	// mirrors onScrollKey's m.vp routing (pgup/pgdn delegate to the viewport,
+	// home/end jump to top/bottom) so the scroll affordance is identical to the
+	// running phase. up/down also scroll (NOT button focus) so a long plan is
+	// navigable by the most natural keys; left/right/tab keep button focus.
+	if isPlanAsk(m.ask.Tool) {
+		if mm, cmd, handled := m.onPlanScrollKey(msg); handled {
+			return mm, cmd
+		}
+	}
 	// The focus ring is {0:allow, 2:deny} for a two-button modal and
 	// {0:allow, 1:always, 2:deny} when always-allow is offered.
 	ring := []int{0, 2}
@@ -1368,10 +1413,20 @@ func (m Model) advanceAsk() (Model, bool) {
 		// older Model copy is never observed. (The queued-retract removal uses the
 		// capacity-clamped append form instead because it appends into the very
 		// slice it splits.)
+		// First clear any prior plan-review viewport (the outgoing head may have
+		// been a plan ask; a non-plan successor must NOT inherit its planVP), then
+		// if the new head is itself a plan ask, populate a fresh planVP for it.
+		(&m).clearPlanReview()
 		m.ask = m.askQueue[0]
 		m.askQueue = m.askQueue[1:]
+		if isPlanAsk(m.ask.Tool) {
+			(&m).openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
+		}
 		return m, false
 	}
+	// No successor: clear any plan-review viewport (the closing ask may have been
+	// a plan ask) and close the modal, returning to phaseRunning.
+	(&m).clearPlanReview()
 	m.ask = pendingAsk{}
 	m.phase = phaseRunning
 	return m, true
@@ -2423,7 +2478,9 @@ func (m Model) endRun(stop string) Model {
 	m.activeTool = ""
 	// A dead run's asks must not survive into idle: drop the visible modal, the FIFO
 	// queue behind it, and the answered-set dedupe (covers every endRun caller —
-	// ResultMsg, StreamErrMsg, StreamClosedMsg, cancel).
+	// ResultMsg, StreamErrMsg, StreamClosedMsg, cancel). The plan-review viewport
+	// is cleared alongside (the closing ask may have been a plan ask).
+	(&m).clearPlanReview()
 	m.ask = pendingAsk{}
 	m.askQueue = nil
 	m.resolvedAsks = nil
@@ -2447,7 +2504,18 @@ func (m Model) endRun(stop string) Model {
 // MouseModeCellMotion there); the viewport's own Update handles tea.MouseWheelMsg
 // (gated on MouseWheelEnabled, default true), so a wheel-up unsticks and a wheel
 // back to the bottom re-sticks — same as the nav keys.
+//
+// While a plan ask is the front ask, the wheel routes to the dedicated plan-review
+// viewport (planVP) instead, so the operator can scroll the full plan with the
+// mouse. The plan viewport's MouseWheelEnabled defaults true (viewport.New), so
+// its Update handles the wheel natively; m.vp is left untouched (it is not the
+// visible body during a plan ask).
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) && m.planVPReady {
+		var cmd tea.Cmd
+		m.planVP, cmd = m.planVP.Update(msg)
+		return m, cmd
+	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	// A wheel event changes the scroll offset: invalidate the vpView cache so the
@@ -2957,6 +3025,43 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.rend.invalidateVPView()
 	m.syncStuck()
 	return m, cmd
+}
+
+// onPlanScrollKey routes a scroll key to the plan-review viewport (planVP) while
+// a plan ask is the front ask. It mirrors onScrollKey's m.vp routing — pgup/
+// pgdn delegate to the viewport, home/end jump to top/bottom, and the arrow
+// keys (up/down) scroll a line at a time — EXCEPT up/down are NOT EditBack here
+// (the plan-review view has no textarea queue to pull back). Returns
+// handled=true when the key was a scroll key it consumed; false otherwise so
+// onApprovalKey's action-key fall-through (A/W/D/enter/left/right/tab) still
+// resolves the ask. The plan viewport's scroll offset is the operator's reading
+// position; clearing planVP on resolve preserves nothing (a new plan ask opens
+// at the top).
+func (m Model) onPlanScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.planVPReady {
+		return m, nil, false
+	}
+	var cmd tea.Cmd
+	switch {
+	case key.Matches(msg, m.keys.ScrollTop):
+		m.planVP.GotoTop()
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollBottom):
+		m.planVP.GotoBottom()
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.ScrollD):
+		m.planVP, cmd = m.planVP.Update(msg)
+		return m, cmd, true
+	case msg.String() == keyMenuUp, msg.String() == keyMenuDown:
+		// Arrow keys scroll the plan a line at a time (the plan-review view's
+		// primary nav). They are NOT button-focus keys here (left/right/tab move
+		// the button focus instead — documented in the plan-review footer hint),
+		// so a long plan is navigable by the most natural keys without losing the
+		// reading position.
+		m.planVP, cmd = m.planVP.Update(msg)
+		return m, cmd, true
+	}
+	return m, nil, false
 }
 
 // refreshView re-renders the conversation into the viewport, keeping the view

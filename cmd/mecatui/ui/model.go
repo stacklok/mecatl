@@ -281,10 +281,29 @@ type Model struct {
 	width  int
 	height int
 
-	conv conversation
-	vp   viewport.Model
-	ta   textarea.Model
-	sp   spinner.Model
+	conv   conversation
+	vp     viewport.Model
+	planVP viewport.Model
+	// planVPReady is true once the plan-review viewport has been populated for the
+	// current plan ask (openPlanReviewView). It gates both the render path (so a
+	// half-initialized planVP never renders) and the scroll-key routing (so a scroll
+	// key before population does not no-op into an empty viewport). Reset to false
+	// whenever the plan ask resolves/retracts/endRun/resetSession clears planVP.
+	planVPReady bool
+	// planVPWidth/planVPHeight record the geometry planVP was LAST populated at, so
+	// relayout can skip a no-op re-population (and the expensive glamour re-wrap +
+	// SetContent it triggers) when the body region did not actually change. A
+	// width/height change re-populates so the plan re-wraps at the new size; the
+	// scroll offset is preserved (clamped) across the re-wrap. Zero before the
+	// first population.
+	planVPWidth, planVPHeight int
+	// planVPFingerprint is the ask fingerprint (Tool + Args + queued + model)
+	// planVP was LAST populated for, so a no-op re-population (same ask, same
+	// geometry) short-circuits in openPlanReviewView — a plan-review keypress
+	// does not re-render the plan. Cleared alongside planVPReady.
+	planVPFingerprint string
+	ta                textarea.Model
+	sp                spinner.Model
 	// stuck is true while the viewport auto-follows the bottom (tails streaming
 	// output). It is no longer hardcoded: syncStuck re-derives it from
 	// m.vp.AtBottom() after every scroll/wheel/nav so a scroll-up unsticks (and
@@ -717,7 +736,9 @@ func (m Model) resetSession() Model {
 	// modal, stale queued asks, or a stale dedupe set dangling. Latent today (the
 	// picker/clear paths are idle-only, so no ask is open), but keeps this seam's
 	// "owns all session-derived state" invariant honest — and the restart-now
-	// handoff goes through here.
+	// handoff goes through here. The plan-review viewport is cleared alongside (a
+	// plan ask may have been open).
+	(&m).clearPlanReview()
 	m.ask = pendingAsk{}
 	m.askQueue = nil
 	m.resolvedAsks = nil

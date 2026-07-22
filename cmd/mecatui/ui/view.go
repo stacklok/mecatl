@@ -72,14 +72,22 @@ func (m Model) View() tea.View {
 }
 
 // renderBody picks the viewport body: an overlay (help/picker/panel), the
-// permission-modal card (generic or plan-specific), or the conversation.
+// permission-modal card (generic) or the full-screen scrollable plan-review
+// view (a plan ask), or the conversation.
 func (m Model) renderBody() string {
 	switch {
 	case m.showHelp:
 		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.agentsKeyMarking(), m.jumpKeyMarking())
 	case m.phase == phaseAwaitingApproval:
 		if isPlanAsk(m.ask.Tool) {
-			return m.rend.renderPlanApprovalModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height(), m.effectiveModel.ModelID)
+			// A plan ask fills the conversation region with a dedicated SCROLLABLE
+			// viewport (planVP) instead of the small centered card — the plan is
+			// read in full, no collapse, no ctrl+t gate. planVP is populated at the
+			// reducer seams (openPlanReviewView: the PermissionAskMsg reducer, the
+			// advanceAsk queued-successor path, relayout/onResize geometry changes)
+			// so the render path is a pure read of m.planVP.View(). See
+			// renderPlanReviewView / openPlanReviewView.
+			return m.renderPlanReviewView(m.ask, m.width, m.vp.Height())
 		}
 		return m.rend.renderPermissionModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height())
 	case m.mcp.view != mcpNone:

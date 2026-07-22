@@ -14,6 +14,11 @@ import (
 )
 
 // planAskModel builds a connected, awaiting-approval Model with a PresentPlan ask.
+// It mirrors the reducer's PermissionAskMsg path: setting m.ask + m.phase AND
+// populating the dedicated scrollable plan-review viewport (openPlanReviewView)
+// so the render path reads a populated planVP. Tests that set m.ask directly
+// without this helper must also call openPlanReviewView, or the plan-review view
+// renders only its pinned action bar.
 func planAskModel(t *testing.T, offerAlways bool) Model {
 	t.Helper()
 	m := New(Deps{
@@ -31,7 +36,23 @@ func planAskModel(t *testing.T, offerAlways bool) Model {
 		Reason:      "Plan mode requires approval to execute.",
 		offerAlways: offerAlways,
 	}
+	// Populate the plan-review viewport exactly as the PermissionAskMsg reducer
+	// does (the helper sets m.ask directly, bypassing the reducer). A test that
+	// later mutates m.ask.Args MUST re-call openPlanReviewView to re-populate.
+	(&m).openPlanReviewView(m.ask, 0, m.effectiveModel.ModelID)
 	return m
+}
+
+// setPlanArgs sets the plan ask's Args JSON and re-populates the plan-review
+// viewport so the next View() reflects the new plan content. Tests that drive a
+// plan ask through the reducer (PermissionAskMsg) don't need this — the reducer
+// calls openPlanReviewView; this is for tests that mutate m.ask.Args directly
+// after planAskModel (which bypasses the reducer). It mirrors the reducer's
+// Args-carrying population path exactly.
+func setPlanArgs(t *testing.T, m *Model, args string) {
+	t.Helper()
+	m.ask.Args = args
+	m.openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
 }
 
 func TestIsPlanAsk(t *testing.T) {
@@ -204,6 +225,10 @@ func TestPlanAskQueueBadge(t *testing.T) {
 	m := planAskModel(t, true)
 	// Enqueue a second ask — the plan ask is the head, the queue has one entry.
 	m.askQueue = append(m.askQueue, pendingAsk{AskID: "sess-test-0001:2:c2", Tool: "Bash"})
+	// Re-populate the plan-review viewport so the title badge reflects the queue
+	// (planAskModel populated it with queued=0; the badge lives in planVP's
+	// header, which View renders from planVP.View()).
+	(&m).openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "Plan ready for review (1 of 2)") {
 		t.Errorf("plan ask with queue must show '(1 of 2)' badge, got %q", got)
@@ -238,6 +263,9 @@ func TestGenericAskFooterIsUnchanged(t *testing.T) {
 func TestPlanAskRendersModelNames(t *testing.T) {
 	m := planAskModel(t, true)
 	m.effectiveModel = client.ResolvedModel{ModelID: "gpt-5", ProviderID: "openai"}
+	// Re-populate the plan-review viewport so the model line reflects the now-set
+	// effective model (planAskModel populated it with no model echo).
+	(&m).openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "plan model: gpt-5") {
 		t.Errorf("plan modal should show the plan model, got %q", got)
@@ -273,7 +301,7 @@ func TestPlanAskRendersPlanFromArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)
 	}
-	m.ask.Args = string(args)
+	setPlanArgs(t, &m, string(args))
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "plan:") {
 		t.Errorf("plan modal must render the plan: label, got: %s", got)
@@ -295,7 +323,7 @@ func TestPlanAskPlanArgsSanitized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)
 	}
-	m.ask.Args = string(args)
+	setPlanArgs(t, &m, string(args))
 	// Strip the theme/lipgloss chrome (legitimate ESC) so the assertion targets
 	// the plan text: sanitizeTerminal must have removed the model-injected ESC
 	// (0x1b control byte), leaving the inert "[31m"/"[0m" fragments + the plan
@@ -312,22 +340,25 @@ func TestPlanAskPlanArgsSanitized(t *testing.T) {
 	}
 }
 
-// TestPlanAskLongPlanLineCappedThenExpandable pins the scrollable/expandable
-// behaviour: a plan longer than the line cap shows the first maxPlanLines lines
-// plus a "+N more lines · ctrl+t expand" affordance (the established reveal
-// pattern mirroring renderToolDiff's diffSide / truncateLines), and ctrl+t
-// (expand) reveals the full plan.
-func TestPlanAskLongPlanLineCappedThenExpandable(t *testing.T) {
+// TestPlanAskLongPlanFullNotCollapsed pins the scrollable-view UX (issue #206
+// rework): a plan longer than the viewport shows the FULL plan in the
+// scrollable plan-review view — NO "+N more lines · ctrl+t expand" collapse
+// marker (the collapse-by-default / ctrl+t gate is GONE for the plan path),
+// and the plan is NOT rendered in the small centered card. The full plan is
+// reachable by scrolling (asserted in TestPlanAskScrollReachesFullPlan).
+func TestPlanAskLongPlanFullNotCollapsed(t *testing.T) {
 	m := planAskModel(t, true)
-	// Build a plan with long source LINES that each wrap to multiple display
-	// lines. Single-word lines get merged by glamour into one paragraph and never
-	// hit the cap; long numbered-list items with blank lines between them become
-	// separate paragraphs that each wrap independently, so 8 items with ~200-char
-	// lines comfortably exceed the 12-line display cap.
+	// Build a plan whose wrapped line count far exceeds the viewport height.
+	// Each item carries a UNIQUE marker (LAST-ITEM-MARKER on the last) so the
+	// full-plan assertion is robust against glamour's list-marker reformatting.
 	var lines []string
 	repeat := strings.Repeat("analysis ", 20) // ~200 chars per line
 	for i := 1; i <= 8; i++ {
-		lines = append(lines, fmt.Sprintf("%d. %s", i, repeat))
+		marker := fmt.Sprintf("step-%d", i)
+		if i == 8 {
+			marker = "LAST-ITEM-MARKER"
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s %s", i, marker, repeat))
 	}
 	// Blank lines between items so glamour treats them as separate paragraphs.
 	planText := strings.Join(lines, "\n\n")
@@ -335,30 +366,82 @@ func TestPlanAskLongPlanLineCappedThenExpandable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)
 	}
-	m.ask.Args = string(args)
+	setPlanArgs(t, &m, string(args))
 
-	collapsed := stripANSIstr(m.View().Content)
-	// The plan rendered — some content is visible.
-	if !strings.Contains(collapsed, "analysis") {
-		t.Errorf("collapsed plan modal must show plan content, got: %s", collapsed)
+	got := stripANSIstr(m.View().Content)
+	// The plan content rendered.
+	if !strings.Contains(got, "analysis") {
+		t.Errorf("plan-review view must show plan content, got: %s", got)
 	}
-	// The collapse marker is present (the plan wraps past maxPlanLines).
-	if !strings.Contains(collapsed, "ctrl+t expand") {
-		t.Errorf("collapsed plan modal must show the 'ctrl+t expand' affordance, got: %s", collapsed)
+	// NO collapse marker — the ctrl+t expand affordance is gone for the plan.
+	if strings.Contains(got, "ctrl+t expand") {
+		t.Errorf("plan-review view must NOT show the 'ctrl+t expand' collapse affordance, got: %s", got)
 	}
-	// The marker reports the hidden line count.
-	if !strings.Contains(collapsed, " more lines") {
-		t.Errorf("collapsed plan modal must report hidden line count, got: %s", collapsed)
+	if strings.Contains(got, "more lines") {
+		t.Errorf("plan-review view must NOT show a '+N more lines' collapse marker, got: %s", got)
+	}
+	// The full plan's last item is present in the planVP content (reachable by
+	// scrolling — the viewport's GetContent holds the entire plan).
+	content := m.planVP.GetContent()
+	if !strings.Contains(content, "LAST-ITEM-MARKER") {
+		t.Errorf("planVP must hold the FULL plan incl. the last item; GetContent missing the LAST-ITEM-MARKER: %s", content)
+	}
+}
+
+// TestPlanAskScrollReachesFullPlan pins the scroll behaviour: the plan-review
+// viewport starts at the top (the operator reads from the title down), and
+// pgdn/wheel-down advance the YOffset so later plan content comes into view;
+// pgup/home returns. The full plan is reachable by scrolling, no truncation.
+func TestPlanAskScrollReachesFullPlan(t *testing.T) {
+	m := planAskModel(t, true)
+	// A plan long enough that the viewport (height ~ body - footer) cannot show
+	// it all at once. The last item carries a unique marker reachable only by
+	// scrolling to the bottom.
+	var lines []string
+	repeat := strings.Repeat("analysis ", 20)
+	for i := 1; i <= 8; i++ {
+		marker := fmt.Sprintf("step-%d", i)
+		if i == 8 {
+			marker = "LAST-ITEM-MARKER"
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s %s", i, marker, repeat))
+	}
+	planText := strings.Join(lines, "\n\n")
+	args, err := json.Marshal(map[string]string{"plan": planText})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	setPlanArgs(t, &m, string(args))
+
+	// Opens at the top.
+	if y := m.planVP.YOffset(); y != 0 {
+		t.Fatalf("planVP must open at YOffset 0, got %d", y)
 	}
 
-	// Expand (ctrl+t) reveals the full wrapped plan — no collapse marker.
-	m.expandTools = true
-	expanded := stripANSIstr(m.View().Content)
-	if !strings.Contains(expanded, "analysis") {
-		t.Errorf("expanded plan modal must show plan content, got: %s", expanded)
+	// pgdn advances the scroll offset.
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if y := m.planVP.YOffset(); y <= 0 {
+		t.Errorf("pgdn must advance planVP YOffset past 0, got %d", y)
 	}
-	if strings.Contains(expanded, "ctrl+t expand") {
-		t.Errorf("expanded plan modal must NOT show the collapse affordance, got: %s", expanded)
+	afterPgdn := m.planVP.YOffset()
+
+	// wheel-down advances further.
+	m, _ = pressKey(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if y := m.planVP.YOffset(); y < afterPgdn {
+		t.Errorf("wheel-down must not regress planVP YOffset (was %d, now %d)", afterPgdn, y)
+	}
+
+	// home returns to the top.
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	if y := m.planVP.YOffset(); y != 0 {
+		t.Errorf("home must return planVP to YOffset 0, got %d", y)
+	}
+
+	// The full plan's last item is reachable by scrolling to the bottom (end).
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	content := m.planVP.View()
+	if !strings.Contains(stripANSIstr(content), "LAST-ITEM-MARKER") {
+		t.Errorf("after scrolling to the bottom the last plan item must be visible, got: %s", content)
 	}
 }
 
@@ -367,7 +450,7 @@ func TestPlanAskLongPlanLineCappedThenExpandable(t *testing.T) {
 // note is rendered as the plan body (better than the bare reason line).
 func TestPlanAskFallbackToNote(t *testing.T) {
 	m := planAskModel(t, true)
-	m.ask.Args = `{"note":"short aside"}`
+	setPlanArgs(t, &m, `{"note":"short aside"}`)
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "short aside") {
 		t.Errorf("plan modal with no `plan` arg must fall back to `note`, got: %s", got)
@@ -380,13 +463,13 @@ func TestPlanAskFallbackToNote(t *testing.T) {
 // reason line — it never breaks.
 func TestPlanAskFallbackToReason(t *testing.T) {
 	m := planAskModel(t, true)
-	m.ask.Args = `{}`
+	setPlanArgs(t, &m, `{}`)
 	got := stripANSIstr(m.View().Content)
 	// No plan body rendered (the fallback is the reason line).
 	if strings.Contains(got, "plan:") {
 		t.Errorf("plan modal with empty args must not render a plan: label, got: %s", got)
 	}
-	// The reason line still shows.
+	// The reason line still shows (scrollable in the plan-review view).
 	if !strings.Contains(got, "Plan mode requires approval") {
 		t.Errorf("plan modal with empty args must still show the reason line, got: %s", got)
 	}
@@ -396,7 +479,7 @@ func TestPlanAskFallbackToReason(t *testing.T) {
 // or unparseable) degrades to the reason line — never a panic / broken modal.
 func TestPlanAskMalformedArgsDegrades(t *testing.T) {
 	m := planAskModel(t, true)
-	m.ask.Args = `not json at all`
+	setPlanArgs(t, &m, `not json at all`)
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "Plan mode requires approval") {
 		t.Errorf("plan modal with malformed args must fall back to the reason line, got: %s", got)
@@ -416,8 +499,10 @@ func TestPlanAskLongSingleLineWraps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)
 	}
-	m.ask.Args = string(args)
-	got := stripANSIstr(m.View().Content)
+	setPlanArgs(t, &m, string(args))
+	// The plan-review viewport holds the FULL wrapped plan; assert wrapping
+	// against the full content (the visible window may only show the first rows).
+	got := stripANSIstr(m.planVP.GetContent())
 
 	// The content is present and spans multiple display lines (wrapping happened).
 	if !strings.Contains(got, "analysis") {
@@ -469,8 +554,10 @@ func TestPlanAskMarkdownRendersWrapped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)
 	}
-	m.ask.Args = string(args)
-	got := stripANSIstr(m.View().Content)
+	setPlanArgs(t, &m, string(args))
+	// The plan-review viewport holds the FULL wrapped plan (scrollable); the
+	// visible window is only the top rows, so assert against the full content.
+	got := stripANSIstr(m.planVP.GetContent())
 
 	// Key markdown elements survived glamour rendering.
 	for _, want := range []string{
@@ -487,5 +574,158 @@ func TestPlanAskMarkdownRendersWrapped(t *testing.T) {
 	// The plan rendered without error (no raw glamour error fallback text leaking).
 	if strings.Contains(got, "markdown:") {
 		t.Errorf("plan modal must not contain glamour error fallback, got: %s", got)
+	}
+}
+
+// TestGenericAskStillUsesCenteredModal pins that a NON-plan permission ask
+// (e.g. Bash/Write) KEEPS the centered card modal + its diff collapse — the
+// full-screen scrollable plan-review view is ONLY for plan asks. This is the
+// "generic permission modal unchanged" contract from the design.
+func TestGenericAskStillUsesCenteredModal(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.sessionID = "sess-test-0001"
+	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
+	m.phase = phaseAwaitingApproval
+	m.ask = pendingAsk{
+		AskID:       "sess-test-0001:1:c1",
+		Tool:        "Bash",
+		Args:        `{"command":"echo hi"}`,
+		Reason:      "Bash requires approval",
+		offerAlways: true,
+	}
+	got := stripANSIstr(m.View().Content)
+	// The generic modal shows "Permission required" (NOT the plan-review title).
+	if !strings.Contains(got, "Permission required") {
+		t.Errorf("generic ask must render the centered 'Permission required' modal, got: %s", got)
+	}
+	// The plan-review surface is NOT used for a generic ask.
+	if strings.Contains(got, "Plan ready for review") {
+		t.Errorf("generic ask must NOT render the plan-review view, got: %s", got)
+	}
+	// planVP is not populated for a generic ask (the plan-review viewport is
+	// plan-ask-only).
+	if m.planVPReady {
+		t.Errorf("planVP must not be ready for a generic (non-plan) ask")
+	}
+}
+
+// TestPlanAskActionButtonsResolve pins that the action keys (A/W/D) resolve the
+// ask via resolveAsk from the scrollable plan-review view — the operator reads
+// (scrolls), then acts. Each verdict transitions phaseRunning + the right notice.
+func TestPlanAskActionButtonsResolve(t *testing.T) {
+	// Approve (A) → allow-once.
+	m := planAskModel(t, true)
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if m.phase != phaseRunning {
+		t.Fatalf("approve must return to phaseRunning, got %v", m.phase)
+	}
+	if got := lastNotice(m); got != "permission allowed" {
+		t.Errorf("approve notice = %q, want 'permission allowed'", got)
+	}
+	if m.planVPReady {
+		t.Errorf("planVP must be cleared after resolve, still ready")
+	}
+
+	// Always (W) → allow-always.
+	m = planAskModel(t, true)
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'w', Text: "w"})
+	if m.phase != phaseRunning {
+		t.Fatalf("always must return to phaseRunning, got %v", m.phase)
+	}
+	if got := lastNotice(m); got != "permission allowed (always, this session)" {
+		t.Errorf("always notice = %q", got)
+	}
+	if m.planVPReady {
+		t.Errorf("planVP must be cleared after resolve, still ready")
+	}
+
+	// Deny (D) → deny.
+	m = planAskModel(t, true)
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	if m.phase != phaseRunning {
+		t.Fatalf("deny must return to phaseRunning, got %v", m.phase)
+	}
+	if got := lastNotice(m); got != "permission denied" {
+		t.Errorf("deny notice = %q", got)
+	}
+	if m.planVPReady {
+		t.Errorf("planVP must be cleared after resolve, still ready")
+	}
+}
+
+// TestPlanAskActionBarRendered pins that the pinned action bar (buttons + the
+// auto-accept footnote + the scroll hint) renders in the view so the operator
+// can act after reading. The bar stays reachable regardless of scroll position.
+func TestPlanAskActionBarRendered(t *testing.T) {
+	m := planAskModel(t, true)
+	got := stripANSIstr(m.View().Content)
+	for _, want := range []string{
+		"[A]pprove & run",
+		"[W] auto-accept edits",
+		"[D] iterate",
+		"auto-accept allows every edit in the execution phase for the rest of this session",
+		"scroll: ↑/↓ · pgup/pgdn · home/end · mouse wheel",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan-review view missing action-bar element %q in: %s", want, got)
+		}
+	}
+}
+
+// TestPlanAskWidthWrapsNoRunoff pins that the plan is glamour-wrapped to the
+// view width — no line runs off the right edge (the original bug a centered card
+// with a tiny content width could not fix). The plan-review view wraps at the
+// FULL view content width, so wrapped lines stay within the terminal.
+func TestPlanAskWidthWrapsNoRunoff(t *testing.T) {
+	m := planAskModel(t, true)
+	// A single very long source line (no internal newlines) that MUST wrap to the
+	// view width. If wrapping were absent it would run off the right edge.
+	longLine := strings.Repeat("word ", 120)
+	args, err := json.Marshal(map[string]string{"plan": longLine})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	setPlanArgs(t, &m, string(args))
+	content := m.planVP.GetContent()
+	// No display line exceeds the view width (the plan wraps to the content
+	// width). Allow a small tolerance for trailing padding; assert strictly
+	// against the view width + a margin.
+	maxW := m.width + 2
+	for _, line := range strings.Split(stripANSIstr(content), "\n") {
+		// Count runes (approx display width for ASCII "word " content).
+		if w := len([]rune(line)); w > maxW {
+			t.Errorf("plan line exceeds view width (%d > %d): %q", w, maxW, line)
+		}
+	}
+}
+
+// TestPlanAskResolveClearsPlanView pins the cleanup contract: after the plan
+// ask resolves (any verdict), planVP is cleared (not ready) and the normal
+// conversation view is restored (renderBody no longer routes to the plan-review
+// view for a non-plan phase).
+func TestPlanAskResolveClearsPlanView(t *testing.T) {
+	m := planAskModel(t, true)
+	args, _ := json.Marshal(map[string]string{"plan": "1. step one\n2. step two"})
+	setPlanArgs(t, &m, string(args))
+	if !m.planVPReady {
+		t.Fatal("precondition: planVP must be ready after a plan ask opens")
+	}
+	// Approve resolves the ask.
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if m.planVPReady {
+		t.Errorf("planVP must be cleared (not ready) after resolve, still ready")
+	}
+	if m.phase != phaseRunning {
+		t.Fatalf("phase must be phaseRunning after resolve, got %v", m.phase)
+	}
+	// The view no longer routes to the plan-review surface (the phase is running,
+	// so renderBody returns the conversation viewport, not the plan-review view).
+	got := stripANSIstr(m.View().Content)
+	if strings.Contains(got, "Plan ready for review") {
+		t.Errorf("view must not show the plan-review surface after resolve, got: %s", got)
+	}
+	if strings.Contains(got, "[A]pprove & run") {
+		t.Errorf("view must not show the plan action bar after resolve, got: %s", got)
 	}
 }
