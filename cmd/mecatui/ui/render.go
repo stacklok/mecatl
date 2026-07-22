@@ -426,10 +426,19 @@ func (r *renderer) vpView(vp viewport.Model) string {
 	return r.vpViewCache
 }
 
-// markdown renders src to ANSI through a width-cached glamour renderer themed by
-// the active theme. On any glamour error it falls back to the raw text so the
-// stream is never lost. MUST be called only on the update goroutine.
-func (r *renderer) markdown(src string) string {
+// markdownWidth renders src to ANSI through a width-cached glamour renderer
+// themed by the active theme, wrapping at the caller-provided width w. It applies
+// normalizeEmojiWidth (the streaming-scramble fix) and trims trailing spaces.
+// When w <= 0 it floors at 80; the final column is reserved (w-- when w > 1).
+// On any glamour error it falls back to the raw text so the stream is never lost.
+// MUST be called only on the update goroutine.
+//
+// markdownWidth is the single glamour-render entry-point shared by the
+// conversation markdown path (via markdown) and the plan-approval modal — the
+// plan modal wraps at the card's content width rather than the transcript budget.
+// The glamour cache is width-keyed, so each distinct caller width gets its own
+// renderer entry.
+func (r *renderer) markdownWidth(src string, w int) string {
 	if strings.TrimSpace(src) == "" {
 		return ""
 	}
@@ -455,18 +464,8 @@ func (r *renderer) markdown(src string) string {
 	// property, so the end-of-turn ClearScreen just re-paints the same wrong
 	// layout. normalizeEmojiWidth strips VS16 and collapses any residual divergent
 	// cluster so WcWidth == GraphemeWidth for every cluster — the two layers then
-	// agree without depending on the terminal upgrading the renderer. It sits
-	// below the markdownAt memo (which keys on the original src), so the memo stays
-	// consistent.
+	// agree without depending on the terminal upgrading the renderer.
 	src = normalizeEmojiWidth(src)
-	// Lay out against the CONTENT width (viewport minus the left indent) MINUS the
-	// assistant body hang, so the glamour body still fits after renderBlock prefixes each
-	// line with `indent` spaces AND the blockAssistant arm hang-indents it by
-	// assistantBodyHang to sit under "mecatl". markdown/markdownAt are the assistant
-	// body's render path only (no other caller), so baking the hang in here keeps it the
-	// single budget source. A width-0 bare renderer (no indent, contentWidth==r.width)
-	// still floors at 80 below.
-	w := r.contentWidth() - assistantBodyHang
 	if w <= 0 {
 		w = 80
 	}
@@ -510,6 +509,14 @@ func (r *renderer) markdown(src string) string {
 		return src
 	}
 	return trimTrailingSpaces(strings.TrimRight(out, "\n"))
+}
+
+// markdown renders src to ANSI through a width-cached glamour renderer at the
+// assistant body's wrap budget (content width minus the body hang). It delegates
+// to markdownWidth with the caller-independent width already computed.
+func (r *renderer) markdown(src string) string {
+	w := r.contentWidth() - assistantBodyHang
+	return r.markdownWidth(src, w)
 }
 
 // markdownAt is the memoized form of markdown used by the conversation render

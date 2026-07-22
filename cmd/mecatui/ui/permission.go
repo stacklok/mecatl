@@ -110,13 +110,15 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 // The plan CONTENT rides PendingAsk.Args → proto `PermissionAsk.args` (the model
 // passes it in the PresentPlan `plan` argument; see engine/agent/presentplan.go).
 // It is parsed out of the args JSON here and rendered between the model line and
-// the buttons so the operator can READ what they are approving. A long plan is
-// line-capped (mirroring renderToolDiff's diffSide / truncateLines) and revealed
-// in full via the global ctrl+t expand toggle — the SAME established reveal
-// mechanism used for Edit/Write diffs and tool-result bodies. Fallbacks (issue
-// #206 backwards-compat): no `plan` arg → the optional `note`; no note → the
-// "plan ready for operator approval" reason line. The model-authored plan text is
-// terminal-sanitized (it crosses the wire from the model, same as tool args).
+// the buttons so the operator can READ what they are approving. The plan is
+// rendered as markdown WRAPPED to the modal card's content width (via glamour,
+// reusing the established markdownWidth path — so headings, bullets, and code
+// fences get their transcript styling), and the line-cap (maxPlanLines) counts
+// WRAPPED display lines, not raw source lines. ctrl+t expand reveals the full
+// wrapped plan. Fallbacks (issue #206 backwards-compat): no `plan` arg → the
+// optional `note`; no note → the "plan ready for operator approval" reason line.
+// The model-authored plan text is terminal-sanitized (it crosses the wire from
+// the model, same as tool args).
 func (r *renderer) renderPlanApprovalModal(ask pendingAsk, expand bool, queued int,
 	width, height int, effectiveModel string,
 ) string {
@@ -143,12 +145,26 @@ func (r *renderer) renderPlanApprovalModal(ask pendingAsk, expand bool, queued i
 	// Render the plan content the operator is approving. The plan rides the
 	// PresentPlan `plan` argument (engine/agent/presentplan.go); surfacePlanAsk
 	// copies c.Args into PendingAsk.Args, so it reaches here as ask.Args (the raw
-	// JSON string). Parse it, line-cap + ctrl+t-expand (the established reveal
-	// pattern), and fall back to `note` then the reason line for older models
-	// that put the plan only in message text (issue #206 backwards-compat).
-	if plan := planBodyFromArgs(ask.Args, expand); plan != "" {
+	// JSON string). Parse it, render through markdownWidth at the card's content
+	// width (so long markdown lines wrap to the modal, not run off-screen), then
+	// line-cap at maxPlanLines WRAPPED (display) lines + ctrl+t-expand reveal.
+	// Fall back to `note` then the reason line for older models that put the plan
+	// only in message text (issue #206 backwards-compat).
+	if planText := planBodyFromArgs(ask.Args); planText != "" {
 		b.WriteString("\n" + th.Style("muted").Render("plan:") + "\n")
-		b.WriteString(plan + "\n")
+		// Wrap to the card's content width, same budget as the other askCard
+		// panels (skills, agents inventory) — cardTextWidth subtracts the card
+		// chrome + a centering margin and caps for readability.
+		cw := cardTextWidth(width)
+		wrapped := r.markdownWidth(planText, cw)
+		lines := strings.Split(wrapped, "\n")
+		if expand || len(lines) <= maxPlanLines {
+			b.WriteString(wrapped + "\n")
+		} else {
+			extra := len(lines) - maxPlanLines
+			kept := lines[:maxPlanLines]
+			b.WriteString(strings.Join(kept, "\n") + "\n" + collapseMarker(extra) + "\n")
+		}
 	} else if ask.Reason != "" {
 		b.WriteString("\n" + th.Style("muted").Render(sanitizeTerminal(ask.Reason)) + "\n")
 	}
@@ -183,14 +199,13 @@ func (r *renderer) renderPlanApprovalModal(ask pendingAsk, expand bool, queued i
 }
 
 // planBodyFromArgs extracts the PresentPlan `plan` (falling back to `note`) from
-// the raw JSON args string and returns a line-capped, terminal-sanitized block
-// the operator reads in the approval modal. It mirrors the diff-side /
-// truncateLines line-cap + ctrl+t-expand reveal pattern: a long plan shows the
-// first maxPlanLines lines plus a "+N more lines · ctrl+t expand" affordance, and
-// expand (ctrl+t) reveals the full plan. Returns "" when neither plan nor note is
-// present (the caller falls back to the reason line). Malformed JSON yields "" so
-// an older model that omitted the `plan` arg degrades gracefully.
-func planBodyFromArgs(rawArgs string, expand bool) string {
+// the raw JSON args string and returns the raw, terminal-sanitized plan text.
+// The caller (renderPlanApprovalModal) is responsible for wrapping (via
+// markdownWidth at the card's content width) and line-capping the WRAPPED output.
+// Returns "" when neither plan nor note is present (the caller falls back to the
+// reason line). Malformed JSON yields "" so an older model that omitted the
+// `plan` arg degrades gracefully.
+func planBodyFromArgs(rawArgs string) string {
 	rawArgs = strings.TrimSpace(rawArgs)
 	if rawArgs == "" {
 		return ""
@@ -209,14 +224,7 @@ func planBodyFromArgs(rawArgs string, expand bool) string {
 	if body == "" {
 		return ""
 	}
-	body = sanitizeTerminal(strings.TrimRight(body, "\n"))
-	lines := strings.Split(body, "\n")
-	if expand || len(lines) <= maxPlanLines {
-		return strings.Join(lines, "\n")
-	}
-	extra := len(lines) - maxPlanLines
-	kept := lines[:maxPlanLines]
-	return strings.Join(kept, "\n") + "\n" + collapseMarker(extra)
+	return sanitizeTerminal(strings.TrimRight(body, "\n"))
 }
 
 // maxPlanLines caps how many lines of the plan the approval modal shows before the
