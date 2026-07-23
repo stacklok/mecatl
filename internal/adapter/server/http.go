@@ -714,7 +714,7 @@ func (h *HTTPHandler) relayEventsSSE(w http.ResponseWriter, r *http.Request, id 
 // ModePlan (deny / iterate) — the fail-safe posture that does NOT flip the mode
 // or start a continuation run, mirroring verdictFromHTTP's fail-safe-to-deny.
 func planModeFromString(s string) session.PermissionMode {
-	switch strings.ToLower(strings.TrimPrefix(s, "PERMISSION_MODE_")) {
+	switch strings.TrimPrefix(strings.ToLower(s), "permission_mode_") {
 	case "default":
 		return session.ModeDefault
 	case "accept_edits", "accept", "acceptedits":

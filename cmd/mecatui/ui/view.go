@@ -563,7 +563,15 @@ func (m Model) renderFooter() string {
 		help = "enter queue · esc cancel/clear · " + help
 	}
 	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) {
-		help = "A approve & run · W auto-accept · D iterate · " + help
+		// Gate the "W auto-accept" hint on offerAlways — the SAME condition the
+		// action bar (permission.go renderPlanReviewView) uses to show/hide the
+		// [W] button. Without this a surfaced child plan ask (offerAlways=false)
+		// would advertise a key that silently no-ops (onApprovalKey ignores W).
+		if m.ask.offerAlways {
+			help = "A approve & run · W auto-accept · D iterate · " + help
+		} else {
+			help = "A approve & run · D iterate · " + help
+		}
 	}
 	// While the double-ctrl+c guard is armed, prepend a loud "again to quit" cue to
 	// the help line. The footer is the one chrome line present in every phase (the

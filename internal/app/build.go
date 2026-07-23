@@ -2947,11 +2947,23 @@ func logBuildConfigFacts(cfg Config) {
 	}
 	// Plan-mode auto-approve (issue #206 Wave 6a): narrate the OPT-IN flag when ON
 	// so the operator sees at startup that plans will be approved WITHOUT a human.
+	// An INTERACTIVE deployment surfaces the plan ask to the client for a human to
+	// approve, so the flag never fires — WARN that it is INERT rather than narrate a
+	// "NO HUMAN REVIEW" fact that does nothing (mirrors normalizeAskReviewerModel's
+	// inert-when-interactive posture; the Service gate is `!PlanModeAutoApprove ||
+	// Interactive`).
 	if cfg.PlanModeAutoApprove {
-		facts = append(facts, diagFact{
-			level: port.LevelWarn,
-			msg:   "plan_mode_auto_approve: ON (NO HUMAN REVIEW) — a plan-mode run ending headless is auto-approved via ApprovePlan(ModeDefault); plans are NOT reviewed by a human operator",
-		})
+		if cfg.Interactive {
+			facts = append(facts, diagFact{
+				level: port.LevelWarn,
+				msg:   "plan_mode_auto_approve configured but INERT: this deployment is interactive, so a plan-approval ask is surfaced to the client for a human to approve and auto-approve never fires; run headless (mecated: --headless) to engage it",
+			})
+		} else {
+			facts = append(facts, diagFact{
+				level: port.LevelWarn,
+				msg:   "plan_mode_auto_approve: ON (NO HUMAN REVIEW) — a plan-mode run ending headless is auto-approved via ApprovePlan(ModeDefault); plans are NOT reviewed by a human operator",
+			})
+		}
 	}
 	for _, f := range facts {
 		cfg.diag().Log(context.Background(), f.level, f.msg, f.args...)

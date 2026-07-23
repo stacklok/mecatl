@@ -3158,7 +3158,7 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 // live run to reach a terminal state before giving up (fail-safe, never a
 // wedge). Generous: a plan-approval run terminates promptly after the verdict,
 // but a slow provider/tool turn must not be cut short.
-var autoApproveWaitTimeout = 30 * time.Second
+const autoApproveWaitTimeout = 30 * time.Second
 
 // autoApprovePollInterval is the GetSession poll cadence while waiting for the
 // live run to terminate. Short so the continuation starts promptly after the

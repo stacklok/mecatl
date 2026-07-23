@@ -5,6 +5,15 @@
 - Scope: the plan-approval seam — the `engine/agent` PresentPlan signalling tool + the dispatcher's plan-ask surface, `engine/session` `PendingAsk.PlanOriginated`/`AskOrigin`/`Origin()`/`StopPlanApproved`, `engine/tool.PlanOnly` catalog gate, the `engine/agent.Run.planApprovedTarget` run-scoped flip, and the composition/adapter wiring (`internal/adapter/server.Service.ApprovePlan` + the `ApprovePlan` streaming RPC + `POST /v1/sessions/{id}/plan:approve` + the opt-in `--plan-mode-auto-approve` observer + the mecatui plan-approval modal). The `PermissionAsk` proto is UNCHANGED (no provenance field added; the tool name `PresentPlan` is the discriminator).
 - Supersedes: none
 - Superseded by: none
+- Amended: 2026-07-23 — the deny/iterate path described in §3 ("On Deny it synthesizes a
+  deny result and the loop CONTINUES in plan mode (the model iterates on the plan)") was
+  superseded DURING implementation by a CLEAN TERMINAL. An operator deny of a plan ask now
+  ends the run with `session.StopPlanIterate` (a non-error terminal, routed through the
+  completed path, Reopen-recoverable): the run STOPS, the session stays `ModePlan`, and the
+  operator's NEXT typed prompt drives the revision — the model does NOT keep iterating
+  in-turn with no operator input. The living docs (`docs/architecture/agent-loop.md`,
+  `docs/design/IMPLEMENTATION-NOTES.md`) and `engine/CHANGELOG.md`'s `StopPlanIterate` entry
+  describe the shipped behaviour; this note corrects the frozen ADR rather than rewriting it.
 
 ## Context
 
