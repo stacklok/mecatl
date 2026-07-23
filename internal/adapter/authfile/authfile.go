@@ -14,7 +14,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,10 +77,12 @@ func DefaultPath(env xdgconfig.ResolveEnv) string {
 // surfaced (cmd/ mains: slog.Warn) so a typo'd or loosely-permissioned
 // auth.yaml doesn't go unnoticed.
 //
-// The warning is deliberately VALUE-FREE: it names the path, a provider, or a
-// permission mode, but never echoes file content back. A caller may log it
-// unconditionally without risking a secret leak — see the decode-error branch
-// below for why this is asserted rather than merely intended.
+// The warning is deliberately VALUE-FREE: it names the path, a provider count,
+// or a permission mode, but never echoes file content back — and a mistyped
+// provider NAME is file content (a key typed where the name belongs is a
+// verified leak shape). A caller may log it unconditionally without risking a
+// secret leak — see the decode-error branch below for why this is asserted
+// rather than merely intended.
 //
 // knownProviders is the closed set of provider names an entry may use (e.g.
 // "anthropic"); a name outside it is reported rather than silently ignored,
@@ -112,8 +113,10 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	// Advisory-only permission check: mecatl never WRITES this file, so a loose
 	// mode can only be reported, not fixed on the operator's behalf. Checked
 	// before parsing (a permission problem is worth knowing about even if the
-	// content also turns out to be malformed), but a later, more urgent warning
-	// (parse failure, unknown provider) takes priority for the single return slot.
+	// content also turns out to be malformed), and ACCUMULATED with any later
+	// content warning rather than clobbered by it — the permission finding is
+	// the security-relevant one, and the hand-edited files most likely to trip
+	// a content warning are exactly the ones whose loose mode needs reporting.
 	permWarning := checkPermissions(path)
 
 	if len(bytes.TrimSpace(data)) == 0 {
@@ -144,16 +147,34 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 		)
 	}
 
-	unknown := slices.DeleteFunc(slices.Sorted(maps.Keys(f.Providers)), func(name string) bool {
-		return slices.Contains(knownProviders, name)
-	})
-	if len(unknown) > 0 {
-		return &f, fmt.Sprintf(
-			"auth file %s: unknown provider(s) %s (expected one of %s) — ignored",
-			path, strings.Join(unknown, ", "), strings.Join(knownProviders, ", "),
-		)
+	// Count, never the names: an unknown provider name is an arbitrary YAML
+	// key, and a key typed where the provider name belongs (inverted nesting)
+	// would otherwise be echoed verbatim into the warning — the same CWE-532
+	// class as the decode-error branch above. "Value-free" is a property of
+	// the whole warning surface, not just that one branch.
+	unknown := 0
+	for name := range f.Providers {
+		if !slices.Contains(knownProviders, name) {
+			unknown++
+		}
+	}
+	if unknown > 0 {
+		return &f, joinWarnings(permWarning, fmt.Sprintf(
+			"auth file %s: %d unknown provider(s) ignored (expected one of %s) — check provider names in the file",
+			path, unknown, strings.Join(knownProviders, ", "),
+		))
 	}
 	return &f, permWarning
+}
+
+// joinWarnings accumulates the non-empty warnings into the single return
+// string (cheapest way to keep Load's (*File, string) signature while no
+// longer letting a later content warning clobber the permission finding —
+// both land in the one AuthFileWarning the cmd/ mains already log).
+func joinWarnings(warnings ...string) string {
+	return strings.Join(slices.DeleteFunc(slices.Clone(warnings), func(w string) bool {
+		return w == ""
+	}), "\n")
 }
 
 // checkPermissions warns (never fails) when path's file mode grants group or

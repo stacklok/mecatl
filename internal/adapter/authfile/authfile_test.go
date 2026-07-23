@@ -126,8 +126,25 @@ func TestLoadUnknownProviderNameWarnsButValidEntryApplies(t *testing.T) {
 	if got := f.APIKey("anthropic"); got != "sk-ant-good" {
 		t.Errorf("APIKey(anthropic) = %q, want sk-ant-good (the valid entry must still apply)", got)
 	}
-	if warning == "" || !strings.Contains(warning, "anthropik") {
-		t.Errorf("warning = %q, want it to name the unknown provider %q", warning, "anthropik")
+	if warning == "" {
+		t.Fatal("warning should be non-empty for an unknown provider name")
+	}
+	// The unknown provider name must NOT appear verbatim in the warning — a
+	// secret typed where the provider name belongs (inverted nesting) would
+	// otherwise echo into the warning (CWE-532). The warning reports a COUNT,
+	// never the name.
+	if strings.Contains(warning, "anthropik") {
+		t.Errorf("warning = %q, must NOT contain the unknown provider name %q", warning, "anthropik")
+	}
+	if !strings.Contains(warning, "1 unknown provider") {
+		t.Errorf("warning = %q, want it to report the count (1 unknown provider)", warning)
+	}
+	// The warning must still list the known providers so the operator can
+	// self-correct without guessing which names are valid.
+	for _, known := range testKnownProviders {
+		if !strings.Contains(warning, known) {
+			t.Errorf("warning = %q, want it to list known provider %q", warning, known)
+		}
 	}
 }
 
@@ -173,6 +190,67 @@ func TestLoadMalformedYAMLNeverLeaksFileContent(t *testing.T) {
 		if strings.Contains(warning, realSecret[:n]) {
 			t.Fatalf("warning leaked a %d-byte fragment of the real secret: %q (in %q)", n, realSecret[:n], warning)
 		}
+	}
+}
+
+// TestLoadUnknownProviderNameNeverLeaksSecretShapedName is the
+// security-review regression test for the value-free unknown-provider warning:
+// a provider name that looks like a real secret (sk-ant-api03-...) must never
+// appear in the warning string — not verbatim, and not as a substring
+// fragment. This is the inverted-nesting analog of
+// TestLoadMalformedYAMLNeverLeaksFileContent: that test covers structural
+// mismatch (a scalar where a mapping is expected), while this one covers
+// arbitrary YAML keys that are file content and must never be echoed.
+func TestLoadUnknownProviderNameNeverLeaksSecretShapedName(t *testing.T) {
+	const secretName = "sk-ant-api03-THIS-MUST-NEVER-APPEAR-IN-A-WARNING"
+	contents := "providers:\n  anthropic:\n    api_key: sk-ant-good\n  " + secretName + ":\n    api_key: x\n"
+	dir := t.TempDir()
+	path := writeFile(t, dir, contents, 0o600)
+	f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+	if warning == "" {
+		t.Fatal("warning should be non-empty for an unknown provider name")
+	}
+	// The valid entry must still apply.
+	if got := f.APIKey("anthropic"); got != "sk-ant-good" {
+		t.Errorf("APIKey(anthropic) = %q, want sk-ant-good (the valid entry must still apply)", got)
+	}
+	// No fragment — the whole point is that NO user-supplied key string
+	// reaches the warning. Check every substring prefix from 4 bytes to the
+	// full length, matching the existing
+	// TestLoadMalformedYAMLNeverLeaksFileContent pattern.
+	if strings.Contains(warning, secretName) {
+		t.Fatalf("warning leaked the secret-shaped provider name verbatim: %q", warning)
+	}
+	for n := 4; n <= len(secretName); n++ {
+		if strings.Contains(warning, secretName[:n]) {
+			t.Fatalf("warning leaked a %d-byte fragment of the secret-shaped name: %q (in %q)", n, secretName[:n], warning)
+		}
+	}
+}
+
+// TestLoadLoosePermissionsAndUnknownProviderBothWarned proves the
+// accumulation fix: a file with a loose permission AND a content warning
+// (unknown provider name) reports BOTH in the single returned warning string
+// — the permission finding is not clobbered by the content warning.
+func TestLoadLoosePermissionsAndUnknownProviderBothWarned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits don't apply on windows")
+	}
+	dir := t.TempDir()
+	path := writeFile(t, dir, "providers:\n  anthropic:\n    api_key: sk-ant-good\n  anthropik:\n    api_key: sk-ant-typo\n", 0o644)
+	f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+	if warning == "" {
+		t.Fatal("warning should be non-empty for both loose permissions and unknown provider")
+	}
+	// The valid entry must still apply.
+	if got := f.APIKey("anthropic"); got != "sk-ant-good" {
+		t.Errorf("APIKey(anthropic) = %q, want sk-ant-good (the valid entry must still apply)", got)
+	}
+	if !strings.Contains(warning, "0644") {
+		t.Errorf("warning = %q, want it to report the loose mode 0644", warning)
+	}
+	if !strings.Contains(warning, "1 unknown provider") {
+		t.Errorf("warning = %q, want it to report the count (1 unknown provider)", warning)
 	}
 }
 
