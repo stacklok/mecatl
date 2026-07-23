@@ -24,3 +24,7 @@ coverage.*
 /.claude/worktrees/
 /.claude/scheduled_tasks.lock
 /mecatui
+
+# Personal, local-only Claude Code instructions and running-state notes
+/CLAUDE.local.md
+/HANDOFF.md
