@@ -23,6 +23,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -462,6 +463,9 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 	keys := cfg.providerFlags.Apply(&out)
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
+	}
+	if keys.AuthFileWarning != "" {
+		slog.Warn(keys.AuthFileWarning)
 	}
 	cfg.toolhiveLLMFlags.Apply(&out)
 	return out

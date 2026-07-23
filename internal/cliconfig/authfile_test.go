@@ -16,7 +16,10 @@ import (
 // matches this package's existing convention (see TestApplyMapsAllSixFields
 // and friends, which drive the provider-key env vars the same way) — Apply
 // resolves the conventional default through xdgconfig.OSEnv, so redirecting
-// XDG_CONFIG_HOME is what actually exercises that path.
+// XDG_CONFIG_HOME is what actually exercises that path. The parsing/schema
+// specifics (strict decode, unknown providers, permissions, the secret-leak
+// regression) live at the internal/adapter/authfile level; these tests only
+// prove Apply's WIRING — precedence and flag plumbing.
 func writeAuthFile(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -140,6 +143,36 @@ func TestApplyMissingConventionalAuthFileIsSilent(t *testing.T) {
 	}
 }
 
+// TestApplyExplicitAuthFileFlagIsUsed proves --auth-file overrides the
+// conventional default path.
+func TestApplyExplicitAuthFileFlagIsUsed(t *testing.T) {
+	clearProviderEnv(t)
+	// Point XDG_CONFIG_HOME somewhere with NO auth.yaml, so only the explicit
+	// flag path can possibly supply a key.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	explicitDir := t.TempDir()
+	explicitPath := filepath.Join(explicitDir, "custom-auth.yaml")
+	if err := os.WriteFile(explicitPath, []byte("providers:\n  anthropic:\n    api_key: sk-ant-explicit\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
+	if err := fs.Parse([]string{"--auth-file", explicitPath}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var cfg app.Config
+	keys := pf.Apply(&cfg)
+
+	if cfg.AnthropicKey != "sk-ant-explicit" {
+		t.Errorf("AnthropicKey = %q, want sk-ant-explicit", cfg.AnthropicKey)
+	}
+	if keys.AuthFileWarning != "" {
+		t.Errorf("AuthFileWarning = %q, want empty", keys.AuthFileWarning)
+	}
+}
+
 // TestApplyMissingExplicitAuthFileWarns proves an explicit --auth-file
 // pointed at a nonexistent path IS reported — the operator named that exact
 // path, so silence would hide a typo.
@@ -163,39 +196,20 @@ func TestApplyMissingExplicitAuthFileWarns(t *testing.T) {
 	}
 }
 
-// TestApplyMalformedAuthFileWarns proves invalid YAML at the auth-file path
-// is reported (never silently ignored) and contributes no keys, regardless of
-// whether the path was explicit or the conventional default.
-func TestApplyMalformedAuthFileWarns(t *testing.T) {
-	clearProviderEnv(t)
-	writeAuthFile(t, "providers: [this is not a map]")
-
-	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
-	if err := fs.Parse(nil); err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var cfg app.Config
-	keys := pf.Apply(&cfg)
-
-	if keys.AuthFileWarning == "" {
-		t.Fatal("AuthFileWarning should be non-empty for malformed YAML")
-	}
-	if cfg.AnthropicKey != "" || keys.Any() {
-		t.Errorf("a malformed file must contribute no keys; got %+v", keys)
-	}
-}
-
-// TestApplyStrictDecodeRejectsUnknownField proves a typo'd field inside a
-// provider entry (api_key misspelled) is a parse error rather than a
-// silently-dropped credential — the strict (KnownFields) decode is exactly
-// what should catch this in a credentials file.
-func TestApplyStrictDecodeRejectsUnknownField(t *testing.T) {
+// TestApplyAllFourProvidersFillFromFile proves cmp.Or is wired for all four
+// provider fields, not just Anthropic.
+func TestApplyAllFourProvidersFillFromFile(t *testing.T) {
 	clearProviderEnv(t)
 	writeAuthFile(t, `
 providers:
   anthropic:
-    apikey: sk-ant-typo
+    api_key: sk-ant
+  openai:
+    api_key: sk-oai
+  openrouter:
+    api_key: sk-or
+  opencode:
+    api_key: sk-oc
 `)
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
@@ -205,84 +219,10 @@ providers:
 	var cfg app.Config
 	keys := pf.Apply(&cfg)
 
-	if keys.AuthFileWarning == "" {
-		t.Fatal("a mistyped field name should produce a warning, not a silently-dropped credential")
+	if keys.Anthropic != "sk-ant" || keys.OpenAI != "sk-oai" || keys.OpenRouter != "sk-or" || keys.OpenCode != "sk-oc" {
+		t.Errorf("keys mismatch: %+v", keys)
 	}
-	if cfg.AnthropicKey != "" {
-		t.Errorf("AnthropicKey = %q, want empty (the typo'd entry must not resolve)", cfg.AnthropicKey)
-	}
-}
-
-// TestApplyUnknownProviderNameWarns proves a provider name outside the known
-// set (anthropic/openai/openrouter/opencode) is reported, while a VALID
-// sibling entry in the same file still applies — a typo in one entry
-// shouldn't cost you the rest of the file.
-func TestApplyUnknownProviderNameWarns(t *testing.T) {
-	clearProviderEnv(t)
-	writeAuthFile(t, `
-providers:
-  anthropic:
-    api_key: sk-ant-good
-  anthropik:
-    api_key: sk-ant-typo
-`)
-	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
-	if err := fs.Parse(nil); err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var cfg app.Config
-	keys := pf.Apply(&cfg)
-
-	if cfg.AnthropicKey != "sk-ant-good" {
-		t.Errorf("AnthropicKey = %q, want sk-ant-good (the valid entry must still apply)", cfg.AnthropicKey)
-	}
-	if keys.AuthFileWarning == "" || !strings.Contains(keys.AuthFileWarning, "anthropik") {
-		t.Errorf("AuthFileWarning = %q, want it to name the unknown provider %q", keys.AuthFileWarning, "anthropik")
-	}
-}
-
-// TestApplyEmptyAuthFileIsFine proves a present-but-empty auth.yaml (e.g. a
-// freshly-touched file) parses cleanly with no warning and contributes no keys.
-func TestApplyEmptyAuthFileIsFine(t *testing.T) {
-	clearProviderEnv(t)
-	writeAuthFile(t, "")
-
-	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
-	if err := fs.Parse(nil); err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var cfg app.Config
-	keys := pf.Apply(&cfg)
-
-	if keys.AuthFileWarning != "" {
-		t.Errorf("AuthFileWarning = %q, want empty", keys.AuthFileWarning)
-	}
-	if keys.Any() {
-		t.Error("Any() should be false for an empty file and no env")
-	}
-}
-
-// TestApplyOversizedAuthFileWarns proves the size cap rejects an
-// implausibly-large auth.yaml before parsing (defense in depth, CWE-770).
-func TestApplyOversizedAuthFileWarns(t *testing.T) {
-	clearProviderEnv(t)
-	huge := "providers:\n  anthropic:\n    api_key: " + strings.Repeat("x", maxAuthFileBytes+1) + "\n"
-	writeAuthFile(t, huge)
-
-	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
-	if err := fs.Parse(nil); err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var cfg app.Config
-	keys := pf.Apply(&cfg)
-
-	if keys.AuthFileWarning == "" {
-		t.Fatal("an oversized auth.yaml should warn rather than parse silently")
-	}
-	if cfg.AnthropicKey != "" {
-		t.Error("an oversized file must contribute no keys")
+	if cfg.AnthropicKey != "sk-ant" || cfg.OpenAIKey != "sk-oai" || cfg.OpenRouterKey != "sk-or" || cfg.OpenCodeKey != "sk-oc" {
+		t.Errorf("cfg mismatch: %+v", cfg)
 	}
 }

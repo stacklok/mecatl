@@ -458,7 +458,14 @@ path is not an error (most deployments still use env vars, or haven't created
 one yet); a missing file at an **explicit** `--auth-file` path always is,
 since you named that exact path. Neither case is ever fatal to startup — a
 bad or missing file just means that provider's credential falls back to
-whatever the environment already resolved (frequently empty).
+whatever the environment already resolved (frequently empty). A decode
+failure never echoes the file's content back into the warning (only the path
+and a generic shape complaint) — the file exists to hold secrets, so its own
+error messages don't get to leak them.
+
+`mecated` also warns (non-fatally, on Unix) when the file's permissions grant
+group or other access — this file holds plaintext secrets, so a `chmod 600`
+is more than a suggestion on a shared host.
 
 There is no write path yet (no `mecated auth set` command) — create the file
 yourself. This is also the anticipated future home for OAuth-based provider

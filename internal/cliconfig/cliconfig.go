@@ -1,26 +1,37 @@
-// Package cliconfig holds the small slices of CLI/composition wiring that the three
-// command mains (cmd/mecated, cmd/mecatui, cmd/mecatequi) would otherwise copy-paste —
-// extracted here so they cannot drift apart. It is a CMD-SIDE composition helper: it
-// may read the process environment (os.Getenv) and register flags (flag.FlagSet), then
-// apply the resolved values onto an app.Config.
+// Package cliconfig holds the small slices of CLI/composition wiring that the four
+// command mains (cmd/mecated, cmd/mecatui, cmd/mecatequi, cmd/mecak8s) would otherwise
+// copy-paste — extracted here so they cannot drift apart. It is a CMD-SIDE composition
+// helper: it may read the process environment (os.Getenv) and register flags
+// (flag.FlagSet), then apply the resolved values onto an app.Config.
 //
 // Why it lives in internal/ and not in internal/app: app.Build deliberately reads the
 // environment ONLY through its injected envDetector seam (see internal/app/build.go),
 // so the os.Getenv reads for provider credentials belong OUTSIDE app — in the cmd layer
 // or a cmd-side helper like this one. The dependency direction stays inward
-// (cmd -> cliconfig -> app); cliconfig never imports a cmd main.
+// (cmd -> cliconfig -> app); cliconfig never imports a cmd main. The credentials-FILE
+// parsing itself (auth.yaml) lives one layer further out, in the small leaf adapter
+// internal/adapter/authfile, so a future credential-writing subcommand can depend on
+// that schema directly without pulling in cliconfig's flag/model-alias machinery too;
+// cliconfig only wires it (path resolution + precedence against the environment).
 package cliconfig
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 )
+
+// knownAuthProviders is the closed set of provider names an auth.yaml entry
+// may use — passed into authfile.Load so that package stays agnostic of which
+// providers mecatl specifically knows about.
+var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode"}
 
 // Provider credential / base-URL environment variables. These are the SECRET-shaped
 // inputs the cmd layer reads on the operator's behalf (the registry also auto-detects
@@ -117,25 +128,18 @@ func (pf *ProviderFlags) Apply(cfg *app.Config) ResolvedKeys {
 	}
 	path := explicitPath
 	if path == "" {
-		path = DefaultAuthFilePath(xdgconfig.OSEnv)
+		path = authfile.DefaultPath(xdgconfig.OSEnv)
 	}
-	af, warning := loadAuthFile(path, explicitPath != "", xdgconfig.OSEnv)
+	af, warning := authfile.Load(path, explicitPath != "", xdgconfig.OSEnv, knownAuthProviders)
 	keys.AuthFileWarning = warning
-	// The environment always wins: a credential already present is never overwritten by
-	// the file, so a deployment that only ever used env vars sees byte-identical
-	// behavior whether or not an auth.yaml happens to exist.
-	if keys.OpenAI == "" {
-		keys.OpenAI = af.apiKey("openai")
-	}
-	if keys.OpenRouter == "" {
-		keys.OpenRouter = af.apiKey("openrouter")
-	}
-	if keys.Anthropic == "" {
-		keys.Anthropic = af.apiKey("anthropic")
-	}
-	if keys.OpenCode == "" {
-		keys.OpenCode = af.apiKey("opencode")
-	}
+	// The environment always wins: cmp.Or keeps a credential already present and
+	// falls back to the file only when the environment left it empty, so a
+	// deployment that only ever used env vars sees byte-identical behavior
+	// whether or not an auth.yaml happens to exist.
+	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
+	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
+	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
+	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
 
 	cfg.OpenAIKey = keys.OpenAI
 	cfg.OpenRouterKey = keys.OpenRouter
