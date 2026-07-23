@@ -1,0 +1,69 @@
+# Deploy the mecatl.dev docs site (website/) to Cloudflare Pages.
+#
+# WHAT THIS DEPLOYS
+#   The Docusaurus site in website/ (content sourced from ../user-docs), built
+#   to website/build and pushed to the Cloudflare Pages project "mecatl".
+#
+# WHEN IT RUNS
+#   Only on push to `main` (never feature branches — so no public *.pages.dev
+#   preview deployments escape the access gate), scoped to changes under
+#   website/ or user-docs/. `workflow_dispatch` is a manual redeploy hatch.
+#
+# THE ACCESS GATE (not in this repo — Cloudflare dashboard only)
+#   mecatl.dev sits behind Cloudflare Access while pre-public. The policy is
+#   dashboard config, so nothing about it lives in git:
+#     - Google OAuth for the team (emails ending @stacklok.com), OR
+#     - an email-OTP whitelist for external reviewers.
+#   Remove the gate at launch by deleting the Access application — no code change.
+#
+# REQUIRED SECRETS (repo or the `production` environment)
+#   CLOUDFLARE_API_TOKEN   — a token scoped to "Cloudflare Pages: Edit" only.
+#   CLOUDFLARE_ACCOUNT_ID  — the target account id.
+#
+# All actions are SHA-pinned per repo convention.
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'user-docs/**'
+      - '.github/workflows/deploy-site.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push to main supersedes an in-flight one.
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build site
+        working-directory: website
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy website/build --project-name=mecatl --branch=main
