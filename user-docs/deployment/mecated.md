@@ -143,8 +143,11 @@ slow reasoning turn. Once the first chunk arrives, the timer is stopped and only
 | `--default-model` | `""` | Deployment-wide default model id for the default provider; validated fail-fast |
 | `--subagent-model` | `""` | Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own |
 
-Provider credentials are read from environment variables, never flag values:
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`.
+Provider credentials are read from environment variables — `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` — never flag values. An optional
+`auth.yaml` credentials file is also supported for operators who'd rather not
+export a key into the shell environment; see
+[`docs/usage/mecated.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#credentials-file-authyaml).
 
 ### Posture
 

@@ -146,7 +146,7 @@ The `publish` job resolves its write token in precedence order:
 
 ## Key flags
 
-All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`) via `internal/cliconfig.ProviderFlags` — the same credential helper `mecated` and `mecatui` use. Never pass secrets as flag values.
+All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`, the same credential helper `mecated`, `mecatui`, and `mecak8s` share. Never pass secrets as flag values.
 
 ### Prompt and output
 
