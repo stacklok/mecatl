@@ -30,3 +30,22 @@ func TestScheduleTool_SchedulesCLIRemoved(t *testing.T) {
 		t.Fatalf("usage banner still advertises the removed `schedules <verb>` subcommand:\n%s", out)
 	}
 }
+
+// TestScheduleTool_SchedulerFlagRemoved pins AC2.5 (schedule-tool acceptance
+// plan): the old `--scheduler` opt-in flag is DELETED outright — no deprecated
+// alias, no no-op shim. With the scheduler now ON by default on any
+// schedule-capable store (AC2.1), the opt-in is gone: passing it fails fast as
+// an unknown flag at flag-parse (the standard ContinueOnError error, before any
+// listener binds). The disable knob is `--no-scheduler` (AC2.2); the migration
+// note lives in ADR 0073 + the docs, not in kept code.
+func TestScheduleTool_SchedulerFlagRemoved(t *testing.T) {
+	for _, argv := range [][]string{{"--scheduler"}, {"--scheduler=true"}} {
+		_, err := parseFlags(argv)
+		if err == nil {
+			t.Fatalf("parseFlags(%v) = nil error, want the unknown-flag startup error (the opt-in flag is DELETED, not deprecated)", argv)
+		}
+		if !strings.Contains(err.Error(), "flag provided but not defined: -scheduler") {
+			t.Fatalf("parseFlags(%v) error = %v, want the standard unknown-flag error for -scheduler", argv, err)
+		}
+	}
+}

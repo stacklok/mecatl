@@ -190,10 +190,11 @@ type config struct {
 	enableParallel bool
 	enableTeams    bool
 
-	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler. mecak8s
-	// is the multi-replica home — the leader-lease (the k8s session-lease backend)
-	// elects one ticker. OFF by default.
-	schedulerEnabled            bool
+	// Scheduled tasks (issue #189, Phase 1f; ADR 0073): the in-process scheduler.
+	// mecak8s is the multi-replica home — the leader-lease (the k8s session-lease
+	// backend) elects one ticker. ON by default on a schedule-capable store (the
+	// --redis-url backend); noScheduler is the opt-out.
+	noScheduler                 bool
 	schedulerTickInterval       time.Duration
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
@@ -255,9 +256,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3")
 
 	// Scheduled tasks (issue #189, Phase 1f): mecak8s is the multi-replica home.
-	fs.BoolVar(&cfg.schedulerEnabled, "scheduler", false, "SCHEDULED TASKS: enable the in-process scheduler that ticks the durable ScheduleStore (the --redis-url backend) and fires due schedules. A fire mints a fresh \"sched--\" top-level session driven to completion with subagent-grade defaults. OFF by default. The leader-lease reuses the k8s session-lease backend on a distinct id, electing one ticker across replicas. See ADR 0059")
-	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default")
-	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a tighter cadence is rejected); 0 = no floor. Currently inert — Phase 1 has no create API; enforced at the create-seam (Phase 2)")
+	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "SCHEDULED TASKS: disable the in-process scheduler that ticks the durable ScheduleStore (the --redis-url backend) and fires due schedules. The scheduler is ON by default when the store exposes a ScheduleStore — a fire mints a fresh \"sched--\" top-level session driven to completion with subagent-grade defaults; with --no-scheduler the create/list/fire API still works. The leader-lease reuses the k8s session-lease backend on a distinct id, electing one ticker across replicas. See ADR 0059 + ADR 0073")
+	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default. Inert under --no-scheduler or a store with no ScheduleStore")
+	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a tighter cadence is rejected, fail-closed — by BOTH the Schedule tool's create and the REST/gRPC create); 0 = no floor")
 	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
@@ -304,7 +305,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = startup only")
 	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "how long persisted MAIN session snapshots are retained; 0 (default) disables the main age pass")
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN session snapshots kept store-wide; 0 (default) disables the cap")
-	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. 0 (default) disables the pass — fire sessions are never swept. Only meaningful when --scheduler is enabled (defaults to 7d/168h when scheduler is on and this flag is unset)")
+	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. Defaults to 7d/168h when unset (the scheduler is ON by default); an explicit 0 disables the pass — fire sessions are never swept")
 	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "max persisted \"sched--\"-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of --main-retention-max-total: the age horizon bounds the tail, this cap bounds the head. 0 (default) disables the cap")
 
 	// Skills / agents / soul / user-model (default OFF / conventional, like mecated).
@@ -350,13 +351,13 @@ func parseFlags(argv []string) (config, error) {
 		}
 	})
 
-	// Default the schedule-fire retention to 7d when scheduling is ON and the
-	// operator did not set it explicitly (ADR 0059 decision #7 Phase-2): a durable
-	// store accumulates a "sched--" session per fire, so a sane default keeps it
-	// bounded. mecak8s is the multi-replica scheduling home, so the default is
-	// especially relevant here. 0 (explicit --schedule-fire-retention=0) leaves
-	// fire sessions untouched.
-	if cfg.schedulerEnabled && !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
+	// Default the schedule-fire retention to 7d when the operator did not set it
+	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
+	// default on a schedule-capable store, and a durable store accumulates a
+	// "sched--" session per fire, so a sane default keeps it bounded. mecak8s is
+	// the multi-replica scheduling home, so the default is especially relevant
+	// here. An explicit --schedule-fire-retention=0 disables the sweep.
+	if !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
 		cfg.scheduleFireRetention = 7 * 24 * time.Hour
 	}
 
@@ -402,7 +403,7 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
 		SessionLeaseTTL:               cfg.sessionLeaseTTL,
 		SessionLeaseRenewInterval:     cfg.sessionLeaseRenewInterval,
-		SchedulerEnabled:              cfg.schedulerEnabled,
+		SchedulerEnabled:              !cfg.noScheduler,
 		SchedulerTickInterval:         cfg.schedulerTickInterval,
 		SchedulerMinInterval:          cfg.schedulerMinInterval,
 		SchedulerMaxConcurrentFires:   cfg.schedulerMaxConcurrentFires,

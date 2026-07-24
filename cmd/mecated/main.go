@@ -201,9 +201,13 @@ type config struct {
 	sessionLeaseTTL           time.Duration
 	sessionLeaseRenewInterval time.Duration
 
-	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler ticks the
-	// durable ScheduleStore and fires due schedules. OFF by default.
-	schedulerEnabled            bool
+	// Scheduled tasks (issue #189, Phase 1f; ADR 0073): the in-process scheduler
+	// ticks the durable ScheduleStore and fires due schedules. ON by default on
+	// any schedule-capable store (--store-dir / --redis-url / a driver store that
+	// exposes the accessor); a store with no ScheduleStore (the in-memory
+	// default) stays on the byte-identical no-scheduling path. noScheduler is
+	// the opt-out.
+	noScheduler                 bool
 	schedulerTickInterval       time.Duration
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
@@ -928,7 +932,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
 		SessionLeaseTTL:               cfg.sessionLeaseTTL,
 		SessionLeaseRenewInterval:     cfg.sessionLeaseRenewInterval,
-		SchedulerEnabled:              cfg.schedulerEnabled,
+		SchedulerEnabled:              !cfg.noScheduler,
 		SchedulerTickInterval:         cfg.schedulerTickInterval,
 		SchedulerMinInterval:          cfg.schedulerMinInterval,
 		SchedulerMaxConcurrentFires:   cfg.schedulerMaxConcurrentFires,
@@ -1197,7 +1201,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.childRetentionMaxPerFamily, "child-retention-max-per-family", 500, "max persisted child session snapshots kept per delegation family (subagent/parallel/team); the oldest beyond the cap are deleted, skipping in-flight runs. Durable-store-only, like --child-retention. 0 disables the cap")
 	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "how long persisted MAIN (top-level operator/service) session snapshots are retained before the GC sweep deletes them; child sessions are governed by --child-retention instead. Only meaningful with a durable store (--store-dir or a prunable --session-store-url driver). 0 (default) disables the main age pass entirely, so main sessions are never touched")
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN (top-level) session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight runs. Durable-store-only, like --main-retention. 0 (default) disables the cap, so main sessions are never touched")
-	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. 0 (default) disables the pass — fire sessions are never swept. Only meaningful when --scheduler is enabled and a durable store is configured (--store-dir or a prunable --session-store-url driver). An operator commonly sets 7d (168h) so a durable store does not grow without bound")
+	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. Defaults to 7d (168h) when unset and scheduling can be active (the on-by-default posture) so a durable store does not grow without bound; an explicit 0 disables the pass — fire sessions are never swept. Only meaningful with a durable store (--store-dir or a prunable --session-store-url driver)")
 	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "max persisted \"sched--\"-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of --main-retention-max-total for the schedule-fire family: the age horizon (--schedule-fire-retention) bounds the tail, this cap bounds the head (a per-minute cron accumulates ~10k sessions/week the horizon never trims). Durable-store-only. 0 (default) disables the cap")
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = sweep at startup only. Only meaningful when a child or main retention/cap knob is active")
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
@@ -1207,11 +1211,13 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see docs/usage.md). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
-	// Scheduled tasks (issue #189, Phase 1f).
-	fs.BoolVar(&cfg.schedulerEnabled, "scheduler", false, "SCHEDULED TASKS: enable the in-process scheduler that ticks the durable ScheduleStore (the jsonlstore --store-dir or redisstore --redis-url backend) and fires due schedules. A fire mints a fresh \"sched--\" top-level session and drives it to completion with subagent-grade defaults. OFF by default (byte-identical no-scheduling). Fails startup if the configured store exposes no ScheduleStore (use --store-dir or --redis-url). The leader-lease reuses the session-lease backend on a distinct id; with no lease backend it runs single-replica by affinity. See ADR 0059")
-	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default. Only meaningful when --scheduler is enabled")
-	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a schedule whose cadence is tighter than this is rejected, fail-closed). 0 = no floor. Currently inert — Phase 1 has no create API, so the floor is not yet consulted; it is enforced at the create-seam (Phase 2). Only meaningful when --scheduler is enabled")
-	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick. Only meaningful when --scheduler is enabled")
+	// Scheduled tasks (issue #189, Phase 1f; ADR 0073). The scheduler is ON by
+	// default whenever the configured store exposes a ScheduleStore; the flag
+	// surface is the opt-OUT knob.
+	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "SCHEDULED TASKS: disable the in-process scheduler that ticks the durable ScheduleStore (the jsonlstore --store-dir or redisstore --redis-url backend) and fires due schedules. The scheduler is ON by default on any schedule-capable store — a fire mints a fresh \"sched--\" top-level session and drives it to completion with subagent-grade defaults; a store with no ScheduleStore (the in-memory default) never ticks. With --no-scheduler the create/list/fire API still works (manual management is independent of the tick loop). The leader-lease reuses the session-lease backend on a distinct id; with no lease backend it runs single-replica by affinity. See ADR 0059 + ADR 0073")
+	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default. Inert under --no-scheduler or a store with no ScheduleStore")
+	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", 0, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a schedule whose cadence is tighter than this is rejected, fail-closed — by BOTH the Schedule tool's create and the REST/gRPC create). 0 = no floor")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick. Inert under --no-scheduler or a store with no ScheduleStore")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on the store-driver connections (--session-store-url/--memory-store-url)")
 	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")
@@ -1342,11 +1348,12 @@ func parseFlags(argv []string) (config, error) {
 		}
 	})
 
-	// Default the schedule-fire retention to 7d when scheduling is ON and the
-	// operator did not set it explicitly (ADR 0059 decision #7 Phase-2): a durable
-	// store accumulates a "sched--" session per fire, so a sane default keeps it
-	// bounded. 0 (the flag default / explicit --schedule-fire-retention=0) leaves
-	// fire sessions untouched (byte-identical to pre-Phase-2 / the OFF posture).
+	// Default the schedule-fire retention to 7d when the operator did not set it
+	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
+	// default on a schedule-capable store, and a durable store accumulates a
+	// "sched--" session per fire, so a sane default keeps it bounded. An explicit
+	// --schedule-fire-retention=0 leaves fire sessions untouched (the sweep is
+	// disabled).
 	applyScheduleFireRetentionDefault(&cfg)
 
 	// --perf-mcp rides the admin listener, so it is meaningless without one.
@@ -1426,11 +1433,14 @@ func parseFlags(argv []string) (config, error) {
 }
 
 // applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days
-// when the scheduler is enabled and the operator did not pass
-// --schedule-fire-retention explicitly. Extracted from parseFlags to keep its
-// cyclomatic complexity under the gate (ADR 0059 decision #7 Phase-2).
+// when the operator did not pass --schedule-fire-retention explicitly. The
+// scheduler is ON by default on any schedule-capable store (ADR 0073), so the
+// default activates on the default path too — not only under an explicit
+// enable flag. An explicit --schedule-fire-retention=0 disables the sweep.
+// Extracted from parseFlags to keep its cyclomatic complexity under the gate
+// (ADR 0059 decision #7 Phase-2).
 func applyScheduleFireRetentionDefault(cfg *config) {
-	if cfg.schedulerEnabled && !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
+	if !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
 		cfg.scheduleFireRetention = 7 * 24 * time.Hour
 	}
 }
