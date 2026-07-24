@@ -53,7 +53,7 @@ when the code that satisfies the plan has landed.
   mecatl. Status: draft.
 - [Schedule tool](schedule-tool.md) — in-chat scheduled tasks: a model-facing
   `Schedule` tool, the scheduler on by default, and the removal of the
-  declarative settings block + `mecated schedules` CLI. Status: in-progress.
+  declarative settings block + `mecated schedules` CLI. Status: landed.
 
 ## See also
 

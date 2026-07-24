@@ -1,7 +1,7 @@
 # Schedule tool — acceptance plan
 
 **Phase:** capability — in-chat scheduled tasks
-**Status:** in-progress, 2026-07-24. Follow-up to issue #189: scheduling becomes a model-facing, on-by-default affordance instead of an operator-only infra feature.
+**Status:** landed, 2026-07-24. Follow-up to issue #189: scheduling becomes a model-facing, on-by-default affordance instead of an operator-only infra feature.
 **ADR:** [ADR-0073](../adr/0073-schedule-tool.md) — the model-facing `Schedule` tool, on-by-default scheduler, and the removal of the declarative settings block + `mecated schedules` CLI.
 **Accumulator branch:** `acc/schedule-tool` (off `main`).
 
