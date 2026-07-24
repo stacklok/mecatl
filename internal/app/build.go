@@ -2249,6 +2249,12 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	if cfg.ScheduleMetricsEmitter != nil {
 		sched.SetScheduleMetrics(cfg.ScheduleMetricsEmitter)
 	}
+	// Start is INFALLIBLE-AT-LAUNCH (ADR 0073 follow-up): a non-leader replica
+	// does NOT fail — it serves in standby and retries the leader lease in the
+	// background, taking over when the leader lapses. The pre-standby behaviour
+	// (Start returning ErrLeaseHeld → Build error → the process exits) was the
+	// multi-replica CrashLoop: in a ≥2-replica deployment every non-leader
+	// crashed on startup and never reported ready.
 	if err := sched.Start(ctx); err != nil {
 		schedClose()
 		return noop, fmt.Errorf("start scheduler: %w", err)

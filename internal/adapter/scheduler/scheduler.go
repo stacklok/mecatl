@@ -68,6 +68,14 @@ var ErrFireNowDisabled = errors.New("scheduler: fire-now rejected (schedule disa
 // completed one-shot is rejected. The caller maps it to FailedPrecondition.
 var ErrFireNowExhausted = errors.New("scheduler: fire-now rejected (one-shot already fired)")
 
+// ErrNotLeader is returned by FireNow when this replica is not the scheduler
+// leader (a multi-replica deployment where a peer holds the `__scheduler__`
+// lease). A standby replica fails a manual fire fast rather than double-firing
+// against the leader's tick loop. The caller maps it to FailedPrecondition and
+// SHOULD surface the current leader (Scheduler.LeaderOwner) so a client can
+// redirect. Nil-lease (single-replica) schedulers are always the leader.
+var ErrNotLeader = errors.New("scheduler: not the leader (a peer replica is; retry against the leader)")
+
 // Config wires the scheduler. All fields are set by composition (Phase 1f);
 // the unit tests construct one directly with a stub Fire.
 type Config struct {
@@ -170,6 +178,11 @@ const (
 	// errgroup slot for longer than this. Mirrors the leader-lease acquire
 	// timeout's "bounded so a wedged backend cannot stall" discipline.
 	singletonTrialTimeout = 5 * time.Second
+	// leaderStandbyBackoff is how long a non-leader (standby) replica waits
+	// between leader-lease acquire attempts. Short enough that a standby takes
+	// over soon after the leader's lease lapses (TTL), long enough to avoid
+	// hammering the lease backend on contention.
+	leaderStandbyBackoff = 2 * time.Second
 )
 
 // Scheduler is the composition-layer owner of the scheduled-tasks tick loop.
@@ -180,17 +193,34 @@ type Scheduler struct {
 	cfg  Config
 	diag port.Diagnostics
 
-	mu          sync.Mutex // protects the leader-lease state below
+	mu          sync.Mutex // protects the leader-lease + lifecycle state below
 	leaderLease *port.Lease
 
-	// tickCtx is the tick loop's ctx; cancelling it stops ticking. It is also
-	// cancelled by the renewer on a definitive leader-lease loss (a peer took
-	// over — don't double-fire).
-	tickCtx       context.Context
-	tickCancel    context.CancelFunc
-	tickDone      chan struct{} // closed when the tick goroutine exits
-	renewerCancel context.CancelFunc
-	renewerDone   chan struct{} // closed when the renewer goroutine exits (nil if none started)
+	// isLeader is true while this replica holds the leader lease and is
+	// ticking. Read under mu. A non-leader (standby) has it false and is not
+	// ticking. Only meaningful when cfg.Lease != nil.
+	isLeader bool
+
+	// activeCancel cancels the CURRENT leadership epoch's tick+renewer
+	// goroutines; activeDone is closed when BOTH have exited (via epochWg).
+	// A demotion cancels the epoch; Stop cancels the current epoch. The
+	// leadership loop waits activeDone before starting a new epoch so a
+	// demote→promote never overlaps two tick loops.
+	activeCancel context.CancelFunc
+	activeDone   chan struct{} // nil until the first epoch starts
+	epochWg      sync.WaitGroup
+
+	// leadershipCancel drives the standby leadership loop (started by Start,
+	// cancelled by Stop). leadershipDone is closed when the loop goroutine exits.
+	leadershipCancel context.CancelFunc
+	leadershipDone   chan struct{}
+
+	// tickCtx is the current epoch's tick ctx; cancelling it stops ticking. It
+	// is also cancelled by the renewer on a definitive leader-lease loss (a peer
+	// took over — don't double-fire). Kept for RunOnceForTest + the
+	// ErrScheduleUnsupported sticky stop.
+	tickCtx    context.Context
+	tickCancel context.CancelFunc
 
 	draining atomic.Bool
 
@@ -314,18 +344,29 @@ func New(cfg Config) *Scheduler {
 	}
 }
 
-// Start acquires the leader lease (if a backend is wired) and launches the
-// tick loop (and, on a successful acquire, the renewer). It returns nil on:
-//   - success (lease acquired or standalone — ticking either way);
-//   - ErrLeaseHeld (a peer is the leader — this replica stands down, NOT
-//     ticking; logged INFO);
-//   - ErrLeaseUnsupported (the backend can never lease — sticky-disable the
-//     leader gate and CONTINUE ticking standalone, single-replica by affinity;
-//     logged INFO, the honest posture).
+// Start launches the scheduler's lifecycle. It is INFALLIBLE-AT-LAUNCH: it
+// never returns a leader-lease error. With no lease backend (cfg.Lease == nil,
+// single-replica by affinity) it starts the tick loop directly. With a lease
+// backend it launches a background LEADERSHIP LOOP that acquires the
+// `__scheduler__` leader lease and keeps this replica in one of two states:
 //
-// On any other Acquire error it returns the error WITHOUT ticking (a genuine
-// infrastructure failure — fail loud rather than silently run two tickers).
-// Start is idempotent: a second call is a no-op returning nil.
+//   - LEADER: holds the lease, ticks + renews (a leadership EPOCH). On a
+//     definitive lease loss (a peer took over) the epoch is torn down and the
+//     replica returns to standby.
+//   - STANDBY (non-leader): not ticking. Retries the acquire on a backoff
+//     ticker and PROMOTES when the current leader's lease lapses (crash/TTL)
+//     or is released. This is the multi-replica availability contract: a
+//     standby replica must SERVE (report ready, answer RPCs) and take over
+//     when the leader dies — it must NOT crash (the pre-ADR-0073 on-by-default
+//     bug where a non-leader's Start returned ErrLeaseHeld and the process
+//     exited, CrashLooping the replica).
+//
+// A genuine infrastructure fault on the acquire (NOT ErrLeaseHeld / not
+// ErrLeaseUnsupported) is treated like contention: logged and retried on the
+// same backoff — a wedged lease backend degrades scheduling to standby rather
+// than crashing the process. Start is idempotent: a second call is a no-op.
+// FireNow is GATED on leadership (ErrNotLeader) so a standby replica fails a
+// manual fire fast rather than double-firing against the leader.
 func (s *Scheduler) Start(ctx context.Context) error {
 	if !s.started.CompareAndSwap(false, true) {
 		return nil
@@ -335,75 +376,222 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		panic("scheduler: Start called before SetFire (Fire is nil)")
 	}
 
-	if s.cfg.Lease != nil {
-		lease, standalone, err := s.acquireLeader(ctx)
-		if err != nil {
-			// ErrLeaseHeld: a peer is the leader. Stand down cleanly — do NOT
-			// tick. The peer's Due/Claim fence still gives at-most-once, but
-			// running a second ticker would only waste cycles.
-			s.started.Store(false) // allow a later retry
-			return err
-		}
-		if standalone {
-			// ErrLeaseUnsupported: the backend can never lease. Tick standalone
-			// (single-replica by affinity). The at-most-once Claim fence still
-			// holds within this process. No leader-lease state to record.
-		} else {
-			// Acquired: store the lease and start the renewer.
-			renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-			renewerDone := make(chan struct{})
-			s.mu.Lock()
-			s.leaderLease = &lease
-			s.renewerCancel = cancel
-			s.renewerDone = renewerDone
-			s.mu.Unlock()
-			go func() {
-				defer close(renewerDone)
-				s.renewLeader(renewCtx)
-			}()
-		}
+	if s.cfg.Lease == nil {
+		// No lease backend: single-replica by affinity — tick directly.
+		s.startEpoch(context.WithoutCancel(ctx), port.Lease{}, false)
+		return nil
 	}
 
-	// Launch the tick loop regardless (standalone or leader). The tick ctx is
-	// detached from the caller's ctx so a request-scope cancel does not stop
-	// the loop — only Stop or a lost leader does. tickCtx/tickCancel/tickDone
-	// are written under s.mu (mirroring RunOnceForTest's existing locked read)
-	// because the renewer goroutine started above may already be running and
-	// can read tickCancel via declareLeaderLost concurrently with this write
-	// (a definitive lease loss racing the tick loop's own startup).
-	tickCtx, tickCancel := context.WithCancel(context.WithoutCancel(ctx))
-	tickDone := make(chan struct{})
+	// Lease backend: run the standby leadership loop.
+	lCtx, lCancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
 	s.mu.Lock()
-	s.tickCtx, s.tickCancel, s.tickDone = tickCtx, tickCancel, tickDone
+	s.leadershipCancel = lCancel
+	s.leadershipDone = done
 	s.mu.Unlock()
 	go func() {
-		defer close(tickDone)
-		s.tick(tickCtx)
+		defer close(done)
+		s.leadershipLoop(lCtx)
 	}()
 	return nil
 }
 
-// acquireLeader acquires the __scheduler__ leader lease. It returns:
+// leadershipLoop is the standby acquire→epoch→retry cycle. It runs until Stop
+// cancels ctx. Each iteration: try to acquire the leader lease; on success run
+// a leadership epoch (tick + renew) until the lease is lost or Stop; on
+// contention/unsupported/transient fault, wait a backoff and retry. A lost
+// epoch (demote) loops straight back to the acquire so a deposed former leader
+// can win a later epoch.
+func (s *Scheduler) leadershipLoop(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		// Wait for any prior epoch's goroutines to fully exit before starting a
+		// new one (a demote→promote must never overlap two tick loops).
+		s.waitEpoch()
+
+		lease, standalone, err := s.acquireLeader(ctx)
+		switch {
+		case err == nil:
+			// Acquired: run the epoch (blocks until demote or Stop).
+			s.runEpoch(ctx, lease)
+			continue
+		case standalone:
+			// ErrLeaseUnsupported: the backend can never lease. Tick standalone
+			// (single-replica by affinity) until Stop — no leader gate exists.
+			s.diag.Log(ctx, port.LevelInfo, "leader lease unsupported by backend; running standalone (no cross-replica leader gate)",
+				"owner", s.cfg.LeaseOwner)
+			s.startEpoch(ctx, port.Lease{}, false)
+			<-ctx.Done() // standalone runs until Stop; no retry
+			return
+		default:
+			// ErrLeaseHeld (a peer leads) or a transient infra fault: standby.
+			if errors.Is(err, port.ErrLeaseHeld) {
+				s.diag.Log(ctx, port.LevelInfo, "another replica is the scheduler leader; standing by",
+					"owner", s.cfg.LeaseOwner)
+			} else {
+				s.diag.Log(ctx, port.LevelWarn, "scheduler: leader lease acquire failed; retrying in standby",
+					"owner", s.cfg.LeaseOwner, "err", err.Error())
+			}
+			if !s.sleepOrDone(ctx, leaderStandbyBackoff) {
+				return
+			}
+		}
+	}
+}
+
+// runEpoch starts a leadership epoch (tick + renew goroutines) and blocks until
+// the epoch ends (a definitive lease loss demotes it, or Stop cancels ctx) and
+// its goroutines have exited. It then releases the lease (best-effort) unless
+// it was already lost.
+func (s *Scheduler) runEpoch(ctx context.Context, lease port.Lease) {
+	s.startEpoch(ctx, lease, true)
+	// Block until the epoch's tick loop exits (demote cancels it) or Stop.
+	s.mu.Lock()
+	done := s.activeDone
+	s.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+	// The renewer released nothing on loss; release a still-held lease
+	// best-effort (a clean Stop, not a demote).
+	s.releaseLeader()
+}
+
+// startEpoch launches the tick loop (+ the renewer when renew=true). It is the
+// single epoch-start path used by Start (no-lease), leadershipLoop (standalone),
+// and runEpoch (leader). The epoch ctx is detached so a request-scope cancel
+// does not stop it — only demote/Stop does.
+func (s *Scheduler) startEpoch(ctx context.Context, lease port.Lease, renew bool) {
+	epochCtx, epochCancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
+	s.mu.Lock()
+	s.tickCtx, s.tickCancel = epochCtx, epochCancel
+	s.activeCancel = epochCancel
+	s.activeDone = done
+	if renew {
+		s.leaderLease = &lease
+		s.isLeader = true
+	}
+	s.epochWg.Add(2)
+	s.mu.Unlock()
+
+	go func() {
+		defer s.epochWg.Done()
+		s.tick(epochCtx)
+	}()
+	if renew {
+		go func() {
+			defer s.epochWg.Done()
+			s.renewLeader(epochCtx)
+		}()
+	} else {
+		s.epochWg.Done() // no renewer; balance the Add(2)
+	}
+	go func() {
+		s.epochWg.Wait()
+		close(done)
+	}()
+}
+
+// demote tears down the current epoch on a definitive leader-lease loss: it
+// clears leadership and cancels the epoch ctx so the tick + renewer exit. The
+// leadership loop's runEpoch observes activeDone and returns to standby.
+func (s *Scheduler) demote() {
+	s.mu.Lock()
+	s.isLeader = false
+	s.leaderLease = nil
+	cancel := s.activeCancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// waitEpoch blocks until the current epoch's goroutines have exited (no-op if
+// none started). Called by the leadership loop before a fresh acquire.
+func (s *Scheduler) waitEpoch() {
+	s.mu.Lock()
+	done := s.activeDone
+	s.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+
+// releaseLeader releases a still-held leader lease, best-effort, on a
+// cancel-detached short-timeout ctx. No-op if not the leader.
+func (s *Scheduler) releaseLeader() {
+	s.mu.Lock()
+	lease := s.leaderLease
+	s.leaderLease = nil
+	s.isLeader = false
+	s.mu.Unlock()
+	if s.cfg.Lease != nil && lease != nil {
+		relCtx, relCancel := context.WithTimeout(context.Background(), leaderLeaseAcquireTimeout)
+		if err := s.cfg.Lease.Release(relCtx, *lease); err != nil {
+			s.diag.Log(context.Background(), port.LevelWarn, "scheduler: leader lease release failed",
+				"err", err.Error())
+		}
+		relCancel()
+	}
+}
+
+// sleepOrDone waits d or returns false if ctx is done first.
+func (s *Scheduler) sleepOrDone(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// acquireLeader attempts one __scheduler__ leader-lease acquire. It returns:
 //   - (lease, false, nil) on a successful Acquire;
-//   - (zero, true, nil) on ErrLeaseUnsupported — sticky-disable, tick standalone;
-//   - (zero, false, err) on ErrLeaseHeld (stand down) or any other error (fail).
+//   - (zero, true, nil) on ErrLeaseUnsupported — the backend can never lease
+//     (tick standalone);
+//   - (zero, false, err) on ErrLeaseHeld (a peer leads — standby) or any other
+//     error (a transient infra fault — standby + retry, NOT a fatal start
+//     error: a wedged lease backend degrades scheduling, it must not crash the
+//     process).
 func (s *Scheduler) acquireLeader(ctx context.Context) (port.Lease, bool, error) {
 	acqCtx, acqCancel := context.WithTimeout(ctx, leaderLeaseAcquireTimeout)
 	defer acqCancel()
 	lease, err := s.cfg.Lease.Acquire(acqCtx, port.SchedulerLeaderLeaseID, s.cfg.LeaseOwner)
 	switch {
 	case errors.Is(err, port.ErrLeaseUnsupported):
-		s.diag.Log(ctx, port.LevelInfo, "leader lease unsupported by backend; running standalone (no cross-replica leader gate)",
-			"owner", s.cfg.LeaseOwner)
 		return port.Lease{}, true, nil
 	case errors.Is(err, port.ErrLeaseHeld):
-		s.diag.Log(ctx, port.LevelInfo, "another replica is the scheduler leader; standing down",
-			"owner", s.cfg.LeaseOwner)
 		return port.Lease{}, false, err
 	case err != nil:
 		return port.Lease{}, false, fmt.Errorf("scheduler: acquire leader lease: %w", err)
 	}
 	return lease, false, nil
+}
+
+// LeaderOwner reports whether this replica may fire (it is the scheduler
+// leader, or there is no leader gate at all) and, if so, its lease-owner
+// identity. It backs the FireNow not-leader redirect surface (a standby
+// replica names the leader a client should retry against). A scheduler with no
+// lease backend (single-replica by affinity) has NO leader gate, so it always
+// reports leader=true. A lease-backed scheduler that has not been Started (the
+// unit-test direct-FireNow path) has no standby epoch yet, so it also reports
+// leader=true — the gate bites only for a STARTED lease-backed scheduler
+// currently in standby.
+func (s *Scheduler) LeaderOwner() (owner string, leader bool) {
+	if s.cfg.Lease == nil || !s.started.Load() {
+		return s.cfg.LeaseOwner, true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isLeader {
+		return s.cfg.LeaseOwner, true
+	}
+	return "", false
 }
 
 // renewLeader refreshes the __scheduler__ leader lease on a ticker until
@@ -437,9 +625,12 @@ func (s *Scheduler) renewLeader(renewCtx context.Context) {
 			case errors.Is(err, context.Canceled):
 				return // shutdown raced the tick
 			case errors.Is(err, port.ErrLeaseHeld):
-				// Definitive loss: a competitor holds it now. Stop ticking so we
-				// do not double-fire against the new leader.
-				s.declareLeaderLost(renewCtx, err)
+				// Definitive loss: a competitor holds it now. Demote (stop
+				// ticking) so we do not double-fire against the new leader; the
+				// leadership loop returns this replica to standby.
+				s.diag.Log(renewCtx, port.LevelWarn, "lost scheduler leader lease; demoting to standby",
+					"owner", s.cfg.LeaseOwner, "err", err.Error())
+				s.demote()
 				return
 			case err != nil:
 				// Transient/infra fault: keep the lease unless we are within one
@@ -447,34 +638,15 @@ func (s *Scheduler) renewLeader(renewCtx context.Context) {
 				if s.cfg.Clock.Now().Add(s.cfg.LeaseRenewInterval).Before(lease.Expiry) {
 					continue // still have headroom; retry next tick.
 				}
-				s.declareLeaderLost(renewCtx, err)
+				s.diag.Log(renewCtx, port.LevelWarn, "lost scheduler leader lease; demoting to standby",
+					"owner", s.cfg.LeaseOwner, "err", err.Error())
+				s.demote()
 				return
 			}
 			s.mu.Lock()
 			s.leaderLease = &refreshed
 			s.mu.Unlock()
 		}
-	}
-}
-
-// declareLeaderLost records the definitive leader-lease loss and cancels the
-// tick ctx so the tick loop stops. A peer replica is now the leader; its
-// tick loop takes over. In-flight fires are NOT cancelled (a fire mid-run
-// completes; the at-most-once Claim already advanced NextFireAt, so the peer
-// will not re-fire this slot).
-func (s *Scheduler) declareLeaderLost(ctx context.Context, cause error) {
-	s.diag.Log(ctx, port.LevelWarn, "lost scheduler leader lease; stopping tick loop",
-		"owner", s.cfg.LeaseOwner, "err", cause.Error())
-	// The tick-ctx cancel is the actual loss mechanism; no leader-state flag
-	// needs bookkeeping (leaderLease is cleared on Stop's release path). Read
-	// tickCancel under s.mu: Start's own launch of the tick loop writes it
-	// concurrently with this renewer goroutine on a fast definitive loss (a
-	// lease lost moments after Start), so an unguarded read here would race.
-	s.mu.Lock()
-	cancel := s.tickCancel
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
 	}
 }
 
@@ -790,6 +962,13 @@ func (s *Scheduler) emitScheduleMetrics(payload session.SchedulePayload, duratio
 // for polling cadence). The nextFire handed to ClaimNow is computed via
 // computeNextFire (the same helper the tick loop uses).
 func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (port.ScheduleFire, error) {
+	// Leadership gate: in a multi-replica deployment only the leader fires (a
+	// standby must not double-fire against the leader's tick loop). Fail fast
+	// with ErrNotLeader so the caller can redirect to the leader. A nil-lease
+	// (single-replica) scheduler is always the leader.
+	if _, leader := s.LeaderOwner(); !leader {
+		return port.ScheduleFire{}, ErrNotLeader
+	}
 	// Per-schedule-name serialization: a concurrent FireNow (or a tick-loop
 	// fireOne) on the SAME schedule must not race the Load→singleton→ClaimNow
 	// fence (the TOCTOU the singleton guard closes — two concurrent FireNow RPCs
@@ -1005,42 +1184,42 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 	return fire.Stop == session.StopError
 }
 
-// Stop cancels the tick loop, waits for in-flight fires to drain (with a grace
-// period), releases the leader lease (if held), and closes done. It is
-// idempotent: a second call is a no-op that returns nil. It does NOT return
-// until the tick goroutine and any in-flight fire goroutines have joined (or
-// the grace elapses).
+// Stop cancels the leadership loop and the current epoch (tick + renewer),
+// waits for in-flight fires to drain (with a grace period), releases the leader
+// lease (if held), and closes done. It is idempotent: a second call is a no-op
+// that returns nil. It does NOT return until every scheduler goroutine has
+// joined (or the fire grace elapses).
 func (s *Scheduler) Stop() error {
 	if !s.stopped.CompareAndSwap(false, true) {
 		return nil
 	}
-	// Read the cancel funcs + done channels under s.mu (Start writes them under
-	// the same lock, and declareLeaderLost may concurrently read tickCancel on
-	// the renewer goroutine) — copy locally, then act on them OUTSIDE the lock
-	// so a channel receive below never blocks while holding s.mu.
+	// Cancel the leadership loop first so no new epoch starts, then the current
+	// epoch so the tick + renewer exit. Read the cancel funcs + done channels
+	// under s.mu, then act on them OUTSIDE the lock so a channel receive below
+	// never blocks while holding s.mu.
 	s.mu.Lock()
-	tickCancel, renewerCancel := s.tickCancel, s.renewerCancel
-	tickDone, renewerDone := s.tickDone, s.renewerDone
+	leadershipCancel, leadershipDone := s.leadershipCancel, s.leadershipDone
+	activeCancel, activeDone := s.activeCancel, s.activeDone
 	s.mu.Unlock()
-	// Cancel the tick loop first so no new fires start.
-	if tickCancel != nil {
-		tickCancel()
+	if leadershipCancel != nil {
+		leadershipCancel()
 	}
-	// Stop the renewer so it does not race the release.
-	if renewerCancel != nil {
-		renewerCancel()
+	if activeCancel != nil {
+		activeCancel()
 	}
-	// Wait for the tick + renewer goroutines to fully exit so goleak / a
-	// NumGoroutine check sees a clean shutdown. Both unwind on their ctx cancel
-	// (the tick loop's select returns on ctx.Done(); the renewer likewise). A
-	// nil channel (Start not called, or no renewer) skips the wait.
-	if tickDone != nil {
-		<-tickDone
+	// Wait for the leadership loop and the current epoch's goroutines to fully
+	// exit so goleak / a NumGoroutine check sees a clean shutdown. Nil channels
+	// (Start not called, or no lease backend) skip the wait. The leadership
+	// loop's own runEpoch also waits activeDone, so join it first to avoid a
+	// doubly-consumed close (a closed channel receive is safe to repeat, but
+	// ordering Stop after the loop keeps the lifecycle linear).
+	if leadershipDone != nil {
+		<-leadershipDone
 	}
-	if renewerDone != nil {
-		<-renewerDone
+	if activeDone != nil {
+		<-activeDone
 	}
-	// Join in-flight fires with a grace. After the grace, the tickCtx cancel
+	// Join in-flight fires with a grace. After the grace, the epoch-ctx cancel
 	// has already propagated to any fire whose ctx derives from it; the
 	// firesWG.Wait completes once they unwind.
 	waitDone := make(chan struct{})
@@ -1051,27 +1230,16 @@ func (s *Scheduler) Stop() error {
 	select {
 	case <-waitDone:
 	case <-time.After(s.cfg.StopFireGrace):
-		// Grace elapsed; in-flight fires whose ctx derives from the tick ctx
-		// have been cancelled by tickCancel. Any fire that ignores ctx is
+		// Grace elapsed; in-flight fires whose ctx derives from the epoch ctx
+		// have been cancelled by activeCancel. Any fire that ignores ctx is
 		// abandoned (it will wind down on its own; the at-most-once Claim
 		// already advanced NextFireAt, so no double-fire).
 		s.diag.Log(context.Background(), port.LevelWarn, "scheduler: Stop grace elapsed; abandoning in-flight fires")
 	}
-	// Release the leader lease (if held). Best-effort, cancel-detached
+	// Release the leader lease (if still held). Best-effort, cancel-detached
 	// short-timeout ctx (the appendEvent / releaseLease precedent) so a
 	// shutdown-cancelled ctx cannot abort the release.
-	s.mu.Lock()
-	lease := s.leaderLease
-	s.leaderLease = nil
-	s.mu.Unlock()
-	if s.cfg.Lease != nil && lease != nil {
-		relCtx, relCancel := context.WithTimeout(context.Background(), leaderLeaseAcquireTimeout)
-		if err := s.cfg.Lease.Release(relCtx, *lease); err != nil {
-			s.diag.Log(context.Background(), port.LevelWarn, "scheduler: leader lease release failed",
-				"err", err.Error())
-		}
-		relCancel()
-	}
+	s.releaseLeader()
 	close(s.done)
 	return nil
 }

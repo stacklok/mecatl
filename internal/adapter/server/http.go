@@ -1478,6 +1478,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		// FireNow singleton-overlap skip. 412 (gRPC FailedPrecondition) — the
 		// schedule exists and is well-formed, it is just running.
 		writeError(w, http.StatusPreconditionFailed, err.Error())
+	case errors.Is(err, ErrScheduleNotLeader):
+		// FireNow on a standby (non-leader) replica. 412 (gRPC
+		// FailedPrecondition); the message names the leader to redirect to.
+		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, port.ErrScheduleNotFound):
 		// A schedule/fire not found from the store. 404.
 		writeError(w, http.StatusNotFound, err.Error())

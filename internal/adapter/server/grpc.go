@@ -479,6 +479,10 @@ func toStatus(err error) error {
 		// FireNow singleton-overlap skip. FailedPrecondition (HTTP 412) — the
 		// schedule exists and is well-formed, it is just running.
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrScheduleNotLeader):
+		// FireNow on a standby (non-leader) replica. FailedPrecondition (HTTP
+		// 412); the message names the leader to redirect to.
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, port.ErrScheduleNotFound):
 		// A schedule/fire not found from the store. NotFound (HTTP 404).
 		return status.Error(codes.NotFound, err.Error())

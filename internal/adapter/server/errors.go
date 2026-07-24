@@ -129,4 +129,10 @@ var (
 	// already fired (FireCount > 0). It wraps scheduler.ErrFireNowExhausted.
 	// Adapters map it to FailedPrecondition / HTTP 412.
 	ErrScheduleExhausted = errors.New("server: one-shot schedule already fired")
+	// ErrScheduleNotLeader is returned by FireNow when this replica is not the
+	// scheduler leader (a multi-replica deployment where a peer holds the
+	// `__scheduler__` lease). It wraps scheduler.ErrNotLeader. Adapters map it
+	// to FailedPrecondition / HTTP 412; the message names the current leader
+	// (when known) so a client can redirect.
+	ErrScheduleNotLeader = errors.New("server: not the scheduler leader")
 )

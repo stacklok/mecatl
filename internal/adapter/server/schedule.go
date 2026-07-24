@@ -440,6 +440,8 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrFireNowOverlap, err)
 		case errors.Is(err, scheduler.ErrFireNowExhausted):
 			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrScheduleExhausted, err)
+		case errors.Is(err, scheduler.ErrNotLeader):
+			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrScheduleNotLeader, err)
 		default:
 			return port.ScheduleFire{}, err
 		}
