@@ -1,0 +1,65 @@
+# Deploy the mecatl.dev docs site (website/) to AWS S3 + CloudFront.
+#
+# Hosting lives in the stacklok/infra repo: the private S3 bucket
+# `mecatl-dev-site` behind CloudFront distribution E1CIKTNUUCD4K4, with an edge
+# CloudFront Function doing HTTP Basic Auth while the site is pre-public. This
+# workflow builds the Docusaurus site and publishes it via GitHub OIDC — NO
+# static AWS credentials.
+#
+# It assumes `github_actions_mecatl_role`, whose trust is scoped to this repo's
+# `production` GitHub Environment, so the job MUST declare `environment:
+# production` or the AssumeRole call fails. (Create the environment under repo
+# Settings -> Environments if it doesn't exist yet.)
+#
+# Runs only on push to main (no branch/preview deploys). `workflow_dispatch` is
+# a manual redeploy hatch. All actions are SHA-pinned to their latest release.
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'user-docs/**'
+      - '.github/workflows/deploy-site.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write # required for the OIDC assume-role
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # MUST match the role trust sub: repo:stacklok/mecatl:environment:production
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+
+      - name: Build site
+        working-directory: website
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::781189302813:role/github_actions_mecatl_role
+          aws-region: us-east-1
+
+      - name: Publish to S3
+        run: aws s3 sync website/build/ s3://mecatl-dev-site --delete
+
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id E1CIKTNUUCD4K4 --paths '/*'
