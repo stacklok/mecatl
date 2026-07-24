@@ -12,7 +12,10 @@
 # Settings -> Environments if it doesn't exist yet.)
 #
 # Runs only on push to main (no branch/preview deploys). `workflow_dispatch` is
-# a manual redeploy hatch. All actions are SHA-pinned to their latest release.
+# a manual redeploy hatch, with an optional `purge_before_sync` that empties the
+# bucket first — needed to force a full re-upload after a change that `aws s3
+# sync` can't detect on its own (e.g. a bucket-level encryption change, which
+# does not re-encrypt existing objects). All actions are SHA-pinned to latest.
 name: Deploy site
 
 on:
@@ -22,7 +25,12 @@ on:
       - 'website/**'
       - 'user-docs/**'
       - '.github/workflows/deploy-site.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      purge_before_sync:
+        description: 'Empty the bucket before syncing (forces a full re-upload; use after a bucket encryption change)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -57,6 +65,15 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::781189302813:role/github_actions_mecatl_role
           aws-region: us-east-1
+
+      # Optional: empty the bucket first so every object is re-PUT fresh. Needed
+      # after a bucket encryption change (existing objects keep their old
+      # encryption otherwise, since `s3 sync` compares size/mtime, not SSE).
+      - name: Purge bucket before sync
+        if: ${{ inputs.purge_before_sync }}
+        run: |
+          echo "purge_before_sync=true — emptying s3://mecatl-dev-site before re-upload"
+          aws s3 rm s3://mecatl-dev-site --recursive
 
       - name: Publish to S3
         run: aws s3 sync website/build/ s3://mecatl-dev-site --delete
