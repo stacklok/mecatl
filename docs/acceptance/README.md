@@ -51,6 +51,9 @@ when the code that satisfies the plan has landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into
   mecatl. Status: draft.
+- [Schedule tool](schedule-tool.md) — in-chat scheduled tasks: a model-facing
+  `Schedule` tool, the scheduler on by default, and the removal of the
+  declarative settings block + `mecated schedules` CLI. Status: in-progress.
 
 ## See also
 
