@@ -75,9 +75,9 @@ current behaviour lives in `docs/architecture.md`.
 
 3. **Delete the operator-tier `schedules:` settings block and the `mecated
    schedules` CLI.** The `schedules:` YAML subtree
-   (permconfig `OperatorSchedules` / `foldOperatorSchedules` /
+   (`permconfig.Resolver.OperatorSchedules`, `foldOperatorSchedules`,
    `reconcileSchedules`) and the `schedules <verb>` subcommand group
-   (the former cmd/mecated/schedules_cmd.go, deleted) are removed outright — not deprecated, and
+   (`cmd/mecated/schedules_cmd.go`) are removed outright — not deprecated, and
    with NO presence-marker / WARN shim carried for the removed key (a residual
    `schedules:` block in an old config is silently ignored by the lenient
    top-level decode, the same as any removed YAML key). The in-chat `Schedule`
