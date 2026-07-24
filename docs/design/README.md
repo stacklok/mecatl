@@ -8,6 +8,8 @@ This folder no longer holds the per-feature design records — those are now num
   (what is shipped / in-progress / deferred).
 - [IMPLEMENTATION-NOTES.md](./IMPLEMENTATION-NOTES.md) — the dense, living per-subsystem
   implementation reference.
+- [principles.md](./principles.md) — the **platform principles** acceptance plans cite
+  as `Principle N` (the ac-trace grounding list).
 - this file — the **documentation & citation conventions** the `docs/lint` gate enforces.
 
 One source of truth per fact: current behaviour in

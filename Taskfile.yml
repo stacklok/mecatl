@@ -559,6 +559,21 @@ tasks:
       - task: docs:llms
       - task: docs:check
 
+  ac-trace:
+    desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
+    cmds:
+      - go tool github.com/stacklok/ac-trace/cmd/actrace
+
+  ac-trace-strict:
+    desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
+    cmds:
+      - go tool github.com/stacklok/ac-trace/cmd/actrace --strict
+
+  ac-trace-matrix:
+    desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
+    cmds:
+      - go tool github.com/stacklok/ac-trace/cmd/actrace --matrix
+
   ci:
     desc: Full local CI gate (tidy, fmt, lint, test, build)
     cmds:
