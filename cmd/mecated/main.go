@@ -512,7 +512,7 @@ func main() {
 }
 
 // dispatchSubcommand inspects os.Args for an offline CLI subcommand (skills
-// promote / perf-mcp print-config / config / schedules) and runs it, returning
+// promote / perf-mcp print-config / config) and runs it, returning
 // true when it handled the invocation (so main skips booting the daemon). A
 // subcommand parse error or a usage error exits the process directly from here.
 // It is split out of main so main's cyclomatic complexity stays bounded.
@@ -568,29 +568,7 @@ func dispatchSubcommand() bool {
 		fmt.Fprintln(os.Stderr, "  config init    write/print the operator settings.yaml skeleton (--print, --force)")
 		os.Exit(2)
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "schedules" {
-		return runSchedulesDispatch()
-	}
 	return false
-}
-
-// runSchedulesDispatch runs the `mecated schedules <verb>` subcommand group: a
-// thin HTTP client over the running server's /v1/schedules REST surface. It
-// dials --server-addr and never boots the daemon, so a bare `schedules` or an
-// UNKNOWN verb prints the available verbs and exits non-zero (the
-// config-subcommand discipline — a typo must not start a server).
-func runSchedulesDispatch() bool {
-	if err := runSchedules(os.Args[2:], os.Stdout, os.Stderr); err != nil {
-		if errors.Is(err, errSchedulesUsage) {
-			os.Exit(2)
-		}
-		if errors.Is(err, flag.ErrHelp) {
-			return true
-		}
-		slog.Error("schedules failed", "err", err)
-		os.Exit(1)
-	}
-	return true
 }
 
 // runConfigInit implements `mecated config init [--print] [--force]`: it writes the
@@ -1328,8 +1306,7 @@ func parseFlags(argv []string) (config, error) {
 		_, _ = fmt.Fprintf(out, "Commands:\n")
 		_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 		_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
-		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
-		_, _ = fmt.Fprintf(out, "  schedules <verb>        manage scheduled tasks (create/list/inspect/pause/resume/delete/fire)\n\n")
+		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
 		fs.PrintDefaults()
 	}

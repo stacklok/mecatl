@@ -443,27 +443,18 @@ The events project onto the `Event.schedule` field (proto field 15); a skipped
 fire with no session is dropped from the durable log (the log is session-keyed)
 and surfaces only via the operator diagnostic.
 
-### Declarative config + CLI (Phase 2b, issue #233)
+### Authoring surfaces (the in-chat `Schedule` tool)
 
-Beyond the wire API, Phase 2b adds two operator-facing management surfaces (both
-composition/`cmd`-layer, no `engine/agent` change), reusing the Phase 5 + 2a
-substrate:
+Schedules are authored **in-chat by the model-facing `Schedule` tool** (ADR 0073,
+`engine/agent` — create/list/inspect/pause/resume/delete/fire over the
+`port.ScheduleManager` the composition layer late-binds to the Service) and
+managed **out-of-band over the gRPC/REST `ScheduleService` API surface above**
+(the mecatui `/schedule` overlay's transport). The Phase 2b operator-tier
+`settings.yaml` `schedules:` block (declarative startup reconcile) and the
+`mecated schedules <verb>` CLI were **removed** — the in-chat tool replaces
+both authoring surfaces, and the wire API is the only remaining management
+transport.
 
-- **Operator-tier `settings.yaml` `schedules:` block.** The `permconfig.Resolver`
-  exposes an operator-tier `schedules:` YAML subtree (`Resolver.OperatorSchedules`,
-  read from the user-global + CLI tiers ONLY — a project-tier `schedules:` is IGNORED
-  with a WARN). On startup `Build` parses it (`foldOperatorSchedules`) and, after the
-  scheduler starts, **reconciles** it into the durable `ScheduleStore`
-  (`reconcileSchedules`, `internal/app/schedules.go`): an idempotent upsert — create
-  missing, update differing, leave unchanged alone. It is **no-delete**: a schedule
-  removed from the YAML is NOT removed from the store (an operator must delete it
-  explicitly via the API/CLI). The subtree is parsed strictly per-element (an unknown
-  key inside a declaration is a parse error). See [usage.md](usage.md#declarative-schedules-settingsyaml-phase-2b)
-  for the syntax.
-- **`mecated schedules <verb>` CLI** (`cmd/mecated/schedules_cmd.go`) — a thin HTTP
-  client over the running server's `/v1/schedules` REST surface (dials
-  `--server-addr`): `create`, `list`, `inspect`, `pause`, `resume`, `delete`, `fire`.
-  It never boots the daemon (a bare/unknown verb exits 2 with the usage banner).
 - **Schedule metrics** — two instruments emitted via the composition-injected
   `Config.ScheduleMetrics` callback (`internal/adapter/telemetry/metrics.go`
   `EmitSchedule`): `mecatl.schedule.fires` (counter, by `outcome` =

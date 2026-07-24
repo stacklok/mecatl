@@ -39,10 +39,6 @@ func authoritativeKeys() []string {
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
-	// schedules is a bare sequence of ScheduleDecl elements (no mapping wrapper), so
-	// its element keys are modelled directly under "schedules" (the subtree's Fields
-	// ARE the ScheduleDecl fields). A per-decl unknown key is a strict parse error.
-	collect("schedules", permconfig.ScheduleDecl{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
 	// output-economy is likewise a bare scalar Config field (ADR 0041).
@@ -181,7 +177,6 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
-		"schedules":              configgen.TierOperator, // operator-only: a project cannot register schedules (issue #233)
 	}
 	got := map[string]configgen.Tier{}
 	for _, st := range configgen.BuildModel(nil).Subtrees {

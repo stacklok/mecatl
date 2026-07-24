@@ -124,33 +124,6 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 | `models.router.default-category` | `string` | `(empty)` | DefaultCategory is the category the classifier is told to choose when none clearly fits (advisory to the classifier; the real safety net is the fail-soft inherit). |
 | `models.router.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (ADR 0042, mirroring GuardrailsSection.Disabled): per ADR 0042 a non-empty taxonomy ENABLES the router, so `disabled: true` is the "taxonomy defined but temporarily off" override. The CLI kill-switch --subagent-model-router=false also sets it (the two OR together). Default false ⇒ the router is enabled whenever categories are present. |
 
-## `schedules`
-
-Tier: **operator**
-
-OPERATOR-TIER scheduled-tasks declarations (issue #233, Phase 2b): a list of schedules the harness upserts into the durable ScheduleStore at startup (missing → Create, differing → Update, unchanged → no-op; removed schedules are NOT deleted). A project-tier schedules: block is IGNORED with a WARN (a project repo cannot register schedules).
-
-> **Enable:** Each list entry is one schedule; exactly one of `cron` / `oneShot` is required. The harness must be started with --scheduler for declared schedules to be reconciled and fired.
-
-| Key | Type | Default | Description |
-| --- | --- | --- | --- |
-| `schedules[].name` | `string` | `(empty)` | Name is the schedule's unique key (the ScheduleStore upserts by Name). |
-| `schedules[].cron` | `string` | `(empty)` | Cron is the cron expression (5-field or @-macro). Mutually exclusive with OneShot. Empty unless this is a cron trigger. |
-| `schedules[].oneShot` | `string` | `(empty)` | OneShot is an RFC3339 wall-clock instant the schedule fires once at. Mutually exclusive with Cron. Empty unless this is a one-shot trigger. It MUST be in the future at Build time (the create-seam validates this). |
-| `schedules[].timezone` | `string` | `(empty)` | Timezone is the IANA timezone name the cron expression fires in. Empty means UTC. Ignored for a one-shot trigger (an absolute instant is tz-aware). |
-| `schedules[].prompt` | `string` | `(empty)` | Prompt is the free-text user prompt the fire runs with. |
-| `schedules[].provider` | `string` | `(empty)` | Provider is the opaque provider id ("" = deployment default). |
-| `schedules[].model` | `string` | `(empty)` | Model is the opaque model id ("" = deployment default for the provider). |
-| `schedules[].profile` | `string` | `(empty)` | Profile is the session tool-surface profile ("" default, "no-fs" file-less). |
-| `schedules[].workspace` | `string` | `(empty)` | Workspace is the session cwd ("" = deployment default). |
-| `schedules[].mode` | `string` | `(empty)` | Mode is the session permission posture ("default"/"plan"/"acceptEdits"). A non-mutating schedule (Mutating=false) MUST use "plan". |
-| `schedules[].mutating` | `bool` | `false` | Mutating is the explicit write opt-in. false (the default) = read-leaning. |
-| `schedules[].maxFires` | `int` | `0` | MaxFires bounds the TOTAL number of fires for a cron schedule (0 = forever). Ignored for a one-shot (fires once by definition). |
-| `schedules[].maxTurns` | `int` | `0` | MaxTurns caps the number of model calls per fire (0 = disabled). |
-| `schedules[].maxToolCalls` | `int` | `0` | MaxToolCalls caps the total tool invocations per fire (0 = disabled). |
-| `schedules[].singleton` | `bool` | `false` | Singleton is whether to skip the next fire if a prior fire is still running. v1 LIMITATION: this currently always resolves to true — a bare bool cannot distinguish "unset" from "explicitly false", so the create-seam coerces a false to true (overlapping fires are suppressed) and the declarative fold emits a WARN. Opt-out (a real false) is not yet supported; a future *bool / proto-optional field will carry the explicit override. |
-| `schedules[].misfire` | `string` | `(empty)` | Misfire is the misfire policy: "" (default = MisfireFireOnceNow) or "skip". |
-
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 
 By design, `settings.yaml` covers the four subtrees above. Several other

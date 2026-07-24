@@ -88,7 +88,7 @@ func writeSubtreeSkeleton(b *strings.Builder, st *Subtree) {
 	} else if st.ListBody {
 		// A sequence subtree: render one illustrative list element showing the fields
 		// (the first field gets the "- " list marker). The body is a sequence, not a
-		// mapping, so the round-trip parse matches the SchedulesSection sequence decoder.
+		// mapping, so the round-trip parse matches the subtree's sequence decoder.
 		fmt.Fprintf(&body, "%s:\n", st.Key)
 		first := true
 		for _, f := range st.Fields {
