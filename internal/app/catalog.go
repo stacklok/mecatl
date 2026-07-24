@@ -469,17 +469,23 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
+	// The READ-ONLY half (AC1.4): list/inspect live on a separate query tool so
+	// they join the read-parallel batch (ReadOnly()==true). It registers in
+	// EVERY mode — plan mode included — because it is already ReadOnly()==true
+	// (no plan-aware wrapper needed).
+	cat.MustRegister(agent.NewScheduleQueryTool(mgr))
 	base := agent.NewScheduleTool(mgr)
 	if s.mode == session.ModePlan {
-		// PLAN-MODE variant (AC4.3): the default tool reports ReadOnly()==false,
-		// so the plan-mode catalog projection would hide the WHOLE tool —
-		// including the read-leaning create plan mode must keep (a schedule
-		// CREATE does not itself mutate the workspace). The plan-aware variant
-		// reports ReadOnly()==true (so the projection advertises it) and
-		// hard-denies a mutating: true create per call before the base runs —
-		// the plan-mode mutation veto the AC pins. The read/mutate serialization
-		// contract of the DEFAULT tool is unchanged for every non-plan engine.
-		cat.MustRegister(agent.NewPlanAwareScheduleTool(base))
+		// PLAN-MODE variant (AC4.3): the default MUTATING tool reports
+		// ReadOnly()==false, so the plan-mode catalog projection would hide the
+		// WHOLE tool — including the read-leaning create plan mode must keep (a
+		// schedule CREATE does not itself mutate the workspace). The plan-aware
+		// variant reports ReadOnly()==true (so the projection advertises it) and
+		// hard-denies a mutating: true create (and the fire of a mutating
+		// schedule) per call before the base runs — the plan-mode mutation veto
+		// the AC pins. The read/mutate serialization contract of the DEFAULT
+		// tool is unchanged for every non-plan engine.
+		cat.MustRegister(agent.NewPlanAwareScheduleTool(base, mgr))
 		return
 	}
 	cat.MustRegister(base)

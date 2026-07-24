@@ -197,4 +197,3 @@
 #     # CLI kill-switch --subagent-model-router=false also sets it (the two OR together).
 #     # Default false ⇒ the router is enabled whenever categories are present.
 #     disabled: false
-

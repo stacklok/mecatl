@@ -85,6 +85,37 @@ func TestRunSkillsPromote(t *testing.T) {
 	})
 }
 
+// TestParseFlagsSchedulerMinIntervalDefault pins the cadence-floor security
+// default (ADR 0073, the panel-review repair): --scheduler-min-interval
+// defaults to 1m (NOT 0/off), so an on-by-default scheduler + the floor-Allow
+// Schedule tool cannot mint an unbounded tight-cadence recurring fire out of
+// the box. An operator can still set it explicitly (tighter, or 0 to disable).
+func TestParseFlagsSchedulerMinIntervalDefault(t *testing.T) {
+	def, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags(nil): %v", err)
+	}
+	if def.schedulerMinInterval != time.Minute {
+		t.Errorf("--scheduler-min-interval default = %v, want 1m (the bounded-by-default cadence floor); 0/off would let a model mint an unbounded tight-cadence recurring fire", def.schedulerMinInterval)
+	}
+	// An explicit override wins (tighter).
+	tight, err := parseFlags([]string{"--scheduler-min-interval=5s"})
+	if err != nil {
+		t.Fatalf("parseFlags --scheduler-min-interval=5s: %v", err)
+	}
+	if tight.schedulerMinInterval != 5*time.Second {
+		t.Errorf("--scheduler-min-interval=5s = %v, want 5s (an explicit operator override wins)", tight.schedulerMinInterval)
+	}
+	// An explicit 0 disables the floor.
+	off, err := parseFlags([]string{"--scheduler-min-interval=0"})
+	if err != nil {
+		t.Fatalf("parseFlags --scheduler-min-interval=0: %v", err)
+	}
+	if off.schedulerMinInterval != 0 {
+		t.Errorf("--scheduler-min-interval=0 = %v, want 0 (the floor explicitly disabled)", off.schedulerMinInterval)
+	}
+}
+
 // TestParseFlagsSubagentModelRouter asserts the ADR 0042 kill-switch parses:
 // unset → not set (router governed by taxonomy); a bare flag / =true still PARSES and is
 // a harmless no-op (router stays governed by taxonomy); =false maps to RouterDisabled via

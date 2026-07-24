@@ -52,6 +52,13 @@ func TestParseFlagsK8sDefaults(t *testing.T) {
 	if def.reasoningEffortFlagSet {
 		t.Error("reasoningEffortFlagSet default = true, want false (flag not given)")
 	}
+	// The cadence-floor security default (ADR 0073, the panel-review repair):
+	// --scheduler-min-interval defaults to 1m (NOT 0/off), so the on-by-default
+	// scheduler + the floor-Allow Schedule tool cannot mint an unbounded
+	// tight-cadence recurring fire out of the box.
+	if def.schedulerMinInterval != time.Minute {
+		t.Errorf("--scheduler-min-interval default = %v, want 1m (the bounded-by-default cadence floor)", def.schedulerMinInterval)
+	}
 }
 
 // TestAppConfigMapsK8sFields asserts appConfig threads the k8s-native fields

@@ -351,8 +351,9 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 		// Turn 1: create the schedule.
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
 			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m","workspace":"`+workspace+`"}`))),
-		// Turn 2: list it.
-		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleToolName, []byte(`{"verb":"list"}`))),
+		// Turn 2: list it (a READ-ONLY verb — on the ScheduleQuery tool after the
+		// AC1.4 split).
+		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleQueryToolName, []byte(`{"verb":"list"}`))),
 		// Turn 3: fire it.
 		mockllm.ToolCallTurn(session.NewToolCall("c3", agent.ScheduleToolName, []byte(`{"verb":"fire","name":"nightly"}`))),
 		// Turn 4: done.

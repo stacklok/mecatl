@@ -13,26 +13,39 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// scheduletool.go implements the model-facing Schedule tool (ADR 0073, the
+// scheduletool.go implements the model-facing Schedule tools (ADR 0073, the
 // scheduled-tasks capability): the in-chat affordance the model calls to manage
-// scheduled tasks. The tool is a THIN, validated adapter over the consumer-local
-// port.ScheduleManager seam composition injects (satisfied by the server
-// Service's schedule methods) — the SAME validated create-seam
-// (validateScheduleSpec + applyScheduleDefaults) the REST/gRPC handlers call,
-// never a second path. No adapter/server/proto type crosses into engine/agent
-// (the WithSubagentStore injection precedent).
+// scheduled tasks. The surface is TWO catalog entries over the ONE injected
+// port.ScheduleManager seam — a read-only ScheduleQueryTool (list/inspect,
+// ReadOnly()==true) and a mutating ScheduleTool (create/pause/resume/delete/
+// fire, ReadOnly()==false) — the AC1.4 read-parallel/mutate-serial partition.
+// Both are THIN, validated adapters over the consumer-local port.ScheduleManager
+// seam composition injects (satisfied by the server Service's schedule methods)
+// — the SAME validated create-seam (validateScheduleSpec + applyScheduleDefaults)
+// the REST/gRPC handlers call, never a second path. No adapter/server/proto
+// type crosses into engine/agent (the WithSubagentStore injection precedent).
 
-// ScheduleToolName is the catalog name of the scheduled-task management tool.
-// Exported: the composition root references it for the permission floor Allow
-// (defaultRules) and the catalog registration.
+// ScheduleToolName is the catalog name of the MUTATING scheduled-task
+// management tool (create/pause/resume/delete/fire). Exported: the composition
+// root references it for the permission floor Allow (defaultRules) and the
+// catalog registration.
 const ScheduleToolName = "Schedule"
+
+// ScheduleQueryToolName is the catalog name of the READ-ONLY scheduled-task
+// query tool (list/inspect). Exported: the composition root references it for
+// the permission floor Allow (defaultRules) and the catalog registration.
+const ScheduleQueryToolName = "ScheduleQuery"
 
 // scheduleArgs is the model-supplied argument payload. Verb selects the
 // operation; the remaining fields feed the verb that needs them (create takes a
 // full spec; the name-addressed verbs take name; fire takes name). The JSON
-// keys are snake_case (the repo's tool-arg convention).
+// keys are snake_case (the repo's tool-arg convention). The SAME payload is
+// shared by the read-only query tool (list/inspect) and the mutating tool
+// (create/pause/resume/delete/fire) — each tool's Execute accepts only its own
+// verbs.
 type scheduleArgs struct {
-	// Verb is the operation: create | list | inspect | pause | resume | delete | fire.
+	// Verb is the operation. The mutating tool accepts create | pause | resume |
+	// delete | fire; the read-only query tool accepts list | inspect.
 	Verb string `json:"verb"`
 	// Name addresses one schedule (inspect/pause/resume/delete/fire; required
 	// there, ignored by create/list).
@@ -68,16 +81,17 @@ type scheduleArgs struct {
 	OneShotMaxRetries int `json:"one_shot_max_retries,omitempty"`
 }
 
-// scheduleSchema is the JSON schema the model sees for the tool's arguments.
+// scheduleSchema is the JSON schema the model sees for the MUTATING tool's
+// arguments (create/pause/resume/delete/fire).
 var scheduleSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
     "verb": {
       "type": "string",
-      "enum": ["create", "list", "inspect", "pause", "resume", "delete", "fire"],
-      "description": "The operation. create: register a new schedule. list: every schedule (name, trigger, next fire, enabled, last-fire stop). inspect: one schedule plus its fires. pause/resume: disable/enable without deleting. delete: remove. fire: trigger an immediate run, returning the fire id + session id."
+      "enum": ["create", "pause", "resume", "delete", "fire"],
+      "description": "The operation. create: register a new schedule. pause/resume: disable/enable without deleting. delete: remove. fire: trigger an immediate run, returning the fire id + session id."
     },
-    "name": {"type": "string", "description": "The schedule name (required for inspect/pause/resume/delete/fire; create's new name)."},
+    "name": {"type": "string", "description": "The schedule name (required for pause/resume/delete/fire; create's new name)."},
     "prompt": {"type": "string", "description": "create only: the prompt each fire runs with."},
     "cron": {"type": "string", "description": "create only: a cron expression or @-macro (e.g. '0 9 * * *', '@every 1h'). Mutually exclusive with one_shot."},
     "one_shot": {"type": "string", "description": "create only: a single future fire instant, RFC 3339. Mutually exclusive with cron."},
@@ -94,27 +108,40 @@ var scheduleSchema = json.RawMessage(`{
   "required": ["verb"]
 }`)
 
-// ScheduleTool is the model-facing scheduled-task management tool. It consumes
-// the consumer-local port.ScheduleManager seam composition injects (the server
-// Service's schedule methods) — the SAME validated create-seam the REST/gRPC
-// handlers ride, never a second path, so a schedule created in-chat is
-// indistinguishable from an API-created one (one store, one truth).
+// scheduleQuerySchema is the JSON schema the model sees for the READ-ONLY query
+// tool's arguments (list/inspect).
+var scheduleQuerySchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "verb": {
+      "type": "string",
+      "enum": ["list", "inspect"],
+      "description": "The read-only operation. list: every schedule (name, trigger, next fire, enabled, last-fire stop). inspect: one schedule plus its fires."
+    },
+    "name": {"type": "string", "description": "The schedule name (required for inspect; ignored by list)."}
+  },
+  "required": ["verb"]
+}`)
+
+// ScheduleTool is the model-facing MUTATING scheduled-task management tool
+// (create/pause/resume/delete/fire). It consumes the consumer-local
+// port.ScheduleManager seam composition injects (the server Service's schedule
+// methods) — the SAME validated create-seam the REST/gRPC handlers ride, never
+// a second path, so a schedule created in-chat is indistinguishable from an
+// API-created one (one store, one truth).
 //
-// READONLY PARTITION (the dispatch invariant — AGENTS.md): a single tool carries
-// BOTH read-only verbs (list/inspect) and mutating verbs (create/pause/resume/
-// delete/fire), but ReadOnly() takes no args. The conservative, honest shape is
-// chosen here: the tool reports ReadOnly()==false, so EVERY Schedule call
-// serialises on the mutate path — a mutating verb can NEVER run concurrently
-// with a sibling read (the AC the partition protects). The cost (list/inspect
-// calls also serialise) is accepted over the unsound alternative (a true
-// ReadOnly() would let a mutating verb fan out into the read-parallel batch).
-// The verb-level read-only/mutating split is documented in the Spec description
-// and pinned by TestScheduleTool_ReadOnlyPartition.
+// READONLY PARTITION (the dispatch invariant — AGENTS.md): the read-only verbs
+// (list/inspect) live on the SEPARATE ScheduleQueryTool (ReadOnly()==true,
+// read-parallel); this tool carries ONLY the mutating verbs and reports
+// ReadOnly()==false, so every mutating Schedule call serialises on the mutate
+// path and NEVER runs concurrently with a sibling read. The per-verb split is
+// realised as two catalog entries over the one ScheduleManager because a single
+// tool's ReadOnly() takes no args — pinned by TestScheduleTool_ReadOnlyPartition.
 type ScheduleTool struct {
 	mgr port.ScheduleManager
 }
 
-// NewScheduleTool constructs the Schedule tool over the injected
+// NewScheduleTool constructs the mutating Schedule tool over the injected
 // port.ScheduleManager. mgr must be non-nil; NewScheduleTool panics otherwise
 // (a composition-root programming error — the tool has nothing to drive without
 // the seam). Composition registers the tool ONLY when the session's store backs
@@ -127,54 +154,118 @@ func NewScheduleTool(mgr port.ScheduleManager) tool.Tool {
 	return &ScheduleTool{mgr: mgr}
 }
 
-// Spec returns the model-facing specification for the Schedule tool.
+// Spec returns the model-facing specification for the mutating Schedule tool.
 func (*ScheduleTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: ScheduleToolName,
-		Description: "Manage scheduled tasks (recurring or one-shot prompts that run unattended). " +
+		Description: "Manage scheduled tasks (recurring or one-shot prompts that run unattended) — the MUTATING half. " +
 			"Verbs: create registers a schedule (name + prompt + cron or one_shot + workspace); " +
-			"list shows every schedule (name, trigger, next fire, enabled, last-fire stop reason); " +
-			"inspect shows one schedule plus its fires; pause/resume disable/enable without deleting; " +
-			"delete removes it; fire triggers an immediate run and returns the fire id + session id. " +
-			"list and inspect are read-only; create, pause, resume, delete, and fire mutate the " +
-			"schedule registry. Use list to discover existing schedules before creating a duplicate.",
+			"pause/resume disable/enable without deleting; delete removes it; " +
+			"fire triggers an immediate run and returns the fire id + session id. " +
+			"The read-only list/inspect verbs live on the ScheduleQuery tool; use ScheduleQuery list " +
+			"to discover existing schedules before creating a duplicate.",
 		Schema: scheduleSchema,
 	}
 }
 
-// ReadOnly reports false — the conservative, honest shape for a tool carrying
-// both read-only (list/inspect) and mutating (create/pause/resume/delete/fire)
-// verbs: ReadOnly() takes no args, so a single-verb tool cannot distinguish per
-// call. Reporting false serialises EVERY Schedule call on the mutate path, so a
-// mutating verb NEVER overlaps a sibling read (the AC the partition protects);
-// the alternative (true) would let a mutating verb into the read-parallel
-// batch. See the type doc.
+// ReadOnly reports false — this tool carries ONLY the mutating verbs
+// (create/pause/resume/delete/fire), so every call serialises on the mutate
+// path and never overlaps a sibling read (the dispatch invariant). The read-only
+// list/inspect verbs live on the ScheduleQueryTool (ReadOnly()==true). See the
+// type doc.
 func (*ScheduleTool) ReadOnly() bool { return false }
 
-// NewPlanAwareScheduleTool wraps the Schedule tool for a PLAN-MODE session's
-// catalog (ADR 0073 decision 4, the AC4.3 gate). The default tool reports
-// ReadOnly()==false, so the plan-mode catalog projection (engine/tool/catalog.go
-// Available(ModePlan)) would hide the WHOLE tool — including the read-leaning
-// verbs plan mode must keep (a schedule CREATE does not itself mutate the
-// workspace; the FIRE's posture is pinned at create-time by the Mutating/Mode
-// invariant). The plan-aware variant reports ReadOnly()==true (so the plan-mode
-// projection advertises it) and hard-denies a mutating: true create per call
-// with the plan-mode deny reason BEFORE the base tool runs — the read-leaning
-// verbs (list/inspect, and create with mutating false) drive through unchanged.
+// ScheduleQueryTool is the model-facing READ-ONLY scheduled-task query tool
+// (list/inspect). It shares the injected port.ScheduleManager with the mutating
+// ScheduleTool but reports ReadOnly()==true, so its calls join the read-parallel
+// batch — the AC1.4 partition (a mutating verb can never fan out from here
+// because this tool carries none).
+type ScheduleQueryTool struct {
+	mgr port.ScheduleManager
+}
+
+// NewScheduleQueryTool constructs the read-only Schedule query tool over the
+// injected port.ScheduleManager. mgr must be non-nil; NewScheduleQueryTool
+// panics otherwise (the same composition-root programming-error contract as
+// NewScheduleTool). Composition registers it alongside the mutating Schedule
+// tool when the session's store backs a ScheduleStore.
+func NewScheduleQueryTool(mgr port.ScheduleManager) tool.Tool {
+	if mgr == nil {
+		panic("agent: NewScheduleQueryTool requires a non-nil ScheduleManager")
+	}
+	return &ScheduleQueryTool{mgr: mgr}
+}
+
+// Spec returns the model-facing specification for the read-only Schedule query
+// tool.
+func (*ScheduleQueryTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{
+		Name: ScheduleQueryToolName,
+		Description: "Read-only scheduled-task queries (recurring or one-shot prompts that run unattended). " +
+			"Verbs: list shows every schedule (name, trigger, next fire, enabled, last-fire stop reason); " +
+			"inspect shows one schedule plus its fires. These verbs are read-only; the mutating " +
+			"create/pause/resume/delete/fire verbs live on the Schedule tool.",
+		Schema: scheduleQuerySchema,
+	}
+}
+
+// ReadOnly reports true — list/inspect never mutate the workspace or the
+// schedule registry, so they are parallel-safe (the read-half of the AC1.4
+// partition).
+func (*ScheduleQueryTool) ReadOnly() bool { return true }
+
+// Execute dispatches on the read-only verb (list/inspect). A mutating verb is a
+// model-addressable unknown-verb error (this tool carries none).
+func (t *ScheduleQueryTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+	var args scheduleArgs
+	if msg, ok := session.ParseArgs(call, &args); !ok {
+		return session.NewToolError(call.ID, "ScheduleQuery: "+msg), nil
+	}
+	st := &ScheduleTool{mgr: t.mgr}
+	switch strings.ToLower(strings.TrimSpace(args.Verb)) {
+	case "list":
+		return st.list(ctx, call), nil
+	case "inspect":
+		return st.inspect(ctx, call, args), nil
+	default:
+		return session.NewToolError(call.ID, fmt.Sprintf(
+			"ScheduleQuery: unknown verb %q (supported: list, inspect — the mutating create/pause/resume/delete/fire verbs live on the Schedule tool)", args.Verb)), nil
+	}
+}
+
+// Compile-time assertion: ScheduleQueryTool is a Tool.
+var _ tool.Tool = (*ScheduleQueryTool)(nil)
+
+// NewPlanAwareScheduleTool wraps the MUTATING Schedule tool for a PLAN-MODE
+// session's catalog (ADR 0073 decision 4, the AC4.3 gate). The default mutating
+// tool reports ReadOnly()==false, so the plan-mode catalog projection
+// (engine/tool/catalog.go Available(ModePlan)) would hide the WHOLE tool —
+// including the read-leaning create plan mode must keep (a schedule CREATE does
+// not itself mutate the workspace; the FIRE's posture is pinned at create-time
+// by the Mutating/Mode invariant). The plan-aware variant reports
+// ReadOnly()==true (so the plan-mode projection advertises it) and hard-denies
+// the mutating shapes per call with the plan-mode deny reason BEFORE the base
+// tool runs — the read-leaning create (mutating:false) drives through
+// unchanged. The read-only ScheduleQueryTool needs no wrapper: it is
+// ReadOnly()==true, so the plan-mode projection advertises it as-is.
 //
 // The wrapper's ReadOnly()==true is sound because the ONLY call shapes it lets
 // through are the read-leaning ones: none mutate the workspace (a CREATE writes
-// the schedule REGISTRY, not the tree), so no admitted plan-mode call can
-// mutate. The non-plan engine keeps the DEFAULT tool (the read/mutate
-// serialization contract is unchanged).
-func NewPlanAwareScheduleTool(base tool.Tool) tool.Tool {
-	return &planAwareScheduleTool{base: base}
+// the schedule REGISTRY, not the tree; a read-leaning schedule's FIRE runs in
+// plan mode), so no admitted plan-mode call can mutate. mgr is the SAME
+// ScheduleManager the base drives — the fire gate reads the schedule's pinned
+// Mutating posture from it (the fire verb carries no mutating flag of its own).
+// The non-plan engine keeps the DEFAULT tool (the read/mutate serialization
+// contract is unchanged).
+func NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager) tool.Tool {
+	return &planAwareScheduleTool{base: base, mgr: mgr}
 }
 
 // planAwareScheduleTool is the plan-mode view NewPlanAwareScheduleTool wraps
 // (see its doc).
 type planAwareScheduleTool struct {
 	base tool.Tool
+	mgr  port.ScheduleManager
 }
 
 // Spec is the base spec verbatim — the model sees the same verbs; the plan-mode
@@ -186,28 +277,51 @@ func (t *planAwareScheduleTool) Spec() tool.ToolSpec { return t.base.Spec() }
 // (see NewPlanAwareScheduleTool for the soundness argument).
 func (*planAwareScheduleTool) ReadOnly() bool { return true }
 
-// Execute hard-denies a mutating: true create (the plan-mode mutation veto) and
-// passes every other call through to the base tool.
+// Execute hard-denies the mutating shapes (a mutating: true create, and the
+// fire of a mutating schedule — the plan-mode mutation veto) and passes every
+// other call through to the base tool.
 func (t *planAwareScheduleTool) Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
-	if reason := schedulePlanModeDeny(call); reason != "" {
+	if reason := t.schedulePlanModeDeny(ctx, call); reason != "" {
 		return session.NewToolError(call.ID, reason), nil
 	}
 	return t.base.Execute(ctx, call, ws)
 }
 
-// schedulePlanModeDeny returns the plan-mode hard-deny reason for a
-// mutating: true create, else "". The reason mirrors the governance evaluator's
-// plan-mode deny for mutating tools (present a plan and exit plan mode first)
-// so the model gets the same guidance the loop's own deny carries — plus the
-// read-leaning alternative it may use instead.
-func schedulePlanModeDeny(call session.ToolCall) string {
+// schedulePlanModeDeny returns the plan-mode hard-deny reason for a mutating
+// shape, else "". Two shapes are denied: a mutating: true create, and the fire
+// of a schedule whose create-time Mutating opt-in is set (the fire's own
+// mutations are workspace writes — the plan-mode hard-deny on mutations). The
+// reason mirrors the governance evaluator's plan-mode deny for mutating tools
+// (present a plan and exit plan mode first) so the model gets the same guidance
+// the loop's own deny carries — plus the read-leaning alternative it may use
+// instead. A fire of a READ-LEANING schedule drives through (the fire runs in
+// plan mode, pinned at create-time); an unresolvable schedule name lets the
+// base tool surface its own honest not-found error (the gate never lies about a
+// schedule that does not exist).
+func (t *planAwareScheduleTool) schedulePlanModeDeny(ctx context.Context, call session.ToolCall) string {
 	var args scheduleArgs
 	if _, ok := session.ParseArgs(call, &args); !ok {
 		return "" // a parse miss is the base tool's model-addressable error, not the gate's
 	}
-	if strings.EqualFold(strings.TrimSpace(args.Verb), "create") && args.Mutating {
-		return "plan mode is active: a mutating Schedule create is not permitted; present a plan and exit plan mode first " +
-			"(a read-leaning create with mutating:false IS permitted — the fire then runs in plan mode)"
+	switch strings.ToLower(strings.TrimSpace(args.Verb)) {
+	case "create":
+		if args.Mutating {
+			return "plan mode is active: a mutating Schedule create is not permitted; present a plan and exit plan mode first " +
+				"(a read-leaning create with mutating:false IS permitted — the fire then runs in plan mode)"
+		}
+	case "fire":
+		name := strings.TrimSpace(args.Name)
+		if name == "" {
+			return "" // a missing name is the base tool's model-addressable error
+		}
+		sched, err := t.mgr.GetSchedule(ctx, name)
+		if err != nil {
+			return "" // unknown/unresolvable — the base tool's not-found error is the honest surface
+		}
+		if sched.Spec.Mutating {
+			return "plan mode is active: firing the mutating schedule " + name + " is not permitted; present a plan and exit plan mode first " +
+				"(the schedule's create-time mutating:true opt-in means its fire writes the workspace)"
+		}
 	}
 	return ""
 }
@@ -228,10 +342,6 @@ func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, _ too
 	switch strings.ToLower(strings.TrimSpace(args.Verb)) {
 	case "create":
 		return t.create(ctx, call, args), nil
-	case "list":
-		return t.list(ctx, call), nil
-	case "inspect":
-		return t.inspect(ctx, call, args), nil
 	case "pause":
 		return t.setEnabled(ctx, call, args, false), nil
 	case "resume":
@@ -242,7 +352,7 @@ func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, _ too
 		return t.fire(ctx, call, args), nil
 	default:
 		return session.NewToolError(call.ID, fmt.Sprintf(
-			"Schedule: unknown verb %q (supported: create, list, inspect, pause, resume, delete, fire)", args.Verb)), nil
+			"Schedule: unknown verb %q (supported: create, pause, resume, delete, fire — the read-only list/inspect verbs live on the ScheduleQuery tool)", args.Verb)), nil
 	}
 }
 

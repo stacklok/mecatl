@@ -6280,14 +6280,18 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "InspectSubagent", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "InspectMember", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "SubagentStatus", Effect: governance.Allow},
-		// Schedule (ADR 0073): the model-facing scheduled-task management tool.
+		// Schedule (ADR 0073): the model-facing scheduled-task management tools.
 		// Floor-scoped Allow like the memory tools — registering/pausing/firing a
 		// schedule does not itself mutate the workspace (the FIRE's posture is
 		// pinned at create-time by the Mutating/Mode invariant), so it is
 		// pre-approved but config-overridable to ask/deny in any scope. The
 		// cadence floor + the posture pin are the real guards (a later task);
-		// this floor only governs whether the tool ASKS.
+		// this floor only governs whether the tool ASKS. The surface is TWO
+		// entries over the one seam (AC1.4): the mutating Schedule tool
+		// (create/pause/resume/delete/fire) and the read-only ScheduleQuery tool
+		// (list/inspect) — both floor-scoped.
 		{Scope: governance.ScopeBuiltinDefault, Tool: agent.ScheduleToolName, Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: agent.ScheduleQueryToolName, Effect: governance.Allow},
 	}
 }
 

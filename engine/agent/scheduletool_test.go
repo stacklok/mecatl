@@ -298,12 +298,13 @@ func TestScheduleTool_PauseResumeDelete(t *testing.T) {
 	}
 }
 
-// TestScheduleTool_InspectRendersFires pins the inspect verb surfaces the
-// schedule plus its fires' terminal stop reasons.
+// TestScheduleTool_InspectRendersFires pins the inspect verb (a READ-ONLY verb,
+// on the ScheduleQuery tool) surfaces the schedule plus its fires' terminal
+// stop reasons.
 func TestScheduleTool_InspectRendersFires(t *testing.T) {
 	t.Parallel()
 	mgr := newStubScheduleManager()
-	tl := agent.NewScheduleTool(mgr)
+	tl := agent.NewScheduleQueryTool(mgr)
 	ws := memfs.NewWorkspace("/ws")
 	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
 		Name: "nightly", Prompt: "x", Trigger: port.TriggerSpec{Cron: "0 3 * * *"},
@@ -356,7 +357,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	// The PLAN-MODE variant: a mutating create is hard-denied BEFORE the base
 	// tool runs (the manager never sees it — the deny reason mirrors the
 	// governance plan-mode reason), while a read-leaning create drives through.
-	plan := agent.NewPlanAwareScheduleTool(agent.NewScheduleTool(mgr))
+	plan := agent.NewPlanAwareScheduleTool(agent.NewScheduleTool(mgr), mgr)
 	if !plan.ReadOnly() {
 		t.Fatal("the plan-aware Schedule tool must report ReadOnly()==true so the plan-mode catalog projection advertises it (the read-leaning verbs it admits do not mutate the workspace)")
 	}
@@ -385,6 +386,47 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 		t.Fatalf("plan-mode read-leaning create landed %+v, want exactly the ro schedule", mgr.created)
 	}
 
+	// AC4.3 (extended): a `fire` of a MUTATING schedule is ALSO hard-denied in
+	// plan mode (the plan-mode hard-deny on mutations — a mutating schedule's
+	// fire writes the workspace). A `fire` of a READ-LEANING schedule drives
+	// through (the fire itself runs in plan mode, pinned at create-time).
+	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "mutsched", Prompt: "p", Trigger: port.TriggerSpec{Cron: "@every 1h"}, Mutating: true, Mode: session.ModeDefault,
+	}); err != nil {
+		t.Fatalf("CreateSchedule(mutsched): %v", err)
+	}
+	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "rosched", Prompt: "p", Trigger: port.TriggerSpec{Cron: "@every 1h"}, Mutating: false, Mode: session.ModePlan,
+	}); err != nil {
+		t.Fatalf("CreateSchedule(rosched): %v", err)
+	}
+	firesBefore := len(mgr.fires["mutsched"]) + len(mgr.fires["rosched"])
+
+	res, err = plan.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"mutsched"}`), ws)
+	if err != nil {
+		t.Fatalf("plan Execute (fire mutating): %v", err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "plan mode") {
+		t.Fatalf("plan-mode fire of a mutating schedule = %q, want the plan-mode hard-deny", res.Content)
+	}
+	if len(mgr.fires["mutsched"]) != 0 {
+		t.Fatal("plan-mode fire of a mutating schedule reached the manager, want denied before it")
+	}
+
+	res, err = plan.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"rosched"}`), ws)
+	if err != nil {
+		t.Fatalf("plan Execute (fire read-leaning): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("plan-mode fire of a read-leaning schedule = error %q, want allowed (the fire runs in plan mode)", res.Content)
+	}
+	if len(mgr.fires["rosched"]) != 1 {
+		t.Fatalf("plan-mode fire of a read-leaning schedule fired %d times, want 1", len(mgr.fires["rosched"]))
+	}
+	if got := len(mgr.fires["mutsched"]) + len(mgr.fires["rosched"]); got != firesBefore+1 {
+		t.Fatalf("total fires after the two plan-mode fire calls = %d, want exactly one new (the read-leaning one)", got)
+	}
+
 	// The DEFAULT (non-plan) variant admits BOTH — the gate is plan-mode-only.
 	def := agent.NewScheduleTool(mgr)
 	if def.ReadOnly() {
@@ -392,5 +434,8 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	}
 	if res, err := def.Execute(context.Background(), scheduleCall(t, mutCreate), ws); err != nil || res.IsError {
 		t.Fatalf("default-mode mutating create = (%v, %q), want allowed", err, res.Content)
+	}
+	if res, err := def.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"mutsched"}`), ws); err != nil || res.IsError {
+		t.Fatalf("default-mode fire of a mutating schedule = (%v, %q), want allowed (no plan-mode gate outside plan mode)", err, res.Content)
 	}
 }

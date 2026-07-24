@@ -64,17 +64,20 @@ Flags:
 |---|---|---|
 | `--no-scheduler` | false | Disable the in-process scheduler tick loop (ON by default on any schedule-capable store). The create/list/fire API and the in-chat `Schedule` tool still work — manual management is independent of the tick loop. The removed `--scheduler` opt-in fails fast as an unknown flag (clean removal, no deprecated alias — see ADR 0073). |
 | `--scheduler-tick-interval` | 30s | How often the tick loop polls `ScheduleStore.Due`. |
-| `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-create time — by BOTH the in-chat `Schedule` tool and the REST/gRPC handler (a schedule whose cadence is tighter than this is rejected, fail-closed). |
+| `--scheduler-min-interval` | 1m | The frequency floor enforced at schedule-create time — by BOTH the in-chat `Schedule` tool and the REST/gRPC handler (a schedule whose cadence is tighter than this is rejected, fail-closed). Defaults to 1m so an on-by-default scheduler + the floor-Allow `Schedule` tool cannot mint an unbounded tight-cadence recurring fire out of the box; set it explicitly to tighten, or to 0 to disable the floor. |
 | `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
 | `--schedule-fire-retention` | 7d (168h) | How long persisted `sched--`-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from `--child-retention`/`--main-retention`); a LIVE fire (one mid-run) is never deleted. The 7d default applies whenever the flag is unset (the scheduler is on by default); an explicit 0 disables the pass — fire sessions are never swept. Only meaningful with a durable store configured. |
 | `--schedule-fire-retention-max-total` | 0 (off) | Max persisted `sched--`-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of `--main-retention-max-total`: the age horizon (`--schedule-fire-retention`) bounds the tail, this cap bounds the head (a per-minute cron accumulates ~10k sessions/week the horizon never trims). Durable-store-only. |
 
-Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,
-issue #232), the operator-tier **`settings.yaml` `schedules:` block** (Phase 2b,
-issue #233 — declarative reconcile into the store), the **`mecated schedules`
-CLI** (Phase 2b), and the **`mecatui /schedule` overlay** (Phase 3a, issue #234
-— list/inspect/pause/resume/fire-now/delete from the TUI; see `docs/tui.md`).
-An in-overlay Create form + NL→cron is planned for a later phase.
+Schedules are managed via three surviving surfaces: the in-chat **`Schedule`
+tool** (the model-facing catalog affordance — create/list/inspect/pause/resume/
+delete/fire, ADR 0073), the **`ScheduleService`** gRPC + REST API (Phase 2a,
+issue #232), and the **`mecatui /schedule` overlay** (Phase 3a, issue #234 —
+list/inspect/pause/resume/fire-now/delete from the TUI; see `docs/tui.md`). The
+operator-tier `settings.yaml` `schedules:` block and the `mecated schedules`
+CLI were removed by ADR 0073 (the in-chat tool + the retained API + the OS
+scheduler cover the use cases). An in-overlay Create form + NL→cron is planned
+for a later phase.
 
 **gRPC** (`mecatl.v1.ScheduleService`): `CreateSchedule`, `GetSchedule`,
 `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`,
@@ -132,67 +135,23 @@ GC-retention family prefix swept by `--schedule-fire-retention`. The at-most-onc
 firing semantics mean a crash mid-fire skips the slot — a recurring schedule
 self-heals via the fire-once-now misfire policy; a one-shot can be lost.
 
-### Declarative schedules (`settings.yaml`, Phase 2b)
+### Schedule-spec field notes
 
-An operator can declare schedules in the **operator-tier** `settings.yaml` (the
-user-global file or a CLI-supplied config) instead of creating them one-by-one over
-the API. On startup `mecated` parses the `schedules:` block and **reconciles** it
-into the durable `ScheduleStore` (idempotent upsert — create missing, update
-differing, leave unchanged alone):
+The schedule spec fields below apply however the schedule is created (the
+in-chat `Schedule` tool, the REST/gRPC API):
 
-```yaml
-# ~/.config/mecatl/settings.yaml  (operator-tier — NOT a project file)
-schedules:
-  - name: nightly-review
-    cron: "0 9 * * *"          # 5-field cron or @-macro; mutually exclusive with oneShot
-    timezone: "America/New_York" # IANA name; empty = UTC
-    prompt: "Summarize today's commits and open a follow-up if any test broke."
-    workspace: "/repo"
-    mode: plan                  # a non-mutating schedule MUST run in plan mode
-    # mutating: true           # opt into write tools (then mode may be default/acceptEdits)
-    maxTurns: 20                # per-fire turn budget (0 = disabled)
-    maxToolCalls: 40            # per-fire tool-call budget (0 = disabled)
-    maxFires: 0                 # total fires for a cron (0 = forever); ignored for one-shot
-    singleton: true             # skip the next fire if a prior one is still running (currently always effectively true — see notes)
-    # misfire: skip             # "" (default = fire-once-now) or "skip"
-    carryContext: true           # Phase 2c: render the prior fire's conversation as a fenced untrusted preamble (see notes)
-
-  - name: one-shot-patch
-    oneShot: "2026-07-04T10:00:00Z"  # RFC3339 instant; must be in the future
-    prompt: "Apply the pending security patch."
-    mutating: true
-    provider: anthropic
-    model: claude-sonnet-4-5
-    oneShotRetry: true          # Phase 2c: re-arm on a mid-fire crash (cron triggers reject this)
-    oneShotMaxRetries: 3        # Phase 2c: re-arm budget (default 3 when oneShotRetry=true and this is 0)
-```
-
-Notes:
-
-- The `schedules:` key is a **YAML sequence** (no `items:` wrapper). Each element is
-  decoded **strictly** — an unknown key inside one declaration is a parse error, so a
-  typo can't silently disable a schedule.
-- **Operator-tier only.** A **project-tier** `.mecatl/settings.yaml` `schedules:`
-  block is **ignored with a WARN** — a project repo cannot register schedules (same
-  security-downgrade fold as guardrails/posture). Set `schedules:` in your
-  user-global `settings.yaml` or pass it via `--config`.
-- **No destructive reconcile.** Removing a schedule from the YAML does NOT delete it
-  from the store — an operator must delete it explicitly via the API/CLI. Re-running
-  `mecated` only creates/updates; it never deletes.
-- A declaration with neither `cron` nor `oneShot`, or with both, is rejected by the
-  create-seam at reconcile time (WARN'd + skipped, not fatal — one bad schedule does
-  not drop the rest).
+- A declaration with neither `cron` nor `oneShot`, or with both, is rejected by
+  the create-seam (fail-closed).
 - **`workspace` is required** for a default-profile schedule (a fire mints a real
   filesystem session), and must be OMITTED for a `no-fs`-profile schedule. The
   create-seam validates this up front, so an empty-workspace default schedule is
-  rejected at create/reconcile time rather than failing later at fire time.
+  rejected at create time rather than failing later at fire time.
 - **`singleton` currently always effectively resolves to `true`.** The create-seam
   coerces `singleton: false` to `true` (overlap suppression) — a `false` value is
-  accepted but silently overridden, so a fold-time WARN names the schedule. Full
-  opt-out support (allowing overlapping fires) needs an engine-port/proto change and
-  is deferred.
-- **Phase 2c fields (issue #236)** — two opt-in schedule-spec fields, both
-  defaulting OFF (the pre-Phase-2 path is byte-identical when neither is set):
+  accepted but silently overridden. Full opt-out support (allowing overlapping
+  fires) needs an engine-port/proto change and is deferred.
+- **Phase 2c opt-in fields (issue #236)**, both defaulting OFF (the pre-Phase-2
+  path is byte-identical when neither is set):
   - **`oneShotRetry`** (bool, default `false`) — re-arm a one-shot that crashed
     mid-fire (prior fire ended in `StopError`, or `LastFireSessionID` is still the
     `pending` sentinel — Claim happened but RecordFire did not) up to
@@ -218,35 +177,6 @@ Notes:
     error) the fire degrades to fresh-context (WARN, never fails the fire). A
     re-armed one-shot does NOT carry context on the retry (the gate short-circuits
     on the `pending` sentinel).
-
-### `mecated schedules` CLI (Phase 2b)
-
-`mecated schedules <verb>` is a thin HTTP client over the running server's
-`/v1/schedules` REST surface — it dials `--server-addr` (default the loopback HTTP
-listener the server itself binds) and never boots the daemon. Use it for ad-hoc
-management against a running `mecated`:
-
-```sh
-# Create a cron schedule (flags mirror the REST body).
-mecated schedules create --name nightly-review --cron "0 9 * * *" \
-  --prompt "Summarize today's commits." --workspace /repo --mode plan
-
-# List all schedules (text by default; --output json for machine consumption).
-mecated schedules list
-
-# Inspect one schedule (optionally its recent fires with --fires).
-mecated schedules inspect nightly-review --fires
-
-# Pause / resume / delete.
-mecated schedules pause  nightly-review
-mecated schedules resume nightly-review
-mecated schedules delete nightly-review
-
-# Force an immediate fire (synchronous-to-terminal, like FireNow).
-mecated schedules fire nightly-review
-```
-
-A bare `mecated schedules` or an unknown verb prints the usage banner and exits 2.
 
 ## ToolHive LLM gateway
 

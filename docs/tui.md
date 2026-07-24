@@ -771,9 +771,9 @@ engine; unmatched input falls back to raw cron). `tab`/`↑`/`↓` cycle focus
 through the fields; on the mutating toggle, `y`/`n` set the value; `enter`
 submits (fires `CreateSchedule`; the new schedule appears in the panel on
 arrival). `esc` returns to the panel without creating. The form is a
-common-path authoring surface — the CLI (`mecated schedules create`) covers the
-full flag surface (provider/model, mode, max-fires, misfire, timezone,
-singleton, limits); the form keeps it simple.
+common-path authoring surface — the REST/gRPC `CreateSchedule` API (and the
+in-chat `Schedule` tool) covers the full flag surface (provider/model, mode,
+max-fires, misfire, timezone, singleton, limits); the form keeps it simple.
 
 **Row format.** Each `/sessions` picker row renders as
 `<state-badge> <relative-time> <turns>t <label> (<model-id>)`, where `<label>`

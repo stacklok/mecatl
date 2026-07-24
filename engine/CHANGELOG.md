@@ -13,39 +13,68 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.ScheduleQueryTool` + `agent.NewScheduleQueryTool` +
+  `agent.ScheduleQueryToolName` (ADR 0073, the AC1.4 read-parallel/mutate-serial
+  partition)** — the scheduled-task surface is now TWO catalog entries over the
+  ONE injected `port.ScheduleManager`: a read-only query tool (list/inspect,
+  catalog name `"ScheduleQuery"`, `ReadOnly()==true` so list/inspect join the
+  read-parallel batch) and the mutating `agent.ScheduleTool`
+  (create/pause/resume/delete/fire, `ReadOnly()==false` so every mutating call
+  serialises). The split realises the per-verb ReadOnly partition a single
+  tool's no-arg `ReadOnly()` cannot express: a mutating verb can never fan out
+  into the read-parallel batch. Classified Added per COMPATIBILITY.md (a new
+  exported tool + constructor + name are a minor bump). (schedule-tool plan,
+  task 06 repair)
+
+### Changed
+
+- **`agent.NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager)`**
+  — the AC4.3 plan-mode gate now also denies the `fire` of a MUTATING schedule
+  (the plan-mode hard-deny on mutations: a `mutating: true` schedule's fire
+  writes the workspace). It reads the schedule's create-time `Mutating` posture
+  from the injected `mgr` (the fire verb carries no mutating flag of its own),
+  so the constructor takes the manager as a second argument. The mutating
+  `ScheduleTool` now carries ONLY the mutating verbs (list/inspect moved to
+  `agent.ScheduleQueryTool`); its schema and unknown-verb message reflect that.
+  Classified Changed per COMPATIBILITY.md (a widened constructor signature +
+  narrowed verb surface; pre-v1 a minor bump). (schedule-tool plan, task 06
+  repair)
+
+### Added
+
 - **`agent.NewPlanAwareScheduleTool`** (ADR 0073, the AC4.3 plan-mode gate) —
-  wraps the Schedule tool for a PLAN-MODE session's catalog. The default tool
-  reports `ReadOnly()==false` (a single tool carries both read-leaning and
-  mutating verbs), so the plan-mode catalog projection
+  wraps the MUTATING Schedule tool for a PLAN-MODE session's catalog. The default
+  mutating tool reports `ReadOnly()==false`, so the plan-mode catalog projection
   (`engine/tool/catalog.go` `Available(ModePlan)`) would hide the WHOLE tool —
   including the read-leaning create plan mode must keep (a schedule CREATE does
   not itself mutate the workspace; the FIRE's posture is pinned at create-time
   by the Mutating/Mode invariant). The plan-aware variant reports
-  `ReadOnly()==true` (so the projection advertises it) and hard-denies a
-  `mutating: true` create per call with the plan-mode deny reason BEFORE the
-  base tool runs; the read-leaning verbs (list/inspect, and create with
-  `mutating:false`) drive through unchanged. Composition registers it only for
-  a plan-mode session's catalog; every non-plan engine keeps the DEFAULT tool
+  `ReadOnly()==true` (so the projection advertises it) and hard-denies the
+  mutating shapes (a `mutating: true` create; the fire of a mutating schedule)
+  per call with the plan-mode deny reason BEFORE the base tool runs; the
+  read-leaning create (`mutating:false`) and the fire of a read-leaning
+  schedule drive through unchanged. Composition registers it only for a
+  plan-mode session's catalog; every non-plan engine keeps the DEFAULT tool
   (the read/mutate serialization contract is unchanged). Classified Added per
   COMPATIBILITY.md (a new exported constructor is a minor bump). (schedule-tool
-  plan, task 05)
+  plan, task 05; the fire-gate extension + manager arg landed in task 06 repair)
 
 - **`port.ScheduleManager` + `port.ErrFireNowOverlap` + `agent.ScheduleTool`
   (ADR 0073, the model-facing Schedule tool)** — a new consumer-local
   `port.ScheduleManager` interface (the create/inspect/list/update/pause/
-  resume/delete/fire/list-fires verbs the Schedule tool needs, satisfied by
+  resume/delete/fire/list-fires verbs the Schedule tools need, satisfied by
   composition with the server Service's schedule methods — the SAME validated
   create-seam the REST/gRPC handlers ride, never a second path), the
   port-level `ErrFireNowOverlap` sentinel a `FireNow` overlap returns (so a
   layer that may not import the scheduler adapter — the tool — matches the
-  singleton rejection via `errors.Is`), and the `agent.ScheduleTool` itself
-  (`agent.NewScheduleTool(port.ScheduleManager)`, catalog name
-  `agent.ScheduleToolName` = `"Schedule"`). The tool reports
-  `ReadOnly()==false` (the conservative shape for a tool carrying both
-  read-only and mutating verbs — every Schedule call serialises so a mutating
-  verb never overlaps a sibling read). Classified Added per COMPATIBILITY.md
-  (a new interface + sentinel + tool are a minor bump). (schedule-tool plan,
-  task 01)
+  singleton rejection via `errors.Is`), and the MUTATING `agent.ScheduleTool`
+  itself (`agent.NewScheduleTool(port.ScheduleManager)`, catalog name
+  `agent.ScheduleToolName` = `"Schedule"`). The tool carries the mutating verbs
+  (create/pause/resume/delete/fire) and reports `ReadOnly()==false` (every
+  mutating call serialises so it never overlaps a sibling read); the read-only
+  list/inspect verbs live on the `agent.ScheduleQueryTool` (task 06 repair).
+  Classified Added per COMPATIBILITY.md (a new interface + sentinel + tool are
+  a minor bump). (schedule-tool plan, task 01)
 
 - **`session.StripProviderState`** — provider-neutral history for cross-provider
   model-switch carryover (minor): a pure function returning a copy of a message

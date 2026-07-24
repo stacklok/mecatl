@@ -4407,47 +4407,20 @@ on the byte-identical no-scheduling path). The pieces:
 
 #### Phase 2b (issue #233) — declarative config + CLI + metrics
 
-The three shipped Phase 2b surfaces, all composition/`cmd`-layer (no `engine/agent`
-change), reusing the Phase 5 + 2a substrate above:
+> **REMOVED by ADR 0073 (the schedule-tool plan).** The two declarative surfaces
+> Phase 2b shipped — the operator-tier `settings.yaml` `schedules:` block (the
+> `Resolver.OperatorSchedules` accessor and the `foldOperatorSchedules` /
+> `reconcileSchedules` upsert path, formerly `internal/app/schedules.go`) and the
+> `mecated schedules <verb>` CLI subcommand group (formerly
+> `cmd/mecated/schedules_cmd.go`) — no longer exist; both files and the
+> `permconfig` `ScheduleDecl`/`SchedulesSection` schema were deleted outright.
+> The in-chat `Schedule` tool + the retained `ScheduleService` REST/gRPC API +
+> the OS scheduler cover the use cases; a residual `schedules:` block in an old
+> config is silently ignored by the lenient top-level decode. The surviving
+> management surfaces are the in-chat `Schedule` tool, the `ScheduleService`
+> gRPC + REST `/v1/schedules` API, and the mecatui `/schedule` overlay. What
+> remains of Phase 2b is the metrics surface:
 
-- **Operator-tier `settings.yaml` `schedules:` block.** The `permconfig.Resolver`
-  exposes the operator-tier `schedules:` YAML subtree via
-  `Resolver.OperatorSchedules` (`internal/adapter/permconfig/resolve.go`): it reads
-  the user-global + CLI tiers ONLY — a **project-tier** file's `schedules:` block is
-  **IGNORED with a WARN** (`internal/adapter/permconfig/resolve.go`, the same
-  tighten-only/security-downgrade fold as guardrails/posture — a project repo cannot
-  register schedules). The subtree is parsed STRICTLY at the per-element grain
-  (`internal/adapter/permconfig/schema.go` `SchedulesSection.UnmarshalYAML` +
-  `ScheduleDecl.UnmarshalYAML`: the `schedules:` key is a YAML SEQUENCE, each element
-  is a `ScheduleDecl` whose own `UnmarshalYAML` rejects unknown keys, and a non-
-  sequence node is a parse error — a typo inside one declaration cannot silently
-  disable a schedule). `ScheduleDecl` is the YAML-friendly mirror of
-  `port.ScheduleSpec` (cron/oneShot are bare strings parsed by composition;
-  provider/model are opaque selector strings).
-- **`reconcileSchedules` — idempotent upsert, no-delete.**
-  `internal/app/schedules.go` (`foldOperatorSchedules` + `reconcileSchedules`) is the
-  declarative→store path. `foldOperatorSchedules` (called once in `Build` BEFORE the
-  scheduler starts) maps each `ScheduleDecl` to a `port.ScheduleSpec` via
-  `toScheduleSpec` (parse cron/one-shot, map selector/profile/mode/limits, interpret
-  the misfire policy), fail-SOFT per declaration (one bad schedule is WARN'd + skipped,
-  not fatal — mirroring `compileGuardrailRules`). `reconcileSchedules` (called AFTER
-  the scheduler starts, since it needs the live `*server.Service`) upserts the declared
-  specs into the durable `ScheduleStore`: a missing schedule is `CreateSchedule`'d, a
-  differing one is `UpdateSchedule`'d, an unchanged one is left alone (idempotent —
-  re-running `Build` does not churn; the diff normalizes against the create-seam's
-  `applyScheduleDefaults` so a `singleton: false` declaration does not spuriously
-  Update every restart). **Schedules removed from the YAML are NOT deleted** — an
-  operator must delete them explicitly via the API/CLI (no destructive reconcile).
-  Errors are WARN'd per schedule, never fatal — a broken store at reconcile time does
-  not block startup. The whole path is a no-op when no operator-tier `schedules:`
-  block was configured (the byte-identical default).
-- **`mecated schedules <verb>` CLI subcommands** (`cmd/mecated/schedules_cmd.go`) — a
-  thin HTTP client over the running server's `/v1/schedules` REST surface (dials
-  `--server-addr`, default the loopback HTTP listener the server itself binds). Verbs:
-  `create` (cron or one-shot), `list`, `inspect` (optionally its recent fires),
-  `pause`, `resume`, `delete`, and `fire` (force an immediate fire). A bare
-  `mecated schedules` or an unknown verb prints the usage banner and exits 2 — it
-  NEVER falls through to boot the daemon (mirrors the `config` subcommand shape).
 - **Schedule metrics** (`internal/adapter/telemetry/metrics.go` `EmitSchedule`, the
   composition-injected `Config.ScheduleMetrics` callback the scheduler invokes via
   `SetScheduleMetrics`). Two instruments, BOTH carrying an `outcome` attribute (the

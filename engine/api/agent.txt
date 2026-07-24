@@ -29,6 +29,9 @@
     method func (*Run).Cancel()
     method func (*Run).CancelChild(childID string) bool
     method func (*Run).Events() <-chan session.Event
+    method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*ScheduleQueryTool).ReadOnly() bool
+    method func (*ScheduleQueryTool).Spec() tool.ToolSpec
     method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
     method func (*ScheduleTool).ReadOnly() bool
     method func (*ScheduleTool).Spec() tool.ToolSpec
@@ -69,6 +72,7 @@ const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
 const RouterMissDegenerateInput untyped string = "degenerate-input"
 const RouterMissUnknownCategory untyped string = "unknown-category"
+const ScheduleQueryToolName untyped string = "ScheduleQuery"
 const ScheduleToolName untyped string = "Schedule"
 const StopReasonBudget MemberStopReason = "budget"
 const StopReasonCancelled MemberStopReason = "cancelled"
@@ -89,8 +93,9 @@ func NewInspectMemberTool(store port.SessionStore) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool
 func NewLRUForkReaper(capacity int) *LRUForkReaper
 func NewParallelTool(childEngine *Engine, forker tool.WorkspaceForker, opts ...ParallelOption) tool.Tool
-func NewPlanAwareScheduleTool(base tool.Tool) tool.Tool
+func NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager) tool.Tool
 func NewPresentPlanTool() tool.Tool
+func NewScheduleQueryTool(mgr port.ScheduleManager) tool.Tool
 func NewScheduleTool(mgr port.ScheduleManager) tool.Tool
 func NewSubagentStatusTool() tool.Tool
 func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
@@ -181,6 +186,7 @@ type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
 type Run struct{}
 type RunOptions struct{MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
+type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
 type SubagentOption func(*SubagentTool)
 type SubagentStatusTool struct{}

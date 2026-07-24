@@ -35,12 +35,18 @@ import (
 // overlap, and the one-store-one-truth surface parity.
 
 // scheduleCall builds a ToolCall against the assembled catalog for the Schedule
-// tool with the given JSON args.
+// (mutating) tool with the given JSON args.
 func scheduleCall(argsJSON string) session.ToolCall {
 	return session.ToolCall{ID: "call-1", Name: agent.ScheduleToolName, Args: []byte(argsJSON)}
 }
 
-// execSchedule runs the Schedule tool out of the assembled catalog.
+// scheduleQueryCall builds a ToolCall against the assembled catalog for the
+// ScheduleQuery (read-only) tool with the given JSON args.
+func scheduleQueryCall(argsJSON string) session.ToolCall {
+	return session.ToolCall{ID: "call-1", Name: agent.ScheduleQueryToolName, Args: []byte(argsJSON)}
+}
+
+// execSchedule runs the Schedule (mutating) tool out of the assembled catalog.
 func execSchedule(t *testing.T, cat *tool.Catalog, argsJSON string) session.ToolResult {
 	t.Helper()
 	tl, ok := cat.Lookup(agent.ScheduleToolName)
@@ -48,6 +54,21 @@ func execSchedule(t *testing.T, cat *tool.Catalog, argsJSON string) session.Tool
 		t.Fatalf("Schedule tool not in the catalog")
 	}
 	res, err := tl.Execute(context.Background(), scheduleCall(argsJSON), memfs.NewWorkspace("/ws"))
+	if err != nil {
+		t.Fatalf("Execute returned a harness-level error (want a model-addressable ToolResult): %v", err)
+	}
+	return res
+}
+
+// execScheduleQuery runs the ScheduleQuery (read-only) tool out of the
+// assembled catalog (the list/inspect verbs' home after the AC1.4 split).
+func execScheduleQuery(t *testing.T, cat *tool.Catalog, argsJSON string) session.ToolResult {
+	t.Helper()
+	tl, ok := cat.Lookup(agent.ScheduleQueryToolName)
+	if !ok {
+		t.Fatalf("ScheduleQuery tool not in the catalog")
+	}
+	res, err := tl.Execute(context.Background(), scheduleQueryCall(argsJSON), memfs.NewWorkspace("/ws"))
 	if err != nil {
 		t.Fatalf("Execute returned a harness-level error (want a model-addressable ToolResult): %v", err)
 	}
@@ -402,34 +423,75 @@ func TestScheduleTool_CreateEnforcesPhase2FieldRules(t *testing.T) {
 	}
 }
 
-// TestScheduleTool_ReadOnlyPartition pins AC1.4: the read-only verbs
-// (list/inspect) are parallel-safe and the mutating verbs (create/pause/resume/
-// delete/fire) serialize. Because a single tool carries BOTH and ReadOnly()
-// takes no args, the tool reports ReadOnly()==false so EVERY Schedule call
-// serialises on the mutate path — a mutating verb NEVER runs concurrently with
-// a sibling read (the partition's real guarantee). The verb-level split is
-// documented in the Spec description so the model sees the honest read/mutate
-// distinction.
+// TestScheduleTool_ReadOnlyPartition pins AC1.4: the read-only verbs (list/
+// inspect) report ReadOnly()==true (parallel-safe) and the mutating verbs
+// (create/pause/resume/delete/fire) report ReadOnly()==false (serialize), so a
+// mutating Schedule call NEVER runs concurrently with a sibling read. Because a
+// single tool's ReadOnly() takes no args, the per-verb split is realised as TWO
+// catalog entries over the SAME ScheduleManager: a read-only query tool
+// (list/inspect, ReadOnly()==true) and a mutating tool (create/pause/resume/
+// delete/fire, ReadOnly()==false). This test drives the per-verb partition
+// directly against the engine tools and confirms the catalog registration keeps
+// the two read/mutate halves distinct.
 func TestScheduleTool_ReadOnlyPartition(t *testing.T) {
 	t.Parallel()
-	// The tool must be safe to call concurrently for the READ verbs even though
-	// ReadOnly() reports false — the false is the CONSERVATIVE guarantee (all
-	// calls serialize), strictly stronger than "mutating never overlaps a read".
-	tl := agent.NewScheduleTool(newPartitionStubManager())
-	if tl.ReadOnly() {
-		t.Fatal("Schedule.ReadOnly() = true — a mutating verb (create/pause/resume/delete/fire) would fan out into the read-parallel batch and could overlap a sibling read; want false (all Schedule calls serialize)")
+	mgr := newPartitionStubManager()
+
+	// The READ-ONLY half: list + inspect report ReadOnly()==true, so they join
+	// the read-parallel batch.
+	query := agent.NewScheduleQueryTool(mgr)
+	if !query.ReadOnly() {
+		t.Fatal("the read-only Schedule query tool reports ReadOnly()==false — list/inspect would serialize on the mutate path, want true (parallel-safe)")
 	}
-	// The Spec description documents the honest verb-level partition the model
-	// reads (the false ReadOnly() is the conservative serialization, not a lie
-	// that every verb mutates).
-	desc := tl.Spec().Description
-	for _, verb := range []string{"list", "inspect", "create", "pause", "resume", "delete", "fire"} {
-		if !strings.Contains(desc, verb) {
-			t.Fatalf("Spec description does not name verb %q: %q", verb, desc)
+	qdesc := query.Spec().Description
+	for _, verb := range []string{"list", "inspect"} {
+		if !strings.Contains(qdesc, verb) {
+			t.Fatalf("the query tool Spec description does not name read verb %q: %q", verb, qdesc)
 		}
 	}
-	if !strings.Contains(desc, "read-only") {
-		t.Fatalf("Spec description does not document the read-only verbs: %q", desc)
+	// The query tool carries ONLY the read verbs — a mutating verb must be a
+	// model-addressable unknown-verb error, never a mutation.
+	for _, mut := range []string{"create", "pause", "resume", "delete", "fire"} {
+		res, err := query.Execute(context.Background(), scheduleCall(`{"verb":"`+mut+`","name":"x"}`), memfs.NewWorkspace("/ws"))
+		if err != nil {
+			t.Fatalf("query tool mutating verb %q returned a harness error: %v", mut, err)
+		}
+		if !res.IsError {
+			t.Fatalf("query tool accepted mutating verb %q = %q, want an unknown-verb error (it carries only list/inspect)", mut, res.Content)
+		}
+	}
+
+	// The MUTATING half: create/pause/resume/delete/fire report
+	// ReadOnly()==false, so they serialize on the mutate path and never overlap
+	// a sibling read.
+	mut := agent.NewScheduleTool(mgr)
+	if mut.ReadOnly() {
+		t.Fatal("the mutating Schedule tool reports ReadOnly()==true — a mutating verb would fan out into the read-parallel batch and could overlap a sibling read, want false (serialize)")
+	}
+	mdesc := mut.Spec().Description
+	for _, verb := range []string{"create", "pause", "resume", "delete", "fire"} {
+		if !strings.Contains(mdesc, verb) {
+			t.Fatalf("the mutating tool Spec description does not name mutating verb %q: %q", verb, mdesc)
+		}
+	}
+
+	// The CATALOG registers the two halves as distinct entries sharing the one
+	// manager — the registration keeps the read/mutate partition (a mutating
+	// verb is never advertised on the read-parallel query entry).
+	cat := assembleScheduleCatalog(t, func() port.ScheduleManager { return mgr })
+	qtl, ok := cat.Lookup(agent.ScheduleQueryToolName)
+	if !ok {
+		t.Fatal("the catalog has no ScheduleQuery (read-only) entry — the read verbs lost their parallel-safe half")
+	}
+	if !qtl.ReadOnly() {
+		t.Fatal("the catalog ScheduleQuery entry reports ReadOnly()==false, want true")
+	}
+	mtl, ok := cat.Lookup(agent.ScheduleToolName)
+	if !ok {
+		t.Fatal("the catalog has no Schedule (mutating) entry")
+	}
+	if mtl.ReadOnly() {
+		t.Fatal("the catalog Schedule (mutating) entry reports ReadOnly()==true, want false")
 	}
 }
 
@@ -516,14 +578,14 @@ func TestScheduleTool_FireAndInspectRoundTrip(t *testing.T) {
 	}) {
 		t.Fatal("the fire did not reach a terminal stop within 15s")
 	}
-	inspect := execSchedule(t, cat, `{"verb":"inspect","name":"nightly"}`)
+	inspect := execScheduleQuery(t, cat, `{"verb":"inspect","name":"nightly"}`)
 	if inspect.IsError {
 		t.Fatalf("inspect = error %q", inspect.Content)
 	}
 	if !strings.Contains(inspect.Content, "end_turn") {
 		t.Fatalf("inspect = %q, want the fire's terminal stop reason (end_turn) surfaced", inspect.Content)
 	}
-	list := execSchedule(t, cat, `{"verb":"list"}`)
+	list := execScheduleQuery(t, cat, `{"verb":"list"}`)
 	if list.IsError {
 		t.Fatalf("list = error %q", list.Content)
 	}
@@ -1145,7 +1207,12 @@ func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
 // --no-scheduler deployment still enforces it); the check lives in the
 // SHARED seam, so the tool inherits it: driven THROUGH the tool over the
 // REAL Service AND directly against the seam, for both the @every and the
-// fixed-field cron cadence forms.
+// fixed-field cron cadence forms. The floor DEFAULTS to a non-zero value
+// (1m) at the CLI flag layer so an on-by-default scheduler + the floor-Allow
+// Schedule tool cannot mint an unbounded tight-cadence recurring fire out of
+// the box — that default is pinned at the flag-registration seam
+// (TestParseFlagsSchedulerMinIntervalDefault / TestParseFlagsK8sDefaults),
+// while THIS test pins the enforce-at-create half over the composition seam.
 func TestScheduleTool_CreateEnforcesMinInterval(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
