@@ -2,8 +2,8 @@
 id: 01-schedule-tool-core
 title: Schedule tool core (engine/agent + engine/port.ScheduleManager)
 blocked_by: []
-status: pending
-branch: ""
+status: done
+branch: "plan-schedule-tool/01-schedule-tool-core"
 worktree: ""
 issue: ""
 retries: 0
