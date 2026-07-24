@@ -2,7 +2,7 @@
 id: 06-repair-panel-ship-blockers
 title: Repair wave — panel ship-blockers (AC1.4 partition, stale docs, posture defaults)
 blocked_by: [05-schedule-posture-affordance]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
