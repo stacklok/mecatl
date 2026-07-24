@@ -323,9 +323,13 @@ the existing run-entry funnel. The pieces:
   `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`.
   The `FireFunc` seam is how composition injects the run-entry funnel.
 - **Composition** (`internal/app/build.go` `buildScheduler`/`startScheduler`)
-  wires the scheduler behind `--scheduler`, reusing the configured store (by
-  type-assertion on a `ScheduleStore()` accessor) and the session-lease backend
-  (same backend, different id). The `FireFunc` mints a fresh `sched--`
+  wires the scheduler ON BY DEFAULT ([ADR 0073](adr/0073-schedule-tool.md)
+  decision 2 — the opt-in `--scheduler` flag is deleted; `--no-scheduler` is
+  the disable knob) whenever the configured store exposes a `ScheduleStore()`
+  accessor (discovered by type-assertion) — a store with none (the in-memory
+  default) stays on the byte-identical no-scheduling path. The leader-lease
+  reuses the session-lease backend (same backend, different id). The
+  `FireFunc` mints a fresh `sched--`
   top-level session per fire via `Service.CreateSessionWithProfile` +
   `StartRunContent` with subagent-grade defaults (bounded budgets, read-leaning
   posture unless `mutating: true`, headless ask model, fail-closed model
@@ -337,8 +341,12 @@ the existing run-entry funnel. The pieces:
   (`sweepScheduleFires`, peer of the main/child passes) sweeps per-fire
   sessions on their own age horizon — never the main or child pass. The
   `--schedule-fire-retention` flag (operator-tier, peer of
-  `--child-retention`) defaults to 7d when `--scheduler` is on; 0 disables
-  (fire sessions are never swept).
+  `--child-retention`) defaults to 7d whenever unset (the scheduler is on by
+  default); an explicit 0 disables (fire sessions are never swept). The
+  shared create-seam (`validateScheduleSpec`) also enforces the
+  `--scheduler-min-interval` cadence floor and rejects an
+  unknown/uncatalogued provider+model selector, fail-closed, for both the
+  in-chat `Schedule` tool and the REST/gRPC handler.
 
 See [ADR 0059](adr/0059-scheduled-tasks.md) for the frozen rationale (the 10
 resolved decisions + the leader-lease decision) and the consequences. The two

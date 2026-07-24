@@ -110,10 +110,10 @@ type Deps struct {
 	Models    client.ModelLister     // selectable-model discovery for the /models picker; nil disables it
 	Worktrees client.WorktreeLister  // worktree discovery for the /worktrees overlay (issue #102); nil disables it
 	// Sched is the schedule discovery + management surface for the /schedule overlay
-	// (issue #234); nil disables it (the overlay is honestly absent). The embedded
-	// mecatui server has a ScheduleStore but NOT the scheduler tick loop, so the
-	// overlay can create/inspect/pause/resume/fire-now on any store-backed server
-	// while auto-firing on a cadence is the operator's `mecated --scheduler`.
+	// (issue #234); nil disables it (the overlay is honestly absent). The overlay can
+	// create/inspect/pause/resume/fire-now on any store-backed server; auto-firing on
+	// a cadence is the server's tick loop (ON by default on a schedule-capable store,
+	// ADR 0073 — `mecated --no-scheduler` opts out).
 	Sched client.ScheduleLister
 	// Sessions is the stored-session inventory surface for the /sessions picker
 	// (issue #245 Phase 2); nil disables it (the overlay is honestly absent). It is

@@ -45,23 +45,28 @@ an editor that spawned it.
 
 ## Scheduled tasks
 
-`mecated` and `mecak8s` can run scheduled agent fires autonomously (issue #189,
-[ADR 0059](adr/0059-scheduled-tasks.md)) behind `--scheduler`:
+`mecated` and `mecak8s` run scheduled agent fires autonomously (issue #189,
+[ADR 0059](adr/0059-scheduled-tasks.md)). The scheduler is **ON by default**
+whenever the configured store exposes a `ScheduleStore` (jsonlstore via
+`--store-dir`, redisstore via `--redis-url`) — no flag needed ([ADR
+0073](adr/0073-schedule-tool.md)); a store with no `ScheduleStore` (the
+in-memory default) never ticks:
 
 ```sh
-mecated --store-dir ./state --scheduler --scheduler-tick-interval 30s
-mecak8s --redis-url redis://... --scheduler   # multi-replica
+mecated --store-dir ./state --scheduler-tick-interval 30s   # scheduler ticks by default
+mecak8s --redis-url redis://...                             # multi-replica, ticks by default
+mecated --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 
 Flags:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--scheduler` | false | Enable the in-process scheduler tick loop. Requires a store that exposes a `ScheduleStore` (jsonlstore via `--store-dir`, or redisstore via `--redis-url`). |
+| `--no-scheduler` | false | Disable the in-process scheduler tick loop (ON by default on any schedule-capable store). The create/list/fire API and the in-chat `Schedule` tool still work — manual management is independent of the tick loop. The removed `--scheduler` opt-in fails fast as an unknown flag (clean removal, no deprecated alias — see ADR 0073). |
 | `--scheduler-tick-interval` | 30s | How often the tick loop polls `ScheduleStore.Due`. |
-| `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-save time (a schedule tighter than this is rejected). |
+| `--scheduler-min-interval` | 0 (off) | The frequency floor enforced at schedule-create time — by BOTH the in-chat `Schedule` tool and the REST/gRPC handler (a schedule whose cadence is tighter than this is rejected, fail-closed). |
 | `--scheduler-max-concurrent-fires` | 4 | Bounds the per-tick fire fan-out. |
-| `--schedule-fire-retention` | 7d (when `--scheduler` on) | How long persisted `sched--`-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from `--child-retention`/`--main-retention`); a LIVE fire (one mid-run) is never deleted. 0 disables the pass — fire sessions are never swept. Only meaningful when `--scheduler` is enabled and a durable store is configured. |
+| `--schedule-fire-retention` | 7d (168h) | How long persisted `sched--`-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from `--child-retention`/`--main-retention`); a LIVE fire (one mid-run) is never deleted. The 7d default applies whenever the flag is unset (the scheduler is on by default); an explicit 0 disables the pass — fire sessions are never swept. Only meaningful with a durable store configured. |
 | `--schedule-fire-retention-max-total` | 0 (off) | Max persisted `sched--`-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of `--main-retention-max-total`: the age horizon (`--schedule-fire-retention`) bounds the tail, this cap bounds the head (a per-minute cron accumulates ~10k sessions/week the horizon never trims). Durable-store-only. |
 
 Schedules are managed via the **`ScheduleService`** gRPC + REST API (Phase 2a,

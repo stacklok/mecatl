@@ -45,7 +45,8 @@ type Capabilities struct {
 	// ScheduleService RPCs are functional). Gates the /schedule overlay. An older
 	// server (field absent → false) hides the overlay. Independent of the scheduler
 	// tick loop: the overlay can create/inspect/pause/resume/fire-now on any
-	// store-backed server; auto-firing on a cadence is the operator's --scheduler.
+	// store-backed server; auto-firing on a cadence is the server's tick loop
+	// (ON by default on a store-backed server, ADR 0073 — `--no-scheduler` opts out).
 	Scheduling bool
 }
 

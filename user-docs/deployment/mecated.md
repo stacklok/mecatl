@@ -112,12 +112,12 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--scheduler` | `false` | Enable the in-process scheduler tick loop. Requires a store that exposes a `ScheduleStore` (`--store-dir` or `--session-store-url` with redisstore); fails startup otherwise |
+| `--no-scheduler` | `false` | Disable the in-process scheduler tick loop (ON by default when the store exposes a `ScheduleStore` — `--store-dir` or redisstore). The create/list/fire API still works. The removed `--scheduler` opt-in fails fast as an unknown flag |
 | `--scheduler-tick-interval` | `30s` | How often the tick loop polls for due schedules |
-| `--scheduler-min-interval` | `0` (off) | Frequency floor enforced at schedule-create time |
+| `--scheduler-min-interval` | `0` (off) | Frequency floor enforced at schedule-create time (fail-closed) |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
 
-See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the `mecated schedules` CLI, the declarative `settings.yaml schedules:` block, and the gRPC/REST management surface.
+See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 
 ### LLM resilience
 

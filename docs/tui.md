@@ -796,14 +796,14 @@ open will still replay successfully (a partial transcript ending at the log's
 current tail).
 
 **v1 limits.** The overlay lists/inspects/manages schedules and creates them
-in-overlay (the `c` Create form + NL→cron compiler), but the CLI (`mecated
-schedule create`) and the `settings.yaml` `schedules:` block remain the full
-flag surface (provider/model, mode, max-fires, misfire, timezone, singleton,
-limits) — the form covers the common path only. The embedded mecatui server has
-the `ScheduleStore` (the overlay works — create/inspect/pause/resume/fire-now/
-delete from the TUI) but **NOT** the scheduler tick loop, so auto-firing on a
-cadence requires `mecated --scheduler` (or the `settings.yaml` schedules + a
-mecated with the tick loop running); `FireNow` works to trigger a schedule
+in-overlay (the `c` Create form + NL→cron compiler), but the gRPC/REST API
+remains the full flag surface (provider/model, mode, max-fires, misfire,
+timezone, singleton, limits) — the form covers the common path only. The
+embedded mecatui server has the `ScheduleStore` (the overlay works —
+create/inspect/pause/resume/fire-now/delete from the TUI) but **NOT** the
+scheduler tick loop, so auto-firing on a cadence requires a `mecated` serving
+the same store (its tick loop is ON by default on any schedule-capable store,
+ADR 0073 — `--no-scheduler` opts out); `FireNow` works to trigger a schedule
 manually regardless.
 
 A single layout model (`layout.go`) is the source of truth: `View()` renders

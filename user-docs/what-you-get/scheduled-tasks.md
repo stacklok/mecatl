@@ -59,7 +59,7 @@ Read from `ScheduleSpec.Misfire` at tick time (not by the store itself):
 
 ### The singleton guard
 
-A schedule's `Singleton` flag (effectively always `true` in the current release — see the note under [declarative schedules](#declarative-schedules-settingsyaml) below) skips a fire if a prior fire of the same schedule is still running. The liveness check is a trial acquire of the per-session lease on `ScheduleState.LastFireSessionID`: a still-held lease means the prior fire is genuinely in flight (skip); a released or expired lease means it finished or crashed (fire freely, self-healing).
+A schedule's `Singleton` flag (effectively always `true` in the current release — see the note under [the tick loop](#the-tick-loop-on-by-default) below) skips a fire if a prior fire of the same schedule is still running. The liveness check is a trial acquire of the per-session lease on `ScheduleState.LastFireSessionID`: a still-held lease means the prior fire is genuinely in flight (skip); a released or expired lease means it finished or crashed (fire freely, self-healing).
 
 ### Fresh session per fire
 
@@ -67,9 +67,9 @@ Each fire mints a brand-new top-level session (a `sched--`-prefixed id on the cr
 
 The fire's own conversation, tool calls, and usage live in the `SessionStore` under that session id. The `ScheduleFire` record the schedule store keeps is just the pointer to it — the fire id, the session id, the fired-at time, the terminal stop reason, and an error string if it failed. Result delivery is **pull-only in this release**: a caller polls `GetFire`/`ListFires` to see what happened, rather than the store pushing results out.
 
-## Managing schedules: gRPC, REST, and CLI
+## Managing schedules: in-chat, gRPC, and REST
 
-The scheduler is reachable on both wire surfaces the rest of mecatl uses, so schedules can be created and inspected out-of-band from the tick loop.
+Schedules can be created and managed **from inside the conversation** — the model-facing `Schedule` tool (verbs `create`/`list`/`inspect`/`pause`/`resume`/`delete`/`fire`, registered on every session whose store backs a `ScheduleStore`) rides the same validated create-seam as the wire API, so a schedule created in-chat is indistinguishable from an API-created one. The scheduler is also reachable on both wire surfaces the rest of mecatl uses, so schedules can be created and inspected out-of-band from the tick loop.
 
 **gRPC** — `mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`): `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`.
 
@@ -111,89 +111,30 @@ curl -X POST http://localhost:8080/v1/schedules/nightly-report/fire
 curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire_id>
 ```
 
-### Enabling the tick loop
+### The tick loop (on by default)
+
+The tick loop is **ON by default** whenever the configured store exposes a `ScheduleStore` — no enable flag exists anymore (the old `--scheduler` opt-in was removed outright and fails fast as an unknown flag):
 
 ```sh
-mecated --store-dir ./state --scheduler --scheduler-tick-interval 30s
-mecak8s --redis-url redis://... --scheduler   # multi-replica
+mecated --store-dir ./state --scheduler-tick-interval 30s   # ticks by default
+mecak8s --redis-url redis://...                             # multi-replica, ticks by default
+mecated --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--scheduler` | `false` | Enable the in-process scheduler tick loop. Requires a store that exposes a `ScheduleStore` (jsonlstore via `--store-dir`, or redisstore via `--redis-url`); fails startup otherwise. |
+| `--no-scheduler` | `false` | Disable the in-process scheduler tick loop (ON by default on any schedule-capable store). The create/list/fire API and the in-chat `Schedule` tool still work — manual management is independent of the tick loop. |
 | `--scheduler-tick-interval` | `30s` | How often the tick loop polls `ScheduleStore.Due`. |
-| `--scheduler-min-interval` | `0` (off) | The frequency floor enforced at schedule-save time — a schedule tighter than this is rejected, fail-closed. |
+| `--scheduler-min-interval` | `0` (off) | The frequency floor enforced at schedule-create time — a schedule tighter than this is rejected, fail-closed, by BOTH the in-chat `Schedule` tool and the REST/gRPC create. |
 | `--scheduler-max-concurrent-fires` | `4` | Bounds the per-tick fire fan-out. |
-
-### Declarative schedules (`settings.yaml`)
-
-Instead of creating schedules one-by-one over the API, an operator can declare them in the **operator-tier** `settings.yaml`. On startup, `mecated` parses the `schedules:` block and reconciles it into the durable store — an idempotent upsert that creates missing schedules and updates ones that differ, leaving unchanged ones alone:
-
-```yaml
-# ~/.config/mecatl/settings.yaml  (operator-tier — NOT a project file)
-schedules:
-  - name: nightly-review
-    cron: "0 9 * * *"             # 5-field cron or @-macro; mutually exclusive with oneShot
-    timezone: "America/New_York"  # IANA name; empty = UTC
-    prompt: "Summarize today's commits and open a follow-up if any test broke."
-    workspace: "/repo"
-    mode: plan                    # a non-mutating schedule MUST run in plan mode
-    # mutating: true              # opt into write tools (then mode may be default/acceptEdits)
-    maxTurns: 20                  # per-fire turn budget (0 = disabled)
-    maxToolCalls: 40              # per-fire tool-call budget (0 = disabled)
-    maxFires: 0                   # total fires for a cron (0 = forever); ignored for one-shot
-    singleton: true               # skip the next fire if a prior one is still running
-    # misfire: skip               # "" (default = fire-once-now) or "skip"
-
-  - name: one-shot-patch
-    oneShot: "2026-07-04T10:00:00Z"  # RFC3339 instant; must be in the future
-    prompt: "Apply the pending security patch."
-    mutating: true
-    provider: anthropic
-    model: claude-sonnet-4-5
-```
-
-A few things worth knowing before relying on this:
-
-- `schedules:` is a plain YAML sequence, decoded **strictly** — an unknown key inside a declaration is a parse error, so a typo can't silently disable a schedule.
-- **Operator-tier only.** A project-tier `.mecatl/settings.yaml` `schedules:` block is ignored with a WARN — a project repo can't register its own schedules, the same security-downgrade fold as guardrails and posture config.
-- **No destructive reconcile.** Removing a schedule from the YAML does not delete it from the store. An operator has to delete it explicitly via the API or CLI; re-running `mecated` only ever creates or updates.
-- A declaration with neither `cron` nor `oneShot`, or with both, is rejected at reconcile time — logged and skipped, not fatal, so one bad entry doesn't take down the rest.
-- `workspace` is required for a default-profile schedule and must be omitted for a `no-fs`-profile one; the create-seam validates this up front rather than failing later at fire time.
 
 :::note[Singleton is currently always effectively true]
 
-The create-seam coerces `singleton: false` to `true` (overlap suppression is always on), logging a WARN naming the schedule when it does. Full opt-out — allowing overlapping fires of the same schedule — needs an engine-port/proto change and is deferred to a later release.
+The create-seam coerces `singleton: false` to `true` (overlap suppression is always on). Full opt-out — allowing overlapping fires of the same schedule — needs an engine-port/proto change and is deferred to a later release.
 
 :::
 
-### The `mecated schedules` CLI
-
-`mecated schedules <verb>` is a thin HTTP client over a running server's `/v1/schedules` REST surface — it dials `--server-addr` and never boots its own daemon:
-
-```sh
-# Create a cron schedule (flags mirror the REST body).
-mecated schedules create --name nightly-review --cron "0 9 * * *" \
-  --prompt "Summarize today's commits." --workspace /repo --mode plan
-
-# List all schedules (text by default; --output json for machine consumption).
-mecated schedules list
-
-# Inspect one schedule (optionally its recent fires with --fires).
-mecated schedules inspect --name nightly-review --fires
-
-# Pause / resume / delete.
-mecated schedules pause  --name nightly-review
-mecated schedules resume --name nightly-review
-mecated schedules delete --name nightly-review
-
-# Force an immediate fire (synchronous-to-terminal, like FireNow).
-mecated schedules fire --name nightly-review
-```
-
-A bare `mecated schedules` or an unknown verb prints the usage banner and exits with status 2 — it never falls through to booting the server.
-
-There's also a read/manage overlay in the `mecatui` TUI (`/schedule`, gated on the connected server advertising a reachable `ScheduleStore`): it lists schedules with their trigger, enabled state, and fire counts, and supports pause/resume/fire-now/delete plus a read-only inspect view. It doesn't yet have an in-overlay create form or natural-language-to-cron conversion — author schedules via the CLI or the `settings.yaml` block, then manage them from the TUI.
+There's also a read/manage overlay in the `mecatui` TUI (`/schedule`, gated on the connected server advertising a reachable `ScheduleStore`): it lists schedules with their trigger, enabled state, and fire counts, supports pause/resume/fire-now/delete, and has an in-overlay create form with natural-language-to-cron conversion.
 
 ## Events and metrics
 
