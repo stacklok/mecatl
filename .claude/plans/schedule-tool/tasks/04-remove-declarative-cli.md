@@ -2,7 +2,7 @@
 id: 04-remove-declarative-cli
 title: Remove the settings.yaml schedules: block + the mecated schedules CLI (clean)
 blocked_by: [01-schedule-tool-core]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

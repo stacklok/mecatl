@@ -2,7 +2,7 @@
 id: 02-schedule-tool-validation
 title: Schedule tool create-seam validation parity (cron/mode/workspace/Phase-2 fields)
 blocked_by: [01-schedule-tool-core]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

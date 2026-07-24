@@ -2,7 +2,7 @@
 id: 03-scheduler-on-by-default
 title: Scheduler on by default + cadence floor + selector validation + flag flip
 blocked_by: [01-schedule-tool-core]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
