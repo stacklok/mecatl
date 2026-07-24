@@ -178,15 +178,6 @@ type Resolver struct {
 	// out-ranks user-global (first-non-nil keeps CLI).
 	operatorModels *ModelsSection
 
-	// operatorSchedules is the OPERATOR-TIER schedules: subtree (issue #233, Phase
-	// 2b), read ONCE at construction from the user-global + CLI tiers ONLY. A
-	// project-tier file's schedules: block is deliberately IGNORED (a project repo
-	// registering schedules is an operator decision — the same operator-tier-only
-	// discipline as guardrails/posture) — loadProjectRules WARNs when it sees one.
-	// nil when no operator-tier file carried a schedules: section. CLI (explicit
-	// files) out-ranks user-global (first-non-nil keeps CLI).
-	operatorSchedules *SchedulesSection
-
 	mu    sync.RWMutex
 	cache map[string]*cacheEntry // keyed by ws.Root()
 }
@@ -275,19 +266,6 @@ func (r *Resolver) OperatorModelPolicy() *ModelsSection {
 		return nil
 	}
 	return r.operatorModels
-}
-
-// OperatorSchedules returns the operator-tier schedules: subtree (user-global + CLI
-// only), or nil when none was configured (issue #233, Phase 2b). It is the SOLE
-// accessor the composition layer uses to read declared schedules from config — by
-// construction it never returns a project-tier block (a project schedules: is
-// ignored with a WARN in loadProjectRules). nil-safe. Mirrors
-// OperatorGuardrails().
-func (r *Resolver) OperatorSchedules() *SchedulesSection {
-	if r == nil {
-		return nil
-	}
-	return r.operatorSchedules
 }
 
 // ProjectModelBindings returns the SANITIZED project-tier models: block for the given
@@ -521,17 +499,6 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"plan-mode-auto-approve: IGNORING a project-tier plan-mode-auto-approve: key (operator-tier only — a project repo cannot enable autonomous plan approval; set plan-mode-auto-approve in your user-global settings.yaml or via --plan-mode-auto-approve)",
 				"file", src.path, "root", ws.Root())
 		}
-		// Schedules are OPERATOR-TIER ONLY (issue #233, Phase 2b), for consistency
-		// with guardrails/posture: a project file's schedules: block is IGNORED with a
-		// loud WARN. Honouring it would let a project repo register schedules that fire
-		// agent runs — an operator decision a project repo must not make (the same
-		// operator-tier-only discipline as guardrails: a project cannot mint autonomous
-		// agent runs). It reverses the usual tighten-only gate exactly like guardrails.
-		if cfg.Schedules != nil {
-			r.diag.Log(context.Background(), port.LevelWarn,
-				"schedules: IGNORING a project-tier schedules: block (operator-tier only — a project repo cannot register schedules; set schedules in your user-global settings.yaml)",
-				"file", src.path, "root", ws.Root())
-		}
 		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST (ADR 0030 Phase 4),
 		// otherwise IGNORED. captureProjectModels applies the full gate (allowlist key
 		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
@@ -718,8 +685,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
 		r.captureModels(cfg.Models)
-		// Operator-tier schedules (issue #233, Phase 2b): same first-non-nil-keeps-CLI discipline.
-		r.captureSchedules(cfg.Schedules)
 	}
 
 	if !r.opts.Conventional {
@@ -749,8 +714,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 				// User-global models: captured only if no higher CLI file already did.
 				r.captureModels(cfg.Models)
-				// User-global schedules (issue #233, Phase 2b): captured only if no higher CLI file already did.
-				r.captureSchedules(cfg.Schedules)
 			}
 		}
 	}
@@ -858,20 +821,6 @@ func (r *Resolver) captureModels(m *ModelsSection) {
 		return
 	}
 	r.operatorModels = m
-}
-
-// captureSchedules records the FIRST operator-tier schedules: block seen during
-// construction (CLI files are parsed before user-global, so CLI wins on first-non-
-// nil). It is called only from loadUserRules — the operator (user-global + CLI)
-// tiers — never from loadProjectRules, so a project file can never supply
-// schedules (issue #233, Phase 2b: operator-tier-only, mirroring guardrails).
-// first-non-nil means a CLI `schedules:` block replaces (does not merge with) the
-// user-global one — a list, unlike a struct, has no natural merge.
-func (r *Resolver) captureSchedules(s *SchedulesSection) {
-	if s == nil || r.operatorSchedules != nil {
-		return
-	}
-	r.operatorSchedules = s
 }
 
 // specOf reconstructs a human-readable "Tool(pattern)" spec from a rule, for the
