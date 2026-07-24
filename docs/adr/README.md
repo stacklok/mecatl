@@ -19,6 +19,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ### Process & conventions
 - [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [0003 — Consolidate design records as ADRs](./0003-consolidate-design-records-as-adrs.md)
+- [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md)
 
 ### Architecture & implementation
 - [0001 — Agent Client Protocol (ACP) adapter](./0001-acp-adapter.md)

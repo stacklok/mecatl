@@ -15,6 +15,12 @@ Acceptance plans cite these as `Principle N`; the
 list, and a `TestInvariant_<id>` / `TestADR_NNNN_*` test pins the ones that
 carry a runtime obligation.
 
+> **Convenience index, not a source of truth.** The canonical wording of each
+> principle lives in the ADR / `AGENTS.md` section it cites — when this page
+> and its source ever disagree, the source wins. When you change an invariant
+> in `AGENTS.md` or supersede an ADR, update the matching summary here in the
+> same change.
+
 1. **Dependencies point inward, machine-enforced.** Domain (`session`,
    `prompt`, `governance`, `tool`), `engine/team`, and `engine/agent` never
    import an adapter, `contracts/gen`, `os`, or a provider SDK. The depguard

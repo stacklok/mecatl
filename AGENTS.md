@@ -151,7 +151,7 @@ gauntlet items in `docs/harnesses/08-design-considerations.md` each have a passi
 
 ## Workflow
 
-- Commit directly to `main`. End commit messages with the `Co-Authored-By` trailer.
+- Commit directly to `main`. End commit messages with the `Co-Authored-By` trailer. **Exception:** capability-scale agent work driven by the acceptance-plan spine (`/to-acceptance-plan` → `/plan-orchestrate`, ADR 0072) lands via PR on an accumulator branch — the orchestrator never merges to `main`; the human merge is the gate. Issue-scale work uses `/dev-pipeline`.
 - Never `git add -A` — stage explicit paths.
 - For smoke tests / scratch files, use the repo-local `.scratch/` dir (gitignored) — **not** `/tmp` or `mktemp`.
 - **Changed a core `engine/` exported API?** The `api-compat` gate will fail until you run `task api:update`, commit the changed `engine/api/*.txt`, and note the change in `engine/CHANGELOG.md` classified per `engine/COMPATIBILITY.md` (Added = minor, Changed/Removed = breaking). See ADR 0037.
