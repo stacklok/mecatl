@@ -922,14 +922,16 @@ type Config struct {
 	// composition-supplied FireFunc (mints a fresh "sched--" top-level session
 	// via Service.CreateSessionWithProfile + StartRunContent with subagent-grade
 	// defaults + fail-closed model pinning), and records the outcome. The loop is
-	// storage-agnostic; engine/agent never imports it. OFF by default — a
-	// byte-identical no-scheduler path when SchedulerEnabled is false. The
-	// ScheduleStore is discovered by type-asserting the configured store for the
-	// ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one); a store
-	// that does not expose one FAILS LOUD when --scheduler is enabled. The
-	// leader-lease reuses the SAME backend as the run-entry session lease (a
-	// different id — port.SchedulerLeaderLeaseID — so the two never contend); nil
-	// Lease = single-replica by affinity. See ADR 0059.
+	// storage-agnostic; engine/agent never imports it. ON by default on any
+	// schedule-capable store (ADR 0073 decision 2): the cmd layer feeds
+	// SchedulerEnabled = !--no-scheduler, and a store with no ScheduleStore (the
+	// in-memory default) takes the byte-identical no-scheduler path whether
+	// enabled or not. The ScheduleStore is discovered by type-asserting the
+	// configured store for the ScheduleStore() ACCESSOR (the jsonlstore +
+	// redisstore expose one). The leader-lease reuses the SAME backend as the
+	// run-entry session lease (a different id — port.SchedulerLeaderLeaseID — so
+	// the two never contend); nil Lease = single-replica by affinity. See ADR
+	// 0059 + ADR 0073.
 	SchedulerEnabled            bool
 	SchedulerTickInterval       time.Duration // 0 → default 30s (the scheduler's own default)
 	SchedulerMinInterval        time.Duration // 0 → no floor enforced at the create-seam
@@ -2140,18 +2142,22 @@ func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, 
 }
 
 // buildScheduler resolves the OPTIONAL in-process scheduled-tasks tick loop
-// (issue #189, Phase 1f). It mirrors buildSessionLease: when SchedulerEnabled is
-// false it returns (nil, noop, nil) so the default path is byte-identical. When
-// enabled it discovers the port.ScheduleStore by type-asserting the configured
-// store for the ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose
-// one); a store that does not expose one FAILS LOUD — the operator asked for
-// scheduling, a store that can't store schedules is a misconfiguration. The
-// leader-lease reuses the SAME backend as the run-entry session lease (owner
-// leaseOwner, id port.SchedulerLeaderLeaseID) so the two never contend. The
-// FireFunc is LATE-BOUND: buildScheduler returns the *scheduler.Scheduler with
-// Fire nil; Build calls SetFire(makeFireFunc(svc)) after NewService, then
-// Start. The returned close calls sched.Stop (which drains in-flight fires,
-// releases the leader lease).
+// (issue #189, Phase 1f; ADR 0073 decision 2 — ON BY DEFAULT). It mirrors
+// buildSessionLease: when SchedulerEnabled is false (the operator's explicit
+// --no-scheduler opt-out) it returns (nil, noop, nil). When enabled it
+// discovers the port.ScheduleStore by type-asserting the configured store for
+// the ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one); a
+// store that does not expose one (the in-memory default: mecademo, mecatequi,
+// offline tests) is SILENTLY INERT — the byte-identical no-scheduling path
+// ((nil, noop, nil)), never a startup failure. (The pre-ADR-0073 enabled-but-
+// no-store case FAILED LOUD because enabling was an explicit operator ask;
+// with the default ON, no-store is the common case, so inert is the honest
+// posture.) The leader-lease reuses the SAME backend as the run-entry session
+// lease (owner leaseOwner, id port.SchedulerLeaderLeaseID) so the two never
+// contend. The FireFunc is LATE-BOUND: buildScheduler returns the
+// *scheduler.Scheduler with Fire nil; Build calls SetFire(makeFireFunc(svc))
+// after NewService, then Start. The returned close calls sched.Stop (which
+// drains in-flight fires, releases the leader lease).
 func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string) (*scheduler.Scheduler, func(), error) {
 	noop := func() {}
 	if !cfg.SchedulerEnabled {
@@ -2159,7 +2165,11 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 	}
 	schedStore, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
 	if !ok || schedStore.ScheduleStore() == nil {
-		return nil, nil, fmt.Errorf("scheduler: --scheduler enabled but the configured store does not expose a ScheduleStore (configure a jsonlstore (--store-dir) or redisstore (--redis-url) backend)")
+		// On-by-default reconciliation: a store with no ScheduleStore (the
+		// in-memory default) gets the byte-identical no-scheduling path — no
+		// tick goroutine, Scheduling capability false, the Schedule tool
+		// absent — NOT a startup error.
+		return nil, noop, nil
 	}
 	scfg := scheduler.Config{
 		Store:              schedStore.ScheduleStore(),

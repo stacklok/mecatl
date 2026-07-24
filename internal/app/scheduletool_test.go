@@ -823,3 +823,240 @@ func TestScheduleTool_SharesStoreWithRESTSurface(t *testing.T) {
 		t.Fatalf("GetSchedule after tool delete = %v, want ErrScheduleNotFound (one store, one truth)", err)
 	}
 }
+
+// TestScheduleTool_SchedulerOnByDefault pins AC2.1: with a durable
+// (--store-dir) store and NO scheduler flag passed (the cmd layer feeds
+// SchedulerEnabled = !--no-scheduler, true by default), the scheduler ticks
+// and a due schedule fires WITHOUT any opt-in — the ADR-0073 decision-2 flip
+// of ADR 0059's "wires a scheduler ONLY when an operator selects a backend by
+// flag". Drives the REAL Build composition over jsonlstore + mockllm: a
+// one-shot due in the near future is claimed by the tick loop, its sched--
+// session is driven to StopEndTurn, and the fire is recorded — all without
+// --scheduler (which no longer exists; AC2.5 pins its removal).
+func TestScheduleTool_SchedulerOnByDefault(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	workspace := t.TempDir()
+
+	seedStore, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("seed jsonlstore: %v", err)
+	}
+	schedStore := seedStore.ScheduleStore()
+	const schedName = "default-on-oneshot"
+	due := time.Now().Add(100 * time.Millisecond)
+	if err := schedStore.Save(ctx, port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      schedName,
+			Prompt:    "say hello from the default-on scheduler",
+			Workspace: workspace,
+			Trigger:   port.TriggerSpec{OneShot: due},
+		},
+		State: port.ScheduleState{NextFireAt: due, Enabled: true},
+	}); err != nil {
+		t.Fatalf("save schedule: %v", err)
+	}
+
+	// The cmd layer's default: --no-scheduler unset → SchedulerEnabled true.
+	// NO scheduler opt-in flag exists anymore — the durable store alone
+	// activates the tick loop.
+	built, err := Build(ctx, Config{
+		Workspace:             workspace,
+		NoSoul:                true,
+		NoUserModel:           true,
+		StoreDir:              storeDir,
+		SchedulerEnabled:      true, // = !noScheduler, the cmd default fold
+		SchedulerTickInterval: 50 * time.Millisecond,
+		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient:   offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("hello from the default-on fire"))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	if !built.Service.HasScheduler() {
+		t.Fatal("no scheduler after Build over a durable store with NO opt-in flag, want the on-by-default tick loop")
+	}
+	deadline := 10 * time.Second
+	if !eventually(deadline, func() bool {
+		fire, err := schedStore.LoadFire(ctx, firstFireID(ctx, t, schedStore, schedName))
+		if err != nil {
+			return false
+		}
+		return fire.Stop == session.StopEndTurn
+	}) {
+		t.Fatalf("the due schedule did not fire within %v WITHOUT any --scheduler opt-in (the on-by-default tick loop must claim it)", deadline)
+	}
+}
+
+// TestScheduleTool_FireRetentionDefaultActiveOnDefaultPath pins AC2.1b: the
+// --schedule-fire-retention 7d default now activates on the DEFAULT path (no
+// --scheduler passed — the flag is gone). The cmd-layer fold is pinned by
+// TestScheduleTool_SchedulerFlagRemoved's sibling in cmd/mecated
+// (applyScheduleFireRetentionDefault is exercised through parseFlags there);
+// this test pins the POLICY the default feeds end-to-end: a sched-- fire
+// session older than 7d is swept by the ScheduleFireRetention GC pass, a
+// fresh one is retained, and an explicit --schedule-fire-retention=0 (the
+// zero policy) disables the pass entirely.
+func TestScheduleTool_FireRetentionDefaultActiveOnDefaultPath(t *testing.T) {
+	// The 7d-default policy (what parseFlags now folds WITHOUT any opt-in
+	// flag): an 8-day-old sched-- fire session is swept; a fresh one is kept.
+	f := newGCFixture(t, childGCPolicy{scheduleFireRetention: 7 * 24 * time.Hour})
+	f.save(t, "sched--nightly-20260520-aaaa") // saved at the fixture's t0
+	f.now = f.now.Add(8 * 24 * time.Hour)     // the snapshot is now 8 days old
+	f.save(t, "sched--nightly-fresh-bbbb")    // saved "now" — fresh
+
+	deleted, _ := f.gc.sweep(context.Background())
+	if deleted != 1 {
+		t.Fatalf("7d-retention sweep deleted %d sessions, want exactly 1 (the >7d sched-- fire session)", deleted)
+	}
+	ids := f.ids(t)
+	if ids["sched--nightly-20260520-aaaa"] {
+		t.Fatal("the >7d sched-- fire session survived the 7d-retention sweep, want deleted (the default is ACTIVE on the default path)")
+	}
+	if !ids["sched--nightly-fresh-bbbb"] {
+		t.Fatal("the fresh sched-- fire session was swept, want retained")
+	}
+
+	// The explicit-disable half: --schedule-fire-retention=0 (the zero
+	// policy) sweeps nothing, even a month-old fire session.
+	off := newGCFixture(t, childGCPolicy{})
+	off.save(t, "sched--nightly-20260520-aaaa")
+	off.now = off.now.Add(30 * 24 * time.Hour)
+	if deleted, _ := off.gc.sweep(context.Background()); deleted != 0 {
+		t.Fatalf("retention-0 sweep deleted %d sessions, want 0 (an explicit --schedule-fire-retention=0 disables the pass)", deleted)
+	}
+}
+
+// TestScheduleTool_NoSchedulerDisablesTickOnly pins AC2.2: --no-scheduler
+// (SchedulerEnabled false) restores the pre-change behaviour on a
+// schedule-capable store — NO tick loop, no auto-fire — while the
+// create/list/fire API still works: manual schedule management is independent
+// of the tick loop. The Schedule TOOL also stays registered (its gate is the
+// store's ScheduleStore, not the scheduler), so in-chat manual management
+// works on the opted-out deployment.
+func TestScheduleTool_NoSchedulerDisablesTickOnly(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	workspace := t.TempDir()
+
+	seedStore, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("seed jsonlstore: %v", err)
+	}
+	schedStore := seedStore.ScheduleStore()
+	const schedName = "opted-out-oneshot"
+	due := time.Now().Add(100 * time.Millisecond)
+	if err := schedStore.Save(ctx, port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      schedName,
+			Prompt:    "must not auto-fire under --no-scheduler",
+			Workspace: workspace,
+			Trigger:   port.TriggerSpec{OneShot: due},
+		},
+		State: port.ScheduleState{NextFireAt: due, Enabled: true},
+	}); err != nil {
+		t.Fatalf("save schedule: %v", err)
+	}
+
+	// --no-scheduler passed: SchedulerEnabled false on a schedule-capable
+	// store.
+	built, err := Build(ctx, Config{
+		Workspace:           workspace,
+		NoSoul:              true,
+		NoUserModel:         true,
+		StoreDir:            storeDir,
+		SchedulerEnabled:    false, // the --no-scheduler fold
+		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("hi"))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	// No tick loop: the scheduler is absent.
+	if built.Service.HasScheduler() {
+		t.Fatal("HasScheduler = true under --no-scheduler, want no tick loop (the pre-change behaviour)")
+	}
+	// The due schedule NEVER auto-fires (a window several times the default
+	// tick interval — a ticking scheduler would have claimed it).
+	time.Sleep(500 * time.Millisecond)
+	loaded, err := schedStore.Load(ctx, schedName)
+	if err != nil {
+		t.Fatalf("Load schedule: %v", err)
+	}
+	if loaded.State.FireCount != 0 {
+		t.Fatalf("FireCount = %d under --no-scheduler, want 0 (no auto-fire)", loaded.State.FireCount)
+	}
+
+	// The manual API still works: create + list through the SAME Service seam
+	// the REST handler rides.
+	if _, err := built.Service.CreateSchedule(ctx, port.ScheduleSpec{
+		Name: "manual", Prompt: "p", Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
+		Workspace: workspace, Mode: session.ModePlan,
+	}); err != nil {
+		t.Fatalf("CreateSchedule under --no-scheduler: %v (manual management is independent of the tick loop)", err)
+	}
+	scheds, err := built.Service.ListSchedules(ctx)
+	if err != nil || len(scheds) != 2 {
+		t.Fatalf("ListSchedules under --no-scheduler = (%v, %v), want the seeded + created schedules", scheds, err)
+	}
+
+	// The Schedule tool stays registered (its gate is the store's
+	// ScheduleStore, not the tick loop), so in-chat manual management works.
+	cat := assembleScheduleCatalog(t, built.Service.ScheduleManager)
+	if _, ok := cat.Lookup(agent.ScheduleToolName); !ok {
+		t.Fatal("Schedule tool ABSENT under --no-scheduler on a ScheduleStore-backed store, want present (manual management is independent of the tick loop)")
+	}
+}
+
+// TestScheduleTool_InMemoryStoreByteIdentical pins AC2.3: with the in-memory
+// store (no ScheduleStore), the default-on posture neither ticks nor fails
+// startup — ServerCapabilities.Scheduling is false and the Schedule tool is
+// absent, the byte-identical pre-change default (mecademo, mecatequi, offline
+// tests). The pre-ADR-0073 enabled-but-no-store path FAILED LOUD; the
+// on-by-default flip reconciles it to silently inert.
+func TestScheduleTool_InMemoryStoreByteIdentical(t *testing.T) {
+	ctx := context.Background()
+
+	// The default posture (SchedulerEnabled true — the cmd default) over a
+	// store with NO ScheduleStore: startup must succeed and wire nothing.
+	built, err := Build(ctx, Config{
+		Workspace:           t.TempDir(),
+		NoSoul:              true,
+		NoUserModel:         true,
+		SchedulerEnabled:    true, // the on-by-default fold over the in-memory default
+		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("hi"))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build over the in-memory store with the default-on scheduler posture = %v, want a clean startup (never fails on a store with no ScheduleStore)", err)
+	}
+	defer built.Close()
+
+	// No tick goroutine.
+	if built.Service.HasScheduler() {
+		t.Fatal("HasScheduler = true on the in-memory store, want false (byte-identical no-scheduling path)")
+	}
+	// ServerCapabilities.Scheduling false.
+	if built.Service.ScheduleManager() != nil {
+		t.Fatal("ScheduleManager != nil on the in-memory store (the Scheduling capability gate), want nil")
+	}
+	// The Schedule tool is absent from the catalog assembled over this
+	// Service's manager factory (honest absence, not a stub).
+	cat := assembleScheduleCatalog(t, built.Service.ScheduleManager)
+	if _, ok := cat.Lookup(agent.ScheduleToolName); ok {
+		t.Fatal("Schedule tool PRESENT on the in-memory store, want honest absence (byte-identical default)")
+	}
+}
