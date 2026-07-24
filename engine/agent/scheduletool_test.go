@@ -338,3 +338,59 @@ func TestScheduleTool_NilManagerPanics(t *testing.T) {
 	}()
 	_ = agent.NewScheduleTool(nil)
 }
+
+// TestScheduleTool_MutatingCreateGatedByPlanMode pins the plan-mode gate the
+// Schedule tool carries (ADR 0073 decision 4, AC4.3): in a PLAN-MODE session a
+// mutating: true create is DENIED (the plan-mode hard-deny on mutations — the
+// plan-aware variant is what the plan-mode catalog advertises), while a
+// read-leaning (mutating: false) create is ALLOWED (a schedule CREATE does not
+// itself mutate the workspace — the FIRE's posture is pinned at create-time by
+// the Mutating/Mode invariant). The default (non-plan) variant admits BOTH.
+func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
+	t.Parallel()
+	mgr := newStubScheduleManager()
+	ws := memfs.NewWorkspace("/ws")
+	mutCreate := `{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","workspace":"/r","mutating":true}`
+	roCreate := `{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h","workspace":"/r"}`
+
+	// The PLAN-MODE variant: a mutating create is hard-denied BEFORE the base
+	// tool runs (the manager never sees it — the deny reason mirrors the
+	// governance plan-mode reason), while a read-leaning create drives through.
+	plan := agent.NewPlanAwareScheduleTool(agent.NewScheduleTool(mgr))
+	if !plan.ReadOnly() {
+		t.Fatal("the plan-aware Schedule tool must report ReadOnly()==true so the plan-mode catalog projection advertises it (the read-leaning verbs it admits do not mutate the workspace)")
+	}
+	res, err := plan.Execute(context.Background(), scheduleCall(t, mutCreate), ws)
+	if err != nil {
+		t.Fatalf("plan Execute: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("plan-mode mutating create = %q, want the plan-mode hard-deny (a mutating create must not run in plan mode)", res.Content)
+	}
+	if !strings.Contains(res.Content, "plan mode") {
+		t.Fatalf("plan-mode mutating create deny = %q, want the plan-mode deny reason", res.Content)
+	}
+	if len(mgr.created) != 0 {
+		t.Fatalf("plan-mode mutating create reached the manager (%d creates), want 0 (denied before the base tool)", len(mgr.created))
+	}
+
+	res, err = plan.Execute(context.Background(), scheduleCall(t, roCreate), ws)
+	if err != nil {
+		t.Fatalf("plan Execute (read-leaning): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("plan-mode read-leaning create = error %q, want allowed (a read-leaning create does not mutate the workspace)", res.Content)
+	}
+	if len(mgr.created) != 1 || mgr.created[0].Name != "ro" {
+		t.Fatalf("plan-mode read-leaning create landed %+v, want exactly the ro schedule", mgr.created)
+	}
+
+	// The DEFAULT (non-plan) variant admits BOTH — the gate is plan-mode-only.
+	def := agent.NewScheduleTool(mgr)
+	if def.ReadOnly() {
+		t.Fatal("the default Schedule tool must report ReadOnly()==false (the read/mutate serialization contract — unchanged by the plan-aware variant)")
+	}
+	if res, err := def.Execute(context.Background(), scheduleCall(t, mutCreate), ws); err != nil || res.IsError {
+		t.Fatalf("default-mode mutating create = (%v, %q), want allowed", err, res.Content)
+	}
+}

@@ -151,6 +151,70 @@ func (*ScheduleTool) Spec() tool.ToolSpec {
 // batch. See the type doc.
 func (*ScheduleTool) ReadOnly() bool { return false }
 
+// NewPlanAwareScheduleTool wraps the Schedule tool for a PLAN-MODE session's
+// catalog (ADR 0073 decision 4, the AC4.3 gate). The default tool reports
+// ReadOnly()==false, so the plan-mode catalog projection (engine/tool/catalog.go
+// Available(ModePlan)) would hide the WHOLE tool — including the read-leaning
+// verbs plan mode must keep (a schedule CREATE does not itself mutate the
+// workspace; the FIRE's posture is pinned at create-time by the Mutating/Mode
+// invariant). The plan-aware variant reports ReadOnly()==true (so the plan-mode
+// projection advertises it) and hard-denies a mutating: true create per call
+// with the plan-mode deny reason BEFORE the base tool runs — the read-leaning
+// verbs (list/inspect, and create with mutating false) drive through unchanged.
+//
+// The wrapper's ReadOnly()==true is sound because the ONLY call shapes it lets
+// through are the read-leaning ones: none mutate the workspace (a CREATE writes
+// the schedule REGISTRY, not the tree), so no admitted plan-mode call can
+// mutate. The non-plan engine keeps the DEFAULT tool (the read/mutate
+// serialization contract is unchanged).
+func NewPlanAwareScheduleTool(base tool.Tool) tool.Tool {
+	return &planAwareScheduleTool{base: base}
+}
+
+// planAwareScheduleTool is the plan-mode view NewPlanAwareScheduleTool wraps
+// (see its doc).
+type planAwareScheduleTool struct {
+	base tool.Tool
+}
+
+// Spec is the base spec verbatim — the model sees the same verbs; the plan-mode
+// gate is a per-call deny, not a hidden verb (removing the mutating create from
+// the SCHEMA would make the model guess why its create was refused).
+func (t *planAwareScheduleTool) Spec() tool.ToolSpec { return t.base.Spec() }
+
+// ReadOnly reports true so the plan-mode catalog projection advertises the tool
+// (see NewPlanAwareScheduleTool for the soundness argument).
+func (*planAwareScheduleTool) ReadOnly() bool { return true }
+
+// Execute hard-denies a mutating: true create (the plan-mode mutation veto) and
+// passes every other call through to the base tool.
+func (t *planAwareScheduleTool) Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+	if reason := schedulePlanModeDeny(call); reason != "" {
+		return session.NewToolError(call.ID, reason), nil
+	}
+	return t.base.Execute(ctx, call, ws)
+}
+
+// schedulePlanModeDeny returns the plan-mode hard-deny reason for a
+// mutating: true create, else "". The reason mirrors the governance evaluator's
+// plan-mode deny for mutating tools (present a plan and exit plan mode first)
+// so the model gets the same guidance the loop's own deny carries — plus the
+// read-leaning alternative it may use instead.
+func schedulePlanModeDeny(call session.ToolCall) string {
+	var args scheduleArgs
+	if _, ok := session.ParseArgs(call, &args); !ok {
+		return "" // a parse miss is the base tool's model-addressable error, not the gate's
+	}
+	if strings.EqualFold(strings.TrimSpace(args.Verb), "create") && args.Mutating {
+		return "plan mode is active: a mutating Schedule create is not permitted; present a plan and exit plan mode first " +
+			"(a read-leaning create with mutating:false IS permitted — the fire then runs in plan mode)"
+	}
+	return ""
+}
+
+// Compile-time assertion: the plan-aware wrapper is a Tool.
+var _ tool.Tool = (*planAwareScheduleTool)(nil)
+
 // Execute dispatches on the verb, mapping the call args onto the injected
 // ScheduleManager and rendering the result as model-readable text. A
 // verb-level error (an unknown schedule, a rejected create, a fire overlap) is

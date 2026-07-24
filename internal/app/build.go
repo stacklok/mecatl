@@ -1900,6 +1900,7 @@ func sessionEngineFactory(
 			clientMgr:  mgr,
 			narrate:    false,
 			noFS:       noFS,
+			mode:       mode,
 		})
 
 		// Identical to the main engine in every NON-provider Deps field except the
@@ -1917,6 +1918,14 @@ func sessionEngineFactory(
 		// on the CASE-1 rebuild when the session flips into plan mode. When mode
 		// is not ModePlan the helper returns the Config unchanged.
 		deps.PromptConfig = applyPlanModePosture(deps.PromptConfig, mode)
+		// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate): when
+		// this session's catalog carries the Schedule tool (a scheduleManager
+		// resolves non-nil — the SAME gate registerScheduleTool uses), tell the
+		// model the tool exists + the exact verb workflow up front, on the Role
+		// (the StablePrefix layer). A session whose store backs no ScheduleStore
+		// has no tool, so the note is withheld (the model is never told about a
+		// tool it cannot call).
+		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 		// Guardrails (issue #27), RE-DERIVED per session so a FRESH per-session checker
 		// budget is built: decorate THIS session's main hooks with the LLM-backed
 		// content checker, over the session's resolved provider/model. OFF-by-default
@@ -5877,6 +5886,41 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + planModePostureNote
+	return pc
+}
+
+// schedulePostureNote is the system-prompt suffix a session carrying the
+// Schedule tool's Role receives (ADR 0073, the ADR-0070 model-visible
+// affordance). The tool's correct use depends on the model CALLING it — create
+// a schedule instead of promising to "remember", list before duplicating, fire
+// to verify — so the workflow is told up front, on the Role (the cache-stable
+// StablePrefix layer), exactly like the plan-mode + no-FS notes. The stable
+// "Schedule tool" + verb clauses are the test keys.
+const schedulePostureNote = "You have a Schedule tool for managing scheduled tasks (recurring or one-shot " +
+	"prompts that run unattended). Use it when the user asks to run something later, on a cadence, or " +
+	"unattended — NEVER promise to \"remember\" or improvise a wait loop. Verbs: create registers a schedule " +
+	"(name + prompt + cron or one_shot + workspace; default read-leaning — the fire runs in plan mode, pass " +
+	"mutating:true only when the fire must write); list shows every schedule (call it before creating a " +
+	"duplicate); inspect shows one schedule plus its fires; pause/resume disable/enable without deleting; " +
+	"delete removes it; fire triggers an immediate run and returns the sched-- session id + stop reason. " +
+	"In plan mode a mutating create is denied — create read-leaning schedules and present the plan instead."
+
+// applySchedulePosture appends the Schedule tool's model-visible instruction to
+// a session's Role (DefaultRole fallback first — the applyNoFSPosture idiom)
+// when the session's catalog carries the tool. hasSchedule is the SAME gate the
+// registration uses (a scheduleManagerFactory that resolves non-nil), so a
+// session whose store backs no ScheduleStore (the tool is honestly absent) is
+// NOT told about a tool it cannot call — the note mirrors the registration
+// exactly. It is the Schedule analogue of applyPlanModePosture /
+// applyNoFSPosture.
+func applySchedulePosture(pc prompt.Config, hasSchedule bool) prompt.Config {
+	if !hasSchedule {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + schedulePostureNote
 	return pc
 }
 

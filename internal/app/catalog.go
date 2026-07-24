@@ -27,6 +27,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
@@ -142,6 +143,14 @@ type catalogSession struct {
 	// which pins the EXACT name-set delta. Always false for the build-time shared
 	// catalog (a process always has a default-profile shared engine).
 	noFS bool
+	// mode is the session's permission mode (the per-session factory passes the
+	// session's resolved mode; the build-time shared catalog leaves it
+	// ModeDefault). The Schedule registration reads it to register the
+	// plan-aware variant in plan mode (AC4.3): the plan-mode catalog projection
+	// would hide the mutating (ReadOnly()==false) default tool entirely, so a
+	// plan-mode session carries the ReadOnly()==true plan-aware variant that
+	// stays advertised and hard-denies only the mutating create per call.
+	mode session.PermissionMode
 }
 
 // assembleCatalog registers every tool family into a fresh catalog, in the
@@ -417,6 +426,20 @@ func registerMemoryFamilies(ctx context.Context, cfg Config, cat *tool.Catalog, 
 	}
 }
 
+// scheduleManagerPresent reports whether the assets' late-bound scheduleManager
+// factory resolves a non-nil manager — the SAME gate registerScheduleTool uses
+// to decide the Schedule tool registers. The applySchedulePosture wiring reads
+// it to decide whether the model is told about the tool: the note mirrors the
+// registration exactly (a session whose store backs no ScheduleStore has no
+// tool and is NOT told about one). Extracted so the prompt-posture wiring and
+// the catalog registration cannot drift on the gate.
+func scheduleManagerPresent(a catalogAssets) bool {
+	if a.scheduleManagerFactory == nil {
+		return false
+	}
+	return a.scheduleManagerFactory() != nil
+}
+
 // registerScheduleTool registers the model-facing Schedule tool (ADR 0073) when
 // the assets carry a scheduleManager — the conditional-registration gate that
 // keeps the tool present exactly when the session's store backs a
@@ -446,7 +469,20 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
-	cat.MustRegister(agent.NewScheduleTool(mgr))
+	base := agent.NewScheduleTool(mgr)
+	if s.mode == session.ModePlan {
+		// PLAN-MODE variant (AC4.3): the default tool reports ReadOnly()==false,
+		// so the plan-mode catalog projection would hide the WHOLE tool —
+		// including the read-leaning create plan mode must keep (a schedule
+		// CREATE does not itself mutate the workspace). The plan-aware variant
+		// reports ReadOnly()==true (so the projection advertises it) and
+		// hard-denies a mutating: true create per call before the base runs —
+		// the plan-mode mutation veto the AC pins. The read/mutate serialization
+		// contract of the DEFAULT tool is unchanged for every non-plan engine.
+		cat.MustRegister(agent.NewPlanAwareScheduleTool(base))
+		return
+	}
+	cat.MustRegister(base)
 }
 
 // registerSkillFamily registers the Skill tool over the build-time skills seam

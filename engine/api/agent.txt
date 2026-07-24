@@ -89,6 +89,7 @@ func NewInspectMemberTool(store port.SessionStore) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool
 func NewLRUForkReaper(capacity int) *LRUForkReaper
 func NewParallelTool(childEngine *Engine, forker tool.WorkspaceForker, opts ...ParallelOption) tool.Tool
+func NewPlanAwareScheduleTool(base tool.Tool) tool.Tool
 func NewPresentPlanTool() tool.Tool
 func NewScheduleTool(mgr port.ScheduleManager) tool.Tool
 func NewSubagentStatusTool() tool.Tool

@@ -402,6 +402,16 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// can be inspected after the fact. --no-store opts out (in-memory store);
 		// --store-dir relocates it. See resolveStoreDir.
 		StoreDir: resolveStoreDir(cfg),
+		// Scheduled tasks ON by default (ADR 0073 decision 2, AC2.4): the TUI
+		// inherits the on-by-default scheduler (the same !--no-scheduler fold the
+		// mecated cmd feeds), so the embedded server ticks and a due schedule
+		// auto-fires with no flag — the /schedule overlay's in-chat and manual
+		// fires work out of the box. On the default per-workspace jsonlstore the
+		// store backs a ScheduleStore, so the scheduler engages; on --no-store
+		// (the in-memory store) buildScheduler reconciles to the byte-identical
+		// inert path (AC2.3). The 30s tick is the scheduler's own default
+		// (SchedulerTickInterval left 0).
+		SchedulerEnabled: true,
 		// Session retention GC (issues #38 + #79). With a DURABLE default store the
 		// child snapshots (subagent/parallel/team) AND the top-level main-session
 		// snapshots accumulate on disk, so a LONG-LIVED TUI process otherwise grows

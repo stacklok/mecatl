@@ -13,6 +13,23 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.NewPlanAwareScheduleTool`** (ADR 0073, the AC4.3 plan-mode gate) —
+  wraps the Schedule tool for a PLAN-MODE session's catalog. The default tool
+  reports `ReadOnly()==false` (a single tool carries both read-leaning and
+  mutating verbs), so the plan-mode catalog projection
+  (`engine/tool/catalog.go` `Available(ModePlan)`) would hide the WHOLE tool —
+  including the read-leaning create plan mode must keep (a schedule CREATE does
+  not itself mutate the workspace; the FIRE's posture is pinned at create-time
+  by the Mutating/Mode invariant). The plan-aware variant reports
+  `ReadOnly()==true` (so the projection advertises it) and hard-denies a
+  `mutating: true` create per call with the plan-mode deny reason BEFORE the
+  base tool runs; the read-leaning verbs (list/inspect, and create with
+  `mutating:false`) drive through unchanged. Composition registers it only for
+  a plan-mode session's catalog; every non-plan engine keeps the DEFAULT tool
+  (the read/mutate serialization contract is unchanged). Classified Added per
+  COMPATIBILITY.md (a new exported constructor is a minor bump). (schedule-tool
+  plan, task 05)
+
 - **`port.ScheduleManager` + `port.ErrFireNowOverlap` + `agent.ScheduleTool`
   (ADR 0073, the model-facing Schedule tool)** — a new consumer-local
   `port.ScheduleManager` interface (the create/inspect/list/update/pause/
