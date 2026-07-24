@@ -169,6 +169,9 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 	if spec.Mutating {
 		t.Fatal("read-leaning create Mutating = true, want false")
 	}
+	if spec.OneShotRetry || spec.OneShotMaxRetries != 0 {
+		t.Fatalf("unset one-shot retry fields mapped through as (%v, %d), want (false, 0)", spec.OneShotRetry, spec.OneShotMaxRetries)
+	}
 	if !strings.Contains(res.Content, "nightly") {
 		t.Fatalf("create result = %q, want the schedule name rendered", res.Content)
 	}
@@ -180,6 +183,16 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 	}
 	if mgr.created[1].Mode != session.ModeDefault {
 		t.Fatalf("mutating create Mode = %q, want default", mgr.created[1].Mode)
+	}
+
+	// the Phase-2 one-shot retry fields map through VERBATIM (their rule
+	// enforcement lives in the create-seam — the tool must never drop them).
+	res = run(`{"verb":"create","name":"retryme","prompt":"w","one_shot":"2026-07-25T09:00:00Z","workspace":"/r","one_shot_retry":true,"one_shot_max_retries":7}`)
+	if res.IsError {
+		t.Fatalf("one-shot retry create = error %q", res.Content)
+	}
+	if got := mgr.created[2]; !got.OneShotRetry || got.OneShotMaxRetries != 7 {
+		t.Fatalf("one-shot retry fields mapped as (retry=%v, max=%d), want (true, 7) verbatim", got.OneShotRetry, got.OneShotMaxRetries)
 	}
 
 	// a trigger with neither cron nor one_shot is a model-addressable error.

@@ -60,6 +60,12 @@ type scheduleArgs struct {
 	MaxTurns int `json:"max_turns,omitempty"`
 	// MaxToolCalls bounds each fire's tool calls (create; 0 = the default).
 	MaxToolCalls int `json:"max_tool_calls,omitempty"`
+	// OneShotRetry opts a one-shot into at-least-once crash retry (create;
+	// one-shot-only — the create-seam rejects it on a cron trigger fail-closed).
+	OneShotRetry bool `json:"one_shot_retry,omitempty"`
+	// OneShotMaxRetries bounds the one-shot retry budget (create; 0 with
+	// OneShotRetry = the create-seam default of 3).
+	OneShotMaxRetries int `json:"one_shot_max_retries,omitempty"`
 }
 
 // scheduleSchema is the JSON schema the model sees for the tool's arguments.
@@ -81,7 +87,9 @@ var scheduleSchema = json.RawMessage(`{
     "mutating": {"type": "boolean", "description": "create only: the explicit write opt-in. Default false (read-leaning — the fire runs in plan mode)."},
     "max_fires": {"type": "integer", "description": "create only: bound a cron's total fires (0 = forever). Ignored on a one-shot."},
     "max_turns": {"type": "integer", "description": "create only: bound each fire's turns (0 = the create-seam default)."},
-    "max_tool_calls": {"type": "integer", "description": "create only: bound each fire's tool calls (0 = the default)."}
+    "max_tool_calls": {"type": "integer", "description": "create only: bound each fire's tool calls (0 = the default)."},
+    "one_shot_retry": {"type": "boolean", "description": "create only: opt a one-shot into at-least-once crash retry. One-shot only — rejected on a cron trigger (a cron self-heals via misfire)."},
+    "one_shot_max_retries": {"type": "integer", "description": "create only: bound the one-shot retry budget (0 with one_shot_retry = the create-seam default of 3)."}
   },
   "required": ["verb"]
 }`)
@@ -204,6 +212,12 @@ func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args s
 		Mutating:  args.Mutating,
 		MaxFires:  args.MaxFires,
 		Timezone:  args.Timezone,
+		// The Phase-2 one-shot retry fields map through VERBATIM: their rule
+		// enforcement (one-shot-only rejection, the >= 0 bound, the default of
+		// 3) lives ENTIRELY in the create-seam — the tool must never drop them
+		// (a subset-of-the-seam wiring) or re-check them (a second path).
+		OneShotRetry:      args.OneShotRetry,
+		OneShotMaxRetries: args.OneShotMaxRetries,
 		Limits: session.Limits{
 			MaxTurns:     args.MaxTurns,
 			MaxToolCalls: args.MaxToolCalls,
