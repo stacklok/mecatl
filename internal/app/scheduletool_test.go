@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/cronparse"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
@@ -1058,5 +1059,144 @@ func TestScheduleTool_InMemoryStoreByteIdentical(t *testing.T) {
 	cat := assembleScheduleCatalog(t, built.Service.ScheduleManager)
 	if _, ok := cat.Lookup(agent.ScheduleToolName); ok {
 		t.Fatal("Schedule tool PRESENT on the in-memory store, want honest absence (byte-identical default)")
+	}
+}
+
+// TestScheduleTool_CreateRejectsUnknownSelector pins AC1.2c: `Schedule
+// create` rejects an unknown/uncatalogued provider+model selector at create
+// time (fail-closed, like an invalid cron) — a schedule fire must not
+// silently target a provider the deployment never configured, surfacing hours
+// later as a fire-time failure. The rejection lives in the SHARED seam
+// (validateScheduleSpec), so the tool inherits it: driven THROUGH the tool
+// over the REAL Service (whose selectable-model inventory names exactly the
+// pairs composition projected) AND directly against the seam. An empty
+// selector (the deployment default) is always valid.
+func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	storeDir := t.TempDir()
+	jstore, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	svc := newScheduleTestService(t, jstore, mockllm.New(mockllm.TextTurn("x")), workspace)
+	// The deployment's configured inventory: one provider, one model (the
+	// composition-projected snapshot ListModels advertises).
+	svc.SetModels([]*mecatlv1.ModelInfo{{Id: "test-model", ProviderId: "mock"}})
+	cat := assembleScheduleCatalog(t, svc.ScheduleManager)
+
+	// Direct against the SHARED seam: an unknown provider and an
+	// uncatalogued model are both rejected fail-closed, never saved.
+	for _, tc := range []struct {
+		name     string
+		selector port.ScheduleProviderSelector
+	}{
+		{"unknown provider", port.ScheduleProviderSelector{ProviderID: "nonexistent", ModelID: "test-model"}},
+		{"uncatalogued model", port.ScheduleProviderSelector{ProviderID: "mock", ModelID: "no-such-model"}},
+	} {
+		spec := port.ScheduleSpec{
+			Name: "sel-" + strings.ReplaceAll(tc.name, " ", "-"), Prompt: "p",
+			Trigger: port.TriggerSpec{Cron: "0 9 * * *"}, Workspace: workspace,
+			Mode: session.ModePlan, Selector: tc.selector,
+		}
+		if _, err := svc.CreateSchedule(ctx, spec); !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("%s: CreateSchedule = %v, want ErrInvalidArgument (fail-closed, like an invalid cron)", tc.name, err)
+		}
+		if _, err := svc.GetSchedule(ctx, spec.Name); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("%s: the rejected schedule was SAVED (fail-closed means not saved)", tc.name)
+		}
+	}
+
+	// THROUGH the tool over the REAL seam (a raw-args injection mints the
+	// selector-carrying spec directly — the caller controls every field, so
+	// the seam's check must fire on the forwarded spec; a tool wired to a
+	// SUBSET of the seam would accept it).
+	rawSpec := port.ScheduleSpec{
+		Name: "rawbad", Prompt: "p", Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
+		Workspace: workspace, Mode: session.ModePlan,
+		Selector: port.ScheduleProviderSelector{ProviderID: "nonexistent", ModelID: "x"},
+	}
+	rawMgr := &rawScheduleManager{inner: svc, spec: rawSpec}
+	rawCat := assembleScheduleCatalog(t, func() port.ScheduleManager { return rawMgr })
+	raw := execSchedule(t, rawCat, `{"verb":"create","name":"rawbad","prompt":"p","cron":"0 9 * * *","workspace":"`+workspace+`"}`)
+	if !raw.IsError {
+		t.Fatalf("tool create with an unknown selector = %q, want the seam's fail-closed rejection", raw.Content)
+	}
+	if !strings.Contains(raw.Content, "unknown provider+model selector") {
+		t.Fatalf("tool unknown-selector rejection = %q, want the seam's selector message", raw.Content)
+	}
+	if _, err := svc.GetSchedule(ctx, "rawbad"); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("GetSchedule(rawbad) after the rejection = %v, want ErrScheduleNotFound", err)
+	}
+
+	// An empty selector (the deployment default) is ALWAYS valid — through
+	// the tool.
+	res := execSchedule(t, cat, `{"verb":"create","name":"defaultsel","prompt":"p","cron":"0 9 * * *","workspace":"`+workspace+`"}`)
+	if res.IsError {
+		t.Fatalf("empty-selector create = error %q, want accepted (the deployment default is always valid)", res.Content)
+	}
+}
+
+// TestScheduleTool_CreateEnforcesMinInterval pins AC1.3: `Schedule create`
+// rejects a cadence tighter than the configured SchedulerMinInterval
+// frequency floor — the floor is now CONSULTED at the in-band create verb
+// (no longer inert). The floor flows from app Config.SchedulerMinInterval
+// into the Service create path (Build wires it UNCONDITIONALLY, so a
+// --no-scheduler deployment still enforces it); the check lives in the
+// SHARED seam, so the tool inherits it: driven THROUGH the tool over the
+// REAL Service AND directly against the seam, for both the @every and the
+// fixed-field cron cadence forms.
+func TestScheduleTool_CreateEnforcesMinInterval(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+
+	// Through the REAL Build path (the composition wiring): a 5-minute floor
+	// rejects a 1-minute cadence through the Service the tool drives.
+	built, err := Build(ctx, Config{
+		Workspace:            workspace,
+		NoSoul:               true,
+		NoUserModel:          true,
+		StoreDir:             t.TempDir(),
+		SchedulerEnabled:     false, // the floor binds the create-seam even with the tick loop OFF
+		SchedulerMinInterval: 5 * time.Minute,
+		envDetector:          fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient:  offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("x"))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	cat := assembleScheduleCatalog(t, built.Service.ScheduleManager)
+
+	// THROUGH the tool: a tighter-than-floor cadence is rejected, for both
+	// the @every macro and the fixed-field cron form.
+	for _, cron := range []string{"@every 1m", "* * * * *"} {
+		res := execSchedule(t, cat, `{"verb":"create","name":"tootight","prompt":"p","cron":"`+cron+`","workspace":"`+workspace+`"}`)
+		if !res.IsError {
+			t.Fatalf("tool create cron %q under a 5m floor = %q, want the fail-closed rejection (the floor is consulted at the create verb)", cron, res.Content)
+		}
+		if !strings.Contains(res.Content, "tighter than the configured minimum interval") {
+			t.Fatalf("tool floor rejection for %q = %q, want the seam's cadence message", cron, res.Content)
+		}
+		if _, err := built.Service.GetSchedule(ctx, "tootight"); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("the below-floor schedule %q was SAVED (fail-closed means not saved)", cron)
+		}
+	}
+
+	// Direct against the SHARED seam (the REST create path rides it too).
+	if _, err := built.Service.CreateSchedule(ctx, port.ScheduleSpec{
+		Name: "tight-direct", Prompt: "p", Trigger: port.TriggerSpec{Cron: "@every 30s"},
+		Workspace: workspace, Mode: session.ModePlan,
+	}); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("CreateSchedule(@every 30s under a 5m floor) = %v, want ErrInvalidArgument", err)
+	}
+
+	// At/above the floor: accepted through the tool.
+	res := execSchedule(t, cat, `{"verb":"create","name":"okcadence","prompt":"p","cron":"@every 10m","workspace":"`+workspace+`"}`)
+	if res.IsError {
+		t.Fatalf("tool create @every 10m under a 5m floor = error %q, want accepted", res.Content)
 	}
 }

@@ -1564,6 +1564,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
+	// The cadence floor guards the SHARED create-seam (validateScheduleSpec)
+	// whether or not the tick loop runs — a --no-scheduler deployment still
+	// manages schedules manually through the same seam (ADR 0073, AC1.3). It
+	// is therefore wired UNCONDITIONALLY, not folded into startScheduler.
+	svc.SetScheduleMinInterval(cfg.SchedulerMinInterval)
 
 	// Child-session retention GC (issue #38): wired AFTER the Service exists
 	// because the sweep's liveness predicate is the Service's in-flight run
