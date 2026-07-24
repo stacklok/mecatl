@@ -223,7 +223,6 @@ require (
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
-	github.com/stacklok/ac-trace v0.0.3 // indirect
 	github.com/stacklok/toolhive-core v0.0.26 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
@@ -294,5 +293,3 @@ require (
 )
 
 replace github.com/stacklok/mecatl/engine => ./engine
-
-tool github.com/stacklok/ac-trace/cmd/actrace

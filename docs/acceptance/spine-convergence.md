@@ -70,8 +70,11 @@ mechanism titlani/tequitl run, per the `verify:` contract in
 [`AGENTS.md`](../../AGENTS.md).
 
 **Work:**
-- `go.mod`: `tool github.com/stacklok/ac-trace/cmd/actrace`.
-- `Taskfile.yml`: `ac-trace`, `ac-trace-strict`, `ac-trace-matrix` tasks.
+- `Taskfile.yml`: `ac-trace`, `ac-trace-strict`, `ac-trace-matrix` tasks,
+  invoking the tool via `go run …@v0.0.3` (pinned) rather than a go.mod
+  `tool` directive — ac-trace is an INTERNAL module, and a tool directive
+  would force every build of the root module (incl. CI without internal-org
+  access) to resolve it.
 
 **Acceptance:**
 - AC2.1: `task ac-trace` runs and reports coverage for `docs/acceptance/`.

@@ -32,8 +32,10 @@ Adopt the titlani/tequitl spine variant, adapted to mecatl's anchors:
   `verify:` line naming its proof (a test name, or `none` / `inspection` /
   `demonstration` with a reason). Status lifecycle `draft → in-progress →
   landed`; only `landed` plans gate.
-- **`ac-trace`** (the shared Stacklok tool, wired as a Go tool + Taskfile
-  tasks) checks every named proof resolves; `--strict` gates a landed plan.
+- **`ac-trace`** (the shared Stacklok tool, wired as pinned `go run` Taskfile
+  tasks — not a go.mod `tool` directive, since the module is INTERNAL and a
+  directive would force every root-module build to resolve it) checks every
+  named proof resolves; `--strict` gates a landed plan.
 - **The plan rides the accumulator** — no separate plan PR; orchestrate opens
   one PR (plan + code) and never merges to `main`.
 - **Agents**: `tdd-worker` (the per-task TDD implementor) and
