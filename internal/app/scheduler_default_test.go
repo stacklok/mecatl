@@ -31,13 +31,10 @@ func TestBuildSchedulerStoreBackedByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore.New: %v", err)
 	}
-	sched, closeFn, err := buildScheduler(Config{
+	sched, closeFn := buildScheduler(Config{
 		SchedulerEnabled: true,
 		Diagnostics:      port.NopDiagnostics{},
 	}, store, nil, "test-owner")
-	if err != nil {
-		t.Fatalf("buildScheduler over a ScheduleStore-backed store = %v, want nil (on by default)", err)
-	}
 	if sched == nil {
 		t.Fatal("buildScheduler returned a nil scheduler over a ScheduleStore-backed store, want a ticking scheduler (on by default)")
 	}
@@ -62,23 +59,24 @@ func TestBuildSchedulerInMemoryInertByDefault(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var store port.SessionStore = memstore.New()
+			var store port.SessionStore
 			if tc.enabled {
+				// The in-memory store has no ScheduleStore: inert under the
+				// default-on posture.
 				store = memstore.New()
 			} else {
+				// A schedule-capable store under the explicit opt-out: also
+				// inert (nothing is built).
 				jstore, err := jsonlstore.New(t.TempDir())
 				if err != nil {
 					t.Fatalf("jsonlstore.New: %v", err)
 				}
 				store = jstore
 			}
-			sched, closeFn, err := buildScheduler(Config{
+			sched, closeFn := buildScheduler(Config{
 				SchedulerEnabled: tc.enabled,
 				Diagnostics:      port.NopDiagnostics{},
 			}, store, nil, "test-owner")
-			if err != nil {
-				t.Fatalf("buildScheduler = %v, want nil (the on-by-default path never fails startup on a store with no ScheduleStore; the opt-out never builds)", err)
-			}
 			if sched != nil {
 				t.Fatal("buildScheduler returned a scheduler, want nil (inert)")
 			}

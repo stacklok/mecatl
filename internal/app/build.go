@@ -2162,11 +2162,13 @@ func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, 
 // contend. The FireFunc is LATE-BOUND: buildScheduler returns the
 // *scheduler.Scheduler with Fire nil; Build calls SetFire(makeFireFunc(svc))
 // after NewService, then Start. The returned close calls sched.Stop (which
-// drains in-flight fires, releases the leader lease).
-func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string) (*scheduler.Scheduler, func(), error) {
+// drains in-flight fires, releases the leader lease). buildScheduler CANNOT
+// FAIL with the on-by-default posture — the former enabled-but-no-store
+// startup error is gone with the opt-in flag — so it returns no error.
+func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string) (*scheduler.Scheduler, func()) {
 	noop := func() {}
 	if !cfg.SchedulerEnabled {
-		return nil, noop, nil
+		return nil, noop
 	}
 	schedStore, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
 	if !ok || schedStore.ScheduleStore() == nil {
@@ -2174,7 +2176,7 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 		// in-memory default) gets the byte-identical no-scheduling path — no
 		// tick goroutine, Scheduling capability false, the Schedule tool
 		// absent — NOT a startup error.
-		return nil, noop, nil
+		return nil, noop
 	}
 	scfg := scheduler.Config{
 		Store:              schedStore.ScheduleStore(),
@@ -2204,7 +2206,7 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, "scheduler: enabled",
 		"tick", scfg.TickInterval, "maxConcurrentFires", scfg.MaxConcurrentFires, "owner", leaseOwner, "lease", sessionLease != nil)
-	return sched, func() { _ = sched.Stop() }, nil
+	return sched, func() { _ = sched.Stop() }
 }
 
 // startScheduler builds, wires (SetScheduler + SetFire), and starts the
@@ -2215,10 +2217,7 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 // cyclomatic complexity under the lint cap.
 func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string, svc *server.Service) (func(), error) {
 	noop := func() {}
-	sched, schedClose, err := buildScheduler(cfg, store, sessionLease, leaseOwner)
-	if err != nil {
-		return noop, err
-	}
+	sched, schedClose := buildScheduler(cfg, store, sessionLease, leaseOwner)
 	if sched == nil {
 		return noop, nil // byte-identical default
 	}

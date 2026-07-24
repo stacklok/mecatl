@@ -245,34 +245,41 @@ func (s *Service) validateScheduleSpec(spec port.ScheduleSpec, now time.Time) (t
 			return time.Time{}, fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument)
 		}
 	case port.TriggerCron:
-		// cronparse.NextFire is the fail-closed grammar check; a bad expression
-		// is rejected here so a schedule with a bad cron is never saved. Its
-		// result IS the first NextFireAt — return it so CreateSchedule does not
-		// need a second, redundant parse of the same expression.
-		loc := scheduler.LoadLocation(spec.Timezone)
-		next, err := cronparse.NextFire(spec.Trigger.Cron, now, loc)
+		return s.validateCronTrigger(spec, now)
+	}
+	return time.Time{}, nil
+}
+
+// validateCronTrigger validates the cron arm of the trigger switch: the
+// grammar (fail-closed via cronparse.NextFire — a bad expression is rejected
+// here so a schedule with a bad cron is never saved) and the cadence floor.
+// It returns the first NextFireAt computed by the SAME cronparse.NextFire call
+// that validates the grammar — the parse is inherently required to validate a
+// cron expression, so the caller (validateScheduleSpec) reuses this return
+// value instead of parsing the identical expression a second time.
+func (s *Service) validateCronTrigger(spec port.ScheduleSpec, now time.Time) (time.Time, error) {
+	loc := scheduler.LoadLocation(spec.Timezone)
+	next, err := cronparse.NextFire(spec.Trigger.Cron, now, loc)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
+	}
+	// The cadence floor (ADR 0073, AC1.3 — SchedulerMinInterval, no longer
+	// inert): two consecutive computed fires are the schedule's true
+	// cadence, so a fixed-field cron that fires multiple times within one
+	// minute (e.g. "*/30 * * * * *" has no seconds field, but "* * * * *"
+	// fires every 60s) is measured honestly. A cadence tighter than the
+	// floor is rejected fail-closed. A one-shot has no cadence and never
+	// reaches this check.
+	if floor := s.scheduleMinInterval(); floor > 0 {
+		after, err := cronparse.NextFire(spec.Trigger.Cron, next, loc)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
 		}
-		// The cadence floor (ADR 0073, AC1.3 — SchedulerMinInterval, no longer
-		// inert): two consecutive computed fires are the schedule's true
-		// cadence, so a fixed-field cron that fires multiple times within one
-		// minute (e.g. "*/30 * * * * *" has no seconds field, but "* * * * *"
-		// fires every 60s) is measured honestly. A cadence tighter than the
-		// floor is rejected fail-closed. A one-shot has no cadence and never
-		// reaches this check.
-		if floor := s.scheduleMinInterval(); floor > 0 {
-			after, err := cronparse.NextFire(spec.Trigger.Cron, next, loc)
-			if err != nil {
-				return time.Time{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
-			}
-			if cadence := after.Sub(next); cadence < floor {
-				return time.Time{}, fmt.Errorf("%w: schedule cadence %v is tighter than the configured minimum interval %v (--scheduler-min-interval)", ErrInvalidArgument, cadence, floor)
-			}
+		if cadence := after.Sub(next); cadence < floor {
+			return time.Time{}, fmt.Errorf("%w: schedule cadence %v is tighter than the configured minimum interval %v (--scheduler-min-interval)", ErrInvalidArgument, cadence, floor)
 		}
-		return next, nil
 	}
-	return time.Time{}, nil
+	return next, nil
 }
 
 // validateScheduleSelector rejects (fail-closed) a non-empty
