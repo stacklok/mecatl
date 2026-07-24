@@ -624,6 +624,15 @@ type Service struct {
 	// load-bearing for a race that cannot occur in practice.
 	modelsRefresher atomic.Pointer[func(context.Context)]
 
+	// scheduleMinIntervalNanos is the scheduler cadence floor (ADR 0073, the
+	// create-seam half of scheduler.Config.MinInterval): a schedule whose
+	// cadence is tighter is rejected fail-closed by BOTH the Schedule tool's
+	// create and the REST/gRPC handler (the shared validateScheduleSpec). 0 =
+	// no floor (the byte-identical pre-floor posture). An atomic so the
+	// composition-time SetScheduleMinInterval is race-free against a create
+	// already in flight.
+	scheduleMinIntervalNanos atomic.Int64
+
 	mu    sync.Mutex
 	runs  map[session.SessionID]*runState
 	teams map[string]*teamState
@@ -1565,6 +1574,19 @@ func (s *Service) SetScheduler(sch *scheduler.Scheduler) {
 	s.mu.Lock()
 	s.scheduler = sch
 	s.mu.Unlock()
+}
+
+// SetScheduleMinInterval injects the scheduler cadence floor the create-seam
+// enforces (ADR 0073, AC1.3 — the composition half of
+// scheduler.Config.MinInterval / app Config.SchedulerMinInterval, previously
+// inert while there was no in-band create API). It lives on the Service, NOT
+// the scheduler: the floor guards the SHARED validateScheduleSpec — the
+// Schedule tool's create AND the REST/gRPC create — whether or not the tick
+// loop runs (a --no-scheduler deployment still manages schedules manually).
+// 0 disables the floor. Called once by composition before serving; atomic so
+// an in-flight create never tears against it.
+func (s *Service) SetScheduleMinInterval(d time.Duration) {
+	s.scheduleMinIntervalNanos.Store(int64(d))
 }
 
 // HasScheduler reports whether a scheduler was wired into this Service. It is
