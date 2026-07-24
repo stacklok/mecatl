@@ -78,6 +78,7 @@ absolute path (the server requires absolute).
 | `--list-themes` | – | print available themes and exit |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |
 | `--no-mouse` | off | keep the alt screen but don't capture the mouse, so the terminal's **native** click-drag selection works; trades away in-app wheel scroll + drag-select/copy (or `MECATUI_NO_MOUSE=1`; see the selection section) |
+| `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> — <status word> mecatui` (the title is the first prompt, the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
 | `--no-banner` | off | disable the first-run welcome **splash** (mascot + gradient wordmark); the plain prompt hint + affordance list still show. Auto-forced on under `--quiet` or a non-interactive stdin |
 | `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`). Overridden per session by the `/models` picker |
 | `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`); overrides the built-in provider preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
@@ -138,9 +139,41 @@ reusing an already-running `mecated`) logs nothing of its own.
 |---|---|
 | `MECATUI_THEME` | theme name (same as `--theme`) |
 | `MECATUI_NO_MOUSE` | don't capture the mouse (same as `--no-mouse`) — native terminal selection over in-app wheel/drag |
+| `MECATUI_NO_TERMINAL_TITLE` | suppress the dynamic terminal window/tab title (same as `--terminal-title=off`) — collapse to the bare `mecatui` |
 | `MECATUI_DEBUG_MOUSE` | overlay raw mouse coords / click-mapping in the footer during a press/drag (troubleshooting) |
 | `MECATUI_FORCE_EMOJI` / `MECATUI_NO_EMOJI` | force / suppress the emoji glyph for the YOLO posture badge (force-on, no-wins-over-force); default is conservative env-based detection (see the posture badge) |
 | `MECATUI_FORCE_KITTY` / `MECATUI_NO_KITTY` | force / suppress the Kitty-graphics mascot on the welcome splash (force-on, no-wins-over-force); default is conservative env-based detection, falling back to the always-correct half-block mascot |
+
+**Dynamic terminal window/tab title.** `mecatui` sets the terminal window/tab title
+to `<session title> — <status word> mecatui`, so you can tell sessions apart in a
+tab bar. The title is the **first genuine prompt** of the session (clamped to ~40
+runes); the status word reflects the TUI phase:
+
+| Phase | Title |
+|---|---|
+| running | `<title> — Working mecatui` |
+| awaiting approval | `<title> — ⚠ mecatui` |
+| connecting | `<title> — Connecting mecatui` |
+| fatal | `<title> — ✗ mecatui` |
+| idle / replay (title known) | `<title> — mecatui` |
+| no title yet | `mecatui` |
+
+The title leads because tab bars **truncate from the right**; the status is a
+**static word, never an animated spinner** (per-frame title churn trips OS
+attention heuristics — the dock bounces / the taskbar flashes on every change).
+The title self-heals across a session switch / fork / carryover (a refetch adopts
+the server's stored title when this client never saw the first prompt).
+
+The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
+can't embed an OSC title-injection), and newlines/tabs collapse to single spaces
+(a window title is one line).
+
+Pass `--terminal-title=off` (or `MECATUI_NO_TERMINAL_TITLE=1`) to suppress it and
+leave the title at the bare `mecatui` — the escape hatch for
+terminals/multiplexers where a set title does more harm than good. **tmux note:**
+by default tmux's `automatic-rename` overrides pane titles; to let `mecatui`'s
+title survive, set `set -g automatic-rename off` (or `set -g allow-set-title on`)
+in your `~/.tmux.conf`.
 
 **Skill discovery is ON by default**, via conventional discovery (the read-only
 `Skill` tool activates progressive-disclosure `<name>/SKILL.md` units from the

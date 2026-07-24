@@ -308,6 +308,11 @@ func (m Model) switchToSession(s client.SessionListItem) (tea.Model, tea.Cmd, bo
 	// alias a stale cache entry.
 	m = m.resetSession()
 	m.sessionID = s.ID
+	// Adopt the picker's stored title verbatim (the full unclamped title —
+	// windowTitle clamps at render time). A continued session whose title was set
+	// by the server on its ORIGINAL run surfaces here so the tab reads correctly
+	// before the first new prompt.
+	m.sessionTitle = s.Title
 	m.effectiveModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartedThisRun = true // suppress the welcome splash for the rest of the run

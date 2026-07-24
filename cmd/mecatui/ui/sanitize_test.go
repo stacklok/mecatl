@@ -20,6 +20,10 @@ func TestSanitizeTerminal(t *testing.T) {
 		{"strips bare ESC", "a\x1bb", "ab"},
 		{"strips DEL", "a\x7fb", "ab"},
 		{"strips C0 controls", "a\x00\x01\x02\rb", "ab"},
+		// C1 runes are written as escapes (0x9d as a bare byte is invalid UTF-8
+		// and decodes to U+FFFD, not the C1 rune U+009D).
+		{"strips C1 OSC", "x\u009d]0;evil\x07", "x]0;evil"},
+		{"strips C1 CSI", "a\u009b2Jb", "a2Jb"},
 		{"empty", "", ""},
 	}
 	for _, tc := range cases {

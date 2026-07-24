@@ -193,6 +193,14 @@ type Deps struct {
 	// that strip OSC52 or users who prefer native selection.
 	NoMouse bool
 
+	// NoWindowTitle suppresses the dynamic terminal window/tab title, leaving the
+	// title at the bare "mecatui" (no phase word, no session title). Default
+	// false (the title is dynamic: "<title> — <status word> mecatui"). Set true by
+	// --terminal-title=off / MECATUI_NO_TERMINAL_TITLE=1 — the escape hatch for
+	// terminals/multiplexers where a set title does more harm than good (or where
+	// the per-phase churn is unwanted).
+	NoWindowTitle bool
+
 	// DebugMouse turns on a footer diagnostic overlay (env MECATUI_DEBUG_MOUSE=1):
 	// on every mouse press/motion the footer-left is overridden with the raw mouse
 	// coordinates and their content mapping (top=convTopRow, yoff, viewport height,
@@ -286,8 +294,17 @@ type Model struct {
 
 	phase     phase
 	sessionID string
-	statusMsg string
-	fatalErr  string
+	// sessionTitle is the session's human label for the terminal window/tab title
+	// (the "<title> — …" head of windowTitle). Set-once from the first genuine
+	// user prompt (submitPrompt), adopted on a session switch (switchToSession
+	// reads the picker's stored title), and self-healed via a GetSession refetch
+	// (onResolvedModelMsg) on the carryover/fork/adopt paths where the server
+	// already set a title this client never saw. Cleared by resetSession (a
+	// /clear wipes the session-derived state, including the label). The render
+	// path clamps + sanitizes it; this field holds the raw adopted title.
+	sessionTitle string
+	statusMsg    string
+	fatalErr     string
 
 	width  int
 	height int
@@ -751,6 +768,10 @@ func (m Model) resetSession() Model {
 	m.contextTokens = 0
 	m.activeTool = ""
 	m.toolProgress = ""
+	// Drop the session title: it is session-derived (seeded from the first prompt
+	// / adopted from the stored session on a switch), so a /clear or a /models
+	// restart-now must not leave a stale label on the freshly-cleared session.
+	m.sessionTitle = ""
 	// Drop any pending permission modal — and the FIFO queue behind it plus the
 	// answered-set dedupe: an ask is session-derived in-flight state (its AskID
 	// correlates to a run on the OLD session), so a reset must not leave a stale

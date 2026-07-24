@@ -166,6 +166,14 @@ type fakeConv struct {
 	createCount       int
 	closedIDs         []string
 	mu                sync.Mutex
+	// lastResolved records the resolved model the MOST RECENT CreateSession echoed
+	// back, so GetSession can return it (modelling a real server whose GetSession
+	// returns the same resolved model the create did). Without this, GetSession
+	// would return only the canned resolvedModel, diverging from the echoed one on
+	// the echoSelAsResolved path — a divergence the window-title self-heal refetch
+	// (fired from applySessionReady) would then clobber the header with. Guarded
+	// by mu (touched by the command goroutine + the test goroutine).
+	lastResolved client.ResolvedModel
 	// carryoverFrom records the source session id the LAST
 	// CreateSessionWithCarryover carried (issue #20), and carryoverCount counts
 	// those calls — the /models carryover e2e asserts the live session id
@@ -202,9 +210,12 @@ type fakeConv struct {
 	// Empty ⇒ GetSession returns the canned resolvedModel. getSessionErr, when
 	// non-nil, makes GetSession fail (the benign-error path). getSessionCount counts
 	// calls (guarded by mu) so a test can assert the refetch fired (or did NOT).
+	// getSessionTitle, when non-empty, is returned as the snapshot's Title (the
+	// window-title self-heal channel); empty leaves the snapshot title blank.
 	getSessionResults []client.ResolvedModel
 	getSessionErr     error
 	getSessionCount   int
+	getSessionTitle   string
 
 	// ForkSession recorders (ADR 0068 effort fork-resume). forkedFrom/forkedEffort
 	// record the LAST fork's source id + effort override; forkCount counts calls.
@@ -257,6 +268,13 @@ func (c *fakeConv) GetSession(_ context.Context, _ string) (client.SessionSnapsh
 		return client.SessionSnapshot{}, c.getSessionErr
 	}
 	resolved := c.resolvedModel
+	// When a create echoed a selector-derived model (echoSelAsResolved), GetSession
+	// returns THAT echoed model — a real server's GetSession returns the same
+	// resolved model the create did. lastResolved is set on every create, so this
+	// accurately models the server the ui just talked to.
+	if c.lastResolved.ModelID != "" {
+		resolved = c.lastResolved
+	}
 	if len(c.getSessionResults) > 0 {
 		i := c.getSessionCount - 1
 		if i >= len(c.getSessionResults) {
@@ -268,7 +286,7 @@ func (c *fakeConv) GetSession(_ context.Context, _ string) (client.SessionSnapsh
 	if mode == "" {
 		mode = client.ModeDefaultString
 	}
-	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved}, nil
+	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved, Title: c.getSessionTitle}, nil
 }
 
 func (c *fakeConv) SetMode(_ context.Context, _ string, mode string) (string, error) {
@@ -351,6 +369,7 @@ func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string,
 	if c.echoSelAsResolved && !sel.IsZero() {
 		resolved = client.ResolvedModel{ProviderID: sel.ProviderID, ModelID: sel.ModelID}
 	}
+	c.lastResolved = resolved
 	if c.mode == "" {
 		c.mode = client.ModeDefaultString
 	}

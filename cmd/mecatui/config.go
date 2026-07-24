@@ -53,6 +53,16 @@ type config struct {
 	// inline). Wired to ui.Deps.NoMouse.
 	noMouse bool
 
+	// terminalTitleOff suppresses the dynamic terminal window/tab title (leaving
+	// it at the bare "mecatui"). Off by default (the title is dynamic: "<title> —
+	// <status word> mecatui"). Honoured from --terminal-title=off/false/0 or
+	// MECATUI_NO_TERMINAL_TITLE=1/true. The escape hatch for terminals/
+	// multiplexers where a set title does more harm than good. Wired to
+	// ui.Deps.NoWindowTitle.
+	terminalTitle        string
+	terminalTitleOff     bool
+	terminalTitleFlagSet bool
+
 	// Embedded-server provider config (used only when no external server is
 	// dialled). The OpenAI key is read from OPENAI_API_KEY; --mock selects the
 	// canned offline provider instead (useful for a no-network smoke run).
@@ -284,6 +294,7 @@ func parseFlags(args []string) (config, error) {
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
 	fs.BoolVar(&cfg.noBanner, "no-banner", false, "disable the welcome splash (mascot + gradient wordmark); the plain prompt hint and affordance list are still shown. Also forced on under --quiet or a non-interactive stdin")
+	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "dynamic terminal window/tab title: on (default — shows \"<session title> — <status word> mecatui\") or off (bare \"mecatui\", the escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts on/off/true/false/1/0. Or set MECATUI_NO_TERMINAL_TITLE=1")
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)
@@ -377,6 +388,9 @@ func parseFlags(args []string) (config, error) {
 		if f.Name == "default-provider" {
 			cfg.defaultProviderFlagSet = true
 		}
+		if f.Name == "terminal-title" {
+			cfg.terminalTitleFlagSet = true
+		}
 	})
 
 	if cfg.authToken == "" {
@@ -391,6 +405,28 @@ func parseFlags(args []string) (config, error) {
 		switch os.Getenv("MECATUI_NO_MOUSE") {
 		case "1", "true":
 			cfg.noMouse = true
+		}
+	}
+	// Validate --terminal-title and resolve it onto terminalTitleOff. Accepted
+	// values: on/true/1/"" → on (the default); off/false/0 → off; anything else
+	// fails fast (match the validated-string convention posture/output-economy
+	// use, but those fail-soft — a title toggle is binary, so an unknown value is
+	// a genuine config error, not a soft-degrade case).
+	switch cfg.terminalTitle {
+	case "on", "true", "1", "":
+		cfg.terminalTitleOff = false
+	case "off", "false", "0":
+		cfg.terminalTitleOff = true
+	default:
+		return config{}, fmt.Errorf("invalid --terminal-title %q (want on|off|true|false|1|0)", cfg.terminalTitle)
+	}
+	// Env fallback: --terminal-title wins if passed; otherwise
+	// MECATUI_NO_TERMINAL_TITLE=1/true turns the dynamic title off (set-and-forget
+	// in a shell rc for a terminal/multiplexer where a set title misbehaves).
+	if !cfg.terminalTitleFlagSet && !cfg.terminalTitleOff {
+		switch os.Getenv("MECATUI_NO_TERMINAL_TITLE") {
+		case "1", "true":
+			cfg.terminalTitleOff = true
 		}
 	}
 	// Provider credentials from the environment, via the shared cliconfig reader (one

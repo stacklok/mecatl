@@ -35,7 +35,7 @@ func centerCard(th theme.Theme, body string, width, height int) string {
 func (m Model) View() tea.View {
 	var v tea.View
 	v.AltScreen = !m.deps.NoAltScreen
-	v.WindowTitle = "mecatui"
+	v.WindowTitle = m.windowTitle()
 	// Capture the mouse — but ONLY on the alt screen, and ONLY when mouse capture
 	// is not disabled. Capturing the mouse buys wheel-scroll and the in-app
 	// drag-select/copy layer (see selection.go) at the cost of the terminal's OWN

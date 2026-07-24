@@ -334,6 +334,19 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// sibling return operand leaves the copy order UNSPECIFIED (see markDirty's
 	// doc) — the cmd is taken first so the returned model carries the mutation.
 	cmd := (&m).maybeKittyTransmit()
+	// Self-heal the terminal window title on the carryover/fork/adopt paths where
+	// the server already set a title this client never saw: if we have NO local
+	// title yet AND a session is bound, fire a GetSession refetch so
+	// onResolvedModelMsg adopts the stored title. The footer-heal refetch already
+	// carries the title on its msg; this reuses that channel rather than a second
+	// RPC. Batched with the kitty transmit cmd so both run. (On the startup create
+	// the title is always "" server-side too, so the refetch is a no-op for the
+	// title — it still may raise the footer window denominator, which is the
+	// existing footer-heal path's concern.)
+	if m.sessionTitle == "" && m.sessionID != "" && m.deps.Session != nil {
+		heal := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+		cmd = tea.Batch(cmd, heal)
+	}
 	return m, cmd, true
 }
 
@@ -469,6 +482,13 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	// run starts.
 	if msg.Err != nil || msg.SessionID != m.sessionID {
 		return m, nil, true
+	}
+	// Window-title self-heal: adopt the session's stored title from the refetch
+	// ONLY when the local title is still empty (set-once — a title the user
+	// seeded by typing a prompt sticks; this only backfills carryover/fork/adopt
+	// where the server already had one).
+	if m.sessionTitle == "" && msg.Title != "" {
+		m.sessionTitle = msg.Title
 	}
 	// Mode update: apply when the refetch carries a mode (the plan-approval
 	// refresh path). On the footer-heal path Mode is the same as m.activeMode
@@ -2083,6 +2103,14 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.conv.addUserWithMedia(text, media.Descriptors)
 	} else {
 		m.conv.addUser(text)
+	}
+	// Seed the session title set-once from the first genuine prompt (mirrors the
+	// server's session.SetTitle: the FIRST non-empty prompt sticks, later prompts
+	// never overwrite it). An empty text (media-only / a bare built-in already
+	// intercepted above) leaves it empty — the window title then self-heals from a
+	// GetSession refetch on the carryover/fork/adopt paths (onResolvedModelMsg).
+	if m.sessionTitle == "" {
+		m.sessionTitle = text
 	}
 	m.ta.Reset()
 	// A fresh run clears any queue pause: whether this is the auto-drain (popAndSubmit

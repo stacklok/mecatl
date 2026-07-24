@@ -271,6 +271,89 @@ func TestParseFlagsNoMouse(t *testing.T) {
 	}
 }
 
+// TestParseFlagsTerminalTitle asserts the dynamic terminal title is ON by
+// default, turned off by --terminal-title=off/false/0, left on by
+// on/true/1/"" (explicitly or defaulted), turned off by
+// MECATUI_NO_TERMINAL_TITLE=1/true (with the flag winning), and that an invalid
+// value fails fast.
+func TestParseFlagsTerminalTitle(t *testing.T) {
+	t.Setenv("MECATUI_NO_TERMINAL_TITLE", "") // isolate from the ambient environment
+
+	// Default: on.
+	cfg, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.terminalTitleOff {
+		t.Error("terminalTitleOff = true by default, want false (dynamic title on)")
+	}
+
+	// off/false/0 disable it.
+	for _, v := range []string{"off", "false", "0"} {
+		cfg, err := parseFlags([]string{"--terminal-title", v})
+		if err != nil {
+			t.Fatalf("parseFlags(--terminal-title %q): %v", v, err)
+		}
+		if !cfg.terminalTitleOff {
+			t.Errorf("--terminal-title=%q did not set terminalTitleOff", v)
+		}
+	}
+
+	// on/true/1/"" (explicit) leave it on.
+	for _, v := range []string{"on", "true", "1", ""} {
+		args := []string{"--terminal-title", v}
+		if v == "" {
+			// "" can't be passed as a flag value on the CLI; the default "" path is
+			// already covered by parseFlags(nil) above. Skip the explicit-"" case.
+			continue
+		}
+		cfg, err := parseFlags(args)
+		if err != nil {
+			t.Fatalf("parseFlags(--terminal-title %q): %v", v, err)
+		}
+		if cfg.terminalTitleOff {
+			t.Errorf("--terminal-title=%q set terminalTitleOff, want false (on)", v)
+		}
+	}
+
+	// Env fallback: MECATUI_NO_TERMINAL_TITLE=1/true disables it (flag not passed).
+	for _, v := range []string{"1", "true"} {
+		t.Setenv("MECATUI_NO_TERMINAL_TITLE", v)
+		cfg, err := parseFlags(nil)
+		if err != nil {
+			t.Fatalf("parseFlags (MECATUI_NO_TERMINAL_TITLE=%q): %v", v, err)
+		}
+		if !cfg.terminalTitleOff {
+			t.Errorf("MECATUI_NO_TERMINAL_TITLE=%q did not set terminalTitleOff", v)
+		}
+	}
+
+	// A non-truthy env value must NOT disable it.
+	t.Setenv("MECATUI_NO_TERMINAL_TITLE", "0")
+	cfg, err = parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags (MECATUI_NO_TERMINAL_TITLE=0): %v", err)
+	}
+	if cfg.terminalTitleOff {
+		t.Error("MECATUI_NO_TERMINAL_TITLE=0 set terminalTitleOff, want false")
+	}
+
+	// The flag wins over the env: --terminal-title=on with the env set keeps it on.
+	t.Setenv("MECATUI_NO_TERMINAL_TITLE", "1")
+	cfg, err = parseFlags([]string{"--terminal-title", "on"})
+	if err != nil {
+		t.Fatalf("parseFlags(--terminal-title on with env): %v", err)
+	}
+	if cfg.terminalTitleOff {
+		t.Error("--terminal-title=on should win over MECATUI_NO_TERMINAL_TITLE=1")
+	}
+
+	// An invalid value fails fast.
+	if _, err := parseFlags([]string{"--terminal-title", "maybe"}); err == nil {
+		t.Error("--terminal-title=maybe should fail parseFlags (invalid value)")
+	}
+}
+
 // TestParseFlagsMemoryDefaults asserts the memory flags default to off/empty;
 // the per-project default PATH is computed later in embeddedConfig, not here.
 func TestParseFlagsMemoryDefaults(t *testing.T) {

@@ -175,6 +175,9 @@ func run(args []string) error {
 		// Escape hatch: disable mouse capture so the terminal's native selection
 		// works (trades away in-app wheel scroll + drag-select). Default false.
 		NoMouse: cfg.noMouse,
+		// Dynamic terminal window/tab title: off collapses to bare "mecatui".
+		// Default false (dynamic: "<title> — <status word> mecatui").
+		NoWindowTitle: cfg.terminalTitleOff,
 		// Diagnostic: MECATUI_DEBUG_MOUSE=1 shows raw mouse coords + content mapping in
 		// the footer (for diagnosing selection/coordinate issues). Default off.
 		DebugMouse: os.Getenv("MECATUI_DEBUG_MOUSE") != "",

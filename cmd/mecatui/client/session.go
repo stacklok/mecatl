@@ -76,11 +76,20 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 // Mode carries the server-confirmed permission posture from the session snapshot.
 // When non-empty (the plan-approval refresh path) the reducer applies it to the
 // header mode echo; the footer-heal path may leave it empty (the mode is unchanged).
+//
+// Title carries the session's stored title from the same GetSession refetch — the
+// self-heal channel for the terminal window title on the carryover/fork/adopt
+// paths where the server already set a title this client never saw (the on-sent
+// set-once in submitPrompt only seeds from a prompt the user typed HERE). The
+// reducer adopts it only when the local sessionTitle is still empty (set-once).
 type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel
 	Mode      string
-	Err       error
+	// Title is the session's stored title from the snapshot (self-heal channel for
+	// the window title). See the struct doc.
+	Title string
+	Err   error
 }
 
 // SessionGetter is the narrow subset of *Client that RefreshResolvedModelCmd needs.
@@ -128,6 +137,6 @@ func SetModeCmd(ctx context.Context, s ModeSetter, id, mode string) tea.Cmd {
 func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) tea.Cmd {
 	return func() tea.Msg {
 		snap, err := g.GetSession(ctx, id)
-		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode, Err: err}
+		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode, Title: snap.Title, Err: err}
 	}
 }
