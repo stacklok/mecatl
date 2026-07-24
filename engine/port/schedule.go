@@ -28,6 +28,16 @@ var ErrScheduleNotFound = errors.New("port: schedule not found")
 // ErrLeaseUnsupported / ErrPruneUnsupported's sticky-disable contract.
 var ErrScheduleUnsupported = errors.New("port: scheduled tasks not supported by this backend")
 
+// ErrFireNowOverlap is the port-level sentinel a ScheduleManager's FireNow
+// returns (wrapped with %w) when the schedule's singleton guard found a prior
+// fire still running — the manual fire is REJECTED, not run concurrently with
+// the in-flight one (the create-seam's default-true Singleton holds through
+// every surface: the REST/gRPC FireNow AND the model-facing Schedule tool). A
+// consumer in a layer that may NOT import the scheduler adapter (e.g.
+// engine/agent, a test asserting the tool surfaces the rejection) distinguishes
+// "overlapping fire, try again later" from a genuine failure via errors.Is.
+var ErrFireNowOverlap = errors.New("port: fire-now skipped (prior fire still running)")
+
 // PendingFireSessionID is the single-source sentinel Claim stamps on
 // ScheduleState.LastFireSessionID — the placeholder the caller overwrites via
 // RecordFire with the real fire's session id. It is non-empty so the singleton
@@ -529,6 +539,59 @@ type ScheduleStore interface {
 	// wraps ErrScheduleNotFound; an empty fire list for an existing schedule is a
 	// successful empty slice (not an error). An implementation that cannot store
 	// schedules returns ErrScheduleUnsupported (wrapped).
+	ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error)
+}
+
+// ScheduleManager is the narrow CONSUMER-LOCAL interface the agent-layer
+// Schedule tool (engine/agent) consumes to manage scheduled tasks. It exposes
+// exactly the verbs the tool needs — create/inspect/list/update/pause/resume/
+// delete/fire/list-fires — and is satisfied by composition with the existing
+// schedule surface of the server service (internal/adapter/server.Service),
+// whose methods have these EXACT signatures. The injection precedent is the
+// Subagent tool's WithSubagentStore(port.SessionStore): a consumer-defined
+// port satisfied in composition, so engine/agent NEVER imports
+// internal/adapter/server, an adapter, proto, or gRPC. It is NOT
+// port.ScheduleStore (the durable registry port the tick loop polls) — the
+// manager is the validated create-seam + fire-seam SURFACE (CreateSchedule
+// validates fail-closed and computes the first fire; FireNow claims + runs a
+// fire synchronously-to-terminal), which the store alone does not provide.
+//
+// Error contract: a ScheduleManager MUST wrap the port-level sentinels a
+// consumer distinguishes via errors.Is — port.ErrScheduleNotFound for an
+// unknown schedule/fire name, and the create-seam's argument-rejection class
+// for an invalid spec. A FireNow on a schedule whose prior fire is still
+// running returns the singleton-overlap error the REST FireNow surface
+// returns (a caller may map it to a "try again later" model message); it is
+// NOT a second concurrent fire.
+type ScheduleManager interface {
+	// CreateSchedule validates the spec fail-closed (trigger XOR, cron grammar,
+	// the Mutating/Mode invariant, the profile-aware workspace check), applies
+	// the create-seam defaults (Singleton=true), computes the first NextFireAt,
+	// and saves the schedule. A duplicate name is rejected (create never
+	// clobbers an existing schedule).
+	CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)
+	// GetSchedule loads a schedule by name; the not-found case wraps
+	// ErrScheduleNotFound.
+	GetSchedule(ctx context.Context, name string) (Schedule, error)
+	// ListSchedules returns all stored schedules (no guaranteed order).
+	ListSchedules(ctx context.Context) ([]Schedule, error)
+	// UpdateSchedule re-validates and overwrites the Spec half while preserving
+	// the firing State (progress). The not-found case wraps ErrScheduleNotFound.
+	UpdateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)
+	// DeleteSchedule removes a schedule by name. It is idempotent (deleting an
+	// unknown name is success).
+	DeleteSchedule(ctx context.Context, name string) error
+	// PauseSchedule disables a schedule (Enabled=false) without deleting it.
+	PauseSchedule(ctx context.Context, name string) error
+	// ResumeSchedule re-enables a paused schedule (Enabled=true).
+	ResumeSchedule(ctx context.Context, name string) error
+	// FireNow manually fires a schedule by name, SYNCHRONOUSLY-TO-TERMINAL: it
+	// claims the slot, mints the fire's session (a "sched--"-prefixed id), runs
+	// it, and returns the fire record (ID == SessionID, plus the terminal Stop
+	// reason). A paused/done schedule, an exhausted one-shot, or a singleton
+	// overlap is rejected (the same sentinels the REST FireNow maps).
+	FireNow(ctx context.Context, name string) (ScheduleFire, error)
+	// ListFires returns the fire records for a schedule (no guaranteed order).
 	ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error)
 }
 

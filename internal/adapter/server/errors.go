@@ -1,6 +1,11 @@
 package server
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/stacklok/mecatl/engine/port"
+)
 
 // Sentinel errors the service returns; the gRPC and HTTP adapters map these to
 // their respective status codes (codes.InvalidArgument / NotFound, HTTP 400 /
@@ -112,11 +117,14 @@ var (
 	// FailedPrecondition / HTTP 412.
 	ErrScheduleDisabled = errors.New("server: schedule is disabled")
 	// ErrFireNowOverlap is returned by FireNow when the singleton overlap check
-	// found a prior fire still running. It wraps scheduler.ErrFireNowOverlap.
+	// found a prior fire still running. It wraps scheduler.ErrFireNowOverlap AND
+	// port.ErrFireNowOverlap (the port-level sentinel a layer that may not import
+	// this adapter — e.g. engine/agent's Schedule tool — matches via errors.Is,
+	// the same create-seam default-true Singleton holding through every surface).
 	// Adapters map it to FailedPrecondition / HTTP 412 (the schedule exists and
 	// is well-formed, it is just running — the same precondition-failed class as
 	// ErrScheduleDisabled; the two surfaces agree).
-	ErrFireNowOverlap = errors.New("server: fire-now skipped (prior fire still running)")
+	ErrFireNowOverlap = fmt.Errorf("server: fire-now skipped (prior fire still running): %w", port.ErrFireNowOverlap)
 	// ErrScheduleExhausted is returned by FireNow when a one-shot schedule has
 	// already fired (FireCount > 0). It wraps scheduler.ErrFireNowExhausted.
 	// Adapters map it to FailedPrecondition / HTTP 412.

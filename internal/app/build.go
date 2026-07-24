@@ -1525,6 +1525,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, fmt.Errorf("build service: %w", err)
 	}
 
+	// Model-facing Schedule tool (ADR 0073): late-bind the catalog assets'
+	// ScheduleManager factory to the Service's schedule seam NOW — the Service
+	// (whose schedule methods satisfy port.ScheduleManager verbatim) did not
+	// exist when buildEngine assembled the shared catalog + the sessFactory
+	// (the chicken-and-egg the late-bound factory closes). svc.ScheduleManager
+	// is nil unless the store backs a ScheduleStore (the SAME gate the
+	// capabilities echo uses), so the tool registration + the capability bit
+	// agree. Every later assembleCatalog call (the per-session factories, which
+	// run at session creation) reads it; the shared catalog assembled before
+	// this line legitimately has no Schedule tool.
+	assets.scheduleManagerFactory = svc.ScheduleManager
+
 	// LIVE model listing: Build seeded svcCfg.Models with the EMBEDDED snapshot
 	// synchronously above (so the ModelSelection cap is honest from t=0 and Build
 	// NEVER touches the network). Now kick a SINGLE background refresh that fetches
@@ -6234,6 +6246,14 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "InspectSubagent", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "InspectMember", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "SubagentStatus", Effect: governance.Allow},
+		// Schedule (ADR 0073): the model-facing scheduled-task management tool.
+		// Floor-scoped Allow like the memory tools — registering/pausing/firing a
+		// schedule does not itself mutate the workspace (the FIRE's posture is
+		// pinned at create-time by the Mutating/Mode invariant), so it is
+		// pre-approved but config-overridable to ask/deny in any scope. The
+		// cadence floor + the posture pin are the real guards (a later task);
+		// this floor only governs whether the tool ASKS.
+		{Scope: governance.ScopeBuiltinDefault, Tool: agent.ScheduleToolName, Effect: governance.Allow},
 	}
 }
 

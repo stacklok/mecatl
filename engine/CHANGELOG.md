@@ -13,6 +13,23 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`port.ScheduleManager` + `port.ErrFireNowOverlap` + `agent.ScheduleTool`
+  (ADR 0073, the model-facing Schedule tool)** — a new consumer-local
+  `port.ScheduleManager` interface (the create/inspect/list/update/pause/
+  resume/delete/fire/list-fires verbs the Schedule tool needs, satisfied by
+  composition with the server Service's schedule methods — the SAME validated
+  create-seam the REST/gRPC handlers ride, never a second path), the
+  port-level `ErrFireNowOverlap` sentinel a `FireNow` overlap returns (so a
+  layer that may not import the scheduler adapter — the tool — matches the
+  singleton rejection via `errors.Is`), and the `agent.ScheduleTool` itself
+  (`agent.NewScheduleTool(port.ScheduleManager)`, catalog name
+  `agent.ScheduleToolName` = `"Schedule"`). The tool reports
+  `ReadOnly()==false` (the conservative shape for a tool carrying both
+  read-only and mutating verbs — every Schedule call serialises so a mutating
+  verb never overlaps a sibling read). Classified Added per COMPATIBILITY.md
+  (a new interface + sentinel + tool are a minor bump). (schedule-tool plan,
+  task 01)
+
 - **`session.StripProviderState`** — provider-neutral history for cross-provider
   model-switch carryover (minor): a pure function returning a copy of a message
   slice with every provider-private replay blob cleared (`Message.Reasoning`,

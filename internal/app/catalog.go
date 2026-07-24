@@ -97,6 +97,24 @@ type catalogAssets struct {
 	// reuses the SAME provider (issue #42 — no second resolution to drift), and into
 	// the child catalogs for read-only-discovery parity with WebFetch.
 	searchProvider tool.SearchProvider
+	// scheduleManagerFactory is the LATE-BOUND resolver for the consumer-local
+	// port.ScheduleManager the Schedule tool drives (ADR 0073). The Service it
+	// resolves (whose schedule methods satisfy the interface verbatim) exists
+	// only AFTER NewService, which runs AFTER buildEngine built the shared
+	// catalog + the sessFactory — so the manager cannot be an eager field (a
+	// chicken-and-egg on the build order). Composition sets this ONCE, in Build
+	// right after NewService, to svc.ScheduleManager (nil when the store backs
+	// no ScheduleStore) BEFORE any session is created — every later
+	// assembleCatalog call (the per-session factories, which run at session
+	// creation) reads it. A nil FACTORY or a factory returning nil means no
+	// schedule backend: the tool stays ABSENT (honest, not a stub), agreeing
+	// with ServerCapabilities.Scheduling (scheduleStore() != nil). The
+	// build-time shared catalog assembled before the factory was set
+	// legitimately has no Schedule tool (the chicken-and-egg); the shared
+	// engine is for the DEFAULT profile, and any schedule-capable session
+	// routes through a per-session engine. Typed-nil discipline: assigned once,
+	// known-non-nil or untyped nil.
+	scheduleManagerFactory func() port.ScheduleManager
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -177,6 +195,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	}
 	registerTeamTools(ctx, cfg, cat, reg, store, a, s, refMgr)
 	registerMemoryFamilies(ctx, cfg, cat, a)
+	registerScheduleTool(ctx, cfg, cat, a, s)
 	registerSkillFamily(ctx, cfg, cat, a, s)
 
 	closeFn := composeCloseErr(subagentClose, clientClose)
@@ -396,6 +415,38 @@ func registerMemoryFamilies(ctx context.Context, cfg Config, cat *tool.Catalog, 
 			cfg.diag().Log(ctx, port.LevelWarn, "registering user-model tools failed; some tools may be missing", "err", err)
 		}
 	}
+}
+
+// registerScheduleTool registers the model-facing Schedule tool (ADR 0073) when
+// the assets carry a scheduleManager — the conditional-registration gate that
+// keeps the tool present exactly when the session's store backs a
+// port.ScheduleStore and ABSENT (honest, not a stub) otherwise, agreeing with
+// ServerCapabilities.Scheduling. The SAME conditional-registration shape as
+// registerMemoryFamilies (a nil-asset check, never a stub). Registered in BOTH
+// profiles: managing a schedule is not a filesystem act (a no-fs session can
+// create/list/pause/fire a schedule), so it is NOT in the no-FS excluded set.
+// The tool consumes the consumer-local port.ScheduleManager (the server
+// Service's schedule methods) — the SAME validated create-seam the REST/gRPC
+// handlers ride, never a second path (one store, one truth). It is floor-scoped
+// (a ScopeBuiltinDefault Allow in defaultRules keyed on the tool name), so it is
+// pre-approved but config-overridable, the memory-tool posture.
+func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a catalogAssets, s catalogSession) {
+	// Late-bound resolution: the factory is set in Build right after NewService
+	// (the Service it resolves doesn't exist before then); a nil factory or a
+	// factory returning nil means no schedule backend → the tool stays absent.
+	if a.scheduleManagerFactory == nil {
+		return
+	}
+	mgr := a.scheduleManagerFactory()
+	if mgr == nil {
+		return
+	}
+	// narrate mirrors the build-once-facts discipline (the ENABLED line fires
+	// once on the build-time shared catalog, never per session).
+	if s.narrate {
+		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
+	}
+	cat.MustRegister(agent.NewScheduleTool(mgr))
 }
 
 // registerSkillFamily registers the Skill tool over the build-time skills seam

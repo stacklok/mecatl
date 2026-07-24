@@ -1576,6 +1576,24 @@ func (s *Service) HasScheduler() bool {
 	return s.scheduler != nil
 }
 
+// ScheduleManager returns the consumer-local port.ScheduleManager the
+// model-facing Schedule tool (ADR 0073) drives: the Service's own validated
+// schedule methods (CreateSchedule/GetSchedule/ListSchedules/UpdateSchedule/
+// DeleteSchedule/PauseSchedule/ResumeSchedule/FireNow/ListFires), which satisfy
+// the interface verbatim. It returns nil UNLESS the configured Store backs a
+// port.ScheduleStore (scheduleStore() != nil) — the SAME conditional gate the
+// capabilities echo (Scheduling) uses, so the tool registration and the
+// capability bit agree and a store-less deployment gets the honest absent-tool
+// path, never a stub. Composition calls it AFTER NewService (the Service it
+// closes over is fully constructed) and injects the result into the catalog
+// assets for the Schedule tool's registration.
+func (s *Service) ScheduleManager() port.ScheduleManager {
+	if s.scheduleStore() == nil {
+		return nil
+	}
+	return s
+}
+
 // Diagnostics returns the operational diagnostics sink the Service was
 // configured with. It is the read-side accessor composition (the scheduler's
 // FireFunc) uses to WARN on a non-fatal degradation (e.g. a carried-context
