@@ -539,7 +539,7 @@ func (s *Scheduler) releaseLeader() {
 }
 
 // sleepOrDone waits d or returns false if ctx is done first.
-func (s *Scheduler) sleepOrDone(ctx context.Context, d time.Duration) bool {
+func (*Scheduler) sleepOrDone(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
