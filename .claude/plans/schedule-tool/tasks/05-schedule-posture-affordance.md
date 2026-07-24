@@ -2,8 +2,8 @@
 id: 05-schedule-posture-affordance
 title: Schedule tool model-visible affordance + floor/posture gates + full in-chat flow
 blocked_by: [01-schedule-tool-core, 02-schedule-tool-validation, 03-scheduler-on-by-default, 04-remove-declarative-cli]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-schedule-tool/05-schedule-posture-affordance"
 worktree: ""
 issue: ""
 retries: 0
