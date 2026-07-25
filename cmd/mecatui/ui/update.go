@@ -398,6 +398,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.phase = phaseIdle
 		m.sessionID = ""
 		m.restartFailed = true
+		// A carryover create's failure means enter-to-retry re-fires a FRESH
+		// (non-carryover) create (see onIdleSubmit), so the note armed by
+		// chooseModel for the ORIGINAL attempt would otherwise survive to falsely
+		// claim "conversation kept" on the retry's SessionReadyMsg.
+		m.pendingModelSwitchNote = ""
 		// Record the retry origin: an /effort fork failure (msg.viaFork) re-forks from
 		// the SURVIVING source session on retry — m.sessionID is "" by now, so the
 		// source id must ride its own field. A non-fork failure clears it so a stale

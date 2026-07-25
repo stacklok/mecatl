@@ -1837,17 +1837,21 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 		// is provider-neutral (session.StripProviderState clears Reasoning/
 		// ProviderPhase/ItemID, preserving text/roles/tool-call IDs/Args/results).
 		stripped := session.StripProviderState(snap)
-		// When the new provider is OpenAI, every stripped ToolCall has an
-		// empty ItemID. The OpenAI adapter is store:false (full history replay
-		// every turn) and uses ItemID (the provider's "id" field, e.g. "fc_1")
-		// to de-duplicate replayed function_call items (request.go:353-359).
-		// Without stable unique ids the provider auto-assigns sequential fc_N
-		// values; on the SECOND post-carryover turn those collide with the
-		// current response's items → "Duplicate item found with id fc_N"
-		// HTTP 400 (observed on Azure GPT-5.x). Synthesise stable, unique,
-		// positional ids with a carryover-namespaced prefix that cannot collide
-		// with the provider's fc_ scheme.
-		if newProv == "openai" {
+		// When the new provider rides the openai adapter, every stripped ToolCall
+		// has an empty ItemID. The openai adapter is store:false (full history
+		// replay every turn) and uses ItemID (the provider's "id" field, e.g.
+		// "fc_1") to de-duplicate replayed function_call items
+		// (request.go:353-359). Without stable unique ids the provider
+		// auto-assigns sequential fc_N values; on the SECOND post-carryover turn
+		// those collide with the current response's items → "Duplicate item
+		// found with id fc_N" HTTP 400 (observed on Azure GPT-5.x). Synthesise
+		// stable, unique, positional ids with a carryover-namespaced prefix that
+		// cannot collide with the provider's fc_ scheme. "openrouter" rides the
+		// SAME openai adapter construction (internal/app/registry.go
+		// newOpenAICompatEntry), so it needs the same synthesis — this is a
+		// provider-id check, not an adapter-type check, because the server
+		// layer only has the resolved id, not the adapter.
+		if newProv == "openai" || newProv == "openrouter" {
 			return synthesizeOpenAIItemIDs(stripped), nil
 		}
 		return stripped, nil
