@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -224,6 +225,13 @@ type Scheduler struct {
 
 	draining atomic.Bool
 
+	// stickyUnsupported is set (once) when the tick loop's Due returns
+	// port.ErrScheduleUnsupported — the backend can never store schedules. The
+	// leadership loop checks it and stops re-acquiring (without it, an epoch
+	// cancelled by the tick loop would just loop back to acquireLeader and
+	// churn forever — the sticky-disable must survive the epoch lifecycle).
+	stickyUnsupported atomic.Bool
+
 	// firesWG tracks in-flight fire goroutines so Stop can join them.
 	firesWG sync.WaitGroup
 
@@ -407,6 +415,12 @@ func (s *Scheduler) leadershipLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		// Sticky-disable: the tick loop found the store can never store
+		// schedules. Do not re-acquire / churn a fresh epoch — stand down for
+		// good (the leadership loop exits; Stop still joins cleanly).
+		if s.stickyUnsupported.Load() {
+			return
+		}
 		// Wait for any prior epoch's goroutines to fully exit before starting a
 		// new one (a demote→promote must never overlap two tick loops).
 		s.waitEpoch()
@@ -434,11 +448,24 @@ func (s *Scheduler) leadershipLoop(ctx context.Context) {
 				s.diag.Log(ctx, port.LevelWarn, "scheduler: leader lease acquire failed; retrying in standby",
 					"owner", s.cfg.LeaseOwner, "err", err.Error())
 			}
-			if !s.sleepOrDone(ctx, leaderStandbyBackoff) {
+			// Jittered backoff: on a leader's death N standbys would otherwise
+			// re-acquire in lockstep (a thundering-herd on the lease backend).
+			if !s.sleepOrDone(ctx, jitteredBackoff()) {
 				return
 			}
 		}
 	}
+}
+
+// jitteredBackoff returns the standby backoff with ±25% uniform jitter so a
+// fleet of standby replicas does not retry the leader-lease acquire in
+// lockstep after a leader's lease lapses.
+func jitteredBackoff() time.Duration {
+	// leaderStandbyBackoff in [0.75x, 1.25x]. math/rand/v2 is the right rand
+	// here (timing jitter, not a security decision — the llmresilience
+	// precedent).
+	j := rand.Float64()*0.5 + 0.75 //nolint:gosec // timing jitter, not crypto
+	return time.Duration(float64(leaderStandbyBackoff) * j)
 }
 
 // runEpoch starts a leadership epoch (tick + renew goroutines) and blocks until
@@ -474,20 +501,22 @@ func (s *Scheduler) startEpoch(ctx context.Context, lease port.Lease, renew bool
 		s.leaderLease = &lease
 		s.isLeader = true
 	}
-	s.epochWg.Add(2)
 	s.mu.Unlock()
 
+	// Add(1) per goroutine actually started (the tick always runs; the renewer
+	// only on a leader epoch). The watcher closes done once every started
+	// goroutine has exited.
+	s.epochWg.Add(1)
 	go func() {
 		defer s.epochWg.Done()
 		s.tick(epochCtx)
 	}()
 	if renew {
+		s.epochWg.Add(1)
 		go func() {
 			defer s.epochWg.Done()
 			s.renewLeader(epochCtx)
 		}()
-	} else {
-		s.epochWg.Done() // no renewer; balance the Add(2)
 	}
 	go func() {
 		s.epochWg.Wait()
@@ -520,9 +549,14 @@ func (s *Scheduler) waitEpoch() {
 	}
 }
 
-// releaseLeader releases a still-held leader lease, best-effort, on a
-// cancel-detached short-timeout ctx. No-op if not the leader.
+// releaseLeader demotes (stopping the current epoch so no new fires start on a
+// lease we are about to give up) and releases a still-held leader lease,
+// best-effort, on a cancel-detached short-timeout ctx. No-op if not the leader.
+// The demote BEFORE the release closes the window where a standby could promote
+// and tick while our epoch was still firing (the demote cancels the epoch ctx
+// first; the release then frees the lease only after our tick loop is stopping).
 func (s *Scheduler) releaseLeader() {
+	s.demote()
 	s.mu.Lock()
 	lease := s.leaderLease
 	s.leaderLease = nil
@@ -673,14 +707,26 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	if s.draining.Load() {
 		return // drain gate: no new fires mid-tick
 	}
+	// Leadership belt-and-braces: a demote cancels the epoch ctx, but a tick can
+	// already be in flight past the ctx check. A lease-backed scheduler that is
+	// not (or no longer) the leader must not poll Due / fire — the standby's
+	// only job is to wait for leadership. Nil-lease (single-replica) and
+	// not-yet-Started (direct RunOnceForTest unit tests) schedulers have no
+	// leader gate, so they always pass.
+	if _, leader := s.LeaderOwner(); !leader {
+		return
+	}
 	now := s.cfg.Clock.Now()
 	due, err := s.cfg.Store.Due(ctx, now)
 	if err != nil {
 		if errors.Is(err, port.ErrScheduleUnsupported) {
 			// The backend can never store schedules — stop ticking (the seam
-			// will never work here). This is sticky: we do not retry.
-			s.diag.Log(ctx, port.LevelInfo, "schedule store unsupported by backend; stopping tick loop",
+			// will never work here) AND stickily disable re-acquisition so the
+			// leadership loop does not churn a fresh epoch every TickInterval
+			// (the sticky-disable must outlive the epoch lifecycle).
+			s.diag.Log(ctx, port.LevelInfo, "schedule store unsupported by backend; stopping scheduler",
 				"err", err.Error())
+			s.stickyUnsupported.Store(true)
 			if s.tickCancel != nil {
 				s.tickCancel()
 			}

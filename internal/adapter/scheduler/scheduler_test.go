@@ -2056,3 +2056,211 @@ func TestScheduleMetricsFiredFailedSkipped(t *testing.T) {
 		}
 	})
 }
+
+// --- standby-hardening fakes (the architect-review fixes) --------------------
+
+// unsupportedDueStore is a memschedulestore whose Due always returns
+// port.ErrScheduleUnsupported — the "this backend can never store schedules"
+// case the tick loop must stickily disable on.
+type unsupportedDueStore struct {
+	*memschedulestore.Store
+}
+
+func (unsupportedDueStore) Due(context.Context, time.Time) ([]port.Schedule, error) {
+	return nil, port.ErrScheduleUnsupported
+}
+
+// recordingLease is a port.SessionLease that records the ORDER of Acquire and
+// Release calls relative to a shared probe, so a test can assert the demote
+// (epoch cancel) precedes the lease release. Acquire always succeeds.
+type recordingLease struct {
+	mu      sync.Mutex
+	events  []string
+	onFirst func() // invoked synchronously inside the first Release call
+}
+
+func (l *recordingLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	l.mu.Lock()
+	l.events = append(l.events, "acquire")
+	l.mu.Unlock()
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+func (*recordingLease) Renew(_ context.Context, l port.Lease) (port.Lease, error) { return l, nil }
+
+func (l *recordingLease) Release(_ context.Context, _ port.Lease) error {
+	l.mu.Lock()
+	l.events = append(l.events, "release")
+	first := len(l.events) == 1 || !l.sawAcquireBeforeReleaseLocked()
+	cb := l.onFirst
+	l.mu.Unlock()
+	if first && cb != nil {
+		cb()
+	}
+	return nil
+}
+
+func (l *recordingLease) sawAcquireBeforeReleaseLocked() bool {
+	for _, e := range l.events {
+		if e == "release" {
+			return false
+		}
+	}
+	return true
+}
+
+// --- Fix 2: ErrScheduleUnsupported is sticky across the epoch lifecycle -----
+
+// TestStickyUnsupportedStopsLeadershipLoop: when the store's Due reports
+// ErrScheduleUnsupported, the scheduler must not churn a fresh leadership epoch
+// every TickInterval. Before the fix, the tick loop cancelled only the current
+// epoch ctx; the leadership loop looped back to acquireLeader and started a new
+// epoch that failed Due again — an infinite acquire/tick/release cycle. The
+// stickyUnsupported flag must stop the loop.
+func TestStickyUnsupportedStopsLeadershipLoop(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := unsupportedDueStore{memschedulestore.New()}
+	fire := &fireStub{}
+	diag := &capturingDiag{}
+	lease := &recordingLease{}
+	s := scheduler.New(scheduler.Config{
+		Store:        store,
+		Lease:        lease,
+		LeaseOwner:   "owner-this",
+		Fire:         fire.fire,
+		Clock:        clk,
+		Diagnostics:  diag,
+		TickInterval: 10 * time.Millisecond,
+	})
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// The first epoch's first Due returns Unsupported → the tick loop sets the
+	// sticky flag and cancels; the leadership loop must then EXIT (no re-acquire
+	// churn). Wait for the sticky stop to take effect, then confirm the acquire
+	// count stops growing (a churning loop would keep acquiring every epoch).
+	if !pollUntil(5*time.Second, func() bool {
+		diag.mu.Lock()
+		defer diag.mu.Unlock()
+		for _, m := range diag.msgs {
+			if strings.Contains(m, "schedule store unsupported") {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("tick loop never logged the store-unsupported stop")
+	}
+	lease.mu.Lock()
+	acquiresAtSticky := 0
+	for _, e := range lease.events {
+		if e == "acquire" {
+			acquiresAtSticky++
+		}
+	}
+	lease.mu.Unlock()
+	// Give a churning loop ample time to re-acquire several times.
+	time.Sleep(200 * time.Millisecond)
+	lease.mu.Lock()
+	acquiresAfter := 0
+	for _, e := range lease.events {
+		if e == "acquire" {
+			acquiresAfter++
+		}
+	}
+	lease.mu.Unlock()
+	if acquiresAfter != acquiresAtSticky {
+		t.Fatalf("leadership loop kept acquiring after sticky-unsupported (acquires %d → %d); the sticky disable did not stop the epoch churn",
+			acquiresAtSticky, acquiresAfter)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
+// --- Fix 1: releaseLeader demotes BEFORE releasing the lease -----------------
+
+// TestReleaseLeaderDemotesBeforeRelease: on a clean Stop, the scheduler must
+// cancel the leadership epoch (so no new fires start) BEFORE it releases the
+// leader lease — otherwise a standby could promote and tick while the outgoing
+// leader's epoch was still firing. The recordingLease fires a probe inside the
+// Release call; at that instant the scheduler must already report not-leader.
+func TestReleaseLeaderDemotesBeforeRelease(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	var s2 *scheduler.Scheduler
+	lease := &recordingLease{
+		onFirst: func() {
+			// Inside the Release call: the scheduler must ALREADY be demoted.
+			if _, leader := s2.LeaderOwner(); leader {
+				t.Errorf("releaseLeader released the lease while still leader (demote-before-release violated)")
+			}
+		},
+	}
+	s2 = scheduler.New(scheduler.Config{
+		Store:        store,
+		Lease:        lease,
+		LeaseOwner:   "owner-this",
+		Fire:         fire.fire,
+		Clock:        clk,
+		TickInterval: 10 * time.Millisecond,
+	})
+	if err := s2.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Wait for leadership to be acquired (the probe only makes sense once leader).
+	if !pollUntil(5*time.Second, func() bool {
+		_, leader := s2.LeaderOwner()
+		return leader
+	}) {
+		t.Fatal("scheduler never became leader")
+	}
+	if err := s2.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// The onFirst probe asserted the ordering synchronously; reaching here with
+	// no t.Errorf means demote preceded release.
+}
+
+// --- Fix 1 belt-and-braces: a demoted (standby) replica's tickOnce no-fires --
+
+// TestTickOnceNoFireWhenNotLeader: a lease-backed scheduler that is NOT the
+// leader must not poll Due / fire from tickOnce, even if a tick is in flight
+// past the epoch-ctx cancel (the belt-and-braces leader gate).
+func TestTickOnceNoFireWhenNotLeader(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	store := memschedulestore.New()
+	fire := &fireStub{}
+	leaseBE := memleaseHeldBy(clk, "owner-A") // a peer holds the leader lease
+	s := scheduler.New(scheduler.Config{
+		Store:        store,
+		Lease:        leaseBE,
+		LeaseOwner:   "owner-B",
+		Fire:         fire.fire,
+		Clock:        clk,
+		TickInterval: time.Hour,
+	})
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "due", Prompt: "x", Trigger: port.TriggerSpec{Cron: "* * * * *"}},
+		State: port.ScheduleState{NextFireAt: clk.Now(), Enabled: true},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// Start → standby (peer leads). A direct RunOnceForTest drives tickOnce; the
+	// leader gate must no-op it (a standby never polls Due).
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s.RunOnceForTest(context.Background())
+	if got := fire.count(); got != 0 {
+		t.Fatalf("fires = %d, want 0 (standby tickOnce must not fire)", got)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
