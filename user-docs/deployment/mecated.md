@@ -114,7 +114,7 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 |---|---|---|
 | `--no-scheduler` | `false` | Disable the in-process scheduler tick loop (ON by default when the store exposes a `ScheduleStore` — `--store-dir` or redisstore). The create/list/fire API still works. The removed `--scheduler` opt-in fails fast as an unknown flag |
 | `--scheduler-tick-interval` | `30s` | How often the tick loop polls for due schedules |
-| `--scheduler-min-interval` | `0` (off) | Frequency floor enforced at schedule-create time (fail-closed) |
+| `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
 
 See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
@@ -333,7 +333,9 @@ full candidate content, asks for operator confirmation (or `--yes` for CI), vali
 the promotion, and moves the file. The model cannot perform this step — it does not
 have filesystem access outside the workspace.
 
-There's a fourth subcommand group, `mecated schedules <verb>` (`create`/`list`/`inspect`/`pause`/`resume`/`delete`/`fire`) — unlike the three above it's an HTTP client against an *already-running* server (it dials `--server-addr`), not an offline one-shot. See [Scheduled tasks](/what-you-get/scheduled-tasks.md#the-mecated-schedules-cli) for its usage.
+Schedules are managed **in-chat** via the model-facing `Schedule` tool or over the
+gRPC/REST `ScheduleService` API — there is no `mecated schedules` CLI (it was removed;
+see [Scheduled tasks](/what-you-get/scheduled-tasks.md#managing-schedules-in-chat-grpc-and-rest)).
 
 ---
 

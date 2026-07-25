@@ -125,7 +125,7 @@ mecated --store-dir ./state --no-scheduler                  # opt out (manual ma
 |---|---|---|
 | `--no-scheduler` | `false` | Disable the in-process scheduler tick loop (ON by default on any schedule-capable store). The create/list/fire API and the in-chat `Schedule` tool still work — manual management is independent of the tick loop. |
 | `--scheduler-tick-interval` | `30s` | How often the tick loop polls `ScheduleStore.Due`. |
-| `--scheduler-min-interval` | `0` (off) | The frequency floor enforced at schedule-create time — a schedule tighter than this is rejected, fail-closed, by BOTH the in-chat `Schedule` tool and the REST/gRPC create. |
+| `--scheduler-min-interval` | `1m` | The frequency floor enforced at schedule-create time — a schedule tighter than this is rejected, fail-closed, by BOTH the in-chat `Schedule` tool and the REST/gRPC create. Defaults to `1m` so an on-by-default scheduler plus the floor-Allow `Schedule` tool cannot mint an unbounded tight-cadence recurring fire out of the box; set it explicitly to tighten, or to `0` to disable the floor. |
 | `--scheduler-max-concurrent-fires` | `4` | Bounds the per-tick fire fan-out. |
 
 :::note[Singleton is currently always effectively true]
