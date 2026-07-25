@@ -33,6 +33,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0048 — mecak8s: Kubernetes-native agent harness (storage-free, managed-service state)](./0048-mecak8s.md)
+- [0059 — Scheduled tasks](./0059-scheduled-tasks.md)
+- [0073 — Schedule tool](./0073-schedule-tool.md)
+- [0074 — Many loops per server; scheduler shape](./0074-many-loops-scheduler-shape.md)
 
 ### Memory & context
 - [0008 — Memory on by default](./0008-memory-on-by-default.md)

@@ -319,9 +319,21 @@ the existing run-entry funnel. The pieces:
   `redisstore` (multi-replica, via a Lua CAS for the atomic Claim). All pass
   the shared `scheduleconformance` suite.
 - **`internal/adapter/scheduler`** — the tick loop, gated by a leader-lease on
-  the well-known `__scheduler__` id (only the leader ticks). On each tick:
+  the well-known `__scheduler__` id (only the leader ticks). Leadership is a
+  STANDBY loop (ADR 0073 follow-up): `Start` is infallible-at-launch — a
+  non-leader serves RPCs and retries the acquire on a jittered backoff,
+  promoting when the leader's lease lapses; a definitive Renew loss demotes the
+  leader back to standby (failover), and a sticky
+  store-unsupported flag stops the loop re-acquiring forever. `FireNow` is
+  gated on leadership (`ErrNotLeader` → FailedPrecondition/412). On each tick:
   `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`.
   The `FireFunc` seam is how composition injects the run-entry funnel.
+  **Scaling shape (ADR 0074):** one server hosts MANY concurrent sessions (the
+  per-session `SessionLease` is the exclusion primitive across both vertical
+  session-density and horizontal replicas); the scheduler stays a single global
+  leader for the cheap tick (`Claim` is the correctness fence, leadership is
+  hygiene), and the expensive fire DRIVE is decoupled into a bounded pool
+  (Phase 2), sharded per-schedule only if throughput later demands it.
 - **Composition** (`internal/app/build.go` `buildScheduler`/`startScheduler`)
   wires the scheduler ON BY DEFAULT ([ADR 0073](adr/0073-schedule-tool.md)
   decision 2 — the opt-in `--scheduler` flag is deleted; `--no-scheduler` is
