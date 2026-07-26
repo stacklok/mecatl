@@ -99,7 +99,11 @@ func New(opts ...Option) *Provider {
 	for _, o := range opts {
 		o(&c)
 	}
-	reqOpts := make([]option.RequestOption, 0, len(c.extra)+2)
+	reqOpts := make([]option.RequestOption, 0, len(c.extra)+3)
+	// FIRST, so it is the OUTERMOST middleware and therefore filters the body that
+	// the SDK's ssestream decoder ultimately reads. See ssefilter.go for why an SSE
+	// keepalive would otherwise kill a streaming turn outright.
+	reqOpts = append(reqOpts, option.WithMiddleware(keepaliveFilter()))
 	if c.apiKey != "" {
 		reqOpts = append(reqOpts, option.WithAPIKey(c.apiKey))
 	}
