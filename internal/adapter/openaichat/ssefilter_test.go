@@ -3,6 +3,7 @@ package openaichat
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -224,6 +225,77 @@ func TestNewInstallsKeepaliveFilter(t *testing.T) {
 	}
 	if !sawDone {
 		t.Error("want a terminal ChunkDone through the real client path")
+	}
+}
+
+// endlessNoNewline yields bytes forever and never a '\n'.
+type endlessNoNewline struct{ n int64 }
+
+func (e *endlessNoNewline) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	e.n += int64(len(p))
+	return len(p), nil
+}
+
+func (*endlessNoNewline) Close() error { return nil }
+
+// TestKeepaliveFilterBoundsLineLength pins the memory guard. The filter must see a
+// line's terminator before deciding whether the line survives, so it holds one line
+// in memory — and it sits IN FRONT of ssestream's scanner, whose own 32 MB cap
+// therefore never engages. Unbounded, a newline-less stream grew the buffer to
+// 1.1 GB in 5s and Read never returned; the cap must make it fail closed instead.
+// maxLine is set small so this costs bytes rather than 32 MB.
+func TestKeepaliveFilterBoundsLineLength(t *testing.T) {
+	f := &sseKeepaliveStripper{
+		src:     io.NopCloser(strings.NewReader("data: " + strings.Repeat("x", 4096))),
+		maxLine: 64,
+	}
+	got, err := io.ReadAll(f)
+	if !errors.Is(err, errSSELineTooLong) {
+		t.Fatalf("want errSSELineTooLong, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("must not emit the oversized partial line, got %d bytes", len(got))
+	}
+}
+
+// TestKeepaliveFilterTerminatesOnEndlessLine is the regression proper: Read must
+// RETURN on a newline-less stream rather than looping forever consuming memory.
+func TestKeepaliveFilterTerminatesOnEndlessLine(t *testing.T) {
+	src := &endlessNoNewline{}
+	f := &sseKeepaliveStripper{src: src, maxLine: 1 << 16}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(f)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, errSSELineTooLong) {
+			t.Fatalf("want errSSELineTooLong, got %v", err)
+		}
+		if src.n > 8<<20 {
+			t.Errorf("consumed %d MB before failing closed; the cap is not bounding intake", src.n>>20)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Read never returned on a newline-less stream (consumed %d MB)", src.n>>20)
+	}
+}
+
+// TestErrSSELineTooLongIsNotRetryable pins the classification: the cap error must
+// NOT masquerade as a transient truncation, or llmresilience would replay a stream
+// from a broken endpoint. See errSSELineTooLong's doc comment.
+func TestErrSSELineTooLongIsNotRetryable(t *testing.T) {
+	var syntaxErr *json.SyntaxError
+	if errors.As(errSSELineTooLong, &syntaxErr) {
+		t.Error("must not be a *json.SyntaxError (llmresilience would retry it)")
+	}
+	if errors.Is(errSSELineTooLong, io.ErrUnexpectedEOF) {
+		t.Error("must not wrap io.ErrUnexpectedEOF (llmresilience would retry it)")
 	}
 }
 

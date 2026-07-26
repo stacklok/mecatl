@@ -1,7 +1,9 @@
 package openaichat
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -73,6 +75,34 @@ type sseKeepaliveStripper struct {
 	buf     []byte       // reusable read buffer (allocated once, not per Read)
 	pending int          // non-whitespace data: bytes seen since the last dispatch
 	srcErr  error        // sticky terminal error from src
+	maxLine int          // per-line cap; 0 means maxSSELineBytes (tests set it small)
+}
+
+// maxSSELineBytes bounds a single buffered SSE line. This filter must see a
+// line's terminator before it can decide whether the line survives, so it holds
+// one line in memory — and because it sits IN FRONT of ssestream's scanner, that
+// scanner's own cap no longer engages first. Without this bound a newline-less
+// stream grows the buffer without limit AND Read never returns (measured: 1.1 GB
+// buffered, 3.3 GB heap, 5 seconds), which is strictly worse than the
+// "bufio.Scanner: token too long" the SDK's scanner produced at 32 MB before the
+// filter existed. MIRRORS that cap (bufio.MaxScanTokenSize<<9) so the guard fails
+// exactly where the SDK would have, rather than shifting the limit. Same posture
+// as maxToolArgsBytes.
+const maxSSELineBytes = bufio.MaxScanTokenSize << 9
+
+// errSSELineTooLong fails the stream closed when one line exceeds the cap. It is
+// deliberately a PLAIN error — NOT a *json.SyntaxError and NOT wrapping
+// io.ErrUnexpectedEOF — so llmresilience's DefaultClassifier treats it as
+// NON-retryable: a 32 MB line is a broken or hostile endpoint, not a transient
+// truncation worth replaying.
+var errSSELineTooLong = fmt.Errorf("openaichat: SSE line exceeded %d bytes", maxSSELineBytes)
+
+// lineCap returns the effective per-line cap.
+func (s *sseKeepaliveStripper) lineCap() int {
+	if s.maxLine > 0 {
+		return s.maxLine
+	}
+	return maxSSELineBytes
 }
 
 func (s *sseKeepaliveStripper) Read(p []byte) (int, error) {
@@ -95,7 +125,14 @@ func (s *sseKeepaliveStripper) Read(p []byte) (int, error) {
 		}
 		n, err := s.src.Read(s.buf)
 		if n > 0 {
-			s.consume(s.buf[:n])
+			if cerr := s.consume(s.buf[:n]); cerr != nil {
+				// DISCARD the oversized partial line before latching the error, so
+				// the trailing-line flush below cannot emit it (and thereby swallow
+				// the error) on the next iteration.
+				s.line = nil
+				s.srcErr = cerr
+				continue
+			}
 		}
 		if err != nil {
 			s.srcErr = err
@@ -104,15 +141,20 @@ func (s *sseKeepaliveStripper) Read(p []byte) (int, error) {
 	return s.out.Read(p)
 }
 
-// consume splits b into lines, deciding per line whether it survives.
-func (s *sseKeepaliveStripper) consume(b []byte) {
+// consume splits b into lines, deciding per line whether it survives. It returns
+// errSSELineTooLong if a single line outgrows the cap.
+func (s *sseKeepaliveStripper) consume(b []byte) error {
 	for _, c := range b {
 		if c != '\n' {
+			if len(s.line) >= s.lineCap() {
+				return errSSELineTooLong
+			}
 			s.line = append(s.line, c)
 			continue
 		}
 		s.emitLine()
 	}
+	return nil
 }
 
 // emitLine applies the filter to the completed line held in s.line.
