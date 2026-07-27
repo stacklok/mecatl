@@ -86,9 +86,23 @@ type SessionReplayer interface {
 	StreamSessionEvents(ctx context.Context, id string) (*EventStream, error)
 }
 
+// LiveStreamer is the narrow subset of *Client the ui needs to open the LIVE
+// per-session event stream (ADR 0075 Scenario 5): the server pushes fire-result
+// delivery notes for the active session as they occur. Split out from *Client so
+// the ui is injectable with a fake for offline tests; *Client satisfies it (the
+// StreamSessionLive method on events.go is the concrete implementation). Mirrors
+// the SessionReplayer pattern.
+type LiveStreamer interface {
+	StreamSessionLive(ctx context.Context, id string) (*EventStream, error)
+}
+
 // Compile-time assertion: *Client satisfies SessionReplayer (the picker's
 // replay-stream collaborator). Mirrors the SessionLister pattern.
 var _ SessionReplayer = (*Client)(nil)
+
+// Compile-time assertion: *Client satisfies LiveStreamer (the live subscription
+// bridge collaborator). Mirrors the SessionReplayer pattern.
+var _ LiveStreamer = (*Client)(nil)
 
 // ListSessionsCmd fetches the stored-session inventory off the update goroutine;
 // the result (success or error) arrives as a SessionsListedMsg. Mirrors
