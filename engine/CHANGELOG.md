@@ -24,7 +24,25 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   the outcome. An empty OriginSessionID in out-of-band creates (REST/gRPC, no
   conversation) persists empty — additive, no existing behavior changed.
   Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
-  (fire-result-delivery plan, task 01)- **`agent.ScheduleQueryTool` + `agent.NewScheduleQueryTool` +
+  (fire-result-delivery plan, task 01)
+
+- **`port.DeliveryQueue` + `port.DeliveryNote` + `port.NopDeliveryQueue`**
+  (ADR 0075, fire-result-delivery Scenario 4 / ADR 0027 List 1+2) — a new
+  DURABLE per-session pending-delivery queue port for scheduled-task fire
+  results, keyed on the ORIGIN session id (not a per-Run registry). The queue
+  holds the opaque rendered note text (from the delivery renderer) plus a
+  monotonic per-session sequence that is the exactly-once ledger key: a note
+  queued during one run drains on the origin's next run-entry if the current
+  run ends first (the ledger is session-scoped). A durable backing (the same
+  durability the session snapshot has) survives a process restart so a note
+  queued before a restart drains after it; `NopDeliveryQueue` is the
+  byte-identical no-delivery default (a deployment with delivery unwired sees
+  nothing). The loop stays storage-agnostic: the fire path (composition) ENQUEUEs,
+  the loop's turn-boundary drain + the run-entry funnel DEQUEUE via this port.
+  Classified Added per COMPATIBILITY.md (a new interface + value type + no-op
+  default are a minor bump). (fire-result-delivery plan, task 04)
+
+- **`agent.ScheduleQueryTool` + `agent.NewScheduleQueryTool` +
   `agent.ScheduleQueryToolName` (ADR 0073, the AC1.4 read-parallel/mutate-serial
   partition)** — the scheduled-task surface is now TWO catalog entries over the
   ONE injected `port.ScheduleManager`: a read-only query tool (list/inspect,
