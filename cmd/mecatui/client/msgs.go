@@ -512,25 +512,50 @@ type DeliveryNoteMsg struct {
 	Parts        []ContentBlock
 }
 
-// deliveryNotePrefix is the literal prefix renderFireDelivery emits as the
-// provenance header of every delivery note. It is the single detection pattern
-// EventToMsg keys off to route a user_prompt to DeliveryNoteMsg; it must match
-// the SAME literal renderFireDelivery produces (internal/app/scheduler_delivery.go).
+// deliveryNotePrefix is the literal provenance header renderFireDelivery emits
+// as the FIRST CONTENT LINE of every delivery note, INSIDE the fenced-untrusted
+// block (the line after the "<<<UNTRUSTED\n" opener). It is the single detection
+// pattern EventToMsg keys off to route a user_prompt to DeliveryNoteMsg; it must
+// match the SAME literal renderFireDelivery produces (internal/app/scheduler_delivery.go).
 const deliveryNotePrefix = "[scheduled task "
 
+// deliveryNoteFenceOpener is the leading fence marker renderFireDelivery wraps
+// EVERY delivery note in (agent.FenceUntrusted writes "<<<UNTRUSTED\n" then the
+// body). Detection keys off the fence opener FOLLOWED by the header prefix so a
+// non-delivery user prompt (never fenced) cannot match, and a user who literally
+// typed "[scheduled task …" (un-fenced) is NOT mis-detected. This mirrors the
+// server relay's isDeliveryNoteText (internal/adapter/server/grpc.go) — the two
+// share the SAME detection contract.
+const deliveryNoteFenceOpener = "<<<UNTRUSTED\n"
+
 // deliverNoteFrom extracts the structured fields from a user_prompt whose text
-// starts with the delivery provenance header (the renderFireDelivery pattern).
-// On a match it returns the DeliveryNoteMsg; on a non-match it returns nil
-// (the caller falls back to UserPromptMsg).
+// is a fenced fire-result delivery note (the renderFireDelivery output: a
+// "<<<UNTRUSTED\n" opener followed by the "[scheduled task …" provenance
+// header). On a match it returns the DeliveryNoteMsg; on a non-match it returns
+// nil (the caller falls back to UserPromptMsg).
 func deliverNoteFrom(text string, parts []ContentBlock) *DeliveryNoteMsg {
-	if len(text) < len(deliveryNotePrefix) || text[:len(deliveryNotePrefix)] != deliveryNotePrefix {
+	// The note is fenced: the untrusted-fence opener precedes the header. Strip
+	// it before detecting + parsing so extractDeliveryFields reads the header at
+	// offset 0.
+	header := text
+	if hasDeliveryFenceOpener(text) {
+		header = text[len(deliveryNoteFenceOpener):]
+	}
+	if len(header) < len(deliveryNotePrefix) || header[:len(deliveryNotePrefix)] != deliveryNotePrefix {
+		return nil
+	}
+	// A non-fenced text that merely starts with the header prefix is NOT a
+	// delivery note — renderFireDelivery ALWAYS fences, so an un-fenced match is
+	// a user who literally typed the prefix. Reject it so it renders as an
+	// ordinary UserPromptMsg (mirrors the live-wire relay's fenced discriminator).
+	if !hasDeliveryFenceOpener(text) {
 		return nil
 	}
 	// Extract the schedule name: everything between "[scheduled task " and
 	// " (fire ". Handle the model-authored schedule name which may contain
 	// arbitrary characters (but is neutralised by renderFireDelivery, so it
 	// cannot contain the closing ") (fire " substring).
-	schedName, fireID := extractDeliveryFields(text)
+	schedName, fireID := extractDeliveryFields(header)
 	if schedName == "" {
 		return nil // malformed — no schedule name extractable
 	}
@@ -540,6 +565,12 @@ func deliverNoteFrom(text string, parts []ContentBlock) *DeliveryNoteMsg {
 		Text:         text,
 		Parts:        parts,
 	}
+}
+
+// hasDeliveryFenceOpener reports whether text begins with the untrusted-fence
+// opener renderFireDelivery wraps every delivery note in.
+func hasDeliveryFenceOpener(text string) bool {
+	return len(text) >= len(deliveryNoteFenceOpener) && text[:len(deliveryNoteFenceOpener)] == deliveryNoteFenceOpener
 }
 
 // extractDeliveryFields pulls the schedule name and fire id from a delivery

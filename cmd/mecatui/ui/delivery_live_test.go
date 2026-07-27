@@ -79,8 +79,20 @@ func deliveryUserPromptEvent(_, _, text string) *mecatlv1.Event {
 	}
 }
 
-// deliveryProvenanceText is the canonical delivery note from the scheduler.
-const deliveryProvenanceText = "[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text"
+// deliveryProvenanceBody is the canonical delivery note BODY from the
+// scheduler (the renderFireDelivery header + final-text line, BEFORE the
+// untrusted-fence wrapping). deliveryProvenanceText is the SAME body wrapped
+// in the fenced-untrusted block renderFireDelivery produces (the
+// "<<<UNTRUSTED\n" opener + body + trailing "<<<UNTRUSTED\n"). The ui package
+// may not import engine/agent, so this is the literal mirror of
+// agent.WriteUntrustedBlock's bytes; the client's deliverNoteFrom detects the
+// note via this exact fenced shape.
+const deliveryProvenanceBody = "[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text"
+
+// deliveryProvenanceText is the canonical FENCED delivery note from the
+// scheduler (renderFireDelivery's actual output). The live-wire relay + the TUI
+// client detect the note via the "<<<UNTRUSTED\n[scheduled task " opener shape.
+const deliveryProvenanceText = "<<<UNTRUSTED\n" + deliveryProvenanceBody + "\n<<<UNTRUSTED\n"
 
 // TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive verifies AC5.1: a
 // fire-result delivery EvUserPrompt arriving via the live subscription bridge

@@ -477,19 +477,48 @@ func relayLiveEvent(ev session.Event) bool {
 		// Relay the delivery note only — the renderFireDelivery provenance header
 		// is the single detection pattern (mirrors the TUI client's
 		// deliveryNotePrefix). A non-delivery EvUserPrompt stays skipped.
-		return ev.UserPrompt != nil && strings.HasPrefix(ev.UserPrompt.Text, deliveryNoteHeaderPrefix)
+		//
+		// renderFireDelivery wraps the note in agent.FenceUntrusted, so the
+		// recorded text starts with the untrusted-fence opener
+		// ("<<<UNTRUSTED\n") FOLLOWED by the "[scheduled task " provenance
+		// header on the next line. The detection matches that FENCED form so a
+		// delivery note (which is always fenced) is relayed while a non-delivery
+		// user prompt (which is never fenced) stays skipped. A bare
+		// HasPrefix("[scheduled task ") would NEVER match the real note (the
+		// fence opener precedes the header) and would FALSE-match a user who
+		// literally typed "[scheduled task …"; the fenced discriminator closes
+		// both.
+		return ev.UserPrompt != nil && isDeliveryNoteText(ev.UserPrompt.Text)
 	default:
 		return true
 	}
 }
 
-// deliveryNoteHeaderPrefix is the literal prefix renderFireDelivery emits as the
-// provenance header of every delivery note. It is the single detection pattern
-// the live-wire relay keys off to relay a delivery EvUserPrompt; it must match
-// the SAME literal renderFireDelivery produces (internal/app/scheduler_delivery.go)
-// and the TUI client's deliveryNotePrefix (cmd/mecatui/client/msgs.go). It is the
-// shared contract between the server relay and the client projection.
+// deliveryNoteHeaderPrefix is the literal provenance header renderFireDelivery
+// emits INSIDE the fenced-untrusted block (the first line after the
+// "<<<UNTRUSTED\n" opener). It is the single detection pattern the live-wire
+// relay + the TUI client key off; it must match the SAME literal
+// renderFireDelivery produces (internal/app/scheduler_delivery.go) and the TUI
+// client's deliveryNotePrefix (cmd/mecatui/client/msgs.go). It is the shared
+// contract between the server relay and the client projection.
 const deliveryNoteHeaderPrefix = "[scheduled task "
+
+// deliveryNoteFenceOpener is the leading fence marker renderFireDelivery wraps
+// EVERY delivery note in (agent.FenceUntrusted writes "<<<UNTRUSTED\n" then the
+// body). Detection keys off the fence opener FOLLOWED by the header prefix so a
+// non-delivery user prompt (never fenced) cannot match.
+const deliveryNoteFenceOpener = "<<<UNTRUSTED\n"
+
+// isDeliveryNoteText reports whether text is a fenced fire-result delivery
+// note: it starts with the untrusted-fence opener and its first content line
+// begins with the delivery provenance header. This is the precise shape
+// renderFireDelivery produces; a plain user prompt (un-fenced) never matches.
+func isDeliveryNoteText(text string) bool {
+	if !strings.HasPrefix(text, deliveryNoteFenceOpener) {
+		return false
+	}
+	return strings.HasPrefix(text[len(deliveryNoteFenceOpener):], deliveryNoteHeaderPrefix)
+}
 
 // ListSessions returns the stored-session inventory — the picker metadata a
 // client renders to let an operator open an EXISTING session by id (issue #245

@@ -79,7 +79,7 @@ func TestFireDelivery_Scenario6_RemoteTUIRendersDeliveryLive(t *testing.T) {
 		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", len(evs), liveEventTypes(evs))
 	}
 
-	deliveryNote := "[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text"
+	deliveryNote := "<<<UNTRUSTED\n[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text\n<<<UNTRUSTED\n"
 	driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
 
 	if !waitForLiveEvent(&mu, &evs, "user_prompt", "scheduled task nightly-sync", 3*time.Second) {
@@ -156,7 +156,7 @@ func TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t *testing.T)
 		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", len(evs), liveEventTypes(evs))
 	}
 
-	deliveryNote := "[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text"
+	deliveryNote := "<<<UNTRUSTED\n[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text\n<<<UNTRUSTED\n"
 	driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
 
 	if !waitForLiveEvent(&mu, &evs, "user_prompt", "scheduled task nightly-sync", 3*time.Second) {
@@ -183,10 +183,13 @@ func TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t *testing.T)
 	// AC6.2 NEGATIVE: a non-delivery EvUserPrompt stays skipped. Only the
 	// delivery-patterned note is relayed; a harness continuation prompt (the
 	// no-progress nudge) is a non-delivery EvUserPrompt and MUST stay skipped.
+	// The delivery note is FENCED (renderFireDelivery wraps it in
+	// <<<UNTRUSTED…>>>), so a relayed user_prompt must be a fenced delivery note;
+	// a bare user prompt (the no-progress nudge) is never fenced and never relayed.
 	for _, ev := range evs {
 		if ev.GetType() == "user_prompt" {
 			text := ev.GetUserPrompt().GetText()
-			if !strings.HasPrefix(text, "[scheduled task ") {
+			if !strings.HasPrefix(text, "<<<UNTRUSTED\n[scheduled task ") {
 				t.Fatalf("live stream relayed a NON-delivery EvUserPrompt (must stay skipped): %q", text)
 			}
 		}
@@ -250,7 +253,7 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", len(evs), liveEventTypes(evs))
 	}
 
-	deliveryNote := "[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text"
+	deliveryNote := "<<<UNTRUSTED\n[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text\n<<<UNTRUSTED\n"
 	driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
 
 	if !waitForLiveEvent(&mu, &evs, "user_prompt", "scheduled task nightly-sync", 3*time.Second) {
@@ -304,7 +307,7 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	if recordedText == "" {
 		t.Fatalf("recorded session conversation does not contain the delivery note")
 	}
-	if !strings.Contains(liveText, strings.TrimSpace(deliveryNote)) && liveText != recordedText {
+	if liveText != recordedText {
 		// The live wire carries the EvUserPrompt.text (the recorded prompt body),
 		// which is the SAME bytes the engine recorded. The recorded conversation
 		// message text is the fenced-untrusted note; the live wire carries the
