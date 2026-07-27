@@ -281,9 +281,10 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 	})
 	svc, err := server.NewService(server.Config{
 		Engine: engine, Store: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: time.Now, DefaultCapabilities: originLLM.Capabilities(),
-		EventLog: store, Diagnostics: diag,
+		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:                 time.Now,
+		DefaultCapabilities: originLLM.Capabilities(),
+		EventLog:            store, Diagnostics: diag,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -500,7 +501,7 @@ func TestFireDelivery_Scenario4_BusyOriginQueuesNotCollides(t *testing.T) {
 	svc, err := server.NewService(server.Config{
 		Engine: engine, Store: env.store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
+		Now:        time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
 		EventLog: env.store, Diagnostics: diag,
 	})
 	if err != nil {
@@ -581,7 +582,7 @@ func TestFireDelivery_Scenario4_DrainedExactlyOnceAtLoopStep2a(t *testing.T) {
 	// prior run). Then start a new run on the origin; the loop's Step 2a drain
 	// must record the note exactly once and mark it delivered.
 	env := newDeliveryTestEnv(t,
-		mockllm.TextTurn("first run"), // run N (completes, leaving the note pending)
+		mockllm.TextTurn("first run"),  // run N (completes, leaving the note pending)
 		mockllm.TextTurn("second run"), // run N+1 (drains the pending note at Step 2a)
 	)
 	originID := env.createOrigin(t, "hello")
@@ -689,12 +690,12 @@ func TestFireDelivery_Scenario4_NonDeliverableOriginDropsWithWarn(t *testing.T) 
 			engine := agent.NewEngine(agent.Deps{
 				LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(),
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
-				Model: "m", Store: store, DeliveryQueue: queue,
+				Model:  "m", Store: store, DeliveryQueue: queue,
 			})
 			svc, err := server.NewService(server.Config{
 				Engine: engine, Store: store,
 				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now: time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
+				Now:        time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
 				EventLog: store, Diagnostics: diag,
 			})
 			if err != nil {
@@ -728,14 +729,14 @@ func TestFireDelivery_Scenario4_NonDeliverableOriginDropsWithWarn(t *testing.T) 
 // errQueue is a DeliveryQueue that fails Enqueue, to test AC3.4's
 // enqueue-failure path (kept for completeness; the deleted-origin path above is
 // the primary AC3.4 test).
-type errQueue struct{ once sync.Once }
+type errQueue struct{}
 
-func (e *errQueue) Enqueue(_ context.Context, _ session.SessionID, _ string) (port.DeliveryNote, error) {
+func (*errQueue) Enqueue(_ context.Context, _ session.SessionID, _ string) (port.DeliveryNote, error) {
 	return port.DeliveryNote{}, errors.New("queue broken")
 }
-func (e *errQueue) Pending(_ context.Context, _ session.SessionID) ([]port.DeliveryNote, error) {
+func (*errQueue) Pending(_ context.Context, _ session.SessionID) ([]port.DeliveryNote, error) {
 	return nil, nil
 }
-func (e *errQueue) MarkDelivered(_ context.Context, _ session.SessionID, _ uint64) error { return nil }
+func (*errQueue) MarkDelivered(_ context.Context, _ session.SessionID, _ uint64) error { return nil }
 
 var _ port.DeliveryQueue = (*errQueue)(nil)

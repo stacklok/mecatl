@@ -43,7 +43,7 @@ import (
 // the untrusted fence are void — the origin's own policy still applies).
 func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire) {
 	return func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire) {
-		origin := session.SessionID(sched.Spec.OriginSessionID)
+		origin := sched.Spec.OriginSessionID
 		if origin == "" {
 			return // no delivery — the pre-ADR-0075 pull-only posture
 		}
@@ -124,17 +124,15 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "err", err.Error())
 			return
 		}
-		// Drain the delivery run to its terminal EvResult (the model acknowledges
-		// the note). The run's events are NOT relayed to a client here (the
-		// embedded/remote live-subscription surfacing is Scenario 5+); this only
-		// drives the run to completion so the origin's model sees the note. A
-		// send/drain error is best-effort — the run is cancelled on ctx done.
-		// FinishRun deregisters the run (the relay's discipline) so a later IsLive
-		// check does not falsely report the origin busy.
-		for ev := range run.Events() {
-			if ev.Type == session.EvResult && ev.Result != nil {
-				break
-			}
+		// Drain the delivery run to channel-close (not first EvResult) so the
+		// drain blocks until the run goroutine's deferred close(r.events) fires
+		// — which is after body() returns, after save() has persisted the
+		// terminal session snapshot. Stopping at EvResult races the save() call
+		// that follows emitResult in terminateComplete (engine/agent/loop.go
+		// ~2202-2203), so a caller's immediate GetSession can see a stale,
+		// pre-persist snapshot. Draining to close guarantees the snapshot is
+		// settled.
+		for range run.Events() {
 		}
 		svc.FinishRun(origin, run)
 	}
