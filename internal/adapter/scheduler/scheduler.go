@@ -143,6 +143,24 @@ type Config struct {
 	// EmitScheduleEvent). The payload's Kind ("fired"/"skipped"/"failed")
 	// labels the outcome; duration > 0 only for a fired/failed fire.
 	ScheduleMetrics func(payload session.SchedulePayload, duration time.Duration)
+	// DeliverFireResult is the OPTIONAL composition-injected callback
+	// (ADR 0075, fire-result-delivery) the scheduler invokes from fireClaimed
+	// AFTER RecordFire, to route a fire's terminal result back into its origin
+	// conversation. It is nil-safe (nil = the byte-identical no-delivery path,
+	// matching the pre-ADR-0075 pull-only posture). Composition wires it to
+	// deliverFireResult(svc, queue) which: skips an empty OriginSessionID (no
+	// delivery), renders the note (renderFireDelivery), enqueues it to the
+	// durable DeliveryQueue, and drives a delivery run into an idle/completed/
+	// cancelled/failed origin via StartRunContent (loadAndReopen reopens/
+	// recovers); a BUSY or AWAITING origin is left queued (the loop's Step 2a
+	// drain records it at the next turn boundary); a deleted/child/sched--
+	// origin degrades to pull-only with a WARN. A delivery error WARNs and
+	// NEVER fails the fire (delivery is decoupled — the fire already recorded).
+	// The scheduler invokes it for fired/failed fires alike (a failed fire may
+	// still have an origin that should know it errored); the callback decides
+	// whether to deliver based on the stop reason (it may skip a StopError
+	// fire's delivery, or deliver it — the ADR does not mandate either).
+	DeliverFireResult func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)
 }
 
 // Defaults. The leader-lease defaults mirror the run-entry lease defaults
@@ -311,6 +329,20 @@ func (s *Scheduler) SetScheduleMetrics(cb func(payload session.SchedulePayload, 
 		panic("scheduler: SetScheduleMetrics after Start")
 	}
 	s.cfg.ScheduleMetrics = cb
+}
+
+// SetDeliverFireResult wires the OPTIONAL composition-injected fire-result
+// delivery callback (ADR 0075). Composition calls it after SetFire (so the
+// FireFunc is bound) and before Start. nil is the byte-identical no-delivery
+// path (the pre-ADR-0075 pull-only posture). The scheduler invokes it from
+// fireClaimed AFTER RecordFire, with the schedule + the fire record.
+func (s *Scheduler) SetDeliverFireResult(cb func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started.Load() {
+		panic("scheduler: SetDeliverFireResult after Start")
+	}
+	s.cfg.DeliverFireResult = cb
 }
 
 // New constructs a Scheduler. It applies Config defaults (TTLs, intervals,
@@ -962,6 +994,15 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 	if err := s.cfg.Store.RecordFire(ctx, fire); err != nil && !errors.Is(err, port.ErrScheduleNotFound) {
 		s.diag.Log(ctx, port.LevelWarn, "scheduler: RecordFire failed",
 			"schedule", claimed.Spec.Name, "fire", fire.ID, "err", err.Error())
+	}
+	// Fire-result delivery (ADR 0075, fire-result-delivery): AFTER RecordFire,
+	// route the fire's terminal result back into its origin conversation. The
+	// callback is composition-injected (DeliverFireResult); nil is the
+	// byte-identical no-delivery path (the pre-ADR-0075 pull-only posture). A
+	// delivery error WARNs inside the callback and NEVER fails the fire — the
+	// fire is already recorded; delivery is a decoupled side-channel.
+	if s.cfg.DeliverFireResult != nil {
+		s.cfg.DeliverFireResult(ctx, claimed, fire)
 	}
 	return fire, fireErr
 }

@@ -122,6 +122,17 @@ type catalogAssets struct {
 	// baseEngineDeps (the shared engine) and the per-session engine factory to
 	// wire OriginBinder on the engine Deps. nil when scheduling is off.
 	scheduleOriginBinder agent.OriginBinder
+	// deliveryQueue is the DURABLE per-session pending-delivery queue
+	// (fire-result-delivery, ADR 0075 decision #3). It is built once in Build
+	// (a FileDeliveryQueue under the store dir for a durable store, an
+	// InMemoryDeliveryQueue for the in-memory default) and read by both
+	// baseEngineDeps (the shared engine — the loop's Step 2a drain) and the
+	// per-session engine factory to wire Deps.DeliveryQueue, and by
+	// startScheduler to wire the scheduler's DeliverFireResult callback (the
+	// fire path enqueues). nil when scheduling is off (the byte-identical
+	// no-delivery path). It is the SAME instance across main + per-session
+	// engines so a note queued during one run drains on the next.
+	deliveryQueue port.DeliveryQueue
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
