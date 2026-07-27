@@ -488,9 +488,110 @@ type ApprovalMsg struct {
 // replay. Text carries the flattened prompt body (or a harness-authored
 // continuation/notice); Parts carries any non-text media (image/audio) that rode
 // alongside it, projected to the plain ContentBlock type (image/audio only).
+// A delivery-patterned user_prompt (the fire-result delivery channel, ADR 0075)
+// maps to DeliveryNoteMsg instead — see deliverNoteFrom.
 type UserPromptMsg struct {
 	Text  string
 	Parts []ContentBlock
+}
+
+// DeliveryNoteMsg is a fire-result delivery note (ADR 0075 Scenario 5): the
+// fenced-untrusted harness note the scheduler delivered into the origin session.
+// It is projected from an EvUserPrompt event whose text starts with the
+// "[scheduled task <name> (fire <id>) ..." provenance header renderFireDelivery
+// emits. ScheduleName + FireID are structured fields the ui renders as a
+// distinct delivery card with a scheduled-task affordance; Text carries the
+// full note body verbatim (the same fenced-untrusted content the engine
+// recorded). Parts carries any non-text media that rode alongside the note
+// (normally nil — delivery notes are text-only). The live subscription and
+// the replay (StreamSessionEvents) path share this type via EventToMsg.
+type DeliveryNoteMsg struct {
+	ScheduleName string
+	FireID       string
+	Text         string
+	Parts        []ContentBlock
+}
+
+// deliveryNotePrefix is the literal prefix renderFireDelivery emits as the
+// provenance header of every delivery note. It is the single detection pattern
+// EventToMsg keys off to route a user_prompt to DeliveryNoteMsg; it must match
+// the SAME literal renderFireDelivery produces (internal/app/scheduler_delivery.go).
+const deliveryNotePrefix = "[scheduled task "
+
+// deliverNoteFrom extracts the structured fields from a user_prompt whose text
+// starts with the delivery provenance header (the renderFireDelivery pattern).
+// On a match it returns the DeliveryNoteMsg; on a non-match it returns nil
+// (the caller falls back to UserPromptMsg).
+func deliverNoteFrom(text string, parts []ContentBlock) *DeliveryNoteMsg {
+	if len(text) < len(deliveryNotePrefix) || text[:len(deliveryNotePrefix)] != deliveryNotePrefix {
+		return nil
+	}
+	// Extract the schedule name: everything between "[scheduled task " and
+	// " (fire ". Handle the model-authored schedule name which may contain
+	// arbitrary characters (but is neutralised by renderFireDelivery, so it
+	// cannot contain the closing ") (fire " substring).
+	schedName, fireID := extractDeliveryFields(text)
+	if schedName == "" {
+		return nil // malformed — no schedule name extractable
+	}
+	return &DeliveryNoteMsg{
+		ScheduleName: schedName,
+		FireID:       fireID,
+		Text:         text,
+		Parts:        parts,
+	}
+}
+
+// extractDeliveryFields pulls the schedule name and fire id from a delivery
+// note's provenance header: "[scheduled task <name> (fire <id>) <rest>]".
+// The header is produced by renderFireDelivery (internal/app/scheduler_delivery.go):
+//
+//	fmt.Sprintf("[scheduled task %%s (fire %%s) completed with stop reason: %%s]", ...)
+//
+// Returns ("", "") on any parse failure (the caller falls back to UserPromptMsg).
+func extractDeliveryFields(text string) (string, string) {
+	rest := text[len(deliveryNotePrefix):]
+	// The schedule name is everything before " (fire ".
+	fireTag := " (fire "
+	fireIdx := indexSubstring(rest, fireTag)
+	if fireIdx < 0 {
+		return "", ""
+	}
+	name := rest[:fireIdx]
+	rest = rest[fireIdx+len(fireTag):]
+	// The fire id is everything before the next ")".
+	closeParen := indexByteIn(rest, ')')
+	if closeParen < 0 {
+		return "", ""
+	}
+	fireID := rest[:closeParen]
+	if name == "" || fireID == "" {
+		return "", ""
+	}
+	return name, fireID
+}
+
+// indexSubstring returns the byte index of s within b, or -1.
+func indexSubstring(b, s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	for i := 0; i <= len(b)-len(s); i++ {
+		if b[i:i+len(s)] == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// indexByteIn returns the byte index of c within s, or -1.
+func indexByteIn(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }
 
 // CompactionArchiveMsg is the pre-compaction conversation (EvCompactionArchive),
@@ -773,7 +874,17 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "approval":
 		return approvalMsg(ev.GetApproval())
 	case "user_prompt":
-		return userPromptMsg(ev.GetUserPrompt())
+		up := ev.GetUserPrompt()
+		text := up.GetText()
+		parts := contentPartsFromProto(up.GetParts())
+		// Route fire-result delivery notes (ADR 0075 Scenario 5) to a
+		// distinct DeliveryNoteMsg so the ui renders them as a delivery
+		// card with a scheduled-task affordance, not as a user-typed
+		// prompt. The pattern is the renderFireDelivery provenance header.
+		if dn := deliverNoteFrom(text, parts); dn != nil {
+			return *dn
+		}
+		return UserPromptMsg{Text: text, Parts: parts}
 	case "compaction.archive":
 		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
