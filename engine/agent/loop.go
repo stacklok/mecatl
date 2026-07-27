@@ -289,6 +289,15 @@ type Deps struct {
 	// tool's full spec every turn, exactly as v1 does. The ToolSearch tool is
 	// registered into the catalog by NewEngine only when this is enabled.
 	ProgressiveTools bool
+
+	// OriginBinder, when non-nil, is called in startRun with the executing session's
+	// id so per-run state (e.g. the Schedule tool's origin capture) can bind the
+	// current session. It is the session-origin half of fire-result-delivery
+	// (ADR 0075): the Schedule tool wrapped in a SessionOriginScheduleManager stamps
+	// every CreateSchedule's OriginSessionID with this bound id, so a fire's terminal
+	// result is delivered back to the originating session. nil is fine (the
+	// no-delivery posture).
+	OriginBinder OriginBinder
 }
 
 // Engine builds Runs from a fixed set of ports. It is safe for concurrent use:
@@ -849,6 +858,13 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, opts RunOp
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
+	}
+	// Bind the per-run origin (the session id this engine is driving) so the
+	// SessionOriginScheduleManager wrapper stamps every CreateSchedule with the
+	// origin session id (fire-result-delivery, ADR 0075). nil is fine (the
+	// no-delivery posture).
+	if e.deps.OriginBinder != nil {
+		e.deps.OriginBinder.BindSessionOrigin(sess.ID)
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044): a host-supplied,
 	// colon-free value makes the run's askIDs reconstructable across processes;

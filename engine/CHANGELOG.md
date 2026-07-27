@@ -13,6 +13,21 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
+  `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
+  fire-result-delivery task 02) — a new `port.ScheduleManager` wrapper that
+  holds the current origin session id in a `sync/atomic.Pointer[session.SessionID]`
+  and stamps every `CreateSchedule` call's `OriginSessionID` from the bound id
+  (empty if unbound) before delegating. The `OriginBinder` interface (single
+  method `BindSessionOrigin(session.SessionID)`) is an OPTIONAL `Deps` field
+  the engine calls in `startRun` so the executing session's id is captured at
+  the run boundary. Composition wraps the real manager with
+  `NewSessionOriginScheduleManager` and wires it as both the tool's manager and
+  the engine's `OriginBinder`. The model-supplied `origin` arg is never in the
+  tool schema and is ignored if present — the bound id always wins. Classified
+  Added per COMPATIBILITY.md (a new exported type + constructor + interface +
+  Deps field are a minor bump). (fire-result-delivery plan, task 02)
+
 - **`port.ScheduleSpec.OriginSessionID`** (ADR 0075, fire-result-delivery Phase 1) —
   a new `session.SessionID` field on `ScheduleSpec` carrying the session whose
   terminal result delivery should receive the fire's outcome. Empty means no

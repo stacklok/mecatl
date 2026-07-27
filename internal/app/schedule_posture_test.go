@@ -277,6 +277,11 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	// Save the session to the store the schedule manager validates against, so
+	// OriginSessionID validation (which checks the session exists) passes.
+	if err := jstore.Save(ctx, sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	run := res.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "schedule the work", nil)
 	var results []session.ToolResult
 	for ev := range run.Events() {
@@ -373,6 +378,11 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 6}, time.Now())
+	// Save the session to the store the schedule manager validates against, so
+	// OriginSessionID validation (which checks the session exists) passes.
+	if err := jstore.Save(ctx, sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	run := res.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "schedule a nightly ci check and fire it once", nil)
 	var results []session.ToolResult
 	var stop session.StopReason

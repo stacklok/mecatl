@@ -64,7 +64,7 @@ func TestNoFSCatalogProfile(t *testing.T) {
 		t.Fatal("buildCatalog connected no global MCP manager — fixture broken")
 	}
 
-	noFSCat, noFSClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, assets, catalogSession{
+	noFSCat, noFSClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
 		provider: oa, providerID: providerOpenAI, model: cfg.Model, narrate: false, noFS: true,
 	})
 	defer func() { _ = noFSClose() }()
@@ -111,7 +111,7 @@ func TestNoFSParallelAbsent(t *testing.T) {
 	}
 	defer mcpClose()
 
-	noFSCat, closeFn := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, assets, catalogSession{
+	noFSCat, closeFn := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
 		provider: oa, providerID: providerOpenAI, model: cfg.Model, noFS: true,
 	})
 	defer func() { _ = closeFn() }()

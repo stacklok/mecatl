@@ -1893,7 +1893,7 @@ func sessionEngineFactory(
 		// Subagent per-def inline managers + the client mgr); assets.globalMgr is
 		// NEVER in it — Build owns its lifecycle (a per-session CloseSession must
 		// never tear down MCP for every other session).
-		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, assets, catalogSession{
+		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider:   resolvedProvider,
 			providerID: resolvedProviderID,
 			model:      resolvedModel,
@@ -1910,6 +1910,10 @@ func sessionEngineFactory(
 		// provider never contaminates compaction/counting.
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		deps.Catalog = cat
+		// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
+		// (created by registerScheduleTool) so every per-run startRun stamps the
+		// executing session's id. nil when scheduling is off.
+		deps.OriginBinder = assets.scheduleOriginBinder
 		// MODEL-VISIBLE plan-approval contract (issue #206): the gate only fires
 		// when the model CALLS PresentPlan, and nothing else tells it to — an
 		// uninstructed model treats an inline "acceptable" as approval and keeps
@@ -2463,6 +2467,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 
 	deps := baseEngineDeps(cfg, reg, provider, store, policy, mainHooks, mcpProvider, instructions)
 	deps.Catalog = cat
+	// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
+	// (created by registerScheduleTool) so every per-run startRun stamps the
+	// executing session's id. nil when scheduling is off.
+	deps.OriginBinder = assets.scheduleOriginBinder
 	// The OPT-IN child-ask reviewer (issue #31) rides the MAIN engine's deps only,
 	// built on the shared engine's (default provider, cfg.Model). Per-session
 	// engines get their own via the SAME attachAskAdjudicator in
@@ -3600,7 +3608,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	}
 	// The build-time assembly: default provider + model, no client MCP, narrating
 	// the ENABLED/DISABLED composition facts exactly once.
-	cat, assembledClose := assembleCatalog(ctx, cfg, reg, store, hooks, assets, catalogSession{
+	cat, assembledClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 		provider:   provider,
 		providerID: reg.Default(),
 		model:      cfg.Model,

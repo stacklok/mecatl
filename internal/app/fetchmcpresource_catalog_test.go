@@ -38,7 +38,7 @@ func TestFetchMcpResourcePresentInBothCatalogProfiles(t *testing.T) {
 		t.Fatal("FetchMcpResource is MISSING from the default (fs) shared catalog — it must be registered as a core outbound-read tool")
 	}
 
-	noFSCat, noFSClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, assets, catalogSession{
+	noFSCat, noFSClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
 		provider: oa, providerID: providerOpenAI, model: cfg.Model, narrate: false, noFS: true,
 	})
 	defer func() { _ = noFSClose() }()
