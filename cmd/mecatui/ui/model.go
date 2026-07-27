@@ -588,10 +588,10 @@ type Model struct {
 	// liveCh is the live session event feed's reader channel (LiveStreamCmd /
 	// LiveReplayStreamCmd); WaitForMsg drains it. Armed when the active session
 	// settles (session create / run end) and torn down on session switch / reset.
-	liveCh   chan tea.Msg
-	liveStop func()    // idempotent teardown (context.CancelFunc via sync.Once)
-	liveGen  uint64    // generation guard (parallel to streamGen): drops stale-reader msgs
-	liveArmed string   // the session id liveCh is armed for ("" = not armed); avoids re-arm on same id
+	liveCh    chan tea.Msg
+	liveStop  func() // idempotent teardown (context.CancelFunc via sync.Once)
+	liveGen   uint64 // generation guard (parallel to streamGen): drops stale-reader msgs
+	liveArmed string // the session id liveCh is armed for ("" = not armed); avoids re-arm on same id
 
 	// stagedMedia holds clipboard/pasted-path image attachments not yet sent,
 	// keyed by their literal "[Image #N]" marker (which also sits in the textarea

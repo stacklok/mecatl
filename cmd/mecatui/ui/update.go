@@ -2414,7 +2414,7 @@ func (m *Model) disarmLiveFeed() {
 	}
 	m.liveCh = nil
 	m.liveStop = nil
-	m.liveGen++   // invalidate any stale reader
+	m.liveGen++ // invalidate any stale reader
 	m.liveArmed = ""
 }
 

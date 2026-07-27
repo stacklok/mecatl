@@ -315,7 +315,6 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 
 // --- helpers ---
 
-
 // warmupLiveConn forces the lazy gRPC connection to establish by issuing a quick
 // unary GetSession before the server-streaming live subscription is opened. The
 // dial-on-first-RPC behaviour of grpc.NewClient means the StreamSessionLive
@@ -362,7 +361,6 @@ func driveLiveDeliveryRun(ctx context.Context, t *testing.T, svc *server.Service
 		svc.FinishRun(id, run)
 	}()
 }
-
 
 // probeLiveSubscription publishes a probe event repeatedly until it arrives on
 // the stream (confirming the gRPC handler's Subscribe has run). The handler calls

@@ -1031,16 +1031,6 @@ func approvalMsg(a *mecatlv1.Approval) ApprovalMsg {
 	}
 }
 
-// userPromptMsg builds a UserPromptMsg from a proto UserPrompt payload (nil-safe
-// via the generated getters). It is the single translation point for the
-// log-only "user_prompt" event kind; Parts uses contentPartsFromProto.
-func userPromptMsg(u *mecatlv1.UserPrompt) UserPromptMsg {
-	return UserPromptMsg{
-		Text:  u.GetText(),
-		Parts: contentPartsFromProto(u.GetParts()),
-	}
-}
-
 // compactionArchiveMsg builds a CompactionArchiveMsg from a proto
 // CompactionArchive payload (nil-safe via the generated getters). It is the
 // single translation point for the log-only "compaction.archive" event kind.
