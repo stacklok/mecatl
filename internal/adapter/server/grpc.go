@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -400,6 +401,95 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 	}
 	return nil
 }
+
+// StreamSessionLive is the LIVE per-session event stream (ADR 0075
+// fire-result-delivery Scenario 6 / Wave 3): a thin transport over the in-process
+// per-session subscription registry (Service.Subscribe / PublishSessionEvent). It
+// is the UNIFIED bridge serving BOTH the embedded mecatui (which dials its
+// in-process server over a real gRPC UNIX socket) AND a remote mecated — ONE
+// proto, ONE TUI consumption path.
+//
+// Relay discipline: the live wire applies the SAME log-only skip as the live
+// Converse relay, with ONE narrow exception — a fire-result DELIVERY note (an
+// EvUserPrompt whose text starts with the renderFireDelivery provenance header
+// "[scheduled task ") is RELAYED so a connected client renders the delivery card
+// as it happens (AC6.2). The other two log-only kinds (EvApproval,
+// EvCompactionArchive) stay SKIPPED, and a non-delivery EvUserPrompt stays
+// skipped too (the client already holds its own prompt). The delivery note is
+// metadata-only/redacted by construction (gauntlet #7).
+//
+// Drain-to-discard: a Send error (dead/disconnected client) cancels the
+// subscription and the handler returns — the in-process registry's
+// PublishSessionEvent is already non-blocking (a full subscriber channel drops
+// the event, AC6.3), so a dead client never wedges the delivery run. The
+// durable log records the tail regardless (it is appended by the relay/loop,
+// independent of this stream).
+func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
+	if req.GetSessionId() == "" {
+		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
+	}
+	id := session.SessionID(req.GetSessionId())
+	ch, unsub := h.svc.Subscribe(id)
+	defer unsub()
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			// The client cancelled or disconnected — exit cleanly. The deferred
+			// unsub closes the subscription channel; PublishSessionEvent drops
+			// further events for this (now-gone) subscriber.
+			return nil
+		case ev, ok := <-ch:
+			if !ok {
+				// The subscription channel was closed (unsub by the registry, e.g.
+				// at Service.Close). Exit cleanly.
+				return nil
+			}
+			// Apply the live-wire relay discipline: relay the delivery EvUserPrompt
+			// (the ONE narrow exception) and every non-log-only event; skip the two
+			// other log-only kinds and a non-delivery EvUserPrompt.
+			if !relayLiveEvent(ev) {
+				continue
+			}
+			if err := stream.Send(toProto(ev)); err != nil {
+				// The client is gone — exit cleanly. The delivery run is NOT wedged
+				// (PublishSessionEvent is non-blocking; a dead subscriber's channel
+				// is closed by unsub, so further publishes drop).
+				return nil
+			}
+		}
+	}
+}
+
+// relayLiveEvent reports whether a live-subscription event should be relayed on
+// the client wire. It mirrors the live Converse relay's log-only skip with ONE
+// narrow exception: a fire-result DELIVERY note (an EvUserPrompt whose text
+// starts with the renderFireDelivery provenance header) is relayed so the
+// connected client renders the delivery card as it happens. The other two
+// log-only kinds (EvApproval, EvCompactionArchive) and a non-delivery
+// EvUserPrompt stay skipped (they are persistence-only; the client holds its
+// own verdict/compaction/prompt view).
+func relayLiveEvent(ev session.Event) bool {
+	switch ev.Type {
+	case session.EvApproval, session.EvCompactionArchive:
+		return false
+	case session.EvUserPrompt:
+		// Relay the delivery note only — the renderFireDelivery provenance header
+		// is the single detection pattern (mirrors the TUI client's
+		// deliveryNotePrefix). A non-delivery EvUserPrompt stays skipped.
+		return ev.UserPrompt != nil && strings.HasPrefix(ev.UserPrompt.Text, deliveryNoteHeaderPrefix)
+	default:
+		return true
+	}
+}
+
+// deliveryNoteHeaderPrefix is the literal prefix renderFireDelivery emits as the
+// provenance header of every delivery note. It is the single detection pattern
+// the live-wire relay keys off to relay a delivery EvUserPrompt; it must match
+// the SAME literal renderFireDelivery produces (internal/app/scheduler_delivery.go)
+// and the TUI client's deliveryNotePrefix (cmd/mecatui/client/msgs.go). It is the
+// shared contract between the server relay and the client projection.
+const deliveryNoteHeaderPrefix = "[scheduled task "
 
 // ListSessions returns the stored-session inventory — the picker metadata a
 // client renders to let an operator open an EXISTING session by id (issue #245
