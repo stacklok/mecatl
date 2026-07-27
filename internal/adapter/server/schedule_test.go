@@ -385,3 +385,65 @@ func TestUpdateSchedulePreservesCreatedAt(t *testing.T) {
 			created.Spec.CreatedAt, loaded.Spec.CreatedAt)
 	}
 }
+
+// TestFireDelivery_Scenario1_OutOfBandCreateHasEmptyOrigin pins AC1.2: a
+// schedule created out-of-band (REST/gRPC, no conversation) persists an empty
+// OriginSessionID and behaves exactly as before — the field is metadata-only,
+// never rendered into a prompt.
+func TestFireDelivery_Scenario1_OutOfBandCreateHasEmptyOrigin(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc, schedStore := newScheduleService(t, now)
+	ctx := context.Background()
+
+	// Create without setting OriginSessionID — the field is left at its zero value.
+	sched, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
+		Name:      "empty-origin",
+		Prompt:    "p",
+		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
+		Mutating:  true,
+		Workspace: "/tmp",
+	})
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if sched.Spec.OriginSessionID != "" {
+		t.Errorf("OriginSessionID = %q, want empty (out-of-band create carries no origin)", sched.Spec.OriginSessionID)
+	}
+
+	// The schedule persists and Loads back with the empty OriginSessionID intact.
+	loaded, err := schedStore.Load(ctx, "empty-origin")
+	if err != nil {
+		t.Fatalf("Load after create: %v", err)
+	}
+	if loaded.Spec.OriginSessionID != "" {
+		t.Errorf("persisted OriginSessionID = %q, want empty", loaded.Spec.OriginSessionID)
+	}
+}
+
+// TestFireDelivery_Scenario1_UnknownOriginRejected pins AC1.3: a create whose
+// OriginSessionID names a non-existent session is rejected fail-closed by the
+// create-seam (the same ErrInvalidArgument class as the other spec rejections).
+func TestFireDelivery_Scenario1_UnknownOriginRejected(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc, _ := newScheduleService(t, now)
+	ctx := context.Background()
+
+	// A non-empty OriginSessionID that names a session not in the store is
+	// rejected with ErrInvalidArgument.
+	_, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
+		Name:            "unknown-origin",
+		Prompt:          "p",
+		Trigger:         port.TriggerSpec{Cron: "* * * * *"},
+		Mutating:        true,
+		Workspace:       "/tmp",
+		OriginSessionID: "no-such-session",
+	})
+	if !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("CreateSchedule with unknown OriginSessionID = %v, want ErrInvalidArgument", err)
+	}
+
+	// The rejected schedule is NOT saved (fail-closed means no residual state).
+	if _, lerr := svc.GetSchedule(ctx, "unknown-origin"); !errors.Is(lerr, port.ErrScheduleNotFound) {
+		t.Fatalf("the rejected schedule was SAVED — fail-closed means not saved; err=%v", lerr)
+	}
+}

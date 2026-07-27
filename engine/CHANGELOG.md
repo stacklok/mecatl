@@ -13,7 +13,18 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
-- **`agent.ScheduleQueryTool` + `agent.NewScheduleQueryTool` +
+- **`port.ScheduleSpec.OriginSessionID`** (ADR 0075, fire-result-delivery Phase 1) —
+  a new `session.SessionID` field on `ScheduleSpec` carrying the session whose
+  terminal result delivery should receive the fire's outcome. Empty means no
+  delivery (the v1 pre-delivery posture). Non-empty values are validated at the
+  create-seam: a non-existent session is rejected fail-closed with
+  `ErrInvalidArgument`. The field is METADATA-ONLY — it is never rendered into a
+  prompt, never surfaced to the model, and never appears in any model-visible
+  surface. It is an infrastructure-level routing key the fire path reads to route
+  the outcome. An empty OriginSessionID in out-of-band creates (REST/gRPC, no
+  conversation) persists empty — additive, no existing behavior changed.
+  Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
+  (fire-result-delivery plan, task 01)- **`agent.ScheduleQueryTool` + `agent.NewScheduleQueryTool` +
   `agent.ScheduleQueryToolName` (ADR 0073, the AC1.4 read-parallel/mutate-serial
   partition)** — the scheduled-task surface is now TWO catalog entries over the
   ONE injected `port.ScheduleManager`: a read-only query tool (list/inspect,
