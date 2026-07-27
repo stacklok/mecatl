@@ -54,6 +54,9 @@ when the code that satisfies the plan has landed.
 - [Schedule tool](schedule-tool.md) — in-chat scheduled tasks: a model-facing
   `Schedule` tool, the scheduler on by default, and the removal of the
   declarative settings block + `mecated schedules` CLI. Status: landed.
+- [Fire-result delivery](fire-result-delivery.md) — a scheduled fire reports its
+  result back into the originating conversation ("ping me when X"), closing ADR
+  0073's deferred delivery channel. Status: draft.
 
 ## See also
 
