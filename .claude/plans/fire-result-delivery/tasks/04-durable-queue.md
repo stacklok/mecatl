@@ -2,7 +2,7 @@
 id: 04-durable-queue
 title: Durable per-session pending-delivery queue (ADR 0027 List 1+2)
 blocked_by: [01-spec-field-and-validation]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

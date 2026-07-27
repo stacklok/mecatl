@@ -2,7 +2,7 @@
 id: 01-spec-field-and-validation
 title: ScheduleSpec.OriginSessionID field + create-seam validation
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

@@ -2,7 +2,7 @@
 id: 03-delivery-renderer
 title: Fenced-untrusted delivery renderer (renderFireDelivery)
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
