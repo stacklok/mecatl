@@ -2,8 +2,8 @@
 id: 07b-live-subscription-bridge
 title: Live-subscription bridge — StreamSessionLive RPC + TUI wiring (embedded + remote)
 blocked_by: [07-tui-delivery-card]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/07b-live-subscription-bridge"
 worktree: ""
 issue: ""
 retries: 0
