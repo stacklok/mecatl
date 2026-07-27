@@ -2,8 +2,8 @@
 id: 05-delivery-run-and-drain
 title: Delivery run + busy-origin drain + state-aware handling
 blocked_by: [03-delivery-renderer, 04-durable-queue]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/05-delivery-run-and-drain"
 worktree: ""
 issue: ""
 retries: 0
