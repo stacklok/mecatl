@@ -84,7 +84,7 @@ func assembleScheduleCatalog(t *testing.T, resolve func() port.ScheduleManager) 
 	llm := mockllm.New(mockllm.TextTurn("OK"))
 	reg := regForTest(llm, "mock", cfg.Model)
 	assets := catalogAssets{scheduleManagerFactory: resolve}
-	cat, closeFn := assembleCatalog(context.Background(), cfg, reg, memstore.New(), hookexec.New(nil), assets, catalogSession{
+	cat, closeFn := assembleCatalog(context.Background(), cfg, reg, memstore.New(), hookexec.New(nil), &assets, catalogSession{
 		provider: llm, providerID: reg.Default(), model: cfg.Model, narrate: false,
 	})
 	t.Cleanup(func() { _ = closeFn() })

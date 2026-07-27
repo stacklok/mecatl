@@ -192,6 +192,7 @@ var oracleNonMutators = map[string]string{
 	"liveParallel":        "pure read",
 	"latestTeamBlock":     "overlay READ path (never bumps rev)",
 	"liveTeamBlock":       "overlay READ path (never bumps rev)",
+	"addDelivery":         "mutator — blockDelivery cards do not carry a mutable render field beyond raw",
 }
 
 // TestBlockCacheOutputMatchesFreshRender is THE ORACLE: after EVERY conversation

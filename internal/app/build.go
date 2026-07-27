@@ -936,6 +936,11 @@ type Config struct {
 	SchedulerTickInterval       time.Duration // 0 → default 30s (the scheduler's own default)
 	SchedulerMinInterval        time.Duration // 0 → no floor enforced at the create-seam
 	SchedulerMaxConcurrentFires int           // 0 → default 4
+	// DeliveryBacklogCap bounds the per-origin pending-delivery backlog (ADR 0075,
+	// fire-result-delivery): when the pending count for an origin exceeds this cap,
+	// the OLDEST pending note is dropped with a WARN rather than growing unboundedly
+	// on an overloaded origin. 0 (the default) means UNBOUNDED (no drop).
+	DeliveryBacklogCap int
 }
 
 // GuardrailRule is one operator-tier guardrail rule (issue #27): a tool-NAME matcher,
@@ -1554,7 +1559,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// LATE-BOUND (closes over svc). nil when SchedulerEnabled is false (the
 	// byte-identical default). Extracted to startScheduler so Build's cyclomatic
 	// complexity stays under the lint cap.
-	schedClose, err := startScheduler(ctx, cfg, store, sessionLease, leaseOwner, svc)
+	schedClose, err := startScheduler(ctx, cfg, store, sessionLease, leaseOwner, svc, assets.deliveryQueue)
 	if err != nil {
 		refreshClose()
 		svc.Close()
@@ -1893,7 +1898,7 @@ func sessionEngineFactory(
 		// Subagent per-def inline managers + the client mgr); assets.globalMgr is
 		// NEVER in it — Build owns its lifecycle (a per-session CloseSession must
 		// never tear down MCP for every other session).
-		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, assets, catalogSession{
+		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider:   resolvedProvider,
 			providerID: resolvedProviderID,
 			model:      resolvedModel,
@@ -1910,6 +1915,14 @@ func sessionEngineFactory(
 		// provider never contaminates compaction/counting.
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		deps.Catalog = cat
+		// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
+		// (created by registerScheduleTool) so every per-run startRun stamps the
+		// executing session's id. nil when scheduling is off.
+		deps.OriginBinder = assets.scheduleOriginBinder
+		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
+		// drain reads the SAME durable queue as the main engine. nil (no
+		// schedule-capable store) is the byte-identical no-delivery path.
+		deps.DeliveryQueue = assets.deliveryQueue
 		// MODEL-VISIBLE plan-approval contract (issue #206): the gate only fires
 		// when the model CALLS PresentPlan, and nothing else tells it to — an
 		// uninstructed model treats an inline "acceptable" as approval and keeps
@@ -2224,7 +2237,7 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 // onto closeAll so in-flight fires drain while the service is still alive). A
 // no-op when SchedulerEnabled is false. Extracted from Build to keep Build's
 // cyclomatic complexity under the lint cap.
-func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string, svc *server.Service) (func(), error) {
+func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string, svc *server.Service, deliveryQueue port.DeliveryQueue) (func(), error) {
 	noop := func() {}
 	sched, schedClose := buildScheduler(cfg, store, sessionLease, leaseOwner)
 	if sched == nil {
@@ -2232,6 +2245,14 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	}
 	svc.SetScheduler(sched)
 	sched.SetFire(makeFireFunc(svc))
+	// Fire-result delivery (ADR 0075): wire the composition-injected
+	// DeliverFireResult callback the scheduler invokes from fireClaimed AFTER
+	// RecordFire. It closes over the Service + the SAME durable DeliveryQueue
+	// the main/per-session engines' Step 2a drain reads (assets.deliveryQueue,
+	// built once in buildEngine). nil DeliveryQueue (no schedule-capable store)
+	// is the byte-identical no-delivery path — the callback is still wired (it
+	// no-ops on a nil queue) so a future queue wiring needs no scheduler change.
+	sched.SetDeliverFireResult(deliverFireResult(svc, deliveryQueue))
 	// Wire the OPTIONAL emit callback: the scheduler invokes it from
 	// fireClaimed (fired/failed) and fireOne/FireNow (skipped) with a
 	// session.SchedulePayload; composition appends it as an EvSchedule* event to
@@ -2291,6 +2312,45 @@ func newK8sClientset() (kubernetes.Interface, error) {
 		}
 	}
 	return kubernetes.NewForConfig(restCfg)
+}
+
+// buildDeliveryQueue constructs the DURABLE per-session pending-delivery queue
+// for fire-result delivery (ADR 0075 decision #3). It is the SAME durability
+// discipline as the session store: a FileDeliveryQueue under the store dir for
+// a durable jsonlstore/redisstore (so a note queued before a restart drains
+// after it), an InMemoryDeliveryQueue for the in-memory default (honest
+// degradation across restart — the note is lost, byte-identical to the
+// no-delivery path for the restarted process). nil when there is no
+// schedule-capable store (the byte-identical no-delivery path: the fire path's
+// enqueue is a no-op against a nil queue, and the loop's drain is a no-op
+// against a nil Deps.DeliveryQueue). The queue is built ONCE so the main engine,
+// the per-session engine factory, and the scheduler's fire-path callback all
+// share the SAME instance.
+func buildDeliveryQueue(cfg Config, store port.SessionStore) port.DeliveryQueue {
+	// A store with no ScheduleStore (the in-memory default) has no scheduling,
+	// so no delivery — the byte-identical no-delivery path.
+	ss, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
+	if !ok || ss.ScheduleStore() == nil {
+		return nil
+	}
+	// A durable store dir (jsonlstore) → a durable file-backed queue under it.
+	// The redisstore path is durable at the store, but the delivery queue is a
+	// process-local file (a future redis-backed queue is a sibling); for now a
+	// redisstore-backed deployment uses an in-memory queue (honest degradation
+	// across restart — the redisstore is multi-replica, and a process-local file
+	// queue is single-replica by affinity, matching jsonlstore's posture).
+	if cfg.StoreDir != "" {
+		q, err := NewFileDeliveryQueue(cfg.StoreDir,
+			WithDeliveryDiagnostics(cfg.diag()),
+			WithDeliveryBacklogCap(cfg.DeliveryBacklogCap))
+		if err != nil {
+			cfg.diag().Log(context.Background(), port.LevelWarn, "delivery: durable queue build failed (degrading to in-memory)",
+				"dir", cfg.StoreDir, "err", err.Error())
+			return NewInMemoryDeliveryQueue(WithDeliveryDiagnostics(cfg.diag()))
+		}
+		return q
+	}
+	return NewInMemoryDeliveryQueue(WithDeliveryDiagnostics(cfg.diag()))
 }
 
 // buildSessionStore constructs the SessionStore plus the STORE-DERIVED default
@@ -2463,6 +2523,16 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 
 	deps := baseEngineDeps(cfg, reg, provider, store, policy, mainHooks, mcpProvider, instructions)
 	deps.Catalog = cat
+	// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
+	// (created by registerScheduleTool) so every per-run startRun stamps the
+	// executing session's id. nil when scheduling is off.
+	deps.OriginBinder = assets.scheduleOriginBinder
+	// Fire-result delivery drain (ADR 0075): the loop's Step 2a drain reads
+	// pending fire-result notes for the running session off the durable queue.
+	// nil (no schedule-capable store) is the byte-identical no-delivery path.
+	// Child engines (subagent/member/parallel) do NOT get it — a child origin
+	// degrades to pull-only with a WARN at the fire path.
+	deps.DeliveryQueue = assets.deliveryQueue
 	// The OPT-IN child-ask reviewer (issue #31) rides the MAIN engine's deps only,
 	// built on the shared engine's (default provider, cfg.Model). Per-session
 	// engines get their own via the SAME attachAskAdjudicator in
@@ -3597,10 +3667,18 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		// and threaded onto the assets so every per-session catalog reuses the SAME
 		// provider.
 		searchProvider: buildSearchProvider(ctx, cfg),
+		// Fire-result delivery queue (ADR 0075): the DURABLE per-session
+		// pending-delivery queue. Built ONCE here so the main engine's Step 2a
+		// drain, the per-session engine factory's drain, and the scheduler's
+		// fire-path enqueue all share the SAME instance. nil when there is no
+		// schedule-capable store (the byte-identical no-delivery path — the fire
+		// path's enqueue is a no-op against a nil queue, and the loop's drain is a
+		// no-op against a nil Deps.DeliveryQueue).
+		deliveryQueue: buildDeliveryQueue(cfg, store),
 	}
 	// The build-time assembly: default provider + model, no client MCP, narrating
 	// the ENABLED/DISABLED composition facts exactly once.
-	cat, assembledClose := assembleCatalog(ctx, cfg, reg, store, hooks, assets, catalogSession{
+	cat, assembledClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 		provider:   provider,
 		providerID: reg.Default(),
 		model:      cfg.Model,
@@ -5909,6 +5987,8 @@ const schedulePostureNote = "You have a Schedule tool for managing scheduled tas
 	"mutating:true only when the fire must write); list shows every schedule (call it before creating a " +
 	"duplicate); inspect shows one schedule plus its fires; pause/resume disable/enable without deleting; " +
 	"delete removes it; fire triggers an immediate run and returns the sched-- session id + stop reason. " +
+	"A schedule you create reports its fire's result back into THIS conversation when it fires — tell the " +
+	"user to expect the outcome to arrive here, in this chat, not in a separate session. " +
 	"In plan mode a mutating create is denied — create read-leaning schedules and present the plan instead."
 
 // applySchedulePosture appends the Schedule tool's model-visible instruction to

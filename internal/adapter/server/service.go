@@ -739,6 +739,20 @@ type Service struct {
 	// no-scheduling path stays cheap. Guarded by its own mutex (not s.mu) so a
 	// schedule lookup does not contend with the run/registry hot path.
 	scheduleStoreCache scheduleStoreCache
+
+	// subscriptions is the per-session live event subscription registry (ADR 0075
+	// decision #5): a connected client (e.g. the embedded server's mecatui) holds
+	// open a per-session merged stream over the session's runs via Subscribe, and
+	// PublishSessionEvent fans events to every subscriber for that session ID.
+	// Guarded by subMu (a SEPARATE mutex from s.mu — a PublishSessionEvent in a
+	// delivery-run goroutine must not contend with the run/registry hot path).
+	// A subscriber is a non-blocking channel; on a full channel the event is dropped
+	// (drain-to-discard — a dead client never wedges the delivery run). Cleaned up
+	// by the subscriber's returned unsubscribe func; all remaining subscriptions are
+	// drained at Close.
+	subMu         sync.Mutex
+	subscriptions map[session.SessionID]map[int64]chan session.Event
+	subNextID     int64
 }
 
 // heldLease is one process-held session lease plus the cancel that stops its
@@ -890,6 +904,7 @@ func NewService(cfg Config) (*Service, error) {
 		reservedIDs:       make(map[session.SessionID]struct{}),
 		replayedApprovals: make(map[session.SessionID]struct{}),
 		heldLeases:        make(map[session.SessionID]*heldLease),
+		subscriptions:     make(map[session.SessionID]map[int64]chan session.Event),
 		scheduler:         cfg.Scheduler,
 	}
 	// Seed the model inventory from the static snapshot. ListModels and the
@@ -1525,6 +1540,26 @@ func (s *Service) Close() {
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
 	s.sessionWorkspaces = make(map[session.SessionID]tool.Workspace)
+	// Close all per-session event subscriptions so subscriber goroutines can exit
+	// cleanly. Snapshot + clear under the sub lock, then close outside (close
+	// requires no locks). A channel closed here may ALSO be closed by a concurrent
+	// unsub() — that is the unsub()'s sync.Once's problem, not ours; we close only
+	// the channels that were still registered at snapshot time.
+	s.subMu.Lock()
+	var subChs []chan session.Event
+	for _, m := range s.subscriptions {
+		for _, ch := range m {
+			subChs = append(subChs, ch)
+		}
+	}
+	s.subscriptions = make(map[session.SessionID]map[int64]chan session.Event)
+	s.subMu.Unlock()
+	for _, ch := range subChs {
+		func() {
+			defer func() { _ = recover() }() // tolerate a concurrent unsub() close
+			close(ch)
+		}()
+	}
 	// Snapshot the held-lease ids so we can stop renewers + release each outside
 	// the guard (releaseLease re-takes s.mu).
 	leasedIDs := make([]session.SessionID, 0, len(s.heldLeases))
@@ -3438,6 +3473,81 @@ func (s *Service) deregister(id session.SessionID, run *agent.Run) {
 // clobbered), so it is safe to call unconditionally after a drain.
 func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 	s.deregister(id, run)
+}
+
+// Subscribe registers a new per-session live event subscriber and returns a
+// receive-only channel of session.Event plus an unsubscribe function. Every call
+// to PublishSessionEvent for the given session id fans the event to ALL currently-
+// registered subscribers. The channel carries a buffer of 64 events (matching
+// a Run's own event buffer). When the channel is full, PublishSessionEvent DROPS
+// the event (non-blocking drain-to-discard — a dead client never wedges the
+// producer). The returned unsubscribe func is IDEMPOTENT (safe to call more than
+// once, e.g. an explicit call plus a deferred one): it removes this subscription
+// and closes the channel exactly once so the subscriber goroutine can exit
+// cleanly.
+//
+// Subscribe is the entry point for the in-process embedded server path (Wave 2,
+// ADR 0075 decision #5): the mecatui embed calls it when the user opens a
+// session's live view, and unsubscribes when the view loses focus / the TUI
+// exits. A wire-transport analogue (gRPC server-streaming, Wave 3) is task 08.
+func (s *Service) Subscribe(id session.SessionID) (<-chan session.Event, func()) {
+	ch := make(chan session.Event, 64)
+	s.subMu.Lock()
+	s.subNextID++
+	subID := s.subNextID
+	if s.subscriptions[id] == nil {
+		s.subscriptions[id] = make(map[int64]chan session.Event)
+	}
+	s.subscriptions[id][subID] = ch
+	s.subMu.Unlock()
+
+	var unsubOnce sync.Once
+	unsub := func() {
+		unsubOnce.Do(func() {
+			s.subMu.Lock()
+			if m, ok := s.subscriptions[id]; ok {
+				delete(m, subID)
+				if len(m) == 0 {
+					delete(s.subscriptions, id)
+				}
+			}
+			s.subMu.Unlock()
+			close(ch)
+		})
+	}
+	return ch, unsub
+}
+
+// PublishSessionEvent fans the event to every subscriber registered for the given
+// session id. It is NON-BLOCKING: a full subscriber channel drops the event (the
+// subscriber is dead/disconnected — drain-to-discard without wedging the producer).
+// Events published here are the SAME events the run's own Events() channel carries
+// (projection equivalence); the subscriber receives the raw session.Event, never a
+// proto type. The loop stays storage-agnostic — it never calls this; the relay or
+// the delivery driver (deliverFireResult) publishes.
+func (s *Service) PublishSessionEvent(id session.SessionID, ev session.Event) {
+	s.subMu.Lock()
+	subs := s.subscriptions[id]
+	// Snapshot the subscriber channels under the lock so we can iterate them
+	// without holding the lock (non-blocking sends on each).
+	if len(subs) == 0 {
+		s.subMu.Unlock()
+		return
+	}
+	chs := make([]chan session.Event, 0, len(subs))
+	for _, ch := range subs {
+		chs = append(chs, ch)
+	}
+	s.subMu.Unlock()
+
+	for _, ch := range chs {
+		select {
+		case ch <- ev:
+		default:
+			// drain-to-discard: the subscriber's channel is full — a dead
+			// client that stopped draining. Drop the event without blocking.
+		}
+	}
 }
 
 // randomID returns a 128-bit random hex session id.

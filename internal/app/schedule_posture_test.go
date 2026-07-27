@@ -225,6 +225,64 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 	}
 }
 
+// TestFireDelivery_ScheduleToolNoteLands pins DoD #7 (ADR 0070, the
+// model-visible-affordance gate) for the fire-result-delivery capability: the
+// BUILT engine's system prompt (via the REAL sessionEngineFactory path, not the
+// helper in isolation) tells the model that a schedule it creates reports its
+// fire's result back into THIS conversation — the instruction that lets the
+// model set the operator's expectation ("the outcome arrives in this chat, not
+// a separate session"). Without it the model cannot promise the delivery, and
+// decision #5's "visible in the connected client" is undermined at the prompt
+// layer. Asserted against the StablePrefix (the Role layer applySchedulePosture
+// appends to), not the combined Render() — the tool-inventory block also
+// carries the Spec description (which now carries the same line), so a
+// combined-layer oracle would stay green even if the Role wiring were deleted.
+func TestFireDelivery_ScheduleToolNoteLands(t *testing.T) {
+	ctx := context.Background()
+	const sessionModel = "gpt-5"
+
+	jstore, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	svc := newScheduleTestService(t, jstore, mockllm.New(mockllm.TextTurn("x")), t.TempDir())
+
+	var captured prompt.Layered
+	var invoked bool
+	provider := mockllm.NewWith([]mockllm.Option{
+		mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			captured = req.System
+			invoked = true
+		}),
+	}, mockllm.TextTurn("ok"))
+	cfg := Config{Model: sessionModel}
+	reg := regForTest(provider, providerOpenAI, sessionModel)
+	assets := catalogAssets{scheduleManagerFactory: svc.ScheduleManager}
+	factory := sessionEngineFactory(cfg, reg, provider, memstore.New(),
+		permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
+		prompt.RootAssembler{}, assets, nil)
+
+	res, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	defer func() { _ = res.Close() }()
+
+	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	run := res.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "hi", nil)
+	for range run.Events() {
+	}
+	if !invoked {
+		t.Fatal("the LLM was not invoked; the mock script may be insufficient")
+	}
+	// The reports-back instruction (the Role-layer note) must land verbatim.
+	const reportsBack = "reports its fire's result back into THIS conversation"
+	if !strings.Contains(captured.StablePrefix, reportsBack) {
+		t.Errorf("StablePrefix missing the fire-result-delivery reports-back instruction (ADR 0070)\ngot StablePrefix (first 800):\n%s",
+			firstN(captured.StablePrefix, 800))
+	}
+}
+
 // TestScheduleTool_MutatingCreateGatedByPlanMode pins AC4.3 end-to-end at the
 // LOOP level: in a PLAN-MODE session a mutating: true create is DENIED (the
 // plan-mode hard-deny on mutations), while a read-leaning (mutating: false)
@@ -277,6 +335,11 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	// Save the session to the store the schedule manager validates against, so
+	// OriginSessionID validation (which checks the session exists) passes.
+	if err := jstore.Save(ctx, sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	run := res.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "schedule the work", nil)
 	var results []session.ToolResult
 	for ev := range run.Events() {
@@ -373,6 +436,11 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 6}, time.Now())
+	// Save the session to the store the schedule manager validates against, so
+	// OriginSessionID validation (which checks the session exists) passes.
+	if err := jstore.Save(ctx, sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	run := res.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "schedule a nightly ci check and fire it once", nil)
 	var results []session.ToolResult
 	var stop session.StopReason

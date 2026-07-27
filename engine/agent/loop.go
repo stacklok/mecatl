@@ -289,6 +289,31 @@ type Deps struct {
 	// tool's full spec every turn, exactly as v1 does. The ToolSearch tool is
 	// registered into the catalog by NewEngine only when this is enabled.
 	ProgressiveTools bool
+
+	// OriginBinder, when non-nil, is called in startRun with the executing session's
+	// id so per-run state (e.g. the Schedule tool's origin capture) can bind the
+	// current session. It is the session-origin half of fire-result-delivery
+	// (ADR 0075): the Schedule tool wrapped in a SessionOriginScheduleManager stamps
+	// every CreateSchedule's OriginSessionID with this bound id, so a fire's terminal
+	// result is delivered back to the originating session. nil is fine (the
+	// no-delivery posture).
+	OriginBinder OriginBinder
+
+	// DeliveryQueue, when non-nil, is the DURABLE per-session pending-delivery queue
+	// the loop's turn-boundary drain reads (ADR 0075 decision #3, fire-result-delivery
+	// Scenario 4). The fire path (composition) enqueues a rendered fire-result note
+	// for an origin session that is BUSY or AWAITING (it cannot drive a delivery run
+	// without colliding); the loop drains the pending notes at Step 2a, BEFORE
+	// BeginTurn — the SAME turn-boundary seam injectBackgroundNotice uses — recording
+	// each as an ordinary harness-framed user continuation (recordContinuation) and
+	// marking it delivered via MarkDelivered (the session-scoped exactly-once ledger).
+	//
+	// The drain is registered on the MAIN + per-session engines ONLY — never on child
+	// engines (a child origin degrades to pull-only with a WARN at the fire path). nil
+	// (the default) is the byte-identical no-delivery path: nothing drains, the
+	// fire path's enqueue is a no-op against a nil queue. It is a port (port.DeliveryQueue),
+	// so the agent package imports no concrete adapter.
+	DeliveryQueue port.DeliveryQueue
 }
 
 // Engine builds Runs from a fixed set of ports. It is safe for concurrent use:
@@ -850,6 +875,13 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, opts RunOp
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
 	}
+	// Bind the per-run origin (the session id this engine is driving) so the
+	// SessionOriginScheduleManager wrapper stamps every CreateSchedule with the
+	// origin session id (fire-result-delivery, ADR 0075). nil is fine (the
+	// no-delivery posture).
+	if e.deps.OriginBinder != nil {
+		e.deps.OriginBinder.BindSessionOrigin(sess.ID)
+	}
 	// Resolve the trailing askID discriminator once (ADR-0044): a host-supplied,
 	// colon-free value makes the run's askIDs reconstructable across processes;
 	// otherwise fall back to the process-global serial. A colon would make the
@@ -1028,6 +1060,22 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		// finishing between this scan and the rest of the iteration is simply noticed
 		// at the NEXT boundary.
 		if err := e.injectBackgroundNotice(ctx, r, sess); err != nil {
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			return
+		}
+
+		// Step 2a (delivery drain): drain any pending fire-result delivery notes
+		// queued for THIS session (ADR 0075 decision #3, fire-result-delivery
+		// Scenario 4) — the SAME turn-boundary seam as the background notice, BEFORE
+		// BeginTurn, so the recorded notes are provider-legal (history here always
+		// ends on a user prompt / tool result / nudge, never inside a tool_use pair)
+		// and never orphans a pending tool call. Each pending note is recorded as an
+		// ordinary harness-framed user continuation (recordContinuation) and marked
+		// delivered via MarkDelivered (the session-scoped exactly-once ledger). nil
+		// DeliveryQueue (child engines, the no-delivery posture) is a no-op. A drain
+		// read fault WARNs and ends the run StopError (a broken queue must not
+		// silently lose notes); a record fault likewise.
+		if err := e.drainPendingDelivery(ctx, r, sess); err != nil {
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
 			return
 		}
@@ -1316,6 +1364,74 @@ func (e *Engine) injectBackgroundNotice(ctx context.Context, r *Run, sess *sessi
 		return fmt.Errorf("agent: record background completion notice: %w", err)
 	}
 	e.save(ctx, sess)
+	return nil
+}
+
+// drainPendingDelivery is drive's Step 2a delivery-drain sibling (ADR 0075
+// decision #3): it reads the origin session's pending fire-result delivery
+// notes off the DURABLE per-session DeliveryQueue, records each as an ordinary
+// harness-framed user continuation (recordContinuation — provider-legal at a
+// turn boundary, never inside a tool_use pair), and marks it delivered via
+// MarkDelivered (the session-scoped exactly-once ledger). It is the SOLE loop
+// recording site for queued notes: the fire path enqueues for a BUSY or AWAITING
+// origin (it cannot drive a delivery run without colliding); the loop drains them
+// here at the origin's next turn boundary, exactly-once.
+//
+// The drain is the SAME seam injectBackgroundNotice uses (Step 2a, BEFORE
+// BeginTurn), so history always ends on a user prompt / tool result / nudge when
+// the notes are recorded — the notes are provider-legal and compaction-safe. It
+// is registered on the MAIN + per-session engines ONLY (composition leaves
+// DeliveryQueue nil on child engines — a child origin degrades to pull-only with
+// a WARN at the fire path). A nil DeliveryQueue (the default, or a child engine)
+// is a no-op. An empty pending set is the common case and costs one queue read.
+//
+// Each note is ALREADY rendered (fenced-untrusted, clamped) by the time it
+// arrives here; the drain records it verbatim and does not re-render. A note is
+// marked delivered ONLY AFTER its record succeeds (recordContinuation is the
+// last error-returning step), so a record fault does not strand a "delivered but
+// unrecorded" note — the note stays pending and the run ends StopError (the
+// operator sees the fault, the note drains on the next run-entry). The
+// exactly-once ledger (MarkDelivered is idempotent) keeps a re-drain after a
+// restart from re-recording.
+func (e *Engine) drainPendingDelivery(ctx context.Context, r *Run, sess *session.Session) error {
+	q := e.deps.DeliveryQueue
+	if q == nil {
+		return nil
+	}
+	notes, err := q.Pending(ctx, sess.ID)
+	if err != nil {
+		// A queue read fault must not fail the run silently. WARN (best-effort,
+		// never the fire's failure) and end the run StopError so the operator sees
+		// a broken queue rather than a silent note loss. The fire itself is
+		// unaffected (delivery is decoupled).
+		r.diag.Log(ctx, port.LevelWarn, "agent: delivery queue read failed",
+			"session", string(sess.ID), "err", err.Error())
+		return fmt.Errorf("agent: read pending delivery: %w", err)
+	}
+	for _, n := range notes {
+		// The note is recorded at a turn boundary, before the upcoming BeginTurn, so
+		// it belongs to the turn about to start. recordContinuation records it AND
+		// emits the log-only EvUserPrompt so the durable log/fold captures this
+		// harness-authored user message like every other.
+		if err := e.recordContinuation(r, sess, sess.Counters.Turns, n.Text); err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "agent: delivery note record failed",
+				"session", string(sess.ID), "seq", n.Seq, "err", err.Error())
+			return fmt.Errorf("agent: record delivery note: %w", err)
+		}
+		// Mark delivered AFTER the record succeeds — the exactly-once ledger. A
+		// MarkDelivered fault is best-effort (the note IS recorded; a re-drain after
+		// a restart would re-record it, but MarkDelivered is idempotent and the
+		// ledger is the same, so the re-drain's MarkDelivered is a no-op success and
+		// the re-record is the only cost — a bounded, rare double-record, not a
+		// loss). WARN so the operator sees a ledger fault; do not end the run.
+		if err := q.MarkDelivered(ctx, sess.ID, n.Seq); err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "agent: delivery mark-delivered failed (note recorded; ledger may re-drain)",
+				"session", string(sess.ID), "seq", n.Seq, "err", err.Error())
+		}
+	}
+	if len(notes) > 0 {
+		e.save(ctx, sess)
+	}
 	return nil
 }
 

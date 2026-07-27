@@ -138,6 +138,40 @@ service HarnessService {
   // (UNIMPLEMENTED vs. an empty stream degrade honestly).
   rpc StreamSessionEvents(StreamSessionEventsRequest) returns (stream Event);
 
+  // StreamSessionLive is the LIVE per-session event stream (ADR 0075
+  // fire-result-delivery Scenario 6 / Wave 3): a server-streaming RPC backed by
+  // the in-process per-session subscription registry (Service.Subscribe /
+  // PublishSessionEvent, List 1 row 35). It is the UNIFIED transport for BOTH
+  // embedded and remote clients — the embedded mecatui dials its in-process
+  // server over a real gRPC UNIX socket, so the in-process Subscribe registry is
+  // unreachable from the TUI without a wire transport; this RPC is that
+  // transport, and it serves a remote mecated identically (ONE proto, ONE TUI
+  // consumption path).
+  //
+  // UNLIKE StreamSessionEvents (the durable-log READ-BACK, which relays ALL
+  // events including the three log-only kinds), StreamSessionLive is a LIVE
+  // stream and applies the SAME live-wire relay discipline as the live
+  // `Converse` relay, with ONE narrow exception: a fire-result delivery note
+  // (an EvUserPrompt whose text starts with the renderFireDelivery provenance
+  // header "[scheduled task ") is RELAYED so the connected client renders the
+  // delivery card as it happens (AC6.2). The other two log-only kinds
+  // (EvApproval, EvCompactionArchive) stay SKIPPED on the live wire (they are
+  // persistence-only; a client holds its own verdict/compaction view); a
+  // non-delivery EvUserPrompt stays SKIPPED too (the client already holds its
+  // own prompt). The delivery note is metadata-only/redacted by construction
+  // (gauntlet #7 — it is the fenced-untrusted harness note the engine recorded).
+  //
+  // The stream stays open until the client cancels or disconnects. The handler
+  // is drain-to-discard: a dead client never wedges the delivery run (a full
+  // subscriber channel drops the event, AC6.3). The durable log records the
+  // tail regardless (it is appended by the relay/loop, independent of this
+  // stream). There is intentionally NO ServerCapabilities bit — the capability is
+  // RPC-discoverable (UNIMPLEMENTED on an older server, an empty stream on a
+  // server with no subscribers). An unknown session id yields an empty stream
+  // (absence is data — a never-created id is indistinguishable from a session
+  // with no live events yet).
+  rpc StreamSessionLive(StreamSessionLiveRequest) returns (stream Event);
+
   // ListSessions returns the stored-session inventory — the picker metadata a
   // client renders to let an operator open an EXISTING session by id (issue #245
   // Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -525,6 +559,14 @@ message StreamSessionEventsRequest {
   // session_id is the id of the session to replay. An unknown id yields an empty
   // stream (absence is data); a server with no durable EventLog returns
   // UNIMPLEMENTED.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// StreamSessionLiveRequest names the session whose LIVE event stream is opened.
+message StreamSessionLiveRequest {
+  // session_id is the id of the session to subscribe to. An unknown id yields an
+  // empty stream (absence is data — a never-created id is indistinguishable from
+  // a session with no live events yet).
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 

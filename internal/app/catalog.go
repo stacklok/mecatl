@@ -116,6 +116,23 @@ type catalogAssets struct {
 	// routes through a per-session engine. Typed-nil discipline: assigned once,
 	// known-non-nil or untyped nil.
 	scheduleManagerFactory func() port.ScheduleManager
+	// scheduleOriginBinder is the session-origin binder the Schedule tool's
+	// manager wrapper holds (fire-result-delivery, ADR 0075). It is set in
+	// registerScheduleTool when the wrapper is created and read by both
+	// baseEngineDeps (the shared engine) and the per-session engine factory to
+	// wire OriginBinder on the engine Deps. nil when scheduling is off.
+	scheduleOriginBinder agent.OriginBinder
+	// deliveryQueue is the DURABLE per-session pending-delivery queue
+	// (fire-result-delivery, ADR 0075 decision #3). It is built once in Build
+	// (a FileDeliveryQueue under the store dir for a durable store, an
+	// InMemoryDeliveryQueue for the in-memory default) and read by both
+	// baseEngineDeps (the shared engine — the loop's Step 2a drain) and the
+	// per-session engine factory to wire Deps.DeliveryQueue, and by
+	// startScheduler to wire the scheduler's DeliverFireResult callback (the
+	// fire path enqueues). nil when scheduling is off (the byte-identical
+	// no-delivery path). It is the SAME instance across main + per-session
+	// engines so a note queued during one run drains on the next.
+	deliveryQueue port.DeliveryQueue
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -171,7 +188,7 @@ type catalogSession struct {
 // includes a.globalMgr (Build owns that lifecycle; a per-session CloseSession
 // closing it would kill MCP for every other session). The close is always
 // non-nil and safe to call.
-func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a catalogAssets, s catalogSession) (*tool.Catalog, func() error) {
+func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error) {
 	cat := tool.NewCatalog()
 	registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
 
@@ -185,7 +202,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	// name+mode check is defense-in-depth on top of that projection gate.
 	cat.MustRegister(agent.NewPresentPlanTool())
 
-	mountGlobalMCP(ctx, cfg, cat, a, s)
+	mountGlobalMCP(ctx, cfg, cat, *a, s)
 	clientClose := mountClientMCP(ctx, cfg, cat, s)
 
 	// refMgr is the mainMgr for Subagent/member defs' MCP `reference:` resolution:
@@ -195,17 +212,17 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	if refMgr == nil {
 		refMgr = s.clientMgr
 	}
-	subagentClose := registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, a, s, refMgr)
+	subagentClose := registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
 	// Parallel is ABSENT under the no-FS profile (not merely disarmed): every
 	// branch is a force-copy filesystem fork and the deliverable is a preserved
 	// fork PATH — both meaningless without a filesystem.
 	if !s.noFS {
-		registerParallelTool(ctx, cfg, cat, reg, store, hooks, a, s)
+		registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
 	}
-	registerTeamTools(ctx, cfg, cat, reg, store, a, s, refMgr)
-	registerMemoryFamilies(ctx, cfg, cat, a)
+	registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
+	registerMemoryFamilies(ctx, cfg, cat, *a)
 	registerScheduleTool(ctx, cfg, cat, a, s)
-	registerSkillFamily(ctx, cfg, cat, a, s)
+	registerSkillFamily(ctx, cfg, cat, *a, s)
 
 	closeFn := composeCloseErr(subagentClose, clientClose)
 	if closeFn == nil {
@@ -453,7 +470,7 @@ func scheduleManagerPresent(a catalogAssets) bool {
 // handlers ride, never a second path (one store, one truth). It is floor-scoped
 // (a ScopeBuiltinDefault Allow in defaultRules keyed on the tool name), so it is
 // pre-approved but config-overridable, the memory-tool posture.
-func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a catalogAssets, s catalogSession) {
+func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a *catalogAssets, s catalogSession) {
 	// Late-bound resolution: the factory is set in Build right after NewService
 	// (the Service it resolves doesn't exist before then); a nil factory or a
 	// factory returning nil means no schedule backend → the tool stays absent.
@@ -469,12 +486,18 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
+	// Wrap the manager with the session-origin capture binder (fire-result-delivery,
+	// ADR 0075): every CreateSchedule stamps the bound session id as OriginSessionID.
+	// The wrapper is stored on the assets so the engine Deps can wire it as
+	// OriginBinder (the per-run session binding).
+	wrapper := agent.NewSessionOriginScheduleManager(mgr)
+	a.scheduleOriginBinder = wrapper
 	// The READ-ONLY half (AC1.4): list/inspect live on a separate query tool so
 	// they join the read-parallel batch (ReadOnly()==true). It registers in
 	// EVERY mode — plan mode included — because it is already ReadOnly()==true
 	// (no plan-aware wrapper needed).
-	cat.MustRegister(agent.NewScheduleQueryTool(mgr))
-	base := agent.NewScheduleTool(mgr)
+	cat.MustRegister(agent.NewScheduleQueryTool(wrapper))
+	base := agent.NewScheduleTool(wrapper)
 	if s.mode == session.ModePlan {
 		// PLAN-MODE variant (AC4.3): the default MUTATING tool reports
 		// ReadOnly()==false, so the plan-mode catalog projection would hide the

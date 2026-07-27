@@ -1,7 +1,7 @@
 # Fire-result delivery — acceptance plan
 
 **Phase:** scheduled tasks — delivery channel
-**Status:** draft, 2026-07-27. Synthesised from the design discussion closing #307's deferred "ping me when X" follow-up.
+**Status:** landed, 2026-07-27. Synthesised from the design discussion closing #307's deferred "ping me when X" follow-up.
 **Issue:** [stacklok/mecatl#189](https://github.com/stacklok/mecatl/issues/189) (scheduled tasks; delivery was ADR 0073's out-of-scope follow-up).
 **ADR:** [ADR-0075](../adr/0075-fire-result-delivery.md) — pins the origin-capture + fenced-untrusted delivery + pending-drain + best-effort decisions.
 **Accumulator branch:** `acc/fire-result-delivery` (off `main`).

@@ -1028,6 +1028,8 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 		return r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
 	case blockError:
 		return r.wrapPrefixed("✗ ", sanitizeTerminal(b.raw), r.th.Style("errorText"))
+	case blockDelivery:
+		return r.renderDelivery(b)
 	default:
 		return r.wrapStyled(sanitizeTerminal(b.raw), lipgloss.NewStyle())
 	}
@@ -1209,6 +1211,23 @@ func stripPhaseEcho(raw, phase string) string {
 		}
 	}
 	return s
+}
+
+// renderDelivery renders a fire-result delivery note block: a scheduled-task
+// affordance (⏰) + the schedule name + the fenced outcome body. It is visually
+// distinct from a user prompt (gold rail + "▌ you"), the model's text (● mecatl),
+// and a muted notice (•). The schedule name is on a leading label line (dim colour);
+// the outcome body renders below it with a muted prefix, keeping the delivery card
+// compact but recognisable.
+func (r *renderer) renderDelivery(b *block) string {
+	// Leading label: ⏰ scheduled task <name> — delivery
+	label := "⏰ scheduled task " + sanitizeTerminal(b.toolName) + " — delivery"
+	header := r.wrapPrefixed("", label, r.th.Style("hookModified")) // model-adapted emerald, same as modified hook
+	// Body: the full recorded note, muted so it reads as a transcript receipt, not
+	// a prompt. The note is fenced-untrusted already; the renderer adds a "│" prefix
+	// so the body is clearly subordinate to the header.
+	body := r.wrapPrefixed("│ ", sanitizeTerminal(b.raw), r.th.Style("muted"))
+	return header + "\n" + body
 }
 
 // renderTool renders a tool-call card: status glyph + name + body, and, once

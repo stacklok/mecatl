@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime/trace"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -700,4 +704,298 @@ func TestStartPerfServesAdminSurface(t *testing.T) {
 	// runtime/trace.Start.func1 + runtime.ReadTrace ignores, so any persistent
 	// trace goroutine left by a forgotten Stop also fails it; the direct Enabled()
 	// assertion above closes the gap for the transient-goroutine case.
+}
+
+// startEmbeddedBuiltServer is the test-only embedded-server harness for the
+// fire-result-delivery e2e: it builds the FULL composition (internal/app.Build,
+// same as cmd/mecatui/embed.Start) and serves it over a private UNIX socket with
+// the HarnessService + ScheduleService + gRPC health service registered — the
+// same surface embed.Start serves. It returns the gRPC dial target, the built
+// *app.Built (whose Service the test reaches to create a schedule with an
+// OriginSessionID — see the note in TestFireDelivery_EmbeddedEndToEnd on why
+// the wire cannot set that field), and a teardown that GracefulStops + closes.
+//
+// It differs from embed.Start ONLY in that it hands the caller the *app.Built
+// (embed.Start hides it behind *embed.Server). That reach is the ONE seam this
+// test needs that embed.Start does not expose, because the v1 wire
+// (CreateScheduleRequest.ScheduleSpec) carries NO origin_session_id field —
+// OriginSessionID is stamped ONLY by the in-loop Schedule tool
+// (engine/agent/sessionorigin.go). The fire, the delivery, and the live
+// subscription all run through the REAL composition (app.Build's
+// startScheduler wires SetDeliverFireResult; deliverFireResult drives
+// StartRunContent + PublishSessionEvent; StreamSessionLive relays it live).
+func startEmbeddedBuiltServer(t *testing.T, cfg app.Config) (target string, built *app.Built, teardown func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	b, err := app.Build(ctx, cfg)
+	if err != nil {
+		cancel()
+		t.Fatalf("app.Build: %v", err)
+	}
+	dir, err := os.MkdirTemp(t.TempDir(), "mecatui-")
+	if err != nil {
+		b.Close()
+		cancel()
+		t.Fatalf("create runtime dir: %v", err)
+	}
+	sock := filepath.Join(dir, "mecated.sock")
+	lis, err := net.Listen("unix", sock)
+	if err != nil {
+		b.Close()
+		cancel()
+		t.Fatalf("listen unix: %v", err)
+	}
+	grpcSrv := grpc.NewServer()
+	mecatlv1.RegisterHarnessServiceServer(grpcSrv, server.NewHarnessServer(b.Service))
+	mecatlv1.RegisterScheduleServiceServer(grpcSrv, server.NewScheduleServer(b.Service))
+	go func() { _ = grpcSrv.Serve(lis) }()
+	return "unix://" + sock, b, func() {
+		grpcSrv.GracefulStop()
+		b.Close()
+		cancel()
+	}
+}
+
+// TestFireDelivery_EmbeddedEndToEnd is the DoD #8 ship-gate for the
+// fire-result-delivery plan: a schedule whose fire reports back into its
+// ORIGINATING session's LIVE StreamSessionLive subscription, end-to-end through
+// the REAL embedded composition (app.Build + the in-process scheduler +
+// deliverFireResult + PublishSessionEvent), over a REAL gRPC UNIX socket with a
+// REAL client. Fully offline (UseMock).
+//
+// The chain exercised: app.Build(startScheduler wires SetFire +
+// SetDeliverFireResult over the durable DeliveryQueue) → the scheduler's tick
+// loop fires a near-future one-shot schedule → fireClaimed runs the FireFunc
+// (the fire's run on the mock provider) → RecordFire → deliverFireResult
+// renders the fenced note, Enqueue, and drives a delivery run into the origin
+// via StartRunContent (loadAndReopen reopens the completed origin) → the run's
+// events are fanned to the origin's live subscribers via
+// PublishSessionEvent → the gRPC StreamSessionLive handler relays the delivery
+// EvUserPrompt (the ONE log-only-kind exception) to the connected client → the
+// test asserts the note arrived LIVE, names the schedule + fire id, and is the
+// fenced delivery note.
+//
+// OriginSessionID reach: the v1 CreateScheduleRequest.ScheduleSpec proto has
+// NO origin_session_id field (the wire carries no such field by design — see
+// engine/CHANGELOG.md + internal/adapter/server/grpc_schedule.go's
+// protoToScheduleSpec, which never maps it). OriginSessionID is stamped ONLY by
+// the in-loop Schedule tool via the SessionOriginScheduleManager wrapper
+// (engine/agent/sessionorigin.go). The canned UseMock provider cannot drive a
+// Schedule tool call, so the test reaches the just-built *app.Built.Service
+// directly to create the schedule with OriginSessionID set — the ONE in-process
+// step in an otherwise real-wire e2e. The fire, delivery, and live
+// subscription all run through the REAL composition path.
+func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	workspace := t.TempDir()
+	cfg := mockAppConfig(workspace)
+	// The durable jsonlstore (StoreDir) exposes a ScheduleStore, so the scheduler
+	// + the durable DeliveryQueue wire up (buildScheduler + buildDeliveryQueue).
+	cfg.StoreDir = t.TempDir()
+	// The scheduler is ON by default, but be explicit: this test exercises the
+	// tick loop's fire path, so the tick must actually run.
+	cfg.SchedulerEnabled = true
+	// A short tick so the near-future one-shot is picked up promptly.
+	cfg.SchedulerTickInterval = 50 * time.Millisecond
+	// The workspace is a throwaway temp dir; trust it so the fire's session
+	// (rooted at the schedule's Workspace) mints a real workspace session.
+	cfg.TrustProject = true
+
+	target, built, teardown := startEmbeddedBuiltServer(t, cfg)
+	defer teardown()
+
+	// Dial a REAL gRPC client over the UNIX socket (the embedded product's
+	// transport). Use the generated client directly so the test drains the
+	// server-streaming StreamSessionLive Recv (the client.Client wrapper
+	// projects to tea.Msg; the raw stream carries the proto Event the
+	// assertion reads).
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial embedded server: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	hc := mecatlv1.NewHarnessServiceClient(conn)
+
+	// 1. Create the ORIGIN session S over the real socket.
+	cs, err := hc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	if err != nil {
+		t.Fatalf("CreateSession origin: %v", err)
+	}
+	originID := session.SessionID(cs.GetSessionId())
+	if originID == "" {
+		t.Fatal("CreateSession returned an empty session id")
+	}
+
+	// 2. Open the LIVE StreamSessionLive subscription for S; collect events on a
+	// goroutine. The gRPC handler calls Subscribe asynchronously after the
+	// client opens the stream, so warm up the lazy connection first with a
+	// quick unary GetSession (the same discipline the wire-side live-subscription
+	// tests use).
+	if _, werr := hc.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(originID)}); werr != nil {
+		t.Fatalf("warmup GetSession: %v", werr)
+	}
+	stream, err := hc.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: string(originID)})
+	if err != nil {
+		t.Fatalf("StreamSessionLive: %v", err)
+	}
+	var (
+		evMu sync.Mutex
+		evs  []*mecatlv1.Event
+	)
+	collectDone := make(chan struct{})
+	go func() {
+		defer close(collectDone)
+		for {
+			ev, rerr := stream.Recv()
+			if rerr != nil {
+				return
+			}
+			evMu.Lock()
+			evs = append(evs, ev)
+			evMu.Unlock()
+		}
+	}()
+
+	// Wait for the subscription to actually register before firing: the gRPC
+	// handler's Subscribe runs asynchronously, so an event published before it
+	// returns is lost. Probe with a no-op event until it lands (the same robust
+	// synchronization the wire-side live-subscription tests use).
+	probeDeadline := time.Now().Add(5 * time.Second)
+	probe := session.Event{Type: session.EvNoProgress, Text: "delivery-e2e-probe"}
+	for !liveHasEvent(&evMu, &evs, "no_progress", "delivery-e2e-probe") {
+		if time.Now().After(probeDeadline) {
+			evMu.Lock()
+			types := liveEventTypes(evs)
+			evMu.Unlock()
+			t.Fatalf("StreamSessionLive probe did not arrive within 5s — the subscription is not live; got %d events: %v", len(evs), types)
+		}
+		built.Service.PublishSessionEvent(originID, probe)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 3. Create a schedule whose fire reports back into S. The wire cannot set
+	// OriginSessionID (see the doc comment), so reach the just-built Service
+	// directly — the ONE in-process step. A near-future one-shot the short tick
+	// picks up exercises the REAL tick→fire→deliver chain (stronger than FireNow:
+	// it proves the tick loop, the Claim-before-fire, and the deliverFireResult
+	// callback all wire together). The schedule is read-leaning (mutating:false)
+	// in plan mode, rooted at the workspace.
+	schedName := "embedded-delivery-e2e"
+	spec := port.ScheduleSpec{
+		Name:            schedName,
+		Prompt:          "monitor the build",
+		Workspace:       workspace,
+		Mode:            session.ModePlan,
+		Mutating:        false,
+		OriginSessionID: originID, // <- the metadata-only routing key the wire cannot carry
+		Trigger: port.TriggerSpec{
+			OneShot: time.Now().Add(200 * time.Millisecond), // the short tick picks it up
+		},
+	}
+	if _, cerr := built.Service.CreateSchedule(ctx, spec); cerr != nil {
+		t.Fatalf("CreateSchedule: %v", cerr)
+	}
+
+	// 4. Bounded-poll (require.Eventually-style, ~15s deadline — NOT a fixed
+	// sleep) for the subscription to yield an EvUserPrompt whose text contains
+	// the delivery provenance header "[scheduled task <name> (fire <id>)".
+	// The short tick fires the one-shot; the scheduler drives deliverFireResult;
+	// the delivery run's EvUserPrompt is fanned to this subscription and relayed
+	// live (the ONE log-only-kind exception).
+	const deliveryHeaderPrefix = "[scheduled task "
+	deadline := time.Now().Add(15 * time.Second)
+	var deliveredNote string
+	for {
+		if txt, ok := liveFirstUserPromptContaining(&evMu, &evs, deliveryHeaderPrefix); ok {
+			deliveredNote = txt
+			break
+		}
+		if time.Now().After(deadline) {
+			evMu.Lock()
+			types := liveEventTypes(evs)
+			evMu.Unlock()
+			// Diagnose: did the fire run at all? List the schedule's fires.
+			fires, _ := built.Service.ListFires(ctx, schedName)
+			fireIDs := make([]string, 0, len(fires))
+			for _, f := range fires {
+				fireIDs = append(fireIDs, f.ID)
+			}
+			t.Fatalf("StreamSessionLive did NOT relay the delivery EvUserPrompt within 15s; got %d events: %v (fires: %v)", len(evs), types, fireIDs)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// 5. Assert: the note arrived LIVE on the subscription, names the schedule
+	// and the fire id, and is the fenced delivery note (renderFireDelivery wraps
+	// the header + body in agent.FenceUntrusted).
+	if !strings.Contains(deliveredNote, "[scheduled task "+schedName+" ") {
+		t.Errorf("delivered note does not name the schedule: %q (want prefix %q)", deliveredNote, "[scheduled task "+schedName+" ")
+	}
+	if !strings.Contains(deliveredNote, "(fire ") {
+		t.Errorf("delivered note does not name the fire id: %q (want an '(fire <id>)' segment)", deliveredNote)
+	}
+	if !strings.Contains(deliveredNote, "completed with stop reason:") {
+		t.Errorf("delivered note does not state the stop reason: %q", deliveredNote)
+	}
+	// The fenced-untrusted wrapper: the note body is inside an
+	// agent.FenceUntrusted block (<<<UNTRUSTED…<<<UNTRUSTED — the SAME marker
+	// opens and closes the block). Assert the fence markers are present so the
+	// note is the genuine rendered delivery note, not a stray user_prompt.
+	if !strings.Contains(deliveredNote, "<<<UNTRUSTED") {
+		t.Errorf("delivered note is not fenced-untrusted (missing <<<UNTRUSTED markers): %q", deliveredNote)
+	}
+}
+
+// liveHasEvent reports whether the collected live-stream events include one of
+// the given type whose text (top-level Event.text or UserPrompt.text for a
+// user_prompt) contains substr. Caller holds no lock.
+func liveHasEvent(mu *sync.Mutex, evs *[]*mecatlv1.Event, typ, substr string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	for _, ev := range *evs {
+		if ev.GetType() != typ {
+			continue
+		}
+		if up := ev.GetUserPrompt(); up != nil {
+			if strings.Contains(up.GetText(), substr) {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(ev.GetText(), substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// liveFirstUserPromptContaining returns the text of the first collected
+// user_prompt event whose text contains substr, and ok=true; ("", false) if
+// none yet. Caller holds no lock.
+func liveFirstUserPromptContaining(mu *sync.Mutex, evs *[]*mecatlv1.Event, substr string) (string, bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	for _, ev := range *evs {
+		if ev.GetType() != "user_prompt" {
+			continue
+		}
+		if up := ev.GetUserPrompt(); up != nil && strings.Contains(up.GetText(), substr) {
+			return up.GetText(), true
+		}
+	}
+	return "", false
+}
+
+// liveEventTypes returns the type strings of the collected events for
+// diagnostics. Caller holds no lock.
+func liveEventTypes(evs []*mecatlv1.Event) []string {
+	out := make([]string, 0, len(evs))
+	for _, e := range evs {
+		out = append(out, e.GetType())
+	}
+	return out
 }

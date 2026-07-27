@@ -72,7 +72,7 @@ func (s *Service) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 		return port.Schedule{}, ErrNoScheduleStore
 	}
 	now := s.cfg.Now()
-	cronNextFire, err := s.validateScheduleSpec(spec, now)
+	cronNextFire, err := s.validateScheduleSpec(ctx, spec, now)
 	if err != nil {
 		return port.Schedule{}, err
 	}
@@ -176,7 +176,7 @@ func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 // ListModels advertises) and the cadence floor against the composition-
 // injected scheduler MinInterval — two deployment-level inputs the spec
 // alone cannot carry.
-func (s *Service) validateScheduleSpec(spec port.ScheduleSpec, now time.Time) (time.Time, error) {
+func (s *Service) validateScheduleSpec(ctx context.Context, spec port.ScheduleSpec, now time.Time) (time.Time, error) {
 	if spec.Name == "" {
 		return time.Time{}, fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
 	}
@@ -185,6 +185,16 @@ func (s *Service) validateScheduleSpec(spec port.ScheduleSpec, now time.Time) (t
 	}
 	if err := spec.Trigger.Validate(); err != nil {
 		return time.Time{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	// OriginSessionID validation: a non-empty OriginSessionID must name an
+	// existing session in the store (the session the fire's terminal result
+	// will be delivered to). A non-existent session is rejected fail-closed
+	// so a delivery pointer that can never resolve is caught at create time
+	// rather than surfacing hours later as a fire-time failure. An empty
+	// OriginSessionID is always valid (delivery is OFF — the v1 pre-delivery
+	// posture).
+	if err := s.validateScheduleOrigin(ctx, spec); err != nil {
+		return time.Time{}, err
 	}
 	// OneShotRetry is one-shot-ONLY: a cron self-heals via misfire already
 	// (decision #1), so a retry budget on a cron is a misconfiguration the
@@ -282,6 +292,20 @@ func (s *Service) validateCronTrigger(spec port.ScheduleSpec, now time.Time) (ti
 	return next, nil
 }
 
+// validateScheduleOrigin rejects (fail-closed) a non-empty OriginSessionID that
+// names a session not in the configured store. An empty OriginSessionID is always
+// valid (delivery is OFF). This is extracted from validateScheduleSpec to keep the
+// cyclomatic complexity below the gocyclo threshold of 20.
+func (s *Service) validateScheduleOrigin(ctx context.Context, spec port.ScheduleSpec) error {
+	if spec.OriginSessionID == "" {
+		return nil
+	}
+	if _, lerr := s.cfg.Store.Load(ctx, spec.OriginSessionID); lerr != nil {
+		return fmt.Errorf("%w: origin_session_id %q must reference an existing session: %w", ErrInvalidArgument, spec.OriginSessionID, lerr)
+	}
+	return nil
+}
+
 // validateScheduleSelector rejects (fail-closed) a non-empty
 // ScheduleProviderSelector that names a provider+model pair the deployment
 // does not serve, per the projected selectable-model inventory (the same
@@ -347,7 +371,7 @@ func (s *Service) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	// The computed cron next-fire is not needed here (Update preserves the
 	// existing State, including NextFireAt); the call is still made for its
 	// validation side effect (the shared create-seam checks).
-	if _, err := s.validateScheduleSpec(spec, now); err != nil {
+	if _, err := s.validateScheduleSpec(ctx, spec, now); err != nil {
 		return port.Schedule{}, err
 	}
 	applyScheduleDefaults(&spec)

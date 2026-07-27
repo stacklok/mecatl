@@ -162,6 +162,8 @@ func (*ScheduleTool) Spec() tool.ToolSpec {
 			"Verbs: create registers a schedule (name + prompt + cron or one_shot + workspace); " +
 			"pause/resume disable/enable without deleting; delete removes it; " +
 			"fire triggers an immediate run and returns the fire id + session id. " +
+			"A schedule created here reports its fire's result back into THIS conversation when it fires — " +
+			"tell the user to expect the outcome to arrive in this chat, not a separate session. " +
 			"The read-only list/inspect verbs live on the ScheduleQuery tool; use ScheduleQuery list " +
 			"to discover existing schedules before creating a duplicate.",
 		Schema: scheduleSchema,

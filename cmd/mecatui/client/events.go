@@ -43,6 +43,78 @@ func (s *EventStream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 	readEventLoop(ctx, s.recv.Recv, out)
 }
 
+// StreamSessionLive opens the LIVE per-session event stream (ADR 0075
+// Scenario 5): the server pushes events including the three log-only kinds
+// (approval/user_prompt/compaction.archive) as they occur — principally
+// fire-result delivery notes for the active session. It wraps the returned
+// server stream in an EventStream. The SAME projection path (EventToMsg →
+// readEventLoop) means a live delivery and a replay produce the SAME
+// DeliveryNoteMsg. A server with no live subscription bridge returns gRPC
+// UNIMPLEMENTED → StreamErrMsg.
+func (c *Client) StreamSessionLive(ctx context.Context, id string) (*EventStream, error) {
+	stream, err := c.svc.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: id})
+	if err != nil {
+		return nil, fmt.Errorf("stream session live: %w", err)
+	}
+	return NewEventStream(stream), nil
+}
+
+// LiveStreamCmd opens the LIVE session event stream for session id and runs
+// ReadLoop on a goroutine, pushing tea.Msgs onto a channel the ui drains via
+// WaitForMsg (the SAME fan-in the live Converse and replay streams use).
+// Mirrors StreamSessionEventsCmd exactly but calls c.StreamSessionLive instead
+// of c.StreamSessionEvents. Returns the channel + a teardown func (cancel) the
+// ui calls on session switch / reset. The channel is buffered (64). An open
+// error emits a StreamErrMsg{Err, Transient: TransientStreamErr(err)} then
+// closes the channel, so the ui's WaitForMsg fan-in always terminates. stop is
+// idempotent (context.WithCancel + sync.Once).
+func LiveStreamCmd(ctx context.Context, c *Client, id string) (ch chan tea.Msg, stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	ch = make(chan tea.Msg, 64)
+	var once sync.Once
+	stop = func() { once.Do(cancel) }
+
+	es, err := c.StreamSessionLive(ctx, id)
+	if err != nil {
+		// open-error path: emit the failure then close, so WaitForMsg terminates.
+		go func() {
+			defer close(ch)
+			emit(ctx, ch, StreamErrMsg{Err: err, Transient: TransientStreamErr(err)})
+		}()
+		return ch, stop
+	}
+	go es.ReadLoop(ctx, ch)
+	return ch, stop
+}
+
+// LiveReplayStreamCmd is the interface variant of LiveStreamCmd: it opens the
+// LIVE session event stream for session id via a LiveStreamer (instead of a
+// concrete *Client) and runs ReadLoop on a goroutine, pushing tea.Msgs onto a
+// channel the ui drains via WaitForMsg. It is the open path the ui calls when
+// it holds a LiveStreamer interface (for test injection), mirroring
+// ReplayStreamCmd exactly. Returns the channel + a teardown func (cancel). The
+// channel is buffered (64). An open error emits a StreamErrMsg{Err,
+// Transient: TransientStreamErr(err)} then closes the channel. stop is
+// idempotent (context.WithCancel + sync.Once).
+func LiveReplayStreamCmd(ctx context.Context, r LiveStreamer, id string) (ch chan tea.Msg, stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	ch = make(chan tea.Msg, 64)
+	var once sync.Once
+	stop = func() { once.Do(cancel) }
+
+	es, err := r.StreamSessionLive(ctx, id)
+	if err != nil {
+		// open-error path: emit the failure then close, so WaitForMsg terminates.
+		go func() {
+			defer close(ch)
+			emit(ctx, ch, StreamErrMsg{Err: err, Transient: TransientStreamErr(err)})
+		}()
+		return ch, stop
+	}
+	go es.ReadLoop(ctx, ch)
+	return ch, stop
+}
+
 // StreamSessionEvents opens the durable-event-log replay (cloud-native Phase 3a
 // read-back) for session id and wraps the returned server stream in an
 // EventStream. The replay yields *mecatlv1.Event directly (NO ConverseResponse

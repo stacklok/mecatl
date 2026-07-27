@@ -131,6 +131,7 @@ const (
 	blockTurnStat                   // muted per-turn usage + elapsed stat line
 	blockError                      // an error notice
 	blockHook                       // a structured hook notice (phase + decision)
+	blockDelivery                   // a fire-result delivery note (scheduled-task affordance + outcome)
 )
 
 // block is one entry in the conversation scrollback. Assistant blocks accumulate
@@ -1085,6 +1086,19 @@ func (c *conversation) liveTeamBlock() *block {
 // addNotice appends a muted info block (compaction / permission verb).
 func (c *conversation) addNotice(text string) {
 	c.blocks = append(c.blocks, block{kind: blockNotice, raw: text})
+}
+
+// addDelivery appends a fire-result delivery note block: a scheduled-task
+// affordance + the schedule name + the fenced outcome, visually distinct from a
+// user prompt, the model's text, and a notice. scheduleName is the schedule that
+// fired; text is the full recorded note (the same fenced-untrusted content the
+// engine recorded).
+func (c *conversation) addDelivery(scheduleName, text string) {
+	c.blocks = append(c.blocks, block{
+		kind:     blockDelivery,
+		toolName: scheduleName, // reused for the schedule-name label
+		raw:      text,
+	})
 }
 
 // addHook appends a structured hook-notice block carrying the lifecycle phase,

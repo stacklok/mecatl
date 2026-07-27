@@ -222,6 +222,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case replayMsg:
 		return m.updateReplayMsg(msg)
 
+	case liveMsg:
+		return m.updateLiveMsg(msg)
+
 	case tea.WindowSizeMsg:
 		return m.onResize(msg)
 
@@ -347,6 +350,13 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		heal := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
 		cmd = tea.Batch(cmd, heal)
 	}
+	// Arm the live subscription for the active session so fire-result
+	// delivery notes render as delivery cards with no operator input.
+	// Batched with the kitty/heal cmds so the live feed opens while the
+	// session is loading.
+	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
+		cmd = tea.Batch(cmd, liveCmd)
+	}
 	return m, cmd, true
 }
 
@@ -427,8 +437,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// the policy in one place.
 		m.conv.addError("stream error: " + msg.Err.Error())
 		m = m.endRun(stopError)
+		liveCmd := m.armLiveFeed()
 		mm, drainCmd := m.drainQueue(stopError, msg.Transient)
-		return mm, tea.Batch(m.refreshCmd(), drainCmd), true
+		return mm, tea.Batch(m.refreshCmd(), drainCmd, liveCmd), true
 	case clipboardResultMsg:
 		mm, cmd := m.onClipboardResult(msg)
 		return mm, cmd, true
@@ -448,8 +459,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
 			m = m.endRun("closed")
 			modeCmd := m.retryPendingModeCmd()
+			liveCmd := m.armLiveFeed()
 			mm, drainCmd := m.drainQueue("closed", false)
-			return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd), true
+			return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, liveCmd), true
 		}
 		return m, nil, true
 	case client.CommandsMsg:
@@ -629,6 +641,9 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case client.HookMsg:
 		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
 		return m.afterEvent()
+	case client.DeliveryNoteMsg:
+		m.conv.addDelivery(msg.ScheduleName, msg.Text)
+		return m.afterEvent()
 	case client.ResultMsg:
 		return m.applyResult(msg)
 	default:
@@ -805,7 +820,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		return dm, tea.Batch(pm.refreshCmd(), modeCmd, proceedCmd, drainCmd, refresh)
 	}
 	mm, drainCmd := m.drainQueue(msg.Stop, msg.Transient)
-	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd)
+	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed())
 }
 
 // noticeLine renders the muted-notice text for a transient advisory message
@@ -2138,7 +2153,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	if err != nil {
 		cancel()
 		m.conv.addError("open run: " + err.Error())
-		return m.endRun(stopError), nil
+		return m.endRun(stopError), m.armLiveFeed()
 	}
 	ch := make(chan tea.Msg, 64)
 	m.stream = stream
@@ -2205,7 +2220,7 @@ func (m Model) submitProceedPrompt() (Model, tea.Cmd) {
 	if err != nil {
 		cancel()
 		m.conv.addError("open run: " + err.Error())
-		return m.endRun(stopError), nil
+		return m.endRun(stopError), m.armLiveFeed()
 	}
 	ch := make(chan tea.Msg, 64)
 	m.stream = stream
@@ -2289,6 +2304,118 @@ func (m Model) waitReplayCmd() tea.Cmd {
 	gen := m.sessions.replayGen
 	read := client.WaitForMsg(m.sessions.replayCh)
 	return func() tea.Msg { return replayMsg{gen: gen, msg: read()} }
+}
+
+// liveMsg wraps one message pulled from the LIVE session event feed (LiveStreamCmd
+// / LiveReplayStreamCmd) with the generation that channel belonged to when the
+// reader was armed. It is the live-delivery analogue of streamMsg (live Converse
+// run) and replayMsg (stored-session replay): the reducer drops any liveMsg whose
+// gen no longer matches m.liveGen, so a stale reader left bound to an abandoned
+// channel — torn down on a session switch / reset / a new arm for a different id —
+// cannot route its messages into the current session. It is the structural backstop
+// behind the "exactly one live subscription per active session" fan-in invariant.
+type liveMsg struct {
+	gen uint64
+	msg tea.Msg
+}
+
+// waitLiveCmd re-arms the fan-in command on the current live channel, tagging
+// whatever it delivers with the current live generation so a stale reader's output
+// is dropped rather than misrouted (see liveMsg + updateLiveMsg's gen check).
+// Returns nil when no live channel is armed (defensive). Parallel to waitCmd /
+// waitReplayCmd.
+func (m Model) waitLiveCmd() tea.Cmd {
+	if m.liveCh == nil {
+		return nil
+	}
+	gen := m.liveGen
+	read := client.WaitForMsg(m.liveCh)
+	return func() tea.Msg { return liveMsg{gen: gen, msg: read()} }
+}
+
+// updateLiveMsg applies the generation guard for the live feed fan-in, then
+// reduces the inner msg into the live conversation. A message produced by the
+// live feed's reader (waitLiveCmd) carries the generation of the channel it was
+// read from; if that no longer matches the current live arm, the reader is bound
+// to an ABANDONED channel, so the message is dropped and NOT re-armed — the stale
+// reader dies with it. Parallel to onStreamMsg / updateReplayMsg.
+//
+// The inner msg is reduced into m.conv via m.update (which routes through
+// updateStreamEvent/updateStreamSecondary — the SAME live conversation mutators
+// a Converse stream event uses). A delivery event (DeliveryNoteMsg) renders as a
+// delivery card (addDelivery); other event kinds (StreamClosedMsg, StreamErrMsg)
+// are handled here. A StreamErrMsg on the live feed is transient — it does NOT end
+// the run; the ui keeps the live convo and the next arm re-opens.
+func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
+	if sm.gen != m.liveGen {
+		return m, nil // stale reader — drop, do not re-arm
+	}
+	switch msg := sm.msg.(type) {
+	case client.StreamClosedMsg:
+		// The live feed closed (clean EOF): clear the live channel refs but do NOT
+		// tear down the active session — a server restart or a transient close on
+		// a push-less session is benign. No re-arm (the channel closed).
+		m.liveCh = nil
+		m.liveStop = nil
+		return m, nil
+	case client.StreamErrMsg:
+		// A live feed error: same as a clean close — clear the refs, no re-arm.
+		// The ui ignores the error text (the delivery was missed live; the
+		// operator can reload the session to catch up via the replay).
+		m.liveCh = nil
+		m.liveStop = nil
+		return m, nil
+	default:
+		// A delivery event (or any other EventToMsg projection): reduce into the
+		// live conversation via the SAME updateStreamEvent path a Converse stream
+		// event would take (addDelivery + refreshView via afterEvent). Then
+		// re-arm BOTH the Converse reader (from afterEvent's waitCmd, nil when
+		// idle) AND the live feed reader (waitLiveCmd) so both streams keep
+		// draining. DeliveryNoteMsg → addDelivery renders the delivery card.
+		mm, cmd := m.updateStreamEvent(msg)
+		if m2, ok := mm.(Model); ok {
+			cmd = tea.Batch(cmd, m2.waitLiveCmd())
+		}
+		return mm, cmd
+	}
+}
+
+// armLiveFeed opens the LIVE session event stream for the current active session
+// (m.sessionID) via m.deps.LiveStream if a live streamer is wired AND the session
+// is non-empty AND the feed is not already armed for this id. It tears down any
+// stale feed first (a session switch, or a re-arm after a transient close). The
+// returned tea.Cmd carries the waitLiveCmd fan-in; the caller batches it with the
+// caller's own cmds. Returns nil (no-op) when no streamer is wired, the session is
+// empty, or the feed is already armed for this id.
+func (m *Model) armLiveFeed() tea.Cmd {
+	if m.deps.LiveStream == nil || m.sessionID == "" {
+		return nil
+	}
+	if m.liveArmed == m.sessionID && m.liveCh != nil {
+		return nil // already armed for this session
+	}
+	// Tear down any stale feed (session switch / re-arm).
+	m.disarmLiveFeed()
+
+	m.liveGen++
+	ch, stop := client.LiveReplayStreamCmd(m.deps.Ctx, m.deps.LiveStream, m.sessionID)
+	m.liveCh = ch
+	m.liveStop = stop
+	m.liveArmed = m.sessionID
+	return m.waitLiveCmd()
+}
+
+// disarmLiveFeed tears down the live feed reader goroutine and clears the live
+// state fields. Idempotent (safe to call when not armed). The gen bump
+// invalidates any stale reader still draining into the now-defunct channel.
+func (m *Model) disarmLiveFeed() {
+	if m.liveStop != nil {
+		m.liveStop()
+	}
+	m.liveCh = nil
+	m.liveStop = nil
+	m.liveGen++ // invalidate any stale reader
+	m.liveArmed = ""
 }
 
 // updateReplayMsg applies the generation guard for the replay fan-in, then reduces
@@ -2447,6 +2574,9 @@ func (m *Model) applyReplayEvent(msg tea.Msg) {
 		} else {
 			c.addUser(msg.Text)
 		}
+	case client.DeliveryNoteMsg:
+		// A delivery note renders as a distinct delivery card, not a user prompt.
+		c.addDelivery(msg.ScheduleName, msg.Text)
 	case client.TurnStartMsg:
 		c.startAssistant()
 	case client.AssistantDeltaMsg:

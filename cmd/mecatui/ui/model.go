@@ -129,6 +129,12 @@ type Deps struct {
 	// sessions it cannot open). The ui holds the interface (not a *Client) so it is
 	// injectable with a fake for offline tests.
 	Replayer client.SessionReplayer
+	// LiveStream is the LIVE per-session event feed (ADR 0075 Scenario 5): the server
+	// pushes fire-result delivery notes for the active session as they occur. The ui
+	// holds the interface (not a *Client) so it is injectable with a fake for offline
+	// tests. nil disables the live bridge (the ui still renders deliveries via the
+	// replay on a session switch/reload, just not live). *Client satisfies it.
+	LiveStream client.LiveStreamer
 	// SelectionStore persists the picked model (last-used). nil disables persistence
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
@@ -579,6 +585,14 @@ type Model struct {
 	// next run boundary regardless of how many readers leaked.
 	streamGen uint64
 
+	// liveCh is the live session event feed's reader channel (LiveStreamCmd /
+	// LiveReplayStreamCmd); WaitForMsg drains it. Armed when the active session
+	// settles (session create / run end) and torn down on session switch / reset.
+	liveCh    chan tea.Msg
+	liveStop  func() // idempotent teardown (context.CancelFunc via sync.Once)
+	liveGen   uint64 // generation guard (parallel to streamGen): drops stale-reader msgs
+	liveArmed string // the session id liveCh is armed for ("" = not armed); avoids re-arm on same id
+
 	// stagedMedia holds clipboard/pasted-path image attachments not yet sent,
 	// keyed by their literal "[Image #N]" marker (which also sits in the textarea
 	// text). nextMediaN is the monotonic marker counter. The design is
@@ -801,6 +815,11 @@ func (m Model) resetSession() Model {
 	m.sel = selection{}
 	// Drop any pending multi-click sequence: it is anchored into the old content.
 	m.clickCount = 0
+	// Disarm the live feed: a /clear or session switch rebuilds the session, so
+	// the old live subscription (bound to the old/cleared session id or opened
+	// while the stale session was active) must not route delivery events into the
+	// fresh conversation.
+	m.disarmLiveFeed()
 	return m
 }
 

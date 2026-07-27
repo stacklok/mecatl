@@ -307,6 +307,21 @@ type ScheduleSpec struct {
 	// preamble (NOT seeded history — carried context is untrusted). See the
 	// field-by-field contract above.
 	CarryContext bool
+	// OriginSessionID is the session whose terminal result delivery should
+	// receive the fire's outcome. Empty means no delivery — the fire's result
+	// is discoverable only through the pull-only GetFire/ListFires channel
+	// (the v1 pre-delivery posture). A non-empty value names the session the
+	// fire's terminal EvResult is delivered to (per ADR 0075, fire-result-
+	// delivery). The field is METADATA-ONLY: it is NEVER rendered into a
+	// prompt, NEVER surfaced to the model, and NEVER appears in any
+	// model-visible surface. It is an infrastructure-level routing key the
+	// fire path reads to route the outcome; the model has no access to it.
+	//
+	// The create-seam validates it: a non-empty OriginSessionID that names a
+	// non-existent session is rejected fail-closed (the same ErrInvalidArgument
+	// class as the other spec rejections). An empty OriginSessionID is always
+	// valid (delivery is OFF — the byte-identical pre-delivery posture).
+	OriginSessionID session.SessionID
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half that

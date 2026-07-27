@@ -1,4 +1,7 @@
     ifacemethod func (Clock).Now() time.Time
+    ifacemethod func (DeliveryQueue).Enqueue(ctx context.Context, origin session.SessionID, text string) (DeliveryNote, error)
+    ifacemethod func (DeliveryQueue).MarkDelivered(ctx context.Context, origin session.SessionID, seq uint64) error
+    ifacemethod func (DeliveryQueue).Pending(ctx context.Context, origin session.SessionID) ([]DeliveryNote, error)
     ifacemethod func (Diagnostics).Log(ctx context.Context, level Level, msg string, args ...any)
     ifacemethod func (Diagnostics).With(args ...any) Diagnostics
     ifacemethod func (EventLog).Append(ctx context.Context, id session.SessionID, ev session.Event) error
@@ -42,6 +45,9 @@
     ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
+    method func (NopDeliveryQueue).Enqueue(_ context.Context, origin session.SessionID, _ string) (DeliveryNote, error)
+    method func (NopDeliveryQueue).MarkDelivered(_ context.Context, _ session.SessionID, _ uint64) error
+    method func (NopDeliveryQueue).Pending(_ context.Context, _ session.SessionID) ([]DeliveryNote, error)
     method func (NopDiagnostics).Log(context.Context, Level, string, ...any)
     method func (NopDiagnostics).With(...any) Diagnostics
     method func (TriggerSpec).Kind() TriggerKind
@@ -68,6 +74,8 @@ func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []se
 type Chunk struct{Kind ChunkKind; Text string; ToolCall *session.ToolCall; Usage *session.Usage; Stop session.StopReason}
 type ChunkKind int
 type Clock interface{Now() time.Time}
+type DeliveryNote struct{Seq uint64; SessionID session.SessionID; Text string; EnqueuedAt time.Time}
+type DeliveryQueue interface{Enqueue(ctx context.Context, origin session.SessionID, text string) (DeliveryNote, error); MarkDelivered(ctx context.Context, origin session.SessionID, seq uint64) error; Pending(ctx context.Context, origin session.SessionID) ([]DeliveryNote, error)}
 type Diagnostics interface{Log(ctx context.Context, level Level, msg string, args ...any); With(args ...any) Diagnostics}
 type EventLog interface{Append(ctx context.Context, id session.SessionID, ev session.Event) error; Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error]}
 type EventSink interface{Emit(ctx context.Context, ev session.Event)}
@@ -79,6 +87,7 @@ type Lease struct{SessionID session.SessionID; Owner string; Token uint64; Expir
 type Level int
 type MetaLister interface{MetaList(ctx context.Context) ([]SessionMeta, error)}
 type MisfirePolicy int
+type NopDeliveryQueue struct{}
 type NopDiagnostics struct{}
 type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
 type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
@@ -89,7 +98,7 @@ type ScheduleFire struct{ID string; ScheduleName string; SessionID session.Sessi
 type ScheduleManager interface{CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error); DeleteSchedule(ctx context.Context, name string) error; FireNow(ctx context.Context, name string) (ScheduleFire, error); GetSchedule(ctx context.Context, name string) (Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); ListSchedules(ctx context.Context) ([]Schedule, error); PauseSchedule(ctx context.Context, name string) error; ResumeSchedule(ctx context.Context, name string) error; UpdateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)}
 type ScheduleOneShotReArmer interface{ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error}
 type ScheduleProviderSelector struct{ProviderID string; ModelID string}
-type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; Workspace string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool}
+type ScheduleSpec struct{Name string; Prompt string; Parts []session.Content; Trigger TriggerSpec; Selector ScheduleProviderSelector; Profile string; Workspace string; Mode session.PermissionMode; Limits session.Limits; Mutating bool; MaxFires int; Misfire MisfirePolicy; Singleton bool; Timezone string; CreatedAt time.Time; OneShotRetry bool; OneShotMaxRetries int; CarryContext bool; OriginSessionID session.SessionID}
 type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount int; Enabled bool; LastFireSessionID session.SessionID; OneShotRetryCount int}
 type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); Delete(ctx context.Context, name string) error; Due(ctx context.Context, now time.Time) ([]Schedule, error); List(ctx context.Context) ([]Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); Load(ctx context.Context, name string) (Schedule, error); LoadFire(ctx context.Context, fireID string) (ScheduleFire, error); RecordFire(ctx context.Context, f ScheduleFire) error; Save(ctx context.Context, s Schedule) error; SetEnabled(ctx context.Context, name string, enabled bool) error}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}

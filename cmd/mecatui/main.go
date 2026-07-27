@@ -143,6 +143,7 @@ func run(args []string) error {
 		Sched:               cl,
 		Sessions:            cl,
 		Replayer:            cl,
+		LiveStream:          cl,
 		SelectionStore:      store,
 		InitialModel:        initialSel,
 		WorkspaceDefault:    wsDefault,

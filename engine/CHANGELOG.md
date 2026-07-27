@@ -13,6 +13,50 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
+  `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
+  fire-result-delivery task 02) — a new `port.ScheduleManager` wrapper that
+  holds the current origin session id in a `sync/atomic.Pointer[session.SessionID]`
+  and stamps every `CreateSchedule` call's `OriginSessionID` from the bound id
+  (empty if unbound) before delegating. The `OriginBinder` interface (single
+  method `BindSessionOrigin(session.SessionID)`) is an OPTIONAL `Deps` field
+  the engine calls in `startRun` so the executing session's id is captured at
+  the run boundary. Composition wraps the real manager with
+  `NewSessionOriginScheduleManager` and wires it as both the tool's manager and
+  the engine's `OriginBinder`. The model-supplied `origin` arg is never in the
+  tool schema and is ignored if present — the bound id always wins. Classified
+  Added per COMPATIBILITY.md (a new exported type + constructor + interface +
+  Deps field are a minor bump). (fire-result-delivery plan, task 02)
+
+- **`port.ScheduleSpec.OriginSessionID`** (ADR 0075, fire-result-delivery Phase 1) —
+  a new `session.SessionID` field on `ScheduleSpec` carrying the session whose
+  terminal result delivery should receive the fire's outcome. Empty means no
+  delivery (the v1 pre-delivery posture). Non-empty values are validated at the
+  create-seam: a non-existent session is rejected fail-closed with
+  `ErrInvalidArgument`. The field is METADATA-ONLY — it is never rendered into a
+  prompt, never surfaced to the model, and never appears in any model-visible
+  surface. It is an infrastructure-level routing key the fire path reads to route
+  the outcome. An empty OriginSessionID in out-of-band creates (REST/gRPC, no
+  conversation) persists empty — additive, no existing behavior changed.
+  Classified Added per COMPATIBILITY.md (a new struct field is a minor bump).
+  (fire-result-delivery plan, task 01)
+
+- **`port.DeliveryQueue` + `port.DeliveryNote` + `port.NopDeliveryQueue`**
+  (ADR 0075, fire-result-delivery Scenario 4 / ADR 0027 List 1+2) — a new
+  DURABLE per-session pending-delivery queue port for scheduled-task fire
+  results, keyed on the ORIGIN session id (not a per-Run registry). The queue
+  holds the opaque rendered note text (from the delivery renderer) plus a
+  monotonic per-session sequence that is the exactly-once ledger key: a note
+  queued during one run drains on the origin's next run-entry if the current
+  run ends first (the ledger is session-scoped). A durable backing (the same
+  durability the session snapshot has) survives a process restart so a note
+  queued before a restart drains after it; `NopDeliveryQueue` is the
+  byte-identical no-delivery default (a deployment with delivery unwired sees
+  nothing). The loop stays storage-agnostic: the fire path (composition) ENQUEUEs,
+  the loop's turn-boundary drain + the run-entry funnel DEQUEUE via this port.
+  Classified Added per COMPATIBILITY.md (a new interface + value type + no-op
+  default are a minor bump). (fire-result-delivery plan, task 04)
+
 - **`agent.ScheduleQueryTool` + `agent.NewScheduleQueryTool` +
   `agent.ScheduleQueryToolName` (ADR 0073, the AC1.4 read-parallel/mutate-serial
   partition)** — the scheduled-task surface is now TWO catalog entries over the

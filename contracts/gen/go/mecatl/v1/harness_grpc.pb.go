@@ -58,6 +58,7 @@ const (
 	HarnessService_ListCommands_FullMethodName        = "/mecatl.v1.HarnessService/ListCommands"
 	HarnessService_ListWorktrees_FullMethodName       = "/mecatl.v1.HarnessService/ListWorktrees"
 	HarnessService_StreamSessionEvents_FullMethodName = "/mecatl.v1.HarnessService/StreamSessionEvents"
+	HarnessService_StreamSessionLive_FullMethodName   = "/mecatl.v1.HarnessService/StreamSessionLive"
 	HarnessService_ListSessions_FullMethodName        = "/mecatl.v1.HarnessService/ListSessions"
 	HarnessService_ListSkills_FullMethodName          = "/mecatl.v1.HarnessService/ListSkills"
 	HarnessService_GetSoul_FullMethodName             = "/mecatl.v1.HarnessService/GetSoul"
@@ -172,6 +173,39 @@ type HarnessServiceClient interface {
 	// ServerCapabilities bit for this feature: the capability is RPC-discoverable
 	// (UNIMPLEMENTED vs. an empty stream degrade honestly).
 	StreamSessionEvents(ctx context.Context, in *StreamSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
+	// StreamSessionLive is the LIVE per-session event stream (ADR 0075
+	// fire-result-delivery Scenario 6 / Wave 3): a server-streaming RPC backed by
+	// the in-process per-session subscription registry (Service.Subscribe /
+	// PublishSessionEvent, List 1 row 35). It is the UNIFIED transport for BOTH
+	// embedded and remote clients — the embedded mecatui dials its in-process
+	// server over a real gRPC UNIX socket, so the in-process Subscribe registry is
+	// unreachable from the TUI without a wire transport; this RPC is that
+	// transport, and it serves a remote mecated identically (ONE proto, ONE TUI
+	// consumption path).
+	//
+	// UNLIKE StreamSessionEvents (the durable-log READ-BACK, which relays ALL
+	// events including the three log-only kinds), StreamSessionLive is a LIVE
+	// stream and applies the SAME live-wire relay discipline as the live
+	// `Converse` relay, with ONE narrow exception: a fire-result delivery note
+	// (an EvUserPrompt whose text starts with the renderFireDelivery provenance
+	// header "[scheduled task ") is RELAYED so the connected client renders the
+	// delivery card as it happens (AC6.2). The other two log-only kinds
+	// (EvApproval, EvCompactionArchive) stay SKIPPED on the live wire (they are
+	// persistence-only; a client holds its own verdict/compaction view); a
+	// non-delivery EvUserPrompt stays SKIPPED too (the client already holds its
+	// own prompt). The delivery note is metadata-only/redacted by construction
+	// (gauntlet #7 — it is the fenced-untrusted harness note the engine recorded).
+	//
+	// The stream stays open until the client cancels or disconnects. The handler
+	// is drain-to-discard: a dead client never wedges the delivery run (a full
+	// subscriber channel drops the event, AC6.3). The durable log records the
+	// tail regardless (it is appended by the relay/loop, independent of this
+	// stream). There is intentionally NO ServerCapabilities bit — the capability is
+	// RPC-discoverable (UNIMPLEMENTED on an older server, an empty stream on a
+	// server with no subscribers). An unknown session id yields an empty stream
+	// (absence is data — a never-created id is indistinguishable from a session
+	// with no live events yet).
+	StreamSessionLive(ctx context.Context, in *StreamSessionLiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 	// ListSessions returns the stored-session inventory — the picker metadata a
 	// client renders to let an operator open an EXISTING session by id (issue #245
 	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -449,6 +483,25 @@ func (c *harnessServiceClient) StreamSessionEvents(ctx context.Context, in *Stre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_StreamSessionEventsClient = grpc.ServerStreamingClient[Event]
 
+func (c *harnessServiceClient) StreamSessionLive(ctx context.Context, in *StreamSessionLiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[2], HarnessService_StreamSessionLive_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamSessionLiveRequest, Event]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_StreamSessionLiveClient = grpc.ServerStreamingClient[Event]
+
 func (c *harnessServiceClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSessionsResponse)
@@ -541,7 +594,7 @@ func (c *harnessServiceClient) CancelTeammate(ctx context.Context, in *CancelTea
 
 func (c *harnessServiceClient) RunTeam(ctx context.Context, in *RunTeamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TeamEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[2], HarnessService_RunTeam_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[3], HarnessService_RunTeam_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +633,7 @@ func (c *harnessServiceClient) CleanupTeam(ctx context.Context, in *CleanupTeamR
 
 func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[3], HarnessService_ApprovePlan_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_ApprovePlan_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -696,6 +749,39 @@ type HarnessServiceServer interface {
 	// ServerCapabilities bit for this feature: the capability is RPC-discoverable
 	// (UNIMPLEMENTED vs. an empty stream degrade honestly).
 	StreamSessionEvents(*StreamSessionEventsRequest, grpc.ServerStreamingServer[Event]) error
+	// StreamSessionLive is the LIVE per-session event stream (ADR 0075
+	// fire-result-delivery Scenario 6 / Wave 3): a server-streaming RPC backed by
+	// the in-process per-session subscription registry (Service.Subscribe /
+	// PublishSessionEvent, List 1 row 35). It is the UNIFIED transport for BOTH
+	// embedded and remote clients — the embedded mecatui dials its in-process
+	// server over a real gRPC UNIX socket, so the in-process Subscribe registry is
+	// unreachable from the TUI without a wire transport; this RPC is that
+	// transport, and it serves a remote mecated identically (ONE proto, ONE TUI
+	// consumption path).
+	//
+	// UNLIKE StreamSessionEvents (the durable-log READ-BACK, which relays ALL
+	// events including the three log-only kinds), StreamSessionLive is a LIVE
+	// stream and applies the SAME live-wire relay discipline as the live
+	// `Converse` relay, with ONE narrow exception: a fire-result delivery note
+	// (an EvUserPrompt whose text starts with the renderFireDelivery provenance
+	// header "[scheduled task ") is RELAYED so the connected client renders the
+	// delivery card as it happens (AC6.2). The other two log-only kinds
+	// (EvApproval, EvCompactionArchive) stay SKIPPED on the live wire (they are
+	// persistence-only; a client holds its own verdict/compaction view); a
+	// non-delivery EvUserPrompt stays SKIPPED too (the client already holds its
+	// own prompt). The delivery note is metadata-only/redacted by construction
+	// (gauntlet #7 — it is the fenced-untrusted harness note the engine recorded).
+	//
+	// The stream stays open until the client cancels or disconnects. The handler
+	// is drain-to-discard: a dead client never wedges the delivery run (a full
+	// subscriber channel drops the event, AC6.3). The durable log records the
+	// tail regardless (it is appended by the relay/loop, independent of this
+	// stream). There is intentionally NO ServerCapabilities bit — the capability is
+	// RPC-discoverable (UNIMPLEMENTED on an older server, an empty stream on a
+	// server with no subscribers). An unknown session id yields an empty stream
+	// (absence is data — a never-created id is indistinguishable from a session
+	// with no live events yet).
+	StreamSessionLive(*StreamSessionLiveRequest, grpc.ServerStreamingServer[Event]) error
 	// ListSessions returns the stored-session inventory — the picker metadata a
 	// client renders to let an operator open an EXISTING session by id (issue #245
 	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -848,6 +934,9 @@ func (UnimplementedHarnessServiceServer) ListWorktrees(context.Context, *ListWor
 }
 func (UnimplementedHarnessServiceServer) StreamSessionEvents(*StreamSessionEventsRequest, grpc.ServerStreamingServer[Event]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamSessionEvents not implemented")
+}
+func (UnimplementedHarnessServiceServer) StreamSessionLive(*StreamSessionLiveRequest, grpc.ServerStreamingServer[Event]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamSessionLive not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
@@ -1178,6 +1267,17 @@ func _HarnessService_StreamSessionEvents_Handler(srv interface{}, stream grpc.Se
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_StreamSessionEventsServer = grpc.ServerStreamingServer[Event]
+
+func _HarnessService_StreamSessionLive_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamSessionLiveRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HarnessServiceServer).StreamSessionLive(m, &grpc.GenericServerStream[StreamSessionLiveRequest, Event]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_StreamSessionLiveServer = grpc.ServerStreamingServer[Event]
 
 func _HarnessService_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSessionsRequest)
@@ -1517,6 +1617,11 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamSessionEvents",
 			Handler:       _HarnessService_StreamSessionEvents_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StreamSessionLive",
+			Handler:       _HarnessService_StreamSessionLive_Handler,
 			ServerStreams: true,
 		},
 		{

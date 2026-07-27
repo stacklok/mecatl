@@ -1,6 +1,7 @@
     ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
     ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
+    ifacemethod func (OriginBinder).BindSessionOrigin(session.SessionID)
     ifacemethod func (PreservedForkStore).Preserve(root string, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
@@ -35,6 +36,16 @@
     method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
     method func (*ScheduleTool).ReadOnly() bool
     method func (*ScheduleTool).Spec() tool.ToolSpec
+    method func (*SessionOriginScheduleManager).BindSessionOrigin(id session.SessionID)
+    method func (*SessionOriginScheduleManager).CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error)
+    method func (*SessionOriginScheduleManager).DeleteSchedule(ctx context.Context, name string) error
+    method func (*SessionOriginScheduleManager).FireNow(ctx context.Context, name string) (port.ScheduleFire, error)
+    method func (*SessionOriginScheduleManager).GetSchedule(ctx context.Context, name string) (port.Schedule, error)
+    method func (*SessionOriginScheduleManager).ListFires(ctx context.Context, name string) ([]port.ScheduleFire, error)
+    method func (*SessionOriginScheduleManager).ListSchedules(ctx context.Context) ([]port.Schedule, error)
+    method func (*SessionOriginScheduleManager).PauseSchedule(ctx context.Context, name string) error
+    method func (*SessionOriginScheduleManager).ResumeSchedule(ctx context.Context, name string) error
+    method func (*SessionOriginScheduleManager).UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error)
     method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
     method func (*SubagentStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*SubagentStatusTool).ReadOnly() bool
@@ -97,6 +108,7 @@ func NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager) tool.Too
 func NewPresentPlanTool() tool.Tool
 func NewScheduleQueryTool(mgr port.ScheduleManager) tool.Tool
 func NewScheduleTool(mgr port.ScheduleManager) tool.Tool
+func NewSessionOriginScheduleManager(mgr port.ScheduleManager) *SessionOriginScheduleManager
 func NewSubagentStatusTool() tool.Tool
 func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
 func NewSupervisor(t *team.Team, base tool.Workspace, factory MemberEngine, opts ...SupervisorOption) *Supervisor
@@ -164,7 +176,7 @@ type ChildAskReview struct{Allowed bool; Reason string}
 type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
 type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
-type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; OriginBinder OriginBinder; DeliveryQueue port.DeliveryQueue}
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)
@@ -181,6 +193,7 @@ type MemberSpec struct{Name string; AgentType string; Lead bool; Mutating bool; 
 type MemberStopReason string
 type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
+type OriginBinder interface{BindSessionOrigin(session.SessionID)}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
@@ -188,6 +201,7 @@ type Run struct{}
 type RunOptions struct{MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
+type SessionOriginScheduleManager struct{}
 type SubagentOption func(*SubagentTool)
 type SubagentStatusTool struct{}
 type SubagentTool struct{}
