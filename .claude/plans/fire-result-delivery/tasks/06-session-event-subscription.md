@@ -2,8 +2,8 @@
 id: 06-session-event-subscription
 title: Per-session live event subscription seam (in-process, embedded)
 blocked_by: [05-delivery-run-and-drain]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/06-session-event-subscription"
 worktree: ""
 issue: ""
 retries: 0
