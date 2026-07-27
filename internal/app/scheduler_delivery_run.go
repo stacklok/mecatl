@@ -131,8 +131,11 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		// that follows emitResult in terminateComplete (engine/agent/loop.go
 		// ~2202-2203), so a caller's immediate GetSession can see a stale,
 		// pre-persist snapshot. Draining to close guarantees the snapshot is
-		// settled.
-		for range run.Events() {
+		// settled. Publish each event to the origin session's live subscription
+		// (ADR 0075 decision #5) so a connected embedded mecatui renders the
+		// delivery card live (Wave 2); the durable log records the tail regardless.
+		for ev := range run.Events() {
+			svc.PublishSessionEvent(origin, ev)
 		}
 		svc.FinishRun(origin, run)
 	}
