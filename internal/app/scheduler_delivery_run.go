@@ -101,23 +101,25 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 			// Enqueued; the loop drains it. Done.
 			return
 		}
-		// idle/completed/cancelled/failed: drive a delivery run. Mark the note
-		// delivered BEFORE the drive so the loop's Step 2a drain (which runs in
-		// the delivery run's goroutine) does NOT re-record it — the drive's
-		// recordPrompt is the SOLE recording. If the drive fails, the note is
-		// marked-delivered-but-not-recorded (best-effort loss; the fire result
-		// stays pull-able, and the WARN surfaces the failure).
-		if err := queue.MarkDelivered(ctx, origin, enq.Seq); err != nil {
-			diag.Log(ctx, port.LevelWarn, "delivery: mark-delivered before drive failed (note may double-drain)",
-				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "seq", enq.Seq, "err", err.Error())
-			// Proceed with the drive anyway — the worst case is a double-record
-			// (the drain re-records the note), which is bounded and rare.
-		}
-		// Drive the delivery run via the EXISTING StartRunContent → loadAndReopen
-		// funnel. The note IS the prompt (recorded via recordPrompt as ordinary
-		// harness-framed user history). loadAndReopen reopens-if-completed /
-		// interrupts-if-cancelled / recovers-if-failed. A drive failure WARNs and
-		// never fails the fire.
+		// idle/completed/cancelled/failed: drive a delivery run via the EXISTING
+		// StartRunContent → loadAndReopen funnel. The note IS the prompt (recorded
+		// via recordPrompt as ordinary harness-framed user history). loadAndReopen
+		// reopens-if-completed / interrupts-if-cancelled / recovers-if-failed.
+		//
+		// The note is NOT pre-marked-delivered: it stays PENDING in the queue while
+		// the drive runs, and the drive's own recordPrompt does NOT consult the
+		// queue (it is a user prompt, not the Step 2a drain), so there is exactly
+		// ONE recording — the drive's. MarkDelivered runs AFTER a successful drive
+		// (below), closing the TOCTOU where a concurrent user-initiated run's Step
+		// 2a drain could record the still-pending note AND the drive then record it
+		// again. If that race fires (a user run slips between IsLive and the drive's
+		// runEntryMu acquire), the user run's drain records the note and the drive's
+		// StartRunContent then blocks on runEntryMu; when the user run completes the
+		// drive proceeds and records the note — a possible double-record, bounded
+		// and benign (both records are fenced data; the origin policy gates both).
+		// Not pre-marking keeps the common path single-recorded. A drive failure
+		// WARNs and never fails the fire; the note stays pending and drains on a
+		// later run-entry (the durable queue is the recovery).
 		run, err := svc.StartRunContent(ctx, origin, note, nil)
 		if err != nil {
 			diag.Log(ctx, port.LevelWarn, "delivery: drive run failed (fire result stays pull-able)",
@@ -138,6 +140,14 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 			svc.PublishSessionEvent(origin, ev)
 		}
 		svc.FinishRun(origin, run)
+		// The drive recorded the note (recordPrompt). Mark it delivered so the
+		// loop's Step 2a drain (on THIS or a later run) does not re-record it —
+		// the session-scoped exactly-once ledger. A mark failure WARNs (the worst
+		// case is a bounded double-record on a later drain); it never fails the fire.
+		if err := queue.MarkDelivered(ctx, origin, enq.Seq); err != nil {
+			diag.Log(ctx, port.LevelWarn, "delivery: mark-delivered after drive failed (note may double-drain)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "seq", enq.Seq, "err", err.Error())
+		}
 	}
 }
 

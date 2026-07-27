@@ -5987,6 +5987,8 @@ const schedulePostureNote = "You have a Schedule tool for managing scheduled tas
 	"mutating:true only when the fire must write); list shows every schedule (call it before creating a " +
 	"duplicate); inspect shows one schedule plus its fires; pause/resume disable/enable without deleting; " +
 	"delete removes it; fire triggers an immediate run and returns the sched-- session id + stop reason. " +
+	"A schedule you create reports its fire's result back into THIS conversation when it fires — tell the " +
+	"user to expect the outcome to arrive here, in this chat, not in a separate session. " +
 	"In plan mode a mutating create is denied — create read-leaning schedules and present the plan instead."
 
 // applySchedulePosture appends the Schedule tool's model-visible instruction to

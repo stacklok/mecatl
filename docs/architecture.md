@@ -457,11 +457,35 @@ from every schedule RPC; `FireNow` on a paused/done schedule is
 lifecycle event for each fired/skipped/failed fire via the composition-injected
 `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`), which appends it to
 the fire session's durable `EventLog` (so schedule lifecycle rides the same
-durable log as the fire's own events). For v1 the delivery is durable-log-only
-(pull-only via GetFire/ListFires); a live broadcast stream is a future phase.
-The events project onto the `Event.schedule` field (proto field 15); a skipped
-fire with no session is dropped from the durable log (the log is session-keyed)
-and surfaces only via the operator diagnostic.
+durable log as the fire's own events). The events project onto the
+`Event.schedule` field (proto field 15); a skipped fire with no session is
+dropped from the durable log (the log is session-keyed) and surfaces only via
+the operator diagnostic.
+
+**Fire-result delivery (ADR 0075).** A schedule created in-chat carries
+`ScheduleSpec.OriginSessionID` — the conversation that created it, stamped at
+create-time by the `SessionOriginScheduleManager` wrapper (composition binds the
+per-session id via `Deps.OriginBinder`, set in `startRun`; never a model-supplied
+arg). After a fire reaches its terminal `EvResult` and `RecordFire` persists the
+record, the scheduler's `SetDeliverFireResult` callback
+(`deliverFireResult`, `internal/app/scheduler_delivery_run.go`) renders the
+outcome as a **fenced-untrusted** harness note (`renderFireDelivery` —
+`agent.FenceUntrusted` + `NeutraliseFraming`, never a live instruction), enqueues
+it to a DURABLE per-session pending-delivery queue (`port.DeliveryQueue`, a
+sidecar-backed `FileDeliveryQueue`; the exactly-once ledger is session-scoped and
+survives restart), and delivers it into the origin: an idle/completed/cancelled/
+failed origin is driven through the existing `StartRunContent` → `loadAndReopen`
+funnel (recording the note as ordinary user history); a busy or awaiting origin
+keeps the note queued and the loop drains it at the next turn boundary
+(`drainPendingDelivery`, Step 2a, before `BeginTurn` — the same seam as the
+background-subagent notice). A deleted / child / `sched--` origin degrades to
+pull-only with a WARN (the fire is never failed by delivery). The connected
+mecatui renders the note LIVE as a distinct delivery card over the
+server-streaming `StreamSessionLive` RPC (a per-session live event subscription;
+the live wire relays the delivery's `EvUserPrompt` note while the other log-only
+kinds stay skipped), serving both the embedded in-process server and a remote
+mecated over one projection. Pull-only (`GetFire`/`ListFires`) remains the floor
+for out-of-band schedules (empty `OriginSessionID`).
 
 ### Schedule metrics
 
