@@ -2,8 +2,8 @@
 id: 08-remote-wire-subscription
 title: Remote wire subscription — server-streaming RPC (Wave 3, the bigger change)
 blocked_by: [07-tui-delivery-card]
-status: pending
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/07b-live-subscription-bridge"
 worktree: ""
 issue: ""
 retries: 0
