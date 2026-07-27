@@ -2,7 +2,7 @@
 id: 05-delivery-run-and-drain
 title: Delivery run + busy-origin drain + state-aware handling
 blocked_by: [03-delivery-renderer, 04-durable-queue]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
