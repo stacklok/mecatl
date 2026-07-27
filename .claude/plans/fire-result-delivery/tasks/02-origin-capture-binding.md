@@ -2,8 +2,8 @@
 id: 02-origin-capture-binding
 title: Origin capture — per-run session binding into the ScheduleManager wrapper
 blocked_by: [01-spec-field-and-validation]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/02-origin-capture-binding"
 worktree: ""
 issue: ""
 retries: 0
