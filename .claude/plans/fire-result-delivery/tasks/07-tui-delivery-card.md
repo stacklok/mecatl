@@ -2,8 +2,8 @@
 id: 07-tui-delivery-card
 title: TUI delivery card — render the live note distinctly (embedded e2e)
 blocked_by: [06-session-event-subscription]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/07-tui-delivery-card"
 worktree: ""
 issue: ""
 retries: 0
