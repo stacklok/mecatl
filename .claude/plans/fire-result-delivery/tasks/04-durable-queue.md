@@ -2,8 +2,8 @@
 id: 04-durable-queue
 title: Durable per-session pending-delivery queue (ADR 0027 List 1+2)
 blocked_by: [01-spec-field-and-validation]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-fire-result-delivery/04-durable-queue"
 worktree: ""
 issue: ""
 retries: 0
