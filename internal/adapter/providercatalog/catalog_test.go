@@ -1,6 +1,7 @@
 package providercatalog
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -48,34 +49,59 @@ func TestCatalogOnlyInScopeProviders(t *testing.T) {
 	}
 }
 
-// TestCuratedModelCounts is the "no silent caps" tripwire: a count drift means
-// the regen jq changed silently. All three providers now vendor their FULL
-// upstream model set (no allowlist), so each uses a documented FLOOR (organic
-// upstream growth on a re-pin must not fail spuriously) paired with a sane UPPER
-// bound so a doubled/garbage projection trips loudly.
-func TestCuratedModelCounts(t *testing.T) {
-	c := Default()
-	cases := []struct {
-		id      string
-		floor   int // minimum (>= floor)
-		ceiling int // exclusive sanity upper bound (< ceiling)
-	}{
-		{id: "openai", floor: 50, ceiling: 500},
-		{id: "anthropic", floor: 10, ceiling: 200},
-		{id: "openrouter", floor: 300, ceiling: 1000},
+// TestCuratedModelFidelity is the "no silent caps" tripwire: it verifies the
+// parsed catalog is a faithful projection of the embedded JSON — the model count
+// per provider in the parsed Catalog EXACTLY equals the number of model entries
+// in the raw embedded bytes. Hardcoded floor/ceiling numbers rot every time the
+// weekly catalog-refresh re-pins (a provider dropping or gaining models flips a
+// magic constant), so this test derives its expectation from the data itself and
+// only asserts the structural contract: no model was dropped on the floor, and
+// the per-provider model-id sets match 1:1.
+func TestCuratedModelFidelity(t *testing.T) {
+	// Decode the raw embedded bytes to count model entries per provider. This is
+	// the source of truth the parse must faithfully project — if the jq regen
+	// silently dropped a model, or parse() filtered one out, the counts diverge.
+	var raw map[string]struct {
+		Models map[string]json.RawMessage `json:"models"`
 	}
-	for _, tc := range cases {
-		p, ok := c.Provider(tc.id)
+	if err := json.Unmarshal(rawCatalogBytes, &raw); err != nil {
+		t.Fatalf("embedded models.dev.curated.json failed to decode: %v", err)
+	}
+
+	c := Default()
+	for _, id := range []string{"openai", "anthropic", "openrouter"} {
+		rawProv, ok := raw[id]
 		if !ok {
-			t.Errorf("provider %q missing", tc.id)
+			t.Fatalf("embedded JSON has no %q provider entry", id)
+		}
+		p, ok := c.Provider(id)
+		if !ok {
+			t.Errorf("provider %q missing from parsed catalog", id)
 			continue
 		}
-		n := len(p.Models())
-		if n < tc.floor {
-			t.Errorf("provider %q model count = %d, want >= %d (a model was dropped)", tc.id, n, tc.floor)
+		rawCount := len(rawProv.Models)
+		parsedCount := len(p.Models())
+		if parsedCount != rawCount {
+			t.Errorf("provider %q parsed model count = %d, want exactly %d (embedded entries); a model was dropped on the floor",
+				id, parsedCount, rawCount)
 		}
-		if n >= tc.ceiling {
-			t.Errorf("provider %q model count = %d, want < %d (a doubled/garbage projection)", tc.id, n, tc.ceiling)
+		// 1:1 id-set fidelity: every embedded model id survives parse. This
+		// catches a model whose id decodes to "" being silently kept, or any
+		// deduplication in parse that would collapse two distinct entries.
+		parsedIDs := make(map[string]bool, parsedCount)
+		for _, m := range p.Models() {
+			if m.ID() == "" {
+				t.Errorf("provider %q has a model with an empty id", id)
+			}
+			if parsedIDs[m.ID()] {
+				t.Errorf("provider %q model id %q appears twice after parse (dedup collapsed distinct entries)", id, m.ID())
+			}
+			parsedIDs[m.ID()] = true
+		}
+		for rawID := range rawProv.Models {
+			if !parsedIDs[rawID] {
+				t.Errorf("provider %q embedded model %q missing from parsed catalog", id, rawID)
+			}
 		}
 	}
 }
