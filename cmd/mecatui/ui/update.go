@@ -642,7 +642,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
 		return m.afterEvent()
 	case client.DeliveryNoteMsg:
-		m.conv.addDelivery(msg.ScheduleName, msg.Text)
+		m.conv.addDelivery(msg.ScheduleName, msg.FireID, msg.Text)
 		return m.afterEvent()
 	case client.ResultMsg:
 		return m.applyResult(msg)
@@ -2576,7 +2576,7 @@ func (m *Model) applyReplayEvent(msg tea.Msg) {
 		}
 	case client.DeliveryNoteMsg:
 		// A delivery note renders as a distinct delivery card, not a user prompt.
-		c.addDelivery(msg.ScheduleName, msg.Text)
+		c.addDelivery(msg.ScheduleName, msg.FireID, msg.Text)
 	case client.TurnStartMsg:
 		c.startAssistant()
 	case client.AssistantDeltaMsg:

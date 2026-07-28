@@ -1214,20 +1214,61 @@ func stripPhaseEcho(raw, phase string) string {
 }
 
 // renderDelivery renders a fire-result delivery note block: a scheduled-task
-// affordance (⏰) + the schedule name + the fenced outcome body. It is visually
-// distinct from a user prompt (gold rail + "▌ you"), the model's text (● mecatl),
-// and a muted notice (•). The schedule name is on a leading label line (dim colour);
-// the outcome body renders below it with a muted prefix, keeping the delivery card
-// compact but recognisable.
+// affordance (⏰) + the schedule name + the fire id + the outcome body. It is
+// visually distinct from a user prompt (gold rail + "▌ you"), the model's text
+// (● mecatl), and a muted notice (•). The schedule name + fire id sit on a
+// leading label line (dim colour); the outcome body renders below it with a
+// muted prefix, keeping the delivery card compact but recognisable.
+//
+// The recorded note is fenced-untrusted (renderFireDelivery) with a provenance
+// header — both are MACHINE markers for the model, not content for the
+// operator. The card already carries the provenance in its label, so the
+// renderer strips the fence markers + the redundant header line and shows only
+// the fire's outcome body. The operator-facing transcript and the model's
+// history legitimately differ here: the model needs the fence (trust boundary),
+// the operator needs the readable result.
 func (r *renderer) renderDelivery(b *block) string {
-	// Leading label: ⏰ scheduled task <name> — delivery
+	// Leading label: ⏰ scheduled task <name> — delivery · fire <id>
 	label := "⏰ scheduled task " + sanitizeTerminal(b.toolName) + " — delivery"
+	if b.deliveryFireID != "" {
+		label += " · fire " + sanitizeTerminal(b.deliveryFireID)
+	}
 	header := r.wrapPrefixed("", label, r.th.Style("hookModified")) // model-adapted emerald, same as modified hook
-	// Body: the full recorded note, muted so it reads as a transcript receipt, not
-	// a prompt. The note is fenced-untrusted already; the renderer adds a "│" prefix
-	// so the body is clearly subordinate to the header.
-	body := r.wrapPrefixed("│ ", sanitizeTerminal(b.raw), r.th.Style("muted"))
+	// Body: strip the fence markers + the redundant provenance header, keeping
+	// only the fire's outcome text; the "│" prefix keeps it subordinate to the
+	// header.
+	body := r.wrapPrefixed("│ ", sanitizeTerminal(deliveryBodyForDisplay(b.raw)), r.th.Style("muted"))
 	return header + "\n" + body
+}
+
+// deliveryBodyForDisplay strips the untrusted-fence markers and the
+// "[scheduled task … completed with stop reason: …]" provenance header from a
+// recorded delivery note, returning only the fire's outcome body for display.
+// The fence + header are machine markers (the trust boundary the model reads);
+// the delivery card already shows the provenance in its label, so echoing them
+// in the body is noise. A note that does not match the fenced shape is returned
+// VERBATIM (fail-soft — never drop content the transform can't prove is a
+// delivery note).
+func deliveryBodyForDisplay(raw string) string {
+	const fence = "<<<UNTRUSTED"
+	// Require the fence opener; a non-fenced note is not a delivery note we
+	// recognise, so return it untouched.
+	s, ok := strings.CutPrefix(raw, fence)
+	if !ok {
+		return raw
+	}
+	s = strings.TrimPrefix(s, "\n")
+	// Strip the trailing fence closer (the last fence marker on its own line).
+	if idx := strings.LastIndex(s, "\n"+fence); idx >= 0 {
+		s = s[:idx]
+	}
+	// Strip the redundant provenance header line (the first line, which the
+	// label already carries). Only strip when it IS the provenance header —
+	// otherwise this is a fenced note with no header and the body is line 1.
+	if nl := strings.IndexByte(s, '\n'); nl >= 0 && strings.HasPrefix(s, "[scheduled task ") {
+		s = s[nl+1:]
+	}
+	return s
 }
 
 // renderTool renders a tool-call card: status glyph + name + body, and, once

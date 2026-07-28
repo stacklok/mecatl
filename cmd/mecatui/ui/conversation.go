@@ -188,6 +188,12 @@ type block struct {
 	// nil (the common text-only case) leaves the existing render path byte-unchanged.
 	resultBlocks []client.ContentBlock
 
+	// deliveryFireID is the fire id of a blockDelivery note (empty for every
+	// other block kind). It labels the delivery card's subtitle so the operator
+	// can correlate the card to a `sched--<name>-…` fire session without it being
+	// buried in the fenced body.
+	deliveryFireID string
+
 	// Subagent fields (attached to a Subagent tool block): the REDACTED,
 	// metadata-only projection of the Subagent's child run. They never carry child
 	// content. subagent is true once a subagent.start has been attributed to this
@@ -1089,15 +1095,17 @@ func (c *conversation) addNotice(text string) {
 }
 
 // addDelivery appends a fire-result delivery note block: a scheduled-task
-// affordance + the schedule name + the fenced outcome, visually distinct from a
-// user prompt, the model's text, and a notice. scheduleName is the schedule that
-// fired; text is the full recorded note (the same fenced-untrusted content the
-// engine recorded).
-func (c *conversation) addDelivery(scheduleName, text string) {
+// affordance + the schedule name + the outcome body, visually distinct from a
+// user prompt, the model's text, and a notice. scheduleName + fireID label the
+// card; text is the full recorded note (the same fenced-untrusted content the
+// engine recorded) — the renderer strips the fence markers + redundant
+// provenance header for display (they are machine markers, not content).
+func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 	c.blocks = append(c.blocks, block{
-		kind:     blockDelivery,
-		toolName: scheduleName, // reused for the schedule-name label
-		raw:      text,
+		kind:           blockDelivery,
+		toolName:       scheduleName, // reused for the schedule-name label
+		deliveryFireID: fireID,
+		raw:            text,
 	})
 }
 
