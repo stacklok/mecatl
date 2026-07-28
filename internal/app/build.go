@@ -1312,6 +1312,24 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
+	// Schedule manager (ADR 0076): construct the store-shaped schedule
+	// create/read/update/fire seam BEFORE buildEngine — it is resolvable from
+	// the store + now-func alone (the model-inventory is a late-bound atomic
+	// field the Service binds after NewService). A store that backs no
+	// ScheduleStore (the in-memory default) yields a nil manager — the honest
+	// no-scheduling path, matching ServerCapabilities.Scheduling. Handed to
+	// server.Config.ScheduleManager so the Service adopts it (no
+	// self-discovery); assets.scheduleManagerFactory is still bound LATE
+	// (after NewService) — that eager binding is task 02. This is a pure
+	// refactor: the manager is the SAME seam the Service previously held as
+	// *Service methods, moved onto a standalone value. The now-func is left
+	// nil so NewScheduleManager defaults it to time.Now, mirroring the server
+	// Config's own Now default (composition does not thread a clock today).
+	scheduleMgr := server.NewScheduleManager(server.ScheduleManagerConfig{
+		Store:       store,
+		EventLog:    eventLog,
+		Diagnostics: cfg.diag(),
+	})
 	// Agent seam (Phase C2): resolve the agent-definition registry EXACTLY
 	// ONCE for the whole composition — the build-time catalog's Subagent/Team
 	// tools, the per-session engine factory, the ListAgents snapshot, and the
@@ -1350,6 +1368,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		DefaultLimits:    defaultLimits(),
 		MCPProvider:      mcpProvider,
 		MCPSources:       mcpInventory,
+		// Schedule manager (ADR 0076): the pre-Service store-shaped schedule
+		// seam, constructed above from the store before buildEngine. The Service
+		// adopts it (no self-discovery) and late-binds its models pointer onto
+		// it; assets.scheduleManagerFactory is bound to svc.ScheduleManager
+		// below (still LATE — task 02 eager-binds it). nil when the store backs
+		// no ScheduleStore (the honest no-scheduling path).
+		ScheduleManager: scheduleMgr,
 		// Live re-probe: ListMcpSources re-consults the resolved sources on each call
 		// so a TUI panel refresh (ctrl+o → ctrl+r) reflects CURRENT source status,
 		// not just this startup snapshot. nil when MCP is unconfigured (keeps the
