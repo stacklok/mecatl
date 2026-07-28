@@ -4488,6 +4488,52 @@ trade-offs, both composition/scheduler-layer (no `engine/agent` change):
   LastFireSessionID != PendingFireSessionID` — so a re-armed one-shot does NOT carry
   context on the retry (the pending sentinel short-circuits it).
 
+#### The pre-Service schedule manager (ADR 0076) — schedule capability is STORE-shaped
+
+The schedule create/read/update/fire seam does NOT live on `*server.Service` as
+methods reaching into `s.cfg`: it is a standalone **`scheduleManager`** value
+(`internal/adapter/server/schedule_manager.go`) constructed from the plain
+pre-`buildEngine` inputs (the `port.SessionStore` — its `ScheduleStore` is
+type-asserted via the `scheduleStoreProvider` accessor — a now-func, the durable
+`EventLog`, diagnostics), with the late collaborators (the in-process scheduler
+for `FireNow`, the model inventory for selector validation) as late-bound atomic
+FIELDS on the manager (`SetScheduler` / `setModelsPointer`), never a reach back
+into the Service. `*server.Service` DELEGATES its nine `port.ScheduleManager`
+verbs + `EmitScheduleEvent` + `GetFire` to the embedded manager, so the RPC
+surface is byte-identical. A store with no `ScheduleStore` (the in-memory
+memstore) yields a NIL manager — the honest no-scheduling path, matching
+`ServerCapabilities.Scheduling` — never a stub.
+
+**The eager catalog bind (the AC2 fix).** Because the manager is store-shaped,
+`buildEngine` constructs it from the store BEFORE any catalog assembly and binds
+`assets.scheduleManagerFactory` to a closure returning it — inside `buildCatalog`,
+BEFORE the build-time `assembleCatalog` call — so `registerScheduleTool`
+(`internal/app/catalog.go`) fires on the SHARED pass and the build-time shared
+catalog gains `Schedule` (mutating) + `ScheduleQuery` (read-only), exactly like
+the six memory tools (ADR 0073 decision 1: "registered in the catalog for every
+session that has a backing `ScheduleStore`"). The historical LATE bind (a
+factory set to `svc.ScheduleManager` after `server.NewService`, on the theory
+that "any schedule-capable session routes through a per-session engine") left
+the default-profile shared-engine fast path — the plain mecatui launch —
+schedule-less: `sessionNeedsPerFactory` has no schedule arm and
+`needsRehydration` restores a restarted default-profile session onto the shared
+engine. `Build` hands the SAME manager to `server.NewService` via
+`server.Config.ScheduleManager` (one manager, one truth — the tool and the
+Service ride one create-seam). Typed-nil discipline holds end-to-end: the
+manager crosses composition as the CONCRETE `*scheduleManager` (exposed to
+composition as the `server.ScheduleManagerImpl` alias), and the factory's
+explicit nil check returns an UNTYPED nil `port.ScheduleManager` — never a
+non-nil interface boxing a nil pointer (that would defeat
+`registerScheduleTool`'s `mgr == nil` honest-absence gate AND nil-panic
+`NewService`'s `setModelsPointer` adoption). Because both catalogs are now
+assembled with a bound factory, `TestPerSessionCatalogMatchesSharedCatalog`'s
+exact tool-name-set equality covers the schedule pair with NO carve-out — the
+pair sits in the drift guard's `requiredFamilyTools` pin, and
+`TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools` drives a
+store-backed `app.Build` end-to-end (a scripted mockllm tool call through the
+shared-engine session; the oracle is the run's own `EvToolResult` — an
+unregistered tool comes back `unknown tool`, never a silent success).
+
 
 
 `CreateSessionRequest` carries an OPTIONAL `provider_id`(4)+`model_id`(5) selector (two distinct

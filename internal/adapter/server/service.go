@@ -525,7 +525,12 @@ type Config struct {
 	// Store (the legacy test path + any caller that does not pre-construct); a
 	// store that backs no ScheduleStore yields a nil manager (the honest
 	// no-scheduling path). Composition (app.Build) constructs the manager from
-	// the store before buildEngine and hands it here.
+	// the store before buildEngine and hands it here — the SAME manager its
+	// shared catalog's Schedule tool factory resolves (one manager, one
+	// truth). The field is the CONCRETE *scheduleManager (exposed to
+	// composition as the ScheduleManagerImpl alias) so the typed-nil
+	// discipline holds end-to-end: a store with no ScheduleStore yields an
+	// untyped nil here, never a non-nil interface boxing a nil pointer.
 	ScheduleManager *scheduleManager
 
 	// PlanModeAutoApprove is the OPT-IN, OPERATOR-TIER-ONLY, DEFAULT-OFF flag that

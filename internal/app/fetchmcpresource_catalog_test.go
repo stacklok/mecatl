@@ -28,7 +28,7 @@ func TestFetchMcpResourcePresentInBothCatalogProfiles(t *testing.T) {
 	reg := regForTest(oa, providerOpenAI, cfg.Model)
 	hooks := hookexec.New(nil)
 
-	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New())
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}

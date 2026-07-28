@@ -1,7 +1,7 @@
 # Schedule shared catalog — acceptance plan
 
 **Phase:** capability — the `Schedule` tool on every schedule-capable session
-**Status:** draft, 2026-07-28. Follow-up to the landed [schedule-tool plan](schedule-tool.md): the ADR-0073 contract ("registered in the catalog for **every** session that has a backing `ScheduleStore`") is broken for the shared-engine fast path.
+**Status:** in-progress, 2026-07-28. Follow-up to the landed [schedule-tool plan](schedule-tool.md): the ADR-0073 contract ("registered in the catalog for **every** session that has a backing `ScheduleStore`") is broken for the shared-engine fast path.
 **ADR:** [ADR-0073](../adr/0073-schedule-tool.md) — the model-facing `Schedule` tool, on-by-default scheduler. [ADR-0070](../adr/0070-model-visible-affordance-gate.md) — the model-visible affordance gate. [ADR-0075](../adr/0075-fire-result-delivery.md) — origin capture + fire-result delivery. New: [ADR-0076](../adr/0076-schedule-shared-catalog.md) — the pre-Service schedule manager (schedule capability is store-shaped, not Service-shaped).
 **Accumulator branch:** `acc/schedule-shared-catalog` (off `main`).
 

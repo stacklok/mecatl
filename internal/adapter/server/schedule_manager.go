@@ -136,6 +136,17 @@ func scheduleStoreFrom(store port.SessionStore) port.ScheduleStore {
 	return nil
 }
 
+// ScheduleManagerImpl exposes the concrete manager type to the COMPOSITION
+// layer (internal/app) only: buildEngine must thread the ONE manager it
+// constructs through to server.Config.ScheduleManager, and an interface-typed
+// round-trip would re-introduce the typed-nil hazard (a nil *scheduleManager
+// boxed in a non-nil port.ScheduleManager defeats the mgr == nil honest-absence
+// gate). Consumers still interact with the manager via the port.ScheduleManager
+// interface; the alias exists ONLY so the concrete value crosses the adapter
+// boundary with its nil-ness intact. It adds no methods to the public surface
+// beyond what port.ScheduleManager already declares.
+type ScheduleManagerImpl = scheduleManager
+
 // NewScheduleManager constructs a scheduleManager from the plain pre-Service
 // inputs (ADR 0076): a port.SessionStore + a now-func ALONE (no *Service value
 // required, resolvable before buildEngine). It type-asserts the store for a
