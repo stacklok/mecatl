@@ -12,7 +12,7 @@
 # re-pins so a diff shows only real model changes — no churn from key ordering.
 #
 # The PR is human-reviewed before merge: the diff is the review surface, and the
-# providercatalog tests (TestCuratedModelCounts floor/ceiling guards +
+# providercatalog tests (TestCuratedModelFidelity parse-fidelity guard +
 # TestOpenRouterModelIDsValid structural checks) gate it under ci.yml.
 #
 # No `pull_request_target` (the pwn-request pattern): this is a scheduled job that
@@ -96,7 +96,7 @@ jobs:
             echo ""
             echo "The deterministic \`jq -S\` filter keeps the diff reviewable — it shows only real model changes (added/removed/updated), never key-ordering churn."
             echo ""
-            echo "Review the diff, then merge. The \`providercatalog\` tests (floor/ceiling count guards + structural ID checks) gate this under CI."
+            echo "Review the diff, then merge. The \`providercatalog\` tests (parse-fidelity count guard + structural ID checks) gate this under CI."
           } >> pr-body.md
 
       - name: Open PR

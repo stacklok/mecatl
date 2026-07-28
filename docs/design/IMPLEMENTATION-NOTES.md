@@ -2748,7 +2748,8 @@ ListModels + S5 cap-intersection. ALL models for the three in-scope providers (o
 anthropic, openrouter) are vendored — no hand-pinned allowlist — kept fresh by a weekly CI
 job (`.github/workflows/catalog-refresh.yml`) that re-fetches models.dev/api.json and opens a
 PR if the deterministic `jq -S` regen produces a diff; MIT attribution
-(`MODELS_DEV_LICENSE`) vendored alongside. Count-guard-tested with floor+ceiling bounds.
+(`MODELS_DEV_LICENSE`) vendored alongside. Fidelity-tested against the raw embedded
+bytes (per-provider count + id-set parity), not hardcoded numbers that rot on re-pin.
 It is now the **FALLBACK FLOOR**, not the only source — a provider with a live
 `modelLister` (openrouter) has its real catalog fetched and REPLACES the embedded subset,
 with the embedded subset shown on any
