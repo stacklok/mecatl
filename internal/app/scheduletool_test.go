@@ -26,7 +26,7 @@ import (
 
 // scheduletool_test.go is the composition-side pin for the model-facing
 // Schedule tool (ADR 0073). It drives the REAL seams offline: the assembled
-// catalog (assembleCatalog over the late-bound scheduleManager factory), the
+// catalog (assembleCatalog over the eagerly-bound scheduleManager factory), the
 // server Service's schedule methods (the port.ScheduleManager the tool
 // consumes), and the in-process scheduler — over memschedulestore / jsonlstore
 // + mockllm, never a live model or network. The engine-side dispatch/render
@@ -76,8 +76,8 @@ func execScheduleQuery(t *testing.T, cat *tool.Catalog, argsJSON string) session
 }
 
 // assembleScheduleCatalog assembles a catalog over a scheduleManager factory
-// wired to the given resolver, mirroring the per-session assembly path (the
-// shared-catalog path is the chicken-and-egg the late-bound factory closes).
+// wired to the given resolver — the SAME registration gate both the shared
+// build-time assembly and the per-session path consume (ADR 0076 eager bind).
 func assembleScheduleCatalog(t *testing.T, resolve func() port.ScheduleManager) *tool.Catalog {
 	t.Helper()
 	cfg := Config{Model: "gpt-5", Diagnostics: port.NopDiagnostics{}}

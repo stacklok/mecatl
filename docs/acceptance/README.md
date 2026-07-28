@@ -57,6 +57,10 @@ when the code that satisfies the plan has landed.
 - [Fire-result delivery](fire-result-delivery.md) — a scheduled fire reports its
   result back into the originating conversation ("ping me when X"), closing ADR
   0073's deferred delivery channel. Status: draft.
+- [Schedule shared catalog](schedule-shared-catalog.md) — the `Schedule` tool on
+  every schedule-capable session: a store-shaped pre-Service schedule manager so
+  the shared-engine fast path (the default mecatui session) carries the tool too.
+  Status: draft.
 
 ## See also
 

@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -19,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // sortedNames projects a catalog into its sorted tool-name list for diffing.
@@ -73,6 +75,11 @@ func fullyLoadedCfg(t *testing.T) Config {
 		EnableTeams:      true,
 		MCPResourceTools: true,
 		Diagnostics:      port.NopDiagnostics{},
+		// StoreDir (ADR 0073/0076): a jsonlstore backs a ScheduleStore, so the
+		// fully-loaded catalog carries the Schedule + ScheduleQuery family and
+		// the anti-drift pin exercises it for real (memstore keeps them
+		// honestly absent — TestScheduleTool_RegisteredOnlyWhenStoreBacked).
+		StoreDir: t.TempDir(),
 	}
 }
 
@@ -100,6 +107,51 @@ var requiredFamilyTools = []string{
 	"ReadMcpResource",
 	"CallMcpWithQuery",
 	"mcp__globe__echo", // the server-global MCP mount itself
+	// Schedule + ScheduleQuery (ADR 0073/0076, AC2.3): the eager factory bind
+	// registers them in BOTH catalogs over the SAME gate, so the name-set
+	// equality covers them with NO schedule carve-out. fullyLoadedCfg backs a
+	// ScheduleStore (StoreDir → jsonlstore) so the family pin exercises the
+	// registration for real; a store without one keeps them honestly absent
+	// from both (TestScheduleTool_RegisteredOnlyWhenStoreBacked).
+	agent.ScheduleToolName,      // "Schedule"
+	agent.ScheduleQueryToolName, // "ScheduleQuery"
+}
+
+// eagerScheduleFactoryForTest mirrors buildEngine's eager bind (ADR 0076): the
+// manager is resolved from the store BEFORE any catalog assembly and the
+// captured factory is what buildCatalog binds onto the assets. Tests that call
+// buildCatalog directly (the drift/nofs guards) pass this so the shared
+// assembly they exercise matches the production wiring; a store with no
+// ScheduleStore (memstore) yields a nil-resolving factory — the honest
+// absent-tool path.
+func eagerScheduleFactoryForTest(t *testing.T, store port.SessionStore) func() port.ScheduleManager {
+	t.Helper()
+	// Concrete type + explicit nil check: the typed-nil discipline (a nil
+	// *scheduleManager boxed in a non-nil interface would defeat the
+	// honest-absence gate).
+	mgr := server.NewScheduleManager(server.ScheduleManagerConfig{
+		Store:       store,
+		Diagnostics: port.NopDiagnostics{},
+	})
+	return func() port.ScheduleManager {
+		if mgr == nil {
+			return nil
+		}
+		return mgr
+	}
+}
+
+// fullyLoadedScheduleStore opens the jsonlstore under cfg.StoreDir — the
+// ScheduleStore-backed store the fully-loaded drift/nofs guards pass to
+// buildCatalog so the Schedule family registers (cfg.StoreDir is what
+// buildSessionStore would use on the production path).
+func fullyLoadedScheduleStore(t *testing.T, cfg Config) port.SessionStore {
+	t.Helper()
+	st, err := jsonlstore.New(cfg.StoreDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New(%q): %v", cfg.StoreDir, err)
+	}
+	return st
 }
 
 // TestPerSessionCatalogMatchesSharedCatalog is the issue-#42 KILL-SWITCH: the
@@ -136,7 +188,8 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 	// flocked stores, resolves the skills fixture, and runs the build-time
 	// assembly). Using buildCatalog — not a direct assembleCatalog call — is what
 	// keeps a future post-assembly registration in buildCatalog inside the guard.
-	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New())
+	store := fullyLoadedScheduleStore(t, cfg)
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), store, eagerScheduleFactoryForTest(t, store))
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -160,7 +213,7 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 
 	// The selector inputs (what sessionEngineFactory passes for a /models pick),
 	// over the SAME Phase-A assets, no client manager.
-	selCat, selClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
+	selCat, selClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 		provider: or, providerID: providerOpenRouter, model: "openrouter/other-model", narrate: false,
 	})
 	defer func() { _ = selClose() }()
@@ -180,7 +233,7 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewManager(client): %v", err)
 		}
-		cliCat, cliClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
+		cliCat, cliClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider: or, providerID: providerOpenRouter, model: "openrouter/other-model", clientMgr: clientMgr, narrate: false,
 		})
 		defer func() { _ = cliClose() }()
@@ -203,7 +256,7 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 	// routing through assembleCatalog — every shared-catalog tool name resolves on
 	// a selector engine built by the factory.
 	t.Run("factory engine carries every shared tool", func(t *testing.T) {
-		factory := sessionEngineFactory(cfg, reg, oa, memstore.New(),
+		factory := sessionEngineFactory(cfg, reg, oa, store,
 			permpolicy.NewPolicy(defaultRules(), nil), hooks, nil, prompt.RootAssembler{}, assets, nil)
 		res, err := factory(ctx, server.ProviderSelector{ProviderID: providerOpenRouter}, nil, server.ProfileDefault, "", session.ModeDefault)
 		if err != nil {
@@ -235,7 +288,7 @@ func TestPresentPlanInSharedAndPerSessionCatalogs(t *testing.T) {
 	reg := twoProviderReg(oa, providerOpenAI, cfg.Model, or, providerOpenRouter)
 	hooks := hookexec.New(nil)
 
-	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New())
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}

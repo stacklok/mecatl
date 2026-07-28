@@ -98,22 +98,18 @@ type catalogAssets struct {
 	// reuses the SAME provider (issue #42 — no second resolution to drift), and into
 	// the child catalogs for read-only-discovery parity with WebFetch.
 	searchProvider tool.SearchProvider
-	// scheduleManagerFactory is the LATE-BOUND resolver for the consumer-local
-	// port.ScheduleManager the Schedule tool drives (ADR 0073). The Service it
-	// resolves (whose schedule methods satisfy the interface verbatim) exists
-	// only AFTER NewService, which runs AFTER buildEngine built the shared
-	// catalog + the sessFactory — so the manager cannot be an eager field (a
-	// chicken-and-egg on the build order). Composition sets this ONCE, in Build
-	// right after NewService, to svc.ScheduleManager (nil when the store backs
-	// no ScheduleStore) BEFORE any session is created — every later
-	// assembleCatalog call (the per-session factories, which run at session
-	// creation) reads it. A nil FACTORY or a factory returning nil means no
-	// schedule backend: the tool stays ABSENT (honest, not a stub), agreeing
-	// with ServerCapabilities.Scheduling (scheduleStore() != nil). The
-	// build-time shared catalog assembled before the factory was set
-	// legitimately has no Schedule tool (the chicken-and-egg); the shared
-	// engine is for the DEFAULT profile, and any schedule-capable session
-	// routes through a per-session engine. Typed-nil discipline: assigned once,
+	// scheduleManagerFactory is the resolver for the consumer-local
+	// port.ScheduleManager the Schedule tool drives (ADR 0073). The manager is
+	// STORE-shaped (ADR 0076), resolvable from the session store BEFORE
+	// buildEngine, so buildEngine binds this factory EAGERLY onto the assets
+	// (inside buildCatalog, before the build-time assembly) — registerScheduleTool
+	// fires on the SHARED pass and every per-session assembleCatalog call reads
+	// the SAME bound factory (the schedule tools sit in both catalogs, covered
+	// by TestPerSessionCatalogMatchesSharedCatalog's name-set equality). A nil
+	// FACTORY or a factory returning nil (a store that backs no ScheduleStore)
+	// means no schedule backend: the tool stays ABSENT from both (honest, not
+	// a stub), agreeing with ServerCapabilities.Scheduling
+	// (scheduleStore() != nil). Typed-nil discipline: assigned once,
 	// known-non-nil or untyped nil.
 	scheduleManagerFactory func() port.ScheduleManager
 	// scheduleOriginBinder is the session-origin binder the Schedule tool's
@@ -443,7 +439,7 @@ func registerMemoryFamilies(ctx context.Context, cfg Config, cat *tool.Catalog, 
 	}
 }
 
-// scheduleManagerPresent reports whether the assets' late-bound scheduleManager
+// scheduleManagerPresent reports whether the assets' scheduleManager
 // factory resolves a non-nil manager — the SAME gate registerScheduleTool uses
 // to decide the Schedule tool registers. The applySchedulePosture wiring reads
 // it to decide whether the model is told about the tool: the note mirrors the
@@ -471,9 +467,9 @@ func scheduleManagerPresent(a catalogAssets) bool {
 // (a ScopeBuiltinDefault Allow in defaultRules keyed on the tool name), so it is
 // pre-approved but config-overridable, the memory-tool posture.
 func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a *catalogAssets, s catalogSession) {
-	// Late-bound resolution: the factory is set in Build right after NewService
-	// (the Service it resolves doesn't exist before then); a nil factory or a
-	// factory returning nil means no schedule backend → the tool stays absent.
+	// The factory is bound EAGERLY by buildEngine (ADR 0076 — the manager is
+	// store-shaped, resolvable before any catalog assembly); a nil factory or
+	// a factory returning nil means no schedule backend → the tool stays absent.
 	if a.scheduleManagerFactory == nil {
 		return
 	}

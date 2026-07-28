@@ -202,7 +202,7 @@ func TestBuildCatalogSkillDriverRegistersSkillTool(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("x"))
 	cfg := Config{SkillSourceURL: addr}
 
-	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New())
+	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog(skill driver): %v", err)
 	}

@@ -121,7 +121,13 @@ type Config struct {
 	OpenAIBaseURL string
 	OpenAIKey     string
 	UseMock       bool
-	StoreDir      string
+	// MockProvider, when non-nil, REPLACES the canned UseMock turn with this
+	// scripted provider — the test-only seam for driving a full Build offline
+	// with scripted tool calls (UseMock scripts a single fixed text turn, which
+	// can never emit a tool call). It implies the mock registry entry (same
+	// short-circuit as UseMock); production cmd/ mains never set it.
+	MockProvider port.LLMProvider
+	StoreDir     string
 	// RedisURL (ADR 0048, mecak8s) points the session store + durable event log
 	// at a Redis managed service (internal/adapter/redisstore). It is mutually
 	// exclusive with StoreDir and SessionStoreURL (validateDriverConfig: one
@@ -1327,7 +1333,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if agentClose == nil {
 		agentClose = func() {}
 	}
-	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, agentReg)
+	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, eventLog, agentReg)
 	if err != nil {
 		agentClose()
 		storeClose()
@@ -1350,6 +1356,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		DefaultLimits:    defaultLimits(),
 		MCPProvider:      mcpProvider,
 		MCPSources:       mcpInventory,
+		// Schedule manager (ADR 0076): the pre-Service store-shaped schedule
+		// seam, constructed by buildEngine from the store (the eager bind —
+		// the SAME manager the shared catalog's Schedule tool factory
+		// resolves, so the tool and the Service ride one truth). The Service
+		// adopts it (no self-discovery) and late-binds its models pointer onto
+		// it. nil when the store backs no ScheduleStore (the honest
+		// no-scheduling path).
+		ScheduleManager: scheduleMgr,
 		// Live re-probe: ListMcpSources re-consults the resolved sources on each call
 		// so a TUI panel refresh (ctrl+o → ctrl+r) reflects CURRENT source status,
 		// not just this startup snapshot. nil when MCP is unconfigured (keeps the
@@ -1517,18 +1531,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
-
-	// Model-facing Schedule tool (ADR 0073): late-bind the catalog assets'
-	// ScheduleManager factory to the Service's schedule seam NOW — the Service
-	// (whose schedule methods satisfy port.ScheduleManager verbatim) did not
-	// exist when buildEngine assembled the shared catalog + the sessFactory
-	// (the chicken-and-egg the late-bound factory closes). svc.ScheduleManager
-	// is nil unless the store backs a ScheduleStore (the SAME gate the
-	// capabilities echo uses), so the tool registration + the capability bit
-	// agree. Every later assembleCatalog call (the per-session factories, which
-	// run at session creation) reads it; the shared catalog assembled before
-	// this line legitimately has no Schedule tool.
-	assets.scheduleManagerFactory = svc.ScheduleManager
 
 	// LIVE model listing: Build seeded svcCfg.Models with the EMBEDDED snapshot
 	// synchronously above (so the ModelSelection cap is honest from t=0 and Build
@@ -2415,12 +2417,12 @@ func chainClose(first, second func()) func() {
 // resolveAgentSeam (FS or driver) — threaded in, never re-resolved here, so
 // every consumer (catalog, per-session factory, snapshot, team wiring) shares
 // the same registry.
-func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store port.SessionStore, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, func(), error) {
+func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store port.SessionStore, eventLog port.EventLog, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, *server.ScheduleManagerImpl, func(), error) {
 	// SkillDraft trust boundary: when enabled, the quarantine dir must live OUTSIDE
 	// the workspace root (so the model's workspace-confined Write/Edit cannot reach
 	// it) and be disjoint from every active skills dir. Fatal on a misconfig.
 	if err := validateSkillDraftConfig(cfg); err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, func() {}, err
+		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, err
 	}
 	warnSkillDraftResiduals(cfg)
 
@@ -2443,13 +2445,44 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	policy := permpolicy.NewPolicyWithResolver(mainRules(cfg), learned, cfg.permResolver, mainEvaluatorOptions(cfg)...)
 	hooks := hookexec.New(nil) // no hooks by default; map is the injection seam
 
+	// Schedule manager (ADR 0076, task 02 eager bind): the schedule capability
+	// is STORE-shaped, so the manager is resolvable from the store ALONE —
+	// BEFORE any catalog assembly. The captured factory is bound onto the
+	// assets inside buildCatalog (below), so registerScheduleTool fires on the
+	// BUILD-TIME pass and the SHARED catalog gains Schedule + ScheduleQuery
+	// (AC2.1), exactly like the six memory tools — the historical late bind
+	// (after server.NewService) left the shared-engine fast path
+	// schedule-less. A store that backs no ScheduleStore (the in-memory
+	// default) yields a nil manager — the honest no-scheduling path, and the
+	// tool stays absent from BOTH catalogs (never a stub). Build hands the
+	// SAME manager to server.NewService via server.Config.ScheduleManager (one
+	// manager, one truth — no second construction). The now-func is left nil
+	// so NewScheduleManager defaults it to time.Now, mirroring the server
+	// Config's own Now default (composition does not thread a clock today).
+	// Typed-nil discipline: scheduleMgr is the CONCRETE *scheduleManager
+	// (nil when the store backs no ScheduleStore), so the factory's explicit
+	// nil check returns an UNTYPED nil port.ScheduleManager — never a
+	// non-nil interface boxing a nil pointer (registerScheduleTool's
+	// mgr == nil gate must hold).
+	scheduleMgr := server.NewScheduleManager(server.ScheduleManagerConfig{
+		Store:       store,
+		EventLog:    eventLog,
+		Diagnostics: cfg.diag(),
+	})
+	scheduleManagerFactory := func() port.ScheduleManager {
+		if scheduleMgr == nil {
+			return nil
+		}
+		return scheduleMgr
+	}
+
 	// agentReg (threaded from Build's single resolveAgentSeam) is shared with
 	// BOTH the build-time catalog's Subagent/Team tools and the per-session
 	// engine factory (Half B builds a per-session Subagent/Team tool over the
 	// SAME registry, closed over below) — ONE resolution per process.
-	cat, assets, mcpProvider, mcpInventory, mcpClose, err := buildCatalog(ctx, cfg, reg, provider, hooks, agentReg, store)
+	cat, assets, mcpProvider, mcpInventory, mcpClose, err := buildCatalog(ctx, cfg, reg, provider, hooks, agentReg, store, scheduleManagerFactory)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, func() {}, err
+		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, err
 	}
 	memStore, userModelStore := assets.memStore, assets.userModelStore
 
@@ -2463,13 +2496,13 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		conn, connClose, derr := cfg.drivers().dial(cfg, cfg.SoulSourceURL)
 		if derr != nil {
 			mcpClose()
-			return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, func() {}, fmt.Errorf("dial soul-source driver %q: %w", cfg.SoulSourceURL, derr)
+			return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, fmt.Errorf("dial soul-source driver %q: %w", cfg.SoulSourceURL, derr)
 		}
 		probe := grpcdriver.NewSoulSource(conn, grpcdriver.SoulOptions{Diagnostics: cfg.diag()})
 		if perr := probe.Probe(ctx); perr != nil {
 			connClose()
 			mcpClose()
-			return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, func() {}, fmt.Errorf("probe soul-source driver %q: %w", cfg.SoulSourceURL, perr)
+			return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, fmt.Errorf("probe soul-source driver %q: %w", cfg.SoulSourceURL, perr)
 		}
 		prevClose := mcpClose
 		mcpClose = func() {
@@ -2523,6 +2556,16 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 
 	deps := baseEngineDeps(cfg, reg, provider, store, policy, mainHooks, mcpProvider, instructions)
 	deps.Catalog = cat
+	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
+	// SHARED engine too — the SAME wiring the per-session factory applies
+	// (sessionEngineFactory): when the shared catalog carries the Schedule tool
+	// (a scheduleManager resolves non-nil — the SAME gate registerScheduleTool
+	// uses), tell the model the tool exists + the exact verb workflow up front,
+	// on the Role (the StablePrefix layer). The default-profile shared-engine
+	// fast path (a plain mecatui launch) must be told about the tool just like
+	// a per-session engine; a store that backs no ScheduleStore withholds the
+	// note (the model is never told about a tool it cannot call).
+	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 	// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
 	// (created by registerScheduleTool) so every per-run startRun stamps the
 	// executing session's id. nil when scheduling is off.
@@ -2552,7 +2595,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// (ListSkills snapshot), assets.userModelStore (GetUserModel lister), and
 	// assets.skillReadRoots (the workspace factory + team fork closures) off the
 	// SAME value every catalog assembly shares.
-	return agent.NewEngine(deps), assets.globalMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, mcpClose, nil
+	return agent.NewEngine(deps), assets.globalMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, nil
 }
 
 // buildInstructionAssembler composes the turn-0 instruction assembler in order:
@@ -3558,7 +3601,7 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 // unlike the default-on local memory.New whose failure stays fail-soft
 // (WARN + tools disabled). On error every connection already made here is
 // torn down before returning.
-func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, hooks port.HookRunner, agentReg *agents.Registry, store port.SessionStore) (*tool.Catalog, catalogAssets, mcp.Provider, []mcpsource.SourceInfo, func(), error) {
+func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, hooks port.HookRunner, agentReg *agents.Registry, store port.SessionStore, scheduleManagerFactory func() port.ScheduleManager) (*tool.Catalog, catalogAssets, mcp.Provider, []mcpsource.SourceInfo, func(), error) {
 	// Connect the MAIN MCP servers FIRST, so the per-agent-def Subagent engines built by
 	// buildSubagentTool can (a) pull a REFERENCED main server's tools out of this manager
 	// and (b) connect their own INLINE servers. mainMgr is nil when no main servers are
@@ -3675,6 +3718,16 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		// path's enqueue is a no-op against a nil queue, and the loop's drain is a
 		// no-op against a nil Deps.DeliveryQueue).
 		deliveryQueue: buildDeliveryQueue(cfg, store),
+		// Schedule manager factory (ADR 0076, task 02 eager bind): threaded
+		// from buildEngine, which resolved the manager from the store BEFORE
+		// any catalog assembly. Bound HERE — before the build-time
+		// assembleCatalog call below — so registerScheduleTool fires on the
+		// SHARED pass and the shared catalog gains Schedule + ScheduleQuery
+		// (AC2.1), and every per-session assembly reads the SAME bound
+		// factory (AC2.3's name-set equality). A nil factory (or one
+		// resolving nil — a store with no ScheduleStore) keeps the tool
+		// honestly absent from both (never a stub).
+		scheduleManagerFactory: scheduleManagerFactory,
 	}
 	// The build-time assembly: default provider + model, no client MCP, narrating
 	// the ENABLED/DISABLED composition facts exactly once.

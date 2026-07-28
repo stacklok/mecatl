@@ -508,7 +508,30 @@ type Config struct {
 	// composition (app.Build) AFTER NewService — its FireFunc closes over the
 	// Service, so Build calls SetFire then Start; NewService does NOT start it.
 	// nil = no scheduling (the byte-identical default).
+	//
+	// NOTE: this field is the LEGACY late-attach path. The schedule surface now
+	// lives on the store-shaped scheduleManager (ADR 0076) — see ScheduleManager
+	// below. NewService still seeds the Service's manager-side scheduler reference
+	// from this field for byte-identical Close/Drain; composition attaches the
+	// scheduler via SetScheduler (delegated to the manager) AFTER NewService.
 	Scheduler *scheduler.Scheduler
+
+	// ScheduleManager is the pre-Service store-shaped schedule manager (ADR 0076):
+	// the validated create/read/update/fire seam constructed BEFORE buildEngine
+	// from the store + now-func, with the scheduler / model-inventory as
+	// late-bound atomic fields. When non-nil, the Service delegates its nine
+	// port.ScheduleManager methods + EmitScheduleEvent + GetFire to it — the RPC
+	// surface is byte-identical. When nil, the Service self-constructs one from
+	// Store (the legacy test path + any caller that does not pre-construct); a
+	// store that backs no ScheduleStore yields a nil manager (the honest
+	// no-scheduling path). Composition (app.Build) constructs the manager from
+	// the store before buildEngine and hands it here — the SAME manager its
+	// shared catalog's Schedule tool factory resolves (one manager, one
+	// truth). The field is the CONCRETE *scheduleManager (exposed to
+	// composition as the ScheduleManagerImpl alias) so the typed-nil
+	// discipline holds end-to-end: a store with no ScheduleStore yields an
+	// untyped nil here, never a non-nil interface boxing a nil pointer.
+	ScheduleManager *scheduleManager
 
 	// PlanModeAutoApprove is the OPT-IN, OPERATOR-TIER-ONLY, DEFAULT-OFF flag that
 	// auto-approves a plan-mode PresentPlan ask when the run ends without a human
@@ -624,15 +647,6 @@ type Service struct {
 	// load-bearing for a race that cannot occur in practice.
 	modelsRefresher atomic.Pointer[func(context.Context)]
 
-	// scheduleMinIntervalNanos is the scheduler cadence floor (ADR 0073, the
-	// create-seam half of scheduler.Config.MinInterval): a schedule whose
-	// cadence is tighter is rejected fail-closed by BOTH the Schedule tool's
-	// create and the REST/gRPC handler (the shared validateScheduleSpec). 0 =
-	// no floor (the byte-identical pre-floor posture). An atomic so the
-	// composition-time SetScheduleMinInterval is race-free against a create
-	// already in flight.
-	scheduleMinIntervalNanos atomic.Int64
-
 	mu    sync.Mutex
 	runs  map[session.SessionID]*runState
 	teams map[string]*teamState
@@ -726,19 +740,16 @@ type Service struct {
 	// the run-entry hot path (no s.mu).
 	draining atomic.Bool
 
-	// scheduler is the OPTIONAL in-process scheduled-tasks tick loop (issue #189,
-	// Phase 1f), set from cfg.Scheduler. NewService does NOT start it — composition
-	// (app.Build) calls SetFire then Start after NewService (the FireFunc closes
-	// over the Service). Close stops it (drains in-flight fires + releases the
-	// leader lease); Drain arms its drain gate. nil when no scheduler is wired.
-	scheduler *scheduler.Scheduler
-
-	// scheduleStoreCache memoises the type-assertion of cfg.Store for a
-	// ScheduleStore (the PrunableStore/SessionLease precedent). It is computed
-	// once on first scheduleStore() call and cached so the byte-identical
-	// no-scheduling path stays cheap. Guarded by its own mutex (not s.mu) so a
-	// schedule lookup does not contend with the run/registry hot path.
-	scheduleStoreCache scheduleStoreCache
+	// schedMgr is the embedded store-shaped schedule manager (ADR 0076): the
+	// single truth the Service's nine port.ScheduleManager methods +
+	// EmitScheduleEvent + GetFire delegate to. Constructed in NewService from
+	// cfg.ScheduleManager (the pre-Service path composition hands in) OR
+	// self-constructed from cfg.Store (the legacy test path + any caller that
+	// does not pre-construct). nil when the store backs no ScheduleStore (the
+	// honest no-scheduling path, matching ServerCapabilities.Scheduling). The
+	// manager holds the cadence floor, the late-set in-process scheduler, the
+	// durable EventLog, diagnostics, and the SHARED model-inventory pointer.
+	schedMgr *scheduleManager
 
 	// subscriptions is the per-session live event subscription registry (ADR 0075
 	// decision #5): a connected client (e.g. the embedded server's mecatui) holds
@@ -905,7 +916,6 @@ func NewService(cfg Config) (*Service, error) {
 		replayedApprovals: make(map[session.SessionID]struct{}),
 		heldLeases:        make(map[session.SessionID]*heldLease),
 		subscriptions:     make(map[session.SessionID]map[int64]chan session.Event),
-		scheduler:         cfg.Scheduler,
 	}
 	// Seed the model inventory from the static snapshot. ListModels and the
 	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
@@ -918,6 +928,38 @@ func NewService(cfg Config) (*Service, error) {
 	// call (from the Build-time probe) supplies the initial value.
 	var statusSeed []*mecatlv1.ProviderStatus
 	svc.providerStatus.Store(&statusSeed)
+	// Construct the embedded schedule manager (ADR 0076): the store-shaped
+	// create/read/update/fire seam. Composition hands a pre-Service manager via
+	// cfg.ScheduleManager (constructed from the store BEFORE buildEngine); the
+	// Service adopts it and LATE-BINDS its own models pointer onto the manager
+	// (the model-inventory is a late-bound atomic field — the manager is
+	// resolvable before buildEngine; the pointer is created here, seeded from
+	// cfg.Models). This keeps ONE models pointer: SetModels swaps the Service's
+	// atomic, and the manager's selector validation reads the SAME atomic — no
+	// second copy, so a live-catalog refresh reflects on the next create. When
+	// cfg.ScheduleManager is nil (the legacy test path + any caller that does
+	// not pre-construct), the Service self-constructs one from cfg.Store — a
+	// store that backs no ScheduleStore (the in-memory memstore) yields a nil
+	// manager (the honest no-scheduling path, matching
+	// ServerCapabilities.Scheduling). The legacy cfg.Scheduler field, when set,
+	// is late-attached onto the manager (the byte-identical pre-ADR-0076
+	// attach-at-construction path; composition normally attaches via
+	// SetScheduler after NewService).
+	if cfg.ScheduleManager != nil {
+		svc.schedMgr = cfg.ScheduleManager
+		svc.schedMgr.setModelsPointer(&svc.models)
+	} else {
+		svc.schedMgr = NewScheduleManager(ScheduleManagerConfig{
+			Store:       cfg.Store,
+			Now:         cfg.Now,
+			Models:      &svc.models,
+			EventLog:    cfg.EventLog,
+			Diagnostics: cfg.Diagnostics,
+		})
+	}
+	if cfg.Scheduler != nil && svc.schedMgr != nil {
+		svc.schedMgr.SetScheduler(cfg.Scheduler)
+	}
 	return svc, nil
 }
 
@@ -1524,14 +1566,14 @@ func (s *Service) Close() {
 	// Stop the scheduler FIRST so in-flight fires drain while the service is
 	// still alive to serve them (the FireFunc drives StartRunContent on this
 	// Service). Stop cancels the tick loop, joins in-flight fires (with a grace),
-	// and releases the leader lease. nil-safe (no scheduler wired). Read under
-	// s.mu for consistency with SetScheduler/HasScheduler (set-once-before-serving
-	// so practically safe, but -race won't catch a future caller that re-orders).
-	s.mu.Lock()
-	sched := s.scheduler
-	s.mu.Unlock()
-	if sched != nil {
-		_ = sched.Stop()
+	// and releases the leader lease. The scheduler lives on the embedded
+	// scheduleManager (ADR 0076) as an atomic pointer; nil-safe (no scheduler
+	// wired, or no manager at all). Read via HasScheduler + the manager's
+	// atomic pointer — no s.mu (the manager's atomic is the single truth).
+	if m := s.schedMgr; m != nil {
+		if sch := m.scheduler.Load(); sch != nil {
+			_ = sch.Stop()
+		}
 	}
 	s.mu.Lock()
 	engines := s.sessionEngines
@@ -1591,65 +1633,20 @@ func (s *Service) Close() {
 func (s *Service) Drain() {
 	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
 	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
-	s.mu.Lock()
-	sched := s.scheduler
-	s.mu.Unlock()
-	if sched != nil {
-		sched.Drain()
+	// The scheduler lives on the embedded scheduleManager (ADR 0076) as an
+	// atomic pointer; nil-safe (no scheduler wired, or no manager at all).
+	if m := s.schedMgr; m != nil {
+		if sch := m.scheduler.Load(); sch != nil {
+			sch.Drain()
+		}
 	}
 	s.draining.Store(true)
 }
 
-// SetScheduler wires a scheduler onto an already-constructed Service. It is the
-// late-bind seam for the scheduled-tasks tick loop (issue #189, Phase 1f):
-// buildScheduler needs the Service for the FireFunc, so the scheduler is built
-// AFTER NewService and attached here. NewService does NOT start it; composition
-// calls SetFire then Start on the returned *scheduler.Scheduler. Nil-safe.
-func (s *Service) SetScheduler(sch *scheduler.Scheduler) {
-	s.mu.Lock()
-	s.scheduler = sch
-	s.mu.Unlock()
-}
-
-// SetScheduleMinInterval injects the scheduler cadence floor the create-seam
-// enforces (ADR 0073, AC1.3 — the composition half of
-// scheduler.Config.MinInterval / app Config.SchedulerMinInterval, previously
-// inert while there was no in-band create API). It lives on the Service, NOT
-// the scheduler: the floor guards the SHARED validateScheduleSpec — the
-// Schedule tool's create AND the REST/gRPC create — whether or not the tick
-// loop runs (a --no-scheduler deployment still manages schedules manually).
-// 0 disables the floor. Called once by composition before serving; atomic so
-// an in-flight create never tears against it.
-func (s *Service) SetScheduleMinInterval(d time.Duration) {
-	s.scheduleMinIntervalNanos.Store(int64(d))
-}
-
-// HasScheduler reports whether a scheduler was wired into this Service. It is
-// the read-side companion to SetScheduler: nil-safe (the byte-identical default
-// wires no scheduler).
-func (s *Service) HasScheduler() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.scheduler != nil
-}
-
-// ScheduleManager returns the consumer-local port.ScheduleManager the
-// model-facing Schedule tool (ADR 0073) drives: the Service's own validated
-// schedule methods (CreateSchedule/GetSchedule/ListSchedules/UpdateSchedule/
-// DeleteSchedule/PauseSchedule/ResumeSchedule/FireNow/ListFires), which satisfy
-// the interface verbatim. It returns nil UNLESS the configured Store backs a
-// port.ScheduleStore (scheduleStore() != nil) — the SAME conditional gate the
-// capabilities echo (Scheduling) uses, so the tool registration and the
-// capability bit agree and a store-less deployment gets the honest absent-tool
-// path, never a stub. Composition calls it AFTER NewService (the Service it
-// closes over is fully constructed) and injects the result into the catalog
-// assets for the Schedule tool's registration.
-func (s *Service) ScheduleManager() port.ScheduleManager {
-	if s.scheduleStore() == nil {
-		return nil
-	}
-	return s
-}
+// SetScheduler, SetScheduleMinInterval, HasScheduler, and ScheduleManager are
+// defined in schedule.go — the *Service's thin delegating schedule surface
+// (ADR 0076). They forward to the embedded scheduleManager (s.schedMgr); the
+// manager holds the cadence floor + the late-set in-process scheduler.
 
 // Diagnostics returns the operational diagnostics sink the Service was
 // configured with. It is the read-side accessor composition (the scheduler's

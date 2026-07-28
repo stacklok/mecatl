@@ -254,7 +254,7 @@ func TestBuildCatalogMemoryDriverRegistersTools(t *testing.T) {
 	hooks := hookexec.New(nil)
 
 	cfg := Config{MemoryStoreURL: "127.0.0.1:7443"}
-	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New())
+	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog(memory driver): %v", err)
 	}

@@ -458,11 +458,16 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	}
 
 	// UseMock short-circuit: a single synthetic entry, offline, regardless of env.
-	if cfg.UseMock {
+	if cfg.UseMock || cfg.MockProvider != nil {
 		cfg.diag().Log(context.Background(), port.LevelWarn, "LLM provider: mock (canned, offline) — for smoke tests only")
-		mock := mockllm.New(
+		mock := port.LLMProvider(mockllm.New(
 			mockllm.TextTurn("Mock provider: no real model is configured. Set OPENAI_API_KEY for live use."),
-		)
+		))
+		if cfg.MockProvider != nil {
+			// The test-only scripted seam (Config.MockProvider): the caller's
+			// scripted provider replaces the canned single text turn.
+			mock = cfg.MockProvider
+		}
 		// The mock is intentionally left UNWRAPPED by resilience: it never fails over
 		// the network, so retries/breaker would be inert.
 		return &providerRegistry{
