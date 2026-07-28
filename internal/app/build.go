@@ -2556,6 +2556,16 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 
 	deps := baseEngineDeps(cfg, reg, provider, store, policy, mainHooks, mcpProvider, instructions)
 	deps.Catalog = cat
+	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
+	// SHARED engine too — the SAME wiring the per-session factory applies
+	// (sessionEngineFactory): when the shared catalog carries the Schedule tool
+	// (a scheduleManager resolves non-nil — the SAME gate registerScheduleTool
+	// uses), tell the model the tool exists + the exact verb workflow up front,
+	// on the Role (the StablePrefix layer). The default-profile shared-engine
+	// fast path (a plain mecatui launch) must be told about the tool just like
+	// a per-session engine; a store that backs no ScheduleStore withholds the
+	// note (the model is never told about a tool it cannot call).
+	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 	// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
 	// (created by registerScheduleTool) so every per-run startRun stamps the
 	// executing session's id. nil when scheduling is off.
