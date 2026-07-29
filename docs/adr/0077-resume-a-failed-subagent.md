@@ -152,6 +152,72 @@ had to be re-justified at every seam.
   design, which is a separate change; recovery for the SYNTHESIS path is what this ADR
   commits to.
 
+## Amendment (2026-07-29) — the deferred acceptance bullet is delivered
+
+The final Consequences bullet above ("**One acceptance bullet of #318 is NOT delivered**")
+described an open item, not a decision. It is now **closed**, so that bullet no longer
+describes the code and this section is the correction. It is recorded as an amendment
+rather than a superseding ADR deliberately: nothing in the Decision above is reversed —
+the amendment *completes* a gap the same decision named, in the same subsystem, on the
+same day, and splitting one decision across two frozen records for a single acceptance
+bullet would make both harder to read than one record with its open item closed. The
+bullet's own text is left verbatim; it stated the three things needed, and all three
+landed exactly as described.
+
+**Bounded retry.** `engine/agent/teamsupervisor.go` (`runTurn`) no longer benches a member
+whose round ended `StopError` when the recovery seam SUCCEEDED and the member is still
+under its cap: it stays schedulable. The cap is `Supervisor.memberErrorRetries`
+(`WithMemberErrorRetries`, default `defaultMemberErrorRetries` = 1 — one retry survives a
+network hiccup while capping the wasted spend of a permanently-failing member; 0 restores
+the pre-amendment "bench on the first errored round" behaviour exactly). The counter,
+`memberRT.errorRounds`, is MONOTONIC and never reset, which is what makes the retry
+provably terminating: a member that always fails runs `cap+1` rounds and is then benched
+with its original disposition, and the round loop still reaches quiescence far short of
+`WithMaxRounds`. Three shapes are never retried: a FAILED RECOVERY (`nonResumable` — the
+session cannot be driven at all), a CANCELLED member (a kill is not a transient failure,
+and D5's disposition must hold), and a member that exhausted its LIFETIME TURN BUDGET (the
+ceiling exists precisely to stop rescheduling it).
+
+**Task release.** A retried member releases its in-progress claim through the existing
+`engine/team/team.go` (`ReleaseTasks`) and returns to `team.MemberIdle`, following the
+shape of the idle-between-rounds cancel path in `planRound`. Without it the work would be
+stranded: `InProgressFor` short-circuits `planRound`'s auto-claim, so neither the member
+nor a peer could pick the task up again.
+
+`planRound` additionally FORCE-SCHEDULES a retried member for exactly one turn
+(`memberRT.retryPending`, cleared on schedule). "Not stopped" is not sufficient to be
+rescheduled — `planRound` plans only a member that drained a message or claimed a task,
+and the commonest stall shape is a member dying on its first long exploration turn, before
+any task exists — so without the one-shot the retry would have been a silent no-op in
+precisely the case #318 reported. The retry turn carries `retryTurnNote`: a
+supervisor-authored line stating that the previous turn failed mid-flight, that the
+member's own transcript above is the context to continue from, and that its task claim was
+released. It is harness metadata, nothing quoted from the failed turn, so it renders
+TRUSTED like the roster.
+
+**Disposition honesty, in both directions.** `MemberDisposition` gains NO value — it is a
+closed enum mirrored on the proto wire, and "done" is still the honest terminal for a
+member that finished. Instead `agent.MemberOutcome` gains an additive count `ErrorRounds`,
+mirrored on `engine/session/event.go` (`TeamMemberDisposition`) and on
+`contracts/proto/mecatl/v1/harness.proto` (`TeamMemberDisposition.error_rounds`, field 4),
+so `team.end` carries it: a retried-then-finished member is otherwise byte-identical on the
+wire to one that never failed. `cmd/mecatui` renders such a lane `done (retried)` rather
+than a bare `done`. And the LEAD is told through the EXISTING trusted status section —
+`buildSynthesisSources` → `writeTeamStatus` (renamed from `writeStoppedMemberStatus`) —
+which now names the retried members and their failed-round counts alongside the stopped
+ones. A silently-retried member is a coordination lie in the opposite direction from the
+one the stopped line closes: the lead re-plans and reports on what it believes members did.
+The line is supervisor-authored metadata carrying only a count, so the gauntlet-#7 footing
+is unchanged.
+
+**Costs this adds.** A permanently-failing member now costs `cap+1` rounds of provider
+spend instead of one — bounded, and the reason the default is 1 rather than higher. And a
+retried member re-drives a round whose side effects (a tool call that landed before the
+stream died) may already have happened, so `retryTurnNote` tells it to continue rather than
+start over; the harness cannot know which side effects survived, so this is honest guidance
+and not a guarantee. Both are the same trade the Decision above already accepted for the
+`resume:` path: bounded waste in exchange for never stranding recoverable work.
+
 ## See also
 
 - [ADR 0041](./0041-direct-write-subagent.md) — the direct-write child whose applied

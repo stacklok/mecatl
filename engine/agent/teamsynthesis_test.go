@@ -485,6 +485,13 @@ func TestSynthesisRunsAfterLeadRunFailed(t *testing.T) {
 				recordingFactory(t, tm, rec, scripts),
 				agent.WithTeamGoal("goal"),
 				agent.WithMaxRounds(3),
+				// Retry DISABLED so this test keeps pinning exactly what it claims: the
+				// SYNTHESIS rescue, on a lead that was benched by its errored round. With the
+				// default cap the lead would also be RETRIED for a working round (issue #318's
+				// second half, covered by TestSupervisorRetriedMemberContributesInLaterRound),
+				// which would consume the scripted synthesis turn and make the assertion below
+				// about a working round rather than the synthesis one.
+				agent.WithMemberErrorRetries(0),
 				agent.WithMemberStore(store),
 				agent.WithMemberSessionPrefix("team-demo"))
 			mustAdd(t, sup, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "go"})
@@ -501,9 +508,15 @@ func TestSynthesisRunsAfterLeadRunFailed(t *testing.T) {
 			if len(out.Members) != 1 {
 				t.Fatalf("want 1 member, got %+v", out.Members)
 			}
-			// The honest terminal signal is unchanged: the round DID fail.
+			// The honest terminal signal is unchanged: the round DID fail. With retry
+			// disabled the errored round is terminal, so the member is stopped/error — and
+			// ErrorRounds still counts it, which is what stops a benched member from being
+			// distinguishable only by the (retry-dependent) Stopped flag.
 			if !out.Members[0].Stopped || out.Members[0].Reason != agent.StopReasonError {
 				t.Fatalf("the failed lead must still report stopped/error, got %+v", out.Members[0])
+			}
+			if out.Members[0].ErrorRounds != 1 {
+				t.Errorf("the failed round must be counted: ErrorRounds = %d, want 1", out.Members[0].ErrorRounds)
 			}
 		})
 	}
@@ -567,6 +580,10 @@ func TestSynthesisAfterRecoveredLeadReplaysPairedHistory(t *testing.T) {
 
 	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
 		agent.WithTeamGoal("goal"), agent.WithMaxRounds(3),
+		// Retry disabled for the same reason as TestSynthesisRunsAfterLeadRunFailed: the
+		// subject here is what the SYNTHESIS turn replays, and the default retry would
+		// spend the scripted synthesis turn on a retried working round first.
+		agent.WithMemberErrorRetries(0),
 		agent.WithMemberStore(store), agent.WithMemberSessionPrefix("team-demo"))
 	mustAdd(t, sup, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "go"})
 	out := sup.Run(context.Background(), nil)

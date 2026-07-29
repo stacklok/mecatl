@@ -463,17 +463,23 @@ func TestToProtoTable(t *testing.T) {
 					Dispositions: []session.TeamMemberDisposition{
 						{Name: "lead", Disposition: "done"},
 						{Name: "scout", Disposition: "stopped", Reason: "budget"},
-						{Name: "fixer", Disposition: "stopped", Reason: "error"},
+						{Name: "fixer", Disposition: "stopped", Reason: "error", ErrorRounds: 2},
 						{Name: "probe", Disposition: "stopped", Reason: "cancelled"},
+						// Retried-then-finished (issue #318): done with NO reason, so
+						// error_rounds is the only thing on the wire that says the run was
+						// not clean. If the mapper dropped the count this member would be
+						// byte-identical to the clean lead.
+						{Name: "medic", Disposition: "done", ErrorRounds: 1},
 					}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				disps := got.GetTeam().GetDispositions()
-				if len(disps) != 4 {
-					t.Fatalf("dispositions len = %d, want 4: %+v", len(disps), disps)
+				if len(disps) != 5 {
+					t.Fatalf("dispositions len = %d, want 5: %+v", len(disps), disps)
 				}
-				// done → stopped=false, reason UNSPECIFIED.
+				// done → stopped=false, reason UNSPECIFIED, zero error rounds.
 				if disps[0].GetName() != "lead" || disps[0].GetStopped() ||
-					disps[0].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_UNSPECIFIED {
+					disps[0].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_UNSPECIFIED ||
+					disps[0].GetErrorRounds() != 0 {
 					t.Errorf("done disposition mismatch: %+v", disps[0])
 				}
 				if !disps[1].GetStopped() || disps[1].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_BUDGET {
@@ -482,8 +488,20 @@ func TestToProtoTable(t *testing.T) {
 				if !disps[2].GetStopped() || disps[2].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_ERROR {
 					t.Errorf("error disposition mismatch: %+v", disps[2])
 				}
+				if !disps[2].GetStopped() || disps[2].GetErrorRounds() != 2 {
+					t.Errorf("a benched member's error_rounds must cross: %+v", disps[2])
+				}
 				if !disps[3].GetStopped() || disps[3].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_CANCELLED {
 					t.Errorf("cancelled disposition mismatch: %+v", disps[3])
+				}
+				if disps[3].GetErrorRounds() != 0 {
+					t.Errorf("cancellation is not a run-level error: %+v", disps[3])
+				}
+				// The retried-then-finished member: done, no reason, error_rounds > 0.
+				if disps[4].GetName() != "medic" || disps[4].GetStopped() ||
+					disps[4].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_UNSPECIFIED ||
+					disps[4].GetErrorRounds() != 1 {
+					t.Errorf("retried-then-finished disposition mismatch: %+v", disps[4])
 				}
 			},
 		},
@@ -822,7 +840,10 @@ func TestToProtoTeamOutcomeRoundTrip(t *testing.T) {
 		BudgetExhausted: true,
 		Usage:           session.Usage{InputTokens: 700, OutputTokens: 50, CacheReadTokens: 10, CacheWriteTokens: 5},
 		Members: []agent.MemberOutcome{
-			{Name: "lead", Stopped: false, Disposition: agent.DispositionDone},
+			// The lead was RETRIED through one run-level failure and still finished
+			// (issue #318): stopped=false, no reason, so ErrorRounds is the only thing
+			// distinguishing it on the wire from a member that never failed.
+			{Name: "lead", Stopped: false, Disposition: agent.DispositionDone, ErrorRounds: 1},
 			{Name: "worker", Stopped: true, Disposition: agent.DispositionStopped, Reason: agent.StopReasonBudget},
 		},
 		Findings: []session.TeamFindingSnapshot{
@@ -852,12 +873,14 @@ func TestToProtoTeamOutcomeRoundTrip(t *testing.T) {
 		t.Fatalf("dispositions = %d, want 2", len(ds))
 	}
 	if ds[0].GetName() != "lead" || ds[0].GetStopped() ||
-		ds[0].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_UNSPECIFIED {
-		t.Errorf("dispositions[0] = %+v, want done lead with UNSPECIFIED reason", ds[0])
+		ds[0].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_UNSPECIFIED ||
+		ds[0].GetErrorRounds() != 1 {
+		t.Errorf("dispositions[0] = %+v, want done lead, UNSPECIFIED reason, error_rounds=1", ds[0])
 	}
 	if ds[1].GetName() != "worker" || !ds[1].GetStopped() ||
-		ds[1].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_BUDGET {
-		t.Errorf("dispositions[1] = %+v, want stopped worker with BUDGET reason", ds[1])
+		ds[1].GetReason() != mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_BUDGET ||
+		ds[1].GetErrorRounds() != 0 {
+		t.Errorf("dispositions[1] = %+v, want stopped worker, BUDGET reason, error_rounds=0", ds[1])
 	}
 	// Two findings, asserted positionally: the ledger's append order must survive
 	// the mapping verbatim.

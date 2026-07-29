@@ -1820,7 +1820,9 @@ func teamMutCue(ln *teamLane) string {
 // teamLaneState derives a member's current state label for the collapsed line:
 // "stopped — <reason>" when the team has ended and the lane STOPPED non-resumably
 // (terminal, distinct from a clean finish so the overlay does not contradict the
-// supervisor), "done" when the team has ended cleanly (teamDone — terminal, wins over
+// supervisor), "done (retried)" when it FINISHED but survived at least one recovered
+// run-level failure (issue #318 — the same do-not-contradict-the-supervisor rule),
+// "done" when the team has ended cleanly (teamDone — terminal, wins over
 // everything), "idle" when the member finished its round and is awaiting the next
 // round / synthesis, else the running tool name (when one is active) or "working".
 // Only the WORKING state gets a trailing "…" heartbeat so a quiet card reads as
@@ -1835,6 +1837,11 @@ func teamLaneState(ln *teamLane, teamDone bool) string {
 			return "stopped — " + label
 		}
 		return "stopped"
+	case teamDone && ln.errorRounds > 0:
+		// Finished, but not cleanly: a bounded retry (issue #318) recovered this member
+		// from at least one run-level failure. A bare "done" here would tell the operator
+		// the opposite of what the supervisor reported.
+		return "done (retried)"
 	case teamDone:
 		return "done"
 	case ln.idle:

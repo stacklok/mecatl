@@ -311,6 +311,10 @@ func TestEventToMsgTeam(t *testing.T) {
 					{Name: "scout", Stopped: true, Reason: mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_BUDGET},
 					{Name: "fixer", Stopped: true, Reason: mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_ERROR},
 					{Name: "probe", Stopped: true, Reason: mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_CANCELLED},
+					// Retried-then-finished (issue #318): not stopped, no reason, so
+					// error_rounds is the only field that says the run was not clean —
+					// dropping it here would make the lane render a bare "done".
+					{Name: "medic", ErrorRounds: 1},
 				}}},
 			TeamMsg{Kind: TeamEnd, ParentCallID: "t1", TeamID: "team-t1", Rounds: 2, Stop: "end_turn",
 				Dispositions: []TeamMemberDisposition{
@@ -318,6 +322,7 @@ func TestEventToMsgTeam(t *testing.T) {
 					{Name: "scout", Stopped: true, Reason: "budget"},
 					{Name: "fixer", Stopped: true, Reason: "error"},
 					{Name: "probe", Stopped: true, Reason: "cancelled"},
+					{Name: "medic", ErrorRounds: 1},
 				}},
 		},
 	}

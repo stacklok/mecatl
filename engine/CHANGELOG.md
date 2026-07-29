@@ -57,6 +57,35 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   tasks 01–02)
  (chore(engine): api snapshot + CHANGELOG for the ADR-0079 payload widening)
 
+- **`agent.WithMemberErrorRetries` + `agent.MemberOutcome.ErrorRounds` +
+  `session.TeamMemberDisposition.ErrorRounds`** (issue #318, ADR 0077's amendment) —
+  the bounded MEMBER RETRY that closes #318's last acceptance bullet ("a team
+  member that hits one transient stall still participates in later rounds").
+  ADR 0077 made a failed member's session RECOVERABLE, which rescued the lead's
+  synthesis turn but still descheduled the member for the rest of the run.
+  `WithMemberErrorRetries(n)` is a new `SupervisorOption` (default **1**) capping
+  how many `StopError` rounds a member is retried through before it is benched with
+  its previous disposition; `WithMemberErrorRetries(0)` restores the old
+  bench-on-the-first-errored-round behaviour byte-for-byte. `MemberOutcome.ErrorRounds`
+  and its `session.TeamMemberDisposition.ErrorRounds` mirror are new `int` COUNTS of
+  a member's run-level failed rounds — the disposition-honesty signal, since a
+  retried-then-finished member is `DispositionDone` with no `Reason` and would
+  otherwise be indistinguishable from one that never failed. No enum gained a value
+  (`MemberDisposition` is closed and mirrored on the proto wire) and no exported
+  signature changed. Classified Added per COMPATIBILITY.md (a new option constructor
+  plus two struct fields are a minor bump).
+
+  **BEHAVIOUR CHANGE for library consumers on the default configuration:** a team
+  member whose round ends in `session.StopError` is no longer benched on the first
+  failure. It stays schedulable, its in-progress task claim is RELEASED back to
+  pending (so it or a peer can re-claim), it is force-scheduled for one retry turn
+  carrying a supervisor-authored retry note, and it is benched only once its errored
+  rounds EXCEED the cap. A permanently-failing member therefore consumes `cap+1`
+  rounds of provider spend instead of one — bounded, and the reason the default is 1.
+  A failed RECOVERY (`nonResumable`), a CANCELLED member, and a turn-budget-exhausted
+  member are never retried. Pin `WithMemberErrorRetries(0)` for the prior behaviour.
+  (issue #318)
+
 - **`session.SubagentPayload.Cause`** (issue #319) — a new `string` field on the
   redacted `subagent.*` observability projection carrying the child run's FAILURE
   DETAIL (the loop's `session.ResultPayload.Error`) when `Stop` is `StopError`;

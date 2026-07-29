@@ -567,17 +567,26 @@ func TestTeamToolEmptySynthesisFallsBack(t *testing.T) {
 // is bridged onto the EMITTED team.end payload (the contractual stitch the supervisor /
 // mapper tests bracket but neither exercises): the supervisor's verdict for a STOPPED
 // member must actually reach EvTeamEnd.Dispositions with the right {name, disposition,
-// reason}, and a clean member must reach it as done/no-reason. The worker's run ends
-// StopError (EmptyTurnWithStop) so it is marked stopped/error; the lead finishes
-// cleanly and synthesises, so it is done.
+// reason}, and a clean member must reach it as done/no-reason. It also pins the
+// ErrorRounds count (issue #318) across the same stitch: a run-level failure must be
+// countable on the wire, not only inferable from the Stopped flag.
+//
+// The Team tool builds the supervisor itself, so this runs on the DEFAULT retry cap: the
+// worker therefore needs TWO errored rounds to be benched (the first is retried), which
+// is exactly the end-to-end default-tier coverage the supervisor-level tests pin in
+// isolation. The lead finishes cleanly and synthesises, so it is done with 0 error rounds.
 func TestTeamEndCarriesMemberDispositions(t *testing.T) {
 	leadProv := mockllm.New(
 		mockllm.TextTurn("delegating to the worker"), // round 0
 		mockllm.TextTurn("CONSOLIDATED REPORT"),      // synthesis
 	)
-	// The worker's only turn ends StopError (a refused/truncated/failed response shape),
-	// so its run is non-resumable → the supervisor marks it stopped with reason=error.
-	workerProv := mockllm.New(mockllm.EmptyTurnWithStop(session.StopError))
+	// Both of the worker's turns end StopError (a refused/truncated/failed response
+	// shape). The first is RECOVERED and retried; the second exceeds the default retry
+	// cap → the supervisor benches it stopped with reason=error.
+	workerProv := mockllm.New(
+		mockllm.EmptyTurnWithStop(session.StopError),
+		mockllm.EmptyTurnWithStop(session.StopError),
+	)
 	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
 
 	teamTool := agent.NewTeamTool(teamToolFactory(t, providers))
@@ -615,12 +624,19 @@ func TestTeamEndCarriesMemberDispositions(t *testing.T) {
 	if worker.Disposition != "stopped" || worker.Reason != "error" {
 		t.Errorf("worker disposition = %q/%q, want stopped/error", worker.Disposition, worker.Reason)
 	}
+	// Both errored rounds are counted — the retried one AND the one that benched it.
+	if worker.ErrorRounds != 2 {
+		t.Errorf("worker ErrorRounds = %d, want 2 (one retried round + the round that hit the cap)", worker.ErrorRounds)
+	}
 	lead, ok := byName["lead"]
 	if !ok {
 		t.Fatalf("team.end dispositions missing the lead: %+v", end.Dispositions)
 	}
 	if lead.Disposition != "done" || lead.Reason != "" {
 		t.Errorf("lead disposition = %q/%q, want done/\"\"", lead.Disposition, lead.Reason)
+	}
+	if lead.ErrorRounds != 0 {
+		t.Errorf("a clean lead must report ErrorRounds = 0, got %d", lead.ErrorRounds)
 	}
 }
 

@@ -73,6 +73,11 @@ func TestTeamMemberDispositionHasNoContentFields(t *testing.T) {
 		"Name":        "member name",
 		"Disposition": "closed-enum member terminal disposition",
 		"Reason":      "closed-enum stop reason",
+		// A COUNT of supervisor verdicts (how many rounds ended in a run-level error),
+		// issue #318. Nothing member-authored, so no preview cap applies; it exists because
+		// a bounded retry lets a member fail a round and still finish "done", and a client
+		// that could not see the count would render such a run as silently clean.
+		"ErrorRounds": "count of run-level failed rounds (supervisor verdict)",
 	})
 }
 

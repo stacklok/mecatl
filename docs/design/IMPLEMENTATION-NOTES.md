@@ -1892,9 +1892,36 @@ then (§5 special-case). `runTurn` picks the recovery seam from the session's ST
 (`StateFailed → Recover`, else `Reopen`) rather than from `stop`, because `terminateComplete` lands a
 text-bearing `StopError` turn in `StateCompleted`; `memberRT.nonResumable` is now set ONLY when that
 transition itself fails (in practice: a CANCELLED member, whose `Reopen` is illegal by design), and
-that is the one case that still yields an empty `Report` → the structured fallback. `stopped` /
-`StopReasonError` are unchanged: a failed round still deschedules the member and releases its tasks,
-so the lead still reads an honest "stopped before finishing".
+that is the one case that still yields an empty `Report` → the structured fallback.
+
+**Bounded member retry (ADR 0077's amendment, the last #318 acceptance bullet).** Recovering the
+session made the member drivable, but `stopped` still descheduled it, so a member that hit ONE
+transient stall was benched for the rest of the run. `runTurn` now leaves an errored member
+SCHEDULABLE while it is under `Supervisor.memberErrorRetries` (`agent.WithMemberErrorRetries`, default
+`defaultMemberErrorRetries` = **1**; 0 restores the pre-amendment bench-on-first-error behaviour
+byte-for-byte). Three shapes are NEVER retried: a failed RECOVERY (`nonResumable` — undrivable), a
+CANCELLED member (not a transient failure; D5's disposition must hold), and a member that exhausted its
+LIFETIME TURN BUDGET. TERMINATION comes from `memberRT.errorRounds` being MONOTONIC (counted on every
+`StopError` round, never reset): a permanently-failing member runs exactly `cap+1` rounds and is then
+benched with its original disposition — `stopped` + `StopReasonError` + `team.ReleaseTasks` +
+`finishChildRun`, all unchanged — so the round loop reaches quiescence far short of `WithMaxRounds`.
+A retried member RELEASES its in-progress claim (`ReleaseTasks`) and returns to `team.MemberIdle`,
+because `InProgressFor` short-circuits `planRound`'s auto-claim and a kept claim would strand the work
+behind the member that just failed at it. `planRound` also FORCE-SCHEDULES it for exactly one turn
+(`memberRT.retryPending`, cleared on schedule): "not stopped" is not enough to be rescheduled — the
+ordinary gate plans only a member with a drained message or a claimed task, and the commonest stall
+shape (dying on the first exploration turn, before any task exists) has neither. That turn carries
+`retryTurnNote` — harness metadata (previous turn failed mid-flight, continue from your own transcript
+above, your claim was released), rendered TRUSTED like the roster, quoting nothing from the failed turn.
+DISPOSITION HONESTY is an additive COUNT, never a new `MemberDisposition` value (that enum is closed and
+mirrored on the wire): `MemberOutcome.ErrorRounds` → `session.TeamMemberDisposition.ErrorRounds` →
+proto `TeamMemberDisposition.error_rounds` (field 4) → `cmd/mecatui`'s `done (retried)` lane label, so a
+retried-then-finished member is not byte-identical on the wire to one that never failed. The LEAD is
+told through the EXISTING trusted status section, `writeTeamStatus` (renamed from
+`writeStoppedMemberStatus`), which names the retried members and their failed-round counts alongside the
+stopped ones — a silently-retried member is a coordination lie in the opposite direction from the one
+the stopped line closes, since the lead re-plans and reports on what it believes members did. The line
+is supervisor-authored and carries only a count, so the gauntlet-#7 footing is identical.
 
 **The deliverable chain — never a bare refusal or empty (`teamtool.go`).** `synthesise` is a
 pure PRODUCER; the QUALITY gate lives in `deliverable(TeamOutcome)`, three tiers: **(1)** the

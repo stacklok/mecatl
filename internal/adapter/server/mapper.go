@@ -314,9 +314,10 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 	dispositions := make([]*mecatlv1.TeamMemberDisposition, 0, len(p.Dispositions))
 	for _, d := range p.Dispositions {
 		dispositions = append(dispositions, &mecatlv1.TeamMemberDisposition{
-			Name:    d.Name,
-			Stopped: d.Disposition == "stopped",
-			Reason:  toProtoTeamMemberStopReason(d.Reason),
+			Name:        d.Name,
+			Stopped:     d.Disposition == "stopped",
+			Reason:      toProtoTeamMemberStopReason(d.Reason),
+			ErrorRounds: ClampInt32(d.ErrorRounds),
 		})
 	}
 	return &mecatlv1.Team{
@@ -351,9 +352,10 @@ func toProtoTeamOutcome(o agent.TeamOutcome) *mecatlv1.TeamOutcome {
 	dispositions := make([]*mecatlv1.TeamMemberDisposition, 0, len(o.Members))
 	for _, m := range o.Members {
 		dispositions = append(dispositions, &mecatlv1.TeamMemberDisposition{
-			Name:    m.Name,
-			Stopped: m.Stopped,
-			Reason:  toProtoTeamMemberStopReason(string(m.Reason)),
+			Name:        m.Name,
+			Stopped:     m.Stopped,
+			Reason:      toProtoTeamMemberStopReason(string(m.Reason)),
+			ErrorRounds: ClampInt32(m.ErrorRounds),
 		})
 	}
 	findings := make([]*mecatlv1.TeamFinding, 0, len(o.Findings))

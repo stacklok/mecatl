@@ -142,6 +142,11 @@ type teamLane struct {
 	// blanket "✓ done". Empty stopReason / stopped=false on a clean member.
 	stopped    bool
 	stopReason string
+	// errorRounds is how many of this member's rounds ended in a run-level error, also
+	// applied at team.end. A bounded retry (issue #318) means a member can fail a round
+	// and still finish, so a lane with errorRounds > 0 and stopped == false renders
+	// "done (retried)" — never a bare "done", which would contradict the supervisor.
+	errorRounds int
 
 	// ctxUsed / ctxWindow back the per-member context meter in the ctrl+a agents
 	// overlay. ctxUsed is the CURRENT context occupancy — the most recent turn's
@@ -1061,6 +1066,7 @@ func (c *conversation) setTeamEnd(parentCallID, teamID string, rounds int, stop 
 		ln := b.lane(d.Name)
 		ln.stopped = d.Stopped
 		ln.stopReason = d.Reason
+		ln.errorRounds = d.ErrorRounds
 	}
 	return true
 }

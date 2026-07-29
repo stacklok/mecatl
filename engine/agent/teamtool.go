@@ -769,6 +769,10 @@ func projectTeamDispositions(members []MemberOutcome) []session.TeamMemberDispos
 			Name:        m.Name,
 			Disposition: string(m.Disposition),
 			Reason:      string(m.Reason),
+			// A plain count of supervisor verdicts (issue #318) — it crosses for the same
+			// reason the enums do: without it a retried-then-finished member projects as
+			// indistinguishable from one that never failed.
+			ErrorRounds: m.ErrorRounds,
 		})
 	}
 	return out

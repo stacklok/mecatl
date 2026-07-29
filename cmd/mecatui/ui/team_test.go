@@ -186,6 +186,16 @@ func TestTeamLaneStateMapping(t *testing.T) {
 	if got := teamLaneState(&teamLane{current: "Grep"}, true); got != "done" {
 		t.Errorf("terminal+working member state = %q, want done", got)
 	}
+	// terminal + a RECOVERED run-level failure (issue #318): the member finished, so it
+	// is not "stopped", but a bare "done" would contradict the supervisor's own report.
+	if got := teamLaneState(&teamLane{errorRounds: 1}, true); got != "done (retried)" {
+		t.Errorf("terminal+retried member state = %q, want %q", got, "done (retried)")
+	}
+	// A STOPPED lane keeps its stopped label even with error rounds — the stopped arm is
+	// more specific and must win, or a benched member would read as one that recovered.
+	if got := teamLaneState(&teamLane{stopped: true, stopReason: "error", errorRounds: 2}, true); got != "stopped — error" {
+		t.Errorf("terminal+stopped+retried member state = %q, want %q", got, "stopped — error")
+	}
 
 	// glyph parity: ◆ working / ○ idle / ✓ terminal.
 	if got := teamGlyph(&teamLane{}, false); got != "◆" {

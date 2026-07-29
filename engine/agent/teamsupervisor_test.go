@@ -819,22 +819,25 @@ func TestSupervisorBaseSharingMemberWithBashStillRejected(t *testing.T) {
 // the supervisor composes build.Close with the fork cleanup and runs it on Run's
 // cleanupAll, so a per-member inline MCP manager is torn down (no leak).
 // TestSupervisorMemberDispositionError asserts a member whose run ends StopError is
-// reported with Disposition==stopped and Reason==error. This is the DELIBERATELY unchanged
-// half of issue #318: the failed session is now RECOVERED rather than benched as
-// nonResumable, but `stopped`/`error` stay exactly as they were, because the honest signal
-// to the lead ("this member stopped before finishing") and the task release that lets a
-// peer pick the work up both hang off them. The team has no lead, so there is no synthesis
-// to mask the member's terminal state.
+// reported with Disposition==stopped and Reason==error, and that the errored round is
+// COUNTED on ErrorRounds. It pins the retry-DISABLED tier of issue #318's bounded retry:
+// WithMemberErrorRetries(0) is the escape hatch an operator uses to get exactly the
+// pre-amendment disposition, so the classification path must still be reachable and
+// unchanged. The default tier (one retry) is covered by
+// TestSupervisorRetriedMemberContributesInLaterRound and its cap sibling.
+//
+// The team has no lead, so there is no synthesis to mask the member's terminal state.
 func TestSupervisorMemberDispositionError(t *testing.T) {
 	tm := team.New("t")
 	// One uncooperative turn that ends StopError (a refused/truncated/failed response
-	// shape — see mockllm.EmptyTurnWithStop). The run terminates in error, so the member
-	// is DESCHEDULED (stopped) and never scheduled again — its session is nonetheless
-	// recovered and remains drivable (issue #318).
+	// shape — see mockllm.EmptyTurnWithStop). The run terminates in error, so with retry
+	// disabled the member is DESCHEDULED (stopped) and never scheduled again — its
+	// session is nonetheless recovered and remains drivable (issue #318).
 	prov := mockllm.New(mockllm.EmptyTurnWithStop(session.StopError))
 	providers := map[string]*mockllm.Provider{"worker": prov}
 	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
-		memberFactory(t, tm, providers), agent.WithMaxRounds(5))
+		memberFactory(t, tm, providers), agent.WithMaxRounds(5),
+		agent.WithMemberErrorRetries(0))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}
@@ -842,6 +845,9 @@ func TestSupervisorMemberDispositionError(t *testing.T) {
 	m := singleMember(t, out)
 	if m.Disposition != agent.DispositionStopped || m.Reason != agent.StopReasonError {
 		t.Fatalf("disposition = %q/%q, want stopped/error", m.Disposition, m.Reason)
+	}
+	if m.ErrorRounds != 1 {
+		t.Errorf("ErrorRounds = %d, want 1 (the errored round is counted even when retry is off)", m.ErrorRounds)
 	}
 }
 

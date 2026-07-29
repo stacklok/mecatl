@@ -858,6 +858,13 @@ type TeamMemberDisposition struct {
 	Disposition string
 	// Reason is "error" / "cancelled" / "budget"; empty when done.
 	Reason string
+	// ErrorRounds is how many of this member's rounds ended in a run-level error. It is
+	// a plain COUNT of supervisor verdicts (no member content, no cap needed), and it is
+	// what keeps the disposition HONEST now that a member's errored round is bounded-
+	// retried rather than always terminal (issue #318): such a member finishes
+	// Disposition "done" with no Reason, so the count is the only signal a client has
+	// that the run was not clean. 0 for a member that never errored.
+	ErrorRounds int
 }
 
 // TeamPayload is the BOUNDED observability projection carried by the team.* events

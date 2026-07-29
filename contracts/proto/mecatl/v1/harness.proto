@@ -2155,6 +2155,13 @@ message TeamMemberDisposition {
   bool stopped = 2;
   // reason is WHY a stopped member stopped; UNSPECIFIED for a done member.
   TeamMemberStopReason reason = 3;
+  // error_rounds is how many of this member's rounds ended in a run-level error,
+  // whether it was retried through them or finally stopped by them (issue #318). A
+  // member's errored round is now bounded-retried rather than always terminal, so a
+  // member can fail a round and still finish stopped=false / reason=UNSPECIFIED — this
+  // count is then the ONLY signal a client has that the run was not clean. It is a
+  // count of supervisor verdicts, never member content.
+  int32 error_rounds = 4;
 }
 
 // CleanupTeamRequest names the finished team to tear down.

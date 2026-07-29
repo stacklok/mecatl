@@ -134,6 +134,7 @@ func WithJudgeSessionPrefix(p string) EngineJudgeOption
 func WithMaxBranches(n int) ParallelOption
 func WithMaxConcurrentChildren(n int) SubagentOption
 func WithMaxRounds(n int) SupervisorOption
+func WithMemberErrorRetries(n int) SupervisorOption
 func WithMemberSessionPrefix(p string) SupervisorOption
 func WithMemberStore(store port.SessionStore) SupervisorOption
 func WithMemberTurnBudget(n int) SupervisorOption
@@ -191,7 +192,7 @@ type LRUForkReaper struct{}
 type MemberBuild struct{Engine *Engine; Mode session.PermissionMode; Limits session.Limits; Close func() error; MCPToolNames []string; IsolateReadOnly bool}
 type MemberDisposition string
 type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild
-type MemberOutcome struct{Name string; LastText string; Stopped bool; Disposition MemberDisposition; Reason MemberStopReason; Completed []string; Lead bool}
+type MemberOutcome struct{Name string; LastText string; Stopped bool; Disposition MemberDisposition; Reason MemberStopReason; ErrorRounds int; Completed []string; Lead bool}
 type MemberSpec struct{Name string; AgentType string; Lead bool; Mutating bool; InitialPrompt string}
 type MemberStopReason string
 type ModelRouteCategory struct{Name string; Description string}
