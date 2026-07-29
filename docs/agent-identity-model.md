@@ -108,10 +108,65 @@ interoperability" — accepted; this vocabulary is ours to carry):
 | `sub` | the instance SPIFFE ID (spec) |
 | `aud` | intended verifier(s) (spec; single-audience preferred per JWT-SVID §7.2) |
 | `exp`/`iat`/`jti` | short TTL, unique per mint (spec) |
-| `dlg` | delegation chain: ordered `{id, def, scope}` entries, user → … → parent. Append-only, signed at mint |
+| `dlg` | delegation chain: ordered `{id, def, scope}` entries, user → … → parent. Append-only, signed at mint. **This is RFC 8693 `act` nesting made first-class** — same semantics (see below), explicit instead of emergent |
 | `scope` | the effective authority of this instance — see vocabulary below. Issuer-enforced invariant: **strict subset of the parent's** |
 | `depth` / `max_depth` | how much further this identity may delegate (the RFC 3820 `pCPathLenConstraint` idea, in JWT form) |
 | `txn` | immutable correlation ID for this run (Txn-Token vocabulary); parent's `txn` is recorded in `dlg`, preserving the tree without one giant ID |
+
+### The RFC 8693 contract (`act` / `may_act`)
+
+The delegation semantics are not invented here — they are RFC 8693's,
+adopted verbatim, then extended where 8693 is silent. Three normative
+commitments:
+
+1. **`dlg` IS `act` nesting.** RFC 8693 §4.1 defines the `act` (actor)
+   claim — name the current actor, nest one deeper per delegation hop.
+   In 8693 deployments the chain is *emergent*: each token exchange nests
+   one level, and the full trail only exists across the sequence of
+   exchanges. `dlg` carries the same `{sub, act: {sub, …}}` structure
+   **explicitly**, so a verifier reads the whole user→…→parent tree from
+   one credential instead of reconstructing it.
+2. **The chain is audit, never authority.** 8693 §4.1 is normative:
+   consumers "MUST only consider the token's top-level claims and the
+   party identified as the current actor… prior actors identified by any
+   nested act claims are informational only." We honor exactly that:
+   authorization keys off `sub` (the acting instance) + `scope` (its
+   effective authority). `dlg` entries are informational — the audit
+   trail, not an authz input. This is how every deployed 8693 STS (AWS,
+   Azure, GCP SA impersonation) already evaluates tokens, and it is what
+   keeps a compromised or confused deep actor from re-asserting rights
+   via the chain.
+3. **Delegation, never impersonation.** 8693 §1.1 separates the two:
+   impersonation makes the issued token's `sub` the delegator (the actor
+   vanishes); delegation keeps `sub` = delegator and names the actor.
+   The model is strictly delegation — the user is always at the root of
+   `dlg`, the acting instance always named. (The industry counterexample
+   is GitHub Copilot's coding agent: commits attributed to the user, no
+   visible actor — impersonation with no audit trail. We refuse that
+   shape.)
+
+**`may_act` (8693 §4.4)** — the claim that pre-authorizes *which* actors
+may delegate for a subject — is played by **definition-tier policy**, not
+a token claim: "user U may spawn definition D", "D may spawn children of
+definitions {…}". Those are the three nested envelopes (user grant ⊇
+definition policy ⊇ instance scope ⊇ child scope) from the tier model.
+Same consent-hook semantics as `may_act`, expressed as issuer policy
+because our exchange is in-process (below) rather than an STS the user
+consents through.
+
+**Where 8693 ends and the novel part begins.** 8693 *permits* scope
+narrowing at exchange; nothing structurally enforces it (a misconfigured
+STS can mint wider). Our issuer **refuses** to mint a child whose `scope`
+is not a strict subset — attenuation as an invariant, not a policy
+option. And the exchange itself is in-process: a child mint happens at
+the delegation seams (`buildChildSession`, the team member factory), so
+8693's wire protocol (`grant_type=token-exchange`, `subject_token` /
+`actor_token`) never runs — it only enters if the issuer is later exposed
+as a network STS for external consumers, at which point these claims slot
+into 8693's envelope unchanged (an instance JWT-SVID is already a valid
+`actor_token` of type `urn:ietf:params:oauth:token-type:jwt`). `depth`/
+`max_depth` and `txn` have no 8693 analog — they come from RFC 3820 and
+the Txn-Token draft respectively.
 
 ### The scope vocabulary (innovation ground — Q4)
 
@@ -278,9 +333,11 @@ Each step is independently useful; nothing is big-bang.
 - **The scope vocabulary is ours to get right.** It is the highest-leverage
   design surface in the doc and the least guided by prior art. v1 is
   deliberately minimal for that reason.
-- **Claim-name drift**: `dlg`/`txn`/`depth` are pre-standard. Names are
-  chosen WIMSE-adjacent (`txn`, `dlg`≈`act`) so ratification of Txn-Token /
-  WIMSE agent work is a rename, not a rebuild.
+- **Claim-name drift**: `dlg`/`txn`/`depth` are pre-standard. `dlg` is
+  structurally RFC 8693 `act`-shaped by design and the scope/audience
+  semantics are 8693's, so ratification of Txn-Token / WIMSE agent work —
+  or interop with a plain 8693 STS — is a rename + envelope adapter, not
+  a rebuild.
 - **Multi-tenant trust reduces to "the issuer doesn't lie."** This is the
   same trust a token-exchange STS already carries, but it must be stated:
   the pod that can sign is the pod that can impersonate any session.
