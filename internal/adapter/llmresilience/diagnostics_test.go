@@ -542,14 +542,21 @@ var (
 	_ port.Diagnostics = (*boundDiag)(nil)
 )
 
-// TestResilienceLogsMidStreamCancellationToo pins the DELIBERATE breadth of the mid-stream
-// line: it fires for EVERY non-nil mid-stream error, including context.Canceled when the
-// operator cancels a run. That is intended — the line's job is "this turn ended here", and
-// a cancelled turn ended just as terminally as a 502 — but an operator reading the log has
-// to know to expect one per cancel, and a suite that only covers a clean stream and a 502
-// has no opinion either way. Pin it so a future narrowing (e.g. skipping ctx.Canceled) is
-// a deliberate change with a failing test, not a silent one.
-func TestResilienceLogsMidStreamCancellationToo(t *testing.T) {
+// TestResilienceLogsMidStreamCancellationAsACancellation pins the ACCURACY of the
+// mid-stream line on the single most common way a turn ends early: an operator ctrl+c (or a
+// client disconnect) surfaces as a mid-stream context.Canceled.
+//
+// The line still fires — the line's job is "this turn ended here", and a cancelled turn
+// ended just as terminally as a 502 — but it must not say the stream FAILED. Reporting a
+// user's own cancellation as a fault is the same accuracy defect as the "denied by user"
+// message that was never a user's decision, and it is the one an operator is most likely to
+// meet: a log full of "llm stream failed mid-stream" after a deliberate cancel sends them
+// hunting a provider problem that never existed.
+//
+// The err= arg is deliberately ABSENT on this arm: "context canceled" adds nothing the
+// message does not already say, and its presence is what made the old wording look like a
+// diagnosable fault.
+func TestResilienceLogsMidStreamCancellationAsACancellation(t *testing.T) {
 	diag := &recordingDiag{}
 	f := &fakeProvider{steps: []step{
 		{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: context.Canceled},
@@ -557,7 +564,7 @@ func TestResilienceLogsMidStreamCancellationToo(t *testing.T) {
 	cfg := Config{MaxAttempts: 1, StreamIdleTimeout: 5 * time.Second, Diagnostics: diag}
 	p := Wrap(f, cfg)
 
-	seq, err := p.Stream(context.Background(), port.LLMRequest{})
+	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "m-1"})
 	if err != nil {
 		t.Fatalf("Stream error: %v", err)
 	}
@@ -572,7 +579,99 @@ func TestResilienceLogsMidStreamCancellationToo(t *testing.T) {
 	if rec[0].level != port.LevelInfo {
 		t.Errorf("mid-stream cancellation line level = %v, want LevelInfo", rec[0].level)
 	}
-	if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "context canceled") {
-		t.Errorf("the line must name the cancellation so an operator can tell it from a provider fault, got %q", got)
+	// The message names it a CANCELLATION, not a failure.
+	if !strings.Contains(rec[0].msg, "cancelled mid-stream") {
+		t.Errorf("a cancellation must be logged as a cancellation, got %q", rec[0].msg)
+	}
+	if strings.Contains(rec[0].msg, "failed") {
+		t.Errorf("an operator cancel must not be reported as a stream FAILURE, got %q", rec[0].msg)
+	}
+	// The correlation arg still rides it, so grepping by model still finds this terminal.
+	if got := argValue(rec[0].args, "model"); got != "m-1" {
+		t.Errorf("model arg = %v, want m-1 (correlation must ride every terminal line)", got)
+	}
+
+	// And the FAULT wording is still used for a genuine provider fault — without this the
+	// assertions above would pass on a build that logged every terminal as a cancellation.
+	faultDiag := &recordingDiag{}
+	fault := &fakeProvider{steps: []step{
+		{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: errors.New("upstream 502")},
+	}}
+	fp := Wrap(fault, Config{MaxAttempts: 1, StreamIdleTimeout: 5 * time.Second, Diagnostics: faultDiag})
+	fseq, err := fp.Stream(context.Background(), port.LLMRequest{Model: "m-1"})
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if _, derr := drain(t, fseq); derr == nil {
+		t.Fatal("drain must surface the provider fault")
+	}
+	frec := faultDiag.find("mid-stream")
+	if len(frec) != 1 {
+		t.Fatalf("a mid-stream provider fault must emit exactly one line; got %d (%+v)", len(frec), faultDiag.records)
+	}
+	if !strings.Contains(frec[0].msg, "failed mid-stream") {
+		t.Errorf("a genuine provider fault must still be logged as a FAILURE, got %q", frec[0].msg)
+	}
+	if got, _ := argValue(frec[0].args, "err").(string); !strings.Contains(got, "upstream 502") {
+		t.Errorf("a provider fault must still carry err=, got %q", got)
+	}
+}
+
+// TestResilienceLogsBreakerRejection is the C1 oracle: an OPEN circuit breaker rejects the
+// request before the provider is ever called, which ends the turn terminally — and it was
+// the third such path to log at NO level, so an operator saw a turn die with nothing in the
+// log at all. #319's acceptance is that no terminal stream failure ends a turn without at
+// least one Info-level diagnostic; this is that line, with the same `model` correlation its
+// three siblings carry.
+func TestResilienceLogsBreakerRejection(t *testing.T) {
+	conn := &net.OpError{Op: "dial", Err: errors.New("refused")}
+	clk := &manualClock{t: time.Unix(4000, 0)}
+	diag := &recordingDiag{}
+	// One step, reused: every establish fails with the transient conn error, so two
+	// consecutive calls open the breaker.
+	f := &fakeProvider{steps: []step{{outerErr: conn}}}
+	cfg := Config{
+		MaxAttempts:      1,
+		BaseBackoff:      time.Nanosecond,
+		MaxBackoff:       time.Nanosecond,
+		BreakerThreshold: 2,
+		BreakerCooldown:  10 * time.Second,
+		Clock:            clk.Now,
+		Diagnostics:      diag,
+	}
+	p := Wrap(f, cfg)
+
+	for i := 0; i < 2; i++ {
+		if _, err := p.Stream(context.Background(), port.LLMRequest{Model: "m-1"}); err == nil {
+			t.Fatalf("call %d must fail (it is what opens the breaker)", i+1)
+		}
+	}
+	if got := len(diag.find("open circuit breaker")); got != 0 {
+		t.Fatalf("no call has been REJECTED yet, but %d rejection lines were emitted (%+v)", got, diag.records)
+	}
+	callsBefore := f.Calls()
+
+	// Still within the cooldown: this one is rejected by allow() before the provider is
+	// ever reached — a turn that dies with no provider interaction at all.
+	if _, err := p.Stream(context.Background(), port.LLMRequest{Model: "m-1"}); err == nil {
+		t.Fatal("a call inside the cooldown must be rejected by the open breaker")
+	}
+	rec := diag.find("open circuit breaker")
+	if len(rec) != 1 {
+		t.Fatalf("a breaker rejection must emit exactly one Info line; got %d (%+v)", len(rec), diag.records)
+	}
+	if rec[0].level != port.LevelInfo {
+		t.Errorf("breaker-rejection line level = %v, want LevelInfo", rec[0].level)
+	}
+	if got := argValue(rec[0].args, "model"); got != "m-1" {
+		t.Errorf("model arg = %v, want m-1 (correlation must ride every terminal line)", got)
+	}
+	if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "circuit breaker open") {
+		t.Errorf("the line must carry the breaker error (it names the cooldown), got %q", got)
+	}
+	// The rejected call never reached the provider — that is what makes the missing line
+	// invisible without this fix.
+	if n := f.Calls(); n != callsBefore {
+		t.Errorf("provider Stream calls grew from %d to %d; a rejected call must never reach it", callsBefore, n)
 	}
 }
