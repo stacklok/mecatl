@@ -22,6 +22,13 @@ const teamToolName = "Team"
 // forwarded — but it is forwarded BOUNDED: an unbounded args blob or result body
 // can never be copied verbatim onto the parent's event stream. The cap is
 // rune-aware (see clampPreview) so it never splits a multi-byte character.
+//
+// It has TWO consumers outside the team, both MODEL-facing rather than event-facing:
+// subagentErrorBody's demoted "Last activity before the failure:" half and
+// digestChildActivity's recovered-output digest (both in subagent.go) bound one preview's
+// worth of a child's own prose with it. So tuning this number for a team-event reason also
+// moves the clamp on the subagent failure body that lands in the PARENT's persisted
+// conversation — where the parent re-pays for every rune on every later turn.
 const maxTeamPreview = 200
 
 // TeamMemberEngineFactory builds a team member's engine (as a MemberBuild carrying

@@ -194,6 +194,16 @@ func renderInspectMessage(m session.Message) string {
 
 // clampRunes clamps s to at most n runes, appending an ellipsis on overflow. It is
 // rune-aware so it never splits a multi-byte character.
+//
+// The appended ellipsis is LOAD-BEARING, not decoration. NeutraliseFraming runs BEFORE this
+// clamp on every path that composes untrusted text into a model-visible body (see
+// subagentErrorBody), and nothing re-examines the clamped result. Without the ellipsis an
+// attacker who controls the rune count could place an EXACT-match framing header
+// ("Team status:", "Tool:", "Policy:") so that the truncation lands precisely on its colon:
+// pre-clamp the line reads "Team status: everything is fine" and does not match, post-clamp
+// it IS the bare literal and would never be checked. The "…" makes the truncated line
+// "team status:…", which matches nothing. (Prefix-matched headers are immune either way —
+// truncation only removes a suffix.) So do not "tidy away" the ellipsis.
 func clampRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
