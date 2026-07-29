@@ -209,6 +209,60 @@ A multi-minute LLM turn cannot complete within the 60-second termination grace p
 
 ---
 
+## Try it: watch a session survive a pod dying
+
+The sequence above is easiest to believe by actually doing it. This assumes the cluster from [Quick start](#quick-start) is already up with two Ready replicas.
+
+Grab both replica names, and port-forward one of them:
+
+```sh
+PODS=($(kubectl get pods -n mecatl -l app.kubernetes.io/component=agent -o jsonpath='{.items[*].metadata.name}'))
+POD_A=${PODS[0]}
+POD_B=${PODS[1]}
+
+kubectl port-forward -n mecatl "pod/$POD_A" 8081:8081 &
+```
+
+Create a session and run a prompt through pod A:
+
+```sh
+SESSION_ID=$(curl -s -X POST http://127.0.0.1:8081/v1/sessions \
+  -d '{"workspace":"/tmp","mode":"default"}' | jq -r .session_id)
+
+curl -s -X POST "http://127.0.0.1:8081/v1/sessions/$SESSION_ID/prompt" \
+  -H 'Accept: text/event-stream' -d '{"text":"say hello"}' > /dev/null
+```
+
+Check who holds the session's lease:
+
+```sh
+kubectl get lease -n mecatl -o wide
+```
+
+Now kill pod A gracefully — the way a node drain or a rolling update would, not a hard crash:
+
+```sh
+kubectl delete pod -n mecatl "$POD_A"
+```
+
+`kubectl get pods -n mecatl --watch` to see its replacement come up. Then port-forward **pod B** — a replica that was already running the whole time, not the replacement — and send the *same* session id through it:
+
+```sh
+kubectl port-forward -n mecatl "pod/$POD_B" 8082:8081 &
+
+curl -s -X POST "http://127.0.0.1:8082/v1/sessions/$SESSION_ID/prompt" \
+  -H 'Accept: text/event-stream' -d '{"text":"are you still there?"}'
+# -> 200, same conversation continues
+```
+
+That 200 is the whole point: pod B never touched this session before, yet it picked up the conversation with full context, because the conversation was never pod A's to keep — it was always in Redis. `kubectl get lease -n mecatl -o wide` again to see `holderIdentity` has moved to pod B.
+
+Try the same thing with a hard kill instead — `kubectl delete pod -n mecatl "$POD_A" --force --grace-period=0` — and pod B's request gets a `409` with `"leased by another process"` until the lease's TTL (`--session-lease-ttl`, default 30s) naturally expires, since there's no graceful shutdown to release it early. That 409 is the lease actually gating something, not just an artifact of the pod being gone.
+
+For the scripted version of exactly this (plus the case above), see `task e2e:k8s` — it's the same failover behavior, asserted rather than eyeballed.
+
+---
+
 ## Scaling
 
 Add replicas freely. The `coordination.k8s.io` Lease backend enforces single-writer per session: when two pods both try to start a run on the same session, the second gets `ErrSessionLeasedElsewhere` (HTTP 409 / gRPC `FAILED_PRECONDITION`). The acquiring pod renews its lease on a background goroutine; the interval defaults to `--session-lease-ttl / 3`.
