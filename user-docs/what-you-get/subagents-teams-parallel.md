@@ -91,12 +91,41 @@ When the team finishes, `Team`'s result is **one consolidated report** the lead 
 
 A team-level token ceiling (operator flag `--max-team-tokens`, default unlimited) sums usage across every member and round. If a call sets its own `max_team_tokens`, it can only tighten the operator's default, never loosen it. Crossing the budget stops the team from scheduling new rounds — the in-flight round and the lead's final synthesis still complete, so you always get a report, and it states that the budget stop happened. This is separate from the per-run token budget every individual member inherits.
 
+## Automatic model routing
+
+Beyond a flat `--subagent-model` default, an operator can configure a **model router** that picks a model per delegation automatically, based on what the task actually needs — a cheap model for a mechanical rename, a stronger one for a subtle concurrency bug — instead of every delegation using the same one model.
+
+**It's on the moment an operator configures it — there's no separate enable flag.** A non-empty category taxonomy in the operator's `settings.yaml` *is* the switch:
+
+```yaml
+models:
+  router:
+    categories:
+      - name: small
+        description: trivial, mechanical, single-file edits; quick lookups; renames
+        model: cheap
+      - name: large
+        description: deep multi-step reasoning, architecture, subtle concurrency bugs
+        model: big
+```
+
+**It only fills a gap — it never overrides pinned intent.** It's consulted last, after everything that could already decide the model on its own: your own per-call `model`, a named specialist agent definition that already has its own `model:` set, or `fork`/`resume` (which already run on a fixed engine). Once none of those apply, it can route a plain Subagent call, an undefined team member, or a Parallel branch — never the Parallel **judge**, which always stays on your session's own model, since it's comparing your branches rather than doing delegated work itself.
+
+:::note[The one gotcha: `model: inherit` is not the same as no `model:` key]
+
+If a named specialist agent definition has no `model:` key at all, it's eligible for routing. Set `model: inherit` explicitly instead, and you've opted it *out* — that's a deliberate pin to the session model, not "no preference." Worth knowing if you maintain agent definitions and expect the router to route them.
+
+:::
+
+**It never blocks a delegation.** A classifier failure, a hallucinated category, or an unresolvable target model all fail the same way: the delegation just runs on the model it would have used anyway. A run-scoped breaker gives up on the classifier for the rest of that run after 3 consecutive misses (a hit resets the count), rather than keep paying for a classifier call that keeps failing.
+
+See [`docs/usage/model-routing.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md) for the full taxonomy schema and the `--subagent-model-router` flag — it's a kill-switch only, it can turn a configured router *off* but there's no separate flag to turn it on.
+
 ## Configuring the defaults
 
 A few operator-facing knobs shape delegation without any per-call argument:
 
-- **`--subagent-model`** sets the model every Subagent / Parallel branch / team member uses when nothing else pins one (no `agent` def, no per-call `model`). Leave it unset to inherit the parent's model. A `Parallel` **judge** is the one exception: it always runs on your session's own model, never `--subagent-model` or a routed one, since it's picking between your branches, not doing the work itself.
-- An operator can also configure a **model router** that picks a cheaper or stronger model per delegation automatically, based on the task — opt-in, and orthogonal to everything above (it only fills in a model when nothing else already pinned one). It's an operator/config-level feature, not something you set per call; see `docs/usage/mecated.md` (`--subagent-model-router`) if you're deploying mecatl yourself.
+- **`--subagent-model`** sets the model every Subagent / Parallel branch / team member uses when nothing else pins one (no `agent` def, no per-call `model`, no router pick). Leave it unset to inherit the parent's model.
 - **`--enable-parallel=false`** turns off the `Parallel` tool entirely (on by default).
 - Delegated children get their own slice of the permission system — see [Subagents and the permission model](/what-you-get/permissions.md#subagents-and-the-permission-model) for what a child is pre-approved to do versus what still surfaces to you as a human.
 - **`--subagent-ask-reviewer`** (headless deployments only) lets an LLM adjudicate a child's permission ask instead of falling back to a blanket auto-deny when there's no human to ask. See the same section.
