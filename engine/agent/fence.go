@@ -61,11 +61,12 @@ func NeutraliseFraming(s string) string {
 }
 
 // framingHeader reports whether a (lower-cased, trimmed) line matches one of the
-// literal section headers the team turn/synthesis prompt or the ask-review prompt
-// emits, so an untrusted body cannot forge a fresh "harness" section to smuggle
-// instructions. It is the single list every prompt path that calls NeutraliseFraming
-// shares — extend it whenever a NEW literal header is introduced into a model-visible
-// prompt those paths build.
+// literal section headers a harness-composed, model-visible text emits — the team
+// turn/synthesis prompt, the ask-review prompt, the model-router prompt, and the
+// subagent/Parallel FAILED result — so an untrusted body interpolated into one of them
+// cannot forge a fresh "harness" section to smuggle instructions. It is the single list
+// every path that calls NeutraliseFraming shares — extend it whenever a NEW literal
+// header is introduced into a model-visible text those paths build.
 func framingHeader(trimmed string) bool {
 	switch {
 	case trimmed == "new messages for you:",
@@ -97,7 +98,21 @@ func framingHeader(trimmed string) bool {
 		strings.HasPrefix(trimmed, "you have claimed task "),
 		strings.HasPrefix(trimmed, "findings from "),
 		strings.HasPrefix(trimmed, "last words from "),
-		strings.HasPrefix(trimmed, "completed tasks for "):
+		strings.HasPrefix(trimmed, "completed tasks for "),
+		// Team turn-prompt harness note (retryTurnNote): a peer message body in the SAME
+		// prompt is neutralised, so without this a peer could forge a "NOTE FROM THE
+		// HARNESS: your previous turn FAILED …" line into the target member's prompt.
+		strings.HasPrefix(trimmed, "note from the harness:"),
+		// Subagent/Parallel FAILED-result headers (subagentErrorBody's two halves are
+		// provider- and child-authored, neutralised in that one composer). These are the
+		// lines the harness itself emits around them in the PARENT's conversation:
+		// the resume handle, the demoted-context label, and the bracketed stop-reason /
+		// next-action notes. A forged copy could redirect a resume or fabricate a
+		// harness instruction next to the real one.
+		strings.HasPrefix(trimmed, "agentid:"),
+		strings.HasPrefix(trimmed, "last activity before the failure:"),
+		strings.HasPrefix(trimmed, "[the subagent "),
+		strings.HasPrefix(trimmed, "[subagent "):
 		return true
 	}
 	return false

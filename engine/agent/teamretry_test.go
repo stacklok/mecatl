@@ -21,7 +21,7 @@ import (
 // teamretry_test.go covers the BOUNDED MEMBER RETRY — the last acceptance bullet of
 // issue #318 ("a team member that hits one transient stall still participates in later
 // rounds"), which ADR 0077 shipped its recovery half of and explicitly deferred. See
-// docs/adr/0077-resume-a-failed-subagent.md (Amendment).
+// docs/adr/0077-resume-a-failed-subagent.md.
 //
 // The three mechanisms it pins, all in engine/agent/teamsupervisor.go:
 //
@@ -130,7 +130,7 @@ func TestSupervisorRetriedMemberContributesInLaterRound(t *testing.T) {
 
 // TestSupervisorBenchesMemberAtErrorRetryCap pins the BOUND. A member that errors in
 // every round it is given is benched the moment its errored-round count EXCEEDS the cap,
-// with the pre-amendment disposition (stopped + StopReasonError) and the honest count —
+// with the unchanged disposition (stopped + StopReasonError) and the honest count —
 // and it runs exactly cap+1 rounds, never more.
 //
 // Sweeping the cap is what makes this a bound rather than a single data point: an
@@ -291,7 +291,7 @@ func TestSupervisorRetriedMemberReleasesTaskForReclaim(t *testing.T) {
 	if out.Rounds != 1 {
 		t.Fatalf("Rounds = %d, want 1 — alpha's round must have run", out.Rounds)
 	}
-	alpha := memberByName(t, out, "alpha")
+	alpha := memberOutcome(t, out, "alpha")
 	if alpha.Stopped {
 		t.Fatalf("alpha must be RETRIED, not benched: %+v", alpha)
 	}
@@ -324,6 +324,152 @@ func TestSupervisorRetriedMemberReleasesTaskForReclaim(t *testing.T) {
 	if !ok || got.ID != taskID {
 		t.Fatalf("a peer must be able to claim the released task; ok=%v task=%+v", ok, got)
 	}
+
+	// (c) The member's AGGREGATE STATE is back to idle. The retry branch returns early
+	//     while runTurn set MemberWorking at the top, so its SetMemberState(MemberIdle) is
+	//     the ONLY thing that undoes that — and this run is the exact observation point,
+	//     because it ENDS on a retry round. Without it the team reports a member that is
+	//     forever `working`, which is what Quiescent and every roster projection read.
+	var alphaState team.MemberState
+	var seen bool
+	for _, mem := range tm.Members() {
+		if mem.Name == "alpha" {
+			alphaState, seen = mem.State, true
+		}
+	}
+	if !seen {
+		t.Fatalf("alpha vanished from the team roster: %+v", tm.Members())
+	}
+	if alphaState != team.MemberIdle {
+		t.Fatalf("a member queued for RETRY must be returned to idle in the aggregate, got %q", alphaState)
+	}
+}
+
+// TestSupervisorBudgetExhaustedMemberIsNeverRetried pins the retry gate's
+// `!budgetExhausted` conjunct — the one exclusion no test combined with an errored round.
+//
+// The member's LIFETIME turn budget is the operator's hard ceiling on how many turns it may
+// consume; the retry must not reschedule it past that. Drop the conjunct and a member that
+// blows its budget ON an errored round is retried anyway, and its Reason flips budget→error,
+// mislabelling the terminal as well as overspending it.
+func TestSupervisorBudgetExhaustedMemberIsNeverRetried(t *testing.T) {
+	tm := team.New("budget-error")
+	// Round 0 ends in a run-level error AND consumes the member's entire 1-turn lifetime
+	// budget. Extra error turns follow so a bypassed gate would have something to drive —
+	// the test must not pass merely because the script ran dry.
+	prov := mockllm.New(
+		mockllm.EmptyTurnWithStop(session.StopError),
+		mockllm.EmptyTurnWithStop(session.StopError),
+		mockllm.EmptyTurnWithStop(session.StopError),
+	)
+	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+		memberFactory(t, tm, map[string]*mockllm.Provider{"worker": prov}),
+		agent.WithMaxRounds(5),
+		agent.WithMemberTurnBudget(1),
+		// The DEFAULT retry cap: a retry WOULD be available if the budget conjunct
+		// were not there to refuse it.
+		agent.WithMemberErrorRetries(1))
+	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
+
+	out := sup.Run(context.Background(), nil)
+
+	m := singleMember(t, out)
+	if !m.Stopped {
+		t.Fatalf("a budget-exhausted member must be benched even on an errored round: %+v", m)
+	}
+	// The terminal keeps its most-specific classification: the round DID error, so error
+	// is the honest reason — but the member must not have been rescheduled.
+	if m.Reason != agent.StopReasonError {
+		t.Errorf("Reason = %q, want %q (the round ended in error; budget is the residual class)", m.Reason, agent.StopReasonError)
+	}
+	if m.ErrorRounds != 1 {
+		t.Errorf("ErrorRounds = %d, want 1 — the errored round is still counted", m.ErrorRounds)
+	}
+	if out.Rounds != 1 {
+		t.Fatalf("Rounds = %d, want 1 — a budget-exhausted member must not earn a retry round", out.Rounds)
+	}
+	if got := prov.Calls(); got != 1 {
+		t.Errorf("provider calls = %d, want 1 — the member must not be re-driven past its turn budget", got)
+	}
+}
+
+// TestSupervisorErrorRoundsIsIndependentOfTheTerminal pins the counter-example to the
+// invariant MemberOutcome.ErrorRounds' doc-comment used to claim ("a member benched for
+// cancellation or budget has 0"). The counter is MONOTONIC over the member's LIFETIME —
+// that monotonicity is the retry cap's termination proof — so it does not follow from the
+// terminal and the terminal does not follow from it.
+//
+// The reachable shape: round 0 errors and is retried, round 1 is cancelled. The member ends
+// Reason "cancelled" with ErrorRounds 1. A consumer that read "cancelled ⇒ 0 errored rounds"
+// off the old doc would render that member as a clean kill.
+func TestSupervisorErrorRoundsIsIndependentOfTheTerminal(t *testing.T) {
+	tm := team.New("mixed")
+	ctx, cancel := context.WithCancel(context.Background())
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+
+	var turnsSeen atomic.Int64
+	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		// Round 0: a terminal error stop (recovered + retried). Round 1: cancel the run as
+		// the retry turn reaches the provider, so that round lands StateCancelled.
+		prov := mockllm.NewWith(
+			[]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+				if turnsSeen.Add(1) >= 2 {
+					cancel()
+				}
+			})},
+			mockllm.EmptyTurnWithStop(session.StopError),
+			mockllm.TextTurn("the retry turn, cancelled mid-flight"),
+			mockllm.TextTurn("never reached"),
+		)
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
+			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "mock",
+		})}
+	}
+	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+		agent.WithMaxRounds(5), agent.WithMemberErrorRetries(1))
+	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
+
+	out := sup.Run(ctx, nil)
+
+	m := singleMember(t, out)
+	if m.Reason != agent.StopReasonCancelled {
+		t.Fatalf("precondition: the member must end CANCELLED, got %q/%q (rounds=%d)", m.Disposition, m.Reason, out.Rounds)
+	}
+	if m.ErrorRounds != 1 {
+		t.Fatalf("ErrorRounds = %d, want 1: the counter is a LIFETIME count, independent of the terminal — a cancelled member can carry errored rounds", m.ErrorRounds)
+	}
+}
+
+// TestWithMemberErrorRetriesIgnoresNegative pins the option's documented guard ("a
+// negative value is ignored"). Without it a negative cap would make `errorRounds <= cap`
+// false on the very first errored round, silently turning the SHIPPED default (one retry)
+// into fail-fast for any caller that passed a computed value that went negative.
+func TestWithMemberErrorRetriesIgnoresNegative(t *testing.T) {
+	tm := team.New("negative")
+	// The retry-enabled script: an errored round 0, then real work. If the negative value
+	// were applied, the member would be benched at round 0 and never reach the text turn.
+	prov := mockllm.New(
+		mockllm.EmptyTurnWithStop(session.StopError),
+		mockllm.TextTurn("RECOVERED UNDER THE DEFAULT CAP"),
+	)
+	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+		memberFactory(t, tm, map[string]*mockllm.Provider{"worker": prov}),
+		agent.WithMaxRounds(5), agent.WithMemberErrorRetries(-1))
+	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
+
+	out := sup.Run(context.Background(), nil)
+
+	m := singleMember(t, out)
+	if m.Stopped {
+		t.Fatalf("a negative cap must be IGNORED (default 1 retry stands), but the member was benched: %+v", m)
+	}
+	if !strings.Contains(m.LastText, "RECOVERED UNDER THE DEFAULT CAP") {
+		t.Fatalf("the member must have been retried under the default cap; LastText = %q", m.LastText)
+	}
 }
 
 // TestSupervisorCancelledMemberIsNeverRetried pins the retry gate's exclusions: only a
@@ -339,24 +485,38 @@ func TestSupervisorRetriedMemberReleasesTaskForReclaim(t *testing.T) {
 // gate is therefore fail-closed defence for a future state, and this test covers the shape
 // that exists today: the member is benched, not retried, even though its round did end
 // abnormally.
+//
+// The LastText check alone would be unfalsifiable and is deliberately not the headline:
+// once the run ctx is cancelled a phantom retry drive would die on the cancelled ctx before
+// reaching the provider, so the second scripted turn is unreachable whether the gate holds
+// or not. The load-bearing assertions are therefore the ones a bypassed gate WOULD move —
+// the member's state in the team AGGREGATE (retried ⇒ MemberIdle, benched ⇒ MemberStopped;
+// that state is what Quiescent and every roster projection read) and its released task —
+// plus the provider call count, which bounds how many turns it was actually given.
 func TestSupervisorCancelledMemberIsNeverRetried(t *testing.T) {
 	tm := team.New("cancel")
+	if _, err := tm.CreateTask("work the cancelled member claims"); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	// Cancel the run as soon as the member's round-0 turn reaches the provider, so the
 	// in-flight run observes it and the session lands in StateCancelled — the state whose
 	// Reopen fails. Extra scripted turns are present so a bypassed gate would have
 	// something to drive (the test cannot pass merely because the script ran dry).
+	//
+	// Hoisted out of the factory so the call count is observable: a phantom extra turn
+	// shows up here even when its text never lands on the outcome.
+	prov := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) { cancel() })},
+		mockllm.TextTurn("never reached cleanly"),
+		mockllm.TextTurn("PHANTOM RETRY OF A CANCELLED MEMBER"),
+	)
 	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
 		cat := tool.NewCatalog()
 		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
-		prov := mockllm.NewWith(
-			[]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) { cancel() })},
-			mockllm.TextTurn("never reached cleanly"),
-			mockllm.TextTurn("PHANTOM RETRY OF A CANCELLED MEMBER"),
-		)
 		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
 			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "mock",
 		})}
@@ -374,19 +534,25 @@ func TestSupervisorCancelledMemberIsNeverRetried(t *testing.T) {
 	if m.ErrorRounds != 0 {
 		t.Errorf("cancellation is not a run-level error: ErrorRounds = %d, want 0", m.ErrorRounds)
 	}
+	// The AGGREGATE state is the falsifiable half: the retry branch sets MemberIdle, the
+	// bench branch MemberStopped. A cancelled member must land on the bench.
+	var state team.MemberState
+	var seen bool
+	for _, mem := range tm.Members() {
+		if mem.Name == "worker" {
+			state, seen = mem.State, true
+		}
+	}
+	if !seen {
+		t.Fatalf("worker vanished from the team roster: %+v", tm.Members())
+	}
+	if state != team.MemberStopped {
+		t.Fatalf("a cancelled member must be BENCHED in the aggregate (MemberStopped), got %q — the retry branch would leave it idle", state)
+	}
+	if got := prov.Calls(); got != 1 {
+		t.Errorf("provider calls = %d, want 1 — a cancelled member must not be given a second turn", got)
+	}
 	if strings.Contains(m.LastText, "PHANTOM RETRY") {
 		t.Errorf("a cancelled member must not be retried; LastText = %q", m.LastText)
 	}
-}
-
-// memberByName returns the named member's outcome, failing the test when it is absent.
-func memberByName(t *testing.T, out agent.TeamOutcome, name string) agent.MemberOutcome {
-	t.Helper()
-	for _, m := range out.Members {
-		if m.Name == name {
-			return m
-		}
-	}
-	t.Fatalf("no outcome for member %q: %+v", name, out.Members)
-	return agent.MemberOutcome{}
 }

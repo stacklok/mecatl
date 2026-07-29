@@ -393,9 +393,16 @@ func TestProjectSubagentEndError(t *testing.T) {
 // failed, not just that it did (issue #319). An ACP client is a developer-facing surface
 // (an editor / agent client), and it read the same session.SubagentPayload the mecatui
 // fleet pane reads — so dropping the cause here left the two projections of ONE event
-// disagreeing about how much of the field's contract they surface. The cause is already
-// clamped at the emit site and is harness/provider metadata (never child-authored output),
-// so gauntlet #7 holds; it is collapsed to one line because this content is line-oriented.
+// disagreeing about how much of the field's contract they surface. The cause is
+// harness/provider metadata (never child-authored output), so gauntlet #7 holds.
+//
+// The value arrives already clamped AND whitespace-collapsed: session.SubagentPayload.Cause
+// is LINE-ORIENTED by contract and every emit site normalises it through one helper
+// (agent.subagentCausePayload), which is what lets a consumer render it as-is. The
+// collapse itself is pinned at that emit site, through the real loop, by
+// engine/agent's TestSubagentEndEventCarriesClampedCause — so the fixture here is what the
+// engine actually emits. What this asserts is the projector's own half: it appends the
+// cause to the status line and adds no newline of its own.
 //
 // The negative half matters just as much: a benign terminal carries no cause, and the line
 // must then read exactly as it did before.
@@ -404,7 +411,7 @@ func TestProjectSubagentEndCarriesCause(t *testing.T) {
 		Type: session.EvSubagentEnd,
 		Subagent: &session.SubagentPayload{
 			ParentCallID: "task-3", ToolCount: 4, Stop: session.StopError,
-			Cause: "upstream 503:\n  model overloaded",
+			Cause: "upstream 503: model overloaded",
 		},
 	})
 	u := got.(toolCallUpdate)
@@ -413,10 +420,10 @@ func TestProjectSubagentEndCarriesCause(t *testing.T) {
 	}
 	line := u.Content[0].Content.Text
 	if !strings.Contains(line, "upstream 503: model overloaded") {
-		t.Errorf("the failed-delegation line must carry the collapsed cause, got %q", line)
+		t.Errorf("the failed-delegation line must carry the cause, got %q", line)
 	}
 	if strings.Contains(line, "\n") {
-		t.Errorf("the cause must be collapsed to ONE line for a line-oriented surface, got %q", line)
+		t.Errorf("the projection must stay ONE line for a line-oriented surface, got %q", line)
 	}
 
 	// Benign terminal: no cause, so the line is unchanged from the pre-#319 shape.

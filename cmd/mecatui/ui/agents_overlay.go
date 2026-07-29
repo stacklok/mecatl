@@ -598,9 +598,12 @@ func subagentFailureLine(ln *subagentLane, width int) string {
 		return ""
 	}
 	// Collapse the cause to ONE logical line before clamping: a provider error body is
-	// often multi-line, and its own newlines would defeat the width budget below.
-	oneLine := strings.Join(strings.Fields(ln.cause), " ")
-	return indentWrap("failed: "+truncate(sanitizeTerminal(oneLine), maxSubagentCauseWidth), cardTextWidth(width))
+	// often multi-line, and its own newlines would defeat the width budget below. The
+	// server already normalises the field at its emit site, so this is idempotent there —
+	// it stays because the TUI is a gRPC CLIENT and must not depend on the peer's version
+	// for a display bound. oneLine is the package helper every other server-derived
+	// string in this UI goes through.
+	return indentWrap("failed: "+truncate(sanitizeTerminal(oneLine(ln.cause)), maxSubagentCauseWidth), cardTextWidth(width))
 }
 
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its

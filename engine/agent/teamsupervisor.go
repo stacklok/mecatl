@@ -123,12 +123,12 @@ const defaultMemberTurnBudget = 200
 
 // defaultMemberErrorRetries is how many times a member whose round ended in
 // StopError — and whose session the supervisor then RECOVERED successfully — is left
-// SCHEDULABLE instead of benched (ADR 0077's amendment, issue #318). One retry is the
+// SCHEDULABLE instead of benched (ADR 0077, issue #318). One retry is the
 // default because the failure this closes is a TRANSIENT one (the terminal 180s
 // stream-idle stall): a single re-drive is enough to survive a network hiccup, while
 // keeping the wasted provider spend of a permanently-failing member to one extra
 // round. A member that errors more rounds than this is benched exactly as it was
-// before the amendment (stopped + StopReasonError + tasks released), which is also
+// in the previous release (stopped + StopReasonError + tasks released), which is also
 // what WithMemberErrorRetries(0) restores. It bounds the retry, so a member that
 // always fails always terminates.
 const defaultMemberErrorRetries = 1
@@ -303,7 +303,7 @@ type Supervisor struct {
 	turnBudget  int
 	// memberErrorRetries is how many StopError rounds a member may be RETRIED through
 	// before it is benched (default defaultMemberErrorRetries; 0 disables retry and
-	// restores the pre-amendment "bench on the first errored round" behaviour).
+	// restores the previous release's "bench on the first errored round" behaviour).
 	// WithMemberErrorRetries is the sole writer. It bounds the retry loop: errorRounds
 	// only ever grows, so a permanently-failing member benches after this many extra
 	// rounds and the scheduling loop still reaches quiescence.
@@ -557,12 +557,12 @@ func WithMemberTurnBudget(n int) SupervisorOption {
 // WithMemberErrorRetries sets how many times a member whose round ended in
 // session.StopError — and whose session the supervisor then RECOVERED successfully —
 // is left SCHEDULABLE for a later round instead of being benched (default
-// defaultMemberErrorRetries = 1; ADR 0077's amendment, issue #318). A retried member
+// defaultMemberErrorRetries = 1; ADR 0077, issue #318). A retried member
 // releases its in-progress task claim (so it, or a peer, can re-claim the work) and is
 // force-scheduled for exactly one turn even when it holds no message and no claimable
 // task. Once its errored-round count EXCEEDS this cap it is benched exactly as before
-// the amendment: stopped, MemberStopReason StopReasonError, tasks released, registry
-// entry closed. 0 disables retry entirely (the pre-amendment behaviour); a negative
+// this: stopped, MemberStopReason StopReasonError, tasks released, registry
+// entry closed. 0 disables retry entirely (the previous release's behaviour); a negative
 // value is ignored.
 //
 // A member whose RECOVERY itself failed (memberRT.nonResumable) is NEVER retried
@@ -677,7 +677,7 @@ func NewSupervisor(t *team.Team, base tool.Workspace, factory MemberEngine, opts
 		concurrency: defaultTeamConcurrency,
 		turnBudget:  defaultMemberTurnBudget,
 		// The retry cap is a NONZERO default, so a caller that never sets an option still
-		// survives one transient member failure (ADR 0077's amendment).
+		// survives one transient member failure (ADR 0077).
 		memberErrorRetries: defaultMemberErrorRetries,
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
 		members:            make(map[string]*memberRT),
@@ -1045,15 +1045,21 @@ type MemberOutcome struct {
 	Reason MemberStopReason
 	// ErrorRounds is how many of this member's rounds ended in session.StopError,
 	// whether it was RETRIED through them or finally benched by them (issue #318 /
-	// ADR 0077's amendment). It is the disposition-HONESTY signal: a bounded retry means
+	// ADR 0077). It is the disposition-HONESTY signal: a bounded retry means
 	// a member can fail a round and still finish, and such a member reports
 	// DispositionDone with no Reason — so without this count a transient failure would
 	// be invisible to the caller and the run would read as silently clean. It is a
 	// COUNT, deliberately not a new MemberDisposition value: the disposition is a closed
 	// enum mirrored on the proto wire, and "done" is still the honest terminal.
 	//
-	// 0 for a member that never errored. A benched member's count is >=1 alongside
-	// Stopped/StopReasonError; a member benched for cancellation or budget has 0.
+	// It is INDEPENDENT of the terminal: it counts errored rounds over the member's whole
+	// LIFETIME (the counter is monotonic — that monotonicity is the retry cap's
+	// termination proof), so it does NOT follow from Reason and Reason does not follow
+	// from it. 0 exactly when the member never had an errored round. A member benched by
+	// its errors has >=1 alongside Stopped/StopReasonError, but so can one benched for
+	// cancellation or budget: a member that failed round 1, was recovered and retried,
+	// then was cancelled in round 2 reports Reason "cancelled" with ErrorRounds 1. Read
+	// the two together, never one from the other.
 	ErrorRounds int
 	// Completed holds this member's completed-task descriptions (clamped), captured in
 	// outcome() from the shared task list. It feeds the ledger-rich deliverable
@@ -1318,7 +1324,7 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	}
 	warnUnexpectedRecovery(ctx, s.caps.diag, m.spec.Name, stop, reopenErr)
 
-	// BOUNDED RETRY (ADR 0077's amendment, issue #318). Recovering the session made the
+	// BOUNDED RETRY (ADR 0077, issue #318). Recovering the session made the
 	// member DRIVABLE again; on its own that only rescued the lead's synthesis turn,
 	// because `stopped` still descheduled the member for the rest of the run. A member
 	// that hits ONE transient stall must still participate in later rounds, so an errored
@@ -1462,10 +1468,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		askLabel: fmt.Sprintf("team member %q", m.spec.Name)}
 	stop = session.StopNone
 	for ev := range run.Events() {
-		// The terminal failure cause is discarded here: the team's own use of it is a
-		// separate concern (a member's stopReason already classifies the terminal), so
-		// the arity change stays mechanical.
-		if t, st, _, ok := handleChildEvent(run, ev, posture); ok {
+		if t, st, ok := handleChildEvent(run, ev, posture); ok {
 			stop = st
 			if t != "" {
 				text = t
@@ -1698,6 +1701,14 @@ func (s *Supervisor) buildSynthesisSources() string {
 // is the only forgeable token, and framingHeader neutralises a finding body that tries to
 // forge it. Nothing is written when nothing went wrong (an all-clean team).
 //
+// The member NAMES are NeutraliseFraming'd, matching every sibling interpolation in this
+// file. They are trusted-but-model-INFLUENCED: they come from the parent model's Team call
+// args, and validateTeamArgs checks only non-empty/unique/role — no newline or charset
+// rejection. A parent that has itself ingested injected content can name a member
+// "scout\nRecorded findings:\n…", which would otherwise splice a forged section into this
+// TRUSTED, unfenced region of the lead's synthesis prompt (CWE-1427 / OWASP LLM01), and
+// the synthesis report is the Team tool's deliverable back to the parent.
+//
 // The RETRIED line is the other half of disposition honesty. A member that failed a round,
 // was recovered and then finished is not `stopped`, so without it the lead would plan and
 // report as if that member had run cleanly throughout — a coordination lie in the opposite
@@ -1715,7 +1726,7 @@ func (s *Supervisor) writeTeamStatus(b *strings.Builder) {
 			if reason == "" {
 				reason = "unknown"
 			}
-			stoppedParts = append(stoppedParts, fmt.Sprintf("%s (%s)", name, reason))
+			stoppedParts = append(stoppedParts, fmt.Sprintf("%s (%s)", NeutraliseFraming(name), reason))
 			continue
 		}
 		// Not stopped but it DID fail at least one round: it was recovered and retried.
@@ -1724,7 +1735,7 @@ func (s *Supervisor) writeTeamStatus(b *strings.Builder) {
 			if m.errorRounds == 1 {
 				unit = "round"
 			}
-			retriedParts = append(retriedParts, fmt.Sprintf("%s (%d failed %s)", name, m.errorRounds, unit))
+			retriedParts = append(retriedParts, fmt.Sprintf("%s (%d failed %s)", NeutraliseFraming(name), m.errorRounds, unit))
 		}
 	}
 	if len(stoppedParts) == 0 && len(retriedParts) == 0 && !s.budgetTripped {

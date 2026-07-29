@@ -822,7 +822,7 @@ func TestSupervisorBaseSharingMemberWithBashStillRejected(t *testing.T) {
 // reported with Disposition==stopped and Reason==error, and that the errored round is
 // COUNTED on ErrorRounds. It pins the retry-DISABLED tier of issue #318's bounded retry:
 // WithMemberErrorRetries(0) is the escape hatch an operator uses to get exactly the
-// pre-amendment disposition, so the classification path must still be reachable and
+// unchanged benched disposition, so the classification path must still be reachable and
 // unchanged. The default tier (one retry) is covered by
 // TestSupervisorRetriedMemberContributesInLaterRound and its cap sibling.
 //

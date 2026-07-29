@@ -540,11 +540,36 @@ func runWritableForkWithParent(t *testing.T, task tool.Tool) session.ToolResult 
 }
 
 // subagentGenericResumeHintFragment is a fragment unique to renderSubagentResult's GENERIC
-// subagentErrorResumeHint ("…resume it with the agentId above to continue where it left
-// off…"). The writable arm's combined note deliberately says "agentId BELOW" and never
-// this, so matching on this fragment distinguishes "the generic hint leaked in" from "the
-// combined decision is present".
-const subagentGenericResumeHintFragment = "continue where it left off"
+// subagentErrorResumeHint ("…resume it with the agentId above to continue from its
+// transcript…"). The writable arm's combined note says "the agentId BELOW … to finish on
+// top of them" and never this, so matching on this fragment distinguishes "the generic
+// hint leaked in" from "the combined decision is present".
+//
+// This copy of a production string is the exact thing that went stale once already: it
+// used to read "continue where it left off", which the resume-honesty fix removed from the
+// hint, leaving the absence check below unfalsifiable — it would have passed with the
+// generic hint fully re-leaked. So the check is now paired with a POSITIVE control in the
+// same test (a read-only failure MUST carry this fragment). If the production wording
+// moves again, the positive control fails loudly instead of the guard going quiet.
+const subagentGenericResumeHintFragment = "continue from its transcript"
+
+// readOnlySubagentFailureBody renders a READ-ONLY child's StopError result in the same
+// store-wired configuration the writable test uses. It exists as the POSITIVE CONTROL for
+// subagentGenericResumeHintFragment: the arm that DOES carry the generic hint, so an
+// absence check against that fragment is provably falsifiable.
+func readOnlySubagentFailureBody(t *testing.T) string {
+	t.Helper()
+	childEngine := childEngineWith(mockllm.New(mockllm.EmptyTurnWithStop(session.StopError)), catalogWith(t))
+	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(memstore.New()))
+	results, _ := subagentParentResults(t, task,
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	if len(results) != 1 || !results[0].IsError {
+		t.Fatalf("positive control: want 1 errored read-only tool result, got %+v", results)
+	}
+	return results[0].Content
+}
 
 // TestWritableSubagentFailureRendersOneCombinedNextAction pins the render #318's
 // MOTIVATING scenario produces: a long-running direct-write child that died mid-task with
@@ -603,8 +628,22 @@ func TestWritableSubagentFailureRendersOneCombinedNextAction(t *testing.T) {
 		t.Fatalf("the writable failure must state resume-or-discard as ONE exclusive decision, got:\n%s", body)
 	}
 	// (d) …and NOT also the generic hint, which would re-create the two-imperatives trap.
+	//
+	// POSITIVE CONTROL FIRST — without it this is an absence check against a string
+	// literal that can silently stop matching the production hint (it did exactly that
+	// once). A READ-ONLY failure in the same store-wired configuration MUST carry the
+	// fragment, which proves the absence check below can actually fire.
+	if roBody := readOnlySubagentFailureBody(t); !strings.Contains(roBody, subagentGenericResumeHintFragment) {
+		t.Fatalf("subagentGenericResumeHintFragment %q no longer appears in the GENERIC resume hint, so the suppression check below is vacuous — re-point it at the live wording:\n%s",
+			subagentGenericResumeHintFragment, roBody)
+	}
 	if strings.Contains(body, subagentGenericResumeHintFragment) {
 		t.Fatalf("the writable arm must suppress the generic resume hint (it owns a combined note), got:\n%s", body)
+	}
+	// The writable note must not smuggle the generic hint's OTHER identifying clause
+	// either — "agentId above" is the read-only layout, "agentId below" is this one.
+	if strings.Contains(body, "resume it with the agentId above") {
+		t.Fatalf("the writable arm must not carry the read-only hint's \"agentId above\" clause, got:\n%s", body)
 	}
 	// (e) The ordering the note's own wording depends on: the agentId really is BELOW it.
 	noteAt := strings.Index(body, "Either resume it with the agentId below")

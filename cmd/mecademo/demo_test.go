@@ -157,3 +157,36 @@ func assertApprovalResumed(t *testing.T, events []session.Event) {
 		t.Error("no successful tool result after approval (loop did not resume)")
 	}
 }
+
+// TestFormatEventPrintsSubagentCause covers the cause= branch formatEvent added for the
+// failed-delegation taxonomy (issue #319). mecademo is the runnable example a library
+// consumer copies to learn the event surface, so this line is documentation with a
+// compiler — and it had no oracle: the demo's offline scenarios never fail a child, so the
+// branch was reachable only in production.
+//
+// Both halves matter. A failed child must PRINT the why, and a clean child must not gain a
+// spurious empty cause= (the field is empty on every non-StopError terminal, and printing
+// `cause=""` on a healthy run is noise a consumer would copy).
+func TestFormatEventPrintsSubagentCause(t *testing.T) {
+	failed := formatEvent(session.Event{
+		Type: session.EvSubagentEnd,
+		Subagent: &session.SubagentPayload{
+			ChildID: "subagent-c1", Stop: session.StopError,
+			Cause: "upstream 503: model overloaded",
+		},
+	})
+	if !strings.Contains(failed, `cause="upstream 503: model overloaded"`) {
+		t.Errorf("a failed subagent.end must print the cause, got %q", failed)
+	}
+	if !strings.Contains(failed, "child=subagent-c1") || !strings.Contains(failed, "stop=error") {
+		t.Errorf("the pre-existing child/stop fields must be unchanged, got %q", failed)
+	}
+
+	clean := formatEvent(session.Event{
+		Type:     session.EvSubagentEnd,
+		Subagent: &session.SubagentPayload{ChildID: "subagent-c2", Stop: session.StopEndTurn},
+	})
+	if strings.Contains(clean, "cause=") {
+		t.Errorf("a clean subagent.end must print no cause= at all, got %q", clean)
+	}
+}

@@ -445,6 +445,70 @@ func TestAgentsResolvedSubhead(t *testing.T) {
 	}
 }
 
+// TestAgentsRosterRetriedDisposition is the LAST HOP of the ErrorRounds honesty chain
+// (issue #318). Every earlier hop is pinned end-to-end — supervisor → MemberOutcome →
+// EvTeamEnd.Dispositions through the real Team tool → proto → client.TeamMemberDisposition
+// → teamLaneState — but the assignment that copies the count onto the lane
+// (setTeamEnd: `ln.errorRounds = d.ErrorRounds`) had no oracle at all: team_test.go
+// constructs a &teamLane{errorRounds: 1} DIRECTLY, and no client.TeamMemberDisposition
+// literal in this package ever set the field. Delete that assignment and the whole suite
+// stayed green while the overlay rendered a bare "✓ done" for a member the supervisor
+// reports as retried — the exact disposition lie the feature exists to prevent.
+//
+// It drives a real client.TeamMsg through m.Update (not setTeamEnd directly), so the
+// msgs → update → setTeamEnd hop is covered too.
+func TestAgentsRosterRetriedDisposition(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	mm, _ := m.Update(client.TeamMsg{
+		Kind: client.TeamEnd, ParentCallID: "t1", TeamID: "t1", Rounds: 4, Stop: "end_turn",
+		Dispositions: []client.TeamMemberDisposition{
+			{Name: "lead"},
+			// Not stopped, but it lost a round to a run-level failure and was retried.
+			{Name: "scout", ErrorRounds: 1},
+		},
+	})
+	m = mm.(Model)
+	mm, _ = m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	out := stripANSIstr(m.View().Content)
+
+	if !strings.Contains(out, "done (retried)") {
+		t.Errorf("a retried member's lane must render \"done (retried)\", got %q", out)
+	}
+	// The clean member must NOT pick up the label — otherwise the assertion above would
+	// pass on a build that labelled every lane retried.
+	if n := strings.Count(out, "done (retried)"); n != 1 {
+		t.Errorf("exactly ONE lane may read \"done (retried)\", got %d occurrences: %q", n, out)
+	}
+	// A retried member is not stopped: the roster must not bench it.
+	if strings.Contains(out, "stopped") {
+		t.Errorf("a retried member finished — the overlay must not report it stopped, got %q", out)
+	}
+
+	// A member benched AT the cap keeps the more specific stopped label even though its
+	// count is non-zero: the stopped arm must win, or a benched member reads as recovered.
+	mb := newMCPModel(t, aztec(), nil)
+	mb = seedTeam(mb, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	mmb, _ := mb.Update(client.TeamMsg{
+		Kind: client.TeamEnd, ParentCallID: "t1", TeamID: "t1", Rounds: 2, Stop: "end_turn",
+		Dispositions: []client.TeamMemberDisposition{
+			{Name: "lead"},
+			{Name: "scout", Stopped: true, Reason: "error", ErrorRounds: 2},
+		},
+	})
+	mb = mmb.(Model)
+	mmb, _ = mb.Update(ctrlKey('a'))
+	mb = mmb.(Model)
+	benched := stripANSIstr(mb.View().Content)
+	if !strings.Contains(benched, "stopped — error") {
+		t.Errorf("a member benched at the retry cap must render \"stopped — error\", got %q", benched)
+	}
+	if strings.Contains(benched, "done (retried)") {
+		t.Errorf("a benched member must not read as one that recovered, got %q", benched)
+	}
+}
+
 // TestAgentsRosterStoppedGolden locks the roster overlay for an ENDED team carrying a
 // per-member terminal disposition snapshot: a budget-stopped member must render
 // "✗ stopped — budget", clean members must render "✓ done", and the sub-header must

@@ -29,8 +29,8 @@ import (
 // directory and read back. Recovering the cause from that read is what "recoverable from
 // the parent's .events.jsonl alone" means.
 //
-// MUTATION-KILL: reverting handleChildEvent's `ev.Result.Error` return to "" (or dropping
-// the `Cause:` field from the EvSubagentEnd emit) empties the persisted cause and the
+// MUTATION-KILL: dropping drainChildObserved's `cause = ev.Result.Error` read (or the
+// `Cause:` field from the EvSubagentEnd emit) empties the persisted cause and the
 // assertion below fails.
 func TestEventLogRecordsSubagentFailureCause(t *testing.T) {
 	const causeText = "upstream 503: model overloaded"

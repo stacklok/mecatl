@@ -843,3 +843,44 @@ func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 		t.Fatalf("the child's last chat line may only appear as labelled context, got:\n%s", collected.Content)
 	}
 }
+
+// TestBackgroundSubagentFailureAdvertisesResume is the DISCOVERABILITY half on the
+// background path. A background child's failure reaches the model ONLY through the
+// SubagentStatus-collected body, so if that body omits the resume hint the model never
+// learns the child is recoverable — and a background child is exactly the kind that has
+// already done expensive work. The store is wired deliberately: it is validateResume's
+// first precondition, so this is the configuration in which the advertised action can
+// actually succeed.
+func TestBackgroundSubagentFailureAdvertisesResume(t *testing.T) {
+	const causeText = "upstream 503: model overloaded"
+	task := agent.NewSubagentTool(
+		childEngineWith(mockllm.New(mockllm.ErrorTurn(errors.New(causeText), mockllm.TextChunk("x"))), catalogWith(t)),
+		agent.WithSubagentStore(memstore.New()))
+
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	evs := drainObserving(t, r, nil)
+
+	collected := resultByCallID(evs)["p2"]
+	if collected == nil {
+		t.Fatalf("SubagentStatus produced no result: %v", typesOf(evs))
+	}
+	body := collected.Content
+	if !strings.Contains(body, "resume it with the agentId above to continue") {
+		t.Fatalf("a failed BACKGROUND delegation must advertise the resume path (issue #318), got:\n%s", body)
+	}
+	// The ordering the hint's own wording depends on.
+	idAt := strings.Index(body, "agentId: ")
+	hintAt := strings.Index(body, "resume it with the agentId above")
+	if idAt < 0 {
+		t.Fatalf("the collected error body must keep the agentId trailer, got:\n%s", body)
+	}
+	if hintAt < idAt {
+		t.Fatalf("the hint says \"the agentId above\" but the agentId line comes after it:\n%s", body)
+	}
+}

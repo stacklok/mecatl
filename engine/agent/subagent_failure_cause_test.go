@@ -116,11 +116,17 @@ func TestSubagentFailureWithNoChildTextStillSurfacesCause(t *testing.T) {
 
 // TestSubagentEndEventCarriesClampedCause pins the OBSERVABILITY half: the redacted
 // subagent.end projection carries the cause (so a client — the mecatui fleet pane, or
-// any gRPC consumer — can show WHY a delegation failed), and it is CLAMPED at the emit
-// site so a pathological provider error body cannot dump unbounded bytes onto the event
-// stream. It also pins that the cause is set on subagent.end ONLY.
+// any gRPC consumer — can show WHY a delegation failed), and it is NORMALISED at the emit
+// site — CLAMPED, so a pathological provider error body cannot dump unbounded bytes onto
+// the event stream, and whitespace-COLLAPSED, because every consumer of this field is a
+// single-line surface (a roster row, an ACP status line, a log line) while a real provider
+// error body carries newlines. That contract is what lets those consumers just render the
+// value instead of each re-deriving the collapse. It also pins that the cause is set on
+// subagent.end ONLY.
 func TestSubagentEndEventCarriesClampedCause(t *testing.T) {
-	huge := "BOOM-" + strings.Repeat("z", 5000)
+	// Multi-line AND over-long: the two halves of the field's normalisation contract in
+	// one adversarial input, driven through the real loop.
+	huge := "BOOM-\n  upstream detail\n\t" + strings.Repeat("z", 5000)
 	childLLM := mockllm.New(mockllm.ErrorTurn(errors.New(huge), mockllm.TextChunk("x")))
 	childEngine := childEngineWith(childLLM, catalogWith(t))
 	task := agent.NewSubagentTool(childEngine)
@@ -158,6 +164,14 @@ func TestSubagentEndEventCarriesClampedCause(t *testing.T) {
 	}
 	if n := len([]rune(endCause)); n > 401 { // maxSubagentCausePreview (400) + the ellipsis
 		t.Fatalf("subagent.end cause was not clamped: %d runes", n)
+	}
+	// The line-oriented half of the contract: no newline, CR or tab reaches a consumer,
+	// and the source lines are joined with a single space so nothing is lost.
+	if strings.ContainsAny(endCause, "\n\r\t") {
+		t.Fatalf("subagent.end cause must be collapsed to ONE line at the emit site, got %q", endCause)
+	}
+	if !strings.Contains(endCause, "BOOM- upstream detail ") {
+		t.Fatalf("collapsing must join the source lines with single spaces, got %q", endCause)
 	}
 }
 

@@ -245,11 +245,11 @@ func projectSubagent(ev session.Event) (any, bool) {
 			// WHY it failed, not just that it did (issue #319). Without this an ACP
 			// client sees a failed delegation card with no reason while a mecatui user
 			// sees the cause — two projections of one event disagreeing about how much
-			// of the contract they surface. The value is already clamped at the emit
-			// site and is harness/provider metadata (never child-authored output), so
-			// gauntlet #7 holds; it is collapsed to ONE line because this content is
-			// line-oriented, mirroring the TUI focus pane.
-			line += ": " + strings.Join(strings.Fields(p.Cause), " ")
+			// of the contract they surface. The value arrives already clamped AND
+			// whitespace-collapsed (agent.subagentCausePayload at the emit site, the one
+			// place that projection is built), and it is harness/provider metadata —
+			// never child-authored output — so gauntlet #7 holds.
+			line += ": " + p.Cause
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
