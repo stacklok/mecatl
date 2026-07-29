@@ -442,7 +442,7 @@ var subagentSchema = json.RawMessage(`{
     },
     "resume": {
       "type": "string",
-      "description": "Optional id of a previous subagent to RESUME (the value of the 'agentId:' line on its earlier Subagent result). The subagent continues with its full prior conversation, taking this call's prompt as its next instruction. It runs in a FRESH workspace checkout: file changes and build state from its earlier run are gone (its conversational memory survives; the working tree does not). Cannot be combined with the agent or model arguments. Omit to start a fresh subagent."
+      "description": "Optional id of a previous subagent to RESUME (the value of the 'agentId:' line on its earlier Subagent result). The subagent continues with its full prior conversation, taking this call's prompt as its next instruction. This works whether it finished cleanly, stopped at a limit, was cancelled, or FAILED mid-task — a subagent that died on a stalled or errored provider call can be resumed to continue where it left off. It runs in a FRESH workspace checkout: file changes and build state from its earlier run are gone (its conversational memory survives; the working tree does not) — EXCEPT with mode:'read-write', which continues directly in your real workspace, where the edits it already made are still in place. Cannot be combined with the agent or model arguments. Omit to start a fresh subagent."
     },
     "max_turns": {
       "type": "integer",
@@ -517,7 +517,7 @@ var subagentSchema = json.RawMessage(`{
 // Resume: when a store is wired (WithSubagentStore), a Subagent call carrying `resume`
 // CONTINUES a previously-run child by its persisted id (the result trailer's `agentId:`
 // line) — the prior conversation is reloaded and its terminal state recovered (completed
-// →Reopen, cancelled→Interrupt; failed is not resumable), then it runs on the default
+// →Reopen, cancelled→Interrupt, failed→Recover), then it runs on the default
 // explorer engine in a FRESH workspace fork (the original worktree is gone; a staleness
 // note is prepended). An in-flight guard rejects a concurrent run on the same id.
 type SubagentTool struct {
@@ -788,11 +788,22 @@ const recoveredDigestPrefix = "[recovered the subagent's last output below — t
 // registered into any shared catalog.
 const submitResultToolName = "SubmitResult"
 
-// resumeStalenessNote is the honest harness preface prepended to a resumed child's
-// prompt: the conversation survives but the workspace does not (the original
+// resumeStalenessNote is the honest harness preface prepended to a RESUMED READ-ONLY
+// child's prompt: the conversation survives but the workspace does not (the original
 // worktree was torn down; this run gets a fresh fork), so the child must not trust
 // earlier filesystem observations. Same accuracy discipline as childAutoDenyMessage.
 const resumeStalenessNote = "[harness note: your conversation has been resumed, but you are running in a FRESH workspace checkout — file changes, build artifacts, and running processes from your earlier run are GONE. Re-run commands and re-read files before relying on earlier observations.]"
+
+// resumeWritableNote is resumeStalenessNote's mode:"read-write" sibling. A writable
+// child NEVER forks (ADR 0041 — it edits the real parent tree in place), so on resume it
+// continues in the SAME workspace and its earlier edits are still sitting there. Telling
+// it they are "GONE" would be false, and actively harmful for the case issue #318 exists
+// to serve: a direct-write child recovered from a transient failure must build ON its
+// partial edits, not redo or distrust them. What genuinely did NOT survive is process
+// state (build artifacts are stale, background processes are dead) and any concurrent
+// change the parent made meanwhile — hence the re-read instruction is kept, narrowed to
+// what is actually true. Same accuracy discipline as childAutoDenyMessage.
+const resumeWritableNote = "[harness note: your conversation has been resumed and you are running DIRECTLY in the same workspace as before — the file edits you already made are STILL IN PLACE. Build artifacts and running processes from your earlier run are gone, and the workspace may have changed since, so re-read a file or re-run a command before relying on an earlier observation of it.]"
 
 // SubagentOption configures a SubagentTool.
 type SubagentOption func(*SubagentTool)
@@ -1286,8 +1297,8 @@ func (t *SubagentTool) MutatesParent(call session.ToolCall) bool {
 
 // Execute runs one subagent: it builds a FRESH child Session (own conversation,
 // own Limits, its configured mode) — or, on `resume`, reloads the persisted child
-// session and recovers its terminal state (completed→Reopen, cancelled→Interrupt;
-// failed is not resumable) before driving it in a NEW workspace fork — runs the
+// session and recovers its terminal state (completed→Reopen, cancelled→Interrupt,
+// failed→Recover) before driving it in a NEW workspace fork — runs the
 // child loop via the injected child Engine, drains the child's entire Event stream
 // internally, and returns only the child's final summary text as a single
 // ToolResult. The parent therefore never observes the child's intermediate
@@ -1581,15 +1592,17 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 //   - Per-call token ceiling (R4): a Run-scoped TIGHTEN-ONLY MaxRunTokens override carried
 //     via RunContentWith, bounding the SHARED child engine WITHOUT minting a fresh engine.
 //     0 ⇒ inherit the engine's operator-default budget; it folds tighten-only in the loop.
-//   - Resume staleness note: on RESUME the effective prompt is prefixed with the honest
-//     resumeStalenessNote (the conversation survives but the workspace does not) BEFORE the
-//     structured-output wrap, so the note rides inside the structured prompt too. A fresh
-//     call is unchanged.
+//   - Resume note: on RESUME the effective prompt is prefixed with the honest harness note
+//     BEFORE the structured-output wrap, so it rides inside the structured prompt too. Which
+//     note depends on the mode: a read-only child gets resumeStalenessNote (its worktree was
+//     torn down — earlier file changes are gone), a WRITABLE child gets resumeWritableNote
+//     (it never forked, so its earlier edits are still in the real tree — issue #318). A
+//     fresh call is unchanged.
 //   - Structured output (D1/D2): when an output_schema is supplied, a synthetic SubmitResult
 //     tool (run-scoped — never registered into the shared catalog) whose parameters ARE the
 //     schema is created and the prompt is wrapped to instruct the child to call it. Omitted
 //     ⇒ today's free-text path.
-func buildSubagentRunOptions(args subagentArgs, resuming bool, forkAdvisory string) (RunOptions, *submitResultTool, string) {
+func buildSubagentRunOptions(args subagentArgs, resuming, writable bool, forkAdvisory string) (RunOptions, *submitResultTool, string) {
 	var runOpts RunOptions
 	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
 	// rejected earlier in run() as a model-visible error, so here we only need the
@@ -1609,7 +1622,11 @@ func buildSubagentRunOptions(args subagentArgs, resuming bool, forkAdvisory stri
 	}
 	prompt := args.Prompt
 	if resuming {
-		prompt = resumeStalenessNote + "\n\n" + prompt
+		note := resumeStalenessNote
+		if writable {
+			note = resumeWritableNote
+		}
+		prompt = note + "\n\n" + prompt
 	}
 	// A degraded-fork advisory (the dirty-overlay fell back to committed HEAD) is
 	// prepended so it reaches the child LLM's prompt — model-visible, not just a log.
@@ -2131,9 +2148,9 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 
 	// Build the run options (per-call token ceiling), the synthetic SubmitResult tool (when
 	// structured output is requested), and the effective prompt (with the degraded-fork
-	// advisory + resume staleness note prepended BEFORE the structured-output wrap). See
-	// buildSubagentRunOptions.
-	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, forkAdvisory)
+	// advisory + the mode-appropriate resume note prepended BEFORE the structured-output
+	// wrap). See buildSubagentRunOptions.
+	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, writable, forkAdvisory)
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
 	// Bash asks are eligible for the A2 worktree-safe auto-approve; a forker-less
@@ -2417,7 +2434,10 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		t.persistChild(ctx, child)
 	}
 
-	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming, forkAdvisory)
+	// writable=false unconditionally: mode:"read-write"+background is rejected in
+	// validateMode, so a background child is always the read-only forked kind and gets
+	// the fresh-checkout resume note.
+	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming, false, forkAdvisory)
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
@@ -2520,12 +2540,34 @@ func subagentErrorBody(final, cause string) string {
 	}
 }
 
+// subagentErrorResumeHint is the MODEL-VISIBLE next-action instruction stamped on a
+// FAILED delegation. A failed child is now recoverable through `resume` (issue #318,
+// docs/adr/0077-resume-a-failed-subagent.md), and a capability the model is never told
+// about is a capability it cannot use — the model-visible-affordance rule (ADR 0070),
+// the same reason the StopNoProgress note and the no-summary floor carry their own resume
+// hints.
+//
+// It lives HERE, in renderSubagentResult's StopError arm, and deliberately NOT inside
+// subagentErrorBody: that helper is shared with the Parallel branch-failure path, whose
+// branch ids are `parallel-<callID>-<n>` and are REJECTED by validateResume's
+// t.idPrefix gate (a Parallel branch is inspectable, not resumable). Emitting this hint
+// there would instruct the model to take an action that cannot succeed — the exact
+// inverse of the discoverability rule. subagentErrorBody stays the single composition
+// point for the CAUSE; this is the single composition point for the RESUME affordance.
+//
+// It is appended AFTER the agentId trailer line, so "the agentId above" is literally
+// accurate on the StopError layout (where the trailer comes LAST, unlike the success
+// family's leading trailer), and it names BOTH options so a model facing an obviously
+// permanent cause still re-delegates instead of retrying forever.
+const subagentErrorResumeHint = "[the subagent failed mid-task — its conversation is preserved; if the failure looks transient (a stalled or errored provider call), resume it with the agentId above to continue where it left off, or start a fresh subagent]"
+
 // renderSubagentResult labels the child's terminal by stop reason (D4 — the typed result
 // taxonomy), surfaced in the MODEL-VISIBLE result, and stamps the agentId trailer (D5).
 // The mapping:
 //   - StopError                         → tool error (the child crashed), its body
 //     composed by subagentErrorBody: the loop's FAILURE CAUSE leads, the child's last
-//     assistant text follows as clamped context (issue #319).
+//     assistant text follows as clamped context (issue #319), and the
+//     subagentErrorResumeHint names the recovery path (issue #318).
 //   - StopStructuredOutput              → tool error carrying the last validation
 //     failure (the child never produced a schema-valid payload within the retry budget).
 //   - StopMaxTurns / StopMaxToolCalls   → success-with-note (stopped at a limit).
@@ -2563,7 +2605,8 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID))
 	}
 	if stop == session.StopError {
-		return session.NewToolError(callID, "Subagent: "+subagentErrorBody(final, cause)+"\n\nagentId: "+string(childID))
+		return session.NewToolError(callID, "Subagent: "+subagentErrorBody(final, cause)+
+			"\n\nagentId: "+string(childID)+"\n\n"+subagentErrorResumeHint)
 	}
 
 	// Success family. A structured-output run returns the validated payload; otherwise
@@ -2958,18 +3001,35 @@ func (t *SubagentTool) releaseChildID(childID session.SessionID) {
 // resolveResumeSession loads a persisted subagent session for a `resume` call, recovers
 // its terminal state to StateIdle so it is runnable again, and tightens its preserved
 // Limits by the per-call args. It runs BEFORE the workspace fork so the common error
-// cases (unknown id, failed/non-resumable state, broken store) fail fast without paying
-// a fork/unfork round-trip; the caller re-homes the returned session onto the fresh fork
-// root afterwards (Session.Rehome — a field-consistency repair, not a prompt input). The
-// terminal recovery echoes the service layer's loadAndReopen discipline at the agent
-// layer, with ONE deliberate divergence: StateCompleted → Reopen, StateCancelled →
-// Interrupt (history-repair), StateIdle → run as-is, any other state → not in a
-// resumable state — but StateFailed stays NOT resumable here even though loadAndReopen
-// now recovers a failed MAIN session via Recover (issue #51). A subagent is a one-shot
-// delegated task: a failed child carries no accumulated-user-context cost, so the
-// parent re-delegates instead of retrying a broken transcript. It returns the recovered
-// session on success, or a model-addressable error ToolResult (ok=false) on a load
-// failure or non-resumable state.
+// cases (unknown id, non-resumable state, broken store) fail fast without paying a
+// fork/unfork round-trip; the caller re-homes the returned session onto the fresh fork
+// root afterwards (Session.Rehome — a field-consistency repair, not a prompt input).
+//
+// The per-state switch stays SEPARATE from the service layer's loadAndReopen (a child
+// resume has its own preconditions — the in-flight guard, the tighten-only limits, the
+// fresh fork) but now matches its DISCIPLINE exactly: all THREE terminals recover.
+// StateCompleted → Reopen, StateCancelled → Interrupt, StateFailed → Recover (all three
+// history-repairing where needed), StateIdle → run as-is, any other state → not in a
+// resumable state.
+//
+// StateFailed used to be refused here, justified by "a failed child carries no
+// accumulated-user-context cost, so the parent re-delegates instead of retrying a broken
+// transcript". Issue #318 falsified that premise: a long-running mode:"read-write" child
+// (ADR 0041) accumulates 50+ turns of exploration AND mutations already applied to the
+// REAL tree, so discarding it is strictly more expensive than retrying a main session's
+// transcript — and the failure that gets it here is typically TRANSIENT (the terminal
+// 180s stream-idle stall, which becomes StopError rather than StopCancelled because the
+// run ctx is never cancelled). The inversion was stark: an operator-configured
+// timeout_ms lands in StateCancelled and was already resumable, while a network hiccup
+// was permanent. session.Session.Recover runs closeOutInterruptedTurn with the
+// FAILURE-accurate wording, so a tool call orphaned by the failed turn gets a synthetic
+// error result and the replayed history stays provider-valid. Per Recover's own
+// contract, recovery makes retry POSSIBLE, not guaranteed: a permanent-cause child
+// re-fails cleanly, which is strictly better than never being able to try. See
+// docs/adr/0077-resume-a-failed-subagent.md.
+//
+// It returns the recovered session on success, or a model-addressable error ToolResult
+// (ok=false) on a load failure or non-resumable state.
 func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.ToolCallID, id session.SessionID, args subagentArgs) (*session.Session, session.ToolResult, bool) {
 	loaded, err := t.store.Load(ctx, id)
 	switch {
@@ -2994,14 +3054,22 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 	case session.StateIdle:
 		// Already runnable; run as-is.
 	case session.StateFailed:
-		return nil, session.NewToolError(callID,
-			fmt.Sprintf("Subagent: subagent %q ended in a failed state and is not resumable; start a fresh subagent instead", id)), false
+		// Issue #318: a failed child is RECOVERABLE (see the doc-comment). Recover
+		// repairs the failed turn's history with the failure-accurate close-out wording
+		// before returning to idle; the error wrapping mirrors the two arms above so a
+		// transition that somehow fails is still a model-addressable tool error rather
+		// than a silent retry of a genuinely broken transcript.
+		if rerr := loaded.Recover(); rerr != nil {
+			return nil, session.NewToolError(callID,
+				fmt.Sprintf("Subagent: subagent %q is not in a resumable state (%q): %v", id, loaded.State, rerr)), false
+		}
 	default:
 		return nil, session.NewToolError(callID,
 			fmt.Sprintf("Subagent: subagent %q is not in a resumable state (%q)", id, loaded.State)), false
 	}
 	// Tighten the LOADED session's preserved Limits by the per-call args (tighten-only).
-	// Reopen/Interrupt already reset Counters, so each per-call bound applies afresh.
+	// Reopen/Interrupt/Recover all reset Counters (resetToIdle), so each per-call bound
+	// applies afresh.
 	loaded.Limits.MaxTurns = tightenLimit(loaded.Limits.MaxTurns, args.MaxTurns)
 	loaded.Limits.MaxToolCalls = tightenLimit(loaded.Limits.MaxToolCalls, args.MaxToolCalls)
 	return loaded, session.ToolResult{}, true

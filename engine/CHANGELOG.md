@@ -131,6 +131,24 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Changed
 
+- **A FAILED delegated child is now resumable** (ADR 0077, issue #318) — a
+  BEHAVIOUR change with NO exported signature change, so it is classified Changed
+  (behaviour only; `engine/api/*.txt` is unaffected). The `Subagent` tool's
+  `resume: <agentId>` used to hard-refuse a child persisted in
+  `session.StateFailed` ("ended in a failed state and is not resumable"); it now
+  recovers it through the existing exported `session.Session.Recover`, matching the
+  service layer's `loadAndReopen` discipline (all three terminals recover). A
+  genuinely non-resumable state — e.g. a snapshot still recorded `running` — is
+  still a model-addressable tool error. Two model-facing strings changed with it: a
+  `StopError` Subagent result now carries a resume hint after its `agentId:`
+  trailer, and a resumed `mode:"read-write"` child is told its earlier edits SURVIVED
+  (it never forked) instead of receiving the read-only fresh-checkout staleness note.
+  In `agent.Supervisor`, a team member whose round left its session failed is
+  likewise recovered rather than benched, so a failed LEAD still reaches its final
+  synthesis; `MemberOutcome.Stopped`/`Reason` are unchanged (a failed round still
+  deschedules the member). Consumers relying on a failed child being permanently
+  unresumable — or matching on the old refusal copy — must adjust. (issue #318)
+
 - **`agent.NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager)`**
   — the AC4.3 plan-mode gate now also denies the `fire` of a MUTATING schedule
   (the plan-mode hard-deny on mutations: a `mutating: true` schedule's fire

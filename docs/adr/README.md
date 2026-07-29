@@ -53,6 +53,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0058 — Writable named-specialist Subagent (`mode:"read-write"` + `agent`)](./0058-writable-named-specialist-subagent.md)
 - [0077 — Direct-write writable Subagent (no fork, no merge-back)](./0077-direct-write-subagent.md)
 - [0079 — Converge delegation observability on two tiers (bounded previews for Subagent/Parallel)](./0079-delegation-observability-convergence.md)
+- [0077 — A failed delegated child is resumable (Recover, not refuse)](./0077-resume-a-failed-subagent.md)
 
 ### Providers & APIs
 - [0016 — Multi-provider](./0016-multi-provider.md)

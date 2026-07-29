@@ -383,7 +383,7 @@ func TestSynthesisCancelledMidTeamFallsBackNeverStale(t *testing.T) {
 	}
 }
 
-// stopErrorTurn is a scripted turn that ends in StopError (a non-resumable failure).
+// stopErrorTurn is a scripted turn that ends in StopError (a run FAILURE).
 func stopErrorTurn() mockllm.Turn {
 	return mockllm.ChunksTurn(
 		mockllm.TextChunk("boom"),
@@ -391,28 +391,121 @@ func stopErrorTurn() mockllm.Turn {
 	)
 }
 
-// TestSynthesisFallbackWhenLeadStopped asserts the edge case: when the lead's last
-// run failed non-resumably, synthesise returns "" and the supervisor's outcome
-// Report is empty (the Team tool then renders joinTeamFallback) — never a synthesis
-// on a dead session.
-func TestSynthesisFallbackWhenLeadStopped(t *testing.T) {
-	tm := team.New("demo")
-	rec := newPromptRecorder()
-	scripts := map[string][]mockllm.Turn{
-		"lead": {stopErrorTurn()}, // round 0 fails → non-resumable
-	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
-		recordingFactory(t, tm, rec, scripts),
-		agent.WithTeamGoal("goal"),
-		agent.WithMaxRounds(3))
-	mustAdd(t, sup, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "go"})
-	out := sup.Run(context.Background(), nil)
+// stateRecordingStore wraps a SessionStore and records the State of every session as it
+// is saved, in order. The team supervisor persists a member right after its turn drains
+// and BEFORE recovering it, so the FIRST recorded state for a member is the terminal the
+// recovery dispatch actually saw — which a plain Load cannot show, because the later
+// synthesis save overwrites the snapshot with a completed one.
+type stateRecordingStore struct {
+	inner port.SessionStore
+	mu    sync.Mutex
+	saved map[session.SessionID][]session.State
+}
 
-	if out.Report != "" {
-		t.Errorf("a non-resumable lead must yield an empty Report (fallback), got %q", out.Report)
+func newStateRecordingStore() *stateRecordingStore {
+	return &stateRecordingStore{inner: memstore.New(), saved: map[session.SessionID][]session.State{}}
+}
+
+func (s *stateRecordingStore) Save(ctx context.Context, sess *session.Session) error {
+	s.mu.Lock()
+	s.saved[sess.ID] = append(s.saved[sess.ID], sess.State)
+	s.mu.Unlock()
+	return s.inner.Save(ctx, sess)
+}
+
+func (s *stateRecordingStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	return s.inner.Load(ctx, id)
+}
+
+// firstSavedState returns the state of the FIRST save recorded for id.
+func (s *stateRecordingStore) firstSavedState(t *testing.T, id session.SessionID) session.State {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	states := s.saved[id]
+	if len(states) == 0 {
+		t.Fatalf("no save recorded for %q (saved: %+v)", id, s.saved)
 	}
-	if len(out.Members) != 1 || !out.Members[0].Stopped {
-		t.Fatalf("lead should be stopped: %+v", out.Members)
+	return states[0]
+}
+
+// TestSynthesisRunsAfterLeadRunFailed is the TEAM half of issue #318, and the inverse of
+// the empty-Report fallback this test used to pin. A lead whose working round ends in
+// StopError used to be flagged nonResumable, so synthesise refused to drive it and the
+// team's DELIVERABLE degraded to the labelled fallback — one transient provider failure
+// (the terminal stream-idle stall) cost the whole team its report. The supervisor now
+// returns the lead's session to idle through whichever seam its STATE needs, so the one
+// synthesis turn still runs.
+//
+// Both StopError SHAPES are covered, because they land in DIFFERENT states and therefore
+// exercise DIFFERENT seams — precisely why the supervisor dispatches on m.sess.State and
+// not on the stop reason:
+//
+//   - an EMPTY turn with a terminal error stop goes through the loop's terminate() →
+//     Fail() → StateFailed → Recover();
+//   - a TEXT-BEARING turn with the same stop chunk goes through terminateComplete() →
+//     Stop() → StateCompleted → Reopen() (which the old code skipped entirely for a
+//     StopError run).
+//
+// In both cases the member is still reported stopped/error: `stopped` (descheduled, tasks
+// released, honest "stopped before finishing" signal to the lead) is deliberately
+// unchanged — only `nonResumable` (can this session be driven at all?) moved.
+func TestSynthesisRunsAfterLeadRunFailed(t *testing.T) {
+	tests := []struct {
+		name   string
+		round0 mockllm.Turn
+		// wantState is the state the failed round leaves behind — i.e. WHICH recovery
+		// seam this case exercises. Asserting it is what stops a case from silently
+		// drifting into the other seam and leaving the one under test uncovered.
+		wantState session.State
+	}{
+		{
+			name:      "empty error turn leaves the session failed (Recover)",
+			round0:    mockllm.EmptyTurnWithStop(session.StopError),
+			wantState: session.StateFailed,
+		},
+		{
+			name:      "text-bearing error turn leaves the session completed (Reopen)",
+			round0:    stopErrorTurn(),
+			wantState: session.StateCompleted,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newStateRecordingStore()
+			tm := team.New("demo")
+			rec := newPromptRecorder()
+			scripts := map[string][]mockllm.Turn{
+				"lead": {
+					tc.round0, // round 0 fails
+					mockllm.TextTurn("RECOVERED REPORT despite fail"), // synthesis still runs
+				},
+			}
+			sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+				recordingFactory(t, tm, rec, scripts),
+				agent.WithTeamGoal("goal"),
+				agent.WithMaxRounds(3),
+				agent.WithMemberStore(store),
+				agent.WithMemberSessionPrefix("team-demo"))
+			mustAdd(t, sup, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "go"})
+			out := sup.Run(context.Background(), nil)
+
+			if got := store.firstSavedState(t, agent.MemberSessionID("demo", "lead")); got != tc.wantState {
+				t.Fatalf("the failed round left state %q, want %q — this case would not exercise its recovery seam",
+					got, tc.wantState)
+			}
+
+			if !strings.Contains(out.Report, "RECOVERED REPORT despite fail") {
+				t.Errorf("a lead whose round FAILED must still be recovered for the synthesis turn (issue #318); Report = %q", out.Report)
+			}
+			if len(out.Members) != 1 {
+				t.Fatalf("want 1 member, got %+v", out.Members)
+			}
+			// The honest terminal signal is unchanged: the round DID fail.
+			if !out.Members[0].Stopped || out.Members[0].Reason != agent.StopReasonError {
+				t.Fatalf("the failed lead must still report stopped/error, got %+v", out.Members[0])
+			}
+		})
 	}
 }
 

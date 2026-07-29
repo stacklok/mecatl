@@ -364,11 +364,13 @@ type memberRT struct {
 	// single-goroutine happens-before discipline as turnsUsed.
 	ran     bool
 	stopped bool
-	// nonResumable is true when the member's session can NO LONGER be driven — its
-	// last run failed (StopError) or Reopen failed. It is DISTINCT from stopped: a
-	// member stopped purely by its lifetime turn budget is non-schedulable but its
-	// session is still resumable, so the lead-synthesis special-case (§5) may drive it
-	// ONE last time. synthesise skips a lead only when nonResumable is set.
+	// nonResumable is true when the member's session can NO LONGER be driven: the
+	// recovery seam its terminal state requires (Reopen for a clean/limit end, Recover
+	// for a StopError one — issue #318) itself FAILED. It is DISTINCT from stopped: a
+	// member stopped by its lifetime turn budget, or by one errored round it was
+	// recovered from, is non-schedulable but its session is still drivable, so the
+	// lead-synthesis special-case (§5) may drive it ONE last time. synthesise skips a
+	// lead only when nonResumable is set.
 	nonResumable bool
 	// stopReason is the closed-enum cause when this member is stopped (set in runTurn's
 	// stop branch alongside stopped). Empty for a member that finished cleanly. Touched
@@ -933,7 +935,9 @@ type MemberStopReason string
 
 const (
 	// StopReasonError is a run that failed (StopError) or a session that could not be
-	// re-opened — both internal-fault, non-resumable class.
+	// returned to idle — both the internal-fault class. A failed run is RECOVERED
+	// (issue #318), so this reason no longer implies the session is undrivable; only
+	// memberRT.nonResumable says that.
 	StopReasonError MemberStopReason = "error"
 	// StopReasonCancelled is a member ended by ctx cancellation.
 	StopReasonCancelled MemberStopReason = "cancelled"
@@ -948,8 +952,9 @@ type MemberOutcome struct {
 	Name string
 	// LastText is the member's most recent terminal assistant text.
 	LastText string
-	// Stopped reports whether the member ended in a non-resumable state (its last
-	// run failed or was cancelled, so it could not be re-opened for another round).
+	// Stopped reports whether the supervisor descheduled the member before the team
+	// finished (its last run failed or was cancelled, or it exhausted its lifetime turn
+	// budget), so it ran no further rounds.
 	Stopped bool
 	// Disposition is the member's TERMINAL disposition (done / stopped). It is the
 	// closed-enum form of Stopped: Disposition == DispositionStopped iff Stopped.
@@ -1173,26 +1178,52 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	// task owned by a dead member — and so a budget-exhausted looping member cannot
 	// hold work hostage to the round cap.
 	budgetExhausted := s.turnBudget > 0 && m.turnsUsed >= s.turnBudget
-	// A StopError run or a failed Reopen leaves the session NON-resumable; a member
-	// stopped purely by its budget keeps a resumable session (so the lead-synthesis
-	// special-case may drive it once). Capture the distinction for synthesise. Reopen
-	// is evaluated lazily so a budget-exhausted-but-otherwise-fine member is still
-	// re-opened (cheap, and it keeps the session in idle for a possible synthesis).
-	reopenErr := error(nil)
-	if stop != session.StopError {
+	// Return the member's session to idle so it is DRIVABLE again, choosing the seam its
+	// terminal STATE requires (issue #318). Before the fix this read `if stop !=
+	// StopError { Reopen() }` and then forced nonResumable for a StopError run, so one
+	// transient provider failure (the terminal 180s stream-idle stall) permanently
+	// bricked the member — most visibly for a LEAD, whose final synthesis (the team's
+	// DELIVERABLE) was then skipped for the labelled fallback.
+	//
+	// The dispatch keys on m.sess.State, NOT on stop: a StopError run does not imply a
+	// failed session. The loop's terminate() path Fail()s the session, but
+	// terminateComplete() — which a text-bearing turn carrying a terminal StopError stop
+	// chunk goes through — Stop()s it into StateCompleted. Only the FAILED shape changes
+	// behaviour here: Reopen is completed-only, so it could never handle it anyway and
+	// Recover is the only seam that can. Every other state keeps its exact prior
+	// behaviour, deliberately including a CANCELLED member, whose Reopen still fails and
+	// whose failure is what deschedules it with the StopReasonCancelled classification
+	// (Interrupt here would silently reschedule a cancelled member — a different change,
+	// not this one). Recover history-repairs the failed turn with the failure-accurate
+	// close-out wording, so the replayed history stays provider-valid; per its contract
+	// recovery makes retry POSSIBLE, not guaranteed — a permanent cause re-fails cleanly.
+	//
+	// nonResumable now means what its name says — the session could NOT be returned to
+	// idle — and is set ONLY when that transition itself failed. `stopped` is unchanged:
+	// a member whose round ended in error is still descheduled and still reports
+	// StopReasonError, because the honest signal to the lead ("this member stopped
+	// before finishing") and the task release that lets a peer pick the work up both
+	// hang off it. See docs/adr/0077-resume-a-failed-subagent.md.
+	var reopenErr error
+	if m.sess.State == session.StateFailed {
+		reopenErr = m.sess.Recover()
+	} else {
 		reopenErr = m.sess.Reopen()
 	}
-	warnUnexpectedReopen(ctx, s.caps.diag, m.spec.Name, stop, reopenErr)
+	warnUnexpectedRecovery(ctx, s.caps.diag, m.spec.Name, stop, reopenErr)
 	if stop == session.StopError || budgetExhausted || reopenErr != nil {
 		m.stopped = true
-		if stop == session.StopError || reopenErr != nil {
+		// Set-only, never cleared: the flag is a latch (a stopped member is not
+		// rescheduled, so runTurn does not re-enter for it — but a plain assignment
+		// would silently un-latch it if that ever changed).
+		if reopenErr != nil {
 			m.nonResumable = true
 		}
 		// Classify the stop reason (closed enum). Order is most-specific first: test
 		// stop == StopCancelled BEFORE reopenErr, because a cancelled member's Reopen
 		// also fails (Reopen is completed-only) and would otherwise collapse a genuine
-		// cancellation into the generic error class. Reopen-failure folds into error
-		// (same nonResumable family as StopError); budget is the residual lifetime cap.
+		// cancellation into the generic error class. A failed recovery folds into error
+		// (it IS the nonResumable case); budget is the residual lifetime cap.
 		switch {
 		case stop == session.StopCancelled:
 			m.stopReason = StopReasonCancelled
@@ -1215,18 +1246,24 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	s.fireTeammateIdle(ctx, m)
 }
 
-// warnUnexpectedReopen emits an operator WARN when a member's Reopen failed for a
-// reason OTHER than the expected cancelled case (a cancelled member's Reopen always
-// fails — Reopen is completed-only — and is already classified StopReasonCancelled).
-// It rides the parent run's diagnostics (parentCaps.diag), like the headless
-// auto-deny INFO — a supervisor-level emission, NOT one of the Engine loop's two
-// lines. nil diag (gRPC RunTeam path / no caps) disables it.
-func warnUnexpectedReopen(ctx context.Context, diag port.Diagnostics, member string, stop session.StopReason, reopenErr error) {
-	if reopenErr == nil || stop == session.StopCancelled || diag == nil {
+// warnUnexpectedRecovery emits an operator WARN when a member could not be returned to
+// idle after its turn — for a reason OTHER than the expected cancelled case (a cancelled
+// member's Reopen always fails — Reopen is completed-only — and is already classified
+// StopReasonCancelled). Both recovery seams route here: Reopen for a clean/limit
+// terminal and Recover for a StopError one (issue #318), so the wording names the
+// OUTCOME ("could not be returned to idle") rather than one specific verb — the
+// StopError arm reaches it only when Recover itself fails, which is the genuinely
+// non-resumable case and worth an operator line.
+//
+// It rides the parent run's diagnostics (parentCaps.diag), like the headless auto-deny
+// INFO — a supervisor-level emission, NOT one of the Engine loop's lines. nil diag (gRPC
+// RunTeam path / no caps) disables it.
+func warnUnexpectedRecovery(ctx context.Context, diag port.Diagnostics, member string, stop session.StopReason, recoverErr error) {
+	if recoverErr == nil || stop == session.StopCancelled || diag == nil {
 		return
 	}
-	diag.Log(ctx, port.LevelWarn, "team member reopen failed; member will not be rescheduled",
-		"member", member, "stop", string(stop), "error", reopenErr.Error())
+	diag.Log(ctx, port.LevelWarn, "team member could not be returned to idle; member will not be rescheduled",
+		"member", member, "stop", string(stop), "error", recoverErr.Error())
 }
 
 // fireTeammateIdle runs the TeammateIdle hook for a member that just went idle
@@ -1345,7 +1382,7 @@ func (s *Supervisor) persistMember(ctx context.Context, m *memberRT) {
 // session afterwards. It returns "" — telling Run to fall back to the structured
 // deliverable (the QUALITY gate that rejects a refusal-shaped report lives in the Team
 // tool's deliverable() chain, NOT here: synthesise is a pure producer) —
-// when there is no lead, the lead is stopped (non-resumable: Reopen already failed),
+// when there is no lead, the lead is non-resumable (it could not be returned to idle),
 // or the lead produced no synthesis text. When the lead hits its turn budget mid-
 // synthesis but produced text, the text is returned with a truncation note.
 func (s *Supervisor) synthesise(ctx context.Context, evCh chan<- TeamEvent) (report string, ran bool) {
@@ -1354,11 +1391,13 @@ func (s *Supervisor) synthesise(ctx context.Context, evCh chan<- TeamEvent) (rep
 	}
 	lead := s.members[s.leadName]
 	if lead == nil || lead.nonResumable {
-		// A non-resumable lead's session cannot be driven (its last run failed or
-		// Reopen failed). The only correct path is the labelled fallback, never a
-		// synthesis on a dead session. A lead stopped PURELY by its turn budget is NOT
-		// non-resumable: §5's special-case allows the ONE synthesis turn even then (the
-		// report is the deliverable), which is why we gate on nonResumable, not stopped.
+		// A non-resumable lead's session cannot be driven (its recovery seam — Reopen,
+		// or Recover for a failed run — itself failed). The only correct path is the
+		// labelled fallback, never a synthesis on a dead session. A lead stopped PURELY
+		// by its turn budget, or by one ERRORED round it was recovered from (issue
+		// #318), is NOT non-resumable: §5's special-case allows the ONE synthesis turn
+		// even then (the report is the deliverable), which is why we gate on
+		// nonResumable, not stopped.
 		return "", false
 	}
 
@@ -1371,8 +1410,9 @@ func (s *Supervisor) synthesise(ctx context.Context, evCh chan<- TeamEvent) (rep
 	// cumulative session.Usage now survives Reopen (cloud-native Phase 1, so the
 	// budget survives restart), reset the lead's accumulator through the explicit
 	// aggregate seam so the synthesis turn is not re-blocked by the working run's
-	// spend. The lead is idle here (Reopened after its working run; a non-resumable
-	// lead was already gated out above), so ResetUsage is legal. The synthesis spend
+	// spend. The lead is idle here (Reopened — or Recovered, issue #318 — after its
+	// working run; a non-resumable lead was already gated out above), so ResetUsage is
+	// legal. The synthesis spend
 	// is still folded into the team OUTCOME below (lead.tokensUsed), so the accounting
 	// is complete; only the per-run brake input is reset. A reset error is impossible
 	// on this idle path but is non-fatal (it would only leave the prior spend, which

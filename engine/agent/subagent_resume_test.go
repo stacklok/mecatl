@@ -276,26 +276,119 @@ func TestSubagentResumeCancelledInterrupts(t *testing.T) {
 	assertNoOrphanedToolCalls(t, msgs)
 }
 
-// TestSubagentResumeFailedRejected proves a child that ended in StopError (failed) is NOT
-// resumable: the exact not-resumable copy, and nothing is driven.
-func TestSubagentResumeFailedRejected(t *testing.T) {
+// TestSubagentResumeFailedRecovers is the #318 core contract, the inverse of the
+// refusal this test used to pin: a child that ended in StopError (persisted `failed`) IS
+// resumable. resolveResumeSession recovers it to idle, the child is driven for real, its
+// prior conversation is replayed, and the continuation is re-persisted.
+func TestSubagentResumeFailedRecovers(t *testing.T) {
 	store := memstore.New()
-	childEngine := childEngineWith(mockllm.New(mockllm.EmptyTurnWithStop(session.StopError)), catalogWith(t))
+
+	var mu sync.Mutex
+	var resumeReqMsgs []session.Message
+	var childRun int
+	obs := func(req port.LLMRequest) {
+		mu.Lock()
+		defer mu.Unlock()
+		childRun++
+		if childRun == 2 {
+			resumeReqMsgs = req.Messages
+		}
+	}
+	// Turn 1 crashes the child (empty turn + a StopError stop chunk = the shape a
+	// terminal provider failure lands in); turn 2 is the resumed child's real answer.
+	childLLM := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(obs)},
+		mockllm.EmptyTurnWithStop(session.StopError),
+		mockllm.TextTurn("RESUMED_AFTER_FAILURE"),
+	)
+	childEngine := childEngineWith(childLLM, catalogWith(t))
 	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
 
-	runOneSubagent(t, task, "p1", `{"prompt":"crash"}`)
+	failed := runOneSubagent(t, task, "p1", `{"prompt":"investigate the FIRST_PROMPT"}`)
+	if !failed.IsError {
+		t.Fatalf("crashed child should render a tool error, got %+v", failed)
+	}
 	sess, _ := store.Load(context.Background(), session.SessionID("subagent-p1"))
 	if sess.State != session.StateFailed {
-		t.Fatalf("errored child should be failed, got %q", sess.State)
+		t.Fatalf("errored child should be persisted failed, got %q", sess.State)
 	}
 
-	resumed := runOneSubagent(t, task, "p2", resumeArgs("subagent-p1", "continue"))
-	if !resumed.IsError {
-		t.Fatalf("resume of a failed child must be an error, got %+v", resumed)
+	resumed := runOneSubagent(t, task, "p2", resumeArgs("subagent-p1", "continue after the failure"))
+	if resumed.IsError {
+		t.Fatalf("resume of a FAILED child must now succeed (issue #318), got: %q", resumed.Content)
 	}
-	want := `Subagent: subagent "subagent-p1" ended in a failed state and is not resumable; start a fresh subagent instead`
-	if !strings.Contains(resumed.Content, want) {
-		t.Fatalf("not-resumable copy mismatch, got %q", resumed.Content)
+	if !strings.Contains(resumed.Content, "RESUMED_AFTER_FAILURE") {
+		t.Fatalf("resumed child did not continue, got %q", resumed.Content)
+	}
+	if got := extractAgentID(t, resumed.Content); got != "subagent-p1" {
+		t.Fatalf("resumed agentId = %q, want the same subagent-p1", got)
+	}
+
+	// The recovered session replays the prior conversation, so the delegation's
+	// accumulated context — the whole reason #318 is a bug — actually survives.
+	mu.Lock()
+	msgs := resumeReqMsgs
+	mu.Unlock()
+	var sawOrig bool
+	for _, m := range msgs {
+		if m.Role == session.RoleUser && strings.Contains(m.Text, "FIRST_PROMPT") {
+			sawOrig = true
+		}
+	}
+	if !sawOrig {
+		t.Fatalf("recovered child did not replay its prior conversation: %+v", msgs)
+	}
+	assertNoOrphanedToolCalls(t, msgs)
+
+	// And the continuation is re-persisted as a normal (idle-recovered, then completed)
+	// session, not left failed.
+	after, err := store.Load(context.Background(), session.SessionID("subagent-p1"))
+	if err != nil {
+		t.Fatalf("resumed child not re-persisted: %v", err)
+	}
+	if after.State != session.StateCompleted {
+		t.Fatalf("re-persisted state = %q, want completed", after.State)
+	}
+}
+
+// TestSubagentResumeFailedTightensLimits proves the recovery arm still runs the SAME
+// downstream contract as the other two terminals: the loaded session's preserved Limits
+// are tightened by the per-call args (tighten-only), never loosened. A stored
+// MaxToolCalls of 1 must still bind a recovered child even when the resume call asks for
+// more.
+func TestSubagentResumeFailedTightensLimits(t *testing.T) {
+	store := memstore.New()
+	// Seed a FAILED child whose stored limits are tighter than the resume call's.
+	seed := session.New("subagent-p1", session.ModeDefault, "/ws",
+		session.Limits{MaxTurns: 2, MaxToolCalls: 1}, time.Now())
+	if err := seed.BeginTurn(); err != nil {
+		t.Fatalf("seed BeginTurn: %v", err)
+	}
+	if err := seed.RecordAssistant(session.NewAssistantMessage("seed answer", "", nil)); err != nil {
+		t.Fatalf("seed RecordAssistant: %v", err)
+	}
+	if err := seed.Fail(); err != nil {
+		t.Fatalf("seed Fail: %v", err)
+	}
+	if err := store.Save(context.Background(), seed); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	childLLM := mockllm.New(mockllm.TextTurn("RECOVERED"))
+	childEngine := childEngineWith(childLLM, catalogWith(t))
+	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
+
+	res := runOneSubagent(t, task, "p2",
+		`{"resume":"subagent-p1","prompt":"continue","max_turns":50,"max_tool_calls":99}`)
+	if res.IsError {
+		t.Fatalf("resume of a failed child errored: %q", res.Content)
+	}
+	after, err := store.Load(context.Background(), session.SessionID("subagent-p1"))
+	if err != nil {
+		t.Fatalf("resumed child not re-persisted: %v", err)
+	}
+	if after.Limits.MaxTurns != 2 || after.Limits.MaxToolCalls != 1 {
+		t.Fatalf("recovered child limits = %+v, want the stored (tighter) {MaxTurns:2 MaxToolCalls:1} — a per-call arg must only tighten", after.Limits)
 	}
 }
 
@@ -663,11 +756,16 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 	if err := store.Save(context.Background(), seed); err != nil {
 		t.Fatalf("seed save: %v", err)
 	}
-	// And a FAILED child for the fail-fast case.
-	failedSeed := session.New("subagent-pf", session.ModeDefault, "/dead/original-worktree", session.Limits{}, time.Now())
-	_ = failedSeed.Fail()
-	if err := store.Save(context.Background(), failedSeed); err != nil {
-		t.Fatalf("failed-seed save: %v", err)
+	// And a still-RUNNING child (the shape a process that died mid-turn leaves behind)
+	// for the fail-fast case: StateRunning hits resolveResumeSession's default arm, the
+	// one state that is still not resumable. (StateFailed is NOT usable here anymore —
+	// issue #318 made it recover, so it forks like any other resume.)
+	runningSeed := session.New("subagent-pr", session.ModeDefault, "/dead/original-worktree", session.Limits{}, time.Now())
+	if err := runningSeed.BeginTurn(); err != nil {
+		t.Fatalf("running-seed BeginTurn: %v", err)
+	}
+	if err := store.Save(context.Background(), runningSeed); err != nil {
+		t.Fatalf("running-seed save: %v", err)
 	}
 
 	// Mirror the real composition: the child engine's PromptConfig pre-populates the
@@ -697,14 +795,15 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 		agent.WithSubagentStore(store),
 		agent.WithChildForker(forker))
 
-	// (b) FAIL FAST: an unknown id and a failed id must never reach the forker.
+	// (b) FAIL FAST: an unknown id and a non-resumable (still running) id must never
+	// reach the forker.
 	unknown := runOneSubagent(t, task, "p2", resumeArgs("subagent-nope", "continue"))
 	if !unknown.IsError {
 		t.Fatalf("unknown-id resume must error, got %+v", unknown)
 	}
-	failedRes := runOneSubagent(t, task, "p3", resumeArgs("subagent-pf", "continue"))
-	if !failedRes.IsError {
-		t.Fatalf("failed-id resume must error, got %+v", failedRes)
+	runningRes := runOneSubagent(t, task, "p3", resumeArgs("subagent-pr", "continue"))
+	if !runningRes.IsError {
+		t.Fatalf("running-id resume must error, got %+v", runningRes)
 	}
 	forker.mu.Lock()
 	preForks := len(forker.labels)

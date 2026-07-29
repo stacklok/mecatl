@@ -54,7 +54,10 @@ validation error / error) and carries an `agentId: <childID>` trailer on every t
 (model-visible, mirroring the Team-id line) so the parent can discover the child id and
 read its persisted transcript via the read-only `InspectSubagent` tool (the id is used
 verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up prompt
-(default engine only, fresh fork + staleness note; `failed` is not resumable).
+(default engine only, fresh fork + a resume note — the read-only staleness note, or the
+edits-survived note for a direct-write child). EVERY terminal is resumable, `failed`
+included (ADR 0077): a failed child recovers through `session.Session.Recover`, and its
+error result carries a resume hint so the model can discover the path.
 `fork: true` (issue #34) seeds the child from a DEEP COPY of the parent conversation
 (via `session.ForkSnapshot` — trailing fork-call orphan stripped — and the idle-only
 `session.Session.SeedHistory`) instead of an empty context, TRUST-NEUTRAL (carried

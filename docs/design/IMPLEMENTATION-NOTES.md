@@ -57,10 +57,11 @@ on a reused session at the run-entry funnel (`loadAndReopen`):
   failure (an upstream 5xx that exhausted the resilience retries) degrades to
   "retryable" instead of permanently bricking the session. Recovery makes retry
   POSSIBLE, not guaranteed — a permanent-cause failure (auth/config) simply
-  fails again with the conversation context intact, and the user can clear. The
-  subagent `resume:` policy is deliberately NOT changed (see the Subagent
-  resume note below): a failed child is still not resumable — re-delegate
-  instead.
+  fails again with the conversation context intact, and the user can clear. Since
+  ADR 0077 (issue #318) the subagent `resume:` path uses this seam too: a failed
+  CHILD recovers exactly like a main session (see the Subagent resume note
+  below), because a long-running direct-write child's accumulated cost includes
+  mutations already applied to the real tree.
 
 The service's `loadAndReopen` (shared by `LoadSession`/`LoadSessionWithMCP`, and
 upstream of every `StartRunContent` run-entry) branches on state: `completed →
@@ -1046,9 +1047,13 @@ team-member transcript (`team-<teamID>-<member>`) cannot be resumed through Suba
 via `InspectMember`) — the same gate `InspectSubagent` uses. The child is reloaded and its terminal
 state recovered at the AGENT layer (the `loadAndReopen` discipline): `StateCompleted` → `Reopen()`,
 `StateCancelled` → `Interrupt()` (history-repair, no dangling tool_use), `StateIdle` → run as-is,
-`StateFailed` → NOT resumable (start fresh), any other state → not-in-a-resumable-state. The load +
-recovery + limits-tighten run BEFORE the workspace fork, so the common error cases (unknown id, failed
-state, broken store) FAIL FAST without paying a fork/unfork round-trip; AFTER the fork the recovered
+`StateFailed` → `Recover()` (history-repair with the FAILURE-accurate close-out wording — ADR 0077,
+issue #318; it used to be refused on the premise that "a failed child carries no accumulated-user-context
+cost", which a 50+-turn direct-write child with mutations already applied to the real tree falsifies),
+any other state (e.g. a snapshot still recorded `running` — a process that died mid-turn) →
+not-in-a-resumable-state. The load + recovery + limits-tighten run BEFORE the workspace fork, so the
+common error cases (unknown id, non-resumable state, broken store) FAIL FAST without paying a fork/unfork
+round-trip; AFTER the fork the recovered
 session is re-homed onto the fresh root via the new domain method `session.Session.Rehome` (legal only
 from `StateIdle`) — a FIELD-CONSISTENCY repair: it keeps the persisted session's recorded workspace
 consistent with where the resumed run actually executes (the original worktree is torn down; without
@@ -1056,11 +1061,19 @@ it the re-persisted snapshot would record a dead path). NOTE: the child's prompt
 sourced from the engine's `PromptConfig` and is NOT affected by this field (the loop's
 `sess.Workspace` fallback only fires when the configured prompt `Env.Cwd` is empty, and composition
 pre-populates it). The effective prompt is prefixed
-with the verbatim `resumeStalenessNote` (the conversation survives but file changes/build state/running
-processes do NOT — re-run/re-read before trusting earlier observations), computed BEFORE the
-structured-output wrap so a resumed structured-output child sees the note inside the wrap. The LOADED
+with a verbatim harness resume note, computed BEFORE the structured-output wrap so a resumed
+structured-output child sees the note inside the wrap. WHICH note depends on the mode: a READ-ONLY child
+gets `resumeStalenessNote` (the conversation survives but file changes/build state/running processes do
+NOT — its worktree was torn down, so re-run/re-read before trusting earlier observations); a
+`mode:"read-write"` child gets `resumeWritableNote`, because it NEVER forked (ADR 0041) and its earlier
+edits are still sitting in the real tree — telling it they were "GONE" would be false in exactly the
+direction that defeats ADR 0077 (a recovered direct-write child must build ON its partial edits).
+A FAILED child's error result additionally carries `subagentErrorResumeHint` after the agentId trailer, so
+the model can DISCOVER the recovery path (ADR 0070). That hint lives in `renderSubagentResult`, NOT in the
+`subagentErrorBody` helper shared with Parallel: a `parallel-<callID>-<n>` branch id fails the resume
+prefix gate, so advertising resume there would instruct the model to take an action that cannot succeed. The LOADED
 session keeps its STORED Limits; the per-call `max_turns`/`max_tool_calls` only TIGHTEN them (Reopen/
-Interrupt already reset Counters, so each bound applies afresh); the per-call token budget (`max_run_tokens`,
+Interrupt/Recover all reset Counters via `resetToIdle`, so each bound applies afresh); the per-call token budget (`max_run_tokens`,
 the preferred arg; `max_tokens` the deprecated alias for the same budget — `resolveMaxRunTokens` folds the
 two and REJECTS differing positive values with a model-visible error, accepts same-value) rides the same
 `RunOptions.MaxRunTokensOverride`. An IN-FLIGHT GUARD (`tryAcquireChildID`/`releaseChildID` over a
@@ -1071,7 +1084,13 @@ and waiting would park a dispatcher goroutine + a gate slot (liveness). Everythi
 unchanged: the persist re-saves the SAME id (the grown conversation), the trailer carries the SAME id,
 the structured-output retry and `driveChild` work identically, and no-nesting holds by construction.
 Guards: `agent.TestParentResumesSubagentByTrailerID` (model-facing e2e), `TestSubagentResumeContinuesPriorConversation`,
-`TestSubagentResumeAfterMaxTurns`, `TestSubagentResumeCancelledInterrupts`, `TestSubagentResumeFailedRejected`,
+`TestSubagentResumeAfterMaxTurns`, `TestSubagentResumeCancelledInterrupts`, `TestSubagentResumeFailedRecovers`,
+`TestSubagentResumeFailedTightensLimits`, `TestSubagentResumeFailedRepairsOrphanedToolCall` (adversarial —
+the recovered replay satisfies `session.ValidateToolPairing` and the synthetic close-out carries the
+FAILURE wording, never the cancellation wording), `TestSubagentFailedResultAdvertisesResume` +
+`TestParallelBranchFailureDoesNotAdvertiseResume` (the hint lands, and only where it is true),
+`TestParentResumesFailedSubagentByTrailerID`, `TestWritableResumeNoteSaysEditsSurvive` +
+`TestReadOnlyResumeNoteKeepsFreshCheckoutWording`, `TestSynthesisRunsAfterLeadRunFailed` (the team half),
 `TestSubagentResumeWithAgentRejected`/`TestSubagentResumeWithModelRejected`, `TestSubagentResumeUnknownIDErrors`,
 `TestSubagentResumeNoStoreRejected`, `TestSubagentConcurrentResumeGuard`, `TestSubagentResumeBudgetTightenOnly`,
 `TestSubagentResumeStructuredOutput`, `TestSubagentResumeTeamMemberIDRejected` (adversarial),
@@ -1831,10 +1850,15 @@ mutating-tool backstop because `MemberToolNames()` derives from `MemberTools`); 
 **LastText/completed-task digest** for members that recorded NO finding (rescues a limit-cut-off
 member whose `LastText` is otherwise the only trace); (3) the **lead's drained inbox**.
 `neutraliseFraming`'s header list is extended for every new synthesis/round-0 section header so
-an injected body cannot forge one. A lead stopped purely by its lifetime turn budget is still
-*resumable* (`memberRT.nonResumable` is set ONLY on `StopError`/`Reopen`-fail, NOT on budget), so
-the ONE synthesis turn runs even then (§5 special-case); a genuinely non-resumable lead yields an
-empty `Report` → the structured fallback.
+an injected body cannot forge one. A lead stopped by its lifetime turn budget — or, since ADR 0077,
+by one round that ended in `StopError` — is still *resumable*, so the ONE synthesis turn runs even
+then (§5 special-case). `runTurn` picks the recovery seam from the session's STATE
+(`StateFailed → Recover`, else `Reopen`) rather than from `stop`, because `terminateComplete` lands a
+text-bearing `StopError` turn in `StateCompleted`; `memberRT.nonResumable` is now set ONLY when that
+transition itself fails (in practice: a CANCELLED member, whose `Reopen` is illegal by design), and
+that is the one case that still yields an empty `Report` → the structured fallback. `stopped` /
+`StopReasonError` are unchanged: a failed round still deschedules the member and releases its tasks,
+so the lead still reads an honest "stopped before finishing".
 
 **The deliverable chain — never a bare refusal or empty (`teamtool.go`).** `synthesise` is a
 pure PRODUCER; the QUALITY gate lives in `deliverable(TeamOutcome)`, three tiers: **(1)** the

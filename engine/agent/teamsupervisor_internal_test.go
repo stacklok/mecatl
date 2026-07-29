@@ -53,27 +53,29 @@ func warnArgValue(line recordedWarn, key string) any {
 	return nil
 }
 
-// TestWarnUnexpectedReopen exercises the WI-9 helper directly: it emits exactly one WARN
-// only when a member's Reopen failed for a reason OTHER than cancellation, rides the
-// supplied diag, and is a no-op (no panic) for the nil-diag/expected cases.
-func TestWarnUnexpectedReopen(t *testing.T) {
+// TestWarnUnexpectedRecovery exercises the WI-9 helper directly: it emits exactly one
+// WARN only when a member could not be returned to idle for a reason OTHER than
+// cancellation, rides the supplied diag, and is a no-op (no panic) for the
+// nil-diag/expected cases. Both recovery seams (Reopen and, for a StopError member,
+// Recover — issue #318) report through it.
+func TestWarnUnexpectedRecovery(t *testing.T) {
 	t.Run("nil reopen error → no line", func(t *testing.T) {
 		d := &capturingDiag{}
-		warnUnexpectedReopen(context.Background(), d, "worker", session.StopMaxTurns, nil)
+		warnUnexpectedRecovery(context.Background(), d, "worker", session.StopMaxTurns, nil)
 		if len(d.lines) != 0 {
 			t.Fatalf("expected no diagnostic for a nil reopen error; got %+v", d.lines)
 		}
 	})
 	t.Run("cancelled stop with error → no line", func(t *testing.T) {
 		d := &capturingDiag{}
-		warnUnexpectedReopen(context.Background(), d, "worker", session.StopCancelled, errors.New("reopen: not completed"))
+		warnUnexpectedRecovery(context.Background(), d, "worker", session.StopCancelled, errors.New("reopen: not completed"))
 		if len(d.lines) != 0 {
 			t.Fatalf("a cancelled member's expected reopen failure must not warn; got %+v", d.lines)
 		}
 	})
 	t.Run("unexpected reopen failure → one warn", func(t *testing.T) {
 		d := &capturingDiag{}
-		warnUnexpectedReopen(context.Background(), d, "worker", session.StopMaxTurns, errors.New("boom"))
+		warnUnexpectedRecovery(context.Background(), d, "worker", session.StopMaxTurns, errors.New("boom"))
 		if len(d.lines) != 1 {
 			t.Fatalf("expected exactly one WARN line; got %+v", d.lines)
 		}
@@ -89,7 +91,7 @@ func TestWarnUnexpectedReopen(t *testing.T) {
 		}
 	})
 	t.Run("nil diag → no panic", func(_ *testing.T) {
-		warnUnexpectedReopen(context.Background(), nil, "worker", session.StopMaxTurns, errors.New("boom"))
+		warnUnexpectedRecovery(context.Background(), nil, "worker", session.StopMaxTurns, errors.New("boom"))
 	})
 }
 
