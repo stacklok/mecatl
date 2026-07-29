@@ -185,3 +185,27 @@ func TestSubagentErrorCardShowsProviderCause(t *testing.T) {
 		t.Fatalf("errored card must render the provider cause, got %q", out)
 	}
 }
+
+// TestSubagentFailureLineCollapsesEveryWhitespaceKind pins the client-side collapse against
+// the peer it exists for: an OLDER mecated whose subagent.end Cause was not normalised at
+// the emit site (the current server collapses with strings.Fields, so against it this call
+// is a no-op and any regression is invisible).
+//
+// It is a regression guard for a specific weakening: the collapse was briefly switched to
+// the package `oneLine` helper, which splits on {\n, \r, \t} only — so runs of spaces, NBSP
+// and U+2028/U+2029 stopped being collapsed while the code comment still claimed the bound.
+// unicode.IsSpace (strings.Fields) is what "one logical line" has to mean for an untrusted
+// peer string.
+func TestSubagentFailureLineCollapsesEveryWhitespaceKind(t *testing.T) {
+	ln := &subagentLane{
+		done: true,
+		stop: "error",
+		// A run of spaces, a no-break space and a Unicode line separator: all IsSpace, none
+		// of them in oneLine's {\n, \r, \t} set.
+		cause: "upstream 503:    model\u00a0overloaded\u2028retry later",
+	}
+	got := subagentFailureLine(ln, 120)
+	if !strings.Contains(got, "upstream 503: model overloaded retry later") {
+		t.Fatalf("every kind of whitespace must collapse to a single space for the width budget, got %q", got)
+	}
+}

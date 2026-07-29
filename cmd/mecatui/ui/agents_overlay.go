@@ -599,11 +599,17 @@ func subagentFailureLine(ln *subagentLane, width int) string {
 	}
 	// Collapse the cause to ONE logical line before clamping: a provider error body is
 	// often multi-line, and its own newlines would defeat the width budget below. The
-	// server already normalises the field at its emit site, so this is idempotent there —
-	// it stays because the TUI is a gRPC CLIENT and must not depend on the peer's version
-	// for a display bound. oneLine is the package helper every other server-derived
-	// string in this UI goes through.
-	return indentWrap("failed: "+truncate(sanitizeTerminal(oneLine(ln.cause)), maxSubagentCauseWidth), cardTextWidth(width))
+	// server already normalises the field at its emit site, so this is idempotent against a
+	// CURRENT peer — it stays because the TUI is a gRPC CLIENT and must not depend on the
+	// peer's version for a display bound.
+	//
+	// It deliberately uses strings.Fields rather than the package `oneLine` helper, which
+	// splits on {\n, \r, \t} only: against an OLDER mecated — the only peer this call
+	// exists for — that would leave runs of spaces, NBSP and U+2028/U+2029 uncollapsed,
+	// i.e. it would no longer provide the bound this comment claims. strings.Fields splits
+	// on every unicode.IsSpace, which is what "one logical line" has to mean for an
+	// untrusted peer string.
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), cardTextWidth(width))
 }
 
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its
