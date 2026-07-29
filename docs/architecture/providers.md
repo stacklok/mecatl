@@ -98,30 +98,16 @@ was needed. Live model listing rides `openCodeLister` (the `openaicompat` lister
 wrapped to stamp adapter-static text+image modalities, so a live refresh doesn't
 flip an uncatalogued model's Image capability to false).
 
-**SSE keepalive survival.** The `openai-go` SDK's `ssestream` decoder dispatches an
-Event on every blank line and `json.Unmarshal`s the accumulated data with no
-empty-payload check, so a bare SSE keepalive comment (`: ping - ...`, which OpenCode
-Go sends on long turns) yields `json.Unmarshal([]byte{}, ...)` → `*json.SyntaxError` →
-a latched decode error that ends the stream. Because this lands mid-turn (post the
-first committing chunk), the no-replay rule makes it **terminal**, not retried — one
-rare ping, on an otherwise-healthy stream, killed the turn outright. `ssefilter.go`
-(installed as the outermost `option.WithMiddleware` on the `openaichat.New`
-constructor — content-type-agnostic, since the SDK's own decoder-registry lookup
-misses `text/event-stream; charset=utf-8`) strips only the blank line and the
-empty-value `data:` line a keepalive produces, byte-for-byte otherwise, with no
-buffering beyond the current line. The filter caps a single buffered line at
-`bufio.MaxScanTokenSize<<9` (32 MiB, mirroring the SDK's own scanner bound) — sitting
-in front of that scanner would otherwise silently remove its bound and let an
-unterminated line grow unbounded. Scope is the `opencode` provider slot only; `openai`
-(Responses), `openrouter`, and `anthropic` use different adapters untouched by this.
-`llmresilience`'s transient-error classifier separately treats a bare `*json.SyntaxError`
-or a wrapped `io.ErrUnexpectedEOF` as retryable — a truncated or malformed FIRST frame,
-pre-first-chunk, is a legitimate transport hiccup worth one more attempt. The filter's
-own line-too-long error is deliberately kept OUT of that shape (a plain, unwrapped
-error, neither a `*json.SyntaxError` nor a wrapped `io.ErrUnexpectedEOF`), so it
-classifies as non-retryable instead: a 32 MiB unterminated line is a broken or
-hostile endpoint, not a transient truncation worth replaying. See
-[`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md).
+**SSE keepalive survival.** A bare SSE keepalive comment (`: ping - ...`, which
+OpenCode Go sends on long turns) used to kill the stream outright once it landed
+mid-turn — a rare event on an otherwise-healthy connection, but terminal every
+time it hit, since the no-replay rule can't retry past the first committed chunk.
+`ssefilter.go`, installed as middleware on the `openaichat.New` constructor,
+strips the keepalive line before the SDK's decoder ever sees it, bounding its own
+line buffer so it doesn't reopen the unbounded-read hazard it would otherwise sit
+in front of. Scope is the `opencode` provider slot only. See
+[`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md)
+and `docs/design/IMPLEMENTATION-NOTES.md` for the exact mechanics.
 `buildProvider` returns the registry **and** its default provider so the shared engine
 + every child/fork/team engine keep receiving the single default provider exactly as
 before (the default path is byte-identical). A composition-only `providerConstructor`

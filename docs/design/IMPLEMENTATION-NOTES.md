@@ -2755,6 +2755,51 @@ It is now the **FALLBACK FLOOR**, not the only source — a provider with a live
 with the embedded subset shown on any
 live error/empty/offline.
 
+### `openaichat` — OpenCode Go Chat Completions adapter + SSE keepalive filter (ADR 0067)
+
+The Chat Completions sibling of the `openai` Responses adapter, same `openai-go` SDK via
+`client.Chat.Completions`, provider id `opencode` (base URL `https://opencode.ai/zen/go/v1`,
+key `OPENCODE_API_KEY`, not in the vendored `providercatalog` subset — composition carries
+an explicit `opencode` arm in `providerEnvVars`). Generic OpenAI Chat-Completions protocol
+adapter, not opencode-specific at the wire level. Reasoning-effort passes through un-clamped
+(`xhigh`/`max` included); reasoning-replay and `ProviderPhase` are dropped (Chat Completions
+is stateless across turns) — no port/proto/engine-API change. Live listing rides
+`openCodeLister` (the `openaicompat` lister wrapped to stamp adapter-static text+image
+modalities, so a live refresh can't flip an uncatalogued model's Image capability to false).
+
+**SSE keepalive filter (`ssefilter.go`, fa79f22f/a616f746).** `openai-go`'s `ssestream`
+decoder dispatches an Event on every blank line and `json.Unmarshal`s the accumulated data
+with no empty-payload check, so a bare SSE keepalive comment (`: ping - ...`, observed from
+OpenCode Go on long turns) yields `json.Unmarshal([]byte{}, ...)` → `*json.SyntaxError` → a
+latched decode error. Post-first-committing-chunk this is **terminal** under the no-replay
+rule, not retried — one rare ping killed an otherwise-healthy turn outright. The fix is a
+streaming line filter installed as the OUTERMOST `option.WithMiddleware` on `openaichat.New`
+(not `ssestream.RegisterDecoder`, which is an unsynchronized package-level map and this
+adapter is re-minted per session; middleware is also content-type-agnostic, since the SDK's
+decoder-registry lookup on the RAW header misses `text/event-stream; charset=utf-8`). It
+strips ONLY the blank line that would dispatch an empty payload plus empty-value `data:`
+lines, byte-for-byte otherwise, buffering no more than the current line so SSE arrival
+timing is preserved. Scope is the `opencode` provider slot only — `openai` (Responses),
+`openrouter`, and `anthropic` use different adapters, untouched.
+
+Sitting the filter IN FRONT OF `ssestream`'s own scanner silently removes that scanner's
+line-length bound (measured: unbounded growth to 1126 MiB buffered / 3338 MiB heap in 5s on
+a newline-less stream, `Read` never returning — an OOM lands before `llmresilience`'s idle
+watchdog would). The filter caps a single buffered line at `bufio.MaxScanTokenSize<<9` (32
+MiB, mirroring the SDK's own scanner bound so the failure point doesn't shift, same posture
+as `maxToolArgsBytes`), via an unexported testable `maxLine` field rather than a mutable
+package global. `errSSELineTooLong` is deliberately a PLAIN error — neither a
+`*json.SyntaxError` nor wrapping `io.ErrUnexpectedEOF` — so `llmresilience.DefaultClassifier`
+(which separately treats a bare `*json.SyntaxError`/wrapped `io.ErrUnexpectedEOF` as
+retryable, `bb706b23` #283, for a truncated/malformed FIRST frame pre-first-chunk) classifies
+it non-retryable: a 32 MiB unterminated line is a broken or hostile endpoint, not a transient
+truncation worth replaying. The oversized partial line is discarded before the error latches
+so `Read`'s trailing-line flush can't swallow it. Tests: an ORACLE fixture (the unfiltered
+stream must still fail with the exact original error — fails if upstream adds its own guard),
+a wiring test through the real `New` → middleware → SDK path (mutation-verified: deleting the
+`option.WithMiddleware` line reproduces the production error), and a bounds test at the
+64-byte testable cap.
+
 ### `openrouter` (LIVE model listing leaf)
 
 GETs the FIXED-host const `https://openrouter.ai/api/v1/models` over an INJECTED `*http.Client`
