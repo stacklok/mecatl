@@ -406,6 +406,19 @@ func seedFailedChildInForkRoot(t *testing.T, store port.SessionStore, id session
 //
 // The note is therefore keyed on whether this run executes in the SAME tree the prior run
 // recorded, which the persisted workspace answers without any new field.
+//
+// It asserts BOTH axes, because they are independent and this cell is the only one where
+// they disagree. The earlier oracle asserted the edits axis and then required the
+// fresh-CHECKOUT wording — which is the OTHER axis, and false here: a mode:"read-write" call
+// never forks (prepareChildSession passes forker=nil, ADR 0041), so this child holds
+// Edit/Write on the operator's REAL repository while being told it is in a scratch
+// checkout, and a child that believes that may rewrite or delete files to "start clean".
+//
+// This is `package agent_test` and cannot read the unexported note constants, so each
+// absence check is paired with a POSITIVE control on the same live phrase elsewhere in this
+// file: "STILL IN PLACE" is required to be present by TestWritableResumeNoteSaysEditsSurvive
+// and "FRESH workspace checkout" by TestReadOnlyResumeNoteKeepsFreshCheckoutWording. A
+// reworded constant therefore reddens one of those instead of quietly voiding these.
 func TestReadOnlyChildResumedAsWritableIsNotToldItsEditsSurvived(t *testing.T) {
 	store := memstore.New()
 	// The prior run lived in a throwaway worktree, NOT the parent root the resume runs in.
@@ -437,10 +450,18 @@ func TestReadOnlyChildResumedAsWritableIsNotToldItsEditsSurvived(t *testing.T) {
 	mu.Lock()
 	got := strings.Join(prompts, "\n")
 	mu.Unlock()
+	// Axis 1 — WHAT SURVIVED (the earlier run's mode): nothing did.
 	if strings.Contains(got, "STILL IN PLACE") {
 		t.Fatalf("a child whose prior run was in a torn-down worktree must NOT be told its edits survived, got:\n%s", got)
 	}
-	if !strings.Contains(got, "FRESH workspace checkout") {
-		t.Fatalf("it must get the conservative staleness note instead, got:\n%s", got)
+	if !strings.Contains(got, "are GONE") {
+		t.Fatalf("it must be told the earlier run's file changes are GONE, got:\n%s", got)
+	}
+	// Axis 2 — WHERE IT RUNS (this call's mode): the operator's real tree, no isolation.
+	if strings.Contains(got, "FRESH workspace checkout") {
+		t.Fatalf("a mode:\"read-write\" child runs in the REAL workspace (no fork) and must not be told it is in a fresh checkout, got:\n%s", got)
+	}
+	if !strings.Contains(got, "DIRECTLY in the real workspace") {
+		t.Fatalf("it must be told its writes land in the real workspace, got:\n%s", got)
 	}
 }

@@ -47,6 +47,12 @@ const maxSubagentGoalLen = 60
 // mirrors the team supervisor's defaultTeamConcurrency and the fork concurrency cap.
 const defaultMaxConcurrentChildren = 8
 
+// childPersistTimeout bounds the cancel-DETACHED child snapshot save (see persistChild).
+// It exists only because detaching cancellation removes the caller's ability to abort a
+// wedged store; it is deliberately short, since the save is best-effort and every caller
+// is on a latency path the model is waiting on.
+const childPersistTimeout = 5 * time.Second
+
 // observableTool is the agent-internal seam by which a tool may forward a
 // REDACTED, allowlisted projection of its internal activity to the parent run's
 // event stream WITHOUT widening the public tool.Tool interface. A tool that
@@ -442,7 +448,7 @@ var subagentSchema = json.RawMessage(`{
     },
     "resume": {
       "type": "string",
-      "description": "Optional id of a previous subagent to RESUME (the value of the 'agentId:' line on its earlier Subagent result). The subagent continues with its full prior conversation, taking this call's prompt as its next instruction. This works whether it finished cleanly, stopped at a limit, was cancelled, or FAILED mid-task — a subagent that died on a stalled or errored provider call can be resumed to carry on from its transcript. Its CONVERSATION survives; its WORKSPACE depends on what the EARLIER run was: a previously read-only subagent ran in a throwaway checkout, so it always restarts from a FRESH checkout with its file changes and build state gone, whatever mode you pass now. Only when the earlier run was itself mode:'read-write' are the edits it already made still in place — that child edited your real workspace directly; pass mode:'read-write' again to keep working on them in place. Cannot be combined with the agent or model arguments. Omit to start a fresh subagent."
+      "description": "Optional id of a previous subagent to RESUME (the value of the 'agentId:' line on its earlier Subagent result). The subagent continues with its full prior conversation, taking this call's prompt as its next instruction. This works whether it finished cleanly, stopped at a limit, was cancelled, or FAILED mid-task — a subagent that died on a stalled or errored provider call can be resumed to carry on from its transcript. Its CONVERSATION always survives. Its WORKSPACE is TWO separate questions. (1) WHAT SURVIVED depends on the EARLIER run: Only when the earlier run was itself mode:'read-write' are the file edits it already made still in place — that child edited your real workspace directly, so pass mode:'read-write' again to keep working on them in place. A previously read-only subagent ran in a throwaway checkout, so its file changes and build state are GONE whatever mode you pass now. (2) WHERE IT RUNS NOW follows THIS call's mode, not the earlier run's: mode:'read-write' runs DIRECTLY in your real workspace with no isolation, and read-only runs in a fresh throwaway checkout. Cannot be combined with the agent or model arguments. Omit to start a fresh subagent."
     },
     "max_turns": {
       "type": "integer",
@@ -825,6 +831,62 @@ const resumeStalenessNote = "[harness note: your conversation has been resumed, 
 // selection is keyed on the persisted workspace path, and the conservative staleness note
 // is the fallback whenever the two differ.
 const resumeWritableNote = "[harness note: your conversation has been resumed and you are running DIRECTLY in the same workspace as before — the file edits you already made are STILL IN PLACE. Build artifacts and running processes from your earlier run are gone, and the workspace may have changed since, so re-read a file or re-run a command before relying on an earlier observation of it.]"
+
+// resumeWritableFreshNote is the THIRD cell of the resume-note matrix: this call is
+// mode:"read-write" (so the child runs DIRECTLY in the operator's real workspace — no fork,
+// ADR 0041) but the EARLIER run was read-only, so its throwaway worktree and everything in
+// it is gone.
+//
+// It exists because the matrix has two INDEPENDENT axes and only two notes covered them:
+// WHERE the child runs follows THIS call's mode, WHAT survived follows the EARLIER run's.
+// A previously read-only child resumed with mode:"read-write" — the exact call
+// writableSubagentFailedNote and writableSubagentTimeoutNote now tell the parent to make —
+// used to fall to resumeStalenessNote and be told it "is running in a FRESH workspace
+// checkout" while holding Edit/Write on the real repository. That is the more dangerous
+// half of the falsehood, not the safer one: a child that believes it is in a scratch
+// checkout may rewrite or delete files to "start clean", and here those deletions land in
+// the operator's working tree. So this note states BOTH facts — real workspace, earlier
+// artifacts gone — and neither axis is inferred from the other.
+const resumeWritableFreshNote = "[harness note: your conversation has been resumed and you are now running DIRECTLY in the real workspace — your file edits land immediately and git is the only safety net, so do not delete or rewrite files to \"start clean\". The file changes, build artifacts, and running processes from your EARLIER run are GONE (that run used a throwaway checkout), so re-read files and re-run commands before relying on earlier observations.]"
+
+// resumePosture is the (writable × editsSurvived) pair the resumed child's harness note is
+// a function of. It is a struct rather than two more bool parameters because
+// buildSubagentRunOptions already carries `resuming`, and three adjacent bools at a call
+// site is precisely the transposition trip-wire this file's other TRIP-WIRE comments exist
+// to avoid.
+type resumePosture struct {
+	// writable is THIS call's mode:"read-write" — it decides WHERE the resumed child runs
+	// (the real parent workspace, no fork) and nothing about what survived.
+	writable bool
+	// editsSurvived is prepareChildSession's verdict on the EARLIER run — the persisted
+	// workspace root equals the real parent root, so the file edits that run made are still
+	// on disk. It decides WHAT carries over and nothing about where the child runs.
+	editsSurvived bool
+}
+
+// note resolves the harness preface a RESUMED child's prompt is prefixed with. The two
+// axes are independent, so the space is enumerated here ONCE rather than being reconstructed
+// at the call site: three arms, no combination falling through to a claim that is false on
+// either axis.
+//
+//	!writable                → resumeStalenessNote      (fresh throwaway checkout; nothing survived)
+//	writable && editsSurvived → resumeWritableNote       (real tree; the edits are still there)
+//	writable                 → resumeWritableFreshNote   (real tree; the earlier run's work is gone)
+//
+// The fourth combination (!writable && editsSurvived) is unreachable by construction —
+// prepareChildSession ANDs editsSurvived with writable — and lands on resumeStalenessNote,
+// which is the honest answer for a read-only call whatever the other axis says: it forks, so
+// it genuinely is in a fresh checkout.
+func (p resumePosture) note() string {
+	switch {
+	case !p.writable:
+		return resumeStalenessNote
+	case p.editsSurvived:
+		return resumeWritableNote
+	default:
+		return resumeWritableFreshNote
+	}
+}
 
 // SubagentOption configures a SubagentTool.
 type SubagentOption func(*SubagentTool)
@@ -1614,20 +1676,18 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 //     via RunContentWith, bounding the SHARED child engine WITHOUT minting a fresh engine.
 //     0 ⇒ inherit the engine's operator-default budget; it folds tighten-only in the loop.
 //   - Resume note: on RESUME the effective prompt is prefixed with the honest harness note
-//     BEFORE the structured-output wrap, so it rides inside the structured prompt too. Which
-//     note depends on whether the child's earlier FILE EDITS are still on disk
-//     (editsSurvived, decided in prepareChildSession): the default is resumeStalenessNote
-//     (the earlier run's worktree was torn down — file changes are gone), and only a
-//     direct-write child resuming into the SAME tree it ran in gets resumeWritableNote
-//     (its edits really are still there — issue #318). Note it is NOT keyed on the current
-//     call's `writable` alone: `mode` may CHANGE across a resume, and a previously
-//     read-only child's edits (its Bash could make them) are gone regardless of the mode
-//     this call asks for. A fresh call is unchanged.
+//     BEFORE the structured-output wrap, so it rides inside the structured prompt too. WHICH
+//     note is resumePosture.note()'s three-cell decision over the two INDEPENDENT axes —
+//     where this call runs (its own `mode`) and what the EARLIER run left behind
+//     (editsSurvived, decided in prepareChildSession). Neither axis is inferred from the
+//     other: `mode` may CHANGE across a resume, so a previously read-only child's edits are
+//     gone whatever mode this call asks for, AND a writable call runs in the real workspace
+//     whatever the earlier run did. A fresh call is unchanged.
 //   - Structured output (D1/D2): when an output_schema is supplied, a synthetic SubmitResult
 //     tool (run-scoped — never registered into the shared catalog) whose parameters ARE the
 //     schema is created and the prompt is wrapped to instruct the child to call it. Omitted
 //     ⇒ today's free-text path.
-func buildSubagentRunOptions(args subagentArgs, resuming, editsSurvived bool, forkAdvisory string) (RunOptions, *submitResultTool, string) {
+func buildSubagentRunOptions(args subagentArgs, resuming bool, posture resumePosture, forkAdvisory string) (RunOptions, *submitResultTool, string) {
 	var runOpts RunOptions
 	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
 	// rejected earlier in run() as a model-visible error, so here we only need the
@@ -1647,11 +1707,7 @@ func buildSubagentRunOptions(args subagentArgs, resuming, editsSurvived bool, fo
 	}
 	prompt := args.Prompt
 	if resuming {
-		note := resumeStalenessNote
-		if editsSurvived {
-			note = resumeWritableNote
-		}
-		prompt = note + "\n\n" + prompt
+		prompt = posture.note() + "\n\n" + prompt
 	}
 	// A degraded-fork advisory (the dirty-overlay fell back to committed HEAD) is
 	// prepended so it reaches the child LLM's prompt — model-visible, not just a log.
@@ -2208,7 +2264,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// structured output is requested), and the effective prompt (with the degraded-fork
 	// advisory + the mode-appropriate resume note prepended BEFORE the structured-output
 	// wrap). See buildSubagentRunOptions.
-	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, editsSurvived, forkAdvisory)
+	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming,
+		resumePosture{writable: writable, editsSurvived: editsSurvived}, forkAdvisory)
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
 	// Bash asks are eligible for the A2 worktree-safe auto-approve; a forker-less
@@ -2239,22 +2296,16 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// Best-effort persist of the child's FINAL state (after any structured-output
 	// re-drives) so InspectSubagent can load it by the trailer id. persistMember
 	// discipline: nil store disables; a save failure is advisory and swallowed.
-	// NOTE: ctx may already be cancelled here (parent cancel / timeout_ms) — both
-	// shipped stores ignore ctx on Save, mirroring persistMember; a future
-	// ctx-honouring store would drop the save on that path (same documented
-	// residual the supervisor carries).
+	// NOTE: ctx may already be cancelled here (parent cancel / timeout_ms). persistChild
+	// therefore detaches cancellation and applies its own short deadline, so a
+	// ctx-honouring store (redisstore, grpcdriver) still records the terminal snapshot the
+	// advertised resume needs.
 	t.persistChild(ctx, child)
 
 	if emit != nil {
-		emit(session.Event{Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
-			ParentCallID: string(call.ID),
-			ChildID:      string(childID),
-			ToolCount:    toolCount,
-			Usage:        usage,
-			Stop:         stop,
-			Cause:        subagentCausePayload(cause),
-			DurationMs:   engine.now().Sub(start).Milliseconds(),
-		}})
+		emit(subagentEndEvent(call.ID, childID, stop, cause, subagentEndMetrics{
+			toolCount: toolCount, usage: usage, durationMs: engine.now().Sub(start).Milliseconds(),
+		}))
 	}
 
 	// Fire SubagentStop best-effort, regardless of how the child ended.
@@ -2493,12 +2544,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	endOnError := func(errResult session.ToolResult) {
 		res = errResult
 		if b.emit != nil {
-			b.emit(session.Event{Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
-				ParentCallID: string(b.call.ID),
-				ChildID:      string(b.childID),
-				Stop:         session.StopError,
-				Cause:        subagentCausePayload(errResult.Content),
-			}})
+			b.emit(subagentEndEvent(b.call.ID, b.childID, session.StopError, errResult.Content, subagentEndMetrics{}))
 		}
 	}
 	// Background is read-only only (mode:"read-write"+background is rejected in
@@ -2521,10 +2567,10 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		t.persistChild(ctx, child)
 	}
 
-	// writable=false unconditionally: mode:"read-write"+background is rejected in
-	// validateMode, so a background child is always the read-only forked kind and gets
-	// the fresh-checkout resume note.
-	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming, false, forkAdvisory)
+	// A zero resumePosture (writable=false, editsSurvived=false) unconditionally:
+	// mode:"read-write"+background is rejected in validateMode, so a background child is
+	// always the read-only forked kind and gets the fresh-checkout resume note.
+	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming, resumePosture{}, forkAdvisory)
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
@@ -2535,19 +2581,14 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 
 	// Best-effort persist on EVERY terminal — including the run-end drain's cancel —
 	// so the child is resumable in a later run (the loss-mitigation that makes
-	// cancel-at-end acceptable). Same documented ctx-on-Save residual as foreground.
+	// cancel-at-end acceptable). persistChild detaches the (usually already cancelled) ctx,
+	// so the snapshot survives on a ctx-honouring store too.
 	t.persistChild(ctx, child)
 
 	if b.emit != nil {
-		b.emit(session.Event{Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
-			ParentCallID: string(b.call.ID),
-			ChildID:      string(b.childID),
-			ToolCount:    toolCount,
-			Usage:        usage,
-			Stop:         st,
-			Cause:        subagentCausePayload(cause),
-			DurationMs:   b.engine.now().Sub(start).Milliseconds(),
-		}})
+		b.emit(subagentEndEvent(b.call.ID, b.childID, st, cause, subagentEndMetrics{
+			toolCount: toolCount, usage: usage, durationMs: b.engine.now().Sub(start).Milliseconds(),
+		}))
 	}
 	t.fireSubagentStop(ctx, child)
 
@@ -2619,6 +2660,34 @@ func subagentCausePayload(cause string) string {
 	return clampRunes(strings.Join(strings.Fields(cause), " "), maxSubagentCausePreview)
 }
 
+// subagentEndMetrics is the observability half of an EvSubagentEnd payload: the
+// measurements, as opposed to the outcome. The background PRE-RUN failure site has none of
+// them (nothing ran), which is the only difference between the three emit sites.
+type subagentEndMetrics struct {
+	toolCount  int
+	usage      session.Usage
+	durationMs int64
+}
+
+// subagentEndEvent builds the EvSubagentEnd event. It exists so that setting
+// session.SubagentPayload.Cause and normalising it through subagentCausePayload are the
+// SAME act: the field's doc-comment promises "every emit site normalises it through one
+// helper", and three hand-built struct literals made that a convention a fourth site could
+// silently break — with the ACP projector's and mecademo's own collapses now removed
+// (deliberately: they are in-process consumers), a miss would reach a client as a multi-row
+// status line with no test firing.
+func subagentEndEvent(parentCallID session.ToolCallID, childID session.SessionID, stop session.StopReason, cause string, m subagentEndMetrics) session.Event {
+	return session.Event{Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
+		ParentCallID: string(parentCallID),
+		ChildID:      string(childID),
+		ToolCount:    m.toolCount,
+		Usage:        m.usage,
+		Stop:         stop,
+		Cause:        subagentCausePayload(cause),
+		DurationMs:   m.durationMs,
+	}}
+}
+
 // subagentErrorBody composes the model-facing body of a StopError subagent result.
 // The CAUSE (the harness/provider failure detail the loop put on
 // session.ResultPayload.Error) leads, because it is the actionable half; the child's
@@ -2653,7 +2722,7 @@ func subagentCausePayload(cause string) string {
 // Subagent path prefixes it with "Subagent: " and the Parallel path renders it under a
 // `=== branch-N [FAILED] ===` header, so neither reads as the other's vocabulary.
 //
-// BOTH halves are also framing-NEUTRALISED here (NeutraliseFraming, fence.go's rule for
+// BOTH halves are also framing-NEUTRALISED here (neutraliseChildText, fence.go's rule for
 // any trusted-but-model-influenced value). Neither half is harness-authored: `cause` is a
 // provider/transport error body VERBATIM (the anthropic adapter returns the upstream
 // `error.message` unquoted, so real newlines survive it) and `final` is child-authored
@@ -2661,10 +2730,12 @@ func subagentCausePayload(cause string) string {
 // harness's own imperatives — the agentId trailer the model resumes by and the resume-hint
 // note — so an error string echoed from a hostile MCP server or a fetched page could
 // otherwise forge one of those lines and impersonate the harness (CWE-1427 / OWASP LLM01).
-// Neutralising runs BEFORE the clamp so a redaction can never be half-truncated.
+// Neutralising runs BEFORE the clamp so a redaction can never be half-truncated, and
+// clampRunes' ellipsis is what keeps that ordering safe in the other direction (see its
+// doc-comment: a clean truncation could otherwise land exactly on an exact-match header).
 func subagentErrorBody(cause, final string) string {
-	cause = clampRunes(NeutraliseFraming(strings.TrimSpace(cause)), maxSubagentCausePreview)
-	final = NeutraliseFraming(strings.TrimSpace(final))
+	cause = clampRunes(neutraliseChildText(strings.TrimSpace(cause)), maxSubagentCausePreview)
+	final = neutraliseChildText(strings.TrimSpace(final))
 	switch {
 	case cause != "" && final != "":
 		return cause + "\n\nLast activity before the failure: " + clampRunes(final, maxTeamPreview)
@@ -2825,6 +2896,23 @@ func subagentTimeoutNote(writable, resumable bool) string {
 // driveChild salvages then digests an empty free-text terminal (issue #48 / #152), and
 // even the floor "(subagent produced no summary)" is paired with a stop-reason note.
 func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled bool, resumeHint string) session.ToolResult {
+	// EVERY arm below wraps the harness's own markers — the agentId trailer the model
+	// resumes by, the bracketed stop-reason and next-action notes — around this
+	// child-authored text, so it is neutralised ONCE here rather than per arm (CWE-1427 /
+	// OWASP LLM01: a read-only child has WebFetch/WebSearch/Read, so a hostile page or repo
+	// file it summarises is an injection source on the COMMON, non-failure path — a forged
+	// "agentId:" line hands the model a second resume handle, and a forged
+	// "[the subagent … discard them with `git checkout`]" is a workspace-destruction
+	// imperative no read-only child could have earned). The StopError arm's two halves are
+	// neutralised again inside subagentErrorBody, which is idempotent and must keep doing
+	// it: that composer is shared with the Parallel branch-failure path, which does not come
+	// through here.
+	//
+	// The VALIDATED structured payload below is deliberately NOT neutralised: it is a JSON
+	// document that survived session.ValidateJSON, so a raw line break — the thing a
+	// line-oriented forgery needs — cannot appear inside one of its string values, while
+	// whole-line redaction WOULD corrupt the deliverable the parent is about to parse.
+	final = neutraliseChildText(final)
 	// Structured-output failure: the retry budget was exhausted without a schema-valid
 	// payload. Surface the last validation error AS the tool error (model-visible),
 	// never only a log line.
@@ -2832,7 +2920,7 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 		msg := "subagent did not produce output matching the requested schema"
 		if submit != nil {
 			if last := submit.lastError(); last != "" {
-				msg += ": " + last
+				msg += ": " + neutraliseChildText(last)
 			}
 		}
 		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID))
@@ -2957,7 +3045,12 @@ func renderWritableSubagentResult(callID session.ToolCallID, childID session.Ses
 	case stop == session.StopError && resumable:
 		// The one arm that owns BOTH options, stated as one exclusive decision.
 		note = writableSubagentFailedNote
-	case stop == session.StopError || stop == session.StopCancelled:
+	case stop == session.StopError || stop == session.StopCancelled,
+		// StopStructuredOutput is a mid-task kill too: the child exhausted its correction
+		// budget without ever delivering a schema-valid payload, so whatever it wrote to the
+		// real tree is as likely to be half-finished as a crash's. It used to fall through to
+		// the benign "review the changes" note, which reads as a clean finish.
+		stop == session.StopStructuredOutput:
 		note = writableSubagentPartialNote
 	}
 	// renderSubagentResult always stamps the agentId trailer as the FIRST line
@@ -3840,7 +3933,21 @@ func (t *SubagentTool) persistChild(ctx context.Context, child *session.Session)
 	if t.store == nil {
 		return
 	}
-	_ = t.store.Save(ctx, child)
+	// Cancel-DETACHED with its own short deadline (the port.EventLog appendEvent
+	// precedent). Two of the four call sites are TERMINAL persists on paths where ctx is
+	// already dead — the per-call timeout_ms fired, or the parent run was cancelled — and
+	// this save is the ONLY thing that makes the child resumable afterwards, which the
+	// harness now advertises to the model on exactly those terminals
+	// (subagentTimeoutResumeHint, writableSubagentTimeoutNote). The in-tree stores ignore
+	// ctx on Save, but redisstore.Save passes it straight to HSet and
+	// grpcdriver.SessionStore.Save to the RPC, so on a mecak8s/Redis or remote-driver
+	// deployment the advertised resume came back as "no subagent found for resume id" — an
+	// advertised affordance that cannot succeed, the exact defect resumeSupported() exists
+	// to prevent, one layer down. The deadline is what makes detaching safe: with no live
+	// ctx to cancel it, a wedged store would otherwise block the tool call indefinitely.
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), childPersistTimeout)
+	defer cancel()
+	_ = t.store.Save(saveCtx, child)
 }
 
 // unknownAgentHint builds the model-addressable error text for a Subagent call that

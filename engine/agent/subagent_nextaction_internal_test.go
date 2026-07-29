@@ -93,17 +93,112 @@ func TestResumeSchemaDescriptionConditionsSurvivingEditsOnTheEarlierRun(t *testi
 	if q < 0 || q > inPlace {
 		t.Errorf("the surviving-edits claim must be qualified by %q BEFORE it is stated (qualifier at %d, claim at %d): %q", qualifier, q, inPlace, desc)
 	}
-	// And the read-only default must be stated as MODE-INDEPENDENT: passing
-	// mode:'read-write' on the resume of a previously read-only child does NOT bring its
-	// dead worktree back (resumeStalenessNote is what that child actually receives).
-	for _, want := range []string{"FRESH checkout", "whatever mode you pass now"} {
+	// The two axes must be stated SEPARATELY, because they are independent and the schema
+	// used to fuse them: "it always restarts from a FRESH checkout … whatever mode you pass
+	// now" made the where-it-runs claim follow the EARLIER run's mode, which is false for
+	// resume + mode:'read-write' (prepareChildSession passes forker=nil for any writable
+	// call, so the child runs in the operator's REAL tree) and contradicted the schema's own
+	// `mode` property. A model has to arbitrate that, and the wrong branch is the dangerous
+	// one — it holds Edit/Write while believing it is in a scratch checkout.
+	//
+	// Axis 1 — WHAT SURVIVED is mode-independent: a previously read-only child's files are
+	// gone whatever mode you pass now.
+	gone := strings.Index(desc, "GONE whatever mode you pass now")
+	if gone < 0 {
+		t.Errorf("the resume schema must state the read-only default's LOST FILES as mode-independent: %q", desc)
+	}
+	// Axis 2 — WHERE IT RUNS follows THIS call's mode, and the writable cell must say the
+	// real workspace, not a checkout.
+	for _, want := range []string{"WHERE IT RUNS NOW follows THIS call's mode", "mode:'read-write' runs DIRECTLY in your real workspace"} {
 		if !strings.Contains(desc, want) {
-			t.Errorf("the resume schema must state the read-only default as mode-independent (%q): %q", want, desc)
+			t.Errorf("the resume schema must state where the resumed subagent runs as a function of THIS call's mode (%q): %q", want, desc)
 		}
 	}
-	// Lockstep with the note the resumed child itself receives.
+	// And it must not re-fuse them: no unconditional fresh-checkout claim may govern the
+	// mode the caller passes.
+	for _, forbidden := range []string{"always restarts from a FRESH checkout", "FRESH checkout with its file changes"} {
+		if strings.Contains(desc, forbidden) {
+			t.Errorf("the resume schema must not claim a fresh checkout regardless of mode (%q): %q", forbidden, desc)
+		}
+	}
+	// Lockstep with the notes the resumed child itself receives — all three cells, so the
+	// schema and the runtime cannot disagree about either axis.
 	if !strings.Contains(resumeStalenessNote, "FRESH workspace checkout") {
-		t.Errorf("resumeStalenessNote must still state the fresh-checkout fact the schema mirrors: %q", resumeStalenessNote)
+		t.Errorf("resumeStalenessNote must still state the fresh-checkout fact the schema mirrors for a read-only resume: %q", resumeStalenessNote)
+	}
+	if !strings.Contains(resumeWritableFreshNote, "DIRECTLY in the real workspace") {
+		t.Errorf("resumeWritableFreshNote must state the real-workspace fact the schema mirrors for a writable resume: %q", resumeWritableFreshNote)
+	}
+}
+
+// TestResumeNoteMatrixCoversBothAxes is the SPACE oracle for the resumed child's harness
+// note. The note is a function of TWO independent axes — WHERE the child runs (THIS call's
+// mode) and WHAT the earlier run left behind (editsSurvived) — and the whole class of bug
+// this test exists to catch is a cell nobody enumerated: for a long time two notes covered
+// three reachable combinations, and the missing cell (a previously read-only child resumed
+// with mode:"read-write") got told it was "running in a FRESH workspace checkout" while
+// holding Edit/Write on the operator's real repository.
+//
+// So it asserts the whole cartesian product, per AXIS, rather than that one cell has the
+// right string: every combination must state both facts, and neither fact may be inferred
+// from the other axis. A fourth cell (or a third axis) fails here rather than shipping.
+//
+// The axis phrases are derived from the production constants by the positive controls first:
+// each fragment is asserted PRESENT in the note it is taken from, with t.Fatalf, so a
+// reworded constant cannot make the per-cell checks below vacuous.
+func TestResumeNoteMatrixCoversBothAxes(t *testing.T) {
+	const (
+		freshWorkspace = "FRESH workspace checkout" // resumeStalenessNote — read-only, forked
+		realWorkspace  = "DIRECTLY in the"          // both writable notes — no fork (ADR 0041)
+		editsAlive     = "STILL IN PLACE"           // resumeWritableNote
+		editsGone      = "GONE"                     // resumeStalenessNote + resumeWritableFreshNote
+	)
+	// Positive controls: the fragments must exist in the production constants they name, or
+	// every "must not contain" below is meaningless.
+	for _, c := range []struct {
+		what, fragment, in string
+	}{
+		{"the read-only note's workspace claim", freshWorkspace, resumeStalenessNote},
+		{"the edits-survived note's workspace claim", realWorkspace, resumeWritableNote},
+		{"the edits-gone writable note's workspace claim", realWorkspace, resumeWritableFreshNote},
+		{"the edits-survived claim", editsAlive, resumeWritableNote},
+		{"the read-only note's lost-work claim", editsGone, resumeStalenessNote},
+		{"the writable note's lost-work claim", editsGone, resumeWritableFreshNote},
+	} {
+		if !strings.Contains(c.in, c.fragment) {
+			t.Fatalf("%s no longer contains %q, so the per-cell axis checks below are vacuous — re-point them at the live wording: %q",
+				c.what, c.fragment, c.in)
+		}
+	}
+
+	for _, writable := range []bool{false, true} {
+		for _, editsSurvived := range []bool{false, true} {
+			p := resumePosture{writable: writable, editsSurvived: editsSurvived}
+			note := p.note()
+			if strings.TrimSpace(note) == "" {
+				t.Fatalf("resumePosture{writable:%v, editsSurvived:%v} has NO note — an unenumerated cell", writable, editsSurvived)
+			}
+			// WHERE it runs is a function of THIS call's mode ONLY.
+			if writable {
+				if !strings.Contains(note, realWorkspace) || strings.Contains(note, freshWorkspace) {
+					t.Errorf("writable=%v editsSurvived=%v: a mode:\"read-write\" child runs in the REAL workspace (no fork) and must be told so, never that it is in a fresh checkout:\n%s",
+						writable, editsSurvived, note)
+				}
+			} else if !strings.Contains(note, freshWorkspace) {
+				t.Errorf("writable=%v editsSurvived=%v: a read-only child forks, so it must be told it is in a fresh checkout:\n%s",
+					writable, editsSurvived, note)
+			}
+			// WHAT survived is a function of the EARLIER run ONLY.
+			if writable && editsSurvived {
+				if !strings.Contains(note, editsAlive) {
+					t.Errorf("writable=%v editsSurvived=%v: the child's earlier edits ARE on disk and it must be told so, or it redoes or distrusts them:\n%s",
+						writable, editsSurvived, note)
+				}
+			} else if strings.Contains(note, editsAlive) || !strings.Contains(note, editsGone) {
+				t.Errorf("writable=%v editsSurvived=%v: nothing from the earlier run survived and the note must say so, never that the edits are still in place:\n%s",
+					writable, editsSurvived, note)
+			}
+		}
 	}
 }
 
@@ -230,5 +325,26 @@ func TestRecoveredDigestStatesTheNextActionOnce(t *testing.T) {
 	clean := renderSubagentResult("p2", "subagent-p2", body, session.StopEndTurn, "", nil, false, "")
 	if !strings.Contains(clean.Content, "recovered the subagent's last output") || !strings.Contains(clean.Content, "partial") {
 		t.Fatalf("the digest prefix must read coherently standalone on the note-less empty-StopEndTurn path:\n%s", clean.Content)
+	}
+}
+
+// TestWritableStructuredOutputTerminalWarnsPartialEdits pins the direct-write note cell a
+// structured-output failure lands in. The child exhausted its correction budget without ever
+// producing a schema-valid payload, having already edited the operator's real tree in place
+// (ADR 0041) — it did NOT finish cleanly, so the benign "review the changes" note the switch
+// used to fall through to reads as a clean finish on a mid-task failure.
+func TestWritableStructuredOutputTerminalWarnsPartialEdits(t *testing.T) {
+	t.Parallel()
+	res := renderWritableSubagentResult("p1", "subagent-p1", "", session.StopStructuredOutput, "",
+		&submitResultTool{lastValidationError: `"count": expected integer`}, false, true)
+	if !strings.Contains(res.Content, writableSubagentPartialNote) {
+		t.Errorf("a writable child that never delivered a valid payload must be warned its edits may be PARTIAL:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, writableSubagentCleanNote) {
+		t.Errorf("the benign clean-finish note must not label a structured-output failure:\n%s", res.Content)
+	}
+	// The validation error itself still reaches the model (it is the actionable half).
+	if !strings.Contains(res.Content, "expected integer") {
+		t.Errorf("the last validation error must still be surfaced:\n%s", res.Content)
 	}
 }
