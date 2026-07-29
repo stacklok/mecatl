@@ -66,10 +66,10 @@ Three delegation tools are always registered in a default session. They let the 
 | Catalog name | What it enables |
 |---|---|
 | `Subagent` | Spawn a child agent to handle a subtask. Supports background mode, structured output schemas, fork-from-parent history, named specialist agent definitions, and per-call model overrides. |
-| `Parallel` | Fan out a set of tasks to isolated branches, then join or select a winner. Branches run concurrently; results are merged back into the parent. |
+| `Parallel` | Fan out a set of tasks to isolated branches, then join all results or select a winner. Branches run concurrently; a single-branch winner is merged back into the parent by default, multi-branch runs never auto-merge. |
 | `Team` | Coordinate a named crew of specialist members under a lead. The lead synthesizes a consolidated report from member findings. |
 
-These tools are mutating (the parent serializes their dispatch) and are not available in plan mode. For depth on how delegation works — child permissions, session persistence, token budgets, structured output — see the subagents and teams section (coming soon).
+`Subagent` and `Parallel` are read-parallel — each isolates its child's writes in its own workspace, so the dispatcher can run them alongside your other read-only tool calls. `Team` is fully serialized (it never runs concurrently with anything else). None are available in plan mode. For depth on how delegation works — child permissions, session persistence, token budgets, structured output — see [Subagents, teams, and parallel](subagents-teams-parallel.md).
 
 ---
 
