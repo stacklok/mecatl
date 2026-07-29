@@ -42,13 +42,29 @@ agent capability vocabulary, no standard attenuation algorithm, and no
 credential lifecycle for an interruptible, human-in-the-loop workload. Those
 gaps are called out per-section below as **innovation ground**.
 
+The five questions the rest of this doc adjudicates, with their verdicts:
+
+- **Q1** — Is issuer HA solved for this deployment shape? **Converged**:
+  yes — stateless replicas, KMS-backed signing (see "The issuer in a
+  Kubernetes deployment").
+- **Q2** — How does the credential lifecycle work when sessions park for
+  hours and resume on different pods? **Innovation ground** (see "The
+  parkable credential lifecycle").
+- **Q3** — Is the SVID the *source* of authority or a *projection* of it?
+  **Converged**: projection (see "Projection, not authority").
+- **Q4** — What scope vocabulary should an agent capability credential
+  carry? **Innovation ground** (see "The scope vocabulary").
+- **Q5** — How should a multi-hop agent run be correlated for audit?
+  **Converged**: dual-ID — one immutable tree ID plus per-hop parent links
+  (see "Audit").
+
 ## The three-tier model
 
 Identity is segmented exactly where the industry draws the lines — and where
-mecatl's existing types already draw them (the durable specialist definition
-is `engine/tool/agentsource.go` (`AgentDef`); the stateful conversation is the
-`engine/session/session.go` (`Session`) aggregate; the ephemeral turn loop is
-`Engine.Run`):
+mecatl's existing types already draw them: the durable specialist definition
+is the `AgentDef` value object (`engine/tool/agentsource.go`), the stateful
+conversation is the `Session` aggregate (`engine/session/session.go`), and
+the ephemeral turn loop is `Engine.Run`:
 
 ```
 TIER 1  DEFINITION   durable identity — what the agent IS
@@ -70,6 +86,9 @@ spiffe://<td>/agent/<def>/inst/<sessionID>/child/<childID>
 spiffe://<td>/agent/<def>/inst/<sessionID>/child/<childID>/child/<grandchildID>
 ```
 
+The three levels shown are illustrative; actual nesting is bounded by
+`max_depth` on the chain — the issuer enforces the bound at every hop.
+
 - **Definition identities** (`agent/<def>`) are the durable "who" — the anchor
   for operator policy ("what may a `tdd-worker` ever do?"), exactly the
   ServiceAccount/blueprint role in the platform analogs. They are never
@@ -82,8 +101,8 @@ spiffe://<td>/agent/<def>/inst/<sessionID>/child/<childID>/child/<grandchildID>
   instance ("what did *this* delegation do?").
 - **Child identities** extend the parent's *instance* path with `child/<id>`,
   reusing the existing child session ID schemes — `subagent-<callID>`,
-  `parallel-<callID>-<i>`, and `engine/agent/teamsupervisor.go`
-  (`MemberSessionID`)'s `team-<teamID>-<member>` — so the identity graph and
+  `parallel-<callID>-<i>`, and `team-<teamID>-<member>` (minted by
+  `engine/agent/teamsupervisor.go` (`MemberSessionID`)) — so the identity graph and
   the runtime delegation graph cannot drift.
 - **Runs are not identities.** A run carries the instance credential plus a
   per-run `txn` claim; resumption re-proves the instance, it does not create
@@ -145,6 +164,20 @@ commitments:
    visible actor — impersonation with no audit trail. We refuse that
    shape.)
 
+**Why a private claim instead of RFC 8693's `act` itself.** The two specs
+assign `sub` incompatible meanings: JWT-SVID §3 requires `sub` to be the
+credential holder's own SPIFFE ID (the acting instance), while 8693
+delegation requires `sub` to be the *delegator* (the user) with the actor
+in `act`. A single token cannot be simultaneously a conformant JWT-SVID and
+a conformant 8693 delegation token — so the chain rides a private claim
+with explicitly 8693-derived semantics, and `act` is honored as the
+semantic contract (above) rather than reused as the on-the-wire name. A
+secondary reason: 8693 §4.1 confines `act`-subobject claims to identity
+("claims within the act claim pertain only to the identity of the actor"),
+while our chain entries carry a per-hop **scope snapshot** — the basis of
+attenuation audit and of the resume invariant. If a WIMSE/8693 agent
+profile ratifies a resolution to the `sub` collision, we adopt it.
+
 **`may_act` (8693 §4.4)** — the claim that pre-authorizes *which* actors
 may delegate for a subject — is played by **definition-tier policy**, not
 a token claim: "user U may spawn definition D", "D may spawn children of
@@ -168,6 +201,37 @@ into 8693's envelope unchanged (an instance JWT-SVID is already a valid
 `max_depth` and `txn` have no 8693 analog — they come from RFC 3820 and
 the Txn-Token draft respectively.
 
+### The parkable credential lifecycle (innovation ground — Q2)
+
+No standard or published deployment models a credential lifecycle for a
+workload that parks mid-operation for an indeterminate human-in-the-loop
+wait and resumes on a different host. The converged TTL floor: SPIRE
+defaults (X.509 1h, JWT 5m, rotate at
+half-life), WIMSE WIT "hours, PoP minutes, never bearer". But a mecatl
+session can **park for hours awaiting a human approval and resume on a
+different pod** — and no standard models that. WIMSE's practices draft says
+tokens "SHOULD be invalidated when the workload *pauses*" and explicitly
+leaves the mechanism out of scope; the two live IETF schools (vault/broker
+re-attestation; Zhu's async-delegated refresh tokens with monotonic scope +
+absolute max lifetime) both assume the token holder persists.
+
+The design: **chain durable, credential ephemeral.**
+
+- Instance SVID TTL is minutes; the harness re-mints on demand (it is the
+  issuer — minting is a local signing call, not a network dependency).
+- A parked session's SVID simply expires. Nothing is revoked because nothing
+  needs to be: TTL ≪ any useful attack window.
+- Resume (the existing `rehydrateSession` seam) re-mints the **same instance
+  identity with the same `dlg` chain and a scope no wider than pre-park** —
+  monotonic attenuation across resume, enforced issuer-side against the
+  persisted chain. This state machine — active/parked, re-attest-on-resume,
+  attenuation preserved across pod boundaries — is genuinely novel; the doc
+  treats it as a named contribution, not an implementation detail.
+- Session GC (PrunableStore) plus short TTL bounds the
+  deleted-session-but-live-token window without a revocation list; internal
+  verifiers may additionally check `jti`↔session-liveness against Redis
+  (cheap in-cluster), external verifiers stay offline/TTL-only.
+
 ### The scope vocabulary (innovation ground — Q4)
 
 Nobody has standardized what an agent may *do* in a token: MCP scopes are
@@ -175,10 +239,11 @@ server-defined strings, A2A says "agent-defined", Entra reuses Graph resource
 scopes, Cedar/OPA are app-defined. The v1 vocabulary is deliberately minimal
 and maps onto machinery mecatl already enforces:
 
-- **tool names** — the catalog names the governance fold already evaluates
-  (`engine/governance` rules; the `Audience` enum already distinguishes
-  main- vs subagent-bound rules — the closest existing thing to an
-  attenuation channel);
+- **tool names** — the catalog names the permission evaluator already
+  resolves (`engine/governance` — the deny-dominant, scope-ordered rule
+  evaluator; its `Audience` enum already distinguishes main- vs
+  subagent-bound rules — the closest existing thing to an attenuation
+  channel);
 - **a posture ceiling** — the `strict < trusted < auto < yolo` ladder from
   `internal/app/posture.go`; a child's ceiling ≤ its parent's;
 - **delegation rights** — whether this instance may mint children at all
@@ -192,13 +257,16 @@ Providers/models and egress are candidates for a later vocabulary revision.
 
 The SVID is a **projection** of the session's authority for outbound calls —
 never the source of it. Internally, authority remains exactly where it is
-today: the session aggregate plus the deny-dominant governance fold. This
+today: the session aggregate plus the deny-dominant governance evaluator
+described above. This
 mirrors the SPIFFE Workload Endpoint model (the local agent is the authority;
 the SVID exists to leave the node) and WIMSE's Identity Proxy / egress
 generalization pattern (token exchange at the boundary, internal context
-stays local). The in-process generalization — the *session aggregate* mints
-projection tokens for its children — is practiced everywhere, named nowhere;
-a mild novelty.
+stays local). The in-process generalization — the *session aggregate*
+minting projection tokens for its children rather than delegating to an
+external STS — is a pattern many systems use implicitly but nobody has
+articulated as a named primitive. It is called out here because the
+definition/instance/run mapping makes it explicit and testable.
 
 A consequence that simplifies everything: **subagents are not network
 entities**. A subagent is a goroutine, not a pod; it never presents its own
@@ -210,7 +278,8 @@ the pod.
 
 ## The issuer in a Kubernetes deployment
 
-mecak8s (ADR 0048) already fixed the topology the issuer must fit:
+mecak8s ([ADR 0048](adr/0048-mecak8s.md) — the storage-free, Redis-backed,
+k8s-native agent deployment) already fixed the topology the issuer must fit:
 storage-free agent pods, autoscaled, state in Redis, single-writer via k8s
 leases, any pod rehydrates any session. The industry pattern for issuer HA in
 exactly this shape is **converged** (Q1): stateless replicas, signing keys
@@ -246,43 +315,16 @@ that never leave a signing service.
 
 ## The edge: where users come from
 
-The one piece with no existing seam. The driver protocol today carries "no
-tenant, principal, session, or namespace field anywhere in the service"
-(ADR 0027 List 3), and mecated/mecak8s have TLS/auth/rate-limit but no *user*
+The one piece with no existing seam. The driver protocol today carries no
+tenant, principal, session, or namespace field on any RPC (recorded as a
+decision in [ADR 0027](adr/0027-cloud-native.md), the disposable-process
+arc), and mecated/mecak8s have TLS/auth/rate-limit but no *user*
 concept. The design needs an **edge auth interceptor** (gRPC/HTTP): the
 caller authenticates with an OIDC bearer from the corporate IdP (or mTLS
 client cert), and `CreateSession` binds the session to that user principal —
 the `user/<uid>` at the root of every `dlg` chain. The driver protocol gains
 an additive `principal` field on store/event-log RPCs — the one proto-level
 change.
-
-## The parkable credential lifecycle (innovation ground — Q2)
-
-The converged TTL floor: SPIRE defaults (X.509 1h, JWT 5m, rotate at
-half-life), WIMSE WIT "hours, PoP minutes, never bearer". But a mecatl
-session can **park for hours awaiting a human approval and resume on a
-different pod** — and no standard models that. WIMSE's practices draft says
-tokens "SHOULD be invalidated when the workload *pauses*" and explicitly
-leaves the mechanism out of scope; the two live IETF schools (vault/broker
-re-attestation; Zhu's async-delegated refresh tokens with monotonic scope +
-absolute max lifetime) both assume the token holder persists.
-
-The design: **chain durable, credential ephemeral.**
-
-- Instance SVID TTL is minutes; the harness re-mints on demand (it is the
-  issuer — minting is a local signing call, not a network dependency).
-- A parked session's SVID simply expires. Nothing is revoked because nothing
-  needs to be: TTL ≪ any useful attack window.
-- Resume (the existing `rehydrateSession` seam) re-mints the **same instance
-  identity with the same `dlg` chain and a scope no wider than pre-park** —
-  monotonic attenuation across resume, enforced issuer-side against the
-  persisted chain. This state machine — active/parked, re-attest-on-resume,
-  attenuation preserved across pod boundaries — is genuinely novel; the doc
-  treats it as a named contribution, not an implementation detail.
-- Session GC (PrunableStore) plus short TTL bounds the
-  deleted-session-but-live-token window without a revocation list; internal
-  verifiers may additionally check `jti`↔session-liveness against Redis
-  (cheap in-cluster), external verifiers stay offline/TTL-only.
 
 ## Audit: the delegation tree, durably
 
@@ -293,8 +335,9 @@ session ID is the root, `ParentCallID` on the delegation event families
 (`subagent.*`/`team.*`/`parallel.*`) is the topology, and the durable
 Redis-backed `port.EventLog` is the substrate. The deltas:
 
-- events gain a **principal annotation** (metadata-only — the gauntlet-#7
-  child-isolation contract is preserved: identity, never child content);
+- events gain a **principal annotation** (metadata-only: the existing
+  contract that no child-authored content ever crosses into a parent event
+  stream is preserved — identity, never child content);
 - `txn` correlates a run across the delegation tree; the tree is
   reconstructable offline from Redis alone;
 - optional Rekor-style transparency anchoring of EventLog commits is a later
@@ -329,7 +372,14 @@ Each step is independently useful; nothing is big-bang.
 - **We become an issuer operator**: key rotation, bundle lifecycle, KMS
   dependency, signing-request audit. This is the price of the model; the
   research says it is a well-trodden price (SPIRE/cert-manager/step-ca all
-  pay it the same way).
+  pay it the same way). Operational specifics this doc does not yet answer:
+  whether session creation degrades gracefully when the KMS is unreachable
+  (likely yes — minting rides the session-open/delegation path, not the
+  per-turn path, so a brief outage delays new sessions without killing
+  running ones), whether the JWKS endpoint needs its own SLO, and whether
+  trust-domain renaming has a migration story or is a one-time choice best
+  locked early (a rename orphans every SPIFFE ID in the historical audit
+  log). Standard issuer-operator concerns; none novel.
 - **The scope vocabulary is ours to get right.** It is the highest-leverage
   design surface in the doc and the least guided by prior art. v1 is
   deliberately minimal for that reason.
