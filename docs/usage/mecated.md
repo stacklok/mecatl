@@ -161,6 +161,19 @@ mailbox). See the delegation-capabilities note below.
 > capped, permission asks are never forwarded, and `team.end` includes closed-enum
 > member dispositions. (The `mecatui` `ctrl+a` overlay surfaces all three under
 > **Subagents | Parallel | Teams** tabs with a fleet-status footer — see `docs/tui.md`.)
+>
+> **A member that fails a round is retried once.** A team member whose round dies on a
+> transient provider error (a stalled or errored stream) has its session recovered and is
+> given **one** more scheduled round before it is benched; a second failed round benches it
+> with the same `stopped` / `error` disposition as before. The counter is per-member and
+> never reset, so the exposure is **one extra round per member over the whole team run** —
+> not one per failure. `team.end` reports the count (`error_rounds`), and the lead is told
+> in its synthesis prompt, so a retried member never reads as a clean one; `mecatui` shows
+> such a lane as `done (retried)`. There is **no per-member flag** for this (it is a
+> behavioural default, like the per-member turn budget); the operator brakes on the extra
+> spend are the existing token ceilings — `--max-team-tokens` team-wide and
+> `--max-run-tokens` per member drive — on top of the built-in round cap and per-member
+> turn budget. Mechanism: `docs/adr/0077-resume-a-failed-subagent.md`.
 
 #### Enabling web search
 

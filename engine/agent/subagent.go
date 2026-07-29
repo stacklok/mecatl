@@ -2692,7 +2692,7 @@ func subagentErrorBody(cause, final string) string {
 // inverse of the discoverability rule. subagentErrorBody stays the single composition
 // point for the CAUSE; this is the single composition point for the RESUME affordance.
 //
-// For the SAME reason it is gated on `resumable` (the caller's `t.store != nil`):
+// For the SAME reason it is gated on `resumable` (the caller's `t.resumeSupported()`):
 // validateResume's FIRST precondition is a wired session store, so a SubagentTool built
 // without WithSubagentStore — a supported construction for an engine-module consumer
 // (ADR 0036) — would otherwise tell the model to resume and then refuse the call with

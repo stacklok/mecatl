@@ -111,20 +111,114 @@ read-only child has no Edit/Write but does have Bash in that worktree, so it may
 have applied edits, and a child that trusts absent edits builds on nothing), so anything
 other than an exact path match falls back to the conservative note.
 
+**The PER-CALL TIME-BUDGET terminal gets its own next action.** A `timeout_ms` expiry was
+the last failure path naming no recovery at all, while every neighbouring terminal
+(`StopError`, the limit stops, `StopNoProgress`, the no-summary floor) named one — and left
+silent it reads as *the* exception, teaching the model that this particular delegation is
+simply dead. A timed-out child lands `StateCancelled`, which `resolveResumeSession` has
+always recovered, so it is the SAME affordance. Its wording is its own pair rather than a
+reuse of the `StopError` notes for two reasons: the child ran out of clock, not competence
+(so "if the failure looks transient" would misdescribe it), and the knob that fixes a
+genuine overrun is nameable — a larger `timeout_ms` on the resuming call. `subagentTimeoutNote`
+is the one gate and mirrors `subagentResumeHint`'s shape exactly, including its two silent
+cases, so the timeout path cannot drift from the `StopError` path's policy.
+
+**Both resume-offering DIRECT-WRITE notes name `mode:"read-write"` explicitly.** `writable`
+is derived from the CURRENT call's `mode` only; `run()` never infers it from the loaded
+session. So the obvious follow-up — `Subagent{resume: id, prompt: "finish it"}` — returns
+the READ-ONLY explorer: no Edit/Write, a fresh worktree fork off committed HEAD (the partial
+edits are not even visible to it), and the staleness note telling the child its changes are
+gone, while the operator's real tree still holds the half-finished work. "Resume it to
+finish on top of them" without the argument that makes it true is the same
+harness-asserts-a-falsehood class this ADR exists to close, on the most expensive failure
+path in the tool.
+
+**Neither half of a failed child's model-facing body is harness-authored, so both are
+framing-neutralised.** The CAUSE is a provider/transport error string verbatim (the
+anthropic adapter returns the upstream `error.message` unquoted, so real newlines survive
+it) and `final` is child-authored prose; both are composed into the parent's persisted
+conversation immediately beside the harness's own imperatives — the `agentId:` trailer the
+model resumes by and the resume hint. `subagentErrorBody`, being the ONE composer, is where
+`NeutraliseFraming` is applied, and `framingHeader` gained the headers this result emits so
+an error string echoed from a hostile MCP server cannot forge one of them (CWE-1427 /
+OWASP LLM01).
+
 **The contract is Recover's, unchanged: retry becomes POSSIBLE, not guaranteed.** A child
 whose cause is permanent (bad credentials, a poisoned history the pairing repair cannot
 fix) re-fails cleanly on the next drive, and the parent still holds the conversation. A
 genuinely non-resumable state — a snapshot still recorded `running`, the shape a process
 that died mid-turn leaves — remains a model-addressable tool error via the `default:` arm.
 
+### The team member's bounded retry
+
+Recovery alone rescued only the lead's SYNTHESIS turn: `stopped` still descheduled the
+member for the rest of the run, so #318's last acceptance bullet ("a team member that hits
+one transient stall still participates in later rounds") needed three more things — a
+bounded retry, a task release, and disposition honesty. All three are part of this decision.
+
+**Bounded retry.** `engine/agent/teamsupervisor.go` (`runTurn`) does not bench a member
+whose round ended `StopError` when the recovery seam SUCCEEDED and the member is still under
+its cap: it stays schedulable. The cap is `Supervisor.memberErrorRetries`
+(`WithMemberErrorRetries`, default `defaultMemberErrorRetries` = 1 — one retry survives a
+network hiccup while capping the wasted spend of a permanently-failing member; 0 benches on
+the first errored round, the SCHEDULING behaviour of the release before this one). The
+counter, `memberRT.errorRounds`, is MONOTONIC and never reset, which is what makes the retry
+provably terminating: a member that always fails runs `cap+1` rounds and is then benched
+with the unchanged disposition, and the round loop still reaches quiescence far short of
+`WithMaxRounds`. Three shapes are never retried: a FAILED RECOVERY (`nonResumable` — the
+session cannot be driven at all), a CANCELLED member (a kill is not a transient failure, and
+D5's disposition must hold), and a member that exhausted its LIFETIME TURN BUDGET (the
+ceiling exists precisely to stop rescheduling it).
+
+**Task release.** A retried member releases its in-progress claim through the existing
+`engine/team/team.go` (`ReleaseTasks`) and returns to `team.MemberIdle`, following the
+shape of the idle-between-rounds cancel path in `planRound`. Without it the work would be
+stranded: `InProgressFor` short-circuits `planRound`'s auto-claim, so neither the member
+nor a peer could pick the task up again.
+
+`planRound` additionally FORCE-SCHEDULES a retried member for exactly one turn
+(`memberRT.retryPending`, cleared on schedule). "Not stopped" is not sufficient to be
+rescheduled — `planRound` plans only a member that drained a message or claimed a task,
+and the commonest stall shape is a member dying on its first long exploration turn, before
+any task exists — so without the one-shot the retry would be a silent no-op in
+precisely the case #318 reported. The retry turn carries `retryTurnNote`: a
+supervisor-authored line stating that the previous turn failed mid-flight, that the
+member's own transcript above is the context to continue from, and that its task claim was
+released. It is harness metadata, nothing quoted from the failed turn, so it renders
+TRUSTED like the roster — and its literal header joins `framingHeader`, so a peer message
+body in the same prompt cannot forge a second copy of it.
+
+**Disposition honesty, in both directions.** `MemberDisposition` gains NO value — it is a
+closed enum mirrored on the proto wire, and "done" is still the honest terminal for a
+member that finished. Instead `agent.MemberOutcome` gains an additive count `ErrorRounds`,
+mirrored on `engine/session/event.go` (`TeamMemberDisposition`) and on
+`contracts/proto/mecatl/v1/harness.proto` (`TeamMemberDisposition.error_rounds`, field 4),
+so `team.end` carries it: a retried-then-finished member is otherwise byte-identical on the
+wire to one that never failed. `cmd/mecatui` renders such a lane `done (retried)` rather
+than a bare `done`. The count is a LIFETIME count and therefore INDEPENDENT of the
+terminal — a member that failed a round, was retried, and was then cancelled reports Reason
+`cancelled` with `ErrorRounds` 1 — so a consumer reads the two together and derives neither
+from the other. And the LEAD is told through the EXISTING trusted status section —
+`buildSynthesisSources` → `writeTeamStatus` (renamed from `writeStoppedMemberStatus`) —
+which names the retried members and their failed-round counts alongside the stopped
+ones. A silently-retried member is a coordination lie in the opposite direction from the
+one the stopped line closes: the lead re-plans and reports on what it believes members did.
+The line is supervisor-authored metadata carrying only a count, so the gauntlet-#7 footing
+is unchanged — with one hardening: the member NAMES it interpolates come from the parent
+model's `Team` call args, so they are `NeutraliseFraming`'d like every sibling
+interpolation in that file, or a crafted name could splice a forged section into that
+trusted, unfenced region.
+
 ## Consequences
 
 **Easier.** A long-running direct-write delegation survives a transient provider failure:
 the parent resumes by agentId and the child continues against the real tree, on top of its
 own partial edits. A team survives one member (or lead) failure with its deliverable
-intact instead of degrading to the labelled fallback. The `resume:` policy is now one
+intact instead of degrading to the labelled fallback, AND that member keeps working in
+later rounds rather than sitting benched. The `resume:` policy is now one
 rule — "recover whatever terminal you find" — instead of a per-state exception list that
-had to be re-justified at every seam.
+had to be re-justified at every seam. Every failure terminal the tool can render now names
+a next action, so none of them reads as a dead end.
 
 **Harder / accepted costs.**
 
@@ -143,80 +237,31 @@ had to be re-justified at every seam.
   `nonResumable` branch is now reached only by a CANCELLED member (whose `Reopen` is
   illegal by design). The flag and its WARN are kept as the honest fail-closed path for a
   future state, not deleted.
-- **One acceptance bullet of #318 is NOT delivered.** "A team member that hits one
-  transient stall still participates in later rounds" needs more than recovery: `planRound`
-  only schedules a member that has drained messages or a claimable task, and an unbenched
-  failed member keeps its in-progress claim, so it would be neither rescheduled nor
-  released — and `outcome` would report it `DispositionDone`, hiding the failure from the
-  lead. Genuine rescheduling needs a task-release + bounded-retry + disposition-honesty
-  design, which is a separate change; recovery for the SYNTHESIS path is what this ADR
-  commits to.
-
-## Amendment (2026-07-29) — the deferred acceptance bullet is delivered
-
-The final Consequences bullet above ("**One acceptance bullet of #318 is NOT delivered**")
-described an open item, not a decision. It is now **closed**, so that bullet no longer
-describes the code and this section is the correction. It is recorded as an amendment
-rather than a superseding ADR deliberately: nothing in the Decision above is reversed —
-the amendment *completes* a gap the same decision named, in the same subsystem, on the
-same day, and splitting one decision across two frozen records for a single acceptance
-bullet would make both harder to read than one record with its open item closed. The
-bullet's own text is left verbatim; it stated the three things needed, and all three
-landed exactly as described.
-
-**Bounded retry.** `engine/agent/teamsupervisor.go` (`runTurn`) no longer benches a member
-whose round ended `StopError` when the recovery seam SUCCEEDED and the member is still
-under its cap: it stays schedulable. The cap is `Supervisor.memberErrorRetries`
-(`WithMemberErrorRetries`, default `defaultMemberErrorRetries` = 1 — one retry survives a
-network hiccup while capping the wasted spend of a permanently-failing member; 0 restores
-the pre-amendment "bench on the first errored round" behaviour exactly). The counter,
-`memberRT.errorRounds`, is MONOTONIC and never reset, which is what makes the retry
-provably terminating: a member that always fails runs `cap+1` rounds and is then benched
-with its original disposition, and the round loop still reaches quiescence far short of
-`WithMaxRounds`. Three shapes are never retried: a FAILED RECOVERY (`nonResumable` — the
-session cannot be driven at all), a CANCELLED member (a kill is not a transient failure,
-and D5's disposition must hold), and a member that exhausted its LIFETIME TURN BUDGET (the
-ceiling exists precisely to stop rescheduling it).
-
-**Task release.** A retried member releases its in-progress claim through the existing
-`engine/team/team.go` (`ReleaseTasks`) and returns to `team.MemberIdle`, following the
-shape of the idle-between-rounds cancel path in `planRound`. Without it the work would be
-stranded: `InProgressFor` short-circuits `planRound`'s auto-claim, so neither the member
-nor a peer could pick the task up again.
-
-`planRound` additionally FORCE-SCHEDULES a retried member for exactly one turn
-(`memberRT.retryPending`, cleared on schedule). "Not stopped" is not sufficient to be
-rescheduled — `planRound` plans only a member that drained a message or claimed a task,
-and the commonest stall shape is a member dying on its first long exploration turn, before
-any task exists — so without the one-shot the retry would have been a silent no-op in
-precisely the case #318 reported. The retry turn carries `retryTurnNote`: a
-supervisor-authored line stating that the previous turn failed mid-flight, that the
-member's own transcript above is the context to continue from, and that its task claim was
-released. It is harness metadata, nothing quoted from the failed turn, so it renders
-TRUSTED like the roster.
-
-**Disposition honesty, in both directions.** `MemberDisposition` gains NO value — it is a
-closed enum mirrored on the proto wire, and "done" is still the honest terminal for a
-member that finished. Instead `agent.MemberOutcome` gains an additive count `ErrorRounds`,
-mirrored on `engine/session/event.go` (`TeamMemberDisposition`) and on
-`contracts/proto/mecatl/v1/harness.proto` (`TeamMemberDisposition.error_rounds`, field 4),
-so `team.end` carries it: a retried-then-finished member is otherwise byte-identical on the
-wire to one that never failed. `cmd/mecatui` renders such a lane `done (retried)` rather
-than a bare `done`. And the LEAD is told through the EXISTING trusted status section —
-`buildSynthesisSources` → `writeTeamStatus` (renamed from `writeStoppedMemberStatus`) —
-which now names the retried members and their failed-round counts alongside the stopped
-ones. A silently-retried member is a coordination lie in the opposite direction from the
-one the stopped line closes: the lead re-plans and reports on what it believes members did.
-The line is supervisor-authored metadata carrying only a count, so the gauntlet-#7 footing
-is unchanged.
-
-**Costs this adds.** A permanently-failing member now costs `cap+1` rounds of provider
-spend instead of one — bounded, and the reason the default is 1 rather than higher. And a
-retried member re-drives a round whose side effects (a tool call that landed before the
-stream died) may already have happened, so `retryTurnNote` tells it to continue rather than
-start over; the harness cannot know which side effects survived, so this is honest guidance
-and not a guarantee. Both are the same trade the Decision above already accepted for the
-`resume:` path: bounded waste in exchange for never stranding recoverable work.
+- **A permanently-failing team member costs `cap+1` rounds of provider spend** instead of
+  one — at the default cap, two rounds rather than one, i.e. exactly ONE extra scheduled
+  round per member over the whole team run (the counter is never reset, so it is not one
+  extra per failure). Bounded, and the reason the default cap is 1 rather than higher. It is
+  the same trade as the `resume:` bullet above: bounded waste in exchange for never
+  stranding recoverable work.
+- **The cap has NO operator flag, deliberately.** It is a library option
+  (`WithMemberErrorRetries`), and the repo's line is that **team-wide resource ceilings get
+  operator flags while per-member behavioural bounds stay engine-only defaults**. The
+  precedent is the sibling `WithMemberTurnBudget` (default 200 turns per member), which is
+  likewise unwired at every composition root — NOT `WithTeamTokenBudget`, whose
+  `--max-team-tokens` flag exists because it is a team-wide ceiling. An operator's control
+  over the extra spend is therefore the token ceilings that already bind it,
+  `--max-team-tokens` and the per-drive `--max-run-tokens`, plus the built-in round cap and
+  per-member turn budget. The cost of the choice is that an operator who wants fail-fast
+  cannot get it without a code change; the cost of the alternative is a flag for every
+  per-member default, which is the surface this line exists to hold.
+- **A retried member re-drives a round whose side effects may already have happened.** A
+  tool call that landed before the stream died is not undone, so `retryTurnNote` tells the
+  member to CONTINUE rather than start over. The harness cannot know which side effects
+  survived, so that is honest guidance, not a guarantee.
+- **`ErrorRounds` does not follow from the disposition.** It is a monotonic lifetime count
+  (the retry cap's termination proof), so a cancelled or budget-stopped member can carry a
+  non-zero count. A consumer that reads "clean terminal ⇒ 0 errored rounds" is wrong; the
+  two fields are read together.
 
 ## See also
 

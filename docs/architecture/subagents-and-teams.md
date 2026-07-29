@@ -20,12 +20,17 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
    scoped to the **run** workspace root (the worktree when forked, else the parent).
    **On `resume`** (a Subagent call carrying `resume: <agentId>`) it instead RELOADS the
    persisted child by that id and recovers its terminal state — `completed` → `Reopen()`,
-   `cancelled` → `Interrupt()` (history-repair), `failed` is **not** resumable (a
-   deliberate subagent-policy fence, unchanged by the main session's `failed →
-   Recover → idle` seam: a subagent is a one-shot delegated task, so the parent
-   re-delegates instead) — then
-   re-homes it onto the fresh fork (`session.Session.Rehome`) and prepends an honest
-   staleness note (the conversation survives, the workspace does NOT). Resume runs on the
+   `cancelled` → `Interrupt()` (history-repair), `failed` → `Recover()` (history-repair;
+   ADR 0077, issue #318 — matching the main session's `failed → Recover → idle` seam, since
+   a long-running direct-write child accumulates applied mutations and discarding it costs
+   more than a main session's transcript). Only a NON-terminal state — a snapshot still
+   recorded `running` — is refused. It then
+   re-homes the session onto the fresh fork (`session.Session.Rehome`) and prepends an honest
+   resume note: the read-only **staleness** note (the conversation survives, the workspace
+   does NOT) or, only when this call is `mode:"read-write"` AND the resumed snapshot's
+   persisted workspace IS the real parent root, the **edits-survived** note. That second
+   condition is deliberate: a previously read-only child's worktree was torn down, so
+   resuming it `read-write` must not claim its edits are still in place. Resume runs on the
    **default explorer engine only** (rejected with `agent`/`model`); an in-flight guard
    rejects a concurrent run on the same id.
 3. Runs the child via the injected `childEngine.Run(ctx, child, runWS, prompt)`.
@@ -55,9 +60,15 @@ validation error / error) and carries an `agentId: <childID>` trailer on every t
 read its persisted transcript via the read-only `InspectSubagent` tool (the id is used
 verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up prompt
 (default engine only, fresh fork + a resume note — the read-only staleness note, or the
-edits-survived note for a direct-write child). EVERY terminal is resumable, `failed`
+edits-survived note when the resumed child's OWN earlier run wrote to the real tree and
+this call is `read-write` again). EVERY terminal is resumable, `failed`
 included (ADR 0077): a failed child recovers through `session.Session.Recover`, and its
-error result carries a resume hint so the model can discover the path.
+error result carries a store-gated resume hint so the model can discover the path — the
+hint states what actually carries over (conversation yes, workspace no). A direct-write
+child's failure/timeout instead carries ONE combined resume-or-discard decision that names
+`mode:"read-write"` explicitly, because `writable` is taken from the CURRENT call only: a
+bare `resume` returns the read-only explorer, which can neither see nor finish the partial
+edits sitting in the operator's tree.
 `fork: true` (issue #34) seeds the child from a DEEP COPY of the parent conversation
 (via `session.ForkSnapshot` — trailing fork-call orphan stripped — and the idle-only
 `session.Session.SeedHistory`) instead of an empty context, TRUST-NEUTRAL (carried

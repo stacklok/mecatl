@@ -58,15 +58,22 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
  (chore(engine): api snapshot + CHANGELOG for the ADR-0079 payload widening)
 
 - **`agent.WithMemberErrorRetries` + `agent.MemberOutcome.ErrorRounds` +
-  `session.TeamMemberDisposition.ErrorRounds`** (issue #318, ADR 0077's amendment) —
+  `session.TeamMemberDisposition.ErrorRounds`** (issue #318, ADR 0077) —
   the bounded MEMBER RETRY that closes #318's last acceptance bullet ("a team
   member that hits one transient stall still participates in later rounds").
   ADR 0077 made a failed member's session RECOVERABLE, which rescued the lead's
   synthesis turn but still descheduled the member for the rest of the run.
   `WithMemberErrorRetries(n)` is a new `SupervisorOption` (default **1**) capping
   how many `StopError` rounds a member is retried through before it is benched with
-  its previous disposition; `WithMemberErrorRetries(0)` restores the old
-  bench-on-the-first-errored-round behaviour byte-for-byte. `MemberOutcome.ErrorRounds`
+  the same disposition it received before this release (`stopped` +
+  `StopReasonError`, tasks released). `WithMemberErrorRetries(0)` restores
+  bench-on-the-first-errored-round — the SCHEDULING half only. It does NOT restore
+  the pre-ADR-0077 behaviour of the same round: a member whose round ends in
+  `StopError` still has its session RECOVERED (`session.Session.Recover`) rather than
+  latched `nonResumable`, so a failed LEAD still runs its synthesis turn either way.
+  That half has no knob — see the "A FAILED delegated child is now resumable" entry
+  under **Changed** for the one lever (`agent.WithSubagentStore`) and its scope.
+  `MemberOutcome.ErrorRounds`
   and its `session.TeamMemberDisposition.ErrorRounds` mirror are new `int` COUNTS of
   a member's run-level failed rounds — the disposition-honesty signal, since a
   retried-then-finished member is `DispositionDone` with no `Reason` and would
@@ -80,11 +87,26 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   failure. It stays schedulable, its in-progress task claim is RELEASED back to
   pending (so it or a peer can re-claim), it is force-scheduled for one retry turn
   carrying a supervisor-authored retry note, and it is benched only once its errored
-  rounds EXCEED the cap. A permanently-failing member therefore consumes `cap+1`
-  rounds of provider spend instead of one — bounded, and the reason the default is 1.
+  rounds EXCEED the cap. The counter is per-member and NEVER reset, so at the default
+  cap of 1 the exposure is exactly **one extra scheduled round per member over the whole
+  team run** — not one per failure: a permanently-failing member runs `cap+1` = 2 rounds
+  in total instead of 1, which is what bounds it and the reason the default is 1.
   A failed RECOVERY (`nonResumable`), a CANCELLED member, and a turn-budget-exhausted
-  member are never retried. Pin `WithMemberErrorRetries(0)` for the prior behaviour.
-  (issue #318)
+  member are never retried. Pin `WithMemberErrorRetries(0)` to restore the previous
+  release's SCHEDULING behaviour (see the scope note above — the session recovery is
+  not covered by it).
+
+  **OPERATORS of `mecated`/`mecatui`/`mecak8s` cannot reach `WithMemberErrorRetries`, and
+  that is deliberate.** There is no `--max-member-error-retries` flag and no
+  `app.Config` field: this is a per-member BEHAVIOURAL bound, and the repo's line is that
+  those stay engine-only defaults while team-wide RESOURCE ceilings get flags. The
+  precedent is the sibling `WithMemberTurnBudget` (default 200 turns per member), which is
+  likewise engine-only with no operator flag — not `WithTeamTokenBudget`, which is
+  team-wide and is wired to `--max-team-tokens`. An operator's control over the extra spend
+  is therefore the existing token ceilings: `--max-team-tokens` (team-wide, summed across
+  all members and rounds) and `--max-run-tokens` (per run, inherited by every member
+  drive), on top of the built-in round cap and per-member turn budget. A LIBRARY consumer
+  that wants fail-fast passes `WithMemberErrorRetries(0)`. (issue #318)
 
 - **`session.SubagentPayload.Cause`** (issue #319) — a new `string` field on the
   redacted `subagent.*` observability projection carrying the child run's FAILURE
@@ -92,14 +114,19 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   empty on every other terminal, and set on `EvSubagentEnd` ONLY. It is
   harness/provider metadata (a transport or loop error string), never
   child-authored model output, so it is gauntlet-#7 safe on the same footing as
-  `Stop`/`Usage`, and it is clamped at the emit site. It rides the proto/client
-  wire end-to-end (`Subagent.cause` = field 17). Classified Added per
-  COMPATIBILITY.md (a new struct field on an existing payload is a minor bump).
-  Behaviour note for library consumers: the model-facing `Subagent` tool result on
-  a `StopError` terminal now LEADS with this cause and demotes the child's last
+  `Stop`/`Usage`. It is LINE-ORIENTED by contract — normalised at the emit site
+  (whitespace collapsed to single spaces, then rune-clamped), so a consumer renders
+  it as-is rather than re-deriving the collapse for its own single-line surface. It
+  rides the proto/client wire end-to-end (`Subagent.cause` = field 17). Classified
+  Added per COMPATIBILITY.md (a new struct field on an existing payload is a minor
+  bump). Behaviour note for library consumers: the model-facing `Subagent` tool result
+  on a `StopError` terminal now LEADS with this cause and demotes the child's last
   assistant text to clamped "Last activity before the failure" context — the same
-  change applies to a failed `Parallel` branch's reported reason. No exported
-  signature changed. (issue #319)
+  change applies to a failed `Parallel` branch's reported reason. Both halves of that
+  body are framing-NEUTRALISED (`agent.NeutraliseFraming`) before composition, since
+  neither is harness-authored: a provider error string or a child's prose could
+  otherwise forge the `agentId:` trailer or a bracketed harness note it is composed
+  next to. No exported signature changed. (issue #319)
 
 - **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
   `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
@@ -192,8 +219,12 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   (it never forked) instead of receiving the read-only fresh-checkout staleness note.
   In `agent.Supervisor`, a team member whose round left its session failed is
   likewise recovered rather than benched, so a failed LEAD still reaches its final
-  synthesis; `MemberOutcome.Stopped`/`Reason` are unchanged (a failed round still
-  deschedules the member). Consumers relying on a failed child being permanently
+  synthesis. `MemberOutcome.Stopped`/`Reason` for a failed round changed too — see
+  the `agent.WithMemberErrorRetries` entry under **Added**: on the default
+  configuration a member whose round ends in `StopError` is now retried, so it
+  finishes `Stopped == false` / `DispositionDone` / `Reason == ""` rather than
+  `stopped`/`error`. Read the two entries together; the disposition a consumer sees
+  is the retry entry's, not this one's. Consumers relying on a failed child being permanently
   unresumable — or matching on the old refusal copy — must adjust. There is no knob
   that restores the old refusal; the ONE lever is the precondition `resume` has always
   had — it requires a wired session store, so a consumer that must forbid resuming a

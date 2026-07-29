@@ -1914,11 +1914,11 @@ text-bearing `StopError` turn in `StateCompleted`; `memberRT.nonResumable` is no
 transition itself fails (in practice: a CANCELLED member, whose `Reopen` is illegal by design), and
 that is the one case that still yields an empty `Report` → the structured fallback.
 
-**Bounded member retry (ADR 0077's amendment, the last #318 acceptance bullet).** Recovering the
+**Bounded member retry (ADR 0077, the last #318 acceptance bullet).** Recovering the
 session made the member drivable, but `stopped` still descheduled it, so a member that hit ONE
 transient stall was benched for the rest of the run. `runTurn` now leaves an errored member
 SCHEDULABLE while it is under `Supervisor.memberErrorRetries` (`agent.WithMemberErrorRetries`, default
-`defaultMemberErrorRetries` = **1**; 0 restores the pre-amendment bench-on-first-error behaviour
+`defaultMemberErrorRetries` = **1**; 0 restores the previous release's bench-on-first-error behaviour
 byte-for-byte). Three shapes are NEVER retried: a failed RECOVERY (`nonResumable` — undrivable), a
 CANCELLED member (not a transient failure; D5's disposition must hold), and a member that exhausted its
 LIFETIME TURN BUDGET. TERMINATION comes from `memberRT.errorRounds` being MONOTONIC (counted on every

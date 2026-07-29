@@ -132,11 +132,14 @@ are written to `$XDG_STATE_HOME/mecatl/mecatui.log` (fallback
 alt-screen. `--quiet` discards them instead. A client-only run (`--server`, or
 reusing an already-running `mecated`) logs nothing of its own.
 
-The file's floor is `info`. The two paths that end a turn TERMINALLY — a permanent
-non-retryable provider error and a mid-stream stream failure — log at `info` (issue
-#319), so a died-mid-turn diagnosis needs nothing beyond this file. The resilience
-layer's retry-counting detail sits at `debug` and is therefore not written; it answers
-a different question (a slow or retrying provider, not a dead turn).
+The file's floor is `info`. ALL FOUR paths that end a turn TERMINALLY — a permanent
+non-retryable provider error, a mid-stream stream failure (or cancellation), a rejection
+by the open circuit breaker, and exhausted establishment attempts — log at `info` (issue
+#319), each carrying the `model` so a busy daemon's lines can be told apart, so a
+died-mid-turn diagnosis needs nothing beyond this file. The resilience
+layer's retry-counting detail sits at `debug` and is therefore not written — and there is
+currently no flag, env, or config key that lowers the floor to reach it; it answers
+a different question anyway (a slow or retrying provider, not a dead turn).
 
 **Environment variables.** A handful of envs tune the client beyond the flags above
 (most have a flag equivalent in the table; the rendering-capability pairs are env-only):
