@@ -75,14 +75,18 @@ func TestDigestChildActivity(t *testing.T) {
 }
 
 // TestRecoveredDigestPrefixFraming pins the issue #152 UX contract for the last-resort
-// digest prefix: it states provenance + partial-ness + the resume next-action, and
-// DELIBERATELY does NOT restate the stop reason ("ended without a final summary") so the
-// StopNoProgress note (which owns that "why") and this prefix never double-state it. It
-// must still read coherently standalone on the note-less empty-StopEndTurn path, so it
-// carries its own provenance + partial signal.
+// digest prefix: it states provenance + partial-ness ONLY, so it reads coherently
+// standalone on the note-less empty-StopEndTurn path while restating NEITHER of the two
+// things renderSubagentResult's stop-reason note owns — the stop reason ("ended without a
+// final summary") and the next action ("resume it with the agentId above"). The two
+// strings are rendered one after the other on a StopNoProgress terminal, so a duplicated
+// clause reads to the model as two separate instructions.
+//
+// The de-duplication is asserted end-to-end through the real render path in
+// TestRecoveredDigestStatesTheNextActionOnce; this is the constant-level half.
 func TestRecoveredDigestPrefixFraming(t *testing.T) {
-	// Provenance + partial-ness + the resume next-action are all present.
-	for _, want := range []string{"recovered", "partial", "resume", "agentId"} {
+	// Provenance + partial-ness are present (what the prefix owns).
+	for _, want := range []string{"recovered", "partial"} {
 		if !strings.Contains(recoveredDigestPrefix, want) {
 			t.Errorf("recoveredDigestPrefix %q must mention %q", recoveredDigestPrefix, want)
 		}
@@ -91,6 +95,14 @@ func TestRecoveredDigestPrefixFraming(t *testing.T) {
 	// note + prefix double-state "ended without a final summary" and subtly conflict.
 	if strings.Contains(recoveredDigestPrefix, "ended without a final summary") {
 		t.Errorf("recoveredDigestPrefix must not restate the StopNoProgress note's stop reason: %q", recoveredDigestPrefix)
+	}
+	// Nor the next action, for the same reason (the issue #319 review round found the
+	// clause "treat as partial; resume it with the agentId above to continue" was
+	// byte-identical in the prefix and the note).
+	for _, forbidden := range []string{"resume", "agentId"} {
+		if strings.Contains(recoveredDigestPrefix, forbidden) {
+			t.Errorf("recoveredDigestPrefix must not restate the note's next action (%q): %q", forbidden, recoveredDigestPrefix)
+		}
 	}
 }
 

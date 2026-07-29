@@ -903,13 +903,16 @@ child's last non-empty `RoleAssistant` text walked backwards out of its own hist
 not a peer preview) and framed by `recoveredDigestPrefix`. Only when BOTH stages are empty does the
 floor `(subagent produced no summary …)` stand — and even then the stop-reason note names WHY, so the
 result is never opaque. **Framing discipline (UX): the stop reason is stated in exactly ONE place.**
-The `StopNoProgress` note (`renderSubagentResult`) owns the canonical "why" (`ended without a final
-summary`) and the next-action hint (`treat as partial; resume it with the agentId above to
-continue`); `recoveredDigestPrefix` states ONLY provenance + partial-ness + the resume hint (it
-does NOT restate the stop reason), so the note + prefix never double-state it, and the prefix still
-reads coherently standalone on the note-less empty-`StopEndTurn` path. The floor placeholder + the
-note both carry the resume hint, so the result is never a dead end (the `agentId` trailer is already
-on it). (Note: the loop's own `lastText` machinery already carries ANY text-bearing turn's text into
+The `StopNoProgress` note (`renderSubagentResult`) owns BOTH the canonical "why" (`ended without a
+final summary`) AND the next action (`treat as partial; resume it with the agentId above to
+continue`); `recoveredDigestPrefix` states ONLY provenance + partial-ness, restating NEITHER. The two
+are rendered one after the other on that terminal, and the prefix used to duplicate the whole
+`treat as partial; resume …` clause BYTE-FOR-BYTE — a model reading the same imperative twice, in two
+framings, cannot tell one instruction from two, so the one-place rule generalises from the stop reason
+to the next action. The prefix still reads coherently standalone on the note-less empty-`StopEndTurn`
+path: that terminal is a BENIGN clean end, so provenance + partial-ness is all it owes, and the
+`agentId` trailer is on the result regardless — resuming stays available where it is not advertised.
+The floor placeholder + the note both carry the resume hint, so the result is never a dead end. (Note: the loop's own `lastText` machinery already carries ANY text-bearing turn's text into
 a `StopNoProgress`/limit result — every text turn sets `lastText`, so for the salvage to run the
 original drive must have produced no assistant text at all, and then there is none for the digest to
 find either. The digest is therefore genuine belt-and-suspenders that the live loop provably cannot
@@ -1107,7 +1110,24 @@ direct-write child (`writableSubagentFailedNote` — resume on top of the partia
 with git, "Do not do both"), because the generic hint plus the partial-edits note are two independent
 imperatives and a model can follow BOTH: discard the edits, then resume a child `resumeWritableNote`
 greets with "the file edits you already made are STILL IN PLACE", which the discard just falsified.
-A store-less writable failure keeps the plain `writableSubagentPartialNote` (review-or-undo only). The LOADED
+A store-less writable failure keeps the plain `writableSubagentPartialNote` (review-or-undo only).
+The hint's WORDING is mode-accurate in the same spirit: it says the conversation is preserved but the
+WORKSPACE does not carry over (the child ran in a throwaway checkout, so any files it wrote are GONE),
+because the earlier "continue where it left off" over-promised — `resumeStalenessNote` greets the
+resumed child with exactly the opposite, and a parent told only "where it left off" can re-delegate a
+follow-up that assumes half-written files survived. The claim is about the FAILED child's dead
+worktree, so it holds whether the resume comes back read-only (a fresh fork) or is upgraded to
+`mode:"read-write"` (the real parent tree — still not the dead worktree).
+The PER-CALL TIME-BUDGET terminal has the same shape, via its own `subagentTimeoutNote(writable,
+resumable)` gate mirroring `subagentResumeHint`'s four cells (`subagentTimeoutResumeHint` /
+`writableSubagentTimeoutNote` / `writableSubagentPartialNote` / silence). It was the LAST failure path
+with no next action at all — a timed-out child lands `StateCancelled`, which `resolveResumeSession` has
+always recovered, so the silence read as "this delegation is dead" once every neighbouring terminal
+named a recovery. Its wording is its own rather than a reuse of the `StopError` notes for two reasons:
+the child ran out of CLOCK, not out of competence (so "if the failure looks transient" would
+misdescribe it), and the fix has a nameable knob — a larger `timeout_ms` on the resuming call. Both
+call sites (foreground `finishForegroundRun` and background `driveBackground`) go through the one
+gate. The LOADED
 session keeps its STORED Limits; the per-call `max_turns`/`max_tool_calls` only TIGHTEN them (Reopen/
 Interrupt/Recover all reset Counters via `resetToIdle`, so each bound applies afresh); the per-call token budget (`max_run_tokens`,
 the preferred arg; `max_tokens` the deprecated alias for the same budget — `resolveMaxRunTokens` folds the
@@ -3305,14 +3325,29 @@ and plain) so setting `StreamIdleTimeout <= 0` cannot silently re-open the blind
 logged BEFORE the `yield` — an ordinary consumer BREAKS its range loop on the error, which makes
 `yield` return false, so a log placed after the `if !yield(...) { return }` is unreachable on the very
 path that matters. Its ctx is `context.Background()`, mirroring the sibling idle-stall site (the
-request ctx may already be done). The Debug retry lines were deliberately NOT promoted (retries are
-routine, and promoting them is log spam); they were made REACHABLE instead by mecatui's new
-`--log-level debug` (`cmd/mecatui/diaglog.go`'s `logLevels` is the ONE mapping feeding all three
-sinks — the `slogdiag` `port.Diagnostics` floor, the perf logger, and the redirected ambient-slog
-default — so they can never disagree; an unknown value is rejected LOUDLY by `config.validate`, never
-fail-softed to info, because an operator raising the level is debugging). Per `Config.Diagnostics`'
-own contract this is an ADAPTER seam, NOT the loop's run-scoped sink, so the loop's three-line budget
-(ADR 0020) is untouched.
+request ctx may already be done). Per `Config.Diagnostics`' own contract this is an ADAPTER seam, NOT
+the loop's run-scoped sink, so the loop's three-line budget (ADR 0020) is untouched.
+
+**The Debug retry lines stay Debug, and there is deliberately NO operator severity knob.** Promoting
+them to Info was rejected (retries are routine; the line is spam there), and a knob to lower the sink
+floor and REACH them was considered and rejected too. It is not needed for #319/#318: the diagnosis
+those issues asked for is "why did this turn die", which the two Info terminals above answer at the
+DEFAULT floor in every binary. The Debug lines answer a DIFFERENT question — a slow or retrying
+provider — so reaching them is a properly-scoped change of its own, with its own justification, if it
+is ever wanted. Against that, such a knob is permanent operator surface at every composition root
+(help text, docs, tests, support) and carries a real privacy hazard: lowering the floor also admits any
+third-party dependency's debug output into mecatui's plaintext 0700 log file, so it would ship owing a
+disclosure for a problem it introduced. The repo's own preference settles it — the cheapest abstraction
+is the one you don't write yet. Every diagnostics sink is therefore hardcoded at its
+Info/`port.LevelInfo` floor (`cmd/mecatui/diaglog.go`, `cmd/mecatui/main.go`, `cmd/mecated/main.go`).
+
+Both Info lines also carry `"model"` (from the request). Without it an operator on a busy `mecated`
+learns that *a* turn died, not whose — half of what #319 asked for. The model id is the finest
+correlation this decorator can reach: it is a provider DECORATOR and sees no session/run identity at
+all, and `port.LLMRequest` must stay provider-neutral, so widening it for a session id is not on the
+table. The mid-stream site had no request in scope, so the model is threaded `Stream` ->
+`establish` -> `pullToCommit` -> `restSeq` -> `logMidStreamError` as a plain string; both `restSeq`
+variants carry it, so disabling the idle watchdog cannot leave that path uncorrelated.
 
 ### `WebSearch` core tool + `search` adapters (issue #26 — source discovery before WebFetch)
 

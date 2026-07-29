@@ -6,79 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
-
-// defaultLogLevel is the --log-level default: the level every mecatui diagnostics sink
-// was HARDCODED to before the flag existed, so the default path is byte-identical.
-const defaultLogLevel = "info"
-
-// logLevels maps a --log-level token to the matching pair of level values the two sink
-// families need: the engine's provider-neutral port.Level (for the slogdiag-backed
-// port.Diagnostics the embedded server is given) and slog.Level (for the perf logger and
-// the redirected ambient-slog default). It is ONE mapping so the three sinks can never
-// disagree about what "debug" means. ok is false for an unrecognised token — the caller
-// (config.validate) rejects it loudly rather than fail-softing to info, which would look
-// like the flag did nothing.
-func logLevels(level string) (port.Level, slog.Level, bool) {
-	// The ZERO value means "unset" → the default, matching the repo's empty-means-default
-	// flag convention. parseFlags always seeds defaultLogLevel, so this only matters for a
-	// config built directly (a test, or an embedder), which must not be rejected.
-	if level == "" {
-		level = defaultLogLevel
-	}
-	switch level {
-	case "debug":
-		return port.LevelDebug, slog.LevelDebug, true
-	case "info":
-		return port.LevelInfo, slog.LevelInfo, true
-	case "warn":
-		return port.LevelWarn, slog.LevelWarn, true
-	case "error":
-		return port.LevelError, slog.LevelError, true
-	default:
-		return port.LevelInfo, slog.LevelInfo, false
-	}
-}
-
-// slogLevel is logLevels' slog half for the callers that only build slog handlers. An
-// unrecognised token yields slog.LevelInfo (validate() has already rejected it, so this
-// is a defensive floor, not a fail-soft policy).
-func slogLevel(level string) slog.Level {
-	_, l, _ := logLevels(level)
-	return l
-}
-
-// logSinks bundles the THREE level-bearing diagnostics sinks the host-an-embedded-server
-// path wires over ONE writer: the engine-facing port.Diagnostics the embedded server is
-// given, the perf surface's explicit slog.Logger, and the handler that becomes the GLOBAL
-// slog default (capturing ambient/third-party slog into the same file instead of the
-// alt-screen). They are built together, from the one logLevels mapping, so no sink can
-// silently keep a hardcoded floor while the operator's --log-level moves the other two —
-// which is precisely the bug --log-level exists to fix (the Debug retry lines were
-// unobtainable without rebuilding the binary).
-//
-// The global slog.SetDefault call itself stays in main.go: its ORDERING relative to the
-// baseline floor and the embedded-server start is a cmd-layer concern, and cmd/ mains are
-// the only layer permitted to call it (ADR 0020).
-type logSinks struct {
-	diag    port.Diagnostics
-	perf    *slog.Logger
-	ambient slog.Handler
-}
-
-// newLogSinks builds the three sinks over w at the given --log-level token. An
-// unrecognised token falls to the info floor (config.validate has already rejected it).
-func newLogSinks(w io.Writer, level string) logSinks {
-	diagLevel, handlerLevel, _ := logLevels(level)
-	return logSinks{
-		diag:    slogdiag.New(w, false, diagLevel),
-		perf:    slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: handlerLevel})),
-		ambient: slog.NewTextHandler(w, &slog.HandlerOptions{Level: handlerLevel}),
-	}
-}
 
 // baselineSlogWriter picks the writer for the UNIVERSAL global-slog floor the TUI
 // installs before the alt-screen starts (see installBaselineSlog). mecatui has no
@@ -103,9 +32,9 @@ func baselineSlogWriter(quiet bool) io.Writer {
 // writer, which wins for that path; this baseline stands for the client-only modes.
 // cmd/ mains are the only layer permitted to call slog.SetDefault (internal/ flows
 // through the injected port.Diagnostics, ban-guarded). See docs/adr/0020-diagnostics.md.
-func installBaselineSlog(quiet bool, level string) {
+func installBaselineSlog(quiet bool) {
 	w := baselineSlogWriter(quiet)
-	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slogLevel(level)})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))
 }
 
 // mecatuiLogSubpath is the per-user state-relative path of the embedded server's

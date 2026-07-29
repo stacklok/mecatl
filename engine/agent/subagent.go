@@ -777,11 +777,23 @@ const salvageWrapUpPrompt = "You have reached your budget and must stop now. " +
 // recoveredDigestPrefix frames the last-resort digestChildActivity recovery (issue
 // #152): when both the original drive AND the bounded salvage turn produced no final
 // text, the child's last non-empty assistant message is surfaced verbatim under this
-// prefix. It states ONLY provenance ("recovered … last output") + partial-ness +
-// the resume next-action — DELIBERATELY not the stop reason, which renderSubagentResult's
-// StopNoProgress note owns (so the note + this prefix never double-state "no final
-// summary"). It reads coherently standalone on the note-less empty-StopEndTurn path too.
-const recoveredDigestPrefix = "[recovered the subagent's last output below — treat as partial; resume it with the agentId above to continue]"
+// prefix. It states ONLY provenance ("recovered … last output") + partial-ness.
+//
+// It states NEITHER the stop reason NOR the next action, because renderSubagentResult's
+// stop-reason note owns BOTH: on the StopNoProgress terminal that prefix and that note
+// are rendered one after the other, and the earlier wording duplicated the clause
+// "treat as partial; resume it with the agentId above to continue" BYTE-FOR-BYTE between
+// them. The repo's rule is that the stop reason is stated in exactly ONE place; the same
+// reasoning applies to the next action, which is if anything worse to duplicate — a
+// model reading the same imperative twice, from two different framings, has no way to
+// tell whether it is one instruction or two.
+//
+// It still reads coherently standalone on the note-less empty-StopEndTurn path: that
+// path carries provenance + partial-ness, which is all it owes. StopEndTurn is a BENIGN
+// clean end (the child finished its turn), so no next action is owed there — and the
+// agentId trailer is on the result regardless, so resuming stays available even where it
+// is not advertised.
+const recoveredDigestPrefix = "[recovered the subagent's last output below — treat as partial]"
 
 // submitResultToolName is the catalog name of the synthetic deliverable tool a
 // structured-output child is given. It is run-scoped (RunOptions.ExtraTools), never
@@ -2282,12 +2294,14 @@ func (t *SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish
 	// so the model learns the call hit its own limit (distinct from a generic failure).
 	if f.timeoutCtx != nil && f.timeoutCtx.Err() == context.DeadlineExceeded {
 		msg := fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *f.timeoutMs, f.childID)
-		if f.writable {
-			// Direct-write (ADR 0041): a writable child killed MID-TASK by its time
-			// budget edited the real tree in place and may have left PARTIAL work — warn
-			// the model with the same git-recovery thread the StopError/cancel path gets,
-			// so it never assumes the timed-out call landed nothing.
-			msg += "\n\n" + writableSubagentPartialNote
+		// The recoverable next action (subagentTimeoutNote): a timed-out child lands
+		// StateCancelled, which resume has always recovered, so this terminal is NOT a
+		// dead end — and for a direct-write child (ADR 0041) the note is also the honest
+		// PARTIAL-edits warning, since a writable child killed MID-TASK edited the real
+		// tree in place and may have left half-finished work there. One gate resolves
+		// both axes so the timeout path cannot drift from the StopError path's policy.
+		if note := subagentTimeoutNote(f.writable, t.store != nil); note != "" {
+			msg += "\n\n" + note
 		}
 		return session.NewToolError(f.call.ID, msg)
 	}
@@ -2518,8 +2532,14 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	// the single rendering chokepoint): time-budget first, then the client-cancel
 	// disambiguation. The rendered result is what SubagentStatus delivers verbatim.
 	if b.timeoutCtx != nil && b.timeoutCtx.Err() == context.DeadlineExceeded {
-		res = session.NewToolError(b.call.ID,
-			fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *b.args.TimeoutMs, b.childID))
+		msg := fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *b.args.TimeoutMs, b.childID)
+		// Same recoverable next action as the foreground path (subagentTimeoutNote).
+		// writable=false unconditionally: mode:"read-write"+background is rejected in
+		// validateMode, so a background child is always the read-only forked kind.
+		if note := subagentTimeoutNote(false, t.store != nil); note != "" {
+			msg += "\n\n" + note
+		}
+		res = session.NewToolError(b.call.ID, msg)
 		return
 	}
 	// background is read-only only (mode:"read-write"+background is rejected in
@@ -2563,6 +2583,19 @@ func backgroundGateFullError(ids []string) string {
 // bytes onto the event stream.
 const maxSubagentCausePreview = 400
 
+// maxSubagentFinalPreview caps how many runes of the CHILD'S LAST ASSISTANT TEXT cross
+// into the model-facing StopError body as demoted context (subagentErrorBody's second
+// half). It is deliberately SMALLER than maxSubagentCausePreview (400): the text is
+// "how far did it get" context, not the actionable half, and a chatty child must never
+// push the cause — or the resume affordance that follows it — out of the parent's
+// reading window.
+//
+// The number matches maxTeamPreview's 200 by DESIGN (both bound one preview's worth of
+// model prose), not by dependence: it is named for this path so subagentErrorBody reads
+// self-contained instead of borrowing the team tool's constant, and either bound can move
+// without dragging the other.
+const maxSubagentFinalPreview = 200
+
 // subagentErrorBody composes the model-facing body of a StopError subagent result.
 // The CAUSE (the harness/provider failure detail the loop put on
 // session.ResultPayload.Error) leads, because it is the actionable half; the child's
@@ -2583,7 +2616,8 @@ const maxSubagentCausePreview = 400
 // it on every subsequent turn — an unbounded provider error body (an HTML error page, a
 // giant JSON envelope) must not become permanent context. The cause gets the larger
 // maxSubagentCausePreview budget for the same reason the event payload does: a truncated
-// provider error is unactionable.
+// provider error is unactionable, and the child's text the smaller
+// maxSubagentFinalPreview one.
 //
 // The parameters are ordered as they RENDER (cause first, then final): the two are both
 // strings and adjacent, so a positional swap compiles — and a swap here would silently
@@ -2598,7 +2632,7 @@ func subagentErrorBody(cause, final string) string {
 	final = strings.TrimSpace(final)
 	switch {
 	case cause != "" && final != "":
-		return cause + "\n\nLast activity before the failure: " + clampRunes(final, maxTeamPreview)
+		return cause + "\n\nLast activity before the failure: " + clampRunes(final, maxSubagentFinalPreview)
 	case cause != "":
 		return cause
 	case final != "":
@@ -2633,7 +2667,20 @@ func subagentErrorBody(cause, final string) string {
 // accurate on the StopError layout (where the trailer comes LAST, unlike the success
 // family's leading trailer), and it names BOTH options so a model facing an obviously
 // permanent cause still re-delegates instead of retrying forever.
-const subagentErrorResumeHint = "[the subagent failed mid-task — its conversation is preserved; if the failure looks transient (a stalled or errored provider call), resume it with the agentId above to continue where it left off, or start a fresh subagent]"
+//
+// The wording states WHAT carries over and what does NOT, because the earlier
+// "continue where it left off" over-promised: a resumed child's CONVERSATION is
+// restored but its WORKSPACE is not — resumeStalenessNote greets it with "file changes
+// … from your earlier run are GONE" (its git worktree was torn down; this run gets a
+// fresh fork). A parent told only "continue where it left off" can re-delegate a
+// follow-up that assumes half-written files survived, which is the same
+// harness-asserts-a-falsehood class as the two messages #319 fixed. The clause is
+// mode-ACCURATE both ways: the workspace claim is about the FAILED child's throwaway
+// checkout, so it holds whether the resume comes back read-only (a fresh fork) or is
+// upgraded to mode:"read-write" (the real parent tree — still not the dead worktree).
+// It is kept in lockstep with resumeStalenessNote by
+// TestFailureResumeHintMatchesTheResumedChildsRealWorkspacePosture.
+const subagentErrorResumeHint = "[the subagent failed mid-task — its conversation is preserved; if the failure looks transient (a stalled or errored provider call), resume it with the agentId above to continue from its transcript. Its WORKSPACE does not carry over: it ran in a throwaway checkout, so any files it wrote are GONE and it must re-read files and re-run commands. Otherwise start a fresh subagent.]"
 
 // subagentResumeHint resolves which resume affordance a StopError result may advertise.
 // It is the ONE gate: an empty string means "say nothing", which is the honest answer in
@@ -2653,6 +2700,61 @@ func subagentResumeHint(writable, resumable bool) string {
 		return ""
 	}
 	return subagentErrorResumeHint
+}
+
+// The two MODEL-VISIBLE next actions a per-call TIME-BUDGET terminal can carry.
+//
+// A timed-out child lands in StateCancelled, which resolveResumeSession has ALWAYS
+// recovered, so the terminal is recoverable — but before this it was the one failure
+// path with no next action at all, while every neighbouring terminal (StopError, the
+// limit stops, StopNoProgress, the no-summary floor) names one. Left silent it reads as
+// the exception: the model is taught everywhere else that a bad terminal is resumable
+// and here it infers the delegation is simply dead (ADR 0070's model-visible-affordance
+// rule — an unnamed capability is an unusable one).
+//
+// The timeout wording is its OWN pair rather than a reuse of the StopError notes for two
+// reasons: the cause is not a failure at all (the child ran out of clock, not out of
+// competence, so "if the failure looks transient" would misdescribe it), and the operator
+// knob that fixes it is nameable — `timeout_ms` on the resuming call.
+//
+//   - subagentTimeoutResumeHint (read-only): the same conversation-survives /
+//     workspace-does-not split subagentErrorResumeHint states, for the same reason.
+//   - writableSubagentTimeoutNote (direct-write, resumable): ONE combined decision, not
+//     two independent imperatives — identical reasoning to writableSubagentFailedNote
+//     (a model handed "undo the edits" and "resume" separately can do both, then meet
+//     resumeWritableNote's "your edits are STILL IN PLACE", which the undo just
+//     falsified). "the agentId above" is literally accurate here: the timeout layout
+//     stamps the trailer FIRST and appends the note.
+//
+// A store-less deployment keeps today's rendering (no hint at all; the writable arm keeps
+// writableSubagentPartialNote's review-or-undo) because validateResume's first
+// precondition is a wired store — advertising a resume it will refuse is the same defect,
+// which is exactly what subagentResumeHint's `resumable` gate exists for.
+const (
+	subagentTimeoutResumeHint   = "[the subagent ran out of its per-call time budget, not out of work — its conversation is preserved; resume it with the agentId above to continue from its transcript (pass a larger `timeout_ms` if the task genuinely needs longer), or start a fresh subagent with a narrower goal. Its WORKSPACE does not carry over: it ran in a throwaway checkout, so any files it wrote are GONE and it must re-read files and re-run commands.]"
+	writableSubagentTimeoutNote = "[the subagent edited your workspace directly and was stopped MID-TASK by its time budget — its edits may be PARTIAL and are still in your working tree. Either resume it with the agentId above to finish on top of them (pass a larger `timeout_ms` if the task genuinely needs longer), or discard them with `git checkout`/`git stash` (review first with `git diff`/`git status`). Do not do both.]"
+)
+
+// subagentTimeoutNote resolves the next-action body a per-call time-budget terminal
+// carries. It is the ONE gate for that terminal, mirroring subagentResumeHint's shape
+// (and its two honest-silence cases) so the timeout path cannot drift from the StopError
+// path's policy:
+//
+//	writable + resumable → the single combined resume-or-discard decision
+//	writable             → today's review-or-undo partial note (no resume to offer)
+//	resumable            → the generic timeout resume hint
+//	neither              → "" (say nothing: no store, nothing to advertise)
+func subagentTimeoutNote(writable, resumable bool) string {
+	switch {
+	case writable && resumable:
+		return writableSubagentTimeoutNote
+	case writable:
+		return writableSubagentPartialNote
+	case resumable:
+		return subagentTimeoutResumeHint
+	default:
+		return ""
+	}
 }
 
 // renderSubagentResult labels the child's terminal by stop reason (D4 — the typed result
@@ -2739,10 +2841,12 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 	case session.StopBudget:
 		body = "[subagent stopped: reached its token budget]\n\n" + body
 	case session.StopNoProgress:
-		// The CANONICAL stop-reason note: it owns the "why" ("ended without a final
-		// summary"), so the digest prefix (driveChild) must NOT restate it. The
-		// next-action hint makes the partial result recoverable — the agentId trailer is
-		// already on the result, so the parent can resume the child rather than discard it.
+		// The CANONICAL note: it owns BOTH the "why" ("ended without a final summary")
+		// and the next action, so the digest prefix (driveChild) restates NEITHER — the
+		// two are rendered one after the other on this terminal, and duplicating either
+		// reads as two separate instructions. The next-action half makes the partial
+		// result recoverable: the agentId trailer is already on the result, so the parent
+		// can resume the child rather than discard it.
 		body = "[subagent stopped: ended without a final summary — treat as partial; resume it with the agentId above to continue]\n\n" + body
 	case session.StopCancelled:
 		// Only a CLIENT cancel (CancelChild) is noted; a parent-run cancel keeps the
@@ -2840,6 +2944,19 @@ func renderSubagentTrailer(childID session.SessionID, body string) string {
 // stop reason, the terminal FAILURE CAUSE (the loop's ResultPayload.Error — non-empty
 // only on a StopError terminal; issue #319), cumulative usage, and observed tool-call
 // count. As with finalText/stop, the cause reported by the LAST drive wins.
+//
+// TRIP-WIRE — the child-outcome return chain. driveChild and drainChildObserved return
+// FIVE values (text, stop, cause, usage, toolCount) and handleChildEvent four (text, stop,
+// cause, bool), i.e. two `string` results separated by a non-string, so a call site that
+// transposes text and cause COMPILES. That is deliberately left un-refactored: the
+// definitions use named results, there are only five call sites, and the reordered
+// subagentErrorBody(cause, final) plus its tests catch a transposition on the paths that
+// matter — extracting a value type today would be churn without a second consumer. A
+// SIXTH value on this chain is the point to extract a `childOutcome` struct, not before.
+// (drainChild deliberately keeps its 2-value signature: five fail-soft callers want no
+// cause.) This mirrors the same named-trip-wire discipline the three delegation-event
+// families carry in engine/session/event.go, where a FOURTH family is the extraction
+// point.
 //
 // FREE-TEXT path (submit == nil): exactly one RunContentWith drive — byte-identical to
 // the prior engine.Run(...) behaviour.

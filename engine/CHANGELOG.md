@@ -160,6 +160,24 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Changed
 
+- **Model-facing next-action wording on the Subagent failure terminals** (issue #319 /
+  #318 review round) — BEHAVIOUR/COPY only; no exported signature moved and
+  `engine/api/*.txt` is unaffected. Three strings a consumer might be matching on
+  changed, all in the same direction (the harness must not assert something the next
+  turn contradicts):
+  1. The `StopError` resume hint no longer says "continue where it left off" — it now
+     states that the CONVERSATION is preserved but the WORKSPACE is not (the failed
+     child ran in a throwaway checkout, so files it wrote are gone), which is what
+     `resumeStalenessNote` tells the resumed child.
+  2. The PER-CALL TIME-BUDGET terminal (`timeout_ms`) now carries a next action — a
+     timed-out child lands `StateCancelled` and has always been resumable, but the
+     terminal named no recovery, and a `mode:"read-write"` timeout gets the single
+     combined resume-or-discard decision instead of a bare partial-edits warning.
+  3. The last-resort recovered-digest prefix no longer restates the stop-reason note's
+     next action; it states provenance + partial-ness only (the two rendered
+     back-to-back and duplicated the clause byte-for-byte).
+  Consumers asserting on the old copy must adjust. No new exported symbol.
+
 - **A FAILED delegated child is now resumable** (ADR 0077, issue #318) — a
   BEHAVIOUR change with NO exported signature change, so it is classified Changed
   (behaviour only; `engine/api/*.txt` is unaffected). The `Subagent` tool's

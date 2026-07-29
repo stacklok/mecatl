@@ -69,11 +69,13 @@ func TestSubagentErrorBodyPrefersCause(t *testing.T) {
 // error body (an HTML error page, a giant JSON envelope) must not become permanent
 // context, and neither must a runaway assistant message. The cause gets the larger
 // maxSubagentCausePreview budget for the same reason the event payload does — a truncated
-// provider error is unactionable — and the child's text the smaller maxTeamPreview one.
+// provider error is unactionable — and the child's text the smaller
+// maxSubagentFinalPreview one (a subagent-NAMED bound: the helper is the ONE place the
+// StopError body is composed, so it must not read as borrowing the team tool's constant).
 func TestSubagentErrorBodyClampsBothHalves(t *testing.T) {
 	t.Parallel()
 	hugeCause := "BOOM-" + strings.Repeat("x", maxSubagentCausePreview*4)
-	hugeFinal := strings.Repeat("y", maxTeamPreview*4)
+	hugeFinal := strings.Repeat("y", maxSubagentFinalPreview*4)
 
 	got := subagentErrorBody(hugeCause, hugeFinal)
 	const label = "\n\nLast activity before the failure: "
@@ -89,8 +91,8 @@ func TestSubagentErrorBodyClampsBothHalves(t *testing.T) {
 		t.Fatalf("cause was not clamped: %d runes, want <= %d", n, maxSubagentCausePreview+1)
 	}
 	tail := got[idx+len(label):]
-	if n := len([]rune(tail)); n > maxTeamPreview+1 {
-		t.Fatalf("final was not clamped: %d runes, want <= %d", n, maxTeamPreview+1)
+	if n := len([]rune(tail)); n > maxSubagentFinalPreview+1 {
+		t.Fatalf("final was not clamped: %d runes, want <= %d", n, maxSubagentFinalPreview+1)
 	}
 }
 

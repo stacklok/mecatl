@@ -187,7 +187,7 @@ func TestResilienceLogsPermanentError(t *testing.T) {
 	cfg.Diagnostics = diag
 	p := Wrap(f, cfg)
 
-	if _, err := p.Stream(context.Background(), port.LLMRequest{}); err == nil {
+	if _, err := p.Stream(context.Background(), port.LLMRequest{Model: "gpt-5.5-mini"}); err == nil {
 		t.Fatal("Stream must surface the permanent error")
 	}
 
@@ -203,6 +203,13 @@ func TestResilienceLogsPermanentError(t *testing.T) {
 	}
 	if got, _ := argValue(rec[0].args, "err").(string); got == "" {
 		t.Errorf("non-retryable line must carry the clamped err, got %q", got)
+	}
+	// CORRELATION (issue #319's other half): without the model an operator reading a
+	// busy server's log learns that A turn died, not whose. It is the finest correlation
+	// this decorator can reach — it sees no session/run identity, and port.LLMRequest
+	// must stay provider-neutral.
+	if got, _ := argValue(rec[0].args, "model").(string); got != "gpt-5.5-mini" {
+		t.Errorf("non-retryable line model arg = %q, want the request's model", got)
 	}
 	// A permanent error is NOT retried, so no retry line may accompany it.
 	if n := len(diag.find("retrying")); n != 0 {
@@ -231,7 +238,7 @@ func TestResilienceLogsMidStreamError(t *testing.T) {
 			cfg := Config{MaxAttempts: 1, StreamIdleTimeout: tc.idle, Diagnostics: diag}
 			p := Wrap(f, cfg)
 
-			seq, err := p.Stream(context.Background(), port.LLMRequest{})
+			seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "claude-opus-5"})
 			if err != nil {
 				t.Fatalf("Stream error: %v", err)
 			}
@@ -248,6 +255,13 @@ func TestResilienceLogsMidStreamError(t *testing.T) {
 			}
 			if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "502") {
 				t.Errorf("mid-stream line must carry the clamped err, got %q", got)
+			}
+			// CORRELATION: the model is threaded Stream -> establish -> pullToCommit ->
+			// restSeq for this line specifically (the mid-stream site had no request in
+			// scope), so BOTH restSeq variants must carry it — a thread that reached only
+			// the idle-bounded path would leave the disable-the-watchdog wiring blind.
+			if got, _ := argValue(rec[0].args, "model").(string); got != "claude-opus-5" {
+				t.Errorf("mid-stream line model arg = %q, want the request's model", got)
 			}
 		})
 	}

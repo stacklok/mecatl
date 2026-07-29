@@ -109,7 +109,6 @@ absolute path (the server requires absolute).
 | `--trust-project` | off | **embedded** server: honour a discovered project's permission **ALLOW** rules **and** its project soul (`.mecatl/soul.md`). Default OFF, unified with `mecated` — deny/ask are always honoured regardless. Only pass it for a repo you trust |
 | `--yolo` | off | **embedded** server: OPERATOR POSTURE (dangerous) — suppress permission prompts for the built-in mutate-ask floor, for ephemeral/sandboxed use only. A configured deny/ask in any scope still applies. Refused as root unless `MECATL_SANDBOX=1` (or `IS_SANDBOX=1`) |
 | `--quiet` | off | discard the embedded server's operational diagnostics instead of writing them to `$XDG_STATE_HOME/mecatl/mecatui.log` (see the diagnostics note below) |
-| `--log-level` | `info` | **embedded** server: minimum severity written to `$XDG_STATE_HOME/mecatl/mecatui.log`: `debug` \| `info` \| `warn` \| `error`. `debug` adds the LLM stream-lifecycle detail (per-attempt timeouts, retry-with-backoff) that is otherwise unobtainable without a rebuild, and also admits third-party debug logging into that file. **No effect** with `--server` or when reusing a running `mecated` (a client-only run writes no log of its own). `--quiet` still discards everything regardless of level; an unknown value fails startup |
 | `--perf` | off | **embedded** server: expose the loopback perf admin surface (`/metrics`, `/debug/pprof`, `/debug/vars`, `/debug/flightrecorder`) and wire domain metrics. Loopback, UNAUTHENTICATED |
 | `--perf-addr` | – (`127.0.0.1:9099`) | **embedded** server: admin listen address for `--perf`. Empty = the **fixed** `127.0.0.1:9099` (predictable, so an MCP-client config can hardcode the `/mcp` URL; distinct from `mecated`'s `:9090`). Pass another `host:port`, or `127.0.0.1:0` for an ephemeral port. On a clash, startup **fails with guidance** |
 | `--perf-goroutine-warn-threshold` | 0 (off) | **embedded** server: arm the live goroutine-leak watchdog — Warn whenever the goroutine count exceeds this; the `/metrics` goroutine series is exported regardless. Only consulted with `--perf` |
@@ -133,15 +132,11 @@ are written to `$XDG_STATE_HOME/mecatl/mecatui.log` (fallback
 alt-screen. `--quiet` discards them instead. A client-only run (`--server`, or
 reusing an already-running `mecated`) logs nothing of its own.
 
-`--log-level` sets the floor for that file (default `info`, the level every sink was
-previously hardcoded to) — so, like the log itself, it applies to the
-**embedded-server** path only; in a client-only run there is no log for it to raise.
-Pass `--log-level debug` when diagnosing a stalled or failing model
-stream: it reveals the resilience layer's per-attempt-timeout and
-retry-with-backoff lines (and, being a floor on the whole file, any third-party
-debug logging too). The two paths that end a turn terminally — a permanent
-non-retryable provider error and a mid-stream stream failure — log at `info`, so
-they are visible without raising the level.
+The file's floor is `info`. The two paths that end a turn TERMINALLY — a permanent
+non-retryable provider error and a mid-stream stream failure — log at `info` (issue
+#319), so a died-mid-turn diagnosis needs nothing beyond this file. The resilience
+layer's retry-counting detail sits at `debug` and is therefore not written; it answers
+a different question (a slow or retrying provider, not a dead turn).
 
 **Environment variables.** A handful of envs tune the client beyond the flags above
 (most have a flag equivalent in the table; the rendering-capability pairs are env-only):

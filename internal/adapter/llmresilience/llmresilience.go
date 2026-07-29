@@ -241,8 +241,17 @@ func (p *resilientProvider) diag() port.Diagnostics {
 // The ctx is deliberately context.Background(), mirroring the sibling idle-stall site:
 // the request ctx may already be done by the time a mid-stream error surfaces, and a
 // slog handler that honours ctx cancellation would drop the line.
-func (p *resilientProvider) logMidStreamError(err error) {
+//
+// The model is CORRELATION, not decoration: on a busy server "llm stream failed
+// mid-stream" alone tells an operator that *a* turn died, not whose — half of what issue
+// #319 asked for. It is threaded down from establish's port.LLMRequest (Stream → establish
+// → pullToCommit → restSeq) rather than read off a wider port: LLMRequest.Model is a bare
+// opaque string and must stay so, and the wrapper deliberately sees no session/run
+// identity at all (it is a provider decorator, not a run-scoped sink), so the model id is
+// the finest correlation reachable here without widening port.LLMRequest.
+func (p *resilientProvider) logMidStreamError(model string, err error) {
 	p.diag().Log(context.Background(), port.LevelInfo, "llm stream failed mid-stream; ending turn",
+		"model", model,
 		"err", clampErr(err))
 }
 
@@ -430,8 +439,14 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		// while this — one of the two paths that actually kills a turn — logged at NO
 		// level, so an operator reading mecatui.log could not tell a permanent 4xx from
 		// a run that never called the provider at all (issue #319 / #318 diagnosis).
+		//
+		// It carries the model for the same correlation reason logMidStreamError does:
+		// on a busy server the bare message identifies that A turn died, not whose, and
+		// the model id is the finest correlation this decorator can reach without
+		// widening port.LLMRequest (which must stay provider-neutral).
 		if !p.cfg.Classifier(err) {
 			p.diag().Log(ctx, port.LevelInfo, "llm stream failed with a non-retryable provider error; ending turn",
+				"model", req.Model,
 				"attempt", attempt+1,
 				"err", clampErr(err))
 			return nil, err
@@ -559,7 +574,7 @@ func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest) 
 	// Pull chunks until the first COMMITTING chunk is in hand. Non-committing
 	// chunks (ChunkReasoning, ChunkReasoningItem) are buffered. The establishment
 	// timer stays live through the reasoning prefix.
-	return p.pullToCommit(ctx, seq, stopEstTimer, cancel, establishmentFailure)
+	return p.pullToCommit(ctx, req.Model, seq, stopEstTimer, cancel, establishmentFailure)
 }
 
 // pullToCommit drives the pull iterator from seq until the first COMMITTING chunk
@@ -567,6 +582,7 @@ func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest) 
 // to keep establish's cyclomatic complexity within the lint budget.
 func (p *resilientProvider) pullToCommit(
 	ctx context.Context,
+	model string,
 	seq iter.Seq2[port.Chunk, error],
 	stopEstTimer func() bool,
 	cancel context.CancelFunc,
@@ -627,7 +643,7 @@ func (p *resilientProvider) pullToCommit(
 			}
 			return nil, attemptError(context.DeadlineExceeded, errFirstChunkTimeout)
 		}
-		rest := p.restSeq(next, stop, cancel)
+		rest := p.restSeq(model, next, stop, cancel)
 		return &firstChunk{chunk: chunk, preCommit: preCommit, restSeq: rest}, nil
 	}
 }
@@ -643,7 +659,7 @@ func (p *resilientProvider) pullToCommit(
 // cancels the per-attempt context (unblocking the inner stream.Next()) and yields
 // a terminal *StreamIdleError. The helper goroutine is always drained after a
 // cancel so it cannot leak.
-func (p *resilientProvider) restSeq(next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
+func (p *resilientProvider) restSeq(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
 	if p.cfg.StreamIdleTimeout <= 0 {
 		return func(yield func(port.Chunk, error) bool) {
 			defer stop()
@@ -659,7 +675,7 @@ func (p *resilientProvider) restSeq(next func() (port.Chunk, error, bool), stop 
 					// Logged BEFORE the yield: an ordinary consumer BREAKS its range loop on
 					// the error, which makes yield return false — so a log placed after the
 					// yield-false return is unreachable on the very path that matters.
-					p.logMidStreamError(e)
+					p.logMidStreamError(model, e)
 				}
 				if !yield(c, e) {
 					return
@@ -713,7 +729,7 @@ func (p *resilientProvider) restSeq(next func() (port.Chunk, error, bool), stop 
 				if r.e != nil {
 					// See the non-idle variant above: logged BEFORE the yield because a
 					// consumer that breaks on the error makes yield return false.
-					p.logMidStreamError(r.e)
+					p.logMidStreamError(model, r.e)
 				}
 				if !yield(r.c, r.e) {
 					return

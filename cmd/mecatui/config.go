@@ -179,15 +179,6 @@ type config struct {
 	// entirely for an operator who wants zero on-disk diagnostics.
 	quiet bool
 
-	// logLevel is the MINIMUM severity written to the embedded server's diagnostics
-	// log (and the redirected ambient-slog default): debug|info|warn|error, default
-	// info. It exists because the stream-lifecycle DEBUG lines the resilience wrapper
-	// emits (per-attempt timeout, retry-with-backoff) were unobtainable without
-	// rebuilding the binary — the log floor was hardcoded to Info at every sink
-	// (issue #319). --quiet still wins: it discards everything regardless of level.
-	// Validated in validate(); resolved to a port.Level / slog.Level by logLevels.
-	logLevel string
-
 	// Embedded-server memory config (used only when hosting an in-process
 	// server). An empty memoryDir means "compute the per-project default under
 	// $XDG_DATA_HOME/mecatui/memory"; an explicit path overrides it. noMemory
@@ -350,8 +341,6 @@ func parseFlags(args []string) (config, error) {
 		"embedded server only: OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). A per-session /effort out-ranks it. Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
 	fs.BoolVar(&cfg.quiet, "quiet", false,
 		"discard the embedded server's operational diagnostics instead of writing them to $XDG_STATE_HOME/mecatl/mecatui.log (fallback ~/.local/state/mecatl/mecatui.log). Diagnostics NEVER go to stderr (that corrupts the TUI alt-screen); --quiet drops them entirely")
-	fs.StringVar(&cfg.logLevel, "log-level", defaultLogLevel,
-		"embedded server only: minimum severity written to the diagnostics log at $XDG_STATE_HOME/mecatl/mecatui.log: debug|info|warn|error. debug adds the LLM stream-lifecycle detail (per-attempt timeouts, retry-with-backoff) that is otherwise unobtainable without a rebuild, and also admits any third-party debug logging into that file. HAS NO EFFECT with --server or when reusing an already-running mecated: a client-only mecatui has no diagnostics of its own and writes no log (that server owns its own logging). --quiet still discards everything regardless of level; diagnostics NEVER go to stderr")
 	fs.StringVar(&cfg.memoryDir, "memory-dir", "", "embedded server only: per-project memory store directory (empty = a per-project default under $XDG_DATA_HOME/mecatui/memory)")
 	fs.BoolVar(&cfg.noMemory, "no-memory", false, "embedded server only: disable cross-session memory (Remember/Recall) entirely")
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "embedded server only: durable JSONL session/event store directory (empty = a per-workspace default under $XDG_STATE_HOME/mecatui/sessions, so sessions survive restart and can be inspected after the fact). PRIVACY: stores the RAW conversation (prompts, model output, tool args/results) in PLAINTEXT; the dir is created mode 0700 (owner-only). Tool args/results include file contents and command output the agent read, so secrets it touched (e.g. a .env it opened) are persisted too")
@@ -517,12 +506,6 @@ func (c config) validate() error {
 	case "default", "plan", "accept-edits":
 	default:
 		return fmt.Errorf("invalid --mode %q (want default|plan|accept-edits)", c.mode)
-	}
-	// Fail LOUDLY on an unknown --log-level rather than fail-softing to info: an
-	// operator raising the level is debugging, and silently keeping the old floor
-	// would look like the flag did nothing.
-	if _, _, ok := logLevels(c.logLevel); !ok {
-		return fmt.Errorf("invalid --log-level %q (want debug|info|warn|error)", c.logLevel)
 	}
 	// When hosting an embedded server (no external --server) the provider must be
 	// resolvable: an OpenAI, Anthropic, or OpenRouter key in the environment, the

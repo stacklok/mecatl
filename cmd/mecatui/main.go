@@ -38,6 +38,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -65,7 +66,7 @@ func run(args []string) error {
 	// default at stderr, which the alt-screen (started below for ALL paths) would let a
 	// stray ambient/third-party slog line corrupt. The host-embedded branch later refines
 	// this floor to the mecatui.log file writer. See docs/adr/0020-diagnostics.md.
-	installBaselineSlog(cfg.quiet, cfg.logLevel)
+	installBaselineSlog(cfg.quiet)
 
 	// Operator-posture WARN: mecatui has no slog and runs on the alt screen, so emit a
 	// single pre-TUI stderr line (it lands in scrollback before the alt screen takes
@@ -258,17 +259,11 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// path leaks a line to the terminal. The file handle (when one was opened) is
 	// closed by the returned cleanup alongside the server.
 	diagW, diagCloser, toFile := openDiagLogWriter(xdgconfig.OSEnv, cfg.quiet)
-	// The floor is the operator's --log-level (default info — the level this was
-	// hardcoded to before the flag existed). newLogSinks builds all three sinks from the
-	// ONE logLevels mapping over this ONE writer, so they can never disagree about what
-	// "debug" means and none can silently keep a hardcoded floor: the engine-facing
-	// port.Diagnostics, a dedicated slog.Logger for the perf surface's Logger field
-	// (explicit injection rather than relying on the redirected default below, so that
-	// sink stays unambiguous even if a caller ever reuses perfConfig elsewhere), and the
-	// handler installed as the global slog default just after.
-	sinks := newLogSinks(diagW, cfg.logLevel)
-	diag := sinks.diag
-	perfLogger := sinks.perf
+	diag := slogdiag.New(diagW, false, port.LevelInfo)
+	// A dedicated slog.Logger over the SAME writer for the perf surface's Logger field.
+	// Explicit injection (rather than relying on the redirected default below) keeps the
+	// perf surface's sink unambiguous even if a caller ever reuses perfConfig elsewhere.
+	perfLogger := slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	// REFINE the universal baseline (installBaselineSlog at the top of run() already
 	// floored the global default to io.Discard for every transport path): in the
 	// host-embedded path, redirect the GLOBAL slog default onto the same FILE writer the
@@ -280,7 +275,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// baseline for the embedded path. cmd/ mains are the only layer allowed to call
 	// slog.SetDefault (internal/ flows through the injected port.Diagnostics, ban-
 	// guarded). See docs/adr/0020-diagnostics.md.
-	slog.SetDefault(slog.New(sinks.ambient))
+	slog.SetDefault(slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg = applyTrustPrompt(cfg, diag)
 
