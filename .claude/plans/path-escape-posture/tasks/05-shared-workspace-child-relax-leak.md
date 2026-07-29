@@ -2,8 +2,8 @@
 id: 05-shared-workspace-child-relax-leak
 title: Shell-less (nil-forker) child must not inherit the relaxed parent workspace
 blocked_by: [04-child-and-glob-confinement]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture/05-shared-workspace-child-relax-leak"
 worktree: ""
 issue: ""
 retries: 0

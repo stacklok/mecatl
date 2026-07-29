@@ -2,8 +2,8 @@
 id: 06-base-sharing-member-relax-leak
 title: Base-sharing (shell-less) read-only team member must not inherit the relaxed base
 blocked_by: [05-shared-workspace-child-relax-leak]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture/06-base-sharing-member-relax-leak"
 worktree: ""
 issue: ""
 retries: 0
