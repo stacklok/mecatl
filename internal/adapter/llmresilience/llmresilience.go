@@ -412,10 +412,10 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// The THIRD path that ends a turn terminally without the provider ever being
-		// called: the shared breaker is OPEN, so the request is rejected outright. Like
-		// its two siblings below (the non-retryable establishment error and the
-		// mid-stream error) it logged at NO level, so an operator reading the log saw a
+		// The THIRD of the five paths that end a turn terminally (and one of the two where the
+		// provider is never called at all): the shared breaker is OPEN, so the request is
+		// rejected outright. Like its siblings below (the non-retryable establishment error,
+		// the mid-stream error, exhausted attempts and the idle stall) it logged at NO level, so an operator reading the log saw a
 		// turn die with nothing at all in it — the exact blind spot issue #319 is about,
 		// whose acceptance is that no terminal stream failure ends a turn without at
 		// least one Info-level diagnostic. It carries the model for the same correlation
@@ -488,10 +488,12 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 			}
 		}
 	}
-	// The FOURTH terminal path. It carries model + err for the same correlation reason as
-	// its three siblings: an operator who has learned to grep the log by model must get
-	// all four ways a turn dies, not two of them, and the last attempt's error is the only
-	// clue to WHY establishment never succeeded.
+	// The FOURTH of the FIVE terminal paths (the fifth is the post-first-chunk idle stall in
+	// the stream watchdog below — a distinct emission on a distinct code path, and the shape
+	// operators actually report as "thinking, then nothing"). It carries model + err for the
+	// same correlation reason as its siblings: an operator who has learned to grep the log by
+	// model must get every way a turn dies, not some of them, and the last attempt's error is
+	// the only clue to WHY establishment never succeeded.
 	p.diag().Log(ctx, port.LevelInfo, "llm stream not established after all attempts",
 		"model", req.Model,
 		"attempts", p.cfg.MaxAttempts,

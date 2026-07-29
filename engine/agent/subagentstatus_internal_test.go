@@ -127,6 +127,16 @@ func (failingForkerInt) Fork(_ context.Context, _ tool.Workspace, _ string) (too
 	return nil, nil, "", errors.New("worktree add failed")
 }
 
+// multiLineFailingForker fails Fork with a MULTI-LINE error, the shape a real `git worktree
+// add` failure has (git writes several lines to stderr). It exists so the pre-run
+// subagent.end emit site can be held to the same line-oriented Cause contract as the other
+// two — see TestBackgroundPreRunFailureEmitsCause.
+type multiLineFailingForker struct{}
+
+func (multiLineFailingForker) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
+	return nil, nil, "", errors.New("worktree add failed:\n\tfatal: could not create leading directories\n\thint: check permissions")
+}
+
 // TestSubagentForegroundForkFailureAbortsEntry pins the A5 foreground ghost fix:
 // a fork failure (the error returned inline; the child never drove) leaves NO
 // registry entry — previously a done+StopNone phantom.
@@ -217,7 +227,7 @@ func TestBackgroundPreRunFailureEmitsCause(t *testing.T) {
 		Policy:  allowAllInt(),
 		Model:   "child-model",
 	})
-	tl := NewSubagentTool(childEngine, WithChildForker(failingForkerInt{})).(*SubagentTool)
+	tl := NewSubagentTool(childEngine, WithChildForker(multiLineFailingForker{})).(*SubagentTool)
 	reg := newChildRunRegistry()
 
 	var mu sync.Mutex
@@ -264,6 +274,16 @@ func TestBackgroundPreRunFailureEmitsCause(t *testing.T) {
 	}
 	if n := len([]rune(got[0].Cause)); n > maxSubagentCausePreview+1 { // +1 for clampRunes' ellipsis
 		t.Fatalf("the pre-run cause must be clamped like the other emit sites: %d runes", n)
+	}
+	// And COLLAPSED like the other two emit sites: a real `git worktree add` failure is
+	// multi-line, while every consumer of this field is a single-line surface. This is emit
+	// site 3 of 3, and the field's doc-comment promises that every one of them normalises
+	// through the same helper.
+	if strings.ContainsAny(got[0].Cause, "\n\r\t") {
+		t.Fatalf("the pre-run emit site must normalise the cause to ONE line through subagentCausePayload, got %q", got[0].Cause)
+	}
+	if !strings.Contains(got[0].Cause, "could not create leading directories") {
+		t.Fatalf("collapsing must not lose the continuation lines of a multi-line fork error, got %q", got[0].Cause)
 	}
 }
 

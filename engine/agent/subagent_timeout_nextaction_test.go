@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -181,5 +183,77 @@ func TestBackgroundSubagentTimeoutAdvertisesResume(t *testing.T) {
 	}
 	if !strings.Contains(collected.Content, "timeout_ms") {
 		t.Fatalf("the collected body must name `timeout_ms` as the knob to raise, got:\n%s", collected.Content)
+	}
+}
+
+// ctxHonouringStore is a SessionStore that refuses to Save on a dead context — the
+// behaviour redisstore.Save (it passes ctx straight to HSet) and
+// grpcdriver.SessionStore.Save (it passes ctx to the RPC) genuinely have, and the one the
+// in-tree memstore/jsonlstore do NOT, which is why this residual survived offline testing.
+type ctxHonouringStore struct {
+	mu     sync.Mutex
+	inner  port.SessionStore
+	denied int
+}
+
+func (s *ctxHonouringStore) Save(ctx context.Context, sess *session.Session) error {
+	if err := ctx.Err(); err != nil {
+		s.mu.Lock()
+		s.denied++
+		s.mu.Unlock()
+		return err
+	}
+	return s.inner.Save(ctx, sess)
+}
+
+func (s *ctxHonouringStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.inner.Load(ctx, id)
+}
+
+func (s *ctxHonouringStore) deniedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.denied
+}
+
+// TestTimedOutSubagentIsPersistedDespiteTheExpiredContext closes the gap between what the
+// timeout terminal now ADVERTISES and what the harness actually saves.
+//
+// The terminal tells the model "resume it with the agentId above", and resume works only
+// off the persisted snapshot — but the terminal persist ran on the very ctx applyCallTimeout
+// had just expired. Against the in-tree stores (which ignore ctx on Save) that was
+// invisible; against redisstore or the remote driver the save failed and the advertised
+// resume came back as "no subagent found for resume id". persistChild therefore detaches
+// cancellation (context.WithoutCancel) under its own short deadline.
+func TestTimedOutSubagentIsPersistedDespiteTheExpiredContext(t *testing.T) {
+	store := &ctxHonouringStore{inner: memstore.New()}
+	slow := &sleepThenLoopTool{sleep: 50 * time.Millisecond}
+	var script []mockllm.Turn
+	for i := 0; i < 100; i++ {
+		script = append(script, mockllm.ToolCallTurn(toolCall("k", "Slow", `{}`)))
+	}
+	childEngine := childEngineWith(mockllm.New(script...), catalogWith(t, slow))
+	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
+
+	results, _ := subagentParentResults(t, task,
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"loop forever","timeout_ms":120}`)),
+		mockllm.TextTurn("parent recovered"),
+	)
+	if len(results) != 1 || !results[0].IsError {
+		t.Fatalf("want 1 errored tool result, got %+v", results)
+	}
+	// Precondition: the terminal really does advertise the resume this save has to make
+	// possible. Without it the assertion below would be testing an unadvertised path.
+	if !strings.Contains(results[0].Content, "resume it with the agentId above") {
+		t.Fatalf("precondition: the timeout terminal must advertise the resume, got:\n%s", results[0].Content)
+	}
+	if n := store.deniedCount(); n != 0 {
+		t.Fatalf("the timed-out child's snapshot was refused %d time(s) because the save ran on the EXPIRED ctx — the advertised resume is a dead end on a ctx-honouring store", n)
+	}
+	if _, err := store.Load(context.Background(), "subagent-p1"); err != nil {
+		t.Fatalf("the timed-out child must be loadable for the resume the terminal advertises: %v", err)
 	}
 }

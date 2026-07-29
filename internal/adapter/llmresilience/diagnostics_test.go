@@ -143,7 +143,7 @@ func TestResilienceLogsIdleStall(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		seq, err := p.Stream(context.Background(), port.LLMRequest{})
+		seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "glm-5.2"})
 		if err != nil {
 			done <- outcome{err: err}
 			return
@@ -171,6 +171,14 @@ func TestResilienceLogsIdleStall(t *testing.T) {
 	}
 	if got := argValue(rec[0].args, "idle"); got != 50*time.Millisecond {
 		t.Errorf("idle-stall idle arg = %v, want 50ms", got)
+	}
+	// The CORRELATION arg. The stated contract is that every way a turn dies carries the
+	// model, so an operator who has learned to grep the log by model gets all of them, not
+	// some of them — and this is the line for the most-reported symptom ("thinking, then
+	// nothing"). It is one entry in a varargs Log call, i.e. exactly the shape a refactor
+	// drops silently, so it needs its own oracle.
+	if got := argValue(rec[0].args, "model"); got != "glm-5.2" {
+		t.Errorf("idle-stall model arg = %v, want the request's model (operator correlation)", got)
 	}
 }
 
@@ -467,7 +475,7 @@ func TestResilienceLogsExhaustion(t *testing.T) {
 	cfg.Diagnostics = diag
 	p := Wrap(f, cfg)
 
-	if _, err := p.Stream(context.Background(), port.LLMRequest{}); err == nil {
+	if _, err := p.Stream(context.Background(), port.LLMRequest{Model: "claude-haiku-5"}); err == nil {
 		t.Fatal("Stream should have failed after exhausting attempts")
 	}
 
@@ -480,6 +488,17 @@ func TestResilienceLogsExhaustion(t *testing.T) {
 	}
 	if got := argValue(rec[0].args, "attempts"); got != 3 {
 		t.Errorf("exhaustion attempts arg = %v, want 3", got)
+	}
+	// The two args this line was RETROFITTED with, neither of which had an oracle: `model`
+	// for the same correlation reason as its three sibling terminals, and `err` — the last
+	// attempt's error, which is the only clue to WHY establishment never succeeded. The old
+	// test could not even express the model assertion: it passed an empty LLMRequest, so the
+	// value was "" whether the arg was wired or not.
+	if got := argValue(rec[0].args, "model"); got != "claude-haiku-5" {
+		t.Errorf("exhaustion model arg = %v, want the request's model (operator correlation)", got)
+	}
+	if got, _ := argValue(rec[0].args, "err").(string); got == "" || !strings.Contains(got, "refused") {
+		t.Errorf("exhaustion err arg = %q, want the last attempt's clamped error", got)
 	}
 }
 

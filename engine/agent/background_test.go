@@ -795,7 +795,13 @@ func TestSubagentBackgroundWithoutRegistryErrors(t *testing.T) {
 // background emit could be mutated to Cause:"" and the whole suite would stay green.
 func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 	const chatter = "Now let me check the tests."
-	const causeText = "upstream 503: model overloaded"
+	// MULTI-LINE on purpose: the subagent.end Cause is a LINE-ORIENTED field and this is
+	// emit site 2 of 3. Site 1 (the foreground terminal) was the only one whose
+	// normalisation was asserted, while the delta simultaneously removed the ACP
+	// projector's and mecademo's own collapses — so a regression here would reach both
+	// consumers as a multi-row status line with nothing firing.
+	const causeText = "upstream 503:\n  model overloaded"
+	const collapsedCause = "upstream 503: model overloaded"
 	// The child says something chatty, calls a tool, then breaks mid-stream — the exact
 	// shape whose last chat line used to be reported AS the failure reason.
 	task := agent.NewSubagentTool(childEngineWith(
@@ -826,8 +832,11 @@ func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 	if end.Stop != session.StopError {
 		t.Fatalf("the background child must end StopError (the precondition for a cause), got %q", end.Stop)
 	}
-	if !strings.Contains(end.Cause, causeText) {
+	if !strings.Contains(end.Cause, collapsedCause) {
 		t.Fatalf("a BACKGROUND child's subagent.end must carry the failure cause — it is the only channel there (issue #319); got %q", end.Cause)
+	}
+	if strings.ContainsAny(end.Cause, "\n\r\t") {
+		t.Fatalf("the background emit site must normalise the cause to ONE line through subagentCausePayload like the foreground one, got %q", end.Cause)
 	}
 
 	// (b) The MODEL channel: the SubagentStatus-collected body leads with the cause, and
