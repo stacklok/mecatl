@@ -20,9 +20,10 @@ defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7
 
 # mecatui needs a full OS base (wolfi) rather than the distroless static base:
 # brood-box connects to the VM via SSH and requires a shell, neither of which
-# is present in cgr.dev/chainguard/static.
+# is present in cgr.dev/chainguard/static. Pinned by digest like the default
+# base above — bump deliberately when brood-box ships a new base.
 baseImageOverrides:
-  github.com/stacklok/mecatl/cmd/mecatui: ghcr.io/stacklok/brood-box/base:latest
+  github.com/stacklok/mecatl/cmd/mecatui: ghcr.io/stacklok/brood-box/base@sha256:f3ec852de36b81cf8fa612fdb8721c05dcc295944114bda3c2c9f10f4345d9bb
 
 builds:
   - id: mecated
@@ -44,3 +45,18 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
+  # mecatui (issue #302): the optional Bubble Tea TUI binary. It overrides the
+  # distroless base with the brood-box wolfi base (see baseImageOverrides above —
+  # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml
+  # brood-box manifest alongside the binary. The build version is stamped into
+  # the welcome splash via -X main.version (cmd/mecatui/version.go), sourced
+  # from the VERSION env var via ko's {{.Env.VERSION}} template expansion.
+  - id: mecatui
+    main: ./cmd/mecatui
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{.Env.VERSION}}

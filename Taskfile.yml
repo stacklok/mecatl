@@ -140,6 +140,36 @@ tasks:
     cmds:
       - ko build --local --bare ./cmd/mecak8s
 
+  ko:build:mecatui:
+    desc: Build the mecatui image locally with ko (issue #302; no push; tagged under ko.local)
+    env:
+      KO_DOCKER_REPO: ko.local
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+    cmds:
+      # --image-label sets the OCI config label brood-box reads to locate the
+      # agent manifest (cmd/mecatui/kodata/agent.yaml, which ko lands at
+      # /var/run/ko/agent.yaml via $KO_DATA_PATH). VERSION feeds the
+      # {{.Env.VERSION}} ldflag template in .ko.yaml.
+      - ko build --local --bare
+          --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
+          ./cmd/mecatui
+
+  ko:publish:mecatui:
+    desc: Build and push the mecatui image with ko (issue #302; honours KO_DOCKER_REPO)
+    env:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+    cmds:
+      - cmd: |
+          if [ -z "${KO_DOCKER_REPO:-}" ]; then
+            echo "KO_DOCKER_REPO is required (e.g. export KO_DOCKER_REPO=ghcr.io/stacklok/mecatl/mecatui)"; exit 1
+          fi
+        silent: true
+      - ko build --push --bare
+          --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
+          ./cmd/mecatui
+
   test:
     desc: Run unit tests with the race detector (root module + engine module + the standalone hygiene proof)
     cmds:
