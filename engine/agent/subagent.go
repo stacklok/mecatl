@@ -2158,7 +2158,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// the redacted subagent.* metadata. The structured-output retry loop re-drives the
 	// SAME child session (Reopen) with a correction prompt on a validation miss; the
 	// free-text path runs exactly one drive.
-	final, stop, usage, toolCount := driveChild(ctx, engine, child, runWS, prompt, runOpts, emit, call, childID, posture, submit, args.OutputSchema)
+	final, stop, cause, usage, toolCount := driveChild(ctx, engine, child, runWS, prompt, runOpts, emit, call, childID, posture, submit, args.OutputSchema)
 	terminalStop = stop
 
 	// Best-effort persist of the child's FINAL state (after any structured-output
@@ -2177,6 +2177,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 			ToolCount:    toolCount,
 			Usage:        usage,
 			Stop:         stop,
+			Cause:        clampRunes(cause, maxSubagentCausePreview),
 			DurationMs:   engine.now().Sub(start).Milliseconds(),
 		}})
 	}
@@ -2188,7 +2189,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// run() stays readable — see finishForegroundRun.
 	return t.finishForegroundRun(ctx, foregroundFinish{
 		call: call, childID: childID,
-		final: final, stop: stop, submit: submit, writable: writable,
+		final: final, stop: stop, cause: cause, submit: submit, writable: writable,
 		timeoutCtx: timeoutCtx, timeoutMs: args.TimeoutMs,
 		clientCancelled: caps.childWasClientCancelled(childID),
 	}), nil
@@ -2196,10 +2197,15 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 
 // foregroundFinish bundles the terminal-rendering inputs for finishForegroundRun.
 type foregroundFinish struct {
-	call            session.ToolCall
-	childID         session.SessionID
-	final           string
-	stop            session.StopReason
+	call    session.ToolCall
+	childID session.SessionID
+	final   string
+	stop    session.StopReason
+	// cause is the child run's terminal FAILURE detail (session.ResultPayload.Error,
+	// non-empty only on a StopError terminal) — the actionable half of a failed
+	// delegation, threaded from driveChild so the render chokepoint can lead with it
+	// instead of the child's last chat line (issue #319).
+	cause           string
 	submit          *submitResultTool
 	writable        bool
 	timeoutCtx      context.Context //nolint:containedctx // deadline-disambiguation handle, mirrors run()'s timeoutCtx local
@@ -2234,9 +2240,9 @@ func (*SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish) 
 	// registry flag, read AFTER the timeout check above so a real deadline keeps its
 	// time-budget error.
 	if f.writable {
-		return renderWritableSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.submit, f.clientCancelled)
+		return renderWritableSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.cause, f.submit, f.clientCancelled)
 	}
-	return renderSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.submit, f.clientCancelled)
+	return renderSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.cause, f.submit, f.clientCancelled)
 }
 
 // backgroundStartedBody is the immediate started-result body a background Subagent
@@ -2417,7 +2423,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		askLabel: fmt.Sprintf("subagent %q", goal)}
 
 	start := b.engine.now()
-	final, st, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runOpts, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
+	final, st, cause, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runOpts, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
 	stop = st
 
 	// Best-effort persist on EVERY terminal — including the run-end drain's cancel —
@@ -2432,6 +2438,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 			ToolCount:    toolCount,
 			Usage:        usage,
 			Stop:         st,
+			Cause:        clampRunes(cause, maxSubagentCausePreview),
 			DurationMs:   b.engine.now().Sub(start).Milliseconds(),
 		}})
 	}
@@ -2445,7 +2452,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 			fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *b.args.TimeoutMs, b.childID))
 		return
 	}
-	res = renderSubagentResult(b.call.ID, b.childID, final, st, submit, b.caps.childWasClientCancelled(b.childID))
+	res = renderSubagentResult(b.call.ID, b.childID, final, st, cause, submit, b.caps.childWasClientCancelled(b.childID))
 }
 
 // tryAcquireChildSlot is acquireChildSlot's NON-BLOCKING sibling for background
@@ -2475,10 +2482,50 @@ func backgroundGateFullError(ids []string) string {
 	return msg + ". Wait for one to finish with SubagentStatus (use wait_ms), or run this task in the foreground."
 }
 
+// maxSubagentCausePreview caps how many runes of a child's FAILURE CAUSE cross onto the
+// subagent.end event payload (session.SubagentPayload.Cause). It is deliberately larger
+// than maxTeamPreview (200): a provider/transport error body is longer than a text
+// preview — a truncated one is unactionable, which is the whole point of issue #319 —
+// but it must still stay BOUNDED so a pathological error body cannot dump unbounded
+// bytes onto the event stream.
+const maxSubagentCausePreview = 400
+
+// subagentErrorBody composes the model-facing body of a StopError subagent result.
+// The CAUSE (the harness/provider failure detail the loop put on
+// session.ResultPayload.Error) leads, because it is the actionable half; the child's
+// last assistant text follows as clamped context when present, because "how far did it
+// get" is load-bearing for recovering a direct-write child's partial edits (ADR 0041).
+//
+// Before #319 the cause was dropped and `final` alone was rendered AS the error, so a
+// chatty child's last sentence was presented to the parent as the failure reason (a
+// stream stall surfaced as "Now let me check the tests." — unactionable and actively
+// misleading). The empty-cause rows preserve that shape for terminals that carry no loop
+// cause, so nothing regresses for non-loop StopError paths.
+//
+// This is the ONE place the StopError body is composed — renderSubagentResult (hence
+// renderWritableSubagentResult) and the Parallel branch-failure path both go through it,
+// so there is no second policy to drift.
+func subagentErrorBody(final, cause string) string {
+	final = strings.TrimSpace(final)
+	cause = strings.TrimSpace(cause)
+	switch {
+	case cause != "" && final != "":
+		return cause + "\n\nLast activity before the failure: " + clampRunes(final, maxTeamPreview)
+	case cause != "":
+		return cause
+	case final != "":
+		return final
+	default:
+		return "subagent failed without producing a summary"
+	}
+}
+
 // renderSubagentResult labels the child's terminal by stop reason (D4 — the typed result
 // taxonomy), surfaced in the MODEL-VISIBLE result, and stamps the agentId trailer (D5).
 // The mapping:
-//   - StopError                         → tool error (the child crashed).
+//   - StopError                         → tool error (the child crashed), its body
+//     composed by subagentErrorBody: the loop's FAILURE CAUSE leads, the child's last
+//     assistant text follows as clamped context (issue #319).
 //   - StopStructuredOutput              → tool error carrying the last validation
 //     failure (the child never produced a schema-valid payload within the retry budget).
 //   - StopMaxTurns / StopMaxToolCalls   → success-with-note (stopped at a limit).
@@ -2502,7 +2549,7 @@ func backgroundGateFullError(ids []string) string {
 // only on the client-only subagent.* events). The body is NEVER a silent empty string:
 // driveChild salvages then digests an empty free-text terminal (issue #48 / #152), and
 // even the floor "(subagent produced no summary)" is paired with a stop-reason note.
-func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, submit *submitResultTool, clientCancelled bool) session.ToolResult {
+func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled bool) session.ToolResult {
 	// Structured-output failure: the retry budget was exhausted without a schema-valid
 	// payload. Surface the last validation error AS the tool error (model-visible),
 	// never only a log line.
@@ -2516,11 +2563,7 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID))
 	}
 	if stop == session.StopError {
-		msg := final
-		if msg == "" {
-			msg = "subagent failed without producing a summary"
-		}
-		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID))
+		return session.NewToolError(callID, "Subagent: "+subagentErrorBody(final, cause)+"\n\nagentId: "+string(childID))
 	}
 
 	// Success family. A structured-output run returns the validated payload; otherwise
@@ -2590,8 +2633,8 @@ const (
 // is the safety net). Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop
 // between complete edits, so they keep the benign clean note. The note is inserted right
 // after the agentId trailer line so it leads the body the model reads.
-func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, submit *submitResultTool, clientCancelled bool) session.ToolResult {
-	res := renderSubagentResult(callID, childID, final, stop, submit, clientCancelled)
+func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled bool) session.ToolResult {
+	res := renderSubagentResult(callID, childID, final, stop, cause, submit, clientCancelled)
 	note := writableSubagentCleanNote
 	// A mid-task kill (the child crashed or was cancelled) may have left PARTIAL edits
 	// in the real tree — there is no fork/quarantine to roll them back, so warn the
@@ -2628,7 +2671,9 @@ func renderSubagentTrailer(childID session.SessionID, body string) string {
 
 // driveChild runs the child loop and, when a structured-output schema is in play,
 // applies the bounded SubmitResult validation-retry. It returns the terminal text,
-// stop reason, cumulative usage, and observed tool-call count.
+// stop reason, the terminal FAILURE CAUSE (the loop's ResultPayload.Error — non-empty
+// only on a StopError terminal; issue #319), cumulative usage, and observed tool-call
+// count. As with finalText/stop, the cause reported by the LAST drive wins.
 //
 // FREE-TEXT path (submit == nil): exactly one RunContentWith drive — byte-identical to
 // the prior engine.Run(...) behaviour.
@@ -2640,7 +2685,7 @@ func renderSubagentTrailer(childID session.SessionID, body string) string {
 // StopStructuredOutput. The retry is a SEPARATE bounded loop owned here (NOT a change
 // to finishTurnNoTools — that hot shared path stays Subagent-agnostic, decision D2), and
 // uses NO tool_choice forcing (incompatible with the reasoning paths).
-func driveChild(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, prompt string, runOpts RunOptions, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture, submit *submitResultTool, schema json.RawMessage) (finalText string, stop session.StopReason, usage session.Usage, toolCount int) {
+func driveChild(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, prompt string, runOpts RunOptions, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture, submit *submitResultTool, schema json.RawMessage) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
 	drivePrompt := prompt
 	// attempts = 1 (initial) + defaultStructuredOutputRetries corrections, but only the
 	// structured path retries; the free-text path runs once.
@@ -2658,12 +2703,12 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		// and runOpts (carrying the tighten-only override) is re-passed to every drive.
 		if attempt > 0 {
 			if err := child.Reopen(); err != nil {
-				return finalText, stop, usage, toolCount
+				return finalText, stop, cause, usage, toolCount
 			}
 		}
 		run := engine.RunContentWith(ctx, child, runWS, drivePrompt, nil, runOpts)
-		text, st, u, tc := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
-		finalText, stop = text, st
+		text, st, c, u, tc := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
+		finalText, stop, cause = text, st, c
 		usage = usage.Add(u)
 		toolCount += tc
 
@@ -2686,15 +2731,15 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 					finalText = recoveredDigestPrefix + "\n\n" + digest
 				}
 			}
-			return finalText, stop, usage, toolCount
+			return finalText, stop, cause, usage, toolCount
 		}
 		// A structured run that produced a valid payload: done.
 		if submit.valid() {
-			return finalText, stop, usage, toolCount
+			return finalText, stop, cause, usage, toolCount
 		}
 		// A child that crashed or was cancelled must not be re-driven — surface it.
 		if stop == session.StopError || stop == session.StopCancelled || ctx.Err() != nil {
-			return finalText, stop, usage, toolCount
+			return finalText, stop, cause, usage, toolCount
 		}
 		// A budget stop is terminal too: the token ceiling is now CUMULATIVE across the
 		// retry Reopens (cloud-native Phase 1 — session.Usage survives Reopen), so a child
@@ -2703,14 +2748,14 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		// success-with-note) rather than burning the remaining Reopens and mislabelling the
 		// terminal as StopStructuredOutput.
 		if stop == session.StopBudget {
-			return finalText, stop, usage, toolCount
+			return finalText, stop, cause, usage, toolCount
 		}
 		// Structured miss: build the correction prompt for the next attempt (if any).
 		drivePrompt = structuredCorrectionPrompt(schema, submit.lastError())
 	}
 	// Retry budget exhausted with no valid payload: a CLEAN terminal the Subagent result
 	// renders as a model-visible validation-failure tool error (recoverable, not failed).
-	return finalText, session.StopStructuredOutput, usage, toolCount
+	return finalText, session.StopStructuredOutput, cause, usage, toolCount
 }
 
 // isEmptyTerminalStop reports whether stop is one of the terminals on which a
@@ -2835,7 +2880,7 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	defer func() { child.Limits = savedLimits }()
 
 	run := engine.RunContentWith(ctx, child, runWS, salvageWrapUpPrompt, nil, runOpts)
-	text, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
+	text, _, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 	// Sum the salvage turn's usage (mirror the structured-output usage accumulation);
 	// the caller's usage already excludes this drive, so there is no double-count.
 	usage = usage.Add(u)
@@ -3075,7 +3120,9 @@ func truncateGoal(s string) string {
 // drainChildObserved consumes the child Run's Event channel to completion,
 // applying the non-interactive child contract (auto-deny asks) via
 // handleChildEvent, and returns the terminal result text, stop reason, the
-// child's cumulative usage, and the number of child tool calls observed.
+// terminal FAILURE CAUSE (ResultPayload.Error — non-empty only on a StopError
+// terminal; issue #319), the child's cumulative usage, and the number of child tool
+// calls observed.
 //
 // When emit is non-nil it ALSO forwards a REDACTED, BOUNDED projection of the
 // child's activity (ADR 0079): a tool NAME + error bool + running count, plus
@@ -3089,7 +3136,7 @@ func truncateGoal(s string) string {
 // client-only and nothing enters the parent's Conversation. With a nil emit
 // it discards every intermediate event exactly as the original drainChild
 // did.
-func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childID string, posture childPosture) (finalText string, stop session.StopReason, usage session.Usage, toolCount int) {
+func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childID string, posture childPosture) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
 	// Track child callID → tool name so a tool.result can be attributed to its
 	// tool.call name without re-deriving it from the (clamped) args preview.
 	names := map[session.ToolCallID]string{}
@@ -3142,14 +3189,14 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 			}
 		}
 	handle:
-		if text, st, ok := handleChildEvent(run, ev, posture); ok {
-			finalText, stop = text, st
+		if text, st, c, ok := handleChildEvent(run, ev, posture); ok {
+			finalText, stop, cause = text, st, c
 			if ev.Result != nil {
 				usage = ev.Result.Usage
 			}
 		}
 	}
-	return finalText, stop, usage, toolCount
+	return finalText, stop, cause, usage, toolCount
 }
 
 // drainChild consumes the child Run's Event channel to completion, auto-denying
@@ -3160,7 +3207,7 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 // gauntlet #7. It is the silent variant used by fork.go and the team supervisor;
 // the observed Subagent path uses drainChildObserved.
 func drainChild(run *Run, posture childPosture) (finalText string, stop session.StopReason) {
-	final, st, _, _ := drainChildObserved(run, nil, "", "", posture)
+	final, st, _, _, _ := drainChildObserved(run, nil, "", "", posture)
 	return final, st
 }
 
@@ -3280,14 +3327,20 @@ func childReviewedDenyMessage(reason, verdictReason string) string {
 //     otherwise) + a correlated operator diagnostic (LevelInfo, agent=<child-session-id>
 //     for Subagent children, e.g. "subagent-<callID>"; member name / fork label for the
 //     others) — never the misleading "denied by user".
-func handleChildEvent(run *Run, ev session.Event, posture childPosture) (text string, stop session.StopReason, isResult bool) {
+//
+// The returned CAUSE is the terminal ResultPayload.Error — the loop's failure detail
+// for a StopError run (empty on every other terminal). It is threaded out here rather
+// than dropped because it is the ACTIONABLE half of a failed delegation (issue #319):
+// before this, the child's last chat line was rendered AS the error while the real
+// provider/loop cause never left the child's own event stream.
+func handleChildEvent(run *Run, ev session.Event, posture childPosture) (text string, stop session.StopReason, cause string, isResult bool) {
 	if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 		resolveChildAsk(run, *ev.Ask, posture)
 	}
 	if ev.Type == session.EvResult && ev.Result != nil {
-		return ev.Result.Text, ev.Result.Stop, true
+		return ev.Result.Text, ev.Result.Stop, ev.Result.Error, true
 	}
-	return "", session.StopNone, false
+	return "", session.StopNone, "", false
 }
 
 // resolveChildAsk applies the 4-step resolution (plus the issue-#32 config axis;

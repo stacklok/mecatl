@@ -174,6 +174,106 @@ func TestResilienceLogsIdleStall(t *testing.T) {
 	}
 }
 
+// TestResilienceLogsPermanentError asserts the FIRST of the two paths that end a turn
+// TERMINALLY — a permanent, non-retryable establishment error — emits exactly one INFO
+// carrying the attempt and a clamped err. Before issue #319 the recoverable lifecycle
+// (retry / exhaustion / idle stall / breaker) was fully observable while both fatal paths
+// logged at NO level, so an operator reading mecatui.log could not distinguish a
+// permanent 4xx from a run that never called the provider at all.
+func TestResilienceLogsPermanentError(t *testing.T) {
+	diag := &recordingDiag{}
+	f := &fakeProvider{steps: []step{{outerErr: apiErr(400)}}}
+	cfg := tinyBackoffCfg(3)
+	cfg.Diagnostics = diag
+	p := Wrap(f, cfg)
+
+	if _, err := p.Stream(context.Background(), port.LLMRequest{}); err == nil {
+		t.Fatal("Stream must surface the permanent error")
+	}
+
+	rec := diag.find("non-retryable")
+	if len(rec) != 1 {
+		t.Fatalf("non-retryable lines = %d, want 1 (%+v)", len(rec), diag.records)
+	}
+	if rec[0].level != port.LevelInfo {
+		t.Errorf("non-retryable line level = %v, want LevelInfo", rec[0].level)
+	}
+	if got := argValue(rec[0].args, "attempt"); got != 1 {
+		t.Errorf("non-retryable attempt arg = %v, want 1", got)
+	}
+	if got, _ := argValue(rec[0].args, "err").(string); got == "" {
+		t.Errorf("non-retryable line must carry the clamped err, got %q", got)
+	}
+	// A permanent error is NOT retried, so no retry line may accompany it.
+	if n := len(diag.find("retrying")); n != 0 {
+		t.Errorf("a permanent error must not be retried, got %d retry lines", n)
+	}
+}
+
+// TestResilienceLogsMidStreamError asserts the SECOND terminal path — an error chunk
+// yielded AFTER the first committing chunk, which the no-replay rule makes unretryable —
+// emits exactly one INFO. It runs BOTH restSeq variants (idle-bounded and not): the
+// production wiring sets StreamIdleTimeout, but ≤0 disables the watchdog, and the blind
+// spot must not silently re-open on that path.
+func TestResilienceLogsMidStreamError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		idle time.Duration
+	}{
+		{"idle watchdog on (the production wiring)", 5 * time.Second},
+		{"idle watchdog off", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &recordingDiag{}
+			f := &fakeProvider{steps: []step{
+				{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: errors.New("upstream 502 mid-stream")},
+			}}
+			cfg := Config{MaxAttempts: 1, StreamIdleTimeout: tc.idle, Diagnostics: diag}
+			p := Wrap(f, cfg)
+
+			seq, err := p.Stream(context.Background(), port.LLMRequest{})
+			if err != nil {
+				t.Fatalf("Stream error: %v", err)
+			}
+			if _, derr := drain(t, seq); derr == nil {
+				t.Fatal("drain must surface the mid-stream error")
+			}
+
+			rec := diag.find("mid-stream")
+			if len(rec) != 1 {
+				t.Fatalf("mid-stream lines = %d, want 1 (%+v)", len(rec), diag.records)
+			}
+			if rec[0].level != port.LevelInfo {
+				t.Errorf("mid-stream line level = %v, want LevelInfo", rec[0].level)
+			}
+			if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "502") {
+				t.Errorf("mid-stream line must carry the clamped err, got %q", got)
+			}
+		})
+	}
+}
+
+// TestResilienceCleanStreamLogsNoTerminalLine is the negative guard for both new lines: a
+// stream that establishes and completes cleanly must emit neither, so a non-empty match
+// genuinely means "this turn died".
+func TestResilienceCleanStreamLogsNoTerminalLine(t *testing.T) {
+	diag := &recordingDiag{}
+	f := &fakeProvider{steps: []step{{chunks: textTurn("ok")}}}
+	cfg := Config{MaxAttempts: 1, StreamIdleTimeout: 5 * time.Second, Diagnostics: diag}
+	p := Wrap(f, cfg)
+
+	seq, err := p.Stream(context.Background(), port.LLMRequest{})
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if _, derr := drain(t, seq); derr != nil {
+		t.Fatalf("drain error: %v", derr)
+	}
+	if n := len(diag.find("mid-stream")) + len(diag.find("non-retryable")); n != 0 {
+		t.Fatalf("a clean stream must emit no terminal-failure line, got %d (%+v)", n, diag.records)
+	}
+}
+
 // TestResilienceLogsBreakerOpen asserts the breaker-open transition emits exactly
 // one INFO at the crossing (not on subsequent fail-fast calls), at LevelInfo with
 // the consecutive_failures and cooldown keys.

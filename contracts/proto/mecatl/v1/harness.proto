@@ -1143,6 +1143,13 @@ message Subagent {
   // result's body (tool.result) — control-byte scrubbed and rune-capped upstream,
   // never the raw, unbounded args/result body (subagent.tool).
   string detail = 16;
+  // cause is the child run's FAILURE DETAIL (subagent.end only, and only when
+  // stop is "error" — empty otherwise): the harness/provider error the loop
+  // recorded on the terminal result. METADATA about how the delegation failed —
+  // a transport/loop error string, never child-authored model output — so it is
+  // context-isolation safe (gauntlet #7: no child content crosses). Clamped at
+  // the emit site. Mirrors session.SubagentPayload.Cause.
+  string cause = 17;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors

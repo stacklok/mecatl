@@ -66,7 +66,7 @@ func run(args []string) error {
 	// default at stderr, which the alt-screen (started below for ALL paths) would let a
 	// stray ambient/third-party slog line corrupt. The host-embedded branch later refines
 	// this floor to the mecatui.log file writer. See docs/adr/0020-diagnostics.md.
-	installBaselineSlog(cfg.quiet)
+	installBaselineSlog(cfg.quiet, cfg.logLevel)
 
 	// Operator-posture WARN: mecatui has no slog and runs on the alt screen, so emit a
 	// single pre-TUI stderr line (it lands in scrollback before the alt screen takes
@@ -259,11 +259,15 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// path leaks a line to the terminal. The file handle (when one was opened) is
 	// closed by the returned cleanup alongside the server.
 	diagW, diagCloser, toFile := openDiagLogWriter(xdgconfig.OSEnv, cfg.quiet)
-	diag := slogdiag.New(diagW, false, port.LevelInfo)
+	// The floor is the operator's --log-level (default info — the level this was
+	// hardcoded to before the flag existed), shared by all three sinks below via
+	// logLevels so they can never disagree about what "debug" means.
+	diagLevel, diagSlogLevel, _ := logLevels(cfg.logLevel)
+	diag := slogdiag.New(diagW, false, diagLevel)
 	// A dedicated slog.Logger over the SAME writer for the perf surface's Logger field.
 	// Explicit injection (rather than relying on the redirected default below) keeps the
 	// perf surface's sink unambiguous even if a caller ever reuses perfConfig elsewhere.
-	perfLogger := slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	perfLogger := slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: diagSlogLevel}))
 	// REFINE the universal baseline (installBaselineSlog at the top of run() already
 	// floored the global default to io.Discard for every transport path): in the
 	// host-embedded path, redirect the GLOBAL slog default onto the same FILE writer the
@@ -275,7 +279,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// baseline for the embedded path. cmd/ mains are the only layer allowed to call
 	// slog.SetDefault (internal/ flows through the injected port.Diagnostics, ban-
 	// guarded). See docs/adr/0020-diagnostics.md.
-	slog.SetDefault(slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: diagSlogLevel})))
 
 	cfg = applyTrustPrompt(cfg, diag)
 

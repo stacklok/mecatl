@@ -113,7 +113,7 @@ var oracleSteps = []struct {
 		})
 	}},
 	{"fleetEnd", func(c *conversation) {
-		c.fleetEnd("child-1", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
+		c.fleetEnd("child-1", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", "", 4200)
 	}},
 	{"setTeamStart", func(c *conversation) {
 		c.addTool("call-team", "Team", `{"goal":"review"}`)

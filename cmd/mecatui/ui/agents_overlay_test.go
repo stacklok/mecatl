@@ -86,7 +86,7 @@ func TestSubagentFleetCounts(t *testing.T) {
 	c.fleetStart("c1", "audit auth", "", "", "", false)
 	c.fleetStart("c2", "map coverage", "", "", "", false)
 	c.fleetStart("c3", "trace config", "", "", "", false)
-	c.fleetEnd("c3", client.Usage{}, 4, "end_turn", 1000)
+	c.fleetEnd("c3", client.Usage{}, 4, "end_turn", "", 1000)
 	running, done := c.subagentFleetCounts()
 	if running != 2 || done != 1 {
 		t.Errorf("subagentFleetCounts = (%d, %d), want (2, 1)", running, done)

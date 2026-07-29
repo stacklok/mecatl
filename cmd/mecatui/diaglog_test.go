@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
@@ -166,11 +168,60 @@ func TestInstallBaselineSlogRedirectsGlobalDefault(t *testing.T) {
 	var stderrStandIn bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&stderrStandIn, nil)))
 
-	installBaselineSlog(false)
+	installBaselineSlog(false, defaultLogLevel)
 	slog.Default().Info("ambient line that must not reach the stderr stand-in")
 	slog.Default().Log(context.Background(), slog.LevelError, "nor this one")
 
 	if stderrStandIn.Len() != 0 {
 		t.Fatalf("global slog default still writes to the stderr stand-in after installBaselineSlog: %q", stderrStandIn.String())
+	}
+}
+
+// TestLogLevelsMapping locks the ONE --log-level mapping (issue #319): the four accepted
+// tokens resolve to the matching port.Level/slog.Level PAIR, the zero value falls to the
+// default (so a config built directly is never rejected), and anything else is reported as
+// NOT ok so config.validate can fail loudly rather than silently keeping the old floor.
+func TestLogLevelsMapping(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		want    port.Level
+		wantLog slog.Level
+		ok      bool
+	}{
+		{"debug", port.LevelDebug, slog.LevelDebug, true},
+		{"info", port.LevelInfo, slog.LevelInfo, true},
+		{"warn", port.LevelWarn, slog.LevelWarn, true},
+		{"error", port.LevelError, slog.LevelError, true},
+		{"", port.LevelInfo, slog.LevelInfo, true}, // unset → the default
+		{"trace", port.LevelInfo, slog.LevelInfo, false},
+		{"INFO", port.LevelInfo, slog.LevelInfo, false}, // case-sensitive, deliberately
+	} {
+		got, gotLog, ok := logLevels(tc.in)
+		if got != tc.want || gotLog != tc.wantLog || ok != tc.ok {
+			t.Errorf("logLevels(%q) = (%v, %v, %v), want (%v, %v, %v)",
+				tc.in, got, gotLog, ok, tc.want, tc.wantLog, tc.ok)
+		}
+		if l := slogLevel(tc.in); l != tc.wantLog {
+			t.Errorf("slogLevel(%q) = %v, want %v", tc.in, l, tc.wantLog)
+		}
+	}
+}
+
+// TestValidateRejectsUnknownLogLevel proves the flag fails LOUDLY: an operator raising
+// the level is debugging, so silently keeping the info floor would look like the flag did
+// nothing. The default and every accepted token must still validate.
+func TestValidateRejectsUnknownLogLevel(t *testing.T) {
+	base := func(level string) config {
+		return config{workspace: "/ws", mode: "default", mock: true, logLevel: level}
+	}
+	if err := base("trace").validate(); err == nil {
+		t.Fatal("validate() must reject an unknown --log-level")
+	} else if !strings.Contains(err.Error(), "--log-level") {
+		t.Fatalf("error must name the flag, got %v", err)
+	}
+	for _, ok := range []string{"", "debug", "info", "warn", "error"} {
+		if err := base(ok).validate(); err != nil {
+			t.Errorf("validate() rejected --log-level %q: %v", ok, err)
+		}
 	}
 }

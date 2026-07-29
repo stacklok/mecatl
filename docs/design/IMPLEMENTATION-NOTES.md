@@ -832,8 +832,39 @@ layers Edit/Write). The team-member catalog is DELIBERATELY NOT built from it (i
 differs: `spec.Mutating || roIsolationAvailable` + the `isolateReadOnly` side-effect). Guard:
 `app.TestExplorerPromptInstructsReferences`.
 
+**A failed delegation's CAUSE crosses to the model and the log (issue #319).** The loop already put a
+failed run's real failure detail on `session.ResultPayload.Error` (`engine/agent/loop.go`,
+`terminate`), and every delegation path then DROPPED it: `handleChildEvent` returned only
+text+stop, so `drainChildObserved`/`driveChild` never saw it, and the `StopError` render used the
+child's last assistant TEXT as the error body. The model-facing "error" was therefore the child's
+last chat line ("Now let me check the tests.") — or, when the child had said nothing, the opaque
+`subagent failed without producing a summary`. The cause is now threaded as a fourth/third return
+value through `handleChildEvent` → `drainChildObserved` → `driveChild` (last drive wins, mirroring
+`finalText`/`stop`; `drainChild` KEEPS its 2-value signature — its five callers do not want the
+cause) and composed at ONE chokepoint, `subagentErrorBody(final, cause)`: the cause LEADS (it is the
+actionable half), the child's last text follows as `Last activity before the failure: ` +
+`clampRunes(final, maxTeamPreview)` when present, and the empty-cause rows preserve the pre-#319
+shape so non-loop `StopError` terminals do not regress. `renderSubagentResult`,
+`renderWritableSubagentResult` and the `parallel.go` branch-failure arm (`res.failReason`) ALL go
+through that one helper — no second policy. `salvageEmptyStop` is untouched (`isEmptyTerminalStop`
+EXCLUDES `StopError`, so a crashed child is never re-driven). The observability half is
+`session.SubagentPayload.Cause`, set on `EvSubagentEnd` ONLY and clamped at both emit sites
+(foreground + background) to `maxSubagentCausePreview` = 400 runes — larger than `maxTeamPreview`
+because a truncated provider error is unactionable, still bounded so a pathological body cannot dump
+onto the event stream. It is harness/provider metadata, never child-authored output, so gauntlet #7
+holds; it rides `Subagent.cause` (proto field 14) → `toProtoSubagent` → `client.SubagentMsg.Cause` →
+the mecatui fleet lane. `ParallelPayload` deliberately gains NO proto field: a branch failure already
+reaches the model through the `Parallel` ToolResult text, which is what `failReason` feeds. In
+mecatui the inline Subagent card needs no new slot (the server-composed error body already carries
+the cause and the card renders it in its result slot); the ctrl+a fleet FOCUS pane gains a
+`failed: <clamped, single-line cause>` line (`subagentFailureLine`), which is the only channel there
+— a roster row otherwise shows just `stop:error`, and a BACKGROUND child's failure never reaches an
+inline card at all (its Subagent call already returned the started-result).
+
 **Subagent typed result taxonomy + agentId trailer (`renderSubagentResult`/`renderSubagentTrailer`).** The Subagent
-RESULT is now LABELLED by terminal stop reason: `StopError` → tool error; `StopStructuredOutput` →
+RESULT is now LABELLED by terminal stop reason: `StopError` → tool error whose body is composed by
+`subagentErrorBody` (cause first, child text as clamped context — see the #319 note above);
+`StopStructuredOutput` →
 tool error carrying the last validation failure; `StopMaxTurns`/`StopMaxToolCalls`/`StopBudget` →
 success-with-note (`[subagent stopped: …]` prefix); `StopNoProgress` → success-with-note
 `[subagent stopped: ended without a final summary]` (issue #152 — a reasoning-only / empty-turn end
@@ -3173,6 +3204,28 @@ breaker is untouched (a mid-stream error structurally never reaches the establis
 `recordFailure` lives). When `StreamIdleTimeout <= 0` the loop is the plain pull (no goroutine, no
 behaviour change). A package-level `goleak` gate (`leakmain_test.go`) proves the watchdog goroutine
 unwinds on every path.
+
+**Both TERMINAL paths log at Info (issue #319).** The RECOVERABLE stream lifecycle was already fully
+observable — breaker transitions, retry-exhaustion, the idle stall above (all Info) plus the
+per-attempt-timeout / retry-with-backoff detail (Debug) — while the two paths that actually END a
+turn logged at NO level: a permanent, non-retryable establishment error (the `!Classifier(err)`
+return in `Stream`) and a mid-stream error chunk after the first committing chunk (`restSeq`). An
+operator reading `mecatui.log` therefore could not distinguish a fatal 4xx from a run that never
+called the provider at all, which is exactly the elimination the #318/#319 diagnosis needed. Both now
+emit ONE Info line with a `clampErr`'d `err`. Two placement rules, both load-bearing: (1) the
+mid-stream line is emitted from `logMidStreamError`, called from BOTH `restSeq` variants (idle-bounded
+and plain) so setting `StreamIdleTimeout <= 0` cannot silently re-open the blind spot; (2) it is
+logged BEFORE the `yield` — an ordinary consumer BREAKS its range loop on the error, which makes
+`yield` return false, so a log placed after the `if !yield(...) { return }` is unreachable on the very
+path that matters. Its ctx is `context.Background()`, mirroring the sibling idle-stall site (the
+request ctx may already be done). The Debug retry lines were deliberately NOT promoted (retries are
+routine, and promoting them is log spam); they were made REACHABLE instead by mecatui's new
+`--log-level debug` (`cmd/mecatui/diaglog.go`'s `logLevels` is the ONE mapping feeding all three
+sinks — the `slogdiag` `port.Diagnostics` floor, the perf logger, and the redirected ambient-slog
+default — so they can never disagree; an unknown value is rejected LOUDLY by `config.validate`, never
+fail-softed to info, because an operator raising the level is debugging). Per `Config.Diagnostics`'
+own contract this is an ADAPTER seam, NOT the loop's run-scoped sink, so the loop's three-line budget
+(ADR 0020) is untouched.
 
 ### `WebSearch` core tool + `search` adapters (issue #26 — source discovery before WebFetch)
 

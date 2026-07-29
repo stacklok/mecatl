@@ -1029,7 +1029,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// it a per-branch translation closure (be.branchTool) that RE-TAGS its redacted
 	// subagent.tool emit into a parallel.branch{branch_tool}. A nil closure (silent path)
 	// makes drainChildObserved discard intermediate events exactly as drainChild did.
-	final, stop, usage, toolCount := drainChildObserved(
+	final, stop, cause, usage, toolCount := drainChildObserved(
 		run, be.branchTool(i),
 		string(callID), string(childSess.ID),
 		childPosture{isolated: true, caps: caps, role: label,
@@ -1053,10 +1053,13 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	switch stop {
 	case session.StopError:
 		res.failed = true
-		if final == "" {
-			final = "branch failed without producing a summary"
-		}
-		res.failReason = final
+		// The SAME chokepoint the Subagent result uses (issue #319): the branch's real
+		// failure cause leads, its last assistant text follows as clamped context. Before
+		// this the branch's last chat line was reported AS the failure reason (and, when it
+		// had said nothing, a bare placeholder). No proto field is added for
+		// ParallelPayload — the branch failure reaches the MODEL through the Parallel
+		// ToolResult text, which is exactly what failReason feeds.
+		res.failReason = subagentErrorBody(final, cause)
 	case session.StopCancelled:
 		res.failed = true
 		// "cancelled" is the run-level/parent cancel; a per-branch CancelChild reads

@@ -428,6 +428,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		Detail:         p.Detail,
 		Usage:          toProtoUsage(p.Usage),
 		Stop:           string(p.Stop),
+		Cause:          p.Cause,
 		DurationMs:     p.DurationMs,
 	}
 }

@@ -222,6 +222,12 @@ type SubagentMsg struct {
 	Usage      Usage
 	Stop       string
 	DurationMs int64
+	// Cause is the child run's FAILURE DETAIL on subagent.end when Stop is "error"
+	// (empty otherwise): the harness/provider error the server recorded on the
+	// terminal result (issue #319). It is METADATA about how the delegation failed —
+	// a transport/loop error string, never child-authored output — so gauntlet #7
+	// holds. Server-clamped; an older server yields "".
+	Cause string
 }
 
 // TeamKind discriminates the three team.* event kinds carried by a TeamMsg, so
@@ -732,6 +738,7 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 		ToolCount:      int(s.GetToolCount()),
 		Usage:          usageFrom(s.GetUsage()),
 		Stop:           s.GetStop(),
+		Cause:          s.GetCause(),
 		DurationMs:     s.GetDurationMs(),
 	}
 }

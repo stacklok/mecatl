@@ -247,7 +247,7 @@ func TestDriveChildStructuredPlainTextExhaustsToCleanTerminal(t *testing.T) {
 	submit := newSubmitResultTool(schema)
 	call := session.NewToolCall("c1", subagentToolName, nil)
 
-	_, stop, _, _ := driveChild(context.Background(), engine, child, ws,
+	_, stop, _, _, _ := driveChild(context.Background(), engine, child, ws,
 		"profile someone", RunOptions{ExtraTools: []tool.Tool{submit}},
 		nil, call, childID, childPosture{}, submit, schema)
 

@@ -562,6 +562,28 @@ func subagentRosterLine(ln *subagentLane) string {
 		humanizeTokens(ln.usage.OutputTokens))
 }
 
+// maxSubagentCauseWidth caps how many runes of a child's failure cause the focus pane
+// renders, so a long provider error body cannot blow the overlay card's width out. The
+// server already clamps the field; this is the display-side bound.
+const maxSubagentCauseWidth = 160
+
+// subagentFailureLine renders the focus pane's failure line for a child that ended on
+// an ERROR-family terminal and carried a cause: "  failed: <clamped cause>". It returns
+// "" for a running child, a benign terminal, or an errored child whose server did not
+// send a cause (an older server, or a StopError with no loop detail) — the pane then
+// reads exactly as before. The cause is server-derived harness/provider metadata (never
+// child-authored output, so gauntlet #7 holds) and is sanitized like every other
+// server-derived string the overlay renders.
+func subagentFailureLine(ln *subagentLane) string {
+	if !ln.done || ln.cause == "" || !subagentStopErrored(ln.stop) {
+		return ""
+	}
+	// Collapse the cause to ONE line before clamping: a provider error body is often
+	// multi-line, and the focus pane is a line-oriented card.
+	oneLine := strings.Join(strings.Fields(ln.cause), " ")
+	return "  failed: " + truncate(sanitizeTerminal(oneLine), maxSubagentCauseWidth)
+}
+
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its
 // fleet roster row and focus header. Like the rest of the lane vocabulary it is a
 // glyph-PLUS-text cue (⇢ "moves on without waiting" + the literal "bg") so it reads
@@ -644,6 +666,13 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hei
 	out.WriteString(muted.Render(subagentRosterLine(ln)))
 	out.WriteString("\n")
 	out.WriteString(muted.Render("  " + boundedPreviewsSubNote))
+	if fail := subagentFailureLine(ln); fail != "" {
+		// The ONE place the fleet answers "why did it fail". The inline Subagent card
+		// already carries the cause inside the tool result the agent received, but a
+		// roster/focus row otherwise shows only "stop:error", and a BACKGROUND child's
+		// failure never reaches an inline card at all (issue #319).
+		out.WriteString("\n" + muted.Render(fail))
+	}
 	if ln.background {
 		// Honest limitation: the events carry background + done only — whether the
 		// AGENT has collected the result (the registry's delivered state) is not on

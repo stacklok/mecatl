@@ -228,6 +228,24 @@ func (p *resilientProvider) diag() port.Diagnostics {
 	return p.cfg.Diagnostics
 }
 
+// logMidStreamError records the OTHER path that ends a turn terminally: an error
+// chunk yielded AFTER the first committing chunk. It is never retried (the
+// no-replay-after-first-chunk rule), so it is the end of the turn — and, like the
+// non-retryable establishment error above, it previously logged at NO level, leaving
+// the fatal half of the stream lifecycle invisible while the recoverable half (retry /
+// exhaustion / idle stall / breaker) was fully observable (issue #319 / #318 diagnosis).
+//
+// It is called from BOTH restSeq variants (idle-bounded and not) so disabling
+// StreamIdleTimeout cannot silently re-open the blind spot.
+//
+// The ctx is deliberately context.Background(), mirroring the sibling idle-stall site:
+// the request ctx may already be done by the time a mid-stream error surfaces, and a
+// slog handler that honours ctx cancellation would drop the line.
+func (p *resilientProvider) logMidStreamError(err error) {
+	p.diag().Log(context.Background(), port.LevelInfo, "llm stream failed mid-stream; ending turn",
+		"err", clampErr(err))
+}
+
 // clampErr renders an error to a length-bounded string for a diagnostics arg.
 // The wrapper sees only port.LLMRequest + errors, never prompt text, but a
 // provider error body can still be large — clamp it so a single log line stays
@@ -406,8 +424,16 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 				"attempt", attempt+1,
 				"max_attempts", p.cfg.MaxAttempts)
 		}
-		// Permanent (non-retryable) errors are surfaced verbatim, not retried.
+		// Permanent (non-retryable) errors are surfaced verbatim, not retried. This
+		// TERMINALLY ends the turn, so it is logged at Info: the recoverable lifecycle
+		// (retry, exhaustion, idle stall, breaker transitions) was already observable
+		// while this — one of the two paths that actually kills a turn — logged at NO
+		// level, so an operator reading mecatui.log could not tell a permanent 4xx from
+		// a run that never called the provider at all (issue #319 / #318 diagnosis).
 		if !p.cfg.Classifier(err) {
+			p.diag().Log(ctx, port.LevelInfo, "llm stream failed with a non-retryable provider error; ending turn",
+				"attempt", attempt+1,
+				"err", clampErr(err))
 			return nil, err
 		}
 		// Backoff before the next attempt, unless this was the last one.
@@ -629,6 +655,12 @@ func (p *resilientProvider) restSeq(next func() (port.Chunk, error, bool), stop 
 				if !ok {
 					return
 				}
+				if e != nil {
+					// Logged BEFORE the yield: an ordinary consumer BREAKS its range loop on
+					// the error, which makes yield return false — so a log placed after the
+					// yield-false return is unreachable on the very path that matters.
+					p.logMidStreamError(e)
+				}
 				if !yield(c, e) {
 					return
 				}
@@ -677,6 +709,11 @@ func (p *resilientProvider) restSeq(next func() (port.Chunk, error, bool), stop 
 			case r := <-results:
 				if !r.ok {
 					return
+				}
+				if r.e != nil {
+					// See the non-idle variant above: logged BEFORE the yield because a
+					// consumer that breaks on the error makes yield return false.
+					p.logMidStreamError(r.e)
 				}
 				if !yield(r.c, r.e) {
 					return

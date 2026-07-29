@@ -1281,7 +1281,10 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		askLabel: fmt.Sprintf("team member %q", m.spec.Name)}
 	stop = session.StopNone
 	for ev := range run.Events() {
-		if t, st, ok := handleChildEvent(run, ev, posture); ok {
+		// The terminal failure cause is discarded here: the team's own use of it is a
+		// separate concern (a member's stopReason already classifies the terminal), so
+		// the arity change stays mechanical.
+		if t, st, _, ok := handleChildEvent(run, ev, posture); ok {
 			stop = st
 			if t != "" {
 				text = t

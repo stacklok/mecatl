@@ -515,7 +515,7 @@ type TurnEndPayload struct {
 //   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount, and —
 //     when a preview is available — Text / Detail / InnerKind (which inner event kind
 //     the preview came from: message.delta / tool.call / tool.result / result).
-//   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, DurationMs.
+//   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, [Cause], DurationMs.
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
 	// this event to the originating Subagent card. Set on all three kinds.
@@ -582,6 +582,14 @@ type SubagentPayload struct {
 	Usage Usage
 	// Stop is the child run's terminal stop reason. Set on EvSubagentEnd only.
 	Stop StopReason
+	// Cause carries the child run's failure detail when Stop is StopError (empty
+	// otherwise) — the mirror of ResultPayload/RunResult.Error for the delegation
+	// projection. Set on EvSubagentEnd ONLY.
+	//
+	// It is HARNESS/PROVIDER metadata (a transport or loop error string), NOT
+	// child-authored model output, so it is gauntlet-#7 safe on the same footing as
+	// Stop/Usage. It is clamped at the emit site.
+	Cause string
 	// DurationMs is the child run's wall-clock duration in milliseconds
 	// (best-effort). Set on EvSubagentEnd only.
 	DurationMs int64

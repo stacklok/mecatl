@@ -117,6 +117,16 @@ func TestEventToMsg(t *testing.T) {
 				Stop: "max_tool_calls", DurationMs: 1234, Usage: Usage{InputTokens: 90, OutputTokens: 12}},
 		},
 		{
+			// Issue #319: a failed child's cause must survive the proto→msg relay, or the
+			// fleet pane can only ever show "stop:error" with no WHY.
+			"subagent.end carries the failure cause",
+			&mecatlv1.Event{Type: "subagent.end", Subagent: &mecatlv1.Subagent{
+				ParentCallId: "p1", ChildId: "subagent-p1", Stop: "error",
+				Cause: "upstream 503: model overloaded"}},
+			SubagentMsg{Kind: SubagentEnd, ParentCallID: "p1", ChildID: "subagent-p1",
+				Stop: "error", Cause: "upstream 503: model overloaded"},
+		},
+		{
 			"parallel.start",
 			&mecatlv1.Event{Type: "parallel.start", Parallel: &mecatlv1.Parallel{
 				ParentCallId: "p1", Join: "judge", BranchCount: 3}},

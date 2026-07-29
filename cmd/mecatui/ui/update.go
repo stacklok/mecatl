@@ -873,7 +873,7 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 		c.fleetTool(msg)
 	case client.SubagentEnd:
 		c.setSubagentEnd(msg.ParentCallID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
-		c.fleetEnd(msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
+		c.fleetEnd(msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.Cause, msg.DurationMs)
 	}
 }
 

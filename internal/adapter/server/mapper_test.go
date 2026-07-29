@@ -277,6 +277,37 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
+			// Issue #319: a FAILED child's cause must survive toProtoSubagent, or the TUI
+			// (and every gRPC consumer) can only ever show "stop:error" with no WHY.
+			name: "subagent.end carries the failure cause",
+			in: session.Event{Type: session.EvSubagentEnd, Seq: 23, Turn: 1,
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+					Stop:  session.StopError,
+					Cause: "agent: stream: upstream 503 model overloaded"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				s := got.GetSubagent()
+				if s == nil || s.GetStop() != "error" {
+					t.Fatalf("subagent.end payload mismatch: %+v", s)
+				}
+				if s.GetCause() != "agent: stream: upstream 503 model overloaded" {
+					t.Fatalf("subagent.end cause not mapped: %q", s.GetCause())
+				}
+			},
+		},
+		{
+			// The negative half: a clean terminal must leave cause empty so a consumer can
+			// treat a non-empty cause as "this delegation failed".
+			name: "subagent.end clean terminal carries no cause",
+			in: session.Event{Type: session.EvSubagentEnd, Seq: 24, Turn: 1,
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+					Stop: session.StopEndTurn}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				if c := got.GetSubagent().GetCause(); c != "" {
+					t.Fatalf("clean subagent.end must carry no cause, got %q", c)
+				}
+			},
+		},
+		{
 			name: "team.start",
 			in: session.Event{Type: session.EvTeamStart, Seq: 30, Turn: 1,
 				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1",

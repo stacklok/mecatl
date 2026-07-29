@@ -329,7 +329,14 @@ type subagentLane struct {
 	isError        bool // the most-recent child tool errored (transient)
 	done           bool
 	stop           string
-	durationMs     int64
+	// cause is the child's FAILURE DETAIL on an errored terminal (subagent.end's
+	// Cause; empty otherwise) — the harness/provider error, not child-authored
+	// output, so gauntlet #7 holds (issue #319). It is the ONLY place the fleet
+	// surfaces WHY a child failed: a roster/focus row otherwise shows just
+	// "stop:error", and a BACKGROUND child's failure never reaches an inline card
+	// at all (its Subagent call already returned the started-result).
+	cause      string
+	durationMs int64
 }
 
 // conversation is the ordered scrollback. It owns block creation/mutation so the
@@ -647,7 +654,7 @@ func (c *conversation) fleetTool(msg client.SubagentMsg) {
 
 // fleetEnd records the resolved end stats on the fleet lane (done gates them), so the
 // footer count and the Subagents-tab glyph flip to terminal.
-func (c *conversation) fleetEnd(childID string, usage client.Usage, toolCount int, stop string, durationMs int64) {
+func (c *conversation) fleetEnd(childID string, usage client.Usage, toolCount int, stop, cause string, durationMs int64) {
 	if childID == "" {
 		return
 	}
@@ -656,6 +663,7 @@ func (c *conversation) fleetEnd(childID string, usage client.Usage, toolCount in
 	ln.usage = usage
 	ln.toolCount = toolCount
 	ln.stop = stop
+	ln.cause = cause
 	ln.durationMs = durationMs
 }
 

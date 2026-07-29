@@ -57,6 +57,21 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   tasks 01–02)
  (chore(engine): api snapshot + CHANGELOG for the ADR-0079 payload widening)
 
+- **`session.SubagentPayload.Cause`** (issue #319) — a new `string` field on the
+  redacted `subagent.*` observability projection carrying the child run's FAILURE
+  DETAIL (the loop's `session.ResultPayload.Error`) when `Stop` is `StopError`;
+  empty on every other terminal, and set on `EvSubagentEnd` ONLY. It is
+  harness/provider metadata (a transport or loop error string), never
+  child-authored model output, so it is gauntlet-#7 safe on the same footing as
+  `Stop`/`Usage`, and it is clamped at the emit site. It rides the proto/client
+  wire end-to-end (`Subagent.cause` = field 17). Classified Added per
+  COMPATIBILITY.md (a new struct field on an existing payload is a minor bump).
+  Behaviour note for library consumers: the model-facing `Subagent` tool result on
+  a `StopError` terminal now LEADS with this cause and demotes the child's last
+  assistant text to clamped "Last activity before the failure" context — the same
+  change applies to a failed `Parallel` branch's reported reason. No exported
+  signature changed. (issue #319)
+
 - **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
   `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
   fire-result-delivery task 02) — a new `port.ScheduleManager` wrapper that
