@@ -216,9 +216,8 @@ The sequence above is easiest to believe by actually doing it. This assumes the 
 Grab both replica names, and port-forward one of them:
 
 ```sh
-PODS=($(kubectl get pods -n mecatl -l app.kubernetes.io/component=agent -o jsonpath='{.items[*].metadata.name}'))
-POD_A=${PODS[0]}
-POD_B=${PODS[1]}
+POD_A=$(kubectl get pods -n mecatl -l app.kubernetes.io/component=agent -o jsonpath='{.items[0].metadata.name}')
+POD_B=$(kubectl get pods -n mecatl -l app.kubernetes.io/component=agent -o jsonpath='{.items[1].metadata.name}')
 
 kubectl port-forward -n mecatl "pod/$POD_A" 8081:8081 &
 ```
@@ -233,7 +232,7 @@ curl -s -X POST "http://127.0.0.1:8081/v1/sessions/$SESSION_ID/prompt" \
   -H 'Accept: text/event-stream' -d '{"text":"say hello"}' > /dev/null
 ```
 
-Check who holds the session's lease:
+Check who holds the session's lease — every session gets its own, so you may see more than one entry; yours is the one that just appeared:
 
 ```sh
 kubectl get lease -n mecatl -o wide
@@ -255,9 +254,15 @@ curl -s -X POST "http://127.0.0.1:8082/v1/sessions/$SESSION_ID/prompt" \
 # -> 200, same conversation continues
 ```
 
-That 200 is the whole point: pod B never touched this session before, yet it picked up the conversation with full context, because the conversation was never pod A's to keep — it was always in Redis. `kubectl get lease -n mecatl -o wide` again to see `holderIdentity` has moved to pod B.
+That 200 is the whole point: pod B never touched this session before, yet it picked up the conversation with full context, because the conversation was never pod A's to keep — it was always in Redis. `kubectl get lease -n mecatl -o wide` again to see the `HOLDER` column has moved to pod B.
 
-Try the same thing with a hard kill instead — `kubectl delete pod -n mecatl "$POD_A" --force --grace-period=0` — and pod B's request gets a `409` with `"leased by another process"` until the lease's TTL (`--session-lease-ttl`, default 30s) naturally expires, since there's no graceful shutdown to release it early. That 409 is the lease actually gating something, not just an artifact of the pod being gone.
+Try the same thing again, but with a hard kill this time. Pod B is now the session's holder, so force-kill *it* — not pod A, which is already gone — and retry the session via a third replica (any agent pod that isn't pod B; `kubectl get pods -n mecatl -l app.kubernetes.io/component=agent` to find one, port-forward it the same way as above):
+
+```sh
+kubectl delete pod -n mecatl "$POD_B" --force --grace-period=0
+```
+
+That retry gets a `409` with `"leased by another process"` — not the `200` a graceful kill gave you — and stays that way until the lease's TTL (`--session-lease-ttl`, default 30s) naturally expires, since there was no graceful shutdown this time to release it early. That 409 is the lease actually gating something, not just an artifact of the pod being gone.
 
 For the scripted version of exactly this (plus the case above), see `task e2e:k8s` — it's the same failover behavior, asserted rather than eyeballed.
 
