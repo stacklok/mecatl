@@ -12,7 +12,7 @@ metadata:
 # Cut a mecatl release
 
 A release is a `vX.Y.Z` git tag. Pushing that tag triggers `.github/workflows/release.yml`,
-which builds, signs, and attests the `mecated` image to GHCR. There is **no** version baked
+which builds, signs, and attests the `mecated` and `mecatui` images to GHCR. There is **no** version baked
 into the Go code — the tag IS the release.
 
 The one fragile part: the `mecatequi-reusable.yml` workflow references its three first-party

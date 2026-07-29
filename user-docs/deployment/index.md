@@ -38,6 +38,8 @@ The [Pick your deployment shape](/getting-started/deployment-decision.md) guide 
 
 - [**Drive via gRPC / HTTP**](grpc-http.md) — the wire protocol: the gRPC `Converse` stream, the HTTP/SSE surface, the `ResumeApproval` frame for permission verdicts, and the `POST /v1/sessions/{id}/approve` endpoint.
 
+- [**mecatui container image (brood-box)**](mecatui.md) — the `ghcr.io/stacklok/mecatl/mecatui` container image: built + signed on release, carries a brood-box agent manifest, importable via `bbox agents import`.
+
 ---
 
 ## What's next

@@ -1189,3 +1189,28 @@ task test:golden     # go test ./cmd/mecatui/ui -update, then re-run
 - [Architecture guide](architecture.md) — the event stream and gRPC `Converse` surface this client renders.
 - [UX discoverability design](adr/0025-ux-discoverability.md) — the rationale behind the capability-wiring approach this UI takes.
 - [Clipboard image paste design](adr/0026-clipboard-image-paste.md) — the non-obvious decisions behind `ctrl+v`.
+
+## Container image / brood-box
+
+`mecatui` ships as a container image on every release, alongside `mecated`:
+`ghcr.io/stacklok/mecatl/mecatui` (tagged `<version>` and `latest`, multi-arch
+`linux/amd64` + `linux/arm64`, signed with cosign + SBOM + SLSA provenance —
+the same supply-chain story as the `mecated` image; see the release workflow
+in `.github/workflows/README.md`). It is built with ko from `./cmd/mecatui`
+onto the digest-pinned brood-box wolfi base (`baseImageOverrides` in
+`.ko.yaml`) and carries a
+brood-box agent manifest at `/var/run/ko/agent.yaml` (from
+`cmd/mecatui/kodata/agent.yaml`), located via the OCI config label
+`org.stacklok.broodbox.agent`.
+
+Import it into brood-box:
+
+```sh
+bbox agents import ghcr.io/stacklok/mecatl/mecatui:latest
+```
+
+The manifest forwards `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, and `OPENCODE_API_KEY` and allows egress to all four provider
+endpoints; mecatl auto-detects the provider from whichever key is set. Edit the
+manifest for a deployment that pins a single provider or a stricter egress
+profile.
