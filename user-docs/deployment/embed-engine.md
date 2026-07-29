@@ -217,5 +217,6 @@ Now `go build` and `go test` resolve `github.com/stacklok/mecatl/engine` from th
 
 - [The agent loop](../what-you-get/agent-loop.md) — event taxonomy, permission pause/resume, compaction, and terminal states.
 - [Permissions & guardrails](../what-you-get/permissions.md) — how to configure rules, posture, and the model-backed guardrail layer.
+- [API stability](../api-stability.md) — what's guaranteed not to break in the engine module you just imported, and how a breaking change is classified and surfaced.
 - [Run mecated standalone](mecated.md) — if you want the composition done for you (auth, TLS, gRPC, Prometheus).
 - [Cloud-native k8s with mecak8s](mecak8s.md) — stateless Kubernetes deployment backed by Redis and k8s leases.

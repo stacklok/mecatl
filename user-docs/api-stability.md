@@ -163,6 +163,7 @@ A session reconstructed by folding mecatl's own event stream is therefore **byte
 
 ## What's next
 
+- [Embed the engine](deployment/embed-engine.md) — `go get github.com/stacklok/mecatl/engine`, its tiny dependency closure, and what's importable.
 - [The agent loop](what-you-get/agent-loop.md) — how the engine runs turns, dispatches tools, and emits the event stream.
 - [Extension points](extension-points/index.md) — implement a port interface (`port.LLMProvider`, `port.SessionStore`, `port.PermissionPolicy`, and others) to replace any capability.
 - [Deployment decision](getting-started/deployment-decision.md) — choosing between `mecated` and the embedded engine library.

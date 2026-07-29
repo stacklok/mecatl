@@ -38,6 +38,10 @@ These tools are always present in a default session (no extra configuration requ
 
 :::
 
+### The no-filesystem session profile
+
+A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`Write`/`Edit`/`Grep`/`Glob`/`Bash`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
+
 ---
 
 ## Memory tools

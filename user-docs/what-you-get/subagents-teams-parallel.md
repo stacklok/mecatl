@@ -95,7 +95,8 @@ A team-level token ceiling (operator flag `--max-team-tokens`, default unlimited
 
 A few operator-facing knobs shape delegation without any per-call argument:
 
-- **`--subagent-model`** sets the model every Subagent / Parallel branch / team member uses when nothing else pins one (no `agent` def, no per-call `model`). Leave it unset to inherit the parent's model.
+- **`--subagent-model`** sets the model every Subagent / Parallel branch / team member uses when nothing else pins one (no `agent` def, no per-call `model`). Leave it unset to inherit the parent's model. A `Parallel` **judge** is the one exception: it always runs on your session's own model, never `--subagent-model` or a routed one, since it's picking between your branches, not doing the work itself.
+- An operator can also configure a **model router** that picks a cheaper or stronger model per delegation automatically, based on the task — opt-in, and orthogonal to everything above (it only fills in a model when nothing else already pinned one). It's an operator/config-level feature, not something you set per call; see `docs/usage/mecated.md` (`--subagent-model-router`) if you're deploying mecatl yourself.
 - **`--enable-parallel=false`** turns off the `Parallel` tool entirely (on by default).
 - Delegated children get their own slice of the permission system — see [Subagents and the permission model](/what-you-get/permissions.md#subagents-and-the-permission-model) for what a child is pre-approved to do versus what still surfaces to you as a human.
 - **`--subagent-ask-reviewer`** (headless deployments only) lets an LLM adjudicate a child's permission ask instead of falling back to a blanket auto-deny when there's no human to ask. See the same section.
