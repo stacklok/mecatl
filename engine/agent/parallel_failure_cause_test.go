@@ -60,7 +60,10 @@ func TestParallelFailedBranchReportsCauseNotLastChatLine(t *testing.T) {
 }
 
 // TestParallelFailedBranchWithNoTextReportsCause closes the no-branch-text half: before
-// #319 this rendered the opaque "branch failed without producing a summary" placeholder.
+// #319 this rendered an opaque no-summary placeholder instead of the real reason. The
+// negative below asserts against subagentErrorBody's CURRENT floor ("failed without
+// producing a summary" — caller-neutral, since the helper is shared with the Subagent
+// path), so it still fires if the cause is ever dropped again.
 func TestParallelFailedBranchWithNoTextReportsCause(t *testing.T) {
 	const causeText = "upstream 429: rate limited"
 	childEngine := childEngineWith(
@@ -80,7 +83,7 @@ func TestParallelFailedBranchWithNoTextReportsCause(t *testing.T) {
 	if !strings.Contains(res.Content, causeText) {
 		t.Fatalf("the joined report must carry the cause, got:\n%s", res.Content)
 	}
-	if strings.Contains(res.Content, "branch failed without producing a summary") {
+	if strings.Contains(res.Content, "failed without producing a summary") {
 		t.Fatalf("the opaque placeholder must not stand when a cause is available, got:\n%s", res.Content)
 	}
 }

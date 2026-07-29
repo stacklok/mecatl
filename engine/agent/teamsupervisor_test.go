@@ -819,15 +819,18 @@ func TestSupervisorBaseSharingMemberWithBashStillRejected(t *testing.T) {
 // the supervisor composes build.Close with the fork cleanup and runs it on Run's
 // cleanupAll, so a per-member inline MCP manager is torn down (no leak).
 // TestSupervisorMemberDispositionError asserts a member whose run ends StopError is
-// reported with Disposition==stopped and Reason==error. A failed run is the hardest
-// fault: it sets nonResumable and short-circuits the Reopen, so it must classify as
-// error regardless of any Reopen outcome. The team has no lead, so there is no
-// synthesis to mask the member's terminal state.
+// reported with Disposition==stopped and Reason==error. This is the DELIBERATELY unchanged
+// half of issue #318: the failed session is now RECOVERED rather than benched as
+// nonResumable, but `stopped`/`error` stay exactly as they were, because the honest signal
+// to the lead ("this member stopped before finishing") and the task release that lets a
+// peer pick the work up both hang off them. The team has no lead, so there is no synthesis
+// to mask the member's terminal state.
 func TestSupervisorMemberDispositionError(t *testing.T) {
 	tm := team.New("t")
 	// One uncooperative turn that ends StopError (a refused/truncated/failed response
-	// shape — see mockllm.EmptyTurnWithStop). The run terminates in error, so the
-	// member is non-resumable and never scheduled again.
+	// shape — see mockllm.EmptyTurnWithStop). The run terminates in error, so the member
+	// is DESCHEDULED (stopped) and never scheduled again — its session is nonetheless
+	// recovered and remains drivable (issue #318).
 	prov := mockllm.New(mockllm.EmptyTurnWithStop(session.StopError))
 	providers := map[string]*mockllm.Provider{"worker": prov}
 	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),

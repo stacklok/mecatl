@@ -147,7 +147,14 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   likewise recovered rather than benched, so a failed LEAD still reaches its final
   synthesis; `MemberOutcome.Stopped`/`Reason` are unchanged (a failed round still
   deschedules the member). Consumers relying on a failed child being permanently
-  unresumable — or matching on the old refusal copy — must adjust. (issue #318)
+  unresumable — or matching on the old refusal copy — must adjust. There is no knob
+  that restores the old refusal; the ONE lever is the precondition `resume` has always
+  had — it requires a wired session store, so a consumer that must forbid resuming a
+  failed child does not pass `agent.WithSubagentStore` (which disables `resume:`
+  wholesale, not just for the failed state, and also stops `InspectSubagent` from
+  loading persisted child transcripts). A `StopError` result built without a store
+  correspondingly omits the resume hint, so the model is never told about a path that
+  deployment cannot serve. (issue #318)
 
 - **`agent.NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager)`**
   — the AC4.3 plan-mode gate now also denies the `fire` of a MUTATING schedule

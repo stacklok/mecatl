@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -86,25 +87,78 @@ func TestSubagentFocusPaneOmitsCauseWhenBenign(t *testing.T) {
 	})
 }
 
-// TestSubagentFailureLineIsBoundedAndSingleLine proves the display is safe against a
-// pathological provider error body: multi-line content is collapsed to one line (the pane
-// is line-oriented) and the whole thing is clamped, so one failure cannot blow the
-// overlay card's width out or push the roster off-screen.
-func TestSubagentFailureLineIsBoundedAndSingleLine(t *testing.T) {
+// TestSubagentFailureLineIsBoundedAndWrapped proves the display is safe against a
+// pathological provider error body on BOTH axes. Height: multi-line content is collapsed
+// (its own newlines would defeat the width budget) and the whole thing is rune-clamped, so
+// one failure cannot push the roster off-screen. Width: the result is word-wrapped to the
+// overlay card's text budget, because renderSubagentFocus's widest line directly sets the
+// card width and centerCard/lipgloss.Place cannot shrink it.
+//
+// The pre-#319-fix version of this test asserted the line was a SINGLE line of up to
+// maxSubagentCauseWidth + the prefix — ~170 columns — i.e. it explicitly accepted a width
+// wider than the viewport it gets drawn into. That is the hole; the per-line width check
+// below is what closes it.
+func TestSubagentFailureLineIsBoundedAndWrapped(t *testing.T) {
 	ln := &subagentLane{
 		done:  true,
 		stop:  "error",
 		cause: "line one\nline two\n" + strings.Repeat("z", maxSubagentCauseWidth*3),
 	}
-	got := subagentFailureLine(ln)
-	if strings.Contains(got, "\n") {
-		t.Fatalf("the failure line must be collapsed to ONE line, got %q", got)
+
+	for _, width := range []int{80, 100, 120} {
+		got := subagentFailureLine(ln, width)
+		if !strings.Contains(strings.Join(strings.Fields(got), " "), "line one line two") {
+			t.Fatalf("width %d: collapsing must join the source lines with spaces, got %q", width, got)
+		}
+		// Rune total (the height bound) — the clamp, plus the per-line "  " indents the
+		// wrap adds.
+		if n := len([]rune(got)); n > maxSubagentCauseWidth+len("  failed: ")+1+2*len(strings.Split(got, "\n")) {
+			t.Fatalf("width %d: the cause was not clamped: %d runes (%q)", width, n, got)
+		}
+		// The width bound: EVERY wrapped line must fit the card's text budget. A
+		// space-free run of 480 z's is the adversarial case — ansi.Wrap must break it.
+		budget := cardTextWidth(width)
+		for i, line := range strings.Split(got, "\n") {
+			if w := lipgloss.Width(line); w > budget {
+				t.Fatalf("width %d: wrapped line %d is %d cols, over the %d-col card budget: %q",
+					width, i, w, budget, line)
+			}
+		}
 	}
-	if !strings.Contains(got, "line one line two") {
-		t.Fatalf("collapsing must join the lines with spaces, got %q", got)
+
+	// Unknown width degrades to the bare unwrapped line, exactly as the /skills and
+	// /agents inventory panels do — centerCard does not Place at width 0, so there is
+	// nothing to overflow.
+	if bare := subagentFailureLine(ln, 0); strings.Contains(bare, "\n") {
+		t.Fatalf("an unknown width must not wrap (the bare content-sized card), got %q", bare)
 	}
-	if n := len([]rune(got)); n > maxSubagentCauseWidth+len("  failed: ")+1 {
-		t.Fatalf("the failure line was not clamped: %d runes (%q)", n, got)
+}
+
+// TestSubagentFocusPaneWithLongCauseFitsViewport is the REAL-RENDER guard for the same
+// property, and the one that would have caught the overflow: it drives the whole ctrl+a
+// focus pane through View() with a realistic long provider error and asserts no rendered
+// line exceeds the viewport. Asserting the bound on subagentFailureLine in isolation is
+// not enough — the helper cannot see the card's border and padding, and centerCard cannot
+// shrink what it is given.
+func TestSubagentFocusPaneWithLongCauseFitsViewport(t *testing.T) {
+	// A genuine Envoy/gateway error shape (~95 chars), the case the 160-rune bound let
+	// through at 80 and 100 columns.
+	const longCause = "upstream connect error or disconnect/reset before headers. " +
+		"reset reason: connection termination"
+	for _, width := range []int{80, 100, 120} {
+		m := newMCPModel(t, aztec(), nil)
+		m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 30})
+		m = seedSubagents(m, "p1",
+			startSub("p1", "c1", "audit auth"),
+			endSubFailed("p1", "c1", longCause),
+		)
+		out := focusFirstChild(t, m)
+		assertFitsViewport(t, []byte(out), width)
+		// …and the cause is still there to read (wrapped, so match on a fragment that
+		// cannot straddle a line break).
+		if !strings.Contains(out, "upstream connect error") {
+			t.Fatalf("width %d: the wrapped failure line must still name the cause, got:\n%s", width, out)
+		}
 	}
 }
 

@@ -125,6 +125,13 @@ func formatEvent(ev session.Event) string {
 	case session.EvSubagentEnd:
 		if ev.Subagent != nil {
 			fmt.Fprintf(&b, " child=%s stop=%s", ev.Subagent.ChildID, ev.Subagent.Stop)
+			// A failed delegation's WHY (session.SubagentPayload.Cause) — printed only
+			// when set, so the clean-run output is unchanged. mecademo is the runnable
+			// example a library consumer copies to learn the event taxonomy, so a field
+			// that appears in no example is a field they never discover.
+			if ev.Subagent.Cause != "" {
+				fmt.Fprintf(&b, " cause=%q", oneLine(ev.Subagent.Cause))
+			}
 		}
 	case session.EvCompaction:
 		fmt.Fprintf(&b, " summary=%q", oneLine(ev.Text))

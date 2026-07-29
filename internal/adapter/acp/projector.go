@@ -241,6 +241,16 @@ func projectSubagent(ev session.Event) (any, bool) {
 			status = toolStatusFailed
 		}
 		line := fmt.Sprintf("subagent finished: %d tool call(s), %s", p.ToolCount, p.Stop)
+		if p.Cause != "" {
+			// WHY it failed, not just that it did (issue #319). Without this an ACP
+			// client sees a failed delegation card with no reason while a mecatui user
+			// sees the cause — two projections of one event disagreeing about how much
+			// of the contract they surface. The value is already clamped at the emit
+			// site and is harness/provider metadata (never child-authored output), so
+			// gauntlet #7 holds; it is collapsed to ONE line because this content is
+			// line-oriented, mirroring the TUI focus pane.
+			line += ": " + strings.Join(strings.Fields(p.Cause), " ")
+		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
 			ToolCallID:    p.ParentCallID,

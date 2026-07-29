@@ -838,29 +838,47 @@ failed run's real failure detail on `session.ResultPayload.Error` (`engine/agent
 `terminate`), and every delegation path then DROPPED it: `handleChildEvent` returned only
 text+stop, so `drainChildObserved`/`driveChild` never saw it, and the `StopError` render used the
 child's last assistant TEXT as the error body. The model-facing "error" was therefore the child's
-last chat line ("Now let me check the tests.") — or, when the child had said nothing, the opaque
-`subagent failed without producing a summary`. The cause is now threaded as a fourth/third return
+last chat line ("Now let me check the tests.") — or, when the child had said nothing, an opaque
+no-summary floor. The cause is now threaded as a fourth/third return
 value through `handleChildEvent` → `drainChildObserved` → `driveChild` (last drive wins, mirroring
 `finalText`/`stop`; `drainChild` KEEPS its 2-value signature — its five callers do not want the
-cause) and composed at ONE chokepoint, `subagentErrorBody(final, cause)`: the cause LEADS (it is the
+cause) and composed at ONE chokepoint, `subagentErrorBody(cause, final)`: the cause LEADS (it is the
 actionable half), the child's last text follows as `Last activity before the failure: ` +
 `clampRunes(final, maxTeamPreview)` when present, and the empty-cause rows preserve the pre-#319
-shape so non-loop `StopError` terminals do not regress. `renderSubagentResult`,
+shape so non-loop `StopError` terminals do not regress. Three deliberate properties of that helper:
+its parameters are ordered as they RENDER (both are `string` and adjacent, so a positional swap
+compiles — and would silently reproduce the very bug #319 fixed); it clamps BOTH halves, because the
+composed body is recorded into the PARENT's conversation and persisted, so an unbounded provider
+error body would become permanent context the parent re-pays for on every turn; and its floor
+wording is caller-NEUTRAL (`failed without producing a summary`), since the Subagent path prefixes
+`Subagent: ` while the Parallel path renders it under a `=== branch-N [FAILED] ===` header.
+`renderSubagentResult`,
 `renderWritableSubagentResult` and the `parallel.go` branch-failure arm (`res.failReason`) ALL go
 through that one helper — no second policy. `salvageEmptyStop` is untouched (`isEmptyTerminalStop`
 EXCLUDES `StopError`, so a crashed child is never re-driven). The observability half is
-`session.SubagentPayload.Cause`, set on `EvSubagentEnd` ONLY and clamped at both emit sites
-(foreground + background) to `maxSubagentCausePreview` = 400 runes — larger than `maxTeamPreview`
+`session.SubagentPayload.Cause`, set on `EvSubagentEnd` ONLY and clamped at ALL THREE emit sites
+(the foreground terminal, the background terminal, and `driveBackground`'s pre-run `endOnError` —
+a fork / session-build failure is a `StopError` terminal too, and for a background child the event
+is the ONLY channel, since its Subagent call already returned the started-result) to
+`maxSubagentCausePreview` = 400 runes — larger than `maxTeamPreview`
 because a truncated provider error is unactionable, still bounded so a pathological body cannot dump
 onto the event stream. It is harness/provider metadata, never child-authored output, so gauntlet #7
 holds; it rides `Subagent.cause` (proto field 14) → `toProtoSubagent` → `client.SubagentMsg.Cause` →
-the mecatui fleet lane. `ParallelPayload` deliberately gains NO proto field: a branch failure already
+the mecatui fleet lane, and the SAME payload field is appended to the ACP `subagent finished:` line
+(`internal/adapter/acp/projector.go`, `projectSubagent`) so the two projections of one event agree.
+`ParallelPayload` deliberately gains NO proto field: a branch failure already
 reaches the model through the `Parallel` ToolResult text, which is what `failReason` feeds. In
 mecatui the inline Subagent card needs no new slot (the server-composed error body already carries
 the cause and the card renders it in its result slot); the ctrl+a fleet FOCUS pane gains a
-`failed: <clamped, single-line cause>` line (`subagentFailureLine`), which is the only channel there
+`failed: <cause>` block (`subagentFailureLine`) — rune-clamped for HEIGHT and word-wrapped to
+`cardTextWidth(width)` via the same `indentWrap` pair the /skills + /agents inventory panels use, because
+`renderSubagentFocus`'s widest line directly sets the overlay card's width and `centerCard`/
+`lipgloss.Place` cannot shrink it (so `width` is now threaded `renderAgentsOverlay` →
+`renderSubagentTab` → `renderSubagentFocus`; an ordinary ~95-char gateway error would otherwise mangle
+the card border at 80/100 columns). It is the only channel there
 — a roster row otherwise shows just `stop:error`, and a BACKGROUND child's failure never reaches an
-inline card at all (its Subagent call already returned the started-result).
+inline card at all (its Subagent call already returned the started-result). `cmd/mecademo` prints
+`cause=…` on `EvSubagentEnd` when set, so the field is discoverable from the runnable example.
 
 **Subagent typed result taxonomy + agentId trailer (`renderSubagentResult`/`renderSubagentTrailer`).** The Subagent
 RESULT is now LABELLED by terminal stop reason: `StopError` → tool error whose body is composed by
@@ -1068,10 +1086,28 @@ NOT — its worktree was torn down, so re-run/re-read before trusting earlier ob
 `mode:"read-write"` child gets `resumeWritableNote`, because it NEVER forked (ADR 0041) and its earlier
 edits are still sitting in the real tree — telling it they were "GONE" would be false in exactly the
 direction that defeats ADR 0077 (a recovered direct-write child must build ON its partial edits).
+The writable note is selected by `prepareChildSession`'s `editsSurvived`, **not** by the current call's
+`writable` flag: `validateMode` deliberately lets `mode` COMPOSE with `resume`, so "the read-only
+investigator stalled, resume it with write access to apply the fix" is legal — and that child's prior
+worktree is gone. `editsSurvived` is `writable && the resumed snapshot's persisted Workspace == the
+real parent root` (captured BEFORE `buildChildSession`'s `Rehome` overwrites it, so no new persisted
+field is needed); anything else falls back to the conservative staleness note. The INVERSE falsehood
+is the worse one: a read-only child has no Edit/Write but DOES have Bash in that worktree, so it may
+genuinely have applied edits, and a child that trusts absent edits builds on nothing.
 A FAILED child's error result additionally carries `subagentErrorResumeHint` after the agentId trailer, so
 the model can DISCOVER the recovery path (ADR 0070). That hint lives in `renderSubagentResult`, NOT in the
 `subagentErrorBody` helper shared with Parallel: a `parallel-<callID>-<n>` branch id fails the resume
-prefix gate, so advertising resume there would instruct the model to take an action that cannot succeed. The LOADED
+prefix gate, so advertising resume there would instruct the model to take an action that cannot succeed. For
+the SAME reason the hint has ONE gate, `subagentResumeHint(writable, resumable)`, with two silent
+cases. (1) No wired store (`t.store == nil`, `validateResume`'s first precondition): a `SubagentTool`
+built without `WithSubagentStore` — a supported construction for an engine-module consumer — would
+otherwise advertise a `resume:` it then refuses with "not supported in this deployment". (2) The
+WRITABLE arm: `renderWritableSubagentResult` owns a SINGLE combined next-action for a failed
+direct-write child (`writableSubagentFailedNote` — resume on top of the partial edits, OR discard them
+with git, "Do not do both"), because the generic hint plus the partial-edits note are two independent
+imperatives and a model can follow BOTH: discard the edits, then resume a child `resumeWritableNote`
+greets with "the file edits you already made are STILL IN PLACE", which the discard just falsified.
+A store-less writable failure keeps the plain `writableSubagentPartialNote` (review-or-undo only). The LOADED
 session keeps its STORED Limits; the per-call `max_turns`/`max_tool_calls` only TIGHTEN them (Reopen/
 Interrupt/Recover all reset Counters via `resetToIdle`, so each bound applies afresh); the per-call token budget (`max_run_tokens`,
 the preferred arg; `max_tokens` the deprecated alias for the same budget — `resolveMaxRunTokens` folds the

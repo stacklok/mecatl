@@ -405,7 +405,7 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	var body string
 	switch tab {
 	case tabSubagents:
-		body = renderSubagentTab(th, sub, fleet, bodyHeight)
+		body = renderSubagentTab(th, sub, fleet, width, bodyHeight)
 	case tabParallel:
 		body = renderParallelTab(th, par, groups, bodyHeight)
 	default:
@@ -470,10 +470,12 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, height int) string {
 }
 
 // renderSubagentTab renders the Subagents tab body: the flat fleet roster, or one
-// focused child's redacted chip trace.
-func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, height int) string {
+// focused child's redacted chip trace. width is the OUTER viewport width, forwarded to the
+// focus pane so its failure line can wrap to the card's text budget (see
+// subagentFailureLine); the roster's own lines are all rune-bounded already.
+func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, width, height int) string {
 	if st.view == subagentFocus {
-		return renderSubagentFocus(th, fleet, st.child, height)
+		return renderSubagentFocus(th, fleet, st.child, width, height)
 	}
 	return renderSubagentRoster(th, st, fleet, height)
 }
@@ -562,26 +564,43 @@ func subagentRosterLine(ln *subagentLane) string {
 		humanizeTokens(ln.usage.OutputTokens))
 }
 
-// maxSubagentCauseWidth caps how many runes of a child's failure cause the focus pane
-// renders, so a long provider error body cannot blow the overlay card's width out. The
-// server already clamps the field; this is the display-side bound.
+// maxSubagentCauseWidth caps how many RUNES of a child's failure cause the focus pane
+// renders. It bounds the pane's HEIGHT cost (the cause is word-wrapped, so this is the
+// "at most ~2 wrapped lines" budget), NOT its width — width is bounded independently by
+// wrapping to the card's text budget, because a rune cap alone cannot know the terminal.
+// The server already clamps the field to 400; this is the display-side bound.
 const maxSubagentCauseWidth = 160
 
-// subagentFailureLine renders the focus pane's failure line for a child that ended on
-// an ERROR-family terminal and carried a cause: "  failed: <clamped cause>". It returns
-// "" for a running child, a benign terminal, or an errored child whose server did not
-// send a cause (an older server, or a StopError with no loop detail) — the pane then
-// reads exactly as before. The cause is server-derived harness/provider metadata (never
+// subagentFailureLine renders the focus pane's failure block for a child that ended on
+// an ERROR-family terminal and carried a cause: "  failed: <cause>", word-wrapped and
+// indented to the overlay card's text budget at the given viewport width. It returns ""
+// for a running child, a benign terminal, or an errored child whose server did not send a
+// cause (an older server, or a StopError with no loop detail) — the pane then reads
+// exactly as before. The cause is server-derived harness/provider metadata (never
 // child-authored output, so gauntlet #7 holds) and is sanitized like every other
 // server-derived string the overlay renders.
-func subagentFailureLine(ln *subagentLane) string {
+//
+// WRAPPING IS LOAD-BEARING, not cosmetic. renderSubagentFocus's output is framed by
+// centerCard → lipgloss.Place, which CANNOT shrink content: the widest line directly sets
+// the card's width, so a single ~170-column line mangles the card border and mis-centres
+// the whole overlay on an 80- or 100-col terminal. And an ordinary provider error is that
+// long ("upstream connect error or disconnect/reset before headers. reset reason:
+// connection termination" is ~95 chars before the prefix). Every peer bound in these
+// overlays (maxSubagentGoalLen 24, maxTeamNameWidth 16, maxTaskDescLen 40) is far narrower
+// precisely because of this. So the cause goes through the same cardTextWidth +
+// indentWrap pair the /skills and /agents inventory panels use — ansi.Wrap breaks
+// over-long tokens too, so even a space-free error string cannot overflow. A width of 0
+// (unknown size) yields budget 0, which degrades to the bare unwrapped card exactly as
+// those panels do — and centerCard does not Place at width 0, so there is nothing to
+// overflow.
+func subagentFailureLine(ln *subagentLane, width int) string {
 	if !ln.done || ln.cause == "" || !subagentStopErrored(ln.stop) {
 		return ""
 	}
-	// Collapse the cause to ONE line before clamping: a provider error body is often
-	// multi-line, and the focus pane is a line-oriented card.
+	// Collapse the cause to ONE logical line before clamping: a provider error body is
+	// often multi-line, and its own newlines would defeat the width budget below.
 	oneLine := strings.Join(strings.Fields(ln.cause), " ")
-	return "  failed: " + truncate(sanitizeTerminal(oneLine), maxSubagentCauseWidth)
+	return indentWrap("failed: "+truncate(sanitizeTerminal(oneLine), maxSubagentCauseWidth), cardTextWidth(width))
 }
 
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its
@@ -647,7 +666,7 @@ const childIDHashLen = 6
 // focus format (tool chips with bounded previews + capped message lines),
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
 // child vanished — defensive) reads as a muted note. It mirrors renderTeamFocus.
-func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, height int) string {
+func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, width, height int) string {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
@@ -666,7 +685,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hei
 	out.WriteString(muted.Render(subagentRosterLine(ln)))
 	out.WriteString("\n")
 	out.WriteString(muted.Render("  " + boundedPreviewsSubNote))
-	if fail := subagentFailureLine(ln); fail != "" {
+	if fail := subagentFailureLine(ln, width); fail != "" {
 		// The ONE place the fleet answers "why did it fail". The inline Subagent card
 		// already carries the cause inside the tool result the agent received, but a
 		// roster/focus row otherwise shows only "stop:error", and a BACKGROUND child's

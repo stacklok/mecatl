@@ -86,9 +86,8 @@ func TestSubagentFailureSurfacesCauseNotLastChatLine(t *testing.T) {
 
 // TestSubagentFailureWithNoChildTextStillSurfacesCause is the second half of the
 // adversarial case: the child says NOTHING at all before the provider breaks. Before
-// #319 that produced the opaque "subagent failed without producing a summary" floor —
-// the operator-visible symptom that started the investigation. The cause must be shown
-// instead of the floor.
+// #319 that produced subagentErrorBody's opaque no-summary floor — the operator-visible
+// symptom that started the investigation. The cause must be shown instead of the floor.
 func TestSubagentFailureWithNoChildTextStillSurfacesCause(t *testing.T) {
 	const causeText = "context deadline exceeded: stream idle for 180s"
 	// One turn only: it streams a first chunk then breaks, so the child never records
@@ -110,7 +109,7 @@ func TestSubagentFailureWithNoChildTextStillSurfacesCause(t *testing.T) {
 	if !strings.Contains(res.Content, causeText) {
 		t.Fatalf("result must carry the cause even with no child text, got:\n%s", res.Content)
 	}
-	if strings.Contains(res.Content, "subagent failed without producing a summary") {
+	if strings.Contains(res.Content, "failed without producing a summary") {
 		t.Fatalf("the opaque floor must not stand when a cause is available, got:\n%s", res.Content)
 	}
 }

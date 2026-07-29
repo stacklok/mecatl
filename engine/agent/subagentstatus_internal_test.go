@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,6 +195,75 @@ func TestBackgroundForkFailureIsCollectible(t *testing.T) {
 	}
 	if stored == nil || !stored.IsError || !strings.Contains(stored.Content, "workspace isolation failed") {
 		t.Fatalf("stored body must carry the failure, got %+v", stored)
+	}
+}
+
+// TestBackgroundPreRunFailureEmitsCause covers the THIRD subagent.end emit site —
+// driveBackground's endOnError, which fires when the fork or the session build fails BEFORE
+// the child ever drove. It is a StopError terminal like the other two, so
+// session.SubagentPayload.Cause's contract ("non-empty whenever Stop is StopError") has to
+// hold here as well; and this is the one path where the event is a client's ONLY channel,
+// since a background child's failure never reaches an inline Subagent card (the model
+// already holds the started-result). Before this guard the emit set Stop with no Cause and
+// nothing noticed.
+//
+// It is an internal test because the emit needs a real emit sink threaded straight into
+// ExecuteWithParent; its external sibling (TestBackgroundSubagentFailureCarriesCause)
+// covers the DRIVE-failure emit.
+func TestBackgroundPreRunFailureEmitsCause(t *testing.T) {
+	childEngine := NewEngine(Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("never runs")),
+		Catalog: tool.NewCatalog(),
+		Policy:  allowAllInt(),
+		Model:   "child-model",
+	})
+	tl := NewSubagentTool(childEngine, WithChildForker(failingForkerInt{})).(*SubagentTool)
+	reg := newChildRunRegistry()
+
+	var mu sync.Mutex
+	var ends []session.SubagentPayload
+	emit := func(ev session.Event) {
+		if ev.Type != session.EvSubagentEnd || ev.Subagent == nil {
+			return
+		}
+		mu.Lock()
+		ends = append(ends, *ev.Subagent)
+		mu.Unlock()
+	}
+
+	res, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","background":true}`)),
+		memfs.NewWorkspace("/ws"), emit, parentCaps{children: reg})
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("the started-result must have been returned before the fork ran, got %+v", res)
+	}
+	doneCh, ok := reg.doneChFor("subagent-p1")
+	if !ok {
+		t.Fatalf("background entry must exist")
+	}
+	select {
+	case <-doneCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("background goroutine did not reach its terminal")
+	}
+
+	mu.Lock()
+	got := append([]session.SubagentPayload(nil), ends...)
+	mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("a pre-run failure must still close its client lane with exactly one subagent.end, got %d", len(got))
+	}
+	if got[0].Stop != session.StopError {
+		t.Fatalf("a pre-run failure is a StopError terminal, got %q", got[0].Stop)
+	}
+	if !strings.Contains(got[0].Cause, "workspace isolation failed") {
+		t.Fatalf("stop=error with an empty Cause breaks the field's contract on the one path that has no other channel; got %q", got[0].Cause)
+	}
+	if n := len([]rune(got[0].Cause)); n > maxSubagentCausePreview+1 { // +1 for clampRunes' ellipsis
+		t.Fatalf("the pre-run cause must be clamped like the other emit sites: %d runes", n)
 	}
 }
 

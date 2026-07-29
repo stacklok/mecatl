@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -135,9 +136,13 @@ func TestSubagentResumeFailedRepairsOrphanedToolCall(t *testing.T) {
 // It also pins the ORDERING the hint's own wording depends on: the agentId line comes
 // BEFORE the hint, so "the agentId above" is literally accurate on the StopError layout
 // (where the trailer is last, unlike the success family's leading trailer).
+//
+// The store is wired deliberately: it is validateResume's first precondition, so it is
+// the configuration in which the advertised action can actually succeed. The store-less
+// counterpart is TestStorelessSubagentFailureDoesNotAdvertiseResume.
 func TestSubagentFailedResultAdvertisesResume(t *testing.T) {
 	childEngine := childEngineWith(mockllm.New(mockllm.EmptyTurnWithStop(session.StopError)), catalogWith(t))
-	task := agent.NewSubagentTool(childEngine)
+	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(memstore.New()))
 
 	results, _ := subagentParentResults(t, task,
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
@@ -157,6 +162,44 @@ func TestSubagentFailedResultAdvertisesResume(t *testing.T) {
 	}
 	if hintAt < idAt {
 		t.Fatalf("the hint says \"the agentId above\" but the agentId line comes after it:\n%s", body)
+	}
+}
+
+// TestStorelessSubagentFailureDoesNotAdvertiseResume is the SECOND negative of the
+// discoverability rule, on the other precondition. validateResume's FIRST check is that a
+// session store is wired; a SubagentTool built without WithSubagentStore is a supported
+// construction for an engine-module consumer (ADR 0036), and in that deployment every
+// `resume` call is refused with "not supported in this deployment". Advertising the resume
+// path there would instruct the model to take an action that cannot succeed — the same
+// defect as advertising it for a Parallel branch id, just a different precondition.
+//
+// The failure body itself must be UNCHANGED apart from the hint: the cause and the agentId
+// trailer (for InspectSubagent) still ride every terminal.
+func TestStorelessSubagentFailureDoesNotAdvertiseResume(t *testing.T) {
+	const causeText = "upstream 503: model overloaded"
+	childEngine := childEngineWith(mockllm.New(
+		mockllm.ErrorTurn(errors.New(causeText), mockllm.TextChunk("thinking")),
+	), catalogWith(t))
+	// No WithSubagentStore: `resume` is unavailable in this deployment.
+	task := agent.NewSubagentTool(childEngine)
+
+	results, _ := subagentParentResults(t, task,
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	if len(results) != 1 || !results[0].IsError {
+		t.Fatalf("want 1 errored tool result, got %+v", results)
+	}
+	body := results[0].Content
+	if strings.Contains(body, "resume it with the agentId") {
+		t.Fatalf("a store-less deployment must NOT advertise resume (validateResume would refuse it), got:\n%s", body)
+	}
+	// The rest of the failed-delegation contract is untouched.
+	if !strings.Contains(body, causeText) {
+		t.Fatalf("the failure cause must still lead the body, got:\n%s", body)
+	}
+	if !strings.Contains(body, "agentId: ") {
+		t.Fatalf("the agentId trailer rides every terminal (InspectSubagent's handle), got:\n%s", body)
 	}
 }
 
@@ -320,5 +363,84 @@ func TestReadOnlyResumeNoteKeepsFreshCheckoutWording(t *testing.T) {
 	}
 	if strings.Contains(got, "STILL IN PLACE") {
 		t.Fatalf("the writable resume note must not reach a read-only child, got:\n%s", got)
+	}
+}
+
+// seedFailedChildInForkRoot persists a failed subagent session whose recorded workspace is
+// a THROWAWAY FORK ROOT rather than the parent tree — the shape a READ-ONLY child leaves
+// behind (its git worktree is created per run and torn down at the end). It is the
+// precondition for the resume-note mismatch below: the path is what tells the harness that
+// this child's earlier file changes did NOT survive.
+func seedFailedChildInForkRoot(t *testing.T, store port.SessionStore, id session.SessionID, forkRoot string) {
+	t.Helper()
+	seed := session.New(id, session.ModeDefault, forkRoot, session.Limits{}, time.Now())
+	if err := seed.RecordUserPrompt("investigate the parser", nil); err != nil {
+		t.Fatalf("seed RecordUserPrompt: %v", err)
+	}
+	if err := seed.BeginTurn(); err != nil {
+		t.Fatalf("seed BeginTurn: %v", err)
+	}
+	if err := seed.RecordAssistant(session.NewAssistantMessage("patched it with a shell one-liner", "", nil)); err != nil {
+		t.Fatalf("seed RecordAssistant: %v", err)
+	}
+	if err := seed.Fail(); err != nil {
+		t.Fatalf("seed Fail: %v", err)
+	}
+	if err := store.Save(context.Background(), seed); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+}
+
+// TestReadOnlyChildResumedAsWritableIsNotToldItsEditsSurvived is the third member of the
+// resume-note family, and the one that closes an assertion the harness could make FALSELY.
+//
+// `writable` comes only from the CURRENT call's `mode`, and validateMode deliberately lets
+// `mode` COMPOSE with `resume` — so "the read-only investigator stalled, resume it with
+// write access so it can apply the fix" is a legal and natural parent move. Keying the note
+// on `writable` alone then hands that child resumeWritableNote: "the file edits you already
+// made are STILL IN PLACE". Its earlier run was in a git worktree that no longer exists, and
+// a read-only child — while it has no Edit/Write — DOES have Bash in that worktree, so it
+// may genuinely have applied edits that are now gone. That is exactly the falsehood
+// resumeWritableNote exists to prevent, inverted, and it is worse than the "GONE" wording
+// it replaces: a child that trusts absent edits builds on nothing.
+//
+// The note is therefore keyed on whether this run executes in the SAME tree the prior run
+// recorded, which the persisted workspace answers without any new field.
+func TestReadOnlyChildResumedAsWritableIsNotToldItsEditsSurvived(t *testing.T) {
+	store := memstore.New()
+	// The prior run lived in a throwaway worktree, NOT the parent root the resume runs in.
+	seedFailedChildInForkRoot(t, store, "subagent-p1", "/ws-worktree-abc123")
+
+	var mu sync.Mutex
+	var prompts []string
+	obs := func(req port.LLMRequest) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, m := range req.Messages {
+			if m.Role == session.RoleUser {
+				prompts = append(prompts, m.Text)
+			}
+		}
+	}
+	writable := childEngineWith(mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(obs)},
+		mockllm.TextTurn("CONTINUED_WITH_WRITE_ACCESS"),
+	), catalogWith(t))
+	task := newWritableSubagent(t, writable, agent.WithSubagentStore(store))
+
+	res := runOneSubagent(t, task, "p2",
+		`{"resume":"subagent-p1","prompt":"now apply the fix","mode":"read-write"}`)
+	if res.IsError {
+		t.Fatalf("resuming a read-only child with write access must be allowed: %q", res.Content)
+	}
+
+	mu.Lock()
+	got := strings.Join(prompts, "\n")
+	mu.Unlock()
+	if strings.Contains(got, "STILL IN PLACE") {
+		t.Fatalf("a child whose prior run was in a torn-down worktree must NOT be told its edits survived, got:\n%s", got)
+	}
+	if !strings.Contains(got, "FRESH workspace checkout") {
+		t.Fatalf("it must get the conservative staleness note instead, got:\n%s", got)
 	}
 }

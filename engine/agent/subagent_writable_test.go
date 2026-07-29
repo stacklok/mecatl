@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -536,4 +537,111 @@ func runWritableForkWithParent(t *testing.T, task tool.Tool) session.ToolResult 
 	}
 	t.Fatal("no Subagent tool result observed in the parent run")
 	return session.ToolResult{}
+}
+
+// subagentGenericResumeHintFragment is a fragment unique to renderSubagentResult's GENERIC
+// subagentErrorResumeHint ("…resume it with the agentId above to continue where it left
+// off…"). The writable arm's combined note deliberately says "agentId BELOW" and never
+// this, so matching on this fragment distinguishes "the generic hint leaked in" from "the
+// combined decision is present".
+const subagentGenericResumeHintFragment = "continue where it left off"
+
+// TestWritableSubagentFailureRendersOneCombinedNextAction pins the render #318's
+// MOTIVATING scenario produces: a long-running direct-write child that died mid-task with
+// edits already applied to the real tree. Three independently-owned pieces collide in that
+// one body and none of them was asserted together:
+//
+//   - subagentErrorBody's cause-leads composition (issue #319),
+//   - the partial-edits honesty ADR 0041 owes ("its edits may be PARTIAL"),
+//   - the resume affordance (issue #318).
+//
+// The load-bearing property is that the last two arrive as ONE decision. Stated as two
+// independent imperatives ("undo with git checkout" and "resume to continue where it left
+// off"), a model can do both — discard the edits and then resume a child that
+// resumeWritableNote immediately greets with "the file edits you already made are STILL IN
+// PLACE", which the discard just made false. So the writable arm carries
+// writableSubagentFailedNote and the generic subagentErrorResumeHint must NOT also appear.
+//
+// The ordering is asserted rather than trusted: the note says "the agentId BELOW", and it
+// is true only because renderSubagentResult puts the trailer LAST on the StopError arm
+// while the writable note is prepended at the top. That is a shape change away from being
+// wrong.
+func TestWritableSubagentFailureRendersOneCombinedNextAction(t *testing.T) {
+	const chatter = "Now let me wire the second half."
+	const causeText = "context deadline exceeded: stream idle for 180s"
+	// A store is wired: it is validateResume's first precondition, so it is the
+	// configuration in which the advertised resume can actually succeed.
+	writable := childEngineWith(
+		chattyThenBrokenChild(chatter, errors.New(causeText)),
+		catalogWith(t, failureCauseReadTool()))
+	task := newWritableSubagent(t, writable,
+		agent.WithSubagentStore(memstore.New()),
+		agent.WithChildForker(&failingForker{t}))
+
+	results, _ := subagentParentResults(t, task,
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"implement the fix","mode":"read-write"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	if len(results) != 1 || !results[0].IsError {
+		t.Fatalf("want 1 errored tool result, got %+v", results)
+	}
+	body := results[0].Content
+
+	// (a) The actionable half leads — not the child's last chat line.
+	if !strings.Contains(body, causeText) {
+		t.Fatalf("a failed WRITABLE delegation must carry the provider cause (issue #319), got:\n%s", body)
+	}
+	if strings.Contains(body, chatter) && !strings.Contains(body, "Last activity before the failure: "+chatter) {
+		t.Fatalf("the child's last chat line may only appear as labelled context, got:\n%s", body)
+	}
+	// (b) The direct-write honesty: edits may be sitting half-finished in the real tree.
+	if !strings.Contains(body, "may be PARTIAL") {
+		t.Fatalf("a mid-task killed writable child must warn that its edits may be PARTIAL (ADR 0041), got:\n%s", body)
+	}
+	// (c) ONE decision, with the two options named as mutually exclusive.
+	if !strings.Contains(body, "Either resume it with the agentId below") || !strings.Contains(body, "Do not do both") {
+		t.Fatalf("the writable failure must state resume-or-discard as ONE exclusive decision, got:\n%s", body)
+	}
+	// (d) …and NOT also the generic hint, which would re-create the two-imperatives trap.
+	if strings.Contains(body, subagentGenericResumeHintFragment) {
+		t.Fatalf("the writable arm must suppress the generic resume hint (it owns a combined note), got:\n%s", body)
+	}
+	// (e) The ordering the note's own wording depends on: the agentId really is BELOW it.
+	noteAt := strings.Index(body, "Either resume it with the agentId below")
+	idAt := strings.Index(body, "agentId: ")
+	if idAt < 0 {
+		t.Fatalf("the error result must keep the agentId trailer, got:\n%s", body)
+	}
+	if idAt < noteAt {
+		t.Fatalf("the note says \"the agentId below\" but the agentId line comes above it:\n%s", body)
+	}
+}
+
+// TestStorelessWritableSubagentFailureKeepsPlainPartialNote is the negative of (c)/(d)
+// above on the OTHER precondition: with no session store wired, validateResume refuses
+// every resume, so the writable failure must fall back to the plain review-or-undo note
+// and offer no resume at all — neither the combined decision nor the generic hint.
+func TestStorelessWritableSubagentFailureKeepsPlainPartialNote(t *testing.T) {
+	writable := childEngineWith(
+		mockllm.New(mockllm.ErrorTurn(errors.New("upstream 503"), mockllm.TextChunk("x"))),
+		catalogWith(t))
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
+
+	results, _ := subagentParentResults(t, task,
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"implement","mode":"read-write"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	if len(results) != 1 || !results[0].IsError {
+		t.Fatalf("want 1 errored tool result, got %+v", results)
+	}
+	body := results[0].Content
+	if !strings.Contains(body, "may be PARTIAL") {
+		t.Fatalf("the partial-edits warning is unconditional on a mid-task kill, got:\n%s", body)
+	}
+	if strings.Contains(body, "resume it with the agentId") {
+		t.Fatalf("a store-less deployment must offer no resume at all, got:\n%s", body)
+	}
+	if strings.Contains(body, "Do not do both") {
+		t.Fatalf("the combined resume-or-discard decision must not appear where resume is unsupported, got:\n%s", body)
+	}
 }

@@ -794,15 +794,24 @@ const submitResultToolName = "SubmitResult"
 // earlier filesystem observations. Same accuracy discipline as childAutoDenyMessage.
 const resumeStalenessNote = "[harness note: your conversation has been resumed, but you are running in a FRESH workspace checkout — file changes, build artifacts, and running processes from your earlier run are GONE. Re-run commands and re-read files before relying on earlier observations.]"
 
-// resumeWritableNote is resumeStalenessNote's mode:"read-write" sibling. A writable
-// child NEVER forks (ADR 0041 — it edits the real parent tree in place), so on resume it
-// continues in the SAME workspace and its earlier edits are still sitting there. Telling
-// it they are "GONE" would be false, and actively harmful for the case issue #318 exists
-// to serve: a direct-write child recovered from a transient failure must build ON its
-// partial edits, not redo or distrust them. What genuinely did NOT survive is process
-// state (build artifacts are stale, background processes are dead) and any concurrent
-// change the parent made meanwhile — hence the re-read instruction is kept, narrowed to
-// what is actually true. Same accuracy discipline as childAutoDenyMessage.
+// resumeWritableNote is resumeStalenessNote's direct-write sibling. A writable child NEVER
+// forks (ADR 0041 — it edits the real parent tree in place), so on resume it continues in
+// the SAME workspace and its earlier edits are still sitting there. Telling it they are
+// "GONE" would be false, and actively harmful for the case issue #318 exists to serve: a
+// direct-write child recovered from a transient failure must build ON its partial edits,
+// not redo or distrust them. What genuinely did NOT survive is process state (build
+// artifacts are stale, background processes are dead) and any concurrent change the parent
+// made meanwhile — hence the re-read instruction is kept, narrowed to what is actually
+// true. Same accuracy discipline as childAutoDenyMessage.
+//
+// It is selected by prepareChildSession's editsSurvived, NOT by the current call's
+// `writable` flag: `mode` may CHANGE across a resume, so a previously READ-ONLY child
+// resumed with mode:"read-write" would otherwise be told its edits survived when its
+// worktree was torn down (a read-only child has no Edit/Write but DOES have Bash in that
+// worktree, so it may really have applied edits). The INVERSE falsehood is worse than the
+// one this note fixes — a child that trusts absent edits builds on nothing — so the
+// selection is keyed on the persisted workspace path, and the conservative staleness note
+// is the fallback whenever the two differ.
 const resumeWritableNote = "[harness note: your conversation has been resumed and you are running DIRECTLY in the same workspace as before — the file edits you already made are STILL IN PLACE. Build artifacts and running processes from your earlier run are gone, and the workspace may have changed since, so re-read a file or re-run a command before relying on an earlier observation of it.]"
 
 // SubagentOption configures a SubagentTool.
@@ -1594,15 +1603,19 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 //     0 ⇒ inherit the engine's operator-default budget; it folds tighten-only in the loop.
 //   - Resume note: on RESUME the effective prompt is prefixed with the honest harness note
 //     BEFORE the structured-output wrap, so it rides inside the structured prompt too. Which
-//     note depends on the mode: a read-only child gets resumeStalenessNote (its worktree was
-//     torn down — earlier file changes are gone), a WRITABLE child gets resumeWritableNote
-//     (it never forked, so its earlier edits are still in the real tree — issue #318). A
-//     fresh call is unchanged.
+//     note depends on whether the child's earlier FILE EDITS are still on disk
+//     (editsSurvived, decided in prepareChildSession): the default is resumeStalenessNote
+//     (the earlier run's worktree was torn down — file changes are gone), and only a
+//     direct-write child resuming into the SAME tree it ran in gets resumeWritableNote
+//     (its edits really are still there — issue #318). Note it is NOT keyed on the current
+//     call's `writable` alone: `mode` may CHANGE across a resume, and a previously
+//     read-only child's edits (its Bash could make them) are gone regardless of the mode
+//     this call asks for. A fresh call is unchanged.
 //   - Structured output (D1/D2): when an output_schema is supplied, a synthetic SubmitResult
 //     tool (run-scoped — never registered into the shared catalog) whose parameters ARE the
 //     schema is created and the prompt is wrapped to instruct the child to call it. Omitted
 //     ⇒ today's free-text path.
-func buildSubagentRunOptions(args subagentArgs, resuming, writable bool, forkAdvisory string) (RunOptions, *submitResultTool, string) {
+func buildSubagentRunOptions(args subagentArgs, resuming, editsSurvived bool, forkAdvisory string) (RunOptions, *submitResultTool, string) {
 	var runOpts RunOptions
 	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
 	// rejected earlier in run() as a model-visible error, so here we only need the
@@ -1623,7 +1636,7 @@ func buildSubagentRunOptions(args subagentArgs, resuming, writable bool, forkAdv
 	prompt := args.Prompt
 	if resuming {
 		note := resumeStalenessNote
-		if writable {
+		if editsSurvived {
 			note = resumeWritableNote
 		}
 		prompt = note + "\n\n" + prompt
@@ -1923,15 +1936,26 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // (forkChildWorkspace). The returned cleanup is ALWAYS non-nil (a no-op when
 // nothing survives) so the caller can defer it unconditionally; on a
 // session-build failure the just-created fork is torn down here.
-func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, ws tool.Workspace, args subagentArgs, resuming, writable bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runWS tool.Workspace, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
+//
+// It also decides editsSurvived — whether the resumed child's earlier FILE EDITS are
+// still on disk — because this is the only place that sees the resumed session's
+// PERSISTED workspace before buildChildSession re-homes it. See editsSurvived's
+// doc-comment on the named result below and resumeWritableNote.
+func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, ws tool.Workspace, args subagentArgs, resuming, writable bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runWS tool.Workspace, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
+	// priorWorkspace is the resumed child's PERSISTED workspace root, captured here
+	// because buildChildSession's Rehome overwrites it. For a read-only child it is the
+	// throwaway worktree its earlier run executed in (long torn down); for a writable
+	// (direct-write, ADR 0041) child it is the real parent root, which still exists.
+	priorWorkspace := ""
 	if resuming {
 		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, args)
 		if !rok {
-			return nil, nil, noop, "", errRes, false
+			return nil, nil, noop, "", false, errRes, false
 		}
 		resumedChild = loaded
+		priorWorkspace = loaded.Workspace
 	}
 	// A mode:"read-write" child runs DIRECTLY against the parent workspace (no fork —
 	// ADR 0041): its Edit/Write/Bash mutate the real tree in place, exactly as the
@@ -1945,12 +1969,23 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	}
 	runWS, cleanupWS, advisory, errRes, fok := t.forkChildWorkspace(ctx, call.ID, ws, subagentGoal(args), forker)
 	if !fok {
-		return nil, nil, noop, "", errRes, false
+		return nil, nil, noop, "", false, errRes, false
 	}
+	// editsSurvived: this call is writable AND the prior run executed in the very tree
+	// this call runs in, so any file edits it made are still there. `writable` ALONE is
+	// not enough — it comes only from the CURRENT call's `mode`, and validateMode
+	// deliberately lets `mode` CHANGE across a resume, so resuming a previously
+	// READ-ONLY child with mode:"read-write" would otherwise be handed
+	// resumeWritableNote ("the file edits you already made are STILL IN PLACE") when its
+	// worktree was torn down. A read-only child has no Edit/Write but DOES have Bash in
+	// that worktree, so it may genuinely have applied edits that are now GONE: telling it
+	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
+	// The path comparison is the honest test and needs no new persisted field.
+	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == ws.Root()
 	child, errRes, bok := t.buildChildSession(call.ID, childID, resumedChild, runWS.Root(), limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()
-		return nil, nil, noop, "", errRes, false
+		return nil, nil, noop, "", false, errRes, false
 	}
 	// RESUME-START persist (issue #38): children otherwise persist only at their
 	// TERMINAL, so a resumed child loaded for a new long run would keep its OLD
@@ -1962,7 +1997,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	if resuming {
 		t.persistChild(ctx, child)
 	}
-	return child, runWS, cleanupWS, advisory, session.ToolResult{}, true
+	return child, runWS, cleanupWS, advisory, editsSurvived, session.ToolResult{}, true
 }
 
 func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
@@ -2121,7 +2156,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// Resume load + fork + session build (see prepareChildSession). The cleanup is
 	// always non-nil and tears the worktree down after the child fully drains (the
 	// run is drained below in this call), so a deferred cleanup is correct.
-	child, runWS, cleanupWS, forkAdvisory, errResult, ok := t.prepareChildSession(ctx, call, ws, args, resuming, writable, childID, limits, forkHistory)
+	child, runWS, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, ws, args, resuming, writable, childID, limits, forkHistory)
 	if !ok {
 		return errResult, nil
 	}
@@ -2150,7 +2185,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// structured output is requested), and the effective prompt (with the degraded-fork
 	// advisory + the mode-appropriate resume note prepended BEFORE the structured-output
 	// wrap). See buildSubagentRunOptions.
-	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, writable, forkAdvisory)
+	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming, editsSurvived, forkAdvisory)
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
 	// Bash asks are eligible for the A2 worktree-safe auto-approve; a forker-less
@@ -2236,7 +2271,11 @@ type foregroundFinish struct {
 // 0041) the result carries an honest note that the child's edits were applied
 // DIRECTLY to the workspace (review with git diff/status) — there is no merge step.
 // Factored out of run() so the loop body stays within the complexity budget.
-func (*SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish) session.ToolResult {
+//
+// The receiver is used for ONE thing: t.store != nil is validateResume's first
+// precondition, so it decides whether a failed terminal may advertise the resume
+// affordance (see subagentErrorResumeHint).
+func (t *SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish) session.ToolResult {
 	// Time-budget terminal: the per-call deadline fired (timeoutCtx deadline exceeded)
 	// rather than a parent cancellation, so the child stopped because it ran out of its
 	// allotted wall-clock time. Render it as a model-addressable time-budget tool error
@@ -2257,9 +2296,10 @@ func (*SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish) 
 	// registry flag, read AFTER the timeout check above so a real deadline keeps its
 	// time-budget error.
 	if f.writable {
-		return renderWritableSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.cause, f.submit, f.clientCancelled)
+		return renderWritableSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.cause, f.submit, f.clientCancelled, t.store != nil)
 	}
-	return renderSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.cause, f.submit, f.clientCancelled)
+	return renderSubagentResult(f.call.ID, f.childID, f.final, f.stop, f.cause, f.submit, f.clientCancelled,
+		subagentResumeHint(false, t.store != nil))
 }
 
 // backgroundStartedBody is the immediate started-result body a background Subagent
@@ -2404,6 +2444,15 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	// already holds the started-result, so the failure must be COLLECTIBLE — it lands
 	// as a done(StopError) entry whose stored result is the error text, and the start
 	// event gets its closing subagent.end so no client lane dangles.
+	//
+	// It carries a Cause like the other two subagent.end emit sites: the field's
+	// contract is "non-empty whenever Stop is StopError", and a client that reads it
+	// that way must not be handed stop=error/cause="" on the very path where the event
+	// is the ONLY channel — a background child's failure never reaches an inline card
+	// (the model already holds the started-result), so a roster row would otherwise
+	// show stop:error with no why. errResult.Content is the HARNESS-composed error text
+	// ("Subagent: workspace isolation failed: …"), never child-authored output, so the
+	// gauntlet-#7 footing is identical to the drive-failure cause.
 	endOnError := func(errResult session.ToolResult) {
 		res = errResult
 		if b.emit != nil {
@@ -2411,6 +2460,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 				ParentCallID: string(b.call.ID),
 				ChildID:      string(b.childID),
 				Stop:         session.StopError,
+				Cause:        clampRunes(errResult.Content, maxSubagentCausePreview),
 			}})
 		}
 	}
@@ -2472,7 +2522,10 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 			fmt.Sprintf("Subagent: subagent exceeded its time budget (%dms) and was stopped\n\nagentId: %s", *b.args.TimeoutMs, b.childID))
 		return
 	}
-	res = renderSubagentResult(b.call.ID, b.childID, final, st, cause, submit, b.caps.childWasClientCancelled(b.childID))
+	// background is read-only only (mode:"read-write"+background is rejected in
+	// validateMode), so the generic resume hint is the right one here.
+	res = renderSubagentResult(b.call.ID, b.childID, final, st, cause, submit, b.caps.childWasClientCancelled(b.childID),
+		subagentResumeHint(false, t.store != nil))
 }
 
 // tryAcquireChildSlot is acquireChildSlot's NON-BLOCKING sibling for background
@@ -2524,10 +2577,25 @@ const maxSubagentCausePreview = 400
 //
 // This is the ONE place the StopError body is composed — renderSubagentResult (hence
 // renderWritableSubagentResult) and the Parallel branch-failure path both go through it,
-// so there is no second policy to drift.
-func subagentErrorBody(final, cause string) string {
+// so there is no second policy to drift. Being that one place, it is also the one place
+// that BOUNDS the body: BOTH halves are clamped here, because this string is recorded
+// into the PARENT's conversation and persisted, so the parent re-pays for every rune of
+// it on every subsequent turn — an unbounded provider error body (an HTML error page, a
+// giant JSON envelope) must not become permanent context. The cause gets the larger
+// maxSubagentCausePreview budget for the same reason the event payload does: a truncated
+// provider error is unactionable.
+//
+// The parameters are ordered as they RENDER (cause first, then final): the two are both
+// strings and adjacent, so a positional swap compiles — and a swap here would silently
+// reproduce the exact bug #319 fixed (the chat line presented as the failure reason).
+// Reading a call site in output order is the cheap defence.
+//
+// The wording is caller-NEUTRAL ("failed without producing a summary", no noun): the
+// Subagent path prefixes it with "Subagent: " and the Parallel path renders it under a
+// `=== branch-N [FAILED] ===` header, so neither reads as the other's vocabulary.
+func subagentErrorBody(cause, final string) string {
+	cause = clampRunes(strings.TrimSpace(cause), maxSubagentCausePreview)
 	final = strings.TrimSpace(final)
-	cause = strings.TrimSpace(cause)
 	switch {
 	case cause != "" && final != "":
 		return cause + "\n\nLast activity before the failure: " + clampRunes(final, maxTeamPreview)
@@ -2536,7 +2604,7 @@ func subagentErrorBody(final, cause string) string {
 	case final != "":
 		return final
 	default:
-		return "subagent failed without producing a summary"
+		return "failed without producing a summary"
 	}
 }
 
@@ -2555,19 +2623,48 @@ func subagentErrorBody(final, cause string) string {
 // inverse of the discoverability rule. subagentErrorBody stays the single composition
 // point for the CAUSE; this is the single composition point for the RESUME affordance.
 //
+// For the SAME reason it is gated on `resumable` (the caller's `t.store != nil`):
+// validateResume's FIRST precondition is a wired session store, so a SubagentTool built
+// without WithSubagentStore — a supported construction for an engine-module consumer
+// (ADR 0036) — would otherwise tell the model to resume and then refuse the call with
+// "`resume` is not supported in this deployment". Same defect, different precondition.
+//
 // It is appended AFTER the agentId trailer line, so "the agentId above" is literally
 // accurate on the StopError layout (where the trailer comes LAST, unlike the success
 // family's leading trailer), and it names BOTH options so a model facing an obviously
 // permanent cause still re-delegates instead of retrying forever.
 const subagentErrorResumeHint = "[the subagent failed mid-task — its conversation is preserved; if the failure looks transient (a stalled or errored provider call), resume it with the agentId above to continue where it left off, or start a fresh subagent]"
 
+// subagentResumeHint resolves which resume affordance a StopError result may advertise.
+// It is the ONE gate: an empty string means "say nothing", which is the honest answer in
+// two distinct cases.
+//
+//   - !resumable — no session store is wired, so validateResume's FIRST precondition
+//     fails and the resume this would advertise comes straight back as "not supported in
+//     this deployment".
+//   - writable — a direct-write child's failure has TWO possible next actions (finish on
+//     top of the partial edits, or discard them), and stating them as two independent
+//     imperatives invites a model to do both: discard the edits, then resume a child that
+//     resumeWritableNote greets with "the file edits you already made are STILL IN PLACE"
+//     — now false. renderWritableSubagentResult therefore owns a SINGLE combined
+//     decision (writableSubagentFailedNote) and this generic hint stays out of its way.
+func subagentResumeHint(writable, resumable bool) string {
+	if !resumable || writable {
+		return ""
+	}
+	return subagentErrorResumeHint
+}
+
 // renderSubagentResult labels the child's terminal by stop reason (D4 — the typed result
 // taxonomy), surfaced in the MODEL-VISIBLE result, and stamps the agentId trailer (D5).
 // The mapping:
 //   - StopError                         → tool error (the child crashed), its body
 //     composed by subagentErrorBody: the loop's FAILURE CAUSE leads, the child's last
-//     assistant text follows as clamped context (issue #319), and the
-//     subagentErrorResumeHint names the recovery path (issue #318).
+//     assistant text follows as clamped context (issue #319), and the caller-supplied
+//     resumeHint (see subagentResumeHint) names the recovery path when there is one to
+//     name (issue #318). An empty hint is deliberate, not a default — a store-less
+//     deployment has no resume to offer, and the writable arm owns its own combined
+//     next-action instead.
 //   - StopStructuredOutput              → tool error carrying the last validation
 //     failure (the child never produced a schema-valid payload within the retry budget).
 //   - StopMaxTurns / StopMaxToolCalls   → success-with-note (stopped at a limit).
@@ -2591,7 +2688,7 @@ const subagentErrorResumeHint = "[the subagent failed mid-task — its conversat
 // only on the client-only subagent.* events). The body is NEVER a silent empty string:
 // driveChild salvages then digests an empty free-text terminal (issue #48 / #152), and
 // even the floor "(subagent produced no summary)" is paired with a stop-reason note.
-func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled bool) session.ToolResult {
+func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled bool, resumeHint string) session.ToolResult {
 	// Structured-output failure: the retry budget was exhausted without a schema-valid
 	// payload. Surface the last validation error AS the tool error (model-visible),
 	// never only a log line.
@@ -2605,8 +2702,11 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID))
 	}
 	if stop == session.StopError {
-		return session.NewToolError(callID, "Subagent: "+subagentErrorBody(final, cause)+
-			"\n\nagentId: "+string(childID)+"\n\n"+subagentErrorResumeHint)
+		body := "Subagent: " + subagentErrorBody(cause, final) + "\n\nagentId: " + string(childID)
+		if resumeHint != "" {
+			body += "\n\n" + resumeHint
+		}
+		return session.NewToolError(callID, body)
 	}
 
 	// Success family. A structured-output run returns the validated payload; otherwise
@@ -2654,14 +2754,27 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 	return session.NewToolResult(callID, renderSubagentTrailer(childID, body))
 }
 
-// writableSubagentCleanNote / writableSubagentPartialNote are the two direct-write
-// (ADR 0041) advisory bodies a mode:"read-write" child's terminal carries. The clean
-// note covers a clean end (and the limit terminals, which stop between complete edits);
-// the PARTIAL note covers a mid-task kill (StopError, a cancel, or a per-call time-budget
-// timeout) where half-finished work may be sitting in the real tree.
+// The three direct-write (ADR 0041) advisory bodies a mode:"read-write" child's terminal
+// can carry:
+//
+//   - CLEAN — a clean end, and the limit terminals, which stop between complete edits.
+//   - PARTIAL — a mid-task kill (a cancel, a per-call time-budget timeout, or a StopError
+//     in a deployment where the child cannot be resumed) where half-finished work may be
+//     sitting in the real tree and the only next action is review-or-undo.
+//   - FAILED — a StopError in a deployment that CAN resume (a session store is wired).
+//     This is the case that needs ONE decision rather than two: "the edits may be partial,
+//     undo them with git" and "resume to continue where it left off" are both true, and
+//     a model handed them as independent imperatives can do both — discarding the edits
+//     and then resuming a child that resumeWritableNote greets with "the file edits you
+//     already made are STILL IN PLACE", which the discard just made false. So the two
+//     options are stated as mutually exclusive, ending in an explicit "Do not do both",
+//     and renderSubagentResult's generic resume hint is suppressed for this arm (see
+//     subagentResumeHint). "the agentId below" is literally accurate here: the note is
+//     prepended to the body while the StopError layout puts the trailer LAST.
 const (
 	writableSubagentCleanNote   = "[the subagent edited your workspace directly — review the changes with `git diff`/`git status` (and `git checkout`/`git stash` to undo)]"
 	writableSubagentPartialNote = "[the subagent edited your workspace directly but did NOT finish cleanly — its edits may be PARTIAL; review with `git diff`/`git status` and undo with `git checkout`/`git stash` if needed]"
+	writableSubagentFailedNote  = "[the subagent edited your workspace directly and did NOT finish cleanly — its edits may be PARTIAL and are still in your working tree. Either resume it with the agentId below to finish on top of them, or discard them with `git checkout`/`git stash` (review first with `git diff`/`git status`). Do not do both.]"
 )
 
 // renderWritableSubagentResult renders a mode:"read-write" child's terminal like
@@ -2676,8 +2789,14 @@ const (
 // is the safety net). Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop
 // between complete edits, so they keep the benign clean note. The note is inserted right
 // after the agentId trailer line so it leads the body the model reads.
-func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled bool) session.ToolResult {
-	res := renderSubagentResult(callID, childID, final, stop, cause, submit, clientCancelled)
+//
+// On a FAILED terminal in a deployment that can resume, the note becomes the SINGLE
+// combined next-action (writableSubagentFailedNote) and renderSubagentResult's generic
+// resume hint is suppressed — resumable is threaded through subagentResumeHint for exactly
+// that. See the note constants above for why two independent imperatives were unsafe.
+func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled, resumable bool) session.ToolResult {
+	res := renderSubagentResult(callID, childID, final, stop, cause, submit, clientCancelled,
+		subagentResumeHint(true, resumable))
 	note := writableSubagentCleanNote
 	// A mid-task kill (the child crashed or was cancelled) may have left PARTIAL edits
 	// in the real tree — there is no fork/quarantine to roll them back, so warn the
@@ -2685,7 +2804,11 @@ func renderWritableSubagentResult(callID session.ToolCallID, childID session.Ses
 	// rendered as a tool error in finishForegroundRun and carries the same PARTIAL note
 	// there.) Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop BETWEEN
 	// complete edits, not mid-edit, so they keep the benign clean note above.
-	if stop == session.StopError || stop == session.StopCancelled {
+	switch {
+	case stop == session.StopError && resumable:
+		// The one arm that owns BOTH options, stated as one exclusive decision.
+		note = writableSubagentFailedNote
+	case stop == session.StopError || stop == session.StopCancelled:
 		note = writableSubagentPartialNote
 	}
 	// renderSubagentResult always stamps the agentId trailer as the FIRST line

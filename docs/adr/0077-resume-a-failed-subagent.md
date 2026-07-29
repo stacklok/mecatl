@@ -82,13 +82,34 @@ never told about is a capability it cannot use — the model-visible-affordance 
 `renderSubagentResult`, **not** in the `subagentErrorBody` helper it shares with the
 Parallel branch-failure path: a Parallel branch id is `parallel-<callID>-<n>`, which
 `validateResume`'s prefix gate rejects, so emitting the hint there would instruct the
-model to take an action that cannot succeed.
+model to take an action that cannot succeed. `subagentResumeHint` is the one gate, and the
+same rule gives it two silent cases: no wired session store — `validateResume`'s FIRST
+precondition — so a `SubagentTool` built without `WithSubagentStore` (a supported
+construction for an engine-module consumer, ADR 0036) stays silent rather than advertising
+a `resume:` it will refuse; and the WRITABLE arm, which owns a single combined
+next-action instead (below).
 
-**A resumed WRITABLE child is told its edits survived.** `resumeStalenessNote` ("file
-changes … are GONE") is true only for the read-only path, whose worktree really was torn
-down. A writable child never forks, so its earlier edits are still in the real tree;
-`resumeWritableNote` states that instead. Shipping #318 while telling the recovered child
-its work was lost would have contradicted the fix at the one layer that matters.
+**A failed DIRECT-WRITE child gets ONE decision, not two.** "Its edits may be PARTIAL,
+undo them with `git checkout`" and "resume it to continue where it left off" are both true
+of a failed `mode:"read-write"` child, and as two independent imperatives a model can
+follow both — discarding the edits, then resuming a child that is immediately told its
+edits are still in place. `renderWritableSubagentResult` therefore carries
+`writableSubagentFailedNote`, which states the two options as mutually exclusive and ends
+in an explicit "Do not do both", and the generic hint is suppressed for that arm. A
+store-less deployment keeps the plain review-or-undo note, offering no resume at all.
+
+**A resumed child is told its edits survived only when they did.**
+`resumeStalenessNote` ("file changes … are GONE") is true for a read-only path whose
+worktree really was torn down. A writable child never forks, so its earlier edits are
+still in the real tree; `resumeWritableNote` states that instead. Shipping #318 while
+telling the recovered child its work was lost would have contradicted the fix at the one
+layer that matters. The selection is keyed on the resumed snapshot's PERSISTED workspace
+matching the real parent root, **not** on the current call's `mode`: `validateMode` lets
+`mode` compose with `resume`, so a previously read-only child can legally be resumed with
+write access — and its worktree is gone. The inverse falsehood is the worse one (a
+read-only child has no Edit/Write but does have Bash in that worktree, so it may really
+have applied edits, and a child that trusts absent edits builds on nothing), so anything
+other than an exact path match falls back to the conservative note.
 
 **The contract is Recover's, unchanged: retry becomes POSSIBLE, not guaranteed.** A child
 whose cause is permanent (bad credentials, a poisoned history the pairing repair cannot

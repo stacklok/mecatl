@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
@@ -48,6 +49,35 @@ func logLevels(level string) (port.Level, slog.Level, bool) {
 func slogLevel(level string) slog.Level {
 	_, l, _ := logLevels(level)
 	return l
+}
+
+// logSinks bundles the THREE level-bearing diagnostics sinks the host-an-embedded-server
+// path wires over ONE writer: the engine-facing port.Diagnostics the embedded server is
+// given, the perf surface's explicit slog.Logger, and the handler that becomes the GLOBAL
+// slog default (capturing ambient/third-party slog into the same file instead of the
+// alt-screen). They are built together, from the one logLevels mapping, so no sink can
+// silently keep a hardcoded floor while the operator's --log-level moves the other two —
+// which is precisely the bug --log-level exists to fix (the Debug retry lines were
+// unobtainable without rebuilding the binary).
+//
+// The global slog.SetDefault call itself stays in main.go: its ORDERING relative to the
+// baseline floor and the embedded-server start is a cmd-layer concern, and cmd/ mains are
+// the only layer permitted to call it (ADR 0020).
+type logSinks struct {
+	diag    port.Diagnostics
+	perf    *slog.Logger
+	ambient slog.Handler
+}
+
+// newLogSinks builds the three sinks over w at the given --log-level token. An
+// unrecognised token falls to the info floor (config.validate has already rejected it).
+func newLogSinks(w io.Writer, level string) logSinks {
+	diagLevel, handlerLevel, _ := logLevels(level)
+	return logSinks{
+		diag:    slogdiag.New(w, false, diagLevel),
+		perf:    slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: handlerLevel})),
+		ambient: slog.NewTextHandler(w, &slog.HandlerOptions{Level: handlerLevel}),
+	}
 }
 
 // baselineSlogWriter picks the writer for the UNIVERSAL global-slog floor the TUI

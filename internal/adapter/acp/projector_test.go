@@ -389,6 +389,47 @@ func TestProjectSubagentEndError(t *testing.T) {
 	}
 }
 
+// TestProjectSubagentEndCarriesCause asserts the ACP projection surfaces WHY a delegation
+// failed, not just that it did (issue #319). An ACP client is a developer-facing surface
+// (an editor / agent client), and it read the same session.SubagentPayload the mecatui
+// fleet pane reads — so dropping the cause here left the two projections of ONE event
+// disagreeing about how much of the field's contract they surface. The cause is already
+// clamped at the emit site and is harness/provider metadata (never child-authored output),
+// so gauntlet #7 holds; it is collapsed to one line because this content is line-oriented.
+//
+// The negative half matters just as much: a benign terminal carries no cause, and the line
+// must then read exactly as it did before.
+func TestProjectSubagentEndCarriesCause(t *testing.T) {
+	got, _ := projectUpdate(session.Event{
+		Type: session.EvSubagentEnd,
+		Subagent: &session.SubagentPayload{
+			ParentCallID: "task-3", ToolCount: 4, Stop: session.StopError,
+			Cause: "upstream 503:\n  model overloaded",
+		},
+	})
+	u := got.(toolCallUpdate)
+	if len(u.Content) != 1 {
+		t.Fatalf("want one content line, got %+v", u.Content)
+	}
+	line := u.Content[0].Content.Text
+	if !strings.Contains(line, "upstream 503: model overloaded") {
+		t.Errorf("the failed-delegation line must carry the collapsed cause, got %q", line)
+	}
+	if strings.Contains(line, "\n") {
+		t.Errorf("the cause must be collapsed to ONE line for a line-oriented surface, got %q", line)
+	}
+
+	// Benign terminal: no cause, so the line is unchanged from the pre-#319 shape.
+	benign, _ := projectUpdate(session.Event{
+		Type:     session.EvSubagentEnd,
+		Subagent: &session.SubagentPayload{ParentCallID: "task-4", ToolCount: 2, Stop: session.StopEndTurn},
+	})
+	bl := benign.(toolCallUpdate).Content[0].Content.Text
+	if bl != "subagent finished: 2 tool call(s), end_turn" {
+		t.Errorf("a clean terminal's line must be unchanged, got %q", bl)
+	}
+}
+
 // TestProjectTeam asserts team.member/end project as tool_call_update on the
 // PARENT Team call id.
 func TestProjectTeam(t *testing.T) {

@@ -1059,7 +1059,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		// had said nothing, a bare placeholder). No proto field is added for
 		// ParallelPayload — the branch failure reaches the MODEL through the Parallel
 		// ToolResult text, which is exactly what failReason feeds.
-		res.failReason = subagentErrorBody(final, cause)
+		res.failReason = subagentErrorBody(cause, final)
 	case session.StopCancelled:
 		res.failed = true
 		// "cancelled" is the run-level/parent cancel; a per-branch CancelChild reads

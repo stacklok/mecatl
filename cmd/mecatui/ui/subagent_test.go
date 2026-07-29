@@ -187,7 +187,9 @@ func TestSubagentErrorResolves(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "", "", "")
 		c.setSubagentEnd("p1", client.Usage{}, 0, "error", 100)
-		c.resolveTool("p1", "Subagent: subagent failed without producing a summary", true)
+		// The server-composed StopError body shape (subagentErrorBody's floor, which is
+		// caller-neutral: "Subagent: " + "failed without producing a summary").
+		c.resolveTool("p1", "Subagent: failed without producing a summary", true)
 	})
 	if !strings.Contains(out, "✗") {
 		t.Errorf("errored card should carry the error glyph, got %q", out)
@@ -195,7 +197,7 @@ func TestSubagentErrorResolves(t *testing.T) {
 	if !strings.Contains(out, "stop:error") {
 		t.Errorf("errored card should show stop:error, got %q", out)
 	}
-	if !strings.Contains(out, "subagent failed") {
+	if !strings.Contains(out, "failed without producing a summary") {
 		t.Errorf("errored card should render the error text, got %q", out)
 	}
 }

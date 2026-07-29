@@ -527,3 +527,38 @@ var (
 	_ port.Diagnostics = (*recordingDiag)(nil)
 	_ port.Diagnostics = (*boundDiag)(nil)
 )
+
+// TestResilienceLogsMidStreamCancellationToo pins the DELIBERATE breadth of the mid-stream
+// line: it fires for EVERY non-nil mid-stream error, including context.Canceled when the
+// operator cancels a run. That is intended — the line's job is "this turn ended here", and
+// a cancelled turn ended just as terminally as a 502 — but an operator reading the log has
+// to know to expect one per cancel, and a suite that only covers a clean stream and a 502
+// has no opinion either way. Pin it so a future narrowing (e.g. skipping ctx.Canceled) is
+// a deliberate change with a failing test, not a silent one.
+func TestResilienceLogsMidStreamCancellationToo(t *testing.T) {
+	diag := &recordingDiag{}
+	f := &fakeProvider{steps: []step{
+		{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: context.Canceled},
+	}}
+	cfg := Config{MaxAttempts: 1, StreamIdleTimeout: 5 * time.Second, Diagnostics: diag}
+	p := Wrap(f, cfg)
+
+	seq, err := p.Stream(context.Background(), port.LLMRequest{})
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if _, derr := drain(t, seq); derr == nil {
+		t.Fatal("drain must surface the cancellation")
+	}
+
+	rec := diag.find("mid-stream")
+	if len(rec) != 1 {
+		t.Fatalf("a mid-stream cancellation must emit exactly one line (the turn DID end there); got %d (%+v)", len(rec), diag.records)
+	}
+	if rec[0].level != port.LevelInfo {
+		t.Errorf("mid-stream cancellation line level = %v, want LevelInfo", rec[0].level)
+	}
+	if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "context canceled") {
+		t.Errorf("the line must name the cancellation so an operator can tell it from a provider fault, got %q", got)
+	}
+}
