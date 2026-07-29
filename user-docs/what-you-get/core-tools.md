@@ -89,6 +89,10 @@ Three delegation tools are always registered in a default session. They let the 
 
 **Skills.** Skills are not tools in the traditional sense — they are progressive-disclosure instruction bundles. A single `Skill` tool exposes a catalog of `SKILL.md` files; the model calls it with a skill name to load that skill's full instructions into context. Skills are opt-in (`--skills-dir` or `--skills-conventional`). See [Extension points: tool catalog](/extension-points/tool-catalog.md) for details on wiring skills.
 
+**Skills can write themselves, sort of.** `SkillDraft` lets the model propose a new skill after it's just worked through a genuinely non-obvious, multi-step procedure — but a drafted skill is never active. It lands in a quarantine review queue, not the live catalog, so a bad or over-eager draft costs nothing but disk. An operator reviews the full content and runs `mecated skills promote` to move it into the trusted, live skills directory; the model has no path to promote its own draft.
+
+**Slash commands.** These aren't tools either — they're your own reusable prompt templates. Drop a `<name>.md` file in `.mecatl/commands/` (or `.claude/commands/`, if you're used to that convention) and typing `/<name>` expands it into the prompt before it's sent, no network or trust cost involved since it never leaves your machine. `mecatui`'s embedded server picks these up automatically (opt out with `--no-commands`); a standalone `mecated` needs `--enable-commands` (or `--commands-dir` for a non-conventional location). `mecatui` merges these into its command palette alongside the built-ins, with a built-in winning any name collision.
+
 ---
 
 ## What's next

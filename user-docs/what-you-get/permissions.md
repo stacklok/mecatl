@@ -163,6 +163,27 @@ semantics; the `prefix:*` / `prefix:` form is normalised to a `prefix*` glob. Th
 a loud parse error and the whole file is skipped (and logged), never silently
 ignored; the `subagent:` subtree inside it parses just as strictly, on its own.
 
+### Importing Claude Code's permissions
+
+If you already have a Claude Code `.claude/settings.json` in the repo (or your home
+directory), `--import-claude-permissions` reads its permissions alongside your
+`.mecatl/` config instead of making you duplicate the rules. The import is
+deliberately **lossy** — every lossy outcome is logged, and it never *widens* what
+Claude Code itself would have allowed:
+
+- `WebFetch(domain:x)` in an allow list is demoted to `ask` — a domain/substring
+  match is too risky to auto-allow without you seeing it at least once.
+- A bare `WebSearch` allow imports verbatim, no demotion (its payload is a query
+  string, not an arbitrary fetch).
+- A `Read(~/...)` pattern imports but stays inert — the `~` is left unexpanded, so
+  it never matches the absolute path a tool actually resolves to.
+- Anything the importer can't parse is dropped, not guessed at.
+
+`deny`/`ask` rules always import verbatim (tightening is never lossy). `mecatui`'s
+embedded server turns this on by default, alongside `--permissions-conventional` —
+if you've used Claude Code in a repo before, mecatui picks up its rules with no
+extra setup.
+
 ### The posture ladder
 
 A single operator tier — chosen at process start by whoever owns the blast radius —
