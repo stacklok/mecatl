@@ -2,8 +2,8 @@
 id: 01-escape-classifier
 title: Escape-classification seam (no behaviour change)
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture/01-escape-classifier"
 worktree: ""
 issue: ""
 retries: 0
