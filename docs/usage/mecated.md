@@ -162,18 +162,23 @@ mailbox). See the delegation-capabilities note below.
 > member dispositions. (The `mecatui` `ctrl+a` overlay surfaces all three under
 > **Subagents | Parallel | Teams** tabs with a fleet-status footer — see `docs/tui.md`.)
 >
-> **A member that fails a round is retried once.** A team member whose round dies on a
-> transient provider error (a stalled or errored stream) has its session recovered and is
+> **A member that fails a round is retried once.** A team member whose round ends in an
+> error — **any** error; the harness cannot tell a transient stall from a permanent failure
+> at this seam, so a poisoned history or a permanent 4xx is retried too and re-fails — has
+> its session recovered and is
 > given **one** more scheduled round before it is benched; a second failed round benches it
 > with the same `stopped` / `error` disposition as before. The counter is per-member and
 > never reset, so the exposure is **one extra round per member over the whole team run** —
 > not one per failure. `team.end` reports the count (`error_rounds`), and the lead is told
 > in its synthesis prompt, so a retried member never reads as a clean one; `mecatui` shows
-> such a lane as `done (retried)`. There is **no per-member flag** for this (it is a
-> behavioural default, like the per-member turn budget); the operator brakes on the extra
-> spend are the existing token ceilings — `--max-team-tokens` team-wide and
-> `--max-run-tokens` per member drive — on top of the built-in round cap and per-member
-> turn budget. Mechanism: `docs/adr/0077-resume-a-failed-subagent.md`.
+> such a lane as `done (retried)`. There is **no flag or config key** for this in any
+> binary — it is a behavioural default like the per-member turn budget, and an embedder can
+> change it only with the library option `agent.WithMemberErrorRetries`. The operator brakes
+> on the extra spend are the existing token ceilings — **`--max-team-tokens`** team-wide
+> (checked at the round boundary, so it genuinely prevents the retry round) and
+> `--max-run-tokens` as each member's CUMULATIVE ceiling (it lives on the member's session
+> and accumulates across rounds, including the retry round) — on top of the built-in round
+> cap and per-member turn budget. Mechanism: `docs/adr/0077-resume-a-failed-subagent.md`.
 
 #### Enabling web search
 

@@ -1083,25 +1083,33 @@ sourced from the engine's `PromptConfig` and is NOT affected by this field (the 
 `sess.Workspace` fallback only fires when the configured prompt `Env.Cwd` is empty, and composition
 pre-populates it). The effective prompt is prefixed
 with a verbatim harness resume note, computed BEFORE the structured-output wrap so a resumed
-structured-output child sees the note inside the wrap. WHICH note depends on the mode: a READ-ONLY child
-gets `resumeStalenessNote` (the conversation survives but file changes/build state/running processes do
-NOT — its worktree was torn down, so re-run/re-read before trusting earlier observations); a
-`mode:"read-write"` child gets `resumeWritableNote`, because it NEVER forked (ADR 0041) and its earlier
-edits are still sitting in the real tree — telling it they were "GONE" would be false in exactly the
-direction that defeats ADR 0077 (a recovered direct-write child must build ON its partial edits).
-The writable note is selected by `prepareChildSession`'s `editsSurvived`, **not** by the current call's
+structured-output child sees the note inside the wrap. WHICH note is `resumePosture.note()`'s
+THREE-cell decision over TWO INDEPENDENT axes — WHERE the child runs (THIS call's `mode`) and WHAT the
+earlier run left behind (`editsSurvived`). `!writable` → `resumeStalenessNote` (fresh throwaway
+checkout; file changes/build state/running processes are GONE, so re-run/re-read before trusting
+earlier observations). `writable && editsSurvived` → `resumeWritableNote` (it NEVER forked, ADR 0041,
+so its earlier edits are still sitting in the real tree — telling it they were "GONE" would be false in
+exactly the direction that defeats ADR 0077: a recovered direct-write child must build ON its partial
+edits). `writable && !editsSurvived` → `resumeWritableFreshNote`, which states BOTH facts: real
+workspace, earlier work gone.
+The edits axis is `prepareChildSession`'s `editsSurvived`, **not** the current call's
 `writable` flag: `validateMode` deliberately lets `mode` COMPOSE with `resume`, so "the read-only
 investigator stalled, resume it with write access to apply the fix" is legal — and that child's prior
 worktree is gone. `editsSurvived` is `writable && the resumed snapshot's persisted Workspace == the
 real parent root` (captured BEFORE `buildChildSession`'s `Rehome` overwrites it, so no new persisted
-field is needed); anything else falls back to the conservative staleness note. The INVERSE falsehood
+field is needed). The INVERSE falsehood
 is the worse one: a read-only child has no Edit/Write but DOES have Bash in that worktree, so it may
-genuinely have applied edits, and a child that trusts absent edits builds on nothing.
+genuinely have applied edits, and a child that trusts absent edits builds on nothing. The third cell
+exists because keying only on the edits axis handed that same call `resumeStalenessNote` — "you are
+running in a FRESH workspace checkout" — while it held Edit/Write on the operator's REAL repository
+(a writable call passes `forker = nil`), and a child that believes it is in a scratch checkout may
+delete or rewrite files to "start clean". `TestResumeNoteMatrixCoversBothAxes` asserts the full
+cartesian product per axis, so a fourth cell or a third axis fails rather than falling through.
 A FAILED child's error result additionally carries `subagentErrorResumeHint` after the agentId trailer, so
 the model can DISCOVER the recovery path (ADR 0070). That hint lives in `renderSubagentResult`, NOT in the
 `subagentErrorBody` helper shared with Parallel: a `parallel-<callID>-<n>` branch id fails the resume
 prefix gate, so advertising resume there would instruct the model to take an action that cannot succeed. For
-the SAME reason the hint has ONE gate, `subagentResumeHint(writable, resumable)`, with two silent
+the SAME reason the hint has ONE gate, `subagentResumeHint(resumable)`, with two silent
 cases. (1) No wired store (`t.store == nil`, `validateResume`'s first precondition): a `SubagentTool`
 built without `WithSubagentStore` — a supported construction for an engine-module consumer — would
 otherwise advertise a `resume:` it then refuses with "not supported in this deployment". (2) The

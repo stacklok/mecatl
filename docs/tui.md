@@ -132,9 +132,11 @@ are written to `$XDG_STATE_HOME/mecatl/mecatui.log` (fallback
 alt-screen. `--quiet` discards them instead. A client-only run (`--server`, or
 reusing an already-running `mecated`) logs nothing of its own.
 
-The file's floor is `info`. ALL FOUR paths that end a turn TERMINALLY — a permanent
-non-retryable provider error, a mid-stream stream failure (or cancellation), a rejection
-by the open circuit breaker, and exhausted establishment attempts — log at `info` (issue
+The file's floor is `info`. ALL FIVE paths that end a turn TERMINALLY — a permanent
+non-retryable provider error, a mid-stream stream failure (or cancellation), a
+**mid-stream idle stall** (the "thinking, then nothing" shape: no chunk for
+`--llm-stream-idle-timeout`), a rejection by the open circuit breaker, and exhausted
+establishment attempts — log at `info` (issue
 #319), each carrying the `model` so a busy daemon's lines can be told apart, so a
 died-mid-turn diagnosis needs nothing beyond this file. The resilience
 layer's retry-counting detail sits at `debug` and is therefore not written — and there is

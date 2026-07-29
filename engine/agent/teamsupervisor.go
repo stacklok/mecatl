@@ -1311,11 +1311,14 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	// recovery makes retry POSSIBLE, not guaranteed — a permanent cause re-fails cleanly.
 	//
 	// nonResumable now means what its name says — the session could NOT be returned to
-	// idle — and is set ONLY when that transition itself failed. `stopped` is unchanged:
-	// a member whose round ended in error is still descheduled and still reports
-	// StopReasonError, because the honest signal to the lead ("this member stopped
-	// before finishing") and the task release that lets a peer pick the work up both
-	// hang off it. See docs/adr/0077-resume-a-failed-subagent.md.
+	// idle — and is set ONLY when that transition itself failed. `stopped` keeps its
+	// MEANING: a member BENCHED by its errors is descheduled and reports StopReasonError,
+	// because the honest signal to the lead ("this member stopped before finishing") and
+	// the task release that lets a peer pick the work up both hang off it. It is no longer
+	// where an errored round LANDS, though: the bounded-retry block ~20 lines below leaves
+	// a member that is still under the cap schedulable and stop-reason-free. Read the two
+	// together — this comment describes the benched end state, not every errored round.
+	// See docs/adr/0077-resume-a-failed-subagent.md.
 	var reopenErr error
 	if m.sess.State == session.StateFailed {
 		reopenErr = m.sess.Recover()

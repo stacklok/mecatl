@@ -69,9 +69,11 @@ turn carrying a terminal error stop chunk goes through) calls `Stop` and lands i
 including a CANCELLED member, keeps its exact prior disposition.
 
 `memberRT.nonResumable` now means what its name says — the recovery transition itself
-failed — and is set only then. `stopped` is unchanged: a member whose round errored is
-still descheduled, still releases its claimed tasks, and still reports
-`StopReasonError`. **The recovered lead therefore reaches `synthesise`**, which gates on
+failed — and is set only then. `stopped` keeps its MEANING: a member BENCHED by its errors is
+descheduled, releases its claimed tasks, and reports `StopReasonError`. But a member still
+UNDER the retry cap is no longer benched at all — it is rescheduled with its tasks released
+and no stop reason set (see *The team member's bounded retry* below, part of this same
+decision). **The recovered lead therefore reaches `synthesise`**, which gates on
 `nonResumable`, so the team's deliverable survives one transient failure.
 
 **The model is told.** `renderSubagentResult`'s `StopError` arm stamps
@@ -98,18 +100,31 @@ edits are still in place. `renderWritableSubagentResult` therefore carries
 in an explicit "Do not do both", and the generic hint is suppressed for that arm. A
 store-less deployment keeps the plain review-or-undo note, offering no resume at all.
 
-**A resumed child is told its edits survived only when they did.**
-`resumeStalenessNote` ("file changes … are GONE") is true for a read-only path whose
-worktree really was torn down. A writable child never forks, so its earlier edits are
-still in the real tree; `resumeWritableNote` states that instead. Shipping #318 while
-telling the recovered child its work was lost would have contradicted the fix at the one
-layer that matters. The selection is keyed on the resumed snapshot's PERSISTED workspace
-matching the real parent root, **not** on the current call's `mode`: `validateMode` lets
-`mode` compose with `resume`, so a previously read-only child can legally be resumed with
-write access — and its worktree is gone. The inverse falsehood is the worse one (a
-read-only child has no Edit/Write but does have Bash in that worktree, so it may really
-have applied edits, and a child that trusts absent edits builds on nothing), so anything
-other than an exact path match falls back to the conservative note.
+**A resumed child's note is a function of TWO independent axes, and all three reachable
+cells exist.** WHERE the child runs follows THIS call's `mode`; WHAT survived follows the
+EARLIER run's. `validateMode` lets `mode` compose with `resume`, so the two genuinely
+disagree, and `resumePosture.note()` (`engine/agent/subagent.go`) enumerates the space in one
+place rather than leaving a cell to fall through:
+
+| this call's `mode` | earlier run's edits on disk | note |
+|---|---|---|
+| read-only | never (a read-only call forks) | `resumeStalenessNote` — fresh checkout, earlier work GONE |
+| `read-write` | yes (the earlier run was direct-write too) | `resumeWritableNote` — real tree, edits STILL IN PLACE |
+| `read-write` | no (the earlier run was read-only) | `resumeWritableFreshNote` — real tree, earlier work GONE |
+
+The edits axis is keyed on the resumed snapshot's PERSISTED workspace matching the real
+parent root, **not** on the current call's `mode`, because a previously read-only child's
+worktree is gone: telling it otherwise is the worse falsehood (a read-only child has no
+Edit/Write but does have Bash in that worktree, so it may really have applied edits, and a
+child that trusts absent edits builds on nothing). The third cell exists because the two
+notes that came first covered the edits axis on both cells and the WORKSPACE axis on
+neither: a previously read-only child resumed `read-write` — exactly the call
+`writableSubagentFailedNote` now tells the parent to make — was told it was "running in a
+FRESH workspace checkout" while holding Edit/Write on the operator's real repository, and a
+child that believes it is in a scratch checkout may rewrite or delete files to "start clean".
+The tool schema's `resume` description states the same two axes separately, and
+`TestResumeNoteMatrixCoversBothAxes` asserts the whole cartesian product per axis rather than
+one cell's string.
 
 **The PER-CALL TIME-BUDGET terminal gets its own next action.** A `timeout_ms` expiry was
 the last failure path naming no recovery at all, while every neighbouring terminal
@@ -139,9 +154,29 @@ anthropic adapter returns the upstream `error.message` unquoted, so real newline
 it) and `final` is child-authored prose; both are composed into the parent's persisted
 conversation immediately beside the harness's own imperatives — the `agentId:` trailer the
 model resumes by and the resume hint. `subagentErrorBody`, being the ONE composer, is where
-`NeutraliseFraming` is applied, and `framingHeader` gained the headers this result emits so
+neutralisation is applied, and `framingHeader` gained the headers this result emits so
 an error string echoed from a hostile MCP server cannot forge one of them (CWE-1427 /
 OWASP LLM01).
+
+That treatment is not confined to the failed arm. EVERY delegation-result arm wraps the same
+harness markers around model-influenced text — the success arm stamps the same `agentId:`
+trailer and the same bracketed notes around child prose, and a read-only child has
+WebFetch/WebSearch/Read, so a hostile page it summarises reaches the COMMON path, not only the
+failure path. `neutraliseChildText` is therefore applied once at the top of
+`renderSubagentResult` and at the one point a Parallel branch's summary is assigned, and
+`framingHeader` covers the Parallel join report's own scaffolding (`branch id:`,
+`=== branch-N [OK|FAILED|WINNER] ===`, the winner-workspace paths, the judge rationale) as
+well as the Subagent result's. Three mechanics make that hold rather than merely claim it:
+matching NORMALISES the line first (line terminators folded, Unicode `Cf`/`Cc` stripped), so
+one invisible character or a bare CR no longer hides a forged header from a prefix match;
+whole-line redaction has a FLOOR (`neutraliseChildText` returns the `%q`-quoted original when
+neutralisation left nothing informative), because a redaction that erases a genuine one-line
+provider error reintroduces exactly the opaque failure this ADR set out to abolish; and the
+coverage is asserted by feeding each renderer's OWN output back through it as a forged body
+(`TestDelegationResultMarkersCannotBeForged`, `TestParallelJoinMarkersCannotBeForged`), so a
+marker added to a renderer without a `framingHeader` entry fails a test instead of shipping.
+The accepted residual is homoglyph substitution, which is strictly more work for an attacker
+than an invisible character and is documented at `canonLine`.
 
 **The contract is Recover's, unchanged: retry becomes POSSIBLE, not guaranteed.** A child
 whose cause is permanent (bad credentials, a poisoned history the pairing repair cannot
@@ -217,8 +252,13 @@ own partial edits. A team survives one member (or lead) failure with its deliver
 intact instead of degrading to the labelled fallback, AND that member keeps working in
 later rounds rather than sitting benched. The `resume:` policy is now one
 rule — "recover whatever terminal you find" — instead of a per-state exception list that
-had to be re-justified at every seam. Every failure terminal the tool can render now names
-a next action, so none of them reads as a dead end.
+had to be re-justified at every seam. Every failure terminal `resume` can RECOVER now names
+a next action, so none of those reads as a dead end. The one terminal still naming none is
+`StopStructuredOutput` (the child never produced a schema-valid payload within its correction
+budget): it surfaces the last validation error, which is the actionable half, and a resume
+would need the same `output_schema` passed again, so the affordance is not obviously the right
+next action there. For a DIRECT-WRITE child that terminal now at least carries the honest
+PARTIAL-edits note rather than the benign clean-finish one.
 
 **Harder / accepted costs.**
 
@@ -250,10 +290,24 @@ a next action, so none of them reads as a dead end.
   likewise unwired at every composition root — NOT `WithTeamTokenBudget`, whose
   `--max-team-tokens` flag exists because it is a team-wide ceiling. An operator's control
   over the extra spend is therefore the token ceilings that already bind it,
-  `--max-team-tokens` and the per-drive `--max-run-tokens`, plus the built-in round cap and
-  per-member turn budget. The cost of the choice is that an operator who wants fail-fast
+  `--max-team-tokens` and the per-member CUMULATIVE `--max-run-tokens` (it lives on the
+  member's session aggregate and `resetToIdle` preserves `Usage`, so it accumulates across
+  rounds including the retry round — it binds tighter than a per-drive reading suggests), plus
+  the built-in round cap and per-member turn budget. The cost of the choice is that an operator who wants fail-fast
   cannot get it without a code change; the cost of the alternative is a flag for every
   per-member default, which is the surface this line exists to hold.
+- **Two writable-resume edges the notes do not cover, neither reachable in-tree.** A
+  deployment that wires `WithAgentWritableEngineFactory` but NOT `WithWritableChildEngine`
+  can render `writableSubagentFailedNote` (a writable specialist failed) and then refuse the
+  very call it advertised, because `resume` rejects `agent` and `validateMode` answers
+  "`mode:"read-write"` (writable subagent) is not supported in this deployment". And a
+  resumed writable SPECIALIST silently loses its specialist scoping (resume forces the
+  generic writable explorer), so the note's "resume *it*" is approximate — the edits still
+  get finished, by a less specialised child. `app.Build` wires both seams, so both edges are
+  engine-consumer-only; if one ever needs closing, `resumeSupported()` has a natural sibling
+  (`writableResumeSupported() = t.writableChildEngine != nil`) to gate the two writable notes
+  on. Recorded rather than fixed: minting a constant for an unreachable cell is the surface
+  this ADR's note matrix exists to hold down.
 - **A retried member re-drives a round whose side effects may already have happened.** A
   tool call that landed before the stream died is not undone, so `retryTurnNote` tells the
   member to CONTINUE rather than start over. The harness cannot know which side effects
