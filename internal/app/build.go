@@ -5199,6 +5199,34 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		taskForker := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay())
 		opts = append(opts, agent.WithChildForker(taskForker))
 	}
+	// PATH-ESCAPE POSTURE (Scenario 5, AC5.1b): a BASE-SHARING child must never
+	// inherit the main session's relaxed workspace. Two child paths share the
+	// parent base verbatim: the SHELL-LESS read-only explorer (no sandboxed
+	// runner ⇒ no forker wired above — forkChildWorkspace returns the parent ws
+	// unchanged) and the mode:"read-write" direct-write child (ADR 0041 — it
+	// runs against the REAL parent tree by design). At auto/yolo the main
+	// session's workspace is relaxed (WithRelaxedReads/WithRelaxedWrites), so a
+	// verbatim share would hand the child the main session's out-of-root reach.
+	// Re-view the shared base through the NON-relaxed construction — the SAME
+	// root, the SAME per-skill read-only roots, NO relaxed options (the exact
+	// constructor newForkWorkspace uses) — so the child keeps the main
+	// session's containment posture without its escape reach. The FORKED child
+	// (childForker wired) never consults this — its worktree already comes from
+	// the non-relaxed newForkWorkspace. The main session's own relaxed
+	// workspace is untouched. Inert below auto (the parent ws is never relaxed
+	// there, so the re-view is a no-op). A root the constructor cannot open
+	// yields nil and the child falls back to the parent ws (fail-open to the
+	// historical shape — the constructor only fails on an unreadable root,
+	// which the parent workspace construction already surfaced).
+	if cfg.Posture >= PostureAuto {
+		opts = append(opts, agent.WithSharedChildWorkspace(func(root string) tool.Workspace {
+			ws, err := newForkWorkspace(skillReadRoots)(root)
+			if err != nil {
+				return nil
+			}
+			return ws
+		}))
+	}
 	// Per-call model override factory: mint an explorer child engine for a requested
 	// model through the SAME contamination-safe per-provider path (newChildEngineFor
 	// Provider re-derives Compactor/TokenCounter/Env.Model/ContextWindow for the

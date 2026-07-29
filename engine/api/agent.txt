@@ -147,6 +147,7 @@ func WithParallelStore(store port.SessionStore) ParallelOption
 func WithParallelSubagentStopHook(h port.HookRunner) ParallelOption
 func WithReadOnlyForker(f tool.WorkspaceForker) SupervisorOption
 func WithRoutableAgents(names []string) SubagentOption
+func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption
 func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 func WithSubagentNoFSNote() SubagentOption
 func WithSubagentShellDisabledNote(reason string) SubagentOption

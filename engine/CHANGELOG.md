@@ -13,6 +13,20 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.WithSharedChildWorkspace`** (path-escape-posture task 05, Scenario 5
+  AC5.1b) — a new `SubagentOption` injecting the NON-relaxed workspace view a
+  BASE-SHARING child runs against. The composition root wires it whenever the
+  parent workspace may carry out-of-root relaxation (the auto/yolo main-session
+  relax): a nil-forker read-only child (no shell wired) and the
+  `mode:"read-write"` direct-write child (ADR 0041) both run against the parent
+  base, and must see it WITHOUT the relax — the relax is main-session-only. The
+  closure receives the parent workspace root and returns the child's workspace;
+  a nil return falls back to the parent ws unchanged. A FORKED child
+  (`WithChildForker` wired) never consults it. nil (the default) is
+  byte-identical to the pre-option behaviour. Classified Added per
+  COMPATIBILITY.md (a new exported option func is a minor bump).
+  (path-escape-posture plan, task 05)
+
 - **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
   `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
   fire-result-delivery task 02) — a new `port.ScheduleManager` wrapper that

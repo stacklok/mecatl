@@ -572,6 +572,19 @@ type SubagentTool struct {
 	// shared base would be the exact hazard isolation exists to prevent.
 	childForker tool.WorkspaceForker
 
+	// sharedChildWS, when non-nil, re-views the parent workspace for a
+	// BASE-SHARING child (a nil-forker read-only child — no shell — and the
+	// mode:"read-write" direct-write child, ADR 0041). Without it the child
+	// runs against the parent ws VERBATIM, so a parent workspace built with
+	// out-of-root relaxation would silently hand the child the main session's
+	// escape reach (the path-escape-posture Scenario 5 boundary: the relax is
+	// main-session-only). The composition root wires it to a NON-relaxed
+	// workspace over the SAME root. A FORKED child (childForker wired) never
+	// consults it — the fork already lands in a non-relaxed constructor. It is
+	// layering-clean: only func(string) tool.Workspace crosses into
+	// engine/agent (same shape as WithChildForker).
+	sharedChildWS func(root string) tool.Workspace
+
 	// childGate bounds how many Subagent children may run CONCURRENTLY — forking AND
 	// forker-less. It is a buffered channel used as a counting semaphore, acquired at
 	// the top of run() (before any fork) and released when the call returns, so the
@@ -820,6 +833,22 @@ func WithChildSessionPrefix(p string) SubagentOption {
 // before. A fork failure on this path is a tool error, not a silent fallback.
 func WithChildForker(f tool.WorkspaceForker) SubagentOption {
 	return func(t *SubagentTool) { t.childForker = f }
+}
+
+// WithSharedChildWorkspace injects the NON-relaxed workspace view a
+// BASE-SHARING child runs against. The composition root wires it whenever the
+// parent workspace may carry out-of-root relaxation (the path-escape-posture
+// auto/yolo main-session relax — docs/acceptance/path-escape-posture.md
+// Scenario 5): a nil-forker read-only child (no shell wired) and the
+// mode:"read-write" direct-write child both run against the parent base, and
+// must see it WITHOUT the relax (the relax is main-session-only). The closure
+// receives the parent workspace root and returns the child's workspace; a nil
+// return falls back to the parent ws unchanged (fail-open to the historical
+// behaviour — composition never returns nil). A FORKED child (childForker
+// wired) never consults it. nil (the default) is byte-identical to the
+// pre-option behaviour.
+func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption {
+	return func(t *SubagentTool) { t.sharedChildWS = f }
 }
 
 // WithSubagentStore injects the optional session store each child session is
@@ -2951,8 +2980,19 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 // be mirrored into the child's checkout, so the child sees committed HEAD only. The
 // caller prepends it to the child's prompt so the child reasons honestly about the
 // degradation instead of silently reporting "nothing to review".
-func (*SubagentTool) forkChildWorkspace(ctx context.Context, callID session.ToolCallID, ws tool.Workspace, label string, forker tool.WorkspaceForker) (runWS tool.Workspace, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) forkChildWorkspace(ctx context.Context, callID session.ToolCallID, ws tool.Workspace, label string, forker tool.WorkspaceForker) (runWS tool.Workspace, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
 	if forker == nil {
+		// Base-sharing child (a shell-less read-only explorer, or the writable
+		// direct-write child): re-view the parent ws through the NON-relaxed
+		// child workspace when composition wired one — a relaxed parent base
+		// must never hand the child the main session's out-of-root reach (the
+		// path-escape-posture Scenario 5 boundary). A nil view (or no wired
+		// re-view) keeps the historical verbatim parent ws.
+		if t.sharedChildWS != nil {
+			if childWS := t.sharedChildWS(ws.Root()); childWS != nil {
+				return childWS, func() error { return nil }, "", session.ToolResult{}, true
+			}
+		}
 		return ws, func() error { return nil }, "", session.ToolResult{}, true
 	}
 	forkWS, forkCleanup, advisory, err := forker.Fork(ctx, ws, label)
