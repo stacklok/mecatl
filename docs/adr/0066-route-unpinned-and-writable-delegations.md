@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-21
 - Scope: `engine/agent` (the `Subagent` tool's engine-selection + router gate) + `internal/app` (the composition factories + the routable-def set). No `port.LLMRequest`, proto, or wire-contract change; the classifier/breaker/observability of [ADR 0031](./0031-subagent-model-router.md) are REUSED unchanged.
-- Supersedes: NARROWLY — (a) the "the per-call `model` arg does not re-engine a writable explorer, an accepted v1 residual" sentence of [ADR 0041](./0041-direct-write-subagent.md) ONLY (everything else in 0041 — direct-write, no-fork/no-merge, the `parentMutatingCaller` dispatch-serial seam, the writable specialist of [ADR 0058](./0058-writable-named-specialist-subagent.md) — stands); (b) the agent-gating rule of [ADR 0031](./0031-subagent-model-router.md) that a named `agent` is NEVER routed (0031's engine half, breaker, precedence spine, fail-soft posture, and observability are otherwise unchanged; this AMENDS the gate, mirroring how [ADR 0042](./0042-taxonomy-gated-model-router.md) narrowly superseded 0031's enable-model).
+- Supersedes: NARROWLY — (a) the "the per-call `model` arg does not re-engine a writable explorer, an accepted v1 residual" sentence of [ADR 0077](./0077-direct-write-subagent.md) ONLY (everything else in 0077 — direct-write, no-fork/no-merge, the `parentMutatingCaller` dispatch-serial seam, the writable specialist of [ADR 0058](./0058-writable-named-specialist-subagent.md) — stands); (b) the agent-gating rule of [ADR 0031](./0031-subagent-model-router.md) that a named `agent` is NEVER routed (0031's engine half, breaker, precedence spine, fail-soft posture, and observability are otherwise unchanged; this AMENDS the gate, mirroring how [ADR 0042](./0042-taxonomy-gated-model-router.md) narrowly superseded 0031's enable-model).
 - Superseded by: none
 
 ## Context
@@ -17,7 +17,7 @@ operator had opted into routing — the gaps this ADR closes:
 
 1. **Writable explorers (issue #285).** A `mode:"read-write"` delegation with no `agent`
    ran the WRITABLE explorer on its default model regardless of a per-call `model` OR the
-   router pick. [ADR 0041](./0041-direct-write-subagent.md) recorded this as an "accepted v1
+   router pick. [ADR 0077](./0077-direct-write-subagent.md) recorded this as an "accepted v1
    residual": the writable child engine had no per-model factory, and an unconditional
    clobber in `resolveEngineAndLimits` discarded whatever engine selection had chosen. So
    `Subagent{mode:"read-write", model:"X"}` silently ignored `X`, and a routed writable
@@ -114,4 +114,4 @@ specialist (`read-write`+`agent`) is never re-routed.
   def/writable routing), [IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) (the
   PRECEDENCE-by-gating mechanics), [usage/model-routing.md](../usage/model-routing.md) (what
   routes + how to pin a def).
-- Related ADRs: [0031](./0031-subagent-model-router.md) (the router), [0042](./0042-taxonomy-gated-model-router.md) (taxonomy-gated enable), [0041](./0041-direct-write-subagent.md) (direct-write writable Subagent), [0058](./0058-writable-named-specialist-subagent.md) (writable named specialist), [0030](./0030-model-selection-heuristics.md) (the model-selection scheme), and the lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).
+- Related ADRs: [0031](./0031-subagent-model-router.md) (the router), [0042](./0042-taxonomy-gated-model-router.md) (taxonomy-gated enable), [0077](./0077-direct-write-subagent.md) (direct-write writable Subagent), [0058](./0058-writable-named-specialist-subagent.md) (writable named specialist), [0030](./0030-model-selection-heuristics.md) (the model-selection scheme), and the lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

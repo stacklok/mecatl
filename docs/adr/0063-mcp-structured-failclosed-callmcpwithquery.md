@@ -8,7 +8,7 @@
 
 ## Context
 
-ADR 0059 carried MCP typed content as the domain's own neutral type and applied the
+ADR 0078 carried MCP typed content as the domain's own neutral type and applied the
 shared size bound (`toolkit.MaxOutputBytes`, issue #178) to MCP results — including
 the new structured fields — *before* the typed-block widening. For an **unstructured
 text** result that bound is honest: a truncated string with a marker is still a string
@@ -126,7 +126,7 @@ and `CallMcpWithQuery` returns the narrowed subset within the same output cap.
 
 ## See also
 
-- [ADR 0059](./0059-mcp-typed-tool-results.md) — MCP typed tool results; this is the
+- [ADR 0078](./0078-mcp-typed-tool-results.md) — MCP typed tool results; this is the
   over-cap follow-on for the structured case.
 - [ADR 0048](./0048-mecak8s.md) — the storage-free, cloud-native posture that rules
   out disk-spill.

@@ -128,7 +128,7 @@ engine-factory seam, so they inherit the new enable model with no further change
 - [ADR 0034](./0034-team-parallel-model-routing.md) and
   [ADR 0035](./0035-per-delegation-model-surface.md) — the team/parallel routers that
   reuse the same closure and inherit this enable model.
-- [ADR 0041](./0041-direct-write-subagent.md) — the narrow-supersession wording template
+- [ADR 0077](./0077-direct-write-subagent.md) — the narrow-supersession wording template
   this ADR follows.
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).
 - Living docs: [`docs/usage.md`](../usage.md) (the `--subagent-model-router` kill-switch

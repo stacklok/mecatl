@@ -1,4 +1,4 @@
-# ADR 0041 — Direct-write writable Subagent (no fork, no merge-back)
+# ADR 0077 — Direct-write writable Subagent (no fork, no merge-back)
 
 - Status: Accepted
 - Date: 2026-06-22

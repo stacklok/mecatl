@@ -266,7 +266,7 @@ is never consulted to suppress model-facing content (CWE-345 — an untrusted MC
 server's `audience:["user"]` is not a suppression control). Server-returned
 `resource_link` URIs are never auto-dereferenced; an `https://` link may be
 fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
-backstop, CWE-918). See `docs/adr/0059-mcp-typed-tool-results.md`.
+backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
 **Conversation fork.** `Service.ForkSession` (`internal/adapter/server/service.go`)
 creates a new peer session whose conversation history is a snapshot of an existing

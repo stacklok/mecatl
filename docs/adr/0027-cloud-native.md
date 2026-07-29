@@ -518,7 +518,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 |---|---|---|---|---|---|---|
 | 1 | Global MCP manager (`globalMgr`) | `app.Build` | process | `mcpClose` in Build's `closeAll`; NEVER folded into per-session close (`build.go:980`) | reconstructible (reconnects from config at next Build) | `internal/app/build.go:1868` (`connectMCP`) |
 | 2 | Per-session client MCP managers | `sessionEngineFactory` | session | per-session close func, invoked by `Service.CloseSession` (`service.go:743`) and shutdown | lost (client specs are not persisted; a client re-mounts via `LoadSessionWithMCP`, `service.go:968`) | `internal/app/build.go:962` |
-| 3 | Preserved-fork LRU (`LRUForkReaper`) — Parallel ONLY | `app.Build` (shared via `catalogAssets`, built only when Parallel is enabled) | process | LRU eviction runs each entry's cleanup (dir removal) outside the lock | registry lost; the preserved fork DIRS remain on disk un-tracked (a leak on crash) | `engine/agent/forkreaper.go:41,64`; built at `internal/app/build.go:1936`. NOTE: the writable Subagent (`mode:"read-write"`) no longer creates a per-call fork dir — it writes the parent workspace directly (ADR 0041), so it contributes no fork dirs here; the shared `autoMerger` (`forker.SerializingMerger`) is likewise Parallel-only now |
+| 3 | Preserved-fork LRU (`LRUForkReaper`) — Parallel ONLY | `app.Build` (shared via `catalogAssets`, built only when Parallel is enabled) | process | LRU eviction runs each entry's cleanup (dir removal) outside the lock | registry lost; the preserved fork DIRS remain on disk un-tracked (a leak on crash) | `engine/agent/forkreaper.go:41,64`; built at `internal/app/build.go:1936`. NOTE: the writable Subagent (`mode:"read-write"`) no longer creates a per-call fork dir — it writes the parent workspace directly (ADR 0077), so it contributes no fork dirs here; the shared `autoMerger` (`forker.SerializingMerger`) is likewise Parallel-only now |
 | 4 | Project memory store (flock pair: `memory.json` + `memory.lock`) | `app.Build` | process handle, per-directory data | flock held per-operation only; one `*Store` per dir per process (self-deadlock invariant, `internal/adapter/memory/store.go:79-88`) | persisted (data on disk; handle rebuilt at next Build) | `internal/app/build.go:1895`; `internal/adapter/memory/store.go:89-92` |
 | 5 | User-model store (same adapter, XDG dir) | `buildUserModelStore` | process handle, per-user data | as above | persisted | `internal/app/build.go:1337` (dir derivation `1328-1335`) |
 | 6 | permstore learned allow-always rules | `app.Build` | session (data), process (store) | `Forget(sessionID)` via `OnCloseSession` (`service.go:748`); capped at 256/session | **replayed (Phase 3b)**: in-memory still, but a post-restart load re-Learns the allow-always rules from the durable log's verdict events (`internal/app/approvalreplay.go` (`replayApprovals`)), so a previously-allow-always'd tool is not re-asked | `engine/adapter/permstore/permstore.go:42,48` |
@@ -642,7 +642,7 @@ Two ledger observations worth stating in prose:
 
 Per the inventory discipline ("Added an outlives-a-call resource? Inventory it
 in `docs/adr/0027-cloud-native.md`"), the typed-tool-results widening
-([ADR 0059](./0059-mcp-typed-tool-results.md)) was re-audited. Expected outcome,
+([ADR 0078](./0078-mcp-typed-tool-results.md)) was re-audited. Expected outcome,
 confirmed:
 
 - **No new List 1 row.** The change is a value-object widening on the existing
@@ -658,7 +658,7 @@ confirmed:
 
 - **The one resource this feature CAN introduce is Phase 2.** The
   `FetchMcpResource` model-facing affordance (fetching an `https://`
-  `resource_link`, ADR 0059 decision 5) introduces an `http.Client`. It MUST be
+  `resource_link`, ADR 0078 decision 5) introduces an `http.Client`. It MUST be
   **per-call** (bounded, no cross-origin credential attachment) — and if Phase 2
   instead caches/reuses it, that client earns a List 1 row at that time. Not
   inventoried now because Phase 2 has not landed.

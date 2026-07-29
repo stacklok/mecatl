@@ -69,7 +69,7 @@ The fork inherits the source's `ProviderID`/`ModelID` labels and rehydrates the 
 - [ADR 0033 — Dirty-aware read-only fork](./0033-dirty-aware-readonly-fork.md) — the subagent worktree fork whose `ForkSnapshot`/`SeedHistory` primitives this reuses.
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md) — the `rehydrateSession` Phase-1 path the forked session's engine is rebuilt through.
 - [ADR 0038 — Event-sourced rehydration](./0038-event-sourced-rehydration.md) — the event-log `Fold` that makes arbitrary-point reconstruction possible in a future v2.
-- [ADR 0041 — Direct-write subagent](./0041-direct-write-subagent.md) — the trust-model precedent for a non-sandboxed child (peer-parity).
+- [ADR 0077 — Direct-write subagent](./0077-direct-write-subagent.md) — the trust-model precedent for a non-sandboxed child (peer-parity).
 - `CreateSession.source_session_id` (issue #20) reuses the same `ForkSnapshot`/`SeedHistory` primitives for same-provider conversation carryover on model switch — a client-side session-create variant under the same same-provider constraint.
 - [`docs/architecture.md`](../architecture.md) — the sessions/storage section (fork paragraph added when implementation ships).
 - [`docs/design/PRODUCTION-READINESS.md`](../design/PRODUCTION-READINESS.md) — the status tracker (conversation-fork row added when implementation ships).

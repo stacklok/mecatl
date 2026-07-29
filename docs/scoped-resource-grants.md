@@ -519,7 +519,7 @@ for this direction would supersede them by new ADR, never by quiet edits.
   tree is a read-only fork; an `exclusive-write` overlay is a mutating one),
   a merge strategy, and a lease. The existing forkers become backends. The
   merge-back machinery ([ADR 0039](adr/0039-parallel-auto-merge.md),
-  [ADR 0041](adr/0041-direct-write-subagent.md)) is not redesigned here; how
+  [ADR 0077](adr/0077-direct-write-subagent.md)) is not redesigned here; how
   merge strategies ride grants is an open question below.
 - **Per-session engines gain a per-call dimension.** Today a workspace is
   fixed per session (and per fork). Grants are per call. The composition
@@ -753,5 +753,5 @@ reversals. The spike is throwaway proof, not phase one.
   [ADR 0048 — mecak8s](adr/0048-mecak8s.md): the disposable-process
   properties this extends from session state to the tool data plane.
 - [ADR 0039](adr/0039-parallel-auto-merge.md) /
-  [ADR 0041](adr/0041-direct-write-subagent.md): the fork/merge decisions the
+  [ADR 0077](adr/0077-direct-write-subagent.md): the fork/merge decisions the
   descent-spec question touches.

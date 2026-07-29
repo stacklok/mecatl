@@ -11,8 +11,8 @@ coverage.*
 # Local scratch
 /.scratch/
 
-# Task cache
-/.task/
+# Task cache (root and per-Taskfile-include, e.g. website/.task/)
+.task/
 
 # Tunnel log
 /cloudflared.log

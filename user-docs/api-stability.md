@@ -116,7 +116,7 @@ When you change a core package's exported API on purpose:
 4. Add an entry to **`engine/CHANGELOG.md`** under `## [Unreleased]`, classified per `engine/COMPATIBILITY.md` (Added = minor; Changed/Deprecated/Removed = breaking).
 5. In the PR, the reviewer sees the readable `.txt` diff and the CHANGELOG classification together. The break is deliberate, reviewed, and recorded — never silent.
 
-See [`engine/CHANGELOG.md`](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md) for the current state of the unreleased surface and the history of versioned changes. Recent examples: `v0.4.0` added `session.Usage.ReasoningTokens`; `v0.3.0` added the guardrail approve-once seam (`governance.HookOutcome.AskApproval`, `session.PendingAsk.HookOriginated`, `port.HookApprovalLearner`); `v0.1.0` **removed** `agent.WithWritableChildForker` and `agent.WithSubagentAutoMerge` (a breaking change, CHANGELOG-classified accordingly, once the writable Subagent moved to direct-write per ADR 0041).
+See [`engine/CHANGELOG.md`](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md) for the current state of the unreleased surface and the history of versioned changes. Recent examples: `v0.4.0` added `session.Usage.ReasoningTokens`; `v0.3.0` added the guardrail approve-once seam (`governance.HookOutcome.AskApproval`, `session.PendingAsk.HookOriginated`, `port.HookApprovalLearner`); `v0.1.0` **removed** `agent.WithWritableChildForker` and `agent.WithSubagentAutoMerge` (a breaking change, CHANGELOG-classified accordingly, once the writable Subagent moved to direct-write per ADR 0077).
 
 :::note[Go minor-version toolchain bumps]
 

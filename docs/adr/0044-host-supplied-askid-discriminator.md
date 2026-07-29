@@ -40,7 +40,7 @@ that correlation — the pending ask — had no equivalent structured field.
 
 Two additive, opt-in changes, both following the run-scoped `RunOptions`/`Deps` seam
 discipline (a per-call knob lives on the `Run`, never mutating the shared engine — the
-same pattern as `MaxRunTokensOverride`/`ExtraTools`, ADR 0041, and the driver-seam
+same pattern as `MaxRunTokensOverride`/`ExtraTools`, ADR 0077, and the driver-seam
 opt-in convention of ADR 0005):
 
 1. **`session.PendingAsk.Call` (`session.ToolCallID`)** — surface the gated tool-call id
@@ -131,7 +131,7 @@ The change must hold four invariants:
 
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md) — the run-entry resume seams and
   the `ApprovalPayload.Call` verdict-half correlation this completes.
-- [ADR 0041 — Direct-write writable Subagent](./0041-direct-write-subagent.md) — the
+- [ADR 0077 — Direct-write writable Subagent](./0077-direct-write-subagent.md) — the
   run-scoped `RunOptions` opt-in seam pattern.
 - [ADR 0005 — Driver seams](./0005-driver-seams.md) — the opt-in seam convention.
 - The living grammar/correlation reference in `docs/design/IMPLEMENTATION-NOTES.md`.

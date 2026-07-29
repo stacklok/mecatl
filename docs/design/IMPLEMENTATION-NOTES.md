@@ -363,7 +363,7 @@ explorer set; the override runs on the def's resolved provider (cross-provider o
 stays out of scope), the model taken verbatim (no alias resolution — parity with the model-only path's opaque-string posture);
 the pre-built `agentEngines` map is never mutated (fresh engine per call); per-def limits still bind. A def with INLINE MCP
 servers is declined on the agent+model path (v1 scope limit — the inline manager's live session has no process-lifetime owner
-on a per-call engine); reference-only MCP is supported (borrows `mainMgr`). `read-write`+`agent` is SUPPORTED via `WithAgentWritableEngineFactory` (`buildAgentWritableEngineFactory`): the named specialist's scoped engine is rebuilt WRITABLE (allowMutating=true, Edit/Write survive) on the def's resolved provider/model, using the MAIN command runner (direct-write parity, ADR 0041/0058); the factory returns (nil,false) for an unknown agent or an inline-MCP def (v1 scope limit); reference-only MCP is supported. `read-write`+`agent`+`model` stays REJECTED (v1 scope limit — a writable specialist runs on its own resolved model). Reasoning-effort stays an
+on a per-call engine); reference-only MCP is supported (borrows `mainMgr`). `read-write`+`agent` is SUPPORTED via `WithAgentWritableEngineFactory` (`buildAgentWritableEngineFactory`): the named specialist's scoped engine is rebuilt WRITABLE (allowMutating=true, Edit/Write survive) on the def's resolved provider/model, using the MAIN command runner (direct-write parity, ADR 0077/0058); the factory returns (nil,false) for an unknown agent or an inline-MCP def (v1 scope limit); reference-only MCP is supported. `read-write`+`agent`+`model` stays REJECTED (v1 scope limit — a writable specialist runs on its own resolved model). Reasoning-effort stays an
 adapter-construction Option (the factory owns adapter construction), never a `subagentArgs`/`port.LLMRequest` field. Guards:
 `agent.TestSubagentPerCallModelRoutesToFactory`, `agent.TestSubagentPerCallModelUnknownErrors`,
 `agent.TestSubagentAgentAndModelTogetherSupported`, `agent.TestSubagentAgentPlusModelRunsScopedChildOnOverrideModel`,
@@ -948,7 +948,7 @@ NilMergerIsNoOp|JudgeSingleBranch)` + `forker.TestMerger(AppliesForkDiffToParent
 CleanForkIsNoOp|ConflictSurfacesError|RefusesGitattributesPatch|
 TextconvDoesNotFire)`.
 
-**Writable Subagent (`mode:"read-write"`) — DIRECT-WRITE (ADR 0041, supersedes
+**Writable Subagent (`mode:"read-write"`) — DIRECT-WRITE (ADR 0077, supersedes
 0040's writable path).** `Subagent` has a `mode` arg (closed set
 `{"","read-only","read-write"}`); a `mode:"read-write"` call runs its child
 DIRECTLY against the REAL parent workspace — NO fork, NO copy, NO merge-back. Its
@@ -3248,7 +3248,7 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   backend-switching secrets are read from `SEARXNG_URL`/`BRAVE_API_KEY`/`EXA_API_KEY`
   (and `WEBSEARCH_API_KEY` for `--websearch-url`) — env only, never flag values.
 
-### MCP typed tool results (issue #223, ADR 0059)
+### MCP typed tool results (issue #223, ADR 0078)
 
 The MCP adapter's `flattenContent` choke point collapsed an MCP
 `CallToolResult` — a typed, audience-aware content array (`text`/`image`/
@@ -3263,7 +3263,7 @@ everything was already a flat string — so a user-audience `resource_link` the
 mcpperf server deliberately emitted for a human-facing client lost its metadata
 and handed the model a bare URI it could not resolve.
 
-The fix (ADR 0059) carries MCP typed content as **the domain's own neutral
+The fix (ADR 0078) carries MCP typed content as **the domain's own neutral
 type**, with every untrusted-server defense in composition and the adapter:
 
 - **`session.ToolResult.Parts []Content`** (`engine/session/toolcall.go`)

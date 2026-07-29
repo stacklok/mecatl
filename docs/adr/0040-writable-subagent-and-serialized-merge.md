@@ -4,7 +4,7 @@
 - Date: 2026-06-21
 - Scope: `engine/agent` (the Subagent + Parallel tools, the dispatcher's per-call mutate-serial seam), `engine/tool` (the `ForkMerger` port doc), `internal/adapter/forker` (the `Merger` + new `SerializingMerger`), `internal/app` (composition wiring)
 - Supersedes: 0039
-- Superseded by: 0041 (the writable-Subagent decision only — direct-write replaces the force-copy fork + merge-back; the Parallel single-branch auto-merge and the `parentMutatingCaller` dispatch-serial seam below are unchanged)
+- Superseded by: 0077 (the writable-Subagent decision only — direct-write replaces the force-copy fork + merge-back; the Parallel single-branch auto-merge and the `parentMutatingCaller` dispatch-serial seam below are unchanged)
 
 ## Context
 

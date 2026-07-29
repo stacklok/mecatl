@@ -1,4 +1,4 @@
-# ADR 0059 — MCP typed tool results
+# ADR 0078 — MCP typed tool results
 
 - Status: Accepted
 - Date: 2026-06-30

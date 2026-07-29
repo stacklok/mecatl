@@ -3,18 +3,18 @@
 - Status: Accepted
 - Date: 2026-06-29
 - Scope: `engine/agent` (the Subagent tool's `validateMode` / `selectChildEngine` / `resolveEngineAndLimits` / `MutatesParent` + the new `WithAgentWritableEngineFactory` Option and `selectWritableSpecialistEngine` helper), `internal/app` (`buildAgentWritableEngineFactory`, the `allowMutating` plumb in `buildAgentDefEngine`)
-- Supersedes: the named-specialists-run-read-only v1 scope restriction shipped alongside ADR 0041's direct-write explorer (lived in `validateMode`, not 0041's prose) — NOT 0041's direct-write mechanics, the `parentMutatingCaller` dispatch-serial seam, or the `isolated:false` posture, all of which are REUSED
+- Supersedes: the named-specialists-run-read-only v1 scope restriction shipped alongside ADR 0077's direct-write explorer (lived in `validateMode`, not 0077's prose) — NOT 0077's direct-write mechanics, the `parentMutatingCaller` dispatch-serial seam, or the `isolated:false` posture, all of which are REUSED
 - Superseded by: none
 
 ## Context
 
-ADR 0041 shipped the direct-write writable Subagent (`mode:"read-write"`) but scoped it to the
+ADR 0077 shipped the direct-write writable Subagent (`mode:"read-write"`) but scoped it to the
 generic explorer: `validateMode` rejected `mode:"read-write"` + `agent` outright, so a named
 specialist could only ever run read-only. The v1 scope cut was incremental, not fundamental — the
 machinery to lift it already existed. `agent` + `model` (`buildAgentModelEngineFactory`) rebuilds a
 specialist's scoped engine per call via the shared `buildAgentDefEngine` step; a writable specialist
 is the same pattern with two knobs moved: `allowMutating=true` (so Edit/Write survive scoping) and
-the MAIN session's command runner (direct-write parity, ADR 0041 — no fork, no merge-back).
+the MAIN session's command runner (direct-write parity, ADR 0077 — no fork, no merge-back).
 
 The tell was a load-bearing line in `resolveEngineAndLimits` (`engine/agent/subagent.go`):
 `if writable { engine = t.writableChildEngine }` unconditionally clobbered whichever engine
@@ -49,7 +49,7 @@ composition wiring is in `internal/app/build.go` (`buildAgentWritableEngineFacto
 - `MutatesParent` is an OR gate: `mode == "read-write"` AND (`writableChildEngine != nil` OR
   `agentWritableFactory != nil`). A writable specialist mutates the real tree DURING its run, so the
   dispatcher keeps it mutate-serial (excluded from the concurrent read batch, run alone) — the SAME
-  `parentMutatingCaller` seam from ADR 0040/0041, decoupled from any merger (there is none).
+  `parentMutatingCaller` seam from ADR 0040/0077, decoupled from any merger (there is none).
 - The factory (`buildAgentWritableEngineFactory`) calls
   `buildAgentDefEngine(…, allowMutating=true, …, buildCommandRunner(cfg), …)` — so Edit/Write SURVIVE
   scoping (`allowMutating=true` keeps workspace-mutating tools), the child runs on the MAIN session's
@@ -66,14 +66,14 @@ composition wiring is in `internal/app/build.go` (`buildAgentWritableEngineFacto
 
 - A named specialist can now land edits directly against the real parent workspace, with its own
   prompt/skills/catalog — not the generic explorer surface. The "delegate one focused task to the
-  specialist and land its edits" path that ADR 0041 opened for the explorer is now open for named
+  specialist and land its edits" path that ADR 0077 opened for the explorer is now open for named
   specialists too.
 - The def's tool allowlist is HONORED: a def that excludes Edit/Write stays non-mutating even in
   writable mode (`allowMutating=true` only KEEPS the mutating tools the def already permits — it does
   not force-inject them). This is documented, not enforced by a separate gate.
 - Partial edits survive a crash: a cancelled/errored writable specialist leaves its completed edits
   IN the working tree, with no fork to quarantine them — git is the rollback layer, the same accepted
-  trade-off as ADR 0041. The result text honestly warns the edits may be partial.
+  trade-off as ADR 0077. The result text honestly warns the edits may be partial.
 - Per-def limits + the def's resolved provider/model still bind — the writable specialist is the
   specialist, not a generic explorer wearing its name.
 - `read-write` + `agent` + `model` stays OUT of scope: the writable specialist runs on its own
@@ -87,7 +87,7 @@ composition wiring is in `internal/app/build.go` (`buildAgentWritableEngineFacto
 
 ## See also
 
-- [ADR 0041](./0041-direct-write-subagent.md) — the direct-write writable Subagent (the
+- [ADR 0077](./0077-direct-write-subagent.md) — the direct-write writable Subagent (the
   `parentMutatingCaller` seam, the `isolated:false` posture, and the direct-write mechanics are all
   REUSED, not superseded; only its "named specialists run read-only" v1 scope cut is lifted here).
 - `docs/architecture/subagents-and-teams.md` — the living description of the subagent writable mode.

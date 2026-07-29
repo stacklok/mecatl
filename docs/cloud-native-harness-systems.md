@@ -144,7 +144,7 @@ discards: Team members and multi-branch Parallel fan-out stay read-only-by-desig
 specifically to dodge the merge-conflict problem, and the writable Subagent
 (`mode:"read-write"`) deliberately bypasses forking altogether — it edits the
 parent tree directly during the run, no fork and no merge involved
-([ADR 0041](adr/0041-direct-write-subagent.md), which superseded an earlier
+([ADR 0077](adr/0077-direct-write-subagent.md), which superseded an earlier
 fork-and-merge design for it in [ADR 0040](adr/0040-writable-subagent-and-serialized-merge.md)).
 
 - **A menu of sharing policies**, chosen per child, is the richer model: (a) a

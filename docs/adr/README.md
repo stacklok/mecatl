@@ -50,8 +50,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0015 — Background subagents](./0015-background-subagents.md)
 - [0039 — Parallel single-branch auto-merge](./0039-parallel-auto-merge.md)
 - [0040 — Writable Subagent mode + serialized merge-back](./0040-writable-subagent-and-serialized-merge.md)
-- [0041 — Direct-write writable Subagent (no fork, no merge-back)](./0041-direct-write-subagent.md)
 - [0058 — Writable named-specialist Subagent (`mode:"read-write"` + `agent`)](./0058-writable-named-specialist-subagent.md)
+- [0077 — Direct-write writable Subagent (no fork, no merge-back)](./0077-direct-write-subagent.md)
 
 ### Providers & APIs
 - [0016 — Multi-provider](./0016-multi-provider.md)
@@ -66,8 +66,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
 - [0057 — MCP server notifications](./0057-mcp-server-notifications.md)
-- [0059 — MCP typed tool results](./0059-mcp-typed-tool-results.md)
 - [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
+- [0078 — MCP typed tool results](./0078-mcp-typed-tool-results.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

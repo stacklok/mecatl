@@ -468,7 +468,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   falling back to `Content`. Typed content rides `EvToolResult.ToolResult`, so
   `engine/adapter/eventsource` (`Fold`) reconstructs it from the durable log with
   no relay sidecar. Classified Added per COMPATIBILITY.md (a new struct field is a
-  minor bump). (#223, [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+  minor bump). (#223, [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
 
 - **`session.Content` block-kind generalization** — the existing `Content` gains a
   `BlockKind` discriminator plus block variants (`BlockText`/`BlockImage`/
@@ -478,7 +478,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   A legacy media part (`BlockKind == ""`, the user-message media shape) is distinct
   from a tool-result block. Classified Added per COMPATIBILITY.md (additive fields
   + consts + constructors). (#223,
-  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
 
 - **`port.RouteToolResultParts`** — a pure composition-driven projection that
   returns the capability-gated subset of a recorded `session.ToolResult.Parts`
@@ -496,7 +496,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   projection that drops every block) returns nil so the caller degrades to the
   recorded model-facing `Content` string. Classified Added per COMPATIBILITY.md
   (a new exported function is a minor bump). (#223,
-  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
 
 - **`FetchMcpResource` tool** (registered in `internal/adapter/tools`, NOT an
   `engine/` exported API — recorded here for completeness) — the model-facing
@@ -508,7 +508,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   `toolkit.MaxOutputBytes`; binary content is summarized. The model sees the
   `resource_link` REFERENCE, never auto-fetched raw bytes. No `engine/` exported
   surface change. (#223,
-  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
 
 - **Wire: `ContentBlock` proto message + `ToolResult.blocks`/`structured_content`
   fields.** The gRPC `ToolResult` proto mirrors the additive domain `Parts` field
@@ -517,7 +517,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   Additive — legacy clients/sessions round-trip with empty `blocks`. (This is a
   `contracts/gen` wire change, not an `engine/` exported-API change; recorded
   here as the wire half of #223.) (#223,
-  [ADR 0059](../docs/adr/0059-mcp-typed-tool-results.md))
+  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
 
 - **`session.ValidateResolvedIP`** — a new exported func
   (`func ValidateResolvedIP(ip net.IP) error`) re-exporting the dial-layer SSRF
@@ -637,7 +637,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   composition-supplied factory `func(agentName string) (*Engine, bool)` that rebuilds
   a named specialist's scoped engine WRITABLE (`allowMutating=true` — Edit/Write survive
   scoping) on the def's resolved provider/model, using the MAIN session's command runner
-  (direct-write parity, ADR 0041/0058). A Subagent call may now set BOTH `mode:"read-write"`
+  (direct-write parity, ADR 0077/0058). A Subagent call may now set BOTH `mode:"read-write"`
   and `agent` (previously rejected); the specialist runs with its prompt/skills/catalog +
   Edit/Write against the real parent workspace, dispatch-serial via `MutatesParent`,
   `isolated:false` (A2 auto-approve does not apply). A def with inline MCP servers is
@@ -717,7 +717,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   and `agent.WithSubagentAutoMerge(m tool.ForkMerger) SubagentOption` — removed. The
   writable Subagent (`mode:"read-write"`) no longer forks the workspace or merges a
   diff back: it now writes DIRECTLY to the real parent workspace, exactly as the main
-  agent does, and git is the rollback layer (ADR 0041, which supersedes the
+  agent does, and git is the rollback layer (ADR 0077, which supersedes the
   writable-subagent decision in ADR 0040). `agent.WithWritableChildEngine` is RETAINED
   (a read-write call still selects a separate Edit/Write-bearing engine); it now runs
   against the parent workspace with the main session's command runner, no forker, no
@@ -725,7 +725,7 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   MutatesParent` is now decoupled from any merger (true whenever the writable engine is
   wired and the call is `mode:"read-write"`). Composition no longer wires a forker or
   merger into the Subagent tool; the shared `tool.ForkMerger` remains for Parallel's
-  single-branch auto-merge only. See `docs/adr/0041-direct-write-subagent.md`.
+  single-branch auto-merge only. See `docs/adr/0077-direct-write-subagent.md`.
 
 ## [0.0.4] - 2026-06-21
 

@@ -63,7 +63,7 @@ main loop records tool results unfenced anyway, and the read-only explorer sandb
 no new untrusted ingress; re-fencing would also bust the byte-stable prompt-cache
 prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
 `model`/`agent`/`resume`; a forked child runs on the parent's engine).
-`mode: "read-write"` (ADR 0041, superseding 0040's writable path; closed set
+`mode: "read-write"` (ADR 0077, superseding 0040's writable path; closed set
 `{"","read-only","read-write"}`, default read-only) runs the child DIRECTLY against
 the REAL parent workspace with Edit/Write — NO fork, NO copy, NO merge-back. Its
 Edit/Write/Bash mutate the real tree IN PLACE, exactly as the main agent does, and
@@ -109,7 +109,7 @@ security boundary:
   does not edit the project). A `mode:"read-write"` call instead runs the SEPARATE
   `writableChildEngine` (`buildWritableSubagentChildEngine`: the explorer surface +
   **Edit/Write**, over the REAL parent workspace + the MAIN session's command runner
-  `buildCommandRunner` — main-session parity, NO fork — ADR 0041); it is NOT isolated
+  `buildCommandRunner` — main-session parity, NO fork — ADR 0077); it is NOT isolated
   (`isolated:false`, so the A2 isolation auto-approve does not apply to its Bash) and
   git is the rollback. A `read-write`+`agent` call instead routes through
   `agentWritableFactory` (`buildAgentWritableEngineFactory`): the specialist's scoped
@@ -127,7 +127,7 @@ security boundary:
   the `.git` object DB/refs (git-locked; config-driven code-exec vectors neutralised via
   `gitenv`).
   A `mode:"read-write"` call WILL mutate the parent IN PLACE during its run (direct-write,
-  ADR 0041), so it declares `MutatesParent(call)==true` and the dispatcher runs it
+  ADR 0077), so it declares `MutatesParent(call)==true` and the dispatcher runs it
   **alone, mutate-serial** — never batched with a sibling read it could tear.
   `MutatesParent` is decoupled from any merger (there is none); the
   `parentMutatingCaller` seam and the `SerializingMerger` are reused only by Parallel's
