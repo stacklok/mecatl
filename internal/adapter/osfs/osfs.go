@@ -105,6 +105,9 @@ type FileSystem struct {
 	// symlink containment that confines the workspace root applies inside each
 	// allowed root. Only Read and Stat consult them; Write/Glob/Grep never do.
 	readRoots []allowedRoot
+	// relaxedReads enables the WithRelaxedReads out-of-root absolute read
+	// carve-out (default off) — see relaxedReadRoot.
+	relaxedReads bool
 }
 
 // allowedRoot is one canonicalized read-only allowed root plus the os.Root it is
@@ -120,7 +123,8 @@ type Option func(*fsOptions)
 
 // fsOptions collects the construction-time options.
 type fsOptions struct {
-	readRoots []string
+	readRoots    []string
+	relaxedReads bool
 }
 
 // WithReadRoots adds explicit READ-ONLY allowed roots: absolute directories that
@@ -137,6 +141,30 @@ type fsOptions struct {
 func WithReadRoots(dirs ...string) Option {
 	return func(o *fsOptions) {
 		o.readRoots = append(o.readRoots, dirs...)
+	}
+}
+
+// WithRelaxedReads lets Read and Stat — and ONLY Read and Stat — serve an
+// ABSOLUTE path that canonicalizes OUTSIDE the workspace root and outside
+// every WithReadRoots read-only root. It is an EXPLICIT construction option,
+// DEFAULT OFF: the zero-value workspace keeps the ordinary
+// canonicalize-then-reject behaviour (ErrPathEscape). The composition layer
+// enables it for the MAIN session's workspace only, at the yolo/auto operator
+// postures where Bash already reads the same bytes (the honesty fix —
+// docs/acceptance/path-escape-posture.md Scenario 2), and always pairs it
+// with the root-aware wrapping permission policy that refuses pseudo-fs
+// (/proc, /sys, /dev) before the tool body: this option exists for THAT
+// pairing, and a relaxed workspace without the policy wrapper is a mis-wire.
+//
+// Serving opens a FRESH *os.Root on the target's LEXICAL parent directory and
+// serves the leaf through it — never a bare os.Open — so a symlink inside the
+// target dir that escapes further is refused by that root's containment,
+// exactly as the workspace root's own containment refuses an in-root escape.
+// Write, Edit, Glob, and Grep stay workspace-confined regardless of this
+// option (the relax is read-only).
+func WithRelaxedReads() Option {
+	return func(o *fsOptions) {
+		o.relaxedReads = true
 	}
 }
 
@@ -162,7 +190,7 @@ func NewFileSystem(root string, opts ...Option) (*FileSystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FileSystem{root: abs, r: r}
+	f := &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads}
 	// Dedup canonical roots; the workspace root itself never needs an allowlist
 	// entry (relative paths already reach it; absolute aliases of it are still
 	// outside the contract).
@@ -322,7 +350,83 @@ func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 	if r, sub, ok := f.allowedReadRoot(path); ok {
 		return r, sub, nil
 	}
+	if r, sub, ok := f.relaxedReadRoot(path); ok {
+		return r, sub, nil
+	}
 	return nil, "", err
+}
+
+// relaxedReadRoot serves an out-of-root ABSOLUTE path under the
+// WithRelaxedReads option (default off — a zero-value FileSystem never
+// reaches here). It opens a FRESH *os.Root on the LEXICAL parent directory of
+// the cleaned verbatim path and returns that root plus the leaf name, so the
+// read itself flows through that root's traversal — never a bare os.Open.
+//
+// Containment survives the relax TWO ways:
+//
+//  1. SERVE: a symlink inside the target dir that escapes further is refused
+//     by the serving root's own traversal (mapEscape at the call site),
+//     exactly as the workspace root refuses an in-root escape.
+//  2. VET: before opening, the resolveInRoot ancestor algorithm (deepest
+//     EXISTING ancestor + EvalSymlinks) canonicalizes the verbatim PARENT dir
+//     with the containment comparison inside the walk: any resolved ancestor
+//     that jumps ABOVE the not-yet-resolved verbatim prefix means a symlinked
+//     component escapes the verbatim path — refuse, so the relax never
+//     becomes a channel for a symlink escape the in-root path would reject.
+//     (EvalSymlinks alone on the whole path resolves to the target and launders
+//     the escape; the ancestor walk vets each component's jump.)
+//
+// It only ever fires after resolvePath AND allowedReadRoot declined, so the
+// target is provably outside the workspace root and every read root. An
+// unverifiable ancestor or an unopenable parent fails safe with no root (the
+// caller returns the original escape error). Only Read/Stat consult it (via
+// resolveRead); writes never do.
+func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
+	if !f.relaxedReads || !filepath.IsAbs(path) {
+		return nil, "", false
+	}
+	cleaned := filepath.Clean(path)
+	parent, leaf := filepath.Dir(cleaned), filepath.Base(cleaned)
+	if leaf == "." || leaf == string(filepath.Separator) || leaf == "" {
+		return nil, "", false
+	}
+	if !vetRelaxedParent(parent) {
+		return nil, "", false
+	}
+	rr, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, "", false
+	}
+	return rr, leaf, true
+}
+
+// vetRelaxedParent canonicalizes the verbatim parent dir with the
+// resolveInRoot ancestor walk, refusing when ANY resolved ancestor jumps
+// above the not-yet-resolved verbatim prefix (a symlinked component that
+// escapes the verbatim path). The parent itself need not exist yet (the read
+// then fails not-exist at the root open); an unverifiable ancestor fails safe.
+func vetRelaxedParent(parent string) bool {
+	existing := parent
+	remainder := ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+		next := filepath.Dir(existing)
+		if next == existing {
+			return true // reached the fs root: every component stays under it
+		}
+		remainder = filepath.Base(existing) + string(filepath.Separator) + remainder
+		existing = next
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return false
+	}
+	prefix := strings.TrimSuffix(parent, remainder)
+	return resolved == prefix || strings.HasPrefix(resolved, prefix+string(filepath.Separator))
 }
 
 // allowedReadRoot tests an absolute path against the explicit read-only allowed

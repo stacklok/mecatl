@@ -597,7 +597,7 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 // upstream no-fs guard regressed). A non-empty root still opens osfs normally.
 func TestOsfsWorkspaceFactoryEmptyRootIntercepted(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	factory := osfsWorkspaceFactory(diag, nil)
+	factory := osfsWorkspaceFactory(diag, nil, PostureStrict)
 
 	ws := factory("")
 	if _, ok := ws.(nofs.Workspace); !ok {

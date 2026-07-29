@@ -1350,7 +1350,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	svcCfg := server.Config{
 		Engine:           engine,
 		Store:            store,
-		Workspaces:       osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots),
+		Workspaces:       osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots, cfg.Posture),
 		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		Worktrees:        buildWorktreeLister(cfg),
 		DefaultLimits:    defaultLimits(),
@@ -2554,7 +2554,17 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	guardrailWaiver := modelhook.NewWaiverHolder()
 	mainHooks = buildGuardrailsHooks(cfg, reg, provider, reg.Default(), cfg.Model, mainHooks, guardrailWaiver)
 
-	deps := baseEngineDeps(cfg, reg, provider, store, policy, mainHooks, mcpProvider, instructions)
+	// Path-escape posture (Scenario 2): wrap the MAIN policy with the root-aware
+	// escape decision. The shared engine (below) AND every per-session engine
+	// (sessionEngineFactory, below) share this ONE wrapped policy, so a
+	// per-session engine inherits the SAME relax. Below auto it is a no-op
+	// pass-through (strict/trusted unchanged this wave). The wrapper classifies
+	// per session root from the ws the loop hands it, and the workspace factory
+	// relaxes the osfs workspace over the SAME root — the policy allow and the
+	// workspace serving can never disagree. assets.skillReadRoots feeds the
+	// per-root classifier's read-root verdict (the skills carve-out).
+	sharedPolicy := newEscapePolicy(policy, cfg.Posture, assets.skillReadRoots)
+	deps := baseEngineDeps(cfg, reg, provider, store, sharedPolicy, mainHooks, mcpProvider, instructions)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
 	// SHARED engine too — the SAME wiring the per-session factory applies
@@ -2590,12 +2600,12 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// catalog is assembled over the SAME collaborators as the shared one. It keeps
 	// the UNWRAPPED hooks: the Phase-2b reviewer fires once per MAIN-engine Stop,
 	// not per per-session stop (one of the two sanctioned per-session deltas).
-	sessFactory := sessionEngineFactory(cfg, reg, provider, store, policy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
+	sessFactory := sessionEngineFactory(cfg, reg, provider, store, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	// The build-once assets travel back to Build whole: it reads assets.skills
 	// (ListSkills snapshot), assets.userModelStore (GetUserModel lister), and
 	// assets.skillReadRoots (the workspace factory + team fork closures) off the
 	// SAME value every catalog assembly shares.
-	return agent.NewEngine(deps), assets.globalMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, nil
+	return agent.NewEngine(deps), assets.globalMgr, mcpProvider, mcpInventory, sessFactory, learned, sharedPolicy, assets, scheduleMgr, mcpClose, nil
 }
 
 // buildInstructionAssembler composes the turn-0 instruction assembler in order:
@@ -6641,6 +6651,16 @@ func defaultLimits() session.Limits {
 // an activated skill's files by absolute path. A root that cannot be opened
 // yields a nil Workspace; tool calls against it return errors the model can read.
 //
+// PATH-ESCAPE POSTURE (docs/acceptance/path-escape-posture.md Scenario 2): at
+// the auto/yolo postures the MAIN session's workspace is built WithRelaxedReads
+// (the osfs out-of-root read carve-out) and wrapped with the session's escape
+// classifier (newEscapeWorkspace), so the workspace and the permission wrapper
+// classify over the SAME root. Below auto the workspace is the ordinary
+// deny-on-escape osfs workspace. The SAME factory is the create-time AND the
+// rehydration workspace source (the run-entry seam rebuilds from the persisted
+// root through Workspaces), so a restarted relaxed session rehydrates the SAME
+// relaxed workspace.
+//
 // EMPTY-ROOT CHOKEPOINT (issue #55): an empty root NEVER reaches osfs. An empty
 // persisted Session.Workspace can only be a no-fs session, and osfs.NewWorkspace("")
 // would MkdirAll/OpenRoot the server process's cwd — a filesystem escalation. The
@@ -6649,12 +6669,25 @@ func defaultLimits() session.Limits {
 // the defense a FUTURE caller cannot bypass: it serves the honest no-filesystem
 // workspace and logs loudly, because reaching it means a no-fs guard upstream
 // regressed.
-func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string) server.WorkspaceFactory {
+func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string, posture Posture) server.WorkspaceFactory {
 	return func(root string) tool.Workspace {
 		if root == "" {
 			d.Log(context.Background(), port.LevelError,
 				"workspace factory: EMPTY root reached the shared osfs factory (a no-fs session bypassed its workspace override?); serving the no-filesystem workspace instead of the process cwd")
 			return nofs.New()
+		}
+		if posture >= PostureAuto {
+			clf, cerr := newEscapeClassifier(root, skillReadRoots...)
+			if cerr != nil {
+				d.Log(context.Background(), port.LevelError, "workspace factory: cannot build the escape classifier for a relaxed workspace; serving the deny-on-escape workspace", "root", root, "err", cerr)
+			} else {
+				ws, err := osfs.NewWorkspace(root, osfs.WithReadRoots(skillReadRoots...), osfs.WithRelaxedReads())
+				if err != nil {
+					d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)
+					return nil
+				}
+				return newEscapeWorkspace(ws, clf)
+			}
 		}
 		ws, err := osfs.NewWorkspace(root, osfs.WithReadRoots(skillReadRoots...))
 		if err != nil {
