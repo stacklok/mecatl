@@ -21,6 +21,78 @@ attests the *infrastructure* — the mecatl pods themselves. Everything above
 the pod — users, agent definitions, sessions, subagents — is mecatl's own
 identity domain.
 
+## Why this matters
+
+A cloud-native agent harness is a **multi-tenant delegation machine**, and
+today it runs on trust-me semantics. One mecatl process serves many users'
+sessions at once; each session's agent runs tools, calls forges and MCP
+servers, and spawns subagents on the user's behalf — and nothing
+cryptographic distinguishes any of them. Concretely, what that means today:
+
+- **The audit trail is the harness's word.** The event log records what
+  happened, but it is self-attested. Nothing lets an operator, an auditor,
+  or a downstream service *verify* that a given action traces back through a
+  specific subagent, agent, and user — the chain exists only as the
+  harness's own say-so.
+- **Outbound calls are unattributable.** When a subagent's work results in
+  an API call to a forge or an MCP server, the callee sees the harness (or
+  worse, the user's ambient credentials) — not *which* agent, acting for
+  *which* user, with *what* delegated authority. There is no way to answer
+  "who actually did this?" from the outside.
+- **Delegation has no teeth.** mecatl already narrows what subagents may do
+  (its permission evaluator, its posture ladder), but the narrowing is
+  internal convention. Nothing makes "a subagent holds a strict subset of
+  its parent's authority" a property a third party can check — or a
+  property the system itself is *forced* to uphold at the boundary.
+- **Multi-user is a promise, not a proof.** Sessions are isolated by
+  software discipline. There is no per-user, per-agent identity a reviewer
+  can point to and say "this action belonged to that delegation."
+
+An identity layer changes each of these: actions become **attributable**
+(the delegation chain is signed, not asserted), delegation becomes
+**enforceable** (attenuation is an issuer invariant, not a convention),
+outbound calls become **verifiable offline** (any party with the bundle can
+check who acted, for whom, with what scope), and multi-tenancy becomes
+**provable** (each user/agent/subagent is a distinct cryptographic
+principal). This is the difference between "trust our logs" and "verify the
+chain yourself."
+
+## Why SPIRE alone is not enough
+
+SPIRE is excellent at what it is for, and this design **keeps it** — for
+infrastructure. What it cannot do is the job above:
+
+- **SPIRE attests workloads, not delegations.** Its identity unit is the
+  workload (a pod, a service account). A multi-tenant harness is *one*
+  workload serving many users — the standard deployment gives every session
+  the same pod identity, which is precisely the "one process, one identity"
+  floor we need to escape.
+- **The SPIFFE identity model has no on-behalf-of.** A SVID says *who* a
+  workload is, never *for whom it acts*. There is no delegation chain, no
+  `act` claim, no user principal anywhere in the spec — JWT-SVID §3 defines
+  `sub`, `aud`, `exp` and stops there. The user→agent→subagent chain that
+  is the whole point of this design is simply outside SPIFFE's vocabulary.
+- **No attenuation semantics.** SPIRE's delegation is structural
+  (parent→child registration entries); a child cannot self-mint a broader
+  identity. But nothing expresses "this specific token carries a strict
+  subset of its parent's authority" in a way a verifier can check — the
+  narrowing lives in the server config, not in a portable, verifiable
+  credential.
+- **The escape hatches are the wrong shape for us.** The Delegated Identity
+  API lets a trusted process impersonate *any* workload (too broad); the
+  newer Broker API vends SVIDs for *referenced* workloads but is
+  experimental, keyed to Kubernetes objects (a poor fit for sessions that
+  migrate pods), and still mints identity-only SVIDs with no delegation
+  claims. Even at its best, the Broker API answers "give this workload an
+  identity" — not "prove this chain of narrowing delegation happened."
+
+The conclusion the research forced: the identity half (SPIFFE IDs, JWT-SVID
+shape, bundle distribution, federation) is worth adopting wholesale; the
+delegation half (chain, attenuation, user principal, parkable lifecycle)
+does not exist in the SPIFFE world and must be built — so mecatl builds it
+as its own issuer, on top of the SPIFFE envelope, rather than waiting for
+SPIRE to grow a feature set that is not on its roadmap.
+
 ## Prior art, honestly assessed
 
 A research pass over the standards landscape (2024–2026) established three
@@ -177,6 +249,21 @@ secondary reason: 8693 §4.1 confines `act`-subobject claims to identity
 while our chain entries carry a per-hop **scope snapshot** — the basis of
 attenuation audit and of the resume invariant. If a WIMSE/8693 agent
 profile ratifies a resolution to the `sub` collision, we adopt it.
+
+**Revisit triggers** — conditions under which this choice flips to a
+standard-`act` shape, recorded so a future reader knows when to reopen it:
+(a) WIMSE ratifies an agent credential profile whose `act` semantics are
+compatible with JWT-SVID's `sub` = holder convention; (b) `go-spiffe/v2`
+grows an alternative identity field (e.g. an actor from `act.sub`), making
+library identity correct regardless of `sub` semantics; (c) a widely
+deployed JWT audit tool emerges that deep-walks multi-hop `act` chains
+(canonical semantics would then be the documented expectation); (d) the
+Phase-3 external verifier ecosystem (`scoped-resource-grants.md`
+consumers, federated domains) demands `act`-named claims for interop;
+(e) SPIFFE issues guidance letting delegation-carrying tokens set `sub`
+to the delegator. Until one fires, `dlg` stands: an 8693-trained reader
+misreads an inverted `act` *confidently*, and confident misreading in an
+audit context is worse than an honestly private claim.
 
 **`may_act` (8693 §4.4)** — the claim that pre-authorizes *which* actors
 may delegate for a subject — is played by **definition-tier policy**, not
