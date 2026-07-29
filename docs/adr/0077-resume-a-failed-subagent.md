@@ -176,7 +176,22 @@ coverage is asserted by feeding each renderer's OWN output back through it as a 
 (`TestDelegationResultMarkersCannotBeForged`, `TestParallelJoinMarkersCannotBeForged`), so a
 marker added to a renderer without a `framingHeader` entry fails a test instead of shipping.
 The accepted residual is homoglyph substitution, which is strictly more work for an attacker
-than an invisible character and is documented at `canonLine`.
+than one invisible character and is documented at `canonLine`.
+
+Two things the first cut of that got wrong, both fixed with the mechanism rather than the
+symptom. **The marker list is SURFACE-TAGGED** (`framingSurface`): applying every entry to
+every result meant ten fenced-PROMPT headers (`Policy:`, `Category:`, `Recorded findings:`, …)
+were matched against delegation results, where they cannot be forged because nothing emits
+them there — and where they ARE how a review subagent heads each finding, so two lines of
+every finding came back to the orchestrating model as a redaction token on the SUCCESS arm.
+`neutraliseChildText` evaluates the result surface only; the fence still runs the full list on
+every prompt body, which is where those headers exist. It stays ONE enumeration with a tag per
+entry, not two lists. The judge's rationale line is `Judge rationale:` and not the bare
+`Rationale:` for the same reason: a marker has to be specific enough to be both matched and
+harmless. **And the model-influenced INPUTS are what the forgery oracles must carry** — the
+judge rationale shipped un-neutralised because the join oracle fed its forgery only through
+the branch summaries, so a value with a listed marker and no neutralisation was invisible to
+it by construction.
 
 **The contract is Recover's, unchanged: retry becomes POSSIBLE, not guaranteed.** A child
 whose cause is permanent (bad credentials, a poisoned history the pairing repair cannot
@@ -253,12 +268,18 @@ intact instead of degrading to the labelled fallback, AND that member keeps work
 later rounds rather than sitting benched. The `resume:` policy is now one
 rule — "recover whatever terminal you find" — instead of a per-state exception list that
 had to be re-justified at every seam. Every failure terminal `resume` can RECOVER now names
-a next action, so none of those reads as a dead end. The one terminal still naming none is
-`StopStructuredOutput` (the child never produced a schema-valid payload within its correction
-budget): it surfaces the last validation error, which is the actionable half, and a resume
-would need the same `output_schema` passed again, so the affordance is not obviously the right
-next action there. For a DIRECT-WRITE child that terminal now at least carries the honest
-PARTIAL-edits note rather than the benign clean-finish one.
+a next action, so none of those reads as a dead end — `StopStructuredOutput` included. That
+terminal (the child never produced a schema-valid payload within its correction budget)
+surfaces the last validation error, which is the actionable half, and now names what to do
+with it: fix the schema or the instruction and delegate again, or — where a session store is
+wired — resume by agentId passing the SAME `output_schema`. The reason first recorded here for
+leaving it bare, that "a resume would need the same `output_schema` passed again", was not an
+obstacle: `resume` composes with `output_schema` (`validateResume` rejects only `agent`/`model`,
+and the submit tool is built from the argument unconditionally), and the schema is the parent's
+own argument. The genuine caveat is weaker and different — a child that failed validation
+through its whole correction budget may fail a fourth time — so the resume is offered SECOND
+and says so. For a DIRECT-WRITE child that terminal also carries the honest PARTIAL-edits note
+rather than the benign clean-finish one.
 
 **Harder / accepted costs.**
 

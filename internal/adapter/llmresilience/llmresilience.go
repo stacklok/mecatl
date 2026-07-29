@@ -231,9 +231,15 @@ func (p *resilientProvider) diag() port.Diagnostics {
 // logMidStreamError records the OTHER path that ends a turn terminally: an error
 // chunk yielded AFTER the first committing chunk. It is never retried (the
 // no-replay-after-first-chunk rule), so it is the end of the turn — and, like the
-// non-retryable establishment error above, it previously logged at NO level, leaving
-// the fatal half of the stream lifecycle invisible while the recoverable half (retry /
-// exhaustion / idle stall / breaker) was fully observable (issue #319 / #318 diagnosis).
+// non-retryable establishment error above, it previously logged at NO level (issue #319 /
+// #318 diagnosis).
+//
+// The blind spot was exactly THREE emissions wide, and this comment used to describe it
+// loosely enough to contradict its sibling 180 lines below. What WAS already observable
+// pre-#319: the per-attempt retry (Debug), exhausted attempts (Info), the idle stall (Info)
+// and the breaker's own state TRANSITIONS (Info). What was silent: this mid-stream error,
+// the non-retryable establishment error, and the breaker REJECTION — the three paths that
+// actually kill a turn. All three log at Info now.
 //
 // It is called from BOTH restSeq variants (idle-bounded and not) so disabling
 // StreamIdleTimeout cannot silently re-open the blind spot.
@@ -414,12 +420,14 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		}
 		// The THIRD of the five paths that end a turn terminally (and one of the two where the
 		// provider is never called at all): the shared breaker is OPEN, so the request is
-		// rejected outright. Like its siblings below (the non-retryable establishment error,
-		// the mid-stream error, exhausted attempts and the idle stall) it logged at NO level, so an operator reading the log saw a
-		// turn die with nothing at all in it — the exact blind spot issue #319 is about,
-		// whose acceptance is that no terminal stream failure ends a turn without at
-		// least one Info-level diagnostic. It carries the model for the same correlation
-		// reason, and the error names the cooldown.
+		// rejected outright. It logged at NO level, so an operator reading the log saw a turn
+		// die with nothing at all in it — the exact blind spot issue #319 is about, whose
+		// acceptance is that no terminal stream failure ends a turn without at least one
+		// Info-level diagnostic. It was one of exactly THREE silent emissions, with the
+		// non-retryable establishment error and the mid-stream error below; exhausted
+		// attempts, the idle stall and the breaker's own state transitions were already
+		// observable (see logMidStreamError for the full pre-#319 ledger). It carries the
+		// model for the same correlation reason, and the error names the cooldown.
 		if err := p.allow(p.cfg.Clock()); err != nil {
 			p.diag().Log(ctx, port.LevelInfo, "llm stream rejected by the open circuit breaker; ending turn",
 				"model", req.Model,
@@ -460,9 +468,10 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		// Permanent (non-retryable) errors are surfaced verbatim, not retried. This
 		// TERMINALLY ends the turn, so it is logged at Info: the recoverable lifecycle
 		// (retry, exhaustion, idle stall, breaker transitions) was already observable
-		// while this — one of the two paths that actually kills a turn — logged at NO
-		// level, so an operator reading mecatui.log could not tell a permanent 4xx from
-		// a run that never called the provider at all (issue #319 / #318 diagnosis).
+		// while this — one of the THREE silent paths that actually kill a turn, with the
+		// mid-stream error and the breaker rejection — logged at NO level, so an operator
+		// reading mecatui.log could not tell a permanent 4xx from a run that never called
+		// the provider at all (issue #319 / #318 diagnosis).
 		//
 		// It carries the model for the same correlation reason logMidStreamError does:
 		// on a busy server the bare message identifies that A turn died, not whose, and
