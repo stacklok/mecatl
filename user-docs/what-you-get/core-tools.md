@@ -26,8 +26,8 @@ These tools are always present in a default session (no extra configuration requ
 | `Write` | Write a file to the workspace (create or overwrite). | No |
 | `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). Safer than Write for targeted changes. | No |
 | `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. | No |
-| `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. | Yes |
-| `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. | Yes |
+| `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree. | Yes |
+| `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
 | `WebFetch` | Fetch the content of an HTTP URL. Present in both default and no-filesystem session profiles. | Yes |
 | `WebSearch` | Run a web search and return results. Present in both default and no-filesystem session profiles. | Yes |
 | `ToolSearch` | Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled. | Yes |

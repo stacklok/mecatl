@@ -380,7 +380,7 @@ command" note.
 **Cross-session memory (Remember/Recall) is ON by default**, scoped per-project
 under `~/.local/share/mecatui/memory/<path-slug>/` (or `$XDG_DATA_HOME/...` when
 set), where `<path-slug>` is the absolute workspace path with `/` replaced by `-`
-(e.g. `-var-home-ozz-dev-mecatl`) — deterministic, human-legible, and collision-free
+(e.g. `-home-me-dev-mecatl`) — deterministic, human-legible, and collision-free
 across same-named checkouts. Pass `--no-memory` to disable it or `--memory-dir` to
 relocate the store. Background memory consolidation (the "dream" distiller, which
 spends tokens) stays **off** on the embedded server.
@@ -396,7 +396,7 @@ matching your workspace (its name is the workspace path with `/` replaced by `-`
 
 ```console
 $ ls ~/.local/state/mecatui/sessions/   # each subdir is one workspace
--var-home-ozz-dev-mecatl   -home-ozz-scratch
+-home-me-dev-mecatl   -home-me-scratch
 ```
 
 **Privacy:** the store holds the **raw conversation** — your prompts, the

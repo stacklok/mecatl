@@ -4,6 +4,11 @@
 - Date: 2026
 - Scope: the entire mecatl system shape — package layout, domain model, ports, adapters, API surface
 
+> This records the v1 shape as it was DECIDED, not the current system — the scope
+> line above spans the whole codebase, so it's easy to mistake for a live
+> reference. For how mecatl actually works today, see
+> [`docs/architecture.md`](../architecture.md) and `docs/architecture/*.md`.
+
 ## Context
 
 mecatl needed a shape that would keep the agent loop provider-agnostic, unit-testable without a network, and extensible without touching the core. The primary risk was coupling: the LLM provider type, gRPC types, and `os` imports bleeding into the domain. A secondary risk was picking the wrong API surface (connect-go vs grpc-go) before the bidi pause/resume flow was understood.

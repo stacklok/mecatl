@@ -42,6 +42,15 @@ There is no active run for that session id — the run already finished, was nev
 started, or you used the wrong id. Approve/cancel only work while the prompt's
 SSE stream is open.
 
+**"the provider's content filter blocked this response (reason: content_filter)"**
+This is an upstream moderation decision, not a mecatl error or a transient bug —
+some routes (e.g. an Azure OpenAI upstream) apply aggressive moderation to benign
+security/credentials wording. It is a terminal `StopError`, never retried by
+design (retrying the identical input against the same filter just reproduces the
+same block). Retype or resend the message that triggered it; if it keeps
+happening on legitimate input, that's a provider-side moderation tuning
+conversation, not something to file against mecatl.
+
 **Reading the JSONL replay log**
 With `--store-dir DIR` (for `mecatui`, the per-workspace default under
 `$XDG_STATE_HOME/mecatui/sessions/<path-slug>/`), inspect a session after the fact
@@ -53,7 +62,7 @@ workspace path with `/` replaced by `-`):
 
 ```console
 $ ls ~/.local/state/mecatui/sessions/   # each subdir is one workspace
--var-home-ozz-dev-mecatl   -home-ozz-scratch
+-home-me-dev-mecatl   -home-me-scratch
 ```
 
 ```console

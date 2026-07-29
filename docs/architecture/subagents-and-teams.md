@@ -159,6 +159,12 @@ Mutating members / Parallel branches keep their hardened force-copy shells
 (force-copy forking runs no git, so the fork-time checkout hazard the gate
 closes cannot fire there).
 
+A free-text Subagent result is never a silent "(subagent produced no summary)" on
+an empty terminal (issue #48/#152): a bounded two-stage recovery runs first — one
+wrap-up turn, then a fallback digest of the child's last non-empty assistant
+text — before the placeholder is ever shown, and the eventual result still names
+the stop reason honestly.
+
 ## Related
 
 - [The agent loop the children run](agent-loop.md)

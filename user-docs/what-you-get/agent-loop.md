@@ -135,7 +135,7 @@ mecatl manages the model's context window automatically. Before each turn, it es
 Two compaction strategies ship out of the box:
 
 - **Heuristic compactor** (default): preserves the goal and recently touched file paths, truncates large tool bodies, keeps the most recent messages.
-- **Cascade compactor** (`--compaction=cascade`): works in cheapest-first tiers — snip → strip tool bodies → collapse large file contents → summarize — stopping as soon as the slice fits the budget.
+- **Cascade compactor** (`--compaction=cascade`): works in cheapest-first tiers — snip → strip tool bodies → collapse large file contents → summarize — stopping as soon as the slice fits the budget. Its trigger and target use separate thresholds (hysteresis) so it doesn't thrash — compact once, then stay quiet until usage climbs back to the trigger ratio, rather than re-compacting on every turn near the edge.
 
 Both strategies guarantee:
 
@@ -185,7 +185,7 @@ A session that ends in any terminal state can be re-entered:
 
 - **Completed** → `Reopen` moves it back to idle; you can submit a new prompt.
 - **Cancelled** → `Interrupt` closes out orphaned tool calls, then moves to idle.
-- **Failed** → `Recover` repairs the conversation and moves to idle.
+- **Failed** → `Recover` repairs the conversation and moves to idle, so a retry is *possible* — not guaranteed. If the failure had a permanent cause (a bad prompt, a persistently misconfigured provider), the retried run just fails cleanly again.
 
 The service layer handles this automatically when you submit a new prompt to a session. You do not call these methods directly in normal operation.
 
