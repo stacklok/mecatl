@@ -195,3 +195,165 @@ func TestRelaxedReads_WritesStayConfined(t *testing.T) {
 		}
 	}
 }
+
+// --- Scenario 3: the relaxed-WRITE half (WithRelaxedWrites) ---
+
+// TestRelaxedWrites_OutOfRootWriteServed pins the positive half of Scenario
+// 3's osfs side: under WithRelaxedWrites an out-of-root absolute Write
+// creates and replaces the file, while the DEFAULT (zero-value) workspace
+// still denies the same path with ErrPathEscape.
+func TestRelaxedWrites_OutOfRootWriteServed(t *testing.T) {
+	t.Parallel()
+	root, outside, _ := setupRelaxedFS(t)
+	target := filepath.Join(outside, "written.txt")
+
+	// DEFAULT OFF: the zero-value workspace denies.
+	plain, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace(plain): %v", err)
+	}
+	if err := plain.Write(t.Context(), target, []byte("plain")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("plain Write(%q) = %v, want ErrPathEscape (default-off)", target, err)
+	}
+
+	relaxed, err := osfs.NewWorkspace(root, osfs.WithRelaxedWrites())
+	if err != nil {
+		t.Fatalf("NewWorkspace(relaxed): %v", err)
+	}
+	// Create.
+	if err := relaxed.Write(t.Context(), target, []byte("escape-content-1")); err != nil {
+		t.Fatalf("relaxed Write(%q): %v", target, err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "escape-content-1" {
+		t.Fatalf("created content = %q, %v, want %q", data, err, "escape-content-1")
+	}
+	// Replace.
+	if err := relaxed.Write(t.Context(), target, []byte("escape-content-2")); err != nil {
+		t.Fatalf("relaxed replace Write(%q): %v", target, err)
+	}
+	data, err = os.ReadFile(target)
+	if err != nil || string(data) != "escape-content-2" {
+		t.Fatalf("replaced content = %q, %v, want %q", data, err, "escape-content-2")
+	}
+}
+
+// TestRelaxedWrites_ReadRootsStayReadOnly pins that a WithRelaxedWrites
+// workspace NEVER writes into a WithReadRoots read-only root: the skills
+// carve-out stays read-only at every posture (resolvePath only consults read
+// roots on the READ path, and relaxedWriteRoot requires an absolute escape —
+// a read-root path is neither).
+func TestRelaxedWrites_ReadRootsStayReadOnly(t *testing.T) {
+	t.Parallel()
+	root, outside, _ := setupRelaxedFS(t)
+	target := filepath.Join(outside, "skill-out.txt")
+	relaxed, err := osfs.NewWorkspace(root, osfs.WithReadRoots(outside), osfs.WithRelaxedWrites())
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if err := relaxed.Write(t.Context(), target, []byte("nope")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("Write into the read root = %v, want ErrPathEscape (read roots stay read-only at every posture)", err)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Fatalf("Write created %q inside a READ-ONLY root", target)
+	}
+}
+
+// TestRelaxedWrites_SymlinkedLeafRefused pins AC3.5's osfs half: the relaxed
+// write flows through a fresh *os.Root on the target's vetted parent, so an
+// existing LEAF SYMLINK inside the parent whose target escapes FURTHER (to a
+// third dir) is refused by that root's containment — a bare os.WriteFile
+// would silently follow it and replace the third dir's file.
+func TestRelaxedWrites_SymlinkedLeafRefused(t *testing.T) {
+	t.Parallel()
+	root, outside, third := setupRelaxedFS(t)
+	relaxed, err := osfs.NewWorkspace(root, osfs.WithRelaxedWrites())
+	if err != nil {
+		t.Fatalf("NewWorkspace(relaxed): %v", err)
+	}
+	thirdTarget := filepath.Join(third, "planted.txt")
+	if err := os.WriteFile(thirdTarget, []byte("third-original-content"), 0o644); err != nil {
+		t.Fatalf("WriteFile(third): %v", err)
+	}
+	leafLink := filepath.Join(outside, "leaflink")
+	if err := os.Symlink(thirdTarget, leafLink); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	if err := relaxed.Write(t.Context(), leafLink, []byte("must-never-land")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("relaxed Write through the escaping leaf symlink = %v, want ErrPathEscape", err)
+	}
+	data, err := os.ReadFile(thirdTarget)
+	if err != nil || string(data) != "third-original-content" {
+		t.Fatalf("third dir content = %q, %v — a direct os.WriteFile would have FOLLOWED the leaf symlink and replaced it; the serving *os.Root must refuse", data, err)
+	}
+}
+
+// TestRelaxedWrites_ParentMustExist pins that the relaxed write creates the
+// LEAF only, never ancestor directories (the in-root Write's MkdirAll has no
+// relaxed analogue — mkdir-ing a host path is a strictly wider mutation the
+// Scenario 3 relax does not grant).
+func TestRelaxedWrites_ParentMustExist(t *testing.T) {
+	t.Parallel()
+	root, outside, _ := setupRelaxedFS(t)
+	relaxed, err := osfs.NewWorkspace(root, osfs.WithRelaxedWrites())
+	if err != nil {
+		t.Fatalf("NewWorkspace(relaxed): %v", err)
+	}
+	target := filepath.Join(outside, "no-such-dir", "leaf.txt")
+	if err := relaxed.Write(t.Context(), target, []byte("nope")); err == nil {
+		t.Fatalf("relaxed Write with a MISSING parent dir SUCCEEDED — the relax must never create ancestor dirs out of root")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "no-such-dir")); err == nil {
+		t.Fatal("the relaxed write created an ancestor directory out of root")
+	}
+}
+
+// TestRelaxedWrites_LedgerKeysCanonicalAbsolute pins AC3.3's osfs half: the
+// Edit read-ledger keys an out-of-root path by its CANONICAL ABSOLUTE form —
+// a RecordRead through the canonical path matches a WasReadUnchanged through
+// a `..`-carrying alias (and the reverse) — while in-root cross-form matching
+// (absolute vs relative) is unregressed.
+func TestRelaxedWrites_LedgerKeysCanonicalAbsolute(t *testing.T) {
+	t.Parallel()
+	root, outside, _ := setupRelaxedFS(t)
+	relaxed, err := osfs.NewWorkspace(root, osfs.WithRelaxedReads(), osfs.WithRelaxedWrites())
+	if err != nil {
+		t.Fatalf("NewWorkspace(relaxed): %v", err)
+	}
+	target := filepath.Join(outside, "out.txt")
+	alias := filepath.Join(outside, "deep", "..", "out.txt")
+
+	// Read canonical, check via the `..` alias.
+	relaxed.RecordRead(target, "")
+	ok, err := relaxed.WasReadUnchanged(t.Context(), alias)
+	if err != nil || !ok {
+		t.Fatalf("WasReadUnchanged(alias) = %v, %v — the ledger must key out-of-root paths canonically", ok, err)
+	}
+
+	// Read via the alias, check canonical.
+	other := filepath.Join(outside, "deep", "d.txt")
+	otherAlias := filepath.Join(outside, "deep", "..", "deep", "d.txt")
+	relaxed.RecordRead(otherAlias, "")
+	ok, err = relaxed.WasReadUnchanged(t.Context(), other)
+	if err != nil || !ok {
+		t.Fatalf("WasReadUnchanged(canonical) after RecordRead(alias) = %v, %v — cross-form must match in BOTH directions", ok, err)
+	}
+
+	// Changed-since-read must still trip on the out-of-root path.
+	if err := os.WriteFile(target, []byte("changed"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	ok, err = relaxed.WasReadUnchanged(t.Context(), target)
+	if err != nil || ok {
+		t.Fatalf("WasReadUnchanged after a behind-the-back change = %v, %v — unchanged-since must reject", ok, err)
+	}
+
+	// In-root cross-form matching is unregressed: read by absolute in-root
+	// path, check by relative.
+	inAbs := filepath.Join(root, "in.txt")
+	relaxed.RecordRead(inAbs, "")
+	ok, err = relaxed.WasReadUnchanged(t.Context(), "in.txt")
+	if err != nil || !ok {
+		t.Fatalf("in-root cross-form WasReadUnchanged = %v, %v — the canonical-absolute keying must not regress in-root matching", ok, err)
+	}
+}

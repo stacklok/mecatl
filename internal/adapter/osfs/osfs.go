@@ -108,6 +108,9 @@ type FileSystem struct {
 	// relaxedReads enables the WithRelaxedReads out-of-root absolute read
 	// carve-out (default off) — see relaxedReadRoot.
 	relaxedReads bool
+	// relaxedWrites enables the WithRelaxedWrites out-of-root absolute write
+	// carve-out (default off) — see relaxedWriteRoot.
+	relaxedWrites bool
 }
 
 // allowedRoot is one canonicalized read-only allowed root plus the os.Root it is
@@ -123,8 +126,9 @@ type Option func(*fsOptions)
 
 // fsOptions collects the construction-time options.
 type fsOptions struct {
-	readRoots    []string
-	relaxedReads bool
+	readRoots     []string
+	relaxedReads  bool
+	relaxedWrites bool
 }
 
 // WithReadRoots adds explicit READ-ONLY allowed roots: absolute directories that
@@ -168,6 +172,33 @@ func WithRelaxedReads() Option {
 	}
 }
 
+// WithRelaxedWrites lets Write — and, through it, the Edit tool's mutation
+// path — serve an ABSOLUTE path that canonicalizes OUTSIDE the workspace root
+// (never a WithReadRoots read-only root: those stay read-only at every
+// posture). It is an EXPLICIT construction option, DEFAULT OFF: the
+// zero-value workspace keeps the ordinary canonicalize-then-reject behaviour
+// (ErrPathEscape). The composition layer enables it for the MAIN session's
+// workspace only, at the yolo/auto operator postures (never a child engine),
+// and always pairs it with the root-aware wrapping permission policy that
+// resolves a write escape Allow at yolo / Ask at auto and hard-denies
+// pseudo-fs (/proc, /sys, /dev) before the tool body — docs/acceptance/
+// path-escape-posture.md Scenario 3. A relaxed workspace without the policy
+// wrapper is a mis-wire: the workspace's job is only to SERVE the path the
+// policy already authorized.
+//
+// Serving opens a FRESH *os.Root on the target's LEXICAL parent directory
+// (vetted by the same vetRelaxedParent ancestor walk the relaxed read uses)
+// and writes the leaf through it — never a bare os.WriteFile — so a symlinked
+// component that escapes further is refused by that root's containment,
+// exactly as the workspace root's own containment refuses an in-root escape
+// (ADR-0047). Glob and Grep stay workspace-confined regardless of this
+// option.
+func WithRelaxedWrites() Option {
+	return func(o *fsOptions) {
+		o.relaxedWrites = true
+	}
+}
+
 // NewFileSystem returns a FileSystem rooted at the given directory. The root is
 // resolved to an absolute, symlink-evaluated path, created if missing, then
 // opened as an *os.Root so all subsequent operations are confined to it.
@@ -190,7 +221,7 @@ func NewFileSystem(root string, opts ...Option) (*FileSystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads}
+	f := &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads, relaxedWrites: o.relaxedWrites}
 	// Dedup canonical roots; the workspace root itself never needs an allowlist
 	// entry (relative paths already reach it; absolute aliases of it are still
 	// outside the contract).
@@ -452,10 +483,16 @@ func (f *FileSystem) allowedReadRoot(path string) (*os.Root, string, bool) {
 }
 
 // Write replaces the contents of the file at the session-relative path, creating
-// it and any parent directories if needed.
+// it and any parent directories if needed. An absolute path that canonicalizes
+// OUTSIDE the workspace root is served only under the explicit WithRelaxedWrites
+// option (default off), through a fresh *os.Root on the target's vetted parent —
+// never a bare os.WriteFile (relaxedWriteRoot).
 func (f *FileSystem) Write(_ context.Context, path string, data []byte) error {
 	rel, err := f.resolvePath(path)
 	if err != nil {
+		if r, leaf, ok := f.relaxedWriteRoot(path); ok {
+			return mapEscape(path, r.WriteFile(leaf, data, 0o644))
+		}
 		return err
 	}
 	if dir := filepath.Dir(rel); dir != "." {
@@ -471,6 +508,49 @@ func (f *FileSystem) Write(_ context.Context, path string, data []byte) error {
 		return mapEscape(path, err)
 	}
 	return nil
+}
+
+// relaxedWriteRoot serves an out-of-root ABSOLUTE write under the
+// WithRelaxedWrites option (default off — a zero-value FileSystem never
+// reaches here). It mirrors relaxedReadRoot exactly: the SAME vetRelaxedParent
+// ancestor walk refuses a verbatim parent whose resolved ancestor escapes the
+// verbatim prefix, then a FRESH *os.Root on the lexical parent serves the leaf,
+// so a symlinked component inside the parent that escapes further is refused
+// by that root's own traversal (mapEscape at the call site) — the write never
+// becomes a bare os.WriteFile that would follow the symlink out.
+//
+// Unlike relaxedReadRoot it additionally requires the verbatim parent to EXIST:
+// out-of-root writes create the LEAF only, never ancestor directories (the
+// in-root Write's MkdirAll has no relaxed analogue — mkdir-ing a host path is a
+// strictly wider mutation the Scenario 3 relax does not grant). A path under a
+// WithReadRoots read-only root is EXPLICITLY refused (the lexical allowedReadRoot
+// match): read roots stay read-only at every posture — the relax never turns the
+// skills carve-out writable. Only Write consults it; Glob/Grep never resolve
+// paths at all.
+func (f *FileSystem) relaxedWriteRoot(path string) (*os.Root, string, bool) {
+	if !f.relaxedWrites || !filepath.IsAbs(path) {
+		return nil, "", false
+	}
+	if _, _, ok := f.allowedReadRoot(path); ok {
+		return nil, "", false // a READ-ONLY root never serves a write, relaxed or not
+	}
+	cleaned := filepath.Clean(path)
+	parent, leaf := filepath.Dir(cleaned), filepath.Base(cleaned)
+	if leaf == "." || leaf == string(filepath.Separator) || leaf == "" {
+		return nil, "", false
+	}
+	if !vetRelaxedParent(parent) {
+		return nil, "", false
+	}
+	info, err := os.Stat(parent)
+	if err != nil || !info.IsDir() {
+		return nil, "", false
+	}
+	rr, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, "", false
+	}
+	return rr, leaf, true
 }
 
 // Stat returns metadata for the file at the session-relative path (or, like
@@ -1021,13 +1101,22 @@ func (r *CommandRunner) Run(ctx context.Context, command, workdir string) (tool.
 // file read by absolute path and then edited by relative path (or vice versa)
 // matches in the ledger. It resolves through fs.resolvePath; an in-root absolute
 // path is reduced to its root-relative form, a relative path is cleaned, and an
-// out-of-root absolute path (a skills-base read served by an allowed root, which
-// has no root-relative form) falls back to the cleaned slash form. The key is
-// stable across the two cross-form call sites (RecordRead and WasReadUnchanged)
-// because both apply the same normalization.
+// out-of-root absolute path (a skills-base read served by an allowed root, or a
+// relaxed-read/write escape) has no root-relative form, so it keys by its
+// CANONICAL ABSOLUTE form (deepest-existing-ancestor + EvalSymlinks, the
+// resolveInRoot algorithm) — a path with ".." components, or one riding a
+// symlinked ancestor, normalizes to the SAME key as the canonical absolute
+// path of the same file. The key is stable across the two cross-form call
+// sites (RecordRead and WasReadUnchanged) because both apply the same
+// normalization.
 func (w *Workspace) ledgerKey(path string) string {
 	if rel, err := w.fs.resolvePath(path); err == nil {
 		return rel
+	}
+	if filepath.IsAbs(path) {
+		if canon, err := Canonicalize("", path); err == nil {
+			return filepath.ToSlash(canon)
+		}
 	}
 	return filepath.Clean(filepath.ToSlash(path))
 }
