@@ -32,6 +32,8 @@ The append-only event log (`port.EventLog`) survives process death. Two consumer
 - **Compaction archive** (`EvCompactionArchive`) — the pre-compaction conversation captured before `ReplaceHistory` rewrites it, so "what did the agent do in turn 12" stays answerable after compaction.
 - **Approval replay** (`EvApproval`) — allow-always verdicts (tool name + verdict string + askID, no raw args) replayed into a fresh permstore on load so a restarted process does not re-ask for every previously-granted tool.
 
+A third event, `EvUserPrompt`, records every user turn (the genuine prompt plus any synthetic continuation) for the same reason: so the durable log alone is enough to reconstruct what the user actually asked. All three are log-only — neither relay puts them on the client's own event stream, only the durable log the server writes to. `engine/adapter/eventsource.Fold` is the reference consumer that walks the log back into a full `*session.Session` for a `SessionStore.Load` that has no snapshot of its own (see [ADR 0038](https://github.com/stacklok/mecatl/blob/main/docs/adr/0038-event-sourced-rehydration.md)).
+
 The loop stays storage-agnostic throughout. It only emits — it never imports `port.EventLog` or calls `Append`. Persistence is handled by the server relay in `internal/adapter/server/grpc.go` and `internal/adapter/server/http.go`.
 
 ---
