@@ -115,6 +115,26 @@ When a session is in `plan` mode, the evaluator gates *before* the rule engine:
 command is **denied**. Read-only tools and read-only Bash fall through to the rules.
 The deny reason tells the model to present a plan and exit plan mode first.
 
+**Getting out of plan mode.** Once the model has a complete plan, it calls the
+`PresentPlan` tool. That parks the run on a **plan-approval** ask — a distinct
+gate from an ordinary permission ask, though it reuses the same ask machinery
+described above. On an interactive client (`mecatui` shows a dedicated "Plan
+ready for review" modal), you pick one of three outcomes: approve and run
+(switches to `default` mode, so mutating tools still go through the ordinary
+deny/ask/allow rules), approve with edits auto-accepted (switches to
+`acceptEdits` mode), or iterate (stay in plan mode while the model revises and
+re-presents).
+
+In a **headless** deployment there's no human to review the plan, so by
+default the ask is auto-denied and the model just keeps iterating. The opt-in
+`--plan-mode-auto-approve` flag (operator-tier only, off by default) instead
+auto-approves a parked plan ask. This is a deliberate autonomous-approval
+capability for the operator, not a safety mechanism: the engine still requires
+`PresentPlan` to reach this ask in the first place — the flag only decides who
+resolves it once parked, human or auto-approve. See [Plan
+approval](https://github.com/stacklok/mecatl/blob/main/docs/usage.md#plan-approval)
+for the full gRPC/HTTP/ACP wire reference.
+
 ### Configuring rules
 
 `.mecatl/settings.yaml` (checked-in, shared), `.mecatl/settings.local.yaml`
