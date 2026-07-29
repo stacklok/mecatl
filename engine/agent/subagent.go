@@ -847,7 +847,23 @@ const resumeWritableNote = "[harness note: your conversation has been resumed an
 // checkout may rewrite or delete files to "start clean", and here those deletions land in
 // the operator's working tree. So this note states BOTH facts — real workspace, earlier
 // artifacts gone — and neither axis is inferred from the other.
-const resumeWritableFreshNote = "[harness note: your conversation has been resumed and you are now running DIRECTLY in the real workspace — your file edits land immediately and git is the only safety net, so do not delete or rewrite files to \"start clean\". The file changes, build artifacts, and running processes from your EARLIER run are GONE (that run used a throwaway checkout), so re-read files and re-run commands before relying on earlier observations.]"
+//
+// Two wording constraints it earns the hard way, both of the class this file keeps closing:
+//
+//   - The caution is scoped to the BEHAVIOUR it exists to prevent (wiping files it did not
+//     write, to get a clean starting point) rather than the broad "do not delete or rewrite
+//     files" it first said. This note goes to a child whose whole job is to rewrite files,
+//     as a TRUSTED harness instruction, and the broad reading — which is what a skim of a
+//     long bracketed note produces — makes it decline the deletion the parent actually
+//     asked for. A child refusing its own task is a confusing failure to debug.
+//   - It states no MECHANISM for why the earlier run's work is gone. The selector is
+//     `priorWorkspace != ws.Root()` (prepareChildSession), which is ALSO true when the
+//     resumed snapshot persisted no workspace at all and when the earlier run was itself
+//     direct-write in a DIFFERENT real tree — so "(that run used a throwaway checkout)" can
+//     be false while the material claim (nothing from it carries over) stays true in every
+//     cell. The same reason resumeStalenessNote and subagentErrorResumeHint state the fact
+//     and not the plumbing.
+const resumeWritableFreshNote = "[harness note: your conversation has been resumed and you are now running DIRECTLY in the real workspace — your file edits land immediately and git is the only safety net, so do not wipe or revert files you did not write yourself just to get a clean starting point. Nothing from your EARLIER run's workspace carries over: its file changes, build artifacts, and running processes are GONE, so re-read files and re-run commands before relying on earlier observations.]"
 
 // resumePosture is the (writable × editsSurvived) pair the resumed child's harness note is
 // a function of. It is a struct rather than two more bool parameters because
@@ -2862,6 +2878,44 @@ func subagentTimeoutNote(writable, resumable bool) string {
 	}
 }
 
+// The two MODEL-VISIBLE next actions a StopStructuredOutput terminal can carry.
+//
+// This was the LAST delegation terminal that named a cause and no action: the model read
+// "did not produce output matching the requested schema: <validation error>" plus the
+// agentId, and nothing about what to do — while StopError, the limit stops, StopNoProgress,
+// the time-budget stop and even the no-summary floor all name one (ADR 0070's
+// model-visible-affordance rule). The reason recorded for leaving it bare was that "a
+// resume would need the same `output_schema` passed again", which is not an obstacle:
+// validateResume rejects only `agent`/`model`, buildSubagentRunOptions builds the submit
+// tool from args.OutputSchema unconditionally, and the schema is the PARENT's own argument
+// — re-passing it costs one field. The real (weaker) argument is that a child which failed
+// validation through its whole correction budget may fail again, so the resume is offered
+// as the SECOND option behind fixing the schema or the instruction, and says so.
+//
+// Both open with "[the subagent " so framingHeader already recognises them: they are
+// harness imperatives sitting next to child-authored text, so a forged copy has to be
+// redactable (TestFramingHeaderCoversTheHarnessNoteFamily pins that).
+//
+// The gate is the same `resumable` one subagentResumeHint and subagentTimeoutNote use — a
+// store-less deployment must not advertise a resume validateResume will refuse — but unlike
+// those two there is no fourth "say nothing" cell: the fix-and-re-delegate half needs no
+// affordance at all, so a store-less deployment still gets a next action.
+const (
+	subagentStructuredOutputNote = "[the subagent could not produce a payload matching `output_schema` within its correction budget — the validation error above names what was wrong. Simplify the schema or restate the instruction, then delegate again.]"
+
+	subagentStructuredOutputResumeNote = "[the subagent could not produce a payload matching `output_schema` within its correction budget — the validation error above names what was wrong. Simplify the schema or restate the instruction and delegate again, or resume it with the agentId above (passing the SAME `output_schema`) for one more attempt — though a child that failed validation this often may fail again.]"
+)
+
+// structuredOutputNote resolves the next action a StopStructuredOutput terminal carries.
+// resumable is the caller's t.resumeSupported() — renderSubagentResult reads it off the
+// resumeHint it was handed, which is that gate's one existing channel into this renderer.
+func structuredOutputNote(resumable bool) string {
+	if resumable {
+		return subagentStructuredOutputResumeNote
+	}
+	return subagentStructuredOutputNote
+}
+
 // renderSubagentResult labels the child's terminal by stop reason (D4 — the typed result
 // taxonomy), surfaced in the MODEL-VISIBLE result, and stamps the agentId trailer (D5).
 // The mapping:
@@ -2873,7 +2927,9 @@ func subagentTimeoutNote(writable, resumable bool) string {
 //     deployment has no resume to offer, and the writable arm owns its own combined
 //     next-action instead.
 //   - StopStructuredOutput              → tool error carrying the last validation
-//     failure (the child never produced a schema-valid payload within the retry budget).
+//     failure (the child never produced a schema-valid payload within the retry budget),
+//     plus a next action (see structuredOutputNote): fix the schema or the instruction and
+//     re-delegate, or — where a store is wired — resume with the same `output_schema`.
 //   - StopMaxTurns / StopMaxToolCalls   → success-with-note (stopped at a limit).
 //   - StopBudget                        → success-with-note (stopped at the token budget).
 //   - StopNoProgress                    → success-with-note "[subagent stopped: ended
@@ -2923,7 +2979,13 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 				msg += ": " + neutraliseChildText(last)
 			}
 		}
-		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID))
+		// The trailer comes LAST on this layout, so "the agentId above" in the note below is
+		// literally accurate. renderWritableSubagentResult reaches here with resumeHint "" (it
+		// owns its own resume decision), so a writable structured-output terminal gets the
+		// no-resume half plus its own PARTIAL-edits note — two next actions that do not
+		// conflict (fix the schema and re-delegate; review or undo what is in the tree).
+		return session.NewToolError(callID, "Subagent: "+msg+"\n\nagentId: "+string(childID)+
+			"\n\n"+structuredOutputNote(resumeHint != ""))
 	}
 	if stop == session.StopError {
 		body := "Subagent: " + subagentErrorBody(cause, final) + "\n\nagentId: " + string(childID)

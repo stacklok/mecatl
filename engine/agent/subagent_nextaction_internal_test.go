@@ -348,3 +348,88 @@ func TestWritableStructuredOutputTerminalWarnsPartialEdits(t *testing.T) {
 		t.Errorf("the last validation error must still be surfaced:\n%s", res.Content)
 	}
 }
+
+// TestStructuredOutputTerminalNamesANextAction is the oracle for the LAST delegation
+// terminal that named a cause and no action. Every neighbouring terminal names one
+// (StopError's resume hint, the limit notes, StopNoProgress, the time-budget notes, even the
+// no-summary floor), so a bare one reads to the model as "this delegation is simply dead" —
+// ADR 0070's model-visible-affordance rule inverted.
+//
+// It pins BOTH cells of the gate, and the wording facts that make each honest: the
+// store-wired cell must name the affordance AND the argument the parent has to re-pass
+// (`output_schema`, which resume composes with — validateResume rejects only `agent`/`model`),
+// while the store-less cell must name a next action that needs no affordance at all and must
+// NOT advertise a resume validateResume would refuse.
+func TestStructuredOutputTerminalNamesANextAction(t *testing.T) {
+	t.Parallel()
+	submit := &submitResultTool{lastValidationError: `"count": expected integer, got string`}
+
+	resumable := renderSubagentResult("p1", "subagent-p1", "", session.StopStructuredOutput, "",
+		submit, false, subagentErrorResumeHint)
+	// Positive control: the cause is still the actionable lead.
+	if !strings.Contains(resumable.Content, "expected integer") {
+		t.Fatalf("the validation error must still reach the model:\n%s", resumable.Content)
+	}
+	for _, want := range []string{"output_schema", "resume it with the agentId above", "delegate again"} {
+		if !strings.Contains(resumable.Content, want) {
+			t.Errorf("a store-wired structured-output terminal must name %q as part of its next action:\n%s", want, resumable.Content)
+		}
+	}
+
+	// Store-less: a next action that needs no affordance, and no resume it cannot honour.
+	storeless := renderSubagentResult("p1", "subagent-p1", "", session.StopStructuredOutput, "",
+		submit, false, "")
+	if !strings.Contains(storeless.Content, "delegate again") {
+		t.Errorf("a store-less structured-output terminal must still name the fix-and-re-delegate action:\n%s", storeless.Content)
+	}
+	if strings.Contains(storeless.Content, "resume it with the agentId") {
+		t.Errorf("a store-less deployment must not advertise a resume validateResume will refuse:\n%s", storeless.Content)
+	}
+
+	// The direct-write arm owns its own PARTIAL-edits warning and reaches this renderer with
+	// no hint, so it gets the affordance-free half — two next actions that do not conflict
+	// (fix the schema and re-delegate; review or undo what is in the tree), unlike the
+	// resume-or-discard pair writableSubagentFailedNote exists to fuse.
+	writable := renderWritableSubagentResult("p1", "subagent-p1", "", session.StopStructuredOutput, "",
+		submit, false, true)
+	if !strings.Contains(writable.Content, writableSubagentPartialNote) {
+		t.Fatalf("the writable structured-output arm must keep its PARTIAL-edits warning:\n%s", writable.Content)
+	}
+	if strings.Contains(writable.Content, "resume it with the agentId") {
+		t.Errorf("the writable arm must not add a second, independent resume imperative:\n%s", writable.Content)
+	}
+}
+
+// TestResumeWritableFreshNoteScopesItsCautionAndClaimsNoMechanism pins the two wording
+// properties this note earned the hard way. Both are about a TRUSTED harness instruction
+// delivered to a child that holds Edit/Write on the operator's real tree, which is why the
+// exact words are behaviour and not style.
+//
+//  1. The caution names the behaviour it prevents (wiping files the child did not write, to
+//     get a clean start), not the whole class "do not delete or rewrite files" — which is a
+//     literal instruction not to do the job the parent delegated, and is what a skim of a long
+//     bracketed note actually lands on.
+//  2. It states no MECHANISM for why the earlier run's work is gone. The selector is
+//     `priorWorkspace != ws.Root()`, which is also true when the snapshot persisted no
+//     workspace and when the earlier run was direct-write in a DIFFERENT real tree, so
+//     "(that run used a throwaway checkout)" can be false while the fact stays true.
+func TestResumeWritableFreshNoteScopesItsCautionAndClaimsNoMechanism(t *testing.T) {
+	t.Parallel()
+	for _, forbidden := range []string{
+		"do not delete or rewrite files",
+		"throwaway checkout",
+	} {
+		if strings.Contains(resumeWritableFreshNote, forbidden) {
+			t.Errorf("resumeWritableFreshNote must not say %q — see this test's doc-comment for which of the two rules it breaks: %q", forbidden, resumeWritableFreshNote)
+		}
+	}
+	for _, want := range []string{
+		"you did not write yourself",     // the scoped caution
+		"carries over",                   // the fact, stated without a mechanism
+		"DIRECTLY in the real workspace", // axis 1, shared with the matrix oracle
+	} {
+		if !strings.Contains(resumeWritableFreshNote, want) {
+			t.Errorf("resumeWritableFreshNote must still contain %q: %q", want, resumeWritableFreshNote)
+		}
+	}
+}
