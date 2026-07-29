@@ -2,8 +2,8 @@
 id: 03-relaxed-write
 title: yolo allow writes; auto ask on writes (os.Root-served, Edit-ledger)
 blocked_by: [02-relaxed-read]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture/03-relaxed-write"
 worktree: ""
 issue: ""
 retries: 0
