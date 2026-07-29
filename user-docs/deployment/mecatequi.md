@@ -146,7 +146,7 @@ The `publish` job resolves its write token in precedence order:
 
 ## Key flags
 
-All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`, the same credential helper `mecated`, `mecatui`, and `mecak8s` share. Never pass secrets as flag values.
+All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`, the same credential helper `mecated`, `mecatui`, and `mecak8s` share. Never pass secrets as flag values.
 
 ### Prompt and output
 
@@ -167,7 +167,7 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 | Flag | Default | Notes |
 |---|---|---|
 | `--workspace` | cwd | Session workspace root. Must be a git repository top level. |
-| `--default-provider` | `""` | Select a provider by id (`openai`, `openrouter`, `anthropic`). |
+| `--default-provider` | `""` | Select a provider by id (`openai`, `openrouter`, `anthropic`, `opencode`). |
 | `--model` | `""` | Per-session passthrough model id. Accepts any id the provider serves, including ids newer than the embedded catalog. Prefer this over `--default-model` for newer models. |
 | `--posture` | `""` (strict) | Operator posture ladder: `strict < trusted < auto < yolo`. For an autonomous CI run use `--posture auto` (allow-all, child injection-defence on). With `strict` posture and `--headless`, a main-engine permission ask cancels the run and exits 1. |
 | `--headless` | `true` | Default on (inverted from `mecated`). A single-shot CI run has no human approver; child asks are auto-denied or routed to the opt-in ask reviewer. |
@@ -177,7 +177,7 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 
 ### Provider keys
 
-`--default-provider` selects a provider; the matching key must be present in the environment or the run fails with "no LLM provider available". A present `OPENAI_API_KEY` auto-enables the OpenAI provider without `--default-provider`. For OpenRouter or Anthropic, set the respective key and pass `--default-provider openrouter` or `--default-provider anthropic`.
+`--default-provider` selects a provider; the matching key must be present in the environment or the run fails with "no LLM provider available". A present `OPENAI_API_KEY` auto-enables the OpenAI provider without `--default-provider`. For OpenRouter, Anthropic, or OpenCode Go, set the respective key and pass `--default-provider openrouter`, `--default-provider anthropic`, or `--default-provider opencode`.
 
 ---
 

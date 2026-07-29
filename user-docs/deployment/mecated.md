@@ -139,14 +139,18 @@ slow reasoning turn. Once the first chunk arrives, the timer is stopped and only
 | Flag | Default | Notes |
 |---|---|---|
 | `--model` | `""` | Model id sent to the provider; empty uses the provider-appropriate default |
-| `--default-provider` | `""` | Deployment-wide default provider (`openai`, `openrouter`, `anthropic`); validated fail-fast |
+| `--default-provider` | `""` | Deployment-wide default provider (`openai`, `openrouter`, `anthropic`, `opencode`); validated fail-fast |
 | `--default-model` | `""` | Deployment-wide default model id for the default provider; validated fail-fast |
 | `--subagent-model` | `""` | Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own |
 
 Provider credentials are read from environment variables — `OPENAI_API_KEY`,
-`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` — never flag values. An optional
-`auth.yaml` credentials file is also supported for operators who'd rather not
-export a key into the shell environment; see
+`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY` — never flag
+values. `opencode` is [OpenCode Go](https://opencode.ai), a subscription LLM
+gateway reached over the OpenAI Chat Completions protocol rather than OpenAI's
+own Responses API — a separate adapter under the hood, but it configures the
+same way as any other provider here. An optional `auth.yaml` credentials file
+is also supported for operators who'd rather not export a key into the shell
+environment; see
 [`docs/usage/mecated.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#credentials-file-authyaml).
 
 ### Posture
