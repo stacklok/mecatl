@@ -2,8 +2,8 @@
 id: 02-relaxed-read
 title: yolo/auto allow out-of-root reads (+ pseudo-fs deny, containment, rehydrate)
 blocked_by: [01-escape-classifier]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture/02-relaxed-read"
 worktree: ""
 issue: ""
 retries: 0

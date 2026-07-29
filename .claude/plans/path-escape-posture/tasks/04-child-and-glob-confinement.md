@@ -2,7 +2,7 @@
 id: 04-child-and-glob-confinement
 title: Child engines never relax + Glob/Grep confined (all postures)
 blocked_by: [02-relaxed-read]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

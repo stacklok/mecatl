@@ -2,7 +2,7 @@
 id: 03-relaxed-write
 title: yolo allow writes; auto ask on writes (os.Root-served, Edit-ledger)
 blocked_by: [02-relaxed-read]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
