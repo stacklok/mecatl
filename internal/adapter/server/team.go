@@ -153,6 +153,9 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	if s.cfg.ReadOnlyForker != nil {
 		opts = append(opts, agent.WithReadOnlyForker(s.cfg.ReadOnlyForker))
 	}
+	if s.cfg.SharedBaseWorkspace != nil {
+		opts = append(opts, agent.WithTeamSharedBaseWorkspace(s.cfg.SharedBaseWorkspace))
+	}
 	if s.cfg.TeamHooks != nil {
 		opts = append(opts, agent.WithTeamHooks(s.cfg.TeamHooks))
 	}

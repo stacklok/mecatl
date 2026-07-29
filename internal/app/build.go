@@ -5585,7 +5585,7 @@ func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *p
 // both are filesystem acts), NO shell runners, and every member gets the no-FS
 // child surface (see buildMemberEngine's noFS branch). `a` carries the catalog
 // assets the no-FS member surface registers over; it is read only when noFS.
-func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillReadRoots []string, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, tool.WorkspaceForker, tool.WorkspaceForker, port.HookRunner) {
+func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillReadRoots []string, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, tool.WorkspaceForker, tool.WorkspaceForker, func(string) tool.Workspace, port.HookRunner) {
 	// A single hooks runner shared by the supervisor and the member coordination
 	// tools. hookexec.New(nil) matches buildEngine's default: the configured-hook map
 	// is not yet wired from cfg anywhere, so this is an inert (no-op) runner today,
@@ -5594,9 +5594,10 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	if noFS {
 		// File-less teams: no forkers (a spawned Mutating member would need a
 		// force-copy fork the supervisor cannot create — it fails that spawn
-		// loudly), no shell runners, and the no-FS member catalog for everyone.
+		// loudly), no shell runners, and the no-FS member catalog for everyone. A
+		// no-FS base can never be relaxed, so no shared-base re-view either.
 		factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, nil, nil, false, mainMgr, a, true)
-		return factory, nil, nil, teamHooks
+		return factory, nil, nil, nil, teamHooks
 	}
 	// agentReg is the SHARED registry (Build's single resolveAgentSeam): a
 	// member whose spec.AgentType names a def adopts that def's scoped
@@ -5621,7 +5622,33 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	mutatingRunner := buildForceCopyRunner(cfg)
 	roIsolationAvailable := memberRunner != nil && roFk != nil
 	factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, memberRunner, mutatingRunner, roIsolationAvailable, mainMgr, a, false)
-	return factory, fk, roFk, teamHooks
+	// PATH-ESCAPE POSTURE (Scenario 5, AC5.1d): a BASE-SHARING (shell-less)
+	// read-only member must never inherit the main session's relaxed workspace.
+	// The supervisor's base-share fallback otherwise hands the member the team
+	// base VERBATIM — and at auto/yolo that base is the escapeWorkspace-wrapped
+	// relaxed osfs (WithRelaxedReads/WithRelaxedWrites), giving the shell-less
+	// member the main session's out-of-root reach (the same leak task 05 closed
+	// for the Subagent nil-forker path). Re-view the shared base through the
+	// NON-relaxed construction — the SAME root, the SAME per-skill read-only
+	// roots, NO relaxed options (the exact constructor newForkWorkspace uses) —
+	// so the member keeps the main session's containment posture without its
+	// escape reach. The two FORKED tiers (Mutating force-copy, read-only
+	// worktree) never consult this — their forks already come from the
+	// non-relaxed newForkWorkspace. The main session's own relaxed workspace is
+	// untouched. Inert below auto (the base is never relaxed there). A root the
+	// constructor cannot open yields nil and the supervisor falls back to the
+	// verbatim base (fail-open to the historical shape).
+	var sharedBaseWS func(string) tool.Workspace
+	if cfg.Posture >= PostureAuto {
+		sharedBaseWS = func(root string) tool.Workspace {
+			ws, err := newForkWorkspace(skillReadRoots)(root)
+			if err != nil {
+				return nil
+			}
+			return ws
+		}
+	}
+	return factory, fk, roFk, sharedBaseWS, teamHooks
 }
 
 // applyTeamConfig wires the opt-in agent-teams capability into the server.Config.
@@ -5643,10 +5670,11 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 	// agentReg is the ONE registry Build resolved (resolveAgentSeam).
 	// The gRPC CreateTeam path is always the DEFAULT (filesystem) profile — a
 	// no-FS team exists only inside a no-fs session's in-catalog Team tool.
-	factory, fk, roFk, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillReadRoots, skillIdx, a, false)
+	factory, fk, roFk, sharedBaseWS, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillReadRoots, skillIdx, a, false)
 	svcCfg.MemberEngine = factory
 	svcCfg.Forker = fk
 	svcCfg.ReadOnlyForker = roFk
+	svcCfg.SharedBaseWorkspace = sharedBaseWS
 	svcCfg.TeamHooks = teamHooks
 	svcCfg.TeamTokenBudget = cfg.MaxTeamTokens
 	cfg.diag().Log(context.Background(), port.LevelInfo, "agent teams ENABLED (experimental; CreateTeam/SpawnTeammate/RunTeam + Team tool)")

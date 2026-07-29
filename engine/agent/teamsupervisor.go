@@ -39,7 +39,13 @@ import (
 //
 //   - BASE-SHARE, no shell — the fallback when no read-only forker is wired: a
 //     read-only member shares the base workspace and gets NO workspace-mutating
-//     tool (no Edit/Write/Bash), so it cannot corrupt the shared base.
+//     tool (no Edit/Write/Bash), so it cannot corrupt the shared base. When the
+//     base may carry out-of-root relaxation (the path-escape-posture auto/yolo
+//     main-session relax), composition wires WithTeamSharedBaseWorkspace so the
+//     member sees the base through a NON-relaxed re-view over the same root —
+//     the relax is main-session-only, and a shell-less member must not inherit
+//     it (the same boundary WithSharedChildWorkspace closes for the Subagent
+//     nil-forker path).
 //   - READ-ONLY WORKTREE, full shell — a read-only member runs in a cheap git
 //     worktree (the default forker mode, shares the base repo's `.git` ⇒ full
 //     history) with Read/Grep/Glob PLUS Bash, but never Edit/Write. It can inspect
@@ -247,7 +253,18 @@ type Supervisor struct {
 	// Nil when no read-only forker is wired (then read-only members base-share with
 	// no shell).
 	roForker tool.WorkspaceForker
-	factory  MemberEngine
+	// sharedBaseWS, when non-nil, re-views the base workspace for a BASE-SHARING
+	// read-only member (the fallback tier above — no shell). Without it the
+	// base-share fallback returns s.base VERBATIM, so a base built with
+	// out-of-root relaxation would silently hand the member the main session's
+	// escape reach (the path-escape-posture Scenario 5 boundary: the relax is
+	// main-session-only — the same leak WithSharedChildWorkspace closes on the
+	// Subagent nil-forker path). The composition root wires it to a NON-relaxed
+	// workspace over the SAME root. The two FORKED tiers never consult it — the
+	// fork already lands in a non-relaxed constructor. WithTeamSharedBaseWorkspace
+	// is the sole writer.
+	sharedBaseWS func(root string) tool.Workspace
+	factory      MemberEngine
 
 	limits      session.Limits
 	mode        session.PermissionMode
@@ -401,6 +418,25 @@ func WithForker(f tool.WorkspaceForker) SupervisorOption {
 // ErrReadOnlyShellNoForker.
 func WithReadOnlyForker(f tool.WorkspaceForker) SupervisorOption {
 	return func(s *Supervisor) { s.roForker = f }
+}
+
+// WithTeamSharedBaseWorkspace injects the NON-relaxed workspace view a
+// BASE-SHARING read-only member (the no-shell fallback tier) runs against. The
+// composition root wires it whenever the base may carry out-of-root relaxation
+// (the path-escape-posture auto/yolo main-session relax —
+// docs/acceptance/path-escape-posture.md Scenario 5): without it the base-share
+// fallback hands the member s.base VERBATIM, silently giving the shell-less
+// member the main session's escape reach (the same child-never-relaxes leak
+// WithSharedChildWorkspace closes for the Subagent nil-forker path). The
+// closure receives the base workspace root and returns the member's workspace;
+// a nil return falls back to s.base unchanged (fail-open to the historical
+// behaviour — composition never returns nil). The two FORKED tiers (Mutating
+// force-copy, read-only worktree) never consult it — their forks already land
+// in a non-relaxed constructor. nil (the default) is byte-identical to the
+// pre-option behaviour. Layering-clean: only func(string) tool.Workspace
+// crosses into engine/agent (the WithSharedChildWorkspace shape).
+func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorOption {
+	return func(s *Supervisor) { s.sharedBaseWS = f }
 }
 
 // WithTeamLimits overrides the per-member, per-round stop conditions (default
@@ -788,7 +824,10 @@ func (s *Supervisor) CancelMember(name string) bool {
 // selectMemberWorkspace picks a member's workspace per the three-tier policy and
 // returns it plus its fork cleanup (nil for the base-sharing tier). A Mutating member
 // forks via s.forker (force-copy); a read-only-isolated member (build.IsolateReadOnly)
-// forks via s.roForker (worktree); a base-sharing member uses s.base with no fork. A
+// forks via s.roForker (worktree); a base-sharing member runs against s.base — re-viewed
+// through s.sharedBaseWS when composition wired the NON-relaxed re-view (the
+// path-escape-posture boundary: a relaxed main-session base must never hand the
+// shell-less member its out-of-root reach), verbatim otherwise. A
 // required-but-missing forker returns the matching sentinel (ErrNoForker /
 // ErrReadOnlyShellNoForker); a fork I/O failure wraps ErrForkWorkspace. The caller
 // owns roster/Close teardown on error.
@@ -808,6 +847,17 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 		}
 		return forkOrWrap(ctx, s.roForker, s.base, spec.Name)
 	default:
+		// Base-sharing read-only member (no shell): re-view the shared base
+		// through the NON-relaxed child workspace when composition wired one —
+		// a relaxed base must never hand the shell-less member the main
+		// session's out-of-root reach (the path-escape-posture Scenario 5
+		// boundary). A nil view (or no wired re-view) keeps the historical
+		// verbatim base.
+		if s.sharedBaseWS != nil {
+			if memberWS := s.sharedBaseWS(s.base.Root()); memberWS != nil {
+				return memberWS, nil, nil
+			}
+		}
 		return s.base, nil, nil
 	}
 }

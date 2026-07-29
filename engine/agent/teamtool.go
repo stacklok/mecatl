@@ -152,6 +152,12 @@ type TeamTool struct {
 	// IsolateReadOnly (which the composition root does only when this is wired). When
 	// nil, read-only members base-share with no shell.
 	roForker tool.WorkspaceForker
+	// sharedBaseWS re-views the parent workspace for a BASE-SHARING read-only
+	// member (the no-shell fallback tier) so it never inherits the main session's
+	// out-of-root relaxation (the path-escape-posture Scenario 5 boundary —
+	// threaded into the supervisor as WithTeamSharedBaseWorkspace). nil keeps the
+	// historical verbatim base share.
+	sharedBaseWS func(root string) tool.Workspace
 	// hooks fires the team lifecycle hooks (TeammateIdle) — shared with the member
 	// coordination tools by the composition root. nil disables them.
 	hooks port.HookRunner
@@ -182,6 +188,18 @@ func WithTeamToolForker(f tool.WorkspaceForker) TeamOption {
 // only if the factory marks a read-only member IsolateReadOnly.
 func WithTeamToolReadOnlyForker(f tool.WorkspaceForker) TeamOption {
 	return func(t *TeamTool) { t.roForker = f }
+}
+
+// WithTeamToolSharedBaseWorkspace injects the NON-relaxed workspace view a
+// BASE-SHARING read-only member runs against (threaded into the supervisor as
+// WithTeamSharedBaseWorkspace). The composition root wires it whenever the
+// parent workspace may carry out-of-root relaxation (the path-escape-posture
+// auto/yolo main-session relax): the in-loop Team tool's base IS the parent's
+// relaxed workspace at those postures, so a shell-less member must re-view it
+// through the non-relaxed construction. nil (the default) is byte-identical to
+// the pre-option behaviour.
+func WithTeamToolSharedBaseWorkspace(f func(root string) tool.Workspace) TeamOption {
+	return func(t *TeamTool) { t.sharedBaseWS = f }
 }
 
 // WithTeamToolHooks injects the HookRunner threaded into the Supervisor (and, by
@@ -324,6 +342,9 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, ws tool.Works
 	}
 	if t.roForker != nil {
 		opts = append(opts, WithReadOnlyForker(t.roForker))
+	}
+	if t.sharedBaseWS != nil {
+		opts = append(opts, WithTeamSharedBaseWorkspace(t.sharedBaseWS))
 	}
 	if t.hooks != nil {
 		opts = append(opts, WithTeamHooks(t.hooks))

@@ -158,10 +158,12 @@ func WithTeamGoal(goal string) SupervisorOption
 func WithTeamHooks(h port.HookRunner) SupervisorOption
 func WithTeamLimits(l session.Limits) SupervisorOption
 func WithTeamMode(m session.PermissionMode) SupervisorOption
+func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorOption
 func WithTeamTokenBudget(n int) SupervisorOption
 func WithTeamToolForker(f tool.WorkspaceForker) TeamOption
 func WithTeamToolHooks(h port.HookRunner) TeamOption
 func WithTeamToolReadOnlyForker(f tool.WorkspaceForker) TeamOption
+func WithTeamToolSharedBaseWorkspace(f func(root string) tool.Workspace) TeamOption
 func WithTeamToolStore(s port.SessionStore) TeamOption
 func WithTeamToolTokenBudget(n int) TeamOption
 func WithUntrustedGoal(untrusted bool) SupervisorOption

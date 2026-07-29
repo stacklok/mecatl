@@ -13,6 +13,23 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.WithTeamSharedBaseWorkspace` + `agent.WithTeamToolSharedBaseWorkspace`**
+  (path-escape-posture task 06, Scenario 5 AC5.1d) — the team-supervisor
+  analogue of `WithSharedChildWorkspace`: a `SupervisorOption` (plus its
+  `TeamOption` counterpart the in-loop Team tool threads through) injecting the
+  NON-relaxed workspace view a BASE-SHARING (shell-less) read-only team member
+  runs against. The composition root wires it whenever the team base may carry
+  out-of-root relaxation (the auto/yolo main-session relax): the supervisor's
+  base-share fallback otherwise hands the member the base VERBATIM, silently
+  giving the shell-less member the main session's escape reach — the same
+  child-never-relaxes leak task 05 closed on the Subagent nil-forker path. The
+  closure receives the base workspace root and returns the member's workspace;
+  a nil return falls back to the verbatim base. The two FORKED tiers (Mutating
+  force-copy, read-only worktree) never consult it — their forks already land
+  in a non-relaxed constructor. nil (the default) is byte-identical to the
+  pre-option behaviour. Classified Added per COMPATIBILITY.md (new exported
+  option funcs are a minor bump). (path-escape-posture plan, task 06)
+
 - **`agent.WithSharedChildWorkspace`** (path-escape-posture task 05, Scenario 5
   AC5.1b) — a new `SubagentOption` injecting the NON-relaxed workspace view a
   BASE-SHARING child runs against. The composition root wires it whenever the

@@ -45,7 +45,7 @@ func noFSTeamAssets(t *testing.T) catalogAssets {
 func noFSTeamWiring(t *testing.T, provider port.LLMProvider, a catalogAssets) (server.MemberEngineFactory, *agent.Supervisor, *team.Team) {
 	t.Helper()
 	cfg := Config{Model: "mock", Shell: "/bin/sh", TrustProject: true, Diagnostics: port.NopDiagnostics{}}
-	factory, fk, roFk, _ := buildTeamWiring(context.Background(), cfg,
+	factory, fk, roFk, _, _ := buildTeamWiring(context.Background(), cfg,
 		regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
 		a.globalMgr, agents.NewRegistry(nil), nil, nil, a, true)
 	if fk != nil || roFk != nil {

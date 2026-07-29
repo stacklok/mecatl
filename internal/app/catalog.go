@@ -404,11 +404,12 @@ func registerTeamTools(ctx context.Context, cfg Config, cat *tool.Catalog, reg *
 		}
 		return
 	}
-	factory, fk, roFk, teamHooks := buildTeamWiring(ctx, cfg, reg, s.provider, s.providerID, s.model, refMgr, a.agentReg, a.skillReadRoots, a.skillIndex, a, s.noFS)
+	factory, fk, roFk, sharedBaseWS, teamHooks := buildTeamWiring(ctx, cfg, reg, s.provider, s.providerID, s.model, refMgr, a.agentReg, a.skillReadRoots, a.skillIndex, a, s.noFS)
 	cat.MustRegister(agent.NewTeamTool(
 		agent.TeamMemberEngineFactory(factory),
 		agent.WithTeamToolForker(fk),
 		agent.WithTeamToolReadOnlyForker(roFk),
+		agent.WithTeamToolSharedBaseWorkspace(sharedBaseWS),
 		agent.WithTeamToolHooks(teamHooks),
 		agent.WithTeamToolStore(store),
 		agent.WithTeamToolTokenBudget(cfg.MaxTeamTokens),

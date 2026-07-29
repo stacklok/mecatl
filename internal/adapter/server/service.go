@@ -396,6 +396,13 @@ type Config struct {
 	// member IsolateReadOnly (which the composition root does only when this is
 	// wired). When nil, read-only members base-share with no shell.
 	ReadOnlyForker tool.WorkspaceForker
+	// SharedBaseWorkspace re-views a team's base workspace for a BASE-SHARING
+	// read-only member (the no-shell fallback tier) so it never inherits a relaxed
+	// base's out-of-root reach (the path-escape-posture Scenario 5 boundary —
+	// threaded to agent.WithTeamSharedBaseWorkspace). The composition root wires it
+	// whenever the Workspaces factory may return a relaxed workspace (auto/yolo).
+	// Optional; nil keeps the historical verbatim base share.
+	SharedBaseWorkspace func(root string) tool.Workspace
 	// TeamHooks fires the team lifecycle hooks (TeammateIdle) and is passed to
 	// member coordination tools for the TaskCreated / TaskCompleted gates.
 	// Optional.
