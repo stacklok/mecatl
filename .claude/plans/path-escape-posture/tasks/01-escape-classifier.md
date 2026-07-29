@@ -2,7 +2,7 @@
 id: 01-escape-classifier
 title: Escape-classification seam (no behaviour change)
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
