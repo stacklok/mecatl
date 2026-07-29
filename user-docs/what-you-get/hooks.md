@@ -118,7 +118,11 @@ Because the mutation happens before the result is emitted, the client stream and
 
 For `PreToolUse`, the permission policy runs on the **original, pre-mutation** args. A hook that rewrites the args is not re-permission-checked after the rewrite. This is deliberate: a hook is operator-deployed and is treated as more trusted than the model. The practical consequence is that a hook can widen a call past the policy that gated the model's original request — for example, normalizing a path that would otherwise have triggered a confirmation. Don't use this to bypass security controls you intend to enforce; use it to implement your own operator-controlled transformations.
 
+## Guardrails: a built-in model-backed hook
+
+Everything above is a **shell** hook you write yourself. mecatl also ships a built-in `PreToolUse`/`PostToolUse` pair that inspects tool content with a dedicated checker **model** instead of a script — a separate "guardrails" layer, off until you point it at a checker model, then on by default with a sensible ruleset (blocking `WebSearch`/`WebFetch`/all MCP tools/`Bash`) rather than empty. It exists for the case a shell hook can't handle well: judging whether a fetched web page looks like a prompt-injection attempt, or whether a tool call is about to exfiltrate a secret. See [Permissions & guardrails](permissions.md#layer-2--model-backed-guardrails) for the full picture, including the approve-once recovery flow when a guardrail blocks something you actually wanted.
+
 ## What's next
 
-- [Permissions](./permissions.md) — the other governance surface; controls what the model can request before hooks fire.
+- [Permissions & guardrails](./permissions.md) — the other governance surface; controls what the model can request before hooks fire, and the model-backed guardrail checker.
 - [Extension points — HookRunner](/extension-points/hook-runner.md) — how to implement a custom hook runner as a port adapter.
