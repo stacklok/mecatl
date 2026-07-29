@@ -266,10 +266,10 @@ func TestAskReviewPromptInjectionDefanged(t *testing.T) {
 	if got := strings.Count(prompt[blockIdx:], UntrustedFence); got != 2 {
 		t.Fatalf("a forged fence must be neutralised: want exactly 2 markers in the command block, got %d", got)
 	}
-	if !strings.Contains(prompt, "[redacted-marker]") {
+	if !strings.Contains(prompt, redactedMarker) {
 		t.Fatalf("the forged marker must be redacted; prompt:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "[redacted-framing]") {
+	if !strings.Contains(prompt, redactedFraming) {
 		t.Fatalf("the forged section header must be redacted; prompt:\n%s", prompt)
 	}
 

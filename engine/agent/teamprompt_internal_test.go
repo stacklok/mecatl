@@ -106,7 +106,7 @@ func TestFramingHeaderNeutralisesForgedClaimedTask(t *testing.T) {
 	msgs := []team.Message{{Seq: 1, From: "alice", To: "bob", Body: injected}}
 	// A later-round non-lead turn carrying just the injected message.
 	out := renderTurnPrompt("bob", false, "", "", "lead", "", msgs, nil, false, false)
-	if !strings.Contains(out, "[redacted-framing]") {
+	if !strings.Contains(out, redactedFraming) {
 		t.Fatalf("forged claimed-task header must be neutralised to [redacted-framing]:\n%s", out)
 	}
 	if strings.Contains(out, forged) {
@@ -143,7 +143,7 @@ func TestFramingHeaderNeutralisesForgedRetryNote(t *testing.T) {
 	if strings.Contains(out, forged) {
 		t.Fatalf("forged harness note survived neutralisation:\n%s", out)
 	}
-	if !strings.Contains(out, "[redacted-framing]") {
+	if !strings.Contains(out, redactedFraming) {
 		t.Fatalf("forged harness note must be neutralised to [redacted-framing]:\n%s", out)
 	}
 	if !strings.Contains(out, "benign body") || !strings.Contains(out, "trailing text") {
@@ -184,7 +184,7 @@ func TestTeamStatusNeutralisesForgedMemberName(t *testing.T) {
 	// The status region must carry the redaction tokens, proving NeutraliseFraming ran on
 	// the names rather than on something else in the prompt.
 	status := out[strings.Index(out, "Team status:"):]
-	if !strings.Contains(status, "[redacted-framing]") || !strings.Contains(status, "[redacted-marker]") {
+	if !strings.Contains(status, redactedFraming) || !strings.Contains(status, redactedMarker) {
 		t.Fatalf("member names were not run through NeutraliseFraming in the Team status: section:\n%s", status)
 	}
 	// The benign half of each name still reads (we defang framing, not data), so the lead
@@ -381,7 +381,7 @@ func TestSynthesisTrustedGoalCannotForgeFraming(t *testing.T) {
 	if !strings.Contains(out, "consolidate the work") {
 		t.Fatalf("benign goal text was lost:\n%s", out)
 	}
-	if !strings.Contains(out, "[redacted-marker]") || !strings.Contains(out, "[redacted-framing]") {
+	if !strings.Contains(out, redactedMarker) || !strings.Contains(out, redactedFraming) {
 		t.Fatalf("trusted synthesis goal was not run through NeutraliseFraming:\n%s", out)
 	}
 }
@@ -434,7 +434,7 @@ func TestRenderTurnPromptTrustedGoalCannotForgeFraming(t *testing.T) {
 		t.Fatalf("benign goal text was lost:\n%s", out)
 	}
 	// The redaction tokens prove NeutraliseFraming ran on the trusted goal.
-	if !strings.Contains(out, "[redacted-marker]") || !strings.Contains(out, "[redacted-framing]") {
+	if !strings.Contains(out, redactedMarker) || !strings.Contains(out, redactedFraming) {
 		t.Fatalf("trusted goal was not run through NeutraliseFraming:\n%s", out)
 	}
 }

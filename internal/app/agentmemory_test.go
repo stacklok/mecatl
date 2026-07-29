@@ -184,7 +184,10 @@ func TestMemoryHeaderNeutralisesDefName(t *testing.T) {
 	if strings.Contains(memSection, "\n"+forged+"\n") {
 		t.Fatalf("forged framing header survived in the memory header:\n%s", memSection)
 	}
-	if !strings.Contains(memSection, "[redacted-framing]") {
+	// The token is DERIVED from the engine's own neutraliser rather than copied, so a
+	// reworded redaction token cannot make this assertion silently vacuous.
+	redacted := strings.TrimSpace(agent.NeutraliseFraming("Team goal:"))
+	if !strings.Contains(memSection, redacted) {
 		t.Fatalf("def.Name framing header was not neutralised in the memory header:\n%s", memSection)
 	}
 	// The memory CONTENT is still fenced and present.

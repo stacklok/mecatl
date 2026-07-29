@@ -55,8 +55,9 @@ func TestFireDelivery_Scenario2_NeutralisesForgedFraming(t *testing.T) {
 	if !strings.Contains(got, "[redacted-marker]") {
 		t.Errorf("forged fence marker should be replaced by [redacted-marker]: %s", got)
 	}
-	if !strings.Contains(got, "[redacted-framing]") {
-		t.Errorf("forged framing header should be replaced by [redacted-framing]: %s", got)
+	redacted := strings.TrimSpace(agent.NeutraliseFraming("Team goal:"))
+	if !strings.Contains(got, redacted) {
+		t.Errorf("forged framing header should be replaced by %q: %s", redacted, got)
 	}
 }
 
@@ -155,8 +156,9 @@ func TestFireDelivery_Scenario2_ProvenanceHeaderNeutralised(t *testing.T) {
 	if !strings.Contains(got, "[redacted-marker]") {
 		t.Errorf("forged fence marker in schedule name should be replaced by [redacted-marker]: %s", got)
 	}
-	if !strings.Contains(got, "[redacted-framing]") {
-		t.Errorf("forged framing headers in schedule name should be replaced by [redacted-framing]: %s", got)
+	redacted := strings.TrimSpace(agent.NeutraliseFraming("Team goal:"))
+	if !strings.Contains(got, redacted) {
+		t.Errorf("forged framing headers in schedule name should be replaced by %q: %s", redacted, got)
 	}
 	// The legit part of the name should still appear (it's not a framing header).
 	if !strings.Contains(got, "legit") {

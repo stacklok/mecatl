@@ -127,7 +127,7 @@ func TestSubagentErrorBodyNeutralisesForgedHarnessFraming(t *testing.T) {
 			t.Errorf("forged harness framing %q survived into the parent-facing failure body:\n%s", forged, got)
 		}
 	}
-	if !strings.Contains(got, "[redacted-framing]") || !strings.Contains(got, "[redacted-marker]") {
+	if !strings.Contains(got, redactedFraming) || !strings.Contains(got, redactedMarker) {
 		t.Fatalf("neither half was run through NeutraliseFraming:\n%s", got)
 	}
 	// The actionable data still reads — we defang framing, not content.

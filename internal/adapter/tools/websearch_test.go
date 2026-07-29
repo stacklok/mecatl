@@ -286,7 +286,10 @@ func TestWebSearchNeutralisesFramingHeaders(t *testing.T) {
 	if strings.Contains(fenced, "Team goal:") || strings.Contains(fenced, "Policy:") {
 		t.Fatalf("framing headers not redacted in fenced body:\n%s", fenced)
 	}
-	if !strings.Contains(fenced, "[redacted-framing]") {
-		t.Fatalf("expected [redacted-framing] markers:\n%s", fenced)
+	// Derived from the engine's own neutraliser, never copied: a reworded redaction token
+	// must not make this assertion vacuous.
+	redacted := strings.TrimSpace(agent.NeutraliseFraming("Team goal:"))
+	if !strings.Contains(fenced, redacted) {
+		t.Fatalf("expected the framing-redaction token %q:\n%s", redacted, fenced)
 	}
 }
