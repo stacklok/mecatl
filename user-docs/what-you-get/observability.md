@@ -39,7 +39,7 @@ All series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel
 | `mecatl_turn_empty_total` | counter | `role` | Turns that produced neither a tool call nor text (the no-progress subset) |
 | `mecatl_events_total` | counter | `type`, `role` | One per emitted session event, by event type |
 | `mecatl_tool_calls_total` | counter | `tool`, `error`, `role` | One per tool execution |
-| `mecatl_tool_duration_seconds` | histogram | `tool`, `role` | Tool execution latency — base-2 exponential buckets |
+| `mecatl_tool_duration_seconds` | histogram | `tool`, `role` | Tool execution latency — explicit-bucket histogram (millisecond resolution up to 300s), so `promtool`/a plain scrape gets usable p50/p90/p99 with no extra config |
 | `mecatl_tokens_total` | counter | `kind`, `role` | Token consumption by kind (input, output, cache read, cache write) |
 | `mecatl_cache_hit_ratio` | gauge | `role` | Ratio of cache-read tokens to total input tokens |
 | `mecatl_active_runs` | gauge | `role` | Currently running Engine.Run goroutines |
@@ -96,7 +96,7 @@ Retries apply **only before the first committing chunk** (the first text, tool c
 |---|---|---|
 | `--llm-max-attempts` | `3` | Total attempts (initial call plus retries). |
 
-What triggers a retry: transient establishment failures — rate limits (429), server errors (5xx), timeouts, and network errors. Permanent client errors (4xx other than 408/429) and caller cancellations do not trigger retries and do not count toward the breaker.
+What triggers a retry: transient establishment failures — rate limits (429), server errors (5xx), timeouts, network errors, and a truncated or malformed first SSE frame (a decode error before any chunk has committed). Permanent client errors (4xx other than 408/429) and caller cancellations do not trigger retries and do not count toward the breaker.
 
 After retries are exhausted the call surfaces as an `ExhaustedError`, which reaches the caller as a terminal `result` event.
 
