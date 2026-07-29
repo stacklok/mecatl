@@ -209,3 +209,41 @@ func TestSubagentFailureLineCollapsesEveryWhitespaceKind(t *testing.T) {
 		t.Fatalf("every kind of whitespace must collapse to a single space for the width budget, got %q", got)
 	}
 }
+
+// TestSubagentFailureLineStripsBidiAndZeroWidth is the display half of the engine's own
+// canonLine lesson, applied to the bound this client keeps for itself.
+//
+// strings.Fields collapses everything unicode.IsSpace considers whitespace, which is not
+// the same set as "invisible or reordering to a terminal": U+200B (zero width space),
+// U+FEFF (BOM) and U+202E (right-to-left override) are Unicode Cf, so the collapse leaves
+// them in place. A provider cause or child summary carrying an RTL override can therefore
+// present a failure line that READS as something other than what it says (CWE-1007), on a
+// pane whose whole job is telling the operator what went wrong. sanitizeTerminal now strips
+// Cf alongside C0/C1/ESC/DEL.
+//
+// The vectors are \u escapes deliberately: an invisible character in source is
+// unreviewable, and a raw one trips the source-level control-character rules.
+func TestSubagentFailureLineStripsBidiAndZeroWidth(t *testing.T) {
+	invisibles := map[string]string{
+		"U+200B zero-width space": "\u200b",
+		"U+202E RTL override":     "\u202e",
+		"U+FEFF byte-order mark":  "\ufeff",
+	}
+	ln := &subagentLane{
+		done: true,
+		stop: "error",
+		cause: "upstream 503:" + invisibles["U+200B zero-width space"] +
+			" model" + invisibles["U+202E RTL override"] +
+			"overloaded" + invisibles["U+FEFF byte-order mark"],
+	}
+	got := subagentFailureLine(ln, 120)
+	for name, r := range invisibles {
+		if strings.Contains(got, r) {
+			t.Errorf("%s survived into the rendered failure line, so it can reorder or hide what the operator reads: %q", name, got)
+		}
+	}
+	// Negative control: the diagnostic itself still reads.
+	if !strings.Contains(got, "upstream 503") || !strings.Contains(got, "overloaded") {
+		t.Fatalf("the cause text was destroyed: %q", got)
+	}
+}
