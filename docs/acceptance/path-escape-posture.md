@@ -401,6 +401,31 @@ guardrail routing), which may be driven as separate `/plan-orchestrate` runs.
   escape-specific headless auto-deny message would be a behaviour change beyond
   "reuse the existing ask spine" and is out of v1.
 
+### Wave-1 panel-review follow-ups (deferred to Wave 2, none a gate)
+
+- **Edit-ledger `fingerprint` pseudo-fs asymmetry (Medium, defense-in-depth).**
+  `osfs.Workspace.fingerprint` reads via the inner `w.fs.Read`, bypassing
+  `escapeWorkspace.refusePseudoFS`. Not live today (the escape policy hard-denies
+  pseudo-fs for Edit before the tool body runs), but a latent asymmetry: if v2
+  ever narrows the pseudo-fs allow, the Edit ledger would read unguarded. The fix
+  is not a clean one-liner (`fingerprint` is an inner-osfs method, the wrapper is
+  composition); decide the routing in v2 alongside the pseudo-fs-narrowing call.
+- **`vetRelaxedParent` → delegate to `osfs.Canonicalize` (Low).** Within osfs the
+  ancestor-walk is now expressed three times (`resolveInRoot`, `Canonicalize`,
+  `vetRelaxedParent`) with three return contracts. `vetRelaxedParent` should
+  canonicalize-then-compare via the already-extracted `Canonicalize` rather than
+  re-walk, so a future semantic change can't drift the containment check.
+- **`escapePolicy` per-root classifier cache (Medium, resource).** `p.clfs` is an
+  unbounded map keyed by session root + a mutex on the hot permission path. If
+  the distinct-root cardinality is genuinely bounded by the deployment, document
+  it in `docs/adr/0027-cloud-native.md` List 1; otherwise move the classifier onto
+  the session-scoped `escapeWorkspace` (which already builds one) so the policy
+  holds no per-root state. Wave 2 decides; not a Wave-1 gate.
+- **Cross-cutting docs deliverables not yet done.** The plan names a
+  `docs/design/IMPLEMENTATION-NOTES.md` "Path-escape posture" section and a
+  `user-docs/` note; Wave 1 shipped code + the acceptance doc only. Land both
+  with Wave 2.
+
 ## Exit criteria
 
 When every point under *Definition of done* holds on the accumulator, this plan

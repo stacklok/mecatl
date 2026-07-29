@@ -17,12 +17,12 @@ import (
 // the layering rule: the escape *decision* is a posture/policy concern, while
 // engine/tool keeps FileSystem/Workspace (the port↔tool cycle gotcha).
 //
-// It NEVER reimplements the osfs algorithms: the in-root/escape verdict comes
-// from osfs.ClassifyPath, which runs the SAME resolvePath/resolveInRoot
-// (canonicalize-then-reject, ADR-0047) and allowedReadRoot (lexical read-root
-// match) code paths the tool body runs, over the same canonicalized root +
-// read roots. A symlinked absolute path therefore classifies identically to
-// the tool body by construction.
+// It NEVER reimplements the osfs algorithms: the in-root/escape verdict is built
+// from osfs.Canonicalize / osfs.LocalizeInRoot / osfs.MatchReadRoot — the SAME
+// canonicalize-then-reject (resolveInRoot, ADR-0047) and lexical read-root match
+// (allowedReadRoot) primitives the tool body runs, over the same canonicalized
+// root + read roots. A symlinked absolute path therefore classifies identically
+// to the tool body by construction.
 
 // escapeKind is the classification of one FS-tool call's path.
 type escapeKind int
@@ -64,14 +64,14 @@ func (k escapeKind) String() string {
 // escapeClassifier classifies FS-tool calls against one session workspace.
 // It holds only canonicalized paths (no *os.Root, no open handles): the only
 // I/O classify performs is the Lstat/EvalSymlinks ancestor canonicalization
-// resolveInRoot itself performs, inside osfs.ClassifyPath.
+// resolveInRoot itself performs (via osfs.Canonicalize).
 type escapeClassifier struct {
 	root      string
 	readRoots []string
 }
 
 // newEscapeClassifier canonicalizes root and readRoots exactly as
-// osfs.NewFileSystem does (via osfs.ClassifyPath's constructor half), so the
+// osfs.NewFileSystem does (via osfs.ResolveRoot), so the
 // classifier's comparisons are canonical-to-canonical with the tool body's.
 func newEscapeClassifier(root string, readRoots ...string) (*escapeClassifier, error) {
 	c := &escapeClassifier{}
