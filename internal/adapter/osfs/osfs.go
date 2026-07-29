@@ -537,6 +537,91 @@ func resolveRoot(root string) (string, error) {
 // os.Root.
 func ResolveRoot(path string) (string, error) { return resolveRoot(path) }
 
+// Canonicalize resolves a path — absolute, or relative against base (an
+// ALREADY-canonicalized root, as produced by ResolveRoot) — to its canonical
+// absolute form WITHOUT opening an *os.Root and WITHOUT serving any content:
+// the exact resolveInRoot/resolveRoot algorithm (deepest EXISTING ancestor +
+// EvalSymlinks + unresolved tail re-appended). An unverifiable ancestor (a
+// non-ErrNotExist stat error) fails safe with an ErrPathEscape error, matching
+// resolveInRoot. The only I/O is the Lstat/EvalSymlinks ancestor resolution
+// resolveInRoot itself performs. The path-escape-posture composition
+// classifier consumes this (plus LocalizeInRoot and MatchReadRoot) so its
+// in-root/escape verdict is single-sourced with the tool body
+// (docs/acceptance/path-escape-posture.md Scenario 1) instead of
+// reimplementing the algorithms.
+func Canonicalize(base, path string) (string, error) {
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(base, filepath.FromSlash(path))
+	}
+	// The resolveInRoot ancestor walk: resolve the deepest EXISTING ancestor's
+	// symlinks and re-append the unresolved tail, so a not-yet-existing leaf
+	// is vetted through its real parent.
+	existing := abs
+	var tail []string
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%w: %q cannot be verified: %v", ErrPathEscape, abs, err)
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return filepath.Clean(abs), nil
+		}
+		tail = append([]string{filepath.Base(existing)}, tail...)
+		existing = parent
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", fmt.Errorf("%w: %q resolving: %v", ErrPathEscape, abs, err)
+	}
+	if len(tail) == 0 {
+		return resolved, nil
+	}
+	return filepath.Join(append([]string{resolved}, tail...)...), nil
+}
+
+// LocalizeInRoot reports the lexical root-relative form of a session-RELATIVE
+// path: the exact lexical computation the tool body and *os.Root perform on a
+// relative operand (filepath.Clean — resolvePath cleans a relative path
+// lexically and hands it to the os.Root, which refuses any ".." traversal that
+// climbs out of the root). It performs NO filesystem I/O — the first
+// containment gate is lexical — so this predicate is precisely the question
+// "would the workspace root's os.Root refuse this relative path before any
+// symlink check?". An absolute or slash-prefixed path is NOT a relative
+// operand (resolvePath routes those to resolveInRoot) and reports not-in-root.
+func LocalizeInRoot(path string) (string, bool) {
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") {
+		return "", false
+	}
+	rel := filepath.Clean(filepath.FromSlash(path))
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
+// MatchReadRoot reports whether the ABSOLUTE path lies under one of the
+// CANONICAL read-only roots, using the exact LEXICAL match allowedReadRoot
+// performs for Read/Stat (cleaned-path equality or containment, never
+// canonicalized): a symlinked absolute path whose lexical form walks through
+// a read root matches exactly as the tool body serves it. No *os.Root is
+// opened and no stat is performed; whether a matched path may actually be
+// served (Read/Stat only) stays the tool body's business.
+func MatchReadRoot(path string, readRoots []string) bool {
+	if len(readRoots) == 0 || !filepath.IsAbs(path) {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	for _, root := range readRoots {
+		if cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Workspace is the session-scoped seam over the real OS filesystem. It composes
 // a FileSystem, performs an in-Go recursive Grep, and carries the Edit
 // read-ledger. Command execution is NOT part of the Workspace: it lives behind
