@@ -1,5 +1,5 @@
 # Release pipeline for mecatl — builds, publishes, signs, and attests the
-# mecated container image on every `v*` tag push.
+# mecated and mecatui container images on every `v*` tag push.
 #
 # Supply-chain properties this workflow gives a consumer:
 #   1. Image built reproducibly from source with ko (no Dockerfile) onto the
@@ -140,6 +140,132 @@ jobs:
             --image-label=org.opencontainers.image.revision=${{ github.sha }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecated
+          # The digest ref is the same image regardless of tag; take the first.
+          digest="$(head -n1 image-refs.txt)"
+          # Write the three step outputs in ONE redirect group (shellcheck SC2129).
+          # attest-build-provenance wants the repo name and the sha256 digest
+          # split apart, so derive both from the immutable ref ko just pushed.
+          {
+            echo "digest=${digest}"
+            echo "image_name=${digest%@*}"
+            echo "image_digest=${digest##*@}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Built ${digest}"
+
+      # Keyless sign the image BY DIGEST. --yes skips the confirmation prompt;
+      # the OIDC identity (this workflow) is logged to Rekor automatically.
+      - name: Sign image (keyless)
+        env:
+          IMAGE: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}"
+
+      # ko already pushed the SBOM as an OCI artifact; additionally attach it as
+      # a signed cosign attestation so it is covered by the same Sigstore
+      # transparency guarantees as the signature.
+      - name: Generate SBOM file
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          # SBOM is attested below; don't also publish it as a release asset.
+          upload-artifact: false
+
+      - name: Attest SBOM (keyless)
+        env:
+          IMAGE: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE}"
+
+      # SLSA build provenance for the published image. GitHub's native
+      # attestation generates a signed SLSA provenance predicate, keyless via
+      # the same Sigstore (Fulcio/Rekor) machinery as the cosign steps, and
+      # stores it with the image in GHCR. The subject is the IMMUTABLE digest
+      # ko produced (subject-name = repo, subject-digest = sha256:...), never a
+      # mutable tag, so the provenance binds to the exact artifact. push-to-
+      # registry uploads the attestation as an OCI referrer of the image, so
+      # `cosign verify-attestation` / `gh attestation verify` can find it.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ steps.build.outputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.image_digest }}
+          push-to-registry: true
+
+  # publish-mecatui (issue #302): the same build/sign/attest pipeline as the
+  # mecated publish job above, targeting the mecatui TUI binary under its own
+  # GHCR repo. It shares the reusable-workflow pin check run in `publish` (that
+  # step is release-global, not per-image), so this job omits it. The brood-box
+  # agent manifest (cmd/mecatui/kodata/agent.yaml) is carried into the image via
+  # ko kodata and located via the org.stacklok.broodbox.agent OCI config label.
+  publish-mecatui:
+    name: Build, publish, sign, attest mecatui
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      packages: write # push image + SBOM to GHCR
+      id-token: write # OIDC: ghcr login, cosign keyless signing AND provenance
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+    env:
+      # mecatui publishes under its own GHCR repo (/mecatui suffix) so the TUI
+      # image is a sibling of the mecated image, not mixed into it. ko appends
+      # the binary import path unless --bare is used (we use --bare).
+      KO_DOCKER_REPO: ghcr.io/${{ github.repository }}/mecatui
+      # On workflow_dispatch github.ref_name is the default branch, so prefer
+      # the explicit input; on a tag push github.ref_name is the tag.
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # ko reads the base image digest from .ko.yaml; no deep history needed.
+          fetch-depth: 1
+          ref: ${{ env.VERSION }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          # engine/ is its own module (go.work monorepo); its go.sum is part of
+          # the build cache key alongside the root's.
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # OIDC-backed registry login. The GITHUB_TOKEN is scoped to this repo's
+      # packages by the job `permissions.packages: write` above — no PAT, no
+      # username/password stored in secrets.
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Build multi-arch, push by digest, and have ko generate + push an SPDX
+      # SBOM next to the image. --bare keeps the repo path clean (no import-path
+      # suffix). We tag both the version and latest. The brood-box agent label
+      # points at /var/run/ko/agent.yaml, where ko's kodata lands the manifest.
+      # The digest is captured for signing so we sign the immutable artifact,
+      # not a mutable tag.
+      - name: Build and push image (+ SBOM)
+        id: build
+        run: |
+          set -euo pipefail
+          # --image-refs writes the fully-qualified pushed refs (one per line,
+          # including the @sha256 digest) to a file; ko's build logs go to
+          # stderr, so reading the file avoids any log interleaving.
+          KO_DOCKER_REPO="${KO_DOCKER_REPO}" ko build \
+            --platform=linux/amd64,linux/arm64 \
+            --bare \
+            --sbom=spdx \
+            -t "${VERSION}" -t latest \
+            --image-refs=image-refs.txt \
+            --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml \
+            --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            --image-label=org.opencontainers.image.title=mecatui \
+            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.vendor=Stacklok \
+            ./cmd/mecatui
           # The digest ref is the same image regardless of tag; take the first.
           digest="$(head -n1 image-refs.txt)"
           # Write the three step outputs in ONE redirect group (shellcheck SC2129).

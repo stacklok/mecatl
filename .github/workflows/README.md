@@ -118,9 +118,11 @@ so `perf.yml` is unaffected. See `docs/adr/0019-perf-tracking.md` (Phase 4 — S
 
 ## `release.yml` — `v*` tag push (+ `workflow_dispatch` with a `tag` input, for idempotently re-publishing an existing tag's artifacts)
 
-Builds and publishes the `mecated` image and its supply-chain metadata. The
-workflow defaults to `contents: read`; the single publish job elevates to
-exactly:
+Builds and publishes the `mecated` image and its supply-chain metadata, and a
+sibling `publish-mecatui` job builds/publishes/signs/attests the `mecatui`
+container image (issue #302) under `ghcr.io/<owner>/<repo>/mecatui` with the
+same supply-chain story. The workflow defaults to `contents: read`; the two
+publish jobs each elevate to exactly:
 
 ```yaml
 permissions:
