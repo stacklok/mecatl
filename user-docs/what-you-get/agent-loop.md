@@ -145,6 +145,14 @@ Both strategies guarantee:
 
 You do not interact with compaction directly. It fires automatically and the run continues.
 
+### Where "the model's context window" comes from
+
+The 80%-of-window trigger above needs an actual number to be 80% of, and that number isn't always known up front. mecatl resolves it in this order: an explicit override, then a live provider-reported window, then the embedded model catalog, then a 128k floor for a model it's never heard of. It resolves this **live, at the point of use** — not once at session start — so a background catalog refresh that lands mid-session takes effect on the very next check without restarting anything.
+
+The operator escape hatch is `--context-window-override` (`mecated`/`mecatui`, default off): pin a specific token count when a provider under-reports its own window or sits behind a proxy that does. It moves both the compaction trigger and (in `mecatui`) the context-meter denominator together — a small override value makes the agent compact on nearly every turn, which is useful for stress-testing compaction but not much else.
+
+In `mecatui`, the context meter's denominator can briefly show as unresolved (`ctx 40K`, no bar) right after a session starts on a model whose window the live catalog hasn't reported yet. This is expected and self-heals: once the live refresh lands, the bar fills in on its own without you doing anything.
+
 ### Token budget
 
 You can bound the total token spend for a run with `MaxRunTokens`. This is checked at the turn boundary — never mid-stream, so an in-flight turn always completes — against the session's accumulated input and output tokens (cache tokens are excluded).

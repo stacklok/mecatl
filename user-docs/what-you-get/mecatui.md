@@ -17,6 +17,8 @@ Switching models is a separate action from clearing your conversation. If you ac
 
 `ctrl+g` on a model sets it as your client-wide default, used for any workspace you haven't picked a model for yet. Your picks persist across mecatui restarts.
 
+The picker lists every model the server can currently reach across every configured provider — if a model you expect isn't there, it's usually a missing credential rather than a mecatui bug. A model that doesn't support images or audio is exactly as capable as the provider and mecatl's own catalog agree it is; see [Extension points: LLM provider](/extension-points/llm-provider.md#providercapabilities) if you're curious why a model can show fewer capabilities than you expected on a given adapter.
+
 ## Switching reasoning effort mid-conversation (`/effort`)
 
 `/effort` opens a picker over the fixed reasoning-effort tiers (`auto`, `low`, `medium`, `high`, `xhigh`, `max`). Pick one and press `enter` — mecatui applies it by **forking your conversation** onto a new session at the new effort level. Like the model switch, nothing is lost: you'll see a brief "switching effort — forking conversation…" note while it rebinds, then you're back in the same conversation at the new tier.

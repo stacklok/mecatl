@@ -149,14 +149,19 @@ permissions:
   ask:
     - "Bash(git push:*)"
   deny:
-    - "Bash(rm:*)"        # deny wins absolutely, in any scope
+    - "Bash(rm:*)"        # deny wins absolutely, in any scope — binds children too
+  subagent:
+    deny:
+      - "Bash(gh pr merge:*)"   # tighten a child's Bash beyond the main rules
+    allow:
+      - "Bash(go vet:*)"        # clears this from a child's substitution-floored ask
 ```
 
 Each entry is a rule spec `Tool(pattern)` or a bare `Tool`. Config rules use **glob**
 semantics; the `prefix:*` / `prefix:` form is normalised to a `prefix*` glob. The
 `permissions:` subtree parses **strictly** — an unknown key (a typo like `alow:`) is
 a loud parse error and the whole file is skipped (and logged), never silently
-ignored.
+ignored; the `subagent:` subtree inside it parses just as strictly, on its own.
 
 ### The posture ladder
 
@@ -454,10 +459,15 @@ restart, the harness re-enters the loop at the pending ask when the verdict arri
 In a **headless** deployment there is no human to ask. An unresolved ask is
 auto-denied by default, with one optional step before that: the
 `--subagent-ask-reviewer` (headless-only) inserts a tool-less, one-turn LLM reviewer
-that can approve a child's ask for that call only. It is fail-safe (any error keeps
-the call denied), never delegated a *configured* ask, and deliberately a server flag
-rather than a config key — granting an autonomous approval capability is an operator
-deployment decision, not something a checked-in project file should switch on.
+that can approve a child's ask for that call only — an allow is always *allow-once*,
+never learned, and a deny leaves the child with the same clamped denial reason an
+auto-deny would give it. It is fail-safe (any error keeps the call denied), never
+delegated a *configured* ask, and deliberately a server flag rather than a config
+key — granting an autonomous approval capability is an operator deployment decision,
+not something a checked-in project file should switch on. A per-run breaker trips
+after 3 consecutive non-allow outcomes (denies, errors, timeouts) — once open, later
+asks in that run skip the reviewer and go straight to auto-deny; a single allow
+resets the count.
 
 ---
 
