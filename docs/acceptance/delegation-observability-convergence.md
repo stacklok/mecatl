@@ -1,7 +1,7 @@
 # Delegation observability convergence — acceptance plan
 
 **Phase:** capability — converge the delegation observability surface on two tiers.
-**Status:** draft, 2026-07-30. Authored from the approved plan for issue #323.
+**Status:** in-progress, 2026-07-30. Authored from the approved plan for issue #323.
 **Issue:** [stacklok/mecatl#323](https://github.com/stacklok/mecatl/issues/323).
 **ADR:** [ADR-0079](../adr/0079-delegation-observability-convergence.md) — pins the two-tier model and the narrowing of the no-content invariant.
 **Accumulator branch:** `acc/delegation-observability-convergence` (off `main`).
