@@ -314,7 +314,7 @@ root — [ADR-0047](../adr/0047-absolute-path-resolution.md) point 5).
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Guardrail-routed escape checking (the `auto`-gated path through the modelhook checker) | v2 — needs a path-aware checker route, not a rule-syntax change | this plan names it a deferred decision |
+| Guardrail-routed escape checking (the `auto`-gated path through the modelhook checker) | ~~v2~~ **resolved** | [ADR-0080](../adr/0080-guardrail-routed-escape-checking.md): a composition-level pre-check in the escape policy, auto-only, `guardrails.escape` knob — pinned by `TestPathEscapePosture_GuardrailRoutedEscape` |
 | A managed-scope posture ceiling for escapes | future | [`internal/app/posture.go`](../../internal/app/posture.go) `postureNoCeiling` precedent |
 | Path-scoped permission **rules** (operator YAML matching on paths) | future | rules stay tool-name-scoped this plan |
 | "Allow always" persistence on an escape Ask | v2 | v1 asks are allow-once only (no learned out-of-root rule) |
@@ -365,7 +365,8 @@ guardrail routing), which may be driven as separate `/plan-orchestrate` runs.
 `TestPathEscapePosture_Scenario5_ChildReadEscapeDenied`,
 `TestPathEscapePosture_Scenario5_GlobGrepConfined`,
 `TestPathEscapePosture_Scenario5_ChildEnginesNeverRelaxed`,
-`TestPathEscapePosture_DefaultConstructionDeniesEscape`.
+`TestPathEscapePosture_DefaultConstructionDeniesEscape`,
+`TestPathEscapePosture_GuardrailRoutedEscape` (wave 2 — ADR-0080).
 
 ## Definition of done
 
@@ -384,10 +385,15 @@ guardrail routing), which may be driven as separate `/plan-orchestrate` runs.
 
 ## Deferred decisions and known risks
 
-- **Guardrail-routed escape checking.** The `auto`-gated route through the
+- **Guardrail-routed escape checking.** ~~The `auto`-gated route through the
   modelhook checker needs a path-aware checker *route* (the matcher is
   name-only); v2 decides whether that is a new checker input field or a
-  composition-level pre-check that calls `RunGuardrailCheck` directly.
+  composition-level pre-check that calls `RunGuardrailCheck` directly.~~
+  **Resolved by [ADR-0080](../adr/0080-guardrail-routed-escape-checking.md):**
+  a composition-level pre-check inside the escape policy (option b), auto-only,
+  configured by the operator-tier `guardrails.escape` knob, fail-closed to the
+  write-escape Ask on a checker error. Pinned by
+  `TestPathEscapePosture_GuardrailRoutedEscape`.
 - **Escape Ask rule persistence.** An "allow always" on an escape Ask is v2;
   v1 asks are allow-once only (no learned out-of-root rule).
 - **Edit-ledger key for out-of-root paths** must be the canonical absolute form,

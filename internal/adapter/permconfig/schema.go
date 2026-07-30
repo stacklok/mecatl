@@ -290,6 +290,11 @@ type GuardrailsSection struct {
 	// explicit rules are configured: "block" (default), "advisory", or "sanitize".
 	// An explicit rules list replaces the defaults entirely (this key is ignored).
 	DefaultMode string `yaml:"defaultMode"`
+	// Escape is the ADR-0080 escape knob: when true AND a checker model is
+	// configured, an out-of-root FS escape at posture auto routes through the
+	// guardrail checker (an unsafe verdict denies; a checker error fails closed
+	// to the write-escape Ask). Default false = the un-routed posture table.
+	Escape bool `yaml:"escape"`
 	// Rules is the guardrail rule list.
 	Rules []GuardrailRuleSpec `yaml:"rules"`
 }
@@ -328,6 +333,7 @@ func (g *GuardrailsSection) strictFields() map[string]any {
 		"disabled":        &g.Disabled,
 		"onCheckerDown":   &g.OnCheckerDown,
 		"defaultMode":     &g.DefaultMode,
+		"escape":          &g.Escape,
 		"rules":           &g.Rules,
 	}
 }

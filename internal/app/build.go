@@ -565,6 +565,13 @@ type Config struct {
 	// rules when no explicit rules are configured: "block" (default), "advisory",
 	// or "sanitize". An explicit rules list replaces the defaults entirely.
 	GuardrailsDefaultMode string
+	// GuardrailsEscape is the ADR-0080 escape knob (operator-tier `guardrails:`
+	// `escape:` key): when true AND a checker model is configured, an out-of-root
+	// FS escape at posture AUTO is routed through the guardrail checker as a
+	// composition-level pre-check (an unsafe verdict denies; a checker error
+	// fails closed to the write-escape Ask). Default false = the un-routed
+	// posture table (auto read-allow / write-ask), byte-identical to before.
+	GuardrailsEscape bool
 
 	// ModelAliases maps a short alias (e.g. "sonnet"/"opus"/"haiku"/"fast") to a
 	// concrete provider model id. Resolved only here; the domain/agent always
@@ -2564,7 +2571,14 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the policy decision and the workspace serving can never disagree.
 	// assets.skillReadRoots feeds the per-root classifier's read-root verdict
 	// (the skills carve-out).
-	sharedPolicy := newEscapePolicy(policy, cfg.Posture, assets.skillReadRoots)
+	// ADR 0080 (auto + the operator-tier escape knob): arm the guardrail-routed
+	// escape pre-check on the MAIN policy ONLY. The checker is built over the
+	// SAME engine-backed VerdictChecker the modelhook hook path uses (the
+	// recursion guard and operator-tier-only config carry over); the option is a
+	// no-op at any non-auto posture or with no checker, so yolo/strict/trusted
+	// and the un-knobbed auto stay byte-identical.
+	sharedPolicy := newEscapePolicy(policy, cfg.Posture, assets.skillReadRoots,
+		withEscapeGuardrailRoute(buildGuardrailsEscapeChecker(cfg, reg, provider)))
 	deps := baseEngineDeps(cfg, reg, provider, store, sharedPolicy, mainHooks, mcpProvider, instructions)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the

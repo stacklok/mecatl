@@ -47,6 +47,10 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if cfg.GuardrailsDefaultMode == "" {
 		cfg.GuardrailsDefaultMode = strings.TrimSpace(g.DefaultMode)
 	}
+	// Escape knob (ADR 0080): YAML-only (no flag); OR-folded like Disabled.
+	if g.Escape {
+		cfg.GuardrailsEscape = true
+	}
 	// Rules: YAML is the sole source. Map the on-disk specs to app.GuardrailRule.
 	if len(cfg.GuardrailsRules) == 0 && len(g.Rules) > 0 {
 		rules := make([]GuardrailRule, 0, len(g.Rules))
@@ -361,6 +365,21 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 	// no-verdict failure), not be nudged into a second.
 	deps.MaxNoProgressNudges = -1
 	return engineGuardrailsChecker{engine: agent.NewEngine(deps)}
+}
+
+// buildGuardrailsEscapeChecker builds the ADR-0080 escape route's checker, or
+// nil when the knob is off or guardrails are unconfigured (the byte-identical
+// no-route posture). It reuses the SAME engine-backed VerdictChecker as the
+// hook-path Runner — the recursion guard (a tool-less one-turn engine that
+// fires no hooks) and the operator-tier-only config carry over unchanged. The
+// route is armed only on the MAIN escape policy, only at posture auto
+// (withEscapeGuardrailRoute enforces the posture gate), so a nil here is the
+// common case and costs nothing.
+func buildGuardrailsEscapeChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider) modelhook.VerdictChecker {
+	if !cfg.GuardrailsEscape || !guardrailsConfigured(cfg) {
+		return nil
+	}
+	return buildGuardrailsChecker(cfg, provReg, provider, "", cfg.Model)
 }
 
 // compileGuardrailRules converts the supplied rule specs into the adapter's compiled

@@ -85,6 +85,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0060 — Add Bash to the default guardrail rule set with a read-only pre-filter](./0060-guardrails-bash-default.md)
 - [0061 — Human one-shot guardrail override (`/guardrail-allow`)](./0061-guardrails-human-override.md) *(superseded by 0062)*
 - [0062 — Out-of-band approve-once for guardrail blocks](./0062-guardrails-approve-once.md)
+- [0080 — Guardrail-routed path-escape checking (composition pre-check, auto-only)](./0080-guardrail-routed-escape-checking.md)
 - [0069 — Plan-approval gate](./0069-plan-approval-gate.md)
 - [0070 — Model-visible affordance gate](./0070-model-visible-affordance-gate.md)
 - [0022 — Allow-all posture](./0022-allow-all-posture.md)
