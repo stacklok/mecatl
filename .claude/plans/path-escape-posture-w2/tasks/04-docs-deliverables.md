@@ -2,8 +2,8 @@
 id: 04-docs-deliverables
 title: Docs deliverables (IMPLEMENTATION-NOTES section + user-docs note)
 blocked_by: [01-strict-trusted-escape-ask]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture-w2/04-docs-deliverables"
 worktree: ""
 issue: ""
 retries: 0
