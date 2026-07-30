@@ -2,8 +2,8 @@
 id: 02-guardrail-routing-decision
 title: Resolve guardrail-routed escape checking (ADR + mechanism)
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture-w2/02-guardrail-routing-decision"
 worktree: ""
 issue: ""
 retries: 0
