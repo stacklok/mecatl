@@ -62,6 +62,17 @@ redaction remains shared in one place.
 - The proto `Subagent` and `Parallel` messages grow `text` / `detail` / `inner_kind`
   fields (additive, backward-compatible on the wire). `engine/api/*.txt` drifts (Added =
   minor per `engine/COMPATIBILITY.md`).
+- **Perf cost (accepted):** the widened projection costs ~+33 allocs/op on the
+  `background_subagents` scenario (~2.2%, above the 1.02 gate threshold vs the
+  pre-feature baseline). This is the intrinsic cost of the feature — per background
+  child, four projected events (message.delta, tool.call, tool.result, result) each
+  pay one `SubagentPayload` alloc + one `session.Event` send, the same per-event cost
+  Team already pays per member event. The cost was reduced from +62/op by making
+  `clampPreview` single-pass (one builder walk, zero-alloc on a clean short string,
+  the cap enforced as it fills) and by skipping the payload alloc for non-projected
+  events in `drainChildObserved`; the residual is the accepted price of the
+  observability the ADR exists to deliver, not a leak. Recorded here so the
+  gh-pages baseline shift on merge is read as intentional, not drift.
 
 ## See also
 

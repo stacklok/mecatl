@@ -3095,6 +3095,13 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 	names := map[session.ToolCallID]string{}
 	for ev := range run.Events() {
 		if emit != nil {
+			// Project ONLY the four preview kinds (ADR 0079); skip everything else
+			// BEFORE allocating the payload (turn.start, hooks, compaction, asks…)
+			// so a dropped event costs nothing.
+			if ev.Type != session.EvToolCall && ev.Type != session.EvToolResult &&
+				ev.Type != session.EvMessageDelta && ev.Type != session.EvResult {
+				goto handle
+			}
 			payload := &session.SubagentPayload{
 				ParentCallID: parentCallID,
 				ChildID:      childID,
@@ -3129,17 +3136,12 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 					payload.ToolCount = toolCount
 					project = true
 				}
-			default:
-				// permission.ask, turn.start, turn.end, hook, compaction,
-				// reasoning.delta, session.init, subagent.*, team.* and any future
-				// kind are NOT projected — a child's permission.ask in particular
-				// is dropped so its (possibly secret-bearing) reason never
-				// reaches the stream.
 			}
 			if project {
 				emit(session.Event{Type: session.EvSubagentTool, Subagent: payload})
 			}
 		}
+	handle:
 		if text, st, ok := handleChildEvent(run, ev, posture); ok {
 			finalText, stop = text, st
 			if ev.Result != nil {

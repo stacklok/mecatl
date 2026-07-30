@@ -614,29 +614,48 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 
 // clampPreview normalises a forwarded text/preview (a member tool-call/result
 // Detail, a member's message Text, a task Description, or a SURFACED subagent command)
-// into a single bounded, control-byte-free line: it replaces every C0/C1 control
-// character (incl. newlines, tabs, ESC/0x1b and the rest of 0x00–0x1f / 0x7f–0x9f) with
-// a space and clamps to maxTeamPreview runes, appending an ellipsis on overflow. The
-// control-byte scrub is a security boundary (CWE-117/150): a surfaced command or member
-// preview can carry PEER-CONTROLLED text, and a non-mecatui gRPC client rendering it
-// verbatim must not be exposed to ANSI/escape-sequence injection. It is rune-aware, so
-// it never splits a multi-byte character. This is the cap+sanitiser that keeps the
-// fuller member content BOUNDED and inert.
+// into a single bounded, control-byte-free line: it replaces every C0 (0x00–
+// 0x1f, includes \n \r \t and ESC 0x1b) and C1/DEL (0x7f–0x9f) control byte to a
+// space so no escape/ANSI sequence rides a verbatim render, and clamps to
+// maxTeamPreview runes, appending an ellipsis on overflow. The control-byte scrub is
+// a security boundary (CWE-117/150): a surfaced command or member preview can carry
+// PEER-CONTROLLED text, and a non-mecatui gRPC client rendering it verbatim must not
+// be exposed to ANSI/escape-sequence injection. It is rune-aware, so it never splits
+// a multi-byte character. This is the cap+sanitiser that keeps the fuller member
+// content BOUNDED and inert.
+//
+// It is SINGLE-PASS (one strings.Builder walk; the delegation-observability
+// convergence made this the hottest pure-perf path — the background_subagents
+// scenario showed the two-pass strings.Map+[]rune shape as the top regression): a
+// clean short string returns the input with NO allocation, and the scrub+clamp share
+// one walk (the rune cap is enforced as the builder fills, so an overlong input
+// allocates only the ~cap-sized prefix, never the full scrubbed copy).
 func clampPreview(s string) string {
-	s = strings.Map(func(r rune) rune {
-		// Drop the Unicode replacement char's source aside, neutralise every C0 (0x00–
-		// 0x1f, includes \n \r \t and ESC 0x1b) and C1/DEL (0x7f–0x9f) control byte to a
-		// space so no escape/ANSI sequence rides a verbatim render.
+	var b strings.Builder
+	b.Grow(min(len(s), maxTeamPreview+1))
+	runes := 0
+	changed := false
+	truncated := false
+	for _, r := range s {
 		if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
-			return ' '
+			r = ' '
+			changed = true
 		}
-		return r
-	}, s)
-	r := []rune(s)
-	if len(r) <= maxTeamPreview {
+		if runes == maxTeamPreview {
+			truncated = true
+			break
+		}
+		b.WriteRune(r)
+		runes++
+	}
+	if !changed && !truncated {
 		return s
 	}
-	return strings.TrimRight(string(r[:maxTeamPreview]), " ") + "…"
+	out := b.String()
+	if truncated {
+		out = strings.TrimRight(out, " ") + "…"
+	}
+	return out
 }
 
 // projectTeamTasksSnapshot maps the team's shared task list (team.Task copies) onto
