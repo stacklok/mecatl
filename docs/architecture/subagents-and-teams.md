@@ -31,8 +31,8 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
 3. Runs the child via the injected `childEngine.Run(ctx, child, runWS, prompt)`.
 4. **Drains the child's entire Event stream inside `Execute`**
    (`drainChildObserved` — the single redaction chokepoint all three delegation
-   families share), relaying only the REDACTED, metadata-only
-   `subagent.start/tool/end` projection ([the domain model](domain-model.md)) and **returning only the final
+   families share), relaying only the REDACTED, bounded-preview
+   `subagent.start/tool/end` projection (ADR 0079; [the domain model](domain-model.md)) and **returning only the final
    summary string** as one `ToolResult` (gauntlet #7) — no child transcript
    ever enters the parent conversation.
 

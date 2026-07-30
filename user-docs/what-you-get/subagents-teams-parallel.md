@@ -11,6 +11,10 @@ This page covers them from the caller's side: what each one does, the knobs you'
 
 A rule all three share: **a child's transcript never enters the parent conversation.** The parent sees only a bounded summary — Subagent's result, a Parallel branch's summary, Team's synthesized report — plus lightweight status events. If you need to see what a child actually did, pull its transcript on demand with `InspectSubagent` (Subagent and Parallel branches) or `InspectMember` (team members). It's never automatic; it's always a deliberate read you ask for.
 
+### Watching a delegation in mecatui — bounded previews
+
+In `mecatui` a running delegation is watchable at the same fidelity whichever tool produced it: a collapsed Subagent card shows the child's **live current-tool name**, and `ctrl+t` (the expanded trace) and the `ctrl+a` agents overlay's Subagent/Parallel focus panes show Team-format traces — tool chips with **bounded previews** of child tool args/results plus capped child message lines. Every preview is capped and control-byte-scrubbed, and this is a client-only view: nothing here enters the parent conversation, and a child's permission ask is never forwarded. The task board, findings ledger, per-member dispositions, mutating cue, and context meter remain Team-only. See [`docs/architecture/domain-model.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/domain-model.md) and [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md) for the full projection and overlay reference.
+
 ## Subagent — delegate one task
 
 `Subagent` spawns a single child agent with a fresh, empty context (unless you ask it to inherit yours — see `fork` below) and hands it a self-contained instruction. It's the right tool for "go investigate X" or "go make this focused change" when the task doesn't need your current conversation.

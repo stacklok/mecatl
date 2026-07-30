@@ -41,6 +41,8 @@ You don't have to wait for a turn to finish before typing your next thing. Press
 
 A tool call doesn't dump its full JSON arguments into your terminal by default — a long value collapses to a size-and-preview summary (`body: 5.1 KB / 72 lines · "## Context…"`), and a card that hid something always says so. `ctrl+t` expands the focused card to the full pretty-printed arguments and result. Edit/Write calls are the exception: their colourised diff renders in full either way, since that's the whole point of looking at them.
 
+A Subagent card adds delegation visibility: while the child runs, its collapsed line names the child's **live current tool**, and `ctrl+t` shows a Team-format trace — tool chips with bounded previews of the child's args/results and capped message lines. The `ctrl+a` agents overlay gives Subagent and Parallel runs the same bounded-preview traces in their focus panes; the task board, findings, dispositions, and context meter stay Team-only. These previews are capped, control-byte-scrubbed, and client-only — see [Subagents, teams, and parallel](subagents-teams-parallel.md#watching-a-delegation-in-mecatui--bounded-previews).
+
 ## What's next
 
 - [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md) — the full mecatui reference: every keybinding, the command palette, the context meter, diff and reasoning panels, and the state-file layout behind model/workspace picks.

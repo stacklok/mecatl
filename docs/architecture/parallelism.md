@@ -88,9 +88,10 @@ under `MemberSessionID(teamID, member)` (`team-<teamID>-<member>`, collision-fre
 concurrent teams); the parent catalog's read-only **`InspectMember`** tool pulls ONE
 member's bounded transcript on demand (PULL — never auto-injected). A `team.findings`
 event projects the ledger onto the stream, mirroring `team.tasks`. The stream projection
-is intentionally fuller than Subagent/Parallel but structurally bounded: `team.member`
-forwards only capped member message/tool previews (never a `permission.ask`), task/finding
-snapshots are capped value types, and `team.end` carries aggregate usage plus closed-enum
+is the ADR-0079 tier-2 superset: `team.member` forwards only capped member message/tool
+previews (the tier-1 bounded previews Subagent/Parallel now share; never a `permission.ask`),
+and the Team-unique structures add task/finding snapshots (capped value types), the mutating
+cue, the context meter, and `team.end` aggregate usage plus closed-enum
 member dispositions (`done` or `stopped` for `error`/`cancelled`/`budget`).
 
 A team-wide **token budget** complements the per-run one ([the agent loop](agent-loop.md)):

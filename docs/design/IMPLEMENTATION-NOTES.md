@@ -1891,9 +1891,9 @@ model already gets `[STOPPED]` in the lead's report via `joinTeamFallback`), so 
 supervisor. It is a supervisor verdict (closed enums, `Name` already on the roster), kept OFF the
 `EvTeamMember` redaction channel exactly like the tasks/findings discipline.
 
-**Team observability structural guard.** Because `TeamPayload` is deliberately
-fuller-than-metadata (bounded member message/tool previews, task descriptions, findings, and terminal
-dispositions), it now has the same review gate Parallel already had: `engine/session/team_payload_test.go`
+**Team observability structural guard.** Because `TeamPayload` is deliberately the fullest
+delegation projection (bounded member message/tool previews, task descriptions, findings, and terminal
+dispositions — the ADR-0079 tier-2 structures stay Team-unique), it now has the same review gate Parallel already had: `engine/session/team_payload_test.go`
 allow-lists every top-level and nested team projection field and rejects unreviewed content-shaped
 additions (`Args`, `Content`, `Message`, `Prompt`, `Transcript`, `PermissionAsk`, `Ask`). This pins the
 redaction contract in code: `team.member` may be watchable, but permission asks are never forwarded,
@@ -4148,7 +4148,7 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   and then SKIPS the client wire (client-facing relay of the verdict record is a later
   optional decision).
 - **The log inherits the stream's redaction.** The event stream is ALREADY the
-  redaction boundary (Subagent/Parallel payloads metadata-only, Team previews capped,
+  redaction boundary (all three delegation families' previews clamped + scrubbed per ADR 0079,
   surfaced child asks clamped). The log is downstream, so it adds no redaction code — it
   stores whatever crosses the relay, verbatim. The Phase 3a gate's redaction subtest
   mutation-verifies this (a Subagent child's secret-shaped arg never appears in any
@@ -5079,9 +5079,9 @@ name/error/count/usage/stop/duration). Two pieces:
   the existing team overlay became the Teams tab verbatim (`renderTeamsTab` dispatches to the
   unchanged `renderTeamRoster`/`Focus`/`Tasks`/`Findings`; the standalone `renderTeamOverlay` is
   gone, the container owns the `centerCard` framing now). The Subagents tab (`subagentState`,
-  `renderSubagentRoster`/`Focus`) reuses the team roster's window/clamp/focus patterns; rows are
-  metadata-only with a `#<hash>` ChildID disambiguator and the latest child tool as the liveness
-  signal. `tab` (`keys.NextTab`) switches tabs (only from a roster); `enter` focuses; `esc` steps
+  `renderSubagentRoster`/`Focus`) reuses the team roster's window/clamp/focus patterns; rows carry
+  a `#<hash>` ChildID disambiguator and the child's LIVE current tool as the liveness signal.
+  `tab` (`keys.NextTab`) switches tabs (only from a roster); `enter` focuses; `esc` steps
   back then closes. **Default tab is context-sensitive** (`preferredAgentsTab`, tested in isolation):
   Teams when a team is LIVE, else Subagents when subagents ran, else the available tab. The newer
   Subagent/Team terminal stop reasons (`budget`/`structured_output`/`no_progress`/`max_*`) ride the
@@ -5094,10 +5094,12 @@ name/error/count/usage/stop/duration). Two pieces:
 THIRD delegation family alongside `subagent.*` and `team.*`. It was chosen as a DEDICATED
 family (Option A) over consolidating into the subagent/team families — see
 `.scratch/task-research/REVIEW-event-consolidation.md`: the only genuinely-shared part (the
-child lifecycle shape) is shared where safe, while Team remains intentionally
-fuller-than-metadata because a crew is meant to be watched. The three families share a
+child lifecycle shape) is shared where safe. As of ADR 0079 the families converge on TWO
+TIERS: bounded previews are common to all three (tier 1), while the task board, findings
+ledger, dispositions, mutating cue, and context meter stay Team-unique (tier 2). The three
+families share a
 LIFECYCLE (parent call id, child/branch/member identity, tool name/error/count, usage,
-stop, duration) but differ in AGGREGATION shape: subagent = flat fleet, parallel = fan-out
+stop, duration, plus the bounded preview fields) but differ in AGGREGATION shape: subagent = flat fleet, parallel = fan-out
 GROUP (join + winner + preserved fork paths), team = coordinating roster (bounded member
 previews + tasks + findings + mailbox). **TRIP-WIRE: a 4th delegation family is the point
 to extract a shared `ChildActivity` value object — not before** (recorded in the
@@ -5106,8 +5108,9 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
 - **Server** (`engine/session/event.go`): `EvParallelStart` / `EvParallelBranch` /
   `EvParallelEnd` + `session.ParallelPayload` (string-passthrough like `subagent.*`; a
   `ParallelEventKind` discriminates the per-branch `branch_start`/`branch_tool`/`branch_end`
-  transitions). It is METADATA ONLY — no branch message text, tool args, or result bodies; it
-  carries fork-root PATHS (handles already in the result text, not branch content). `Event.Parallel`
+  transitions). It carries the ADR-0079 bounded previews — `Text`/`Detail`/`InnerKind` (capped +
+  control-byte-scrubbed, client-only) like the other two families — plus fork-root PATHS
+  (handles already in the result text, not branch content). `Event.Parallel`
   mirrors `Event.Subagent`/`Event.Team`.
 - **Emission** (`engine/agent/parallel.go`): `ExecuteWithParent` (the `childCapableTool` seam the
   dispatcher prefers — emit was already plumbed) brackets the run with `parallel.start`/`parallel.end`
@@ -5121,10 +5124,12 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
   Q3). `branchResult.usage` was added so `sumBranchUsage` can carry the run-total.
 - **Proto + mapper**: `Event.parallel = 14` + a new `Parallel` message (additive, non-breaking) +
   `toProtoParallel` (mirrors `toProtoSubagent`).
-- **Gauntlet #7**: enforced by a STRUCTURAL test (`TestParallelPayloadHasNoContentFields` — an
-  allow-list of metadata field names; trips if a content-shaped field appears) AND a BEHAVIORAL
+- **Gauntlet #7** (ADR 0079 narrowed the structural half): enforced by a STRUCTURAL test
+  (`TestParallelPayloadHasNoContentFields` — an allow-list of field names; trips if an
+  UNREVIEWED content-shaped field appears, with the bounded-preview fields asserted as fed
+  only through `clampPreview`) AND a BEHAVIORAL
   sentinel test (`TestParallelNoContentLeakBehavioral` — a branch whose args/result/message carry a
-  canary; the canary never appears in any emitted `parallel.*` field). Model-facing e2e:
+  canary; the RAW canary never appears in any emitted `parallel.*` field, only its clamped form may). Model-facing e2e:
   `TestParallelEmitsObservabilityStreamAll` / `TestParallelEmitsWinnerJudge` (winner at a non-zero
   index — off-by-one guard) / `TestParallelEmitsWinnerFirst` / `TestParallelBranchErrorRepresented`
   (a fork-failed branch still emits a coherent `branch_end` with `Failed=true`).
@@ -5132,7 +5137,8 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
   `parallelGroup`/`parallelBranch` state (deterministic, insertion-ordered, no map-iteration flake);
   a third `Parallel` tab in the unified `ctrl+a` overlay (`Subagents | Parallel | Teams`) renders the
   grouped roster (join + branch counts + winner) → ONE-level group focus (branches inline with chip
-  traces, the winner highlighted, the preserved fork path, an honesty note). It folds into the fleet
+  traces carrying bounded previews, the winner highlighted, the preserved fork path, a "bounded
+  previews" honesty note). It folds into the fleet
   footer (a `⑂` segment). Default-tab precedence (plan Q5): `teamLive > parallelLive > haveSubagents >
   haveParallel > haveTeam > Subagents`. Rendered from relayed Events ONLY (no internal/proto import).
 

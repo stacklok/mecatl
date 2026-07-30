@@ -100,16 +100,18 @@ message Event {
   Usage         usage       = 9;   // cumulative on result; per-turn in turn_end
   TurnEnd       turn_end    = 10;  // turn.end: this turn's usage + elapsed time
   Hook          hook        = 11;  // structured hook phase/tool/decision/call_id
-  Subagent      subagent    = 12;  // subagent.*: REDACTED metadata-only child projection
+  Subagent      subagent    = 12;  // subagent.*: REDACTED bounded-preview child projection
   Team          team        = 13;  // team.*: BOUNDED team projection (start/member/tasks/findings/end)
   Parallel      parallel    = 14;  // parallel.*: REDACTED fork-join projection (incl. winner + fork paths)
 }
 ```
 
 The three delegation families (`subagent.*`, `team.*`, `parallel.*`) project a
-child loop's lifecycle without leaking its content: `subagent`/`parallel` carry
-metadata only (ids, tool names/counts, usage, stop — never args, results, or
-message text); `team` is fuller but every preview is capped and a member's
+child loop's lifecycle without leaking its content: all three carry the same
+BOUNDED PREVIEWS (ADR 0079) — ids, tool names/counts, usage, stop, plus capped,
+control-byte-scrubbed `text`/`detail` previews of child message text and tool
+args/results; the task board, findings ledger, dispositions, mutating cue, and
+context meter stay Team-only. Every preview is capped and a child's
 permission asks are never forwarded.
 
 `Result.stop` is one of: `end_turn`, `max_turns`, `max_tool_calls`,

@@ -138,9 +138,9 @@ API. The real constants:
 | `no_progress` | `EvNoProgress` | a completed turn produced no tool call and no meaningful text; the loop is nudging (gentle, then a final best-effort extraction) or giving up |
 | `result` | `EvResult` | terminal: carries `ResultPayload{Stop, Text, Usage}` |
 | `user_prompt` | `EvUserPrompt` | a user-role message was recorded (the genuine client prompt AND the harness-authored synthetic continuations — the no-progress / background nudges & completion notice), carrying `UserPromptPayload`; **log-only**, persisted to the durable event log and skipped on the client wire — it lets an event-sourced fold reconstruct user-role turns |
-| `subagent.start/tool/end` | `EvSubagent*` | a `Subagent` child run's REDACTED, metadata-only projection (flat fleet) |
+| `subagent.start/tool/end` | `EvSubagent*` | a `Subagent` child run's REDACTED, bounded-preview projection (flat fleet) |
 | `team.start/member/tasks/findings/end` | `EvTeam*` | an in-process `Team` run's BOUNDED projection (coordinating roster) |
-| `parallel.start/branch/end` | `EvParallel*` | a `Parallel` fork-join run's REDACTED, metadata-only GROUP projection (join + winner + fork paths) |
+| `parallel.start/branch/end` | `EvParallel*` | a `Parallel` fork-join run's REDACTED, bounded-preview GROUP projection (join + winner + fork paths) |
 
 `Event` carries `Type, Seq, Turn, Text` plus optional pointers `ToolCall`,
 `ToolResult`, `Ask *PendingAsk`, `Result *ResultPayload`, `TurnEnd *TurnEndPayload`,
@@ -151,10 +151,13 @@ kind).
 
 The three DELEGATION families (`subagent.*` / `team.*` / `parallel.*`) project child-loop
 lifecycle events and differ in AGGREGATION shape — flat fleet vs coordinating roster vs
-fan-out group. Subagent and Parallel are metadata-only; Team is intentionally
-fuller-but-bounded because a crew is meant to be watched: `team.member` may carry capped
-member text/tool previews, `team.tasks` and `team.findings` carry capped snapshots, and
-`team.end` adds terminal per-member dispositions. A member `permission.ask` is still never
+fan-out group. As of ADR 0079 they converge on a TWO-TIER model: all three families project
+the same BOUNDED PREVIEWS — capped and control-byte-scrubbed (the shared `clampPreview` in
+`engine/agent/teamtool.go`), client-only — through the single `drainChildObserved`
+chokepoint, so a Subagent or a Parallel branch is watchable at the same fidelity as a Team
+member. Team-unique structures stay on tier 2: `team.tasks` and `team.findings` carry capped
+snapshots, `team.end` adds terminal per-member dispositions, plus the mutating cue and the
+context meter. A member/branch/child `permission.ask` is still never
 projected. The families are deliberately NOT merged; a 4th family is the trip-wire to
 extract a shared lifecycle value object (see `docs/design/IMPLEMENTATION-NOTES.md`).
 Gauntlet #7 still holds: none of these projections injects branch/child/member transcripts

@@ -852,7 +852,8 @@ turn it lands. The `?` keys-&-features overlay carries a usage **legend** decodi
 
 Three surfaces watch concurrent **Subagent children**, **Parallel fork-join runs**, and
 **agent teams**, all built purely from the relayed `subagent.*` / `parallel.*` / `team.*`
-event projection (REDACTED, metadata-only — never child/branch content):
+event projection (REDACTED — bounded previews only, ADR 0079; full child/branch content
+stays context-isolated):
 
 - **Fleet status footer segments.** Once **≥1 subagent has started** this session the
   footer carries a peripheral cue — **`⛭ subagents 3◐ 1✓ · ctrl+a`** (N running ◐ / M
@@ -870,8 +871,8 @@ event projection (REDACTED, metadata-only — never child/branch content):
     **✗** error), the goal label, a short `#<hash>` of the `ChildID` (so two similar
     goals are unambiguous), a **`⇢ bg` marker** on a detached (`background: true`)
     child, the current/last child tool, the running tool count, and token usage.
-    `enter` focuses one child's redacted `✓/✗` tool-chip trace (args/results stay
-    hidden — context-isolated; gauntlet #7); a background child's focus pane adds an
+    `enter` focuses one child's `✓/✗` tool-chip trace with bounded previews (args/results
+    shown capped + control-byte-scrubbed — client-only; gauntlet #7, ADR 0079); a background child's focus pane adds an
     honest delivery line — *running detached* vs *done — result ready for the agent
     (SubagentStatus)* — and never claims a collected/uncollected state (the registry's
     `delivered` flag is not on the wire; the events carry only background + done). The
@@ -886,8 +887,8 @@ event projection (REDACTED, metadata-only — never child/branch content):
     join=all run carries none, so the line is omitted), and the **preserved winner fork
     path** (`winner fork (preserved): <path>`). Each branch row carries its own glyph
     (**◐**/**✓**/**✗** failed), label, goal, current/last tool (or, once done, its stop
-    label and **wall-clock duration**), count, and usage. Branch args/results stay hidden
-    (context-isolated; gauntlet #7). The fork paths are the model's no-auto-merge handle
+    label and **wall-clock duration**), count, and usage. Branch args/results render as
+    bounded previews (capped + control-byte-scrubbed — client-only; gauntlet #7, ADR 0079). The fork paths are the model's no-auto-merge handle
     and ride the tool RESULT too — these events are the client observability channel only.
   - **Teams** — the existing agent-team roster + per-member focus + task / findings
     sub-views, verbatim. The tasks sub-view rows show the truncated task **description**
