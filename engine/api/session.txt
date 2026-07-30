@@ -168,7 +168,7 @@ type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
 type MediaKind string
 type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; Parts []Content}
 type ParallelEventKind string
-type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
+type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
@@ -178,7 +178,7 @@ type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation
 type SessionID string
 type State string
 type StopReason string
-type SubagentPayload struct{ParentCallID string; ChildID string; Goal string; Background bool; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Usage Usage; Stop StopReason; DurationMs int64}
+type SubagentPayload struct{ParentCallID string; ChildID string; Goal string; Background bool; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; DurationMs int64}
 type TeamFindingSnapshot struct{Member string; Body string}
 type TeamMemberDisposition struct{Name string; Disposition string; Reason string}
 type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; Model string}

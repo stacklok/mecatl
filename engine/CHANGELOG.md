@@ -43,6 +43,19 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   byte-identical to the pre-option behaviour. Classified Added per
   COMPATIBILITY.md (a new exported option func is a minor bump).
   (path-escape-posture plan, task 05)
+- **`session.SubagentPayload.Text` / `.Detail` / `.InnerKind` and
+  `session.ParallelPayload.Text` / `.Detail` / `.InnerKind`** (ADR 0079,
+  delegation-observability-convergence) — the two delegation payloads gain the
+  same bounded-preview fields `TeamPayload` already carried: `Text` (a clamped
+  child message/result-text preview), `Detail` (a clamped tool-call-args or
+  tool-result-body preview), and `InnerKind` (the inner event kind the preview
+  was projected from). Every preview is fed only through `clampPreview`
+  (control-byte scrub + rune cap) at the single `drainChildObserved`
+  chokepoint, is client-only, and never enters the parent's `Conversation`
+  (gauntlet #7 unchanged). Classified Added per COMPATIBILITY.md (new struct
+  fields are a minor bump). (delegation-observability-convergence plan,
+  tasks 01–02)
+ (chore(engine): api snapshot + CHANGELOG for the ADR-0079 payload widening)
 
 - **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
   `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
