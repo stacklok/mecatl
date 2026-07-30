@@ -61,9 +61,13 @@ when the code that satisfies the plan has landed.
   every schedule-capable session: a store-shaped pre-Service schedule manager so
   the shared-engine fast path (the default mecatui session) carries the tool too.
   Status: draft.
+- [Path-escape posture](path-escape-posture.md) — relax the osfs out-of-root FS
+  rejection by operator posture (allow at `auto`/`yolo`, ask at
+  `strict`/`trusted`), keeping the untrusted-child hard-deny, the symlink
+  containment, and a pseudo-fs never-relaxed rule. Status: draft.
 - [Delegation observability convergence](delegation-observability-convergence.md) —
   bounded previews for Subagent/Parallel, converging the delegation observability
-  surface on two tiers (Team-unique structures stay Team-only). Status: draft.
+  surface on two tiers (Team-unique structures stay Team-only). Status: landed.
 
 ## See also
 
