@@ -2,7 +2,7 @@
 id: 01-strict-trusted-escape-ask
 title: strict/trusted resolve out-of-root escapes to Ask (Scenario 4)
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

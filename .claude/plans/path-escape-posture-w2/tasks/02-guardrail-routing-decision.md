@@ -2,7 +2,7 @@
 id: 02-guardrail-routing-decision
 title: Resolve guardrail-routed escape checking (ADR + mechanism)
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

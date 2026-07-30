@@ -2,7 +2,7 @@
 id: 03-panel-followups
 title: Wave-1 panel-review follow-ups (fingerprint asymmetry, vetRelaxedParent, classifier cache)
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
