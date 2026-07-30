@@ -2,7 +2,7 @@
 id: 04-docs-deliverables
 title: Docs deliverables (IMPLEMENTATION-NOTES section + user-docs note)
 blocked_by: [01-strict-trusted-escape-ask]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
