@@ -218,4 +218,25 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 			t.Fatalf("result = %+v — guardrails WITHOUT the escape knob must leave the auto read row a plain allow", result)
 		}
 	})
+
+	t.Run("checker-authored and error reasons are clamped", func(t *testing.T) {
+		t.Parallel()
+		// Reviewer-flagged hardening parity: a checker-authored deny reason and a
+		// checker-error string both fold into a model-visible
+		// PermissionDecision.Reason — they must be bounded by the SAME 240-rune
+		// clamp the hook path applies (modelhook.ClampReason), never reflected
+		// unbounded into the model's tool error / the human's ask.
+		long := strings.Repeat("r", 500)
+		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"safe":false,"reason":"`+long+`"}`))
+		d := evalEscapeAtAuto(t, p, f.workspace, call)
+		if d.Effect != governance.Deny {
+			t.Fatalf("unsafe escape = %v, want Deny", d.Effect)
+		}
+		if len([]rune(d.Reason)) > 400 {
+			t.Fatalf("deny reason is %d runes — the checker-authored reason must be clamped, got %q…", len([]rune(d.Reason)), string([]rune(d.Reason)[:80]))
+		}
+		if !strings.HasSuffix(d.Reason, "…") {
+			t.Fatalf("deny reason = %q…, want the clamp ellipsis", string([]rune(d.Reason)[:60]))
+		}
+	})
 }

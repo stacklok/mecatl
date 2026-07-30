@@ -293,7 +293,7 @@ func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (
 func (*escapeGuardrailRoute) denyDecision(v modelhook.Verdict) governance.PermissionDecision {
 	return governance.PermissionDecision{
 		Effect: governance.Deny,
-		Reason: "out-of-workspace access denied by the guardrail checker: " + strings.TrimSpace(v.Reason),
+		Reason: "out-of-workspace access denied by the guardrail checker: " + modelhook.ClampReason(v.Reason),
 	}
 }
 
@@ -303,7 +303,7 @@ func (*escapeGuardrailRoute) denyDecision(v modelhook.Verdict) governance.Permis
 func (*escapeGuardrailRoute) failClosedDecision(err error) governance.PermissionDecision {
 	return governance.PermissionDecision{
 		Effect: governance.Ask,
-		Reason: "out-of-workspace access: the guardrail checker could not produce a verdict (" + err.Error() + ") — surfacing for approval instead of allowing silently (fail-closed)",
+		Reason: "out-of-workspace access: the guardrail checker could not produce a verdict (" + modelhook.ClampReason(err.Error()) + ") — surfacing for approval instead of allowing silently (fail-closed)",
 	}
 }
 
@@ -362,9 +362,12 @@ func (p *escapePolicy) isEscapeCall(c session.ToolCall) bool {
 
 // escapeWorkspace is the MAIN session's relaxed workspace: it wraps the
 // posture-relaxed *osfs.Workspace (built WithRelaxedReads and WithRelaxedWrites
-// at auto/yolo) and carries the session's escapeClassifier so Read/Stat/Write
-// consult the SAME pseudo-fs decision before delegating — the workspace and
-// the permission wrapper classify over the SAME root, never two classifiers
+// at every posture — serving is posture-independent; the escape DECISION is the
+// policy wrapper's, and at strict/trusted the relaxed serving is what lets an
+// APPROVED escape ask execute) and carries the session's escapeClassifier so
+// Read/Stat/Write consult the SAME pseudo-fs decision before delegating — the
+// workspace and the permission wrapper classify over the SAME root, never two
+// classifiers
 // that could drift (the single-construction guarantee: only
 // osfsWorkspaceFactory builds the pair, only for the main session).
 //
@@ -382,9 +385,10 @@ type escapeWorkspace struct {
 }
 
 // newEscapeWorkspace wraps a relaxed ws with the escape classifier. It is
-// built ONLY by osfsWorkspaceFactory, ONLY at auto/yolo (relaxedReads on),
-// ONLY for the main session's workspace factory — never a fork/child
-// workspace.
+// built ONLY by osfsWorkspaceFactory (at every posture — the escape DECISION is
+// the policy wrapper's; the workspace only serves what the policy already
+// authorized, which at strict/trusted is an APPROVED escape ask), ONLY for the
+// main session's workspace factory — never a fork/child workspace.
 func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier) tool.Workspace {
 	return &escapeWorkspace{Workspace: ws, classifier: classifier}
 }
