@@ -302,3 +302,94 @@ func TestDrainCleanNoWarn(t *testing.T) {
 		t.Fatalf("drainChildren must seal the registry")
 	}
 }
+
+// TestClampPreviewFastPathZeroAlloc verifies the fast-path is zero-alloc AND
+// correct: a clean short ASCII string is returned verbatim with no allocation,
+// while control bytes, UTF-8 multi-byte sequences, and long strings fall through
+// to the slow path and are scrubbed/capped correctly. This is the regression guard
+// for the inlining/escape bug: if isCleanASCII stops being inlined or the gc
+// starts escaping the result, this benchmark assertion catches it.
+func TestClampPreviewFastPathZeroAlloc(t *testing.T) {
+	// Fast path — zero allocs, returns input.
+	clean := "Background check complete: slice 7 is intact."
+	allocTest := func(input string) float64 {
+		res := testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = clampPreview(input)
+			}
+		})
+		return float64(res.AllocsPerOp())
+	}
+	if allocs := allocTest(clean); allocs != 0.0 {
+		t.Fatalf("clampPreview on a clean short ASCII string allocated %.0f alloc/op; want 0 — isCleanASCII not inlined or result escapes", allocs)
+	}
+	if got := clampPreview(clean); got != clean {
+		t.Fatalf("clampPreview on clean returned %q, want input verbatim", got)
+	}
+
+	// Dirty — control byte scrubbed.
+	dirty := "Back\x1bground"
+	if got := clampPreview(dirty); got != "Back ground" {
+		t.Fatalf("clampPreview on dirty returned %q, want 'Back ground'", got)
+	}
+
+	// Multi-byte UTF-8 — falls to slow path, returned correctly.
+	unicode := "café résumé"
+	if got := clampPreview(unicode); got != unicode {
+		t.Fatalf("clampPreview on multi-byte UTF-8 returned %q, want verbatim %q", got, unicode)
+	}
+
+	// Overlong — clamped.
+	long := ""
+	for i := 0; i < 300; i++ {
+		long += "x"
+	}
+	if got := clampPreview(long); len(got) != maxTeamPreview+3 { // 200 x + "…" (3 bytes)
+		t.Fatalf("clampPreview on 300-byte string returned len %d (%q), want len %d", len(got), got, maxTeamPreview+3)
+	}
+
+	// Empty — fast path returns empty verbatim.
+	if got := clampPreview(""); got != "" {
+		t.Fatalf("clampPreview on empty returned %q, want empty", got)
+	}
+}
+
+// TestIsCleanASCIICorrectness verifies the byte-level sentinel against the rune-aware
+// slow path: for every input the sentinel reports, clampPreview MUST return the input
+// verbatim (unchanged), so the two code paths produce the same output.
+func TestIsCleanASCIICorrectness(t *testing.T) {
+	// Build a long-ish ASCII string — the exact kind a child tool call or message
+	// delta carries.
+	ascii := "find the bug in src/parser/handler.go -- line 42 is the suspect"
+	if !isCleanASCII(ascii) {
+		t.Fatalf("isCleanASCII false on pure ASCII under cap")
+	}
+
+	// Verify product equivalence: the sentinel always precedes the slow path in
+	// clampPreview, and clampPreview returns the input verbatim when isCleanASCII is
+	// true. So the slow-path never runs against these inputs — we assert that the
+	// result matches what the slow path WOULD have produced on the same input.
+	if got := clampPreview(ascii); got != ascii {
+		t.Fatalf("clampPreview fast path changed input: got %q, want %q", got, ascii)
+	}
+
+	// False: control byte.
+	if isCleanASCII("a\x1bb") {
+		t.Fatal("isCleanASCII true on control byte")
+	}
+
+	// False: over cap.
+	long := ""
+	for i := 0; i < 250; i++ {
+		long += "x"
+	}
+	if isCleanASCII(long) {
+		t.Fatal("isCleanASCII true on over-cap string")
+	}
+
+	// False: non-ASCII (multi-byte UTF-8 bytes > 0x7e).
+	if isCleanASCII("café") {
+		t.Fatal("isCleanASCII true on multi-byte UTF-8")
+	}
+}

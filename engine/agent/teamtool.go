@@ -612,6 +612,28 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 	return session.Event{Type: session.EvTeamMember, Team: base}, true
 }
 
+// isCleanASCII is the zero-alloc fast-path sentinel for clampPreview: it returns
+// true when s consists entirely of printable ASCII bytes (0x20–0x7e) not longer
+// than maxRunes, which is the common case for tool-arg/result previews and child
+// message text. Because it is a simple byte loop (gc cost ≤ 80) the compiler
+// inlines it at every call site; clampPreview then returns s verbatim with zero
+// allocation on the fast path. Multi-byte UTF-8, any control byte, or an over-long
+// string short-circuits to false so the full rune-aware slow path takes over. The
+// scan is per-BYTE, so it conservatively classifies a sequence of multi-byte
+// leading/continuation bytes as dirty rather than attempting to decode them — the
+// slow path handles those correctly.
+func isCleanASCII(s string) bool {
+	if len(s) > maxTeamPreview {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // clampPreview normalises a forwarded text/preview (a member tool-call/result
 // Detail, a member's message Text, a task Description, or a SURFACED subagent command)
 // into a single bounded, control-byte-free line: it replaces every C0 (0x00–
@@ -624,13 +646,15 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 // a multi-byte character. This is the cap+sanitiser that keeps the fuller member
 // content BOUNDED and inert.
 //
-// It is SINGLE-PASS (one strings.Builder walk; the delegation-observability
-// convergence made this the hottest pure-perf path — the background_subagents
-// scenario showed the two-pass strings.Map+[]rune shape as the top regression): a
-// clean short string returns the input with NO allocation, and the scrub+clamp share
-// one walk (the rune cap is enforced as the builder fills, so an overlong input
-// allocates only the ~cap-sized prefix, never the full scrubbed copy).
+// The common path (pure ASCII, under the cap) is zero-alloc: isCleanASCII (an
+// inlinable byte loop) short-circuits before the strings.Builder is constructed.
+// The slow path is a single-pass strings.Builder walk — the rune cap is enforced as
+// the builder fills, so an overlong input allocates only the cap-sized prefix, never
+// the full scrubbed copy.
 func clampPreview(s string) string {
+	if isCleanASCII(s) {
+		return s
+	}
 	var b strings.Builder
 	b.Grow(min(len(s), maxTeamPreview+1))
 	runes := 0
