@@ -179,11 +179,13 @@ const (
 	SubagentEnd SubagentKind = "end"
 )
 
-// SubagentMsg is the REDACTED, metadata-only projection of a Subagent tool's
-// child run. It carries NO child content — only ids, a goal label, child tool
-// names/counts, usage, stop, and duration — so the ui can render a subagent's
-// activity under its Subagent card while the child's content stays isolated.
-// ParentCallID attributes the msg to the originating Subagent tool block.
+// SubagentMsg is the BOUNDED projection of a Subagent tool's child run. It carries
+// ids, a goal label, child tool names/counts, usage, stop, and duration — plus the
+// BOUNDED content previews the server clamp-scrubs per ADR 0079 (InnerKind/Text/
+// Detail on a subagent.tool event), so the ui renders a subagent's activity under
+// its Subagent card while the previews stay bounded, scrubbed, and client-only
+// (never entering the parent conversation — gauntlet #7). ParentCallID attributes
+// the msg to the originating Subagent tool block.
 // Background marks a detached-delivery (background: true) child; the server sets
 // it on subagent.start only, and an older server yields false (no marker).
 // RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare
@@ -202,9 +204,20 @@ type SubagentMsg struct {
 	// regardless of how it was chosen — inherited default, agent-def pin, per-call
 	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
 	// RoutedModel. Bare metadata, never child content, so gauntlet #7 holds.
-	Model      string
-	ToolName   string
-	IsError    bool
+	Model    string
+	ToolName string
+	IsError  bool
+	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
+	// subagent.tool event per the child's forwarded inner event kind:
+	// InnerKind is "tool.call" (Detail = the bounded args preview), "tool.result"
+	// (Detail = the bounded result preview), or "message.delta" (Text = the capped
+	// message text); empty on start/end and from an older server (the ui then renders
+	// a bare chip, exactly the pre-ADR-0079 shape). The server clamp-scrubs every
+	// preview (control bytes out, ≤200 runes); the ui caps again on render. ToolCount
+	// (the running total) rides every subagent.tool event regardless of InnerKind.
+	InnerKind  string
+	Text       string
+	Detail     string
 	ToolCount  int
 	Usage      Usage
 	Stop       string
@@ -350,13 +363,16 @@ const (
 	ParallelEnd ParallelKind = "end"
 )
 
-// ParallelMsg is the REDACTED, metadata-only projection of a Parallel fork-join run, as
-// plain data the ui renders in the ctrl+a Parallel tab. Unlike the FLAT SubagentMsg, a
-// Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a join
-// strategy + a single winner + preserved per-branch fork paths. It carries NO branch
-// content — only ids, a goal label, child tool names/counts, usage, stop, duration, the
-// join strategy, the winner index, and the fork-root PATHS (handles already in the result
-// text, not branch content). ParentCallID is the group key.
+// ParallelMsg is the BOUNDED projection of a Parallel fork-join run, as plain data
+// the ui renders in the ctrl+a Parallel tab. Unlike the FLAT SubagentMsg, a
+// Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a
+// join strategy + a single winner + preserved per-branch fork paths. It carries ids,
+// a goal label, child tool names/counts, usage, stop, duration, the join strategy,
+// the winner index, the fork-root PATHS (handles already in the result text, not
+// branch content) — plus the BOUNDED content previews the server clamp-scrubs per
+// ADR 0079 (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
+// client-only (never entering the parent conversation — gauntlet #7).
+// ParentCallID is the group key.
 type ParallelMsg struct {
 	Kind         ParallelKind
 	ParentCallID string
@@ -384,8 +400,15 @@ type ParallelMsg struct {
 	Model string
 	// ToolName / IsError / ToolCount carry per-branch tool activity (branch_tool;
 	// ToolCount is also final on branch_end).
-	ToolName  string
-	IsError   bool
+	ToolName string
+	IsError  bool
+	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
+	// branch_tool event per the branch's forwarded inner event kind (tool.call /
+	// tool.result / message.delta), exactly as on SubagentMsg; empty from an older
+	// server. The server clamp-scrubs every preview; the ui caps again on render.
+	InnerKind string
+	Text      string
+	Detail    string
 	ToolCount int
 	// Failed / Workspace are set on ParallelBranchEnd (Workspace is the branch's fork root).
 	Failed    bool
@@ -703,6 +726,9 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 		Model:          s.GetModel(),
 		ToolName:       s.GetToolName(),
 		IsError:        s.GetIsError(),
+		InnerKind:      s.GetInnerKind(),
+		Text:           s.GetText(),
+		Detail:         s.GetDetail(),
 		ToolCount:      int(s.GetToolCount()),
 		Usage:          usageFrom(s.GetUsage()),
 		Stop:           s.GetStop(),
@@ -729,6 +755,9 @@ func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 		Model:           p.GetModel(),
 		ToolName:        p.GetToolName(),
 		IsError:         p.GetIsError(),
+		InnerKind:       p.GetInnerKind(),
+		Text:            p.GetText(),
+		Detail:          p.GetDetail(),
 		ToolCount:       int(p.GetToolCount()),
 		Failed:          p.GetFailed(),
 		Workspace:       p.GetWorkspace(),

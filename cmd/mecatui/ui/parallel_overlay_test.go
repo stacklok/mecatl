@@ -139,8 +139,8 @@ func TestParallelGroupFocusWinnerHighlight(t *testing.T) {
 	if !strings.Contains(out, "winner fork (preserved)") || !strings.Contains(out, "/fork/branch-2") {
 		t.Errorf("group focus should show the preserved winner fork path:\n%s", out)
 	}
-	if !strings.Contains(out, "context-isolated") {
-		t.Errorf("group focus should carry the no-content honesty note:\n%s", out)
+	if !strings.Contains(out, "bounded previews") {
+		t.Errorf("group focus should carry the bounded-previews honesty note:\n%s", out)
 	}
 	// esc steps back to the roster (ONE level — no deeper branch focus).
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -252,22 +252,18 @@ func TestParallelTabRoutingAndEsc(t *testing.T) {
 	}
 }
 
-// TestParallelNoContentLeakOverlay is the gauntlet-#7 client guard: a branch_tool /
-// branch_end whose (hypothetical) fields carry a canary must never surface in the rendered
-// overlay — only names/glyphs/paths/labels. The ParallelMsg carries no content field, so
-// this asserts the render path never echoes a tool NAME-shaped canary into a body region
-// it shouldn't, mirroring the subagent overlay leak guard.
-func TestParallelNoContentLeakOverlay(t *testing.T) {
+// TestParallelOverlayBoundsBranchContent is the client-side boundedness guard for the
+// Parallel group focus under ADR 0079: branch content reaches the overlay ONLY as
+// bounded previews (engine-clamped; the TUI caps them again) and the honesty note
+// states "bounded previews" — content is bounded, never hidden and never unbounded.
+func TestParallelOverlayBoundsBranchContent(t *testing.T) {
 	const canary = "CANARYLEAK"
+	longPreview := strings.Repeat("z", maxTraceDetailLen*3)
 	m := newMCPModel(t, aztec(), nil)
-	// The only content-ish channel ParallelMsg has is ToolName/Goal/Workspace — all
-	// redacted metadata. Feed a canary into a place it would NOT be allowed to render as
-	// content: the workspace path renders (it is a handle), so use the canary as a tool
-	// name and assert it appears ONLY as a chip name, never as a result body line.
 	m = seedParallel(m, "p1",
 		startPar("p1", "all", 1),
 		branchStartPar("p1", 0, "branch-1", "explore"),
-		branchToolPar("p1", 0, canary, false, 1),
+		branchToolParPreview("p1", 0, "tool.call", "Grep", longPreview, 1),
 		branchEndPar("p1", 0, 10, 2, 1, "end_turn", false, "/fork/branch-1"),
 		endPar("p1", "all", 1, -1, "", "end_turn"),
 	)
@@ -276,18 +272,73 @@ func TestParallelNoContentLeakOverlay(t *testing.T) {
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
-	// The tool name (the only place a canary could legitimately appear) shows as the
-	// branch's last tool — that is metadata, not content. There must be NO args/result
-	// body line. The honesty note asserts the render is redacted.
-	if !strings.Contains(out, "context-isolated") {
-		t.Errorf("group focus must carry the redaction honesty note:\n%s", out)
+	// The honesty note states the accurate posture: bounded previews, not hidden.
+	if !strings.Contains(out, "bounded previews") {
+		t.Errorf("group focus must carry the bounded-previews note:\n%s", out)
 	}
-	// No "result"/"args" body region exists for a branch — assert the overlay never grows
-	// a content line (the canary may appear as a tool-name chip; that is allowed).
+	if strings.Contains(out, "args/results hidden") {
+		t.Errorf("group focus must not carry the stale hidden-interior claim:\n%s", out)
+	}
+	// The preview is rendered — but CAPPED at the TUI's secondary bound.
+	if strings.Contains(out, longPreview) {
+		t.Errorf("an unbounded preview leaked into the group focus (past maxTraceDetailLen):\n%s", out)
+	}
+	if !strings.Contains(out, strings.Repeat("z", maxTraceDetailLen-1)) {
+		t.Errorf("the bounded preview should render (truncated):\n%s", out)
+	}
+	// A canary in a tool NAME renders only as a name chip — never as a body line.
+	m2 := newMCPModel(t, aztec(), nil)
+	m2 = seedParallel(m2, "p1",
+		startPar("p1", "all", 1),
+		branchStartPar("p1", 0, "branch-1", "explore"),
+		branchToolPar("p1", 0, canary, false, 1),
+		branchEndPar("p1", 0, 10, 2, 1, "end_turn", false, "/fork/branch-1"),
+		endPar("p1", "all", 1, -1, "", "end_turn"),
+	)
+	mm2, _ := m2.Update(ctrlKey('a'))
+	m2 = mm2.(Model)
+	mm2, _ = m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m2 = mm2.(Model)
+	out2 := stripANSIstr(m2.View().Content)
 	for _, banned := range []string{canary + " =", "result: " + canary, "args: " + canary} {
-		if strings.Contains(out, banned) {
-			t.Fatalf("overlay leaked branch content %q:\n%s", banned, out)
+		if strings.Contains(out2, banned) {
+			t.Fatalf("overlay leaked branch content %q:\n%s", banned, out2)
 		}
+	}
+}
+
+// TestParallelGroupFocusHeightBounded asserts the group focus stays within its height
+// budget when every branch carries a trace: a tight window clamps the trace with a
+// "+N more lines" tail and surfaces a "+K more branch(es)" roll-up instead of
+// overflowing — the header and footer hints are never pushed off.
+func TestParallelGroupFocusHeightBounded(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m = resize(m, 100, 18)
+	var msgs []client.ParallelMsg
+	msgs = append(msgs, startPar("p1", "all", 4))
+	for i := 0; i < 4; i++ {
+		msgs = append(msgs, branchStartPar("p1", i, "branch-"+string(rune('1'+i)), "explore"))
+		msgs = append(msgs, branchToolParPreview("p1", i, "tool.call", "Grep", "pattern: foo", 1))
+		msgs = append(msgs, branchToolParPreview("p1", i, "message.delta", "", "a branch note", 1))
+	}
+	m = seedParallel(m, "p1", msgs...)
+	mm, _ := m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.parallel.view != parallelGroupView {
+		t.Fatalf("enter should focus the group, view = %v", m.parallel.view)
+	}
+	out := stripANSIstr(m.View().Content)
+	// The focus stays height-bounded: an overflow rolls up into a "+K more" tail
+	// (branch-level) or a "+N more lines" clamp (trace-level) rather than pushing the
+	// footer hint off.
+	rolled := strings.Contains(out, "more branch(es)") || strings.Contains(out, "more line")
+	if !rolled {
+		t.Errorf("a tight group focus should roll up overflow into a +K/+N tail, got %q", out)
+	}
+	if !strings.Contains(out, "esc back") {
+		t.Errorf("the footer hint must survive the height clamp, got %q", out)
 	}
 }
 

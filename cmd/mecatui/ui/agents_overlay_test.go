@@ -34,6 +34,34 @@ func endSub(parent, child string, in, out int64, count int, stop string) client.
 	}
 }
 
+// toolSubPreview builds a subagent.tool projection carrying an InnerKind + bounded
+// content (Detail for a tool.call/tool.result, Text for a message.delta) — the
+// ADR-0079 widened wire. count is the running tool total the event carries.
+func toolSubPreview(parent, child, innerKind, tool, content string, count int) client.SubagentMsg {
+	msg := toolSub(parent, child, tool, false, count)
+	msg.InnerKind = innerKind
+	if innerKind == "message.delta" {
+		msg.Text = content
+	} else {
+		msg.Detail = content
+	}
+	return msg
+}
+
+// branchToolParPreview builds a parallel.branch_tool projection carrying an InnerKind
+// + bounded content (Detail / Text) — the ADR-0079 widened wire. count is the running
+// tool total the event carries.
+func branchToolParPreview(parent string, idx int, innerKind, tool, content string, count int) client.ParallelMsg {
+	msg := branchToolPar(parent, idx, tool, false, count)
+	msg.InnerKind = innerKind
+	if innerKind == "message.delta" {
+		msg.Text = content
+	} else {
+		msg.Detail = content
+	}
+	return msg
+}
+
 // seedSubagents applies a sequence of subagent.* msgs through the real Update path so
 // the model's fleet collection is built exactly as it would be at runtime. It seeds a
 // Subagent tool card for the inline-card routing first (the fleet routing keys on ChildID
@@ -367,8 +395,8 @@ func TestEnterFocusesSubagentChild(t *testing.T) {
 		t.Errorf("focused child = %q, want c1", m.subagents.child)
 	}
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "args/results hidden (context-isolated)") {
-		t.Errorf("focus pane should carry the context-isolation note, got %q", out)
+	if !strings.Contains(out, "bounded previews") {
+		t.Errorf("focus pane should carry the bounded-previews note, got %q", out)
 	}
 	if !strings.Contains(out, "Grep") || !strings.Contains(out, "Read") {
 		t.Errorf("focus pane should show the child's tool chips, got %q", out)
@@ -398,31 +426,35 @@ func TestEscClosesSubagentOverlay(t *testing.T) {
 	}
 }
 
-// TestSubagentOverlayRedactsChildContent is the gauntlet-#7 ABSENCE guard for the
-// Subagents tab: the only child-derived strings the overlay ever renders are the goal
-// label, the ChildID, and child tool NAMES (the redacted subagent.* projection carries
-// no args/result bodies at all). This test seeds a child whose goal and tool name carry
-// a SENTINEL ("SECRETCONTENT") plus a control byte (0x1b), then asserts in BOTH the
-// roster and the focused child's chip trace that:
-//   - the raw 0x1b ESC never reaches the rendered output (sanitizeTerminal applied), and
-//   - the metadata-only note "args/results hidden (context-isolated)" is present, and
-//   - the only place the sentinel appears is the goal/tool-name metadata that is
-//     LEGITIMATELY surfaced — it must never appear as a leaked arg/result body.
+// TestSubagentOverlayBoundsChildContent is the client-side boundedness guard for the
+// Subagents tab under ADR 0079: the subagent.* projection now forwards child content
+// ONLY as bounded previews (the engine clamp-scrubs them; the wire ≤ 200 runes), and
+// the overlay must render them SANITIZED + TUI-capped — never raw, never unbounded.
+// It seeds a child whose goal, tool name, and PREVIEW fields carry a SENTINEL plus
+// control bytes, then asserts in BOTH the roster and the focused child's trace that:
+//   - the raw 0x1b ESC / 0x07 BEL never reach the rendered output (sanitizeTerminal), and
+//   - the bounded-previews honesty note is present (the content is bounded, not hidden), and
+//   - the previews are truncated at the TUI's secondary cap (maxTraceDetailLen), and
+//   - the child content never enters the parent conversation surface — it renders only
+//     inside the overlay card / child trace (gauntlet #7: isolation is about the
+//     CONVERSATION, not what a client may observe).
 //
-// A regression that started forwarding a child's tool ARGS or RESULT into the overlay
-// would have no field carrying it (the projection drops them), so this also fails-loud
-// if a future change widened SubagentMsg and piped a body through the chip trace: the
-// chip would then carry more than the bare tool name, which this pins by asserting the
-// chip line is EXACTLY the glyph + sanitized name.
-func TestSubagentOverlayRedactsChildContent(t *testing.T) {
+// A regression that forwarded a child's args/result UNBOUNDED or UNSCRUBBED fails here
+// (the oversize preview renders past its cap, or the raw escape survives).
+func TestSubagentOverlayBoundsChildContent(t *testing.T) {
 	// Per the no-destructive-test-literals rule the control byte is an innocuous ANSI/OSC
 	// escape, and the sentinel is a plain marker — never a destructive-looking command.
 	const sentinel = "SECRETCONTENT"
 	const evilTool = "\x1b]0;" + sentinel + "\x07Grep"
+	// A preview that (a) carries a control byte and (b) far exceeds the TUI cap.
+	longPreview := strings.Repeat("z", maxTraceDetailLen*3)
 	m := newMCPModel(t, aztec(), nil)
 	m = seedSubagents(m, "p1",
 		startSub("p1", "c1", "\x1b[31m"+sentinel+" goal\x1b[0m"),
-		toolSub("p1", "c1", evilTool, false, 1),
+		client.SubagentMsg{
+			Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
+			InnerKind: "tool.call", ToolName: evilTool, Detail: longPreview + "\x1b[31m", ToolCount: 1,
+		},
 	)
 
 	// Roster: the goal + tool-derived state are sanitized — no raw ESC, and the sentinel
@@ -434,7 +466,7 @@ func TestSubagentOverlayRedactsChildContent(t *testing.T) {
 		t.Errorf("raw ESC (0x1b) leaked into the subagents roster; sanitizeTerminal not applied:\n%q", roster)
 	}
 
-	// Focus pane: the chip trace + sub-header are sanitized and metadata-only.
+	// Focus pane: the trace renders the bounded preview sanitized + capped.
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if m.subagents.view != subagentFocus {
@@ -444,18 +476,22 @@ func TestSubagentOverlayRedactsChildContent(t *testing.T) {
 	if strings.ContainsRune(focus, 0x1b) {
 		t.Errorf("raw ESC (0x1b) leaked into the subagent focus pane; sanitizeTerminal not applied:\n%q", focus)
 	}
-	// The context-isolation note must be present (PRESENCE half of the guard).
-	if !strings.Contains(focus, "args/results hidden (context-isolated)") {
-		t.Errorf("focus pane missing the context-isolation note:\n%q", focus)
-	}
-	// ABSENCE half: the OSC payload that wrapped the sentinel must render inert (no raw
-	// escape), i.e. the sanitized form "]0;SECRETCONTENTGrep" — the escape bytes gone.
-	// There is no SubagentMsg field that carries child args/result, so a body can never
-	// reach here; this asserts the one child-derived string (the tool name) is rendered
-	// only after sanitization, never as a live control sequence.
 	if strings.Contains(focus, "\x07") {
 		t.Errorf("raw BEL (0x07) leaked into the subagent focus pane:\n%q", focus)
 	}
+	// The bounded-previews note must be present (PRESENCE half of the guard).
+	if !strings.Contains(focus, "bounded previews") {
+		t.Errorf("focus pane missing the bounded-previews note:\n%q", focus)
+	}
+	// The preview is rendered — but CAPPED at the TUI's secondary bound: the full
+	// oversize run never appears, the truncated head does.
+	if strings.Contains(focus, strings.Repeat("z", maxTraceDetailLen*3)) {
+		t.Errorf("an unbounded preview leaked into the focus pane (past maxTraceDetailLen):\n%q", focus)
+	}
+	if !strings.Contains(focus, strings.Repeat("z", maxTraceDetailLen-1)) {
+		t.Errorf("the bounded preview should render (truncated), got:\n%q", focus)
+	}
+	// The sanitized tool name renders as inert text (the OSC payload stripped).
 	if !strings.Contains(focus, "]0;"+sentinel+"Grep") {
 		t.Errorf("sanitized tool name not rendered as inert text in the focus chip trace:\n%q", focus)
 	}
@@ -651,7 +687,9 @@ func TestFooterCtxUnknownGolden(t *testing.T) {
 func goldenFleet(m Model) Model {
 	return seedSubagents(m, "p1",
 		startSub("p1", "explorer-a3f1", "audit auth flow"),
-		toolSub("p1", "explorer-a3f1", "Grep", false, 7),
+		toolSub("p1", "explorer-a3f1", "Grep", false, 6),
+		toolSubPreview("p1", "explorer-a3f1", "tool.call", "Grep", "pattern: auth", 7),
+		toolSubPreview("p1", "explorer-a3f1", "message.delta", "", "checking the login flow", 7),
 		startSub("p1", "explorer-b2e2", "find dead code"),
 		toolSub("p1", "explorer-b2e2", "Read", false, 4),
 		startSub("p1", "explorer-c1d3", "trace config loading"),
@@ -794,6 +832,8 @@ func goldenParallel(m Model) Model {
 		branchStartPar("par-1", 2, "branch-3", "refactor inline"),
 		branchToolPar("par-1", 0, "Edit", false, 2),
 		branchToolPar("par-1", 1, "Edit", false, 3),
+		branchToolParPreview("par-1", 1, "tool.call", "Edit", "file: svc.go", 3),
+		branchToolParPreview("par-1", 1, "message.delta", "", "slice approach is cleaner", 3),
 		branchToolPar("par-1", 2, "Bash", true, 1),
 		branchEndPar("par-1", 0, 12000, 3000, 2, "end_turn", false, "/fork/branch-1"),
 		branchEndPar("par-1", 1, 15000, 4200, 3, "end_turn", false, "/fork/branch-2"),

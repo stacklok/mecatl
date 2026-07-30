@@ -1,10 +1,11 @@
 package ui
 
-// Tests for inline Subagent tool visibility: a Subagent tool card renders a REDACTED,
-// metadata-only projection of its child run (goal title, live counts, expanded
-// tool-name chips with an "args/results hidden" honesty note, and a resolved stat
-// line with stop reason). The child's interior is isolated by design and never
-// rendered.
+// Tests for inline Subagent tool visibility: a Subagent tool card renders the
+// BOUNDED projection of its child run (goal title, live counts + current tool,
+// expanded Team-format chips with bounded previews under a "bounded previews"
+// honesty note, and a resolved stat line with stop reason). The previews are
+// bounded, scrubbed, client-only — they never enter the parent conversation
+// (ADR 0079; gauntlet #7).
 
 import (
 	"strings"
@@ -26,40 +27,48 @@ func subagentCard(t *testing.T, expand bool, build func(c *conversation)) string
 	return stripANSIstr(r.renderBlock(0, &c.blocks[0], expand))
 }
 
+// addSubTool routes a bare (kind-less) subagent.tool event into the card — the
+// pre-ADR-0079 shape, where a tool chip is appended with no preview. Returns the
+// accumulator's match bool so the miss-attribution test can assert it.
+func addSubTool(c *conversation, parentCallID, toolName string, isError bool, toolCount int) bool {
+	return c.addSubagentTool(client.SubagentMsg{
+		Kind: client.SubagentTool, ParentCallID: parentCallID,
+		ToolName: toolName, IsError: isError, ToolCount: toolCount,
+	})
+}
+
 // TestSubagentLiveCollapsed asserts the default (collapsed, unresolved) card: the
-// goal title, a calm counts-only status line (tokens + tool count) with the
-// ctrl+t trace affordance — and NO live current-tool name and NO elapsed clock.
+// goal title, a calm status line (LATEST child tool name + tokens + tool count)
+// with the ctrl+t trace affordance — and no heartbeat ticker (ADR 0079: the line
+// changes only when the tool actually changes).
 func TestSubagentLiveCollapsed(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "", "", "")
-		c.addSubagentTool("p1", "Grep", false, 1)
-		c.addSubagentTool("p1", "Read", false, 2)
+		addSubTool(c, "p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Read", false, 2)
 	})
 	if !strings.Contains(out, "investigate the loop") {
 		t.Errorf("live card should show the goal title, got %q", out)
 	}
-	if !strings.Contains(out, "subagent ·") || !strings.Contains(out, "2 tools") {
-		t.Errorf("live card should show a counts-only status line, got %q", out)
+	if !strings.Contains(out, "subagent · Read ·") || !strings.Contains(out, "2 tools") {
+		t.Errorf("live card should show the latest tool name + counts, got %q", out)
 	}
 	if !strings.Contains(out, "ctrl+t trace") {
 		t.Errorf("live card should advertise the ctrl+t trace, got %q", out)
 	}
-	// No live current-tool name leaks into the collapsed line.
-	if strings.Contains(out, "Grep") || strings.Contains(out, "Read") {
-		t.Errorf("collapsed live card must not name the current child tool, got %q", out)
-	}
 }
 
-// TestSubagentExpandedChips asserts the expanded (ctrl+t) card: a row of glyph +
-// name chips for each child tool, under the "args/results hidden" honesty note.
+// TestSubagentExpandedChips asserts the expanded (ctrl+t) card: glyph + name chips
+// for each child tool in the Team trace format, under the "bounded previews"
+// honesty note (ADR 0079).
 func TestSubagentExpandedChips(t *testing.T) {
 	out := subagentCard(t, true, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "", "", "")
-		c.addSubagentTool("p1", "Grep", false, 1)
-		c.addSubagentTool("p1", "Read", true, 2)
+		addSubTool(c, "p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Read", true, 2)
 	})
-	if !strings.Contains(out, "args/results hidden") {
-		t.Errorf("expanded card should carry the hidden-interior note, got %q", out)
+	if !strings.Contains(out, "bounded previews") {
+		t.Errorf("expanded card should carry the bounded-previews note, got %q", out)
 	}
 	if !strings.Contains(out, "Grep") || !strings.Contains(out, "Read") {
 		t.Errorf("expanded card should show child tool chips, got %q", out)
@@ -75,7 +84,7 @@ func TestSubagentExpandedCapsTrace(t *testing.T) {
 	out := subagentCard(t, true, func(c *conversation) {
 		c.setSubagentStart("p1", "big investigation", "", "", "")
 		for i := 0; i < maxSubagentTrace+5; i++ {
-			c.addSubagentTool("p1", "Read", false, i+1)
+			addSubTool(c, "p1", "Read", false, i+1)
 		}
 	})
 	// The trace itself caps at maxSubagentTrace chips. Count the glyphs as a proxy.
@@ -126,7 +135,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 	c.addTool("p1", "Subagent", `{"prompt":"x"}`)
 	c.setSubagentStart("p1", "narrow", "", "", "")
 	for i := 0; i < 6; i++ {
-		c.addSubagentTool("p1", "Read", false, i+1)
+		addSubTool(c, "p1", "Read", false, i+1)
 	}
 	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
 	// The chip region must occupy more than one visual line (it wrapped).
@@ -151,7 +160,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 func TestSubagentResolved(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "", "", "")
-		c.addSubagentTool("p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Grep", false, 1)
 		c.setSubagentEnd("p1", client.Usage{InputTokens: 1200, OutputTokens: 80}, 4, "end_turn", 2500)
 		c.resolveTool("p1", "found the bug in dispatch.go", false)
 	})
@@ -201,8 +210,8 @@ func TestSubagentAttributionByParentCallID(t *testing.T) {
 	if !c.setSubagentStart("pa", "alpha goal", "", "", "") || !c.setSubagentStart("pb", "bravo goal", "", "", "") {
 		t.Fatalf("both starts should attribute")
 	}
-	c.addSubagentTool("pa", "Grep", false, 1)
-	c.addSubagentTool("pb", "Read", false, 1)
+	addSubTool(c, "pa", "Grep", false, 1)
+	addSubTool(c, "pb", "Read", false, 1)
 
 	if c.blocks[0].subGoal != "alpha goal" || c.blocks[0].subTrace[0].name != "Grep" {
 		t.Errorf("card pa mis-attributed: goal=%q trace=%+v", c.blocks[0].subGoal, c.blocks[0].subTrace)
@@ -219,7 +228,7 @@ func TestSubagentMissAttributionIsSafe(t *testing.T) {
 	if c.setSubagentStart("nope", "goal", "", "", "") {
 		t.Errorf("setSubagentStart should miss when no Subagent card matches")
 	}
-	if c.addSubagentTool("nope", "Read", false, 1) {
+	if addSubTool(c, "nope", "Read", false, 1) {
 		t.Errorf("addSubagentTool should miss when no Subagent card matches")
 	}
 	if c.setSubagentEnd("nope", client.Usage{}, 0, "end_turn", 0) {
@@ -234,7 +243,7 @@ func TestSubagentMissAttributionIsSafe(t *testing.T) {
 func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "openai/gpt-4.1-mini")
-		c.addSubagentTool("p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if !strings.Contains(out, "routed: small → openai/gpt-4.1-mini") {
 		t.Errorf("routed card should show the routed-model line, got %q", out)
@@ -243,7 +252,7 @@ func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
 	// An unrouted child (empty category/model) must NOT render the routed line.
 	unrouted := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "", "", "")
-		c.addSubagentTool("p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if strings.Contains(unrouted, "routed:") {
 		t.Errorf("unrouted card must not show a routed line, got %q", unrouted)
@@ -259,7 +268,7 @@ func TestSubagentModelMetadataSurfaced(t *testing.T) {
 	// Inherited / default model (no router): the plain "model:" cue is shown.
 	inherited := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "", "", "openai/gpt-4.5")
-		c.addSubagentTool("p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if !strings.Contains(inherited, "model: openai/gpt-4.5") {
 		t.Errorf("inherited-model card should show the model: line, got %q", inherited)
@@ -270,7 +279,7 @@ func TestSubagentModelMetadataSurfaced(t *testing.T) {
 	// Routed child (model == routedModel): the routed cue is shown, NOT duplicated as model:.
 	routed := subagentCard(t, false, func(c *conversation) {
 		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "openai/gpt-4.1-mini")
-		c.addSubagentTool("p1", "Grep", false, 1)
+		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if !strings.Contains(routed, "routed: small → openai/gpt-4.1-mini") {
 		t.Errorf("routed card should show the routed cue, got %q", routed)

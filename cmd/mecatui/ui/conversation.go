@@ -2,40 +2,40 @@ package ui
 
 import "github.com/stacklok/mecatl/cmd/mecatui/client"
 
-// maxSubagentTrace caps how many child-tool chips a subagent block retains for
-// the expanded trace, mirroring the line-cap idiom used elsewhere (e.g.
-// maxToolResultLines). Older chips are dropped once the cap is reached so a long
-// investigation never unbounds the card.
-const maxSubagentTrace = 12
+// maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
+// a fleet lane, a parallel branch, a team member) retains for the expanded/focus
+// view, mirroring the line-cap idiom used elsewhere (e.g. maxToolResultLines).
+// Older entries are dropped once the cap is reached so a long investigation never
+// unbounds the card. Shared by all three delegation families (ADR 0079 — the trace
+// model is one shape).
+const maxTraceEntries = 12
 
-// subToolChip is one entry in a subagent block's redacted child-tool trace: the
-// child tool's NAME and whether it errored. It deliberately holds no args or
-// result content — only the metadata forwarded by subagent.tool.
-type subToolChip struct {
-	name    string
-	isError bool
-}
+// maxSubagentTrace is kept as the subagent-facing alias of the shared trace cap so
+// existing call sites stay readable; it is the same constant.
+const maxSubagentTrace = maxTraceEntries
 
-// maxTeamTrace caps how many trace entries a single team-member lane retains for
-// the expanded view, mirroring maxSubagentTrace. Older entries are dropped once
-// the cap is reached so a long-running member never unbounds the card.
-const maxTeamTrace = 12
+// maxTeamTrace is kept as the team-facing alias of the shared trace cap; it is the
+// same constant.
+const maxTeamTrace = maxTraceEntries
 
-// teamTraceKind distinguishes the two flavours of a member-lane trace entry: a
-// forwarded message line versus a tool chip. The expanded view renders messages
-// as clamped prose and tools as glyph+name chips.
+// teamTraceKind distinguishes the two flavours of a delegation-lane trace entry: a
+// forwarded message line versus a tool chip. The expanded view renders messages as
+// clamped prose and tools as glyph+name chips. (The kind name stays team-prefixed
+// for the historical type it rides; it is shared by all three families.)
 type teamTraceKind int
 
 const (
-	teamTraceMessage teamTraceKind = iota // a forwarded member message line
-	teamTraceTool                         // a member tool call (name + ok/error glyph)
+	teamTraceMessage teamTraceKind = iota // a forwarded child/member/branch message line
+	teamTraceTool                         // a child/member/branch tool call (name + ok/error glyph)
 )
 
-// teamTrace is one capped entry in a member lane's trace: either a message line
-// (kind=teamTraceMessage, text set) or a tool chip (kind=teamTraceTool, name +
-// detail + isError set). detail is the server-bounded arg/result preview shown
-// next to the chip in the expanded view. All text is bounded server-side; the ui
-// still sanitizes it.
+// teamTrace is one capped entry in a delegation lane's trace — shared by the Team
+// member lanes, the Subagent inline/fleet lanes, and the Parallel branch lanes
+// (ADR 0079: the trace model converged on this one shape). It is either a message
+// line (kind=teamTraceMessage, text set) or a tool chip (kind=teamTraceTool, name
+// + detail + isError set). detail is the server-bounded arg/result preview shown
+// next to the chip in the expanded view. All text is bounded server-side
+// (clamp-scrubbed, ≤200 runes); the ui caps it again on render.
 type teamTrace struct {
 	kind    teamTraceKind
 	text    string // message text (teamTraceMessage)
@@ -44,12 +44,64 @@ type teamTrace struct {
 	isError bool   // tool errored (teamTraceTool)
 }
 
+// pushTrace appends a trace entry to a lane slice and enforces the shared cap,
+// dropping the oldest entries once it overflows. It is the single accumulator
+// behind every delegation family's trace (subagent inline + fleet, parallel
+// branch, team member), so the cap can never drift between surfaces.
+func pushTrace(trace []teamTrace, t teamTrace) []teamTrace {
+	trace = append(trace, t)
+	if len(trace) > maxTraceEntries {
+		trace = trace[len(trace)-maxTraceEntries:]
+	}
+	return trace
+}
+
+// traceAppendMessage adds a message line to a lane trace. Consecutive
+// message.delta fragments coalesce onto the trailing message entry (so streamed
+// text reads as one line, not a chip storm); a new line is started when the last
+// entry is a tool chip. The trace stays capped at maxTraceEntries.
+func traceAppendMessage(trace []teamTrace, text string) []teamTrace {
+	if text == "" {
+		return trace
+	}
+	if n := len(trace); n > 0 && trace[n-1].kind == teamTraceMessage {
+		trace[n-1].text += text
+		return trace
+	}
+	return pushTrace(trace, teamTrace{kind: teamTraceMessage, text: text})
+}
+
+// traceAppendTool adds a tool chip (pending; error + result detail resolved later
+// by traceMarkToolResult). detail here is the call's bounded arg preview.
+func traceAppendTool(trace []teamTrace, name, detail string, isError bool) []teamTrace {
+	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: name, detail: detail, isError: isError})
+}
+
+// traceMarkToolResult finalises the most recent matching pending tool chip's error
+// state, and replaces its detail with the result preview when one is provided (a
+// result preview is more informative than the call's arg preview; an empty result
+// detail keeps the arg preview). If no matching pending chip is found (e.g. a
+// dropped tool.call), it appends a resolved chip so a result is never silently lost.
+func traceMarkToolResult(trace []teamTrace, name, detail string, isError bool) []teamTrace {
+	for i := len(trace) - 1; i >= 0; i-- {
+		t := &trace[i]
+		if t.kind == teamTraceTool && t.name == name {
+			t.isError = isError
+			if detail != "" {
+				t.detail = detail
+			}
+			return trace
+		}
+	}
+	return traceAppendTool(trace, name, detail, isError)
+}
+
 // teamLane is the live projection of one team member's activity, accumulated from
 // the team.member events tagged with that member's name. It holds the member's
 // stable roster metadata (mutating / lead), its current tool or state label, a
 // running token usage, and a capped trace of message lines + tool chips. It never
 // holds unbounded member content — the server caps every preview and the trace is
-// capped at maxTeamTrace.
+// capped at maxTraceEntries.
 type teamLane struct {
 	name string
 	// sessionID is the member's child SESSION id ("team-<teamID>-<member>") — the
@@ -194,15 +246,18 @@ type block struct {
 	// buried in the fenced body.
 	deliveryFireID string
 
-	// Subagent fields (attached to a Subagent tool block): the REDACTED,
-	// metadata-only projection of the Subagent's child run. They never carry child
-	// content. subagent is true once a subagent.start has been attributed to this
-	// block; subGoal is the card title; subTrace is a capped trace of child tool
-	// chips; subToolCount is the running/final child tool count; subUsage,
-	// subStop, and subDurationMs are the resolved end stats (subDone gates them).
+	// Subagent fields (attached to a Subagent tool block): the BOUNDED projection
+	// of the Subagent's child run (ADR 0079). subagent is true once a subagent.start
+	// has been attributed to this block; subGoal is the card title; subCurrent is
+	// the child's live current-tool name; subTrace is the capped shared trace of
+	// child tool chips + message lines; subToolCount is the running/final child
+	// tool count; subUsage, subStop, and subDurationMs are the resolved end stats
+	// (subDone gates them). The previews are bounded/scrubbed/client-only — they
+	// never enter the parent conversation (gauntlet #7).
 	subagent      bool
 	subGoal       string
-	subTrace      []subToolChip
+	subCurrent    string // latest child tool name, "" when none yet
+	subTrace      []teamTrace
 	subToolCount  int
 	subUsage      client.Usage
 	subStop       string
@@ -249,12 +304,11 @@ type block struct {
 // collected ACROSS all Subagent cards into conversation.subagentFleet, so the footer
 // segment can show aggregate running/done counts and the ctrl+a Subagents tab can
 // list one row per child regardless of where its inline card sits in scrollback. It
-// carries only the REDACTED metadata the subagent.* events forward (gauntlet #7) —
-// never child content.
+// carries the BOUNDED previews the subagent.* events forward (ADR 0079) — bounded,
+// scrubbed, client-only (gauntlet #7 is about the conversation, not the client).
 //
-// current is the latest child tool NAME (the most-recent subagent.tool ToolName);
-// the inline card deliberately omits it, but the fleet roster surfaces it as the
-// per-row liveness signal (mirroring teamLane.current). done/stop/usage/durationMs
+// current is the latest child tool NAME (the most-recent subagent.tool ToolName) —
+// the per-row liveness signal (mirroring teamLane.current). done/stop/usage/durationMs
 // are the resolved end stats (done gates them). isError marks the LAST child tool
 // errored (a transient cue); the terminal disposition rides stop. background marks
 // a detached-delivery child (subagent.start's Background field): its Subagent call
@@ -269,7 +323,7 @@ type subagentLane struct {
 	routedModel    string // opt-in model router's chosen model id (ADR 0031); "" when unrouted
 	model          string // concrete model id the child ACTUALLY ran on (issue #112 / ADR 0035); == routedModel when routed
 	current        string // latest child tool name, "" when none yet
-	trace          []subToolChip
+	trace          []teamTrace
 	toolCount      int
 	usage          client.Usage
 	isError        bool // the most-recent child tool errored (transient)
@@ -487,22 +541,45 @@ func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, rout
 	return true
 }
 
-// addSubagentTool appends a child-tool chip (name + error) to the matching Subagent
-// block's trace and bumps its running tool count. The trace is capped at
-// maxSubagentTrace (oldest chips dropped); the count is the authoritative running
-// total carried by the event, not len(trace). Returns false when no match.
-func (c *conversation) addSubagentTool(parentCallID, toolName string, isError bool, toolCount int) bool {
-	b := c.subagentBlock(parentCallID)
+// addSubagentTool routes one subagent.tool projection into the matching Subagent
+// block's trace per the event's InnerKind: a tool.call sets the live current tool
+// and appends a pending chip (with its bounded arg preview); a tool.result
+// finalises the chip (error state + result preview); a message.delta extends a
+// capped message line. The trace is capped at maxTraceEntries (oldest entries
+// dropped); the count is the authoritative running total carried by the event, not
+// len(trace). Returns false when no match.
+func (c *conversation) addSubagentTool(msg client.SubagentMsg) bool {
+	b := c.subagentBlock(msg.ParentCallID)
 	if b == nil {
 		return false
 	}
 	b.subagent = true
-	b.subToolCount = toolCount
-	b.subTrace = append(b.subTrace, subToolChip{name: toolName, isError: isError})
-	if len(b.subTrace) > maxSubagentTrace {
-		b.subTrace = b.subTrace[len(b.subTrace)-maxSubagentTrace:]
-	}
+	b.subToolCount = msg.ToolCount
+	b.subTrace, b.subCurrent = routeTraceEvent(b.subTrace, b.subCurrent, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 	return true
+}
+
+// routeTraceEvent is the shared InnerKind→trace projection every delegation family
+// routes its tool/message events through (subagent inline + fleet, parallel branch,
+// team member), so the semantics (coalesce message deltas, resolve result onto the
+// pending chip) can never drift between surfaces. It returns the updated trace and
+// the lane's live current-tool name (cleared by nothing but the end accumulator).
+func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, text string, isError bool) ([]teamTrace, string) {
+	switch innerKind {
+	case "message.delta", "result":
+		trace = traceAppendMessage(trace, text)
+	case "tool.result":
+		trace = traceMarkToolResult(trace, toolName, detail, isError)
+		if toolName != "" {
+			current = toolName
+		}
+	default: // "tool.call" — or an older server's kind-less subagent.tool/branch_tool
+		if toolName != "" {
+			current = toolName
+			trace = traceAppendTool(trace, toolName, detail, isError)
+		}
+	}
+	return trace, current
 }
 
 // setSubagentEnd records the resolved end stats (usage, final tool count, stop,
@@ -554,21 +631,18 @@ func (c *conversation) fleetStart(childID, goal, routedCategory, routedModel, mo
 	ln.model = model
 }
 
-// fleetTool records a resolved child tool on the fleet lane: the latest tool name
-// (the per-row liveness signal), the running count (authoritative from the event),
-// the last-error cue, and an appended capped trace chip (mirroring addSubagentTool).
-func (c *conversation) fleetTool(childID, toolName string, isError bool, toolCount int) {
-	if childID == "" {
+// fleetTool routes one subagent.tool projection into the fleet lane: the latest
+// tool name (the per-row liveness signal), the running count (authoritative from
+// the event), the last-error cue, and the shared trace (chips with bounded
+// previews + capped message lines), mirroring addSubagentTool.
+func (c *conversation) fleetTool(msg client.SubagentMsg) {
+	if msg.ChildID == "" {
 		return
 	}
-	ln := c.fleetLane(childID)
-	ln.current = toolName
-	ln.isError = isError
-	ln.toolCount = toolCount
-	ln.trace = append(ln.trace, subToolChip{name: toolName, isError: isError})
-	if len(ln.trace) > maxSubagentTrace {
-		ln.trace = ln.trace[len(ln.trace)-maxSubagentTrace:]
-	}
+	ln := c.fleetLane(msg.ChildID)
+	ln.isError = msg.IsError
+	ln.toolCount = msg.ToolCount
+	ln.trace, ln.current = routeTraceEvent(ln.trace, ln.current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 }
 
 // fleetEnd records the resolved end stats on the fleet lane (done gates them), so the
@@ -616,11 +690,11 @@ func (c *conversation) subagentFleetCounts() (running, done int) {
 func (c *conversation) hasSubagents() bool { return len(c.subagentFleet) > 0 }
 
 // parallelBranch is the per-branch projection of ONE Parallel branch, keyed by its 0-based
-// BranchIndex WITHIN a group. It mirrors subagentLane (a current tool, a capped chip trace,
+// BranchIndex WITHIN a group. It mirrors subagentLane (a current tool, a capped trace,
 // terminal stats) but is GROUPED under a parallelGroup — a Parallel run is a fan-out group,
-// not a flat fleet. It carries only the REDACTED metadata the parallel.* events forward
-// (gauntlet #7) — never branch content. workspace is the branch's fork-root path (a handle,
-// not content).
+// not a flat fleet. It carries the BOUNDED previews the parallel.* events forward
+// (ADR 0079) — bounded, scrubbed, client-only (gauntlet #7 is about the conversation).
+// workspace is the branch's fork-root path (a handle, not content).
 type parallelBranch struct {
 	index int
 	// childID is the branch's child SESSION id ("parallel-<callID>-<i>") — the
@@ -640,7 +714,7 @@ type parallelBranch struct {
 	// metadata — never branch content — so gauntlet #7 holds.
 	model      string
 	current    string // latest branch tool name, "" when none yet
-	trace      []subToolChip
+	trace      []teamTrace
 	toolCount  int
 	usage      client.Usage
 	isError    bool // the most-recent branch tool errored (transient)
@@ -739,21 +813,18 @@ func (c *conversation) parallelBranchStart(parentCallID string, index int, child
 	br.model = model
 }
 
-// parallelBranchTool records a resolved branch tool: the latest tool name (liveness),
-// the running count, the last-error cue, and an appended capped trace chip (mirroring
-// fleetTool).
-func (c *conversation) parallelBranchTool(parentCallID string, index int, toolName string, isError bool, toolCount int) {
-	if parentCallID == "" {
+// parallelBranchTool routes one branch_tool projection into the branch lane: the
+// latest tool name (liveness), the running count, the last-error cue, and the
+// shared trace (chips with bounded previews + capped message lines), mirroring
+// fleetTool.
+func (c *conversation) parallelBranchTool(msg client.ParallelMsg) {
+	if msg.ParentCallID == "" {
 		return
 	}
-	br := c.parallelGroupFor(parentCallID).parallelBranchFor(index)
-	br.current = toolName
-	br.isError = isError
-	br.toolCount = toolCount
-	br.trace = append(br.trace, subToolChip{name: toolName, isError: isError})
-	if len(br.trace) > maxSubagentTrace {
-		br.trace = br.trace[len(br.trace)-maxSubagentTrace:]
-	}
+	br := c.parallelGroupFor(msg.ParentCallID).parallelBranchFor(msg.BranchIndex)
+	br.isError = msg.IsError
+	br.toolCount = msg.ToolCount
+	br.trace, br.current = routeTraceEvent(br.trace, br.current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 }
 
 // parallelBranchEnd records a branch's resolved terminal stats (done gates them).
@@ -941,53 +1012,22 @@ func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
 	return true
 }
 
-// appendMessage adds a member message line to the lane trace. Consecutive
-// message.delta fragments coalesce onto the trailing message entry (so streamed
-// text reads as one line, not a chip storm); a new line is started when the last
-// entry is a tool chip. The trace stays capped at maxTeamTrace.
+// appendMessage adds a member message line to the lane trace via the shared
+// traceAppendMessage projection (coalescing streamed deltas).
 func (ln *teamLane) appendMessage(text string) {
-	if text == "" {
-		return
-	}
-	if n := len(ln.trace); n > 0 && ln.trace[n-1].kind == teamTraceMessage {
-		ln.trace[n-1].text += text
-		return
-	}
-	ln.pushTrace(teamTrace{kind: teamTraceMessage, text: text})
+	ln.trace = traceAppendMessage(ln.trace, text)
 }
 
 // appendTool adds a tool chip (pending; error + result detail resolved later by
 // markToolResult). detail here is the call's bounded arg preview.
 func (ln *teamLane) appendTool(name, detail string, isError bool) {
-	ln.pushTrace(teamTrace{kind: teamTraceTool, name: name, detail: detail, isError: isError})
+	ln.trace = traceAppendTool(ln.trace, name, detail, isError)
 }
 
-// markToolResult finalises the most recent matching pending tool chip's error
-// state, and replaces its detail with the result preview when one is provided (a
-// result preview is more informative than the call's arg preview; an empty result
-// detail keeps the arg preview). If no matching pending chip is found (e.g. a
-// dropped tool.call), it appends a resolved chip so a result is never silently lost.
+// markToolResult finalises the most recent matching pending tool chip via the
+// shared traceMarkToolResult projection (result preview supersedes the arg preview).
 func (ln *teamLane) markToolResult(name, detail string, isError bool) {
-	for i := len(ln.trace) - 1; i >= 0; i-- {
-		t := &ln.trace[i]
-		if t.kind == teamTraceTool && t.name == name {
-			t.isError = isError
-			if detail != "" {
-				t.detail = detail
-			}
-			return
-		}
-	}
-	ln.appendTool(name, detail, isError)
-}
-
-// pushTrace appends a trace entry and enforces the per-lane cap, dropping the
-// oldest entries once it overflows.
-func (ln *teamLane) pushTrace(t teamTrace) {
-	ln.trace = append(ln.trace, t)
-	if len(ln.trace) > maxTeamTrace {
-		ln.trace = ln.trace[len(ln.trace)-maxTeamTrace:]
-	}
+	ln.trace = traceMarkToolResult(ln.trace, name, detail, isError)
 }
 
 // setTeamEnd records the resolved end stats (rounds, stop, summed usage) on the

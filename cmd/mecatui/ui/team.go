@@ -450,12 +450,12 @@ func renderTeamFocus(th theme.Theme, b *block, member string, height int) string
 	out.WriteString("\n\n")
 
 	r := &renderer{th: th} // a width-0 renderer: chips don't wrap, traces render full
-	trace := r.renderTeamTrace(ln)
+	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
 	} else {
 		// The trace is ALREADY rendered (carries ANSI; its text was sanitized at the
-		// source in renderTeamTrace). It must NOT go through truncateLines, which
+		// source in renderTrace). It must NOT go through truncateLines, which
 		// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
 		// line count ANSI-safely instead, to the rows that fit the terminal height.
 		out.WriteString(capRenderedLines(th, trace, teamFocusRows(height)))

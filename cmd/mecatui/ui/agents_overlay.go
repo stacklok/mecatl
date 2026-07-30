@@ -619,11 +619,12 @@ func shortChildID(id string) string {
 const childIDHashLen = 6
 
 // renderSubagentFocus renders ONE child's detail: a header line (glyph + goal +
-// current/last tool + count + usage), the context-isolation honesty note (Subagent never
-// forwards child content — gauntlet #7), and the redacted tool-chip trace, height-
-// bounded to the rows that fit. A focused ChildID with no matching lane (the child
-// vanished — defensive) reads as a muted note. It mirrors renderTeamFocus minus the
-// message lines Subagent never carries.
+// current/last tool + count + usage), the bounded-previews honesty note (the
+// previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about
+// the conversation, not the client), and the interleaved child trace in the Team
+// focus format (tool chips with bounded previews + capped message lines),
+// height-bounded to the rows that fit. A focused ChildID with no matching lane (the
+// child vanished — defensive) reads as a muted note. It mirrors renderTeamFocus.
 func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, height int) string {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
@@ -642,7 +643,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hei
 	out.WriteString("\n")
 	out.WriteString(muted.Render(subagentRosterLine(ln)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render("  args/results hidden (context-isolated)"))
+	out.WriteString(muted.Render("  " + boundedPreviewsSubNote))
 	if ln.background {
 		// Honest limitation: the events carry background + done only — whether the
 		// AGENT has collected the result (the registry's delivered state) is not on
@@ -657,7 +658,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hei
 	out.WriteString("\n\n")
 
 	r := &renderer{th: th} // width-0 renderer: chips don't wrap, trace renders full
-	trace := renderFleetChips(r, ln)
+	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
 	} else {
@@ -672,28 +673,6 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hei
 	}
 	out.WriteString("\n\n" + muted.Render(hint))
 	return out.String()
-}
-
-// renderFleetChips renders a fleet lane's redacted tool-chip trace as a wrapped row of
-// glyph+name chips, reusing the same chip vocabulary as the inline subagent card. It
-// holds only tool names + ok/error glyphs (no args/results). Returns "" for an empty
-// trace.
-func renderFleetChips(r *renderer, ln *subagentLane) string {
-	if len(ln.trace) == 0 {
-		return ""
-	}
-	okStyle := r.th.Style("toolOk")
-	errStyle := r.th.Style("toolErr")
-	nameStyle := r.th.Style("toolName")
-	chips := make([]string, 0, len(ln.trace))
-	for _, c := range ln.trace {
-		glyph := okStyle.Render("✓")
-		if c.isError {
-			glyph = errStyle.Render("✗")
-		}
-		chips = append(chips, glyph+" "+nameStyle.Render(sanitizeTerminal(c.name)))
-	}
-	return wrapChips(chips, r.chipContentWidth())
 }
 
 // findFleetLane returns the lane with the given ChildID off the fleet slice, or nil.
@@ -827,11 +806,13 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 }
 
 // renderParallelGroupFocus renders ONE Parallel group's detail (ONE level — plan Q4): a
-// header (join + branch tally + run stop), the context-isolation honesty note (Parallel
-// never forwards branch content — gauntlet #7), every branch inline (glyph + label + goal
-// + current/last tool + count + usage; the SELECTED row carries the "›" cursor the `x`
-// cancel key addresses, the WINNER row a "★"), and the preserved winner fork path. A
-// focused ParentCallID with no matching group reads as a muted note.
+// header (join + branch tally + run stop), the bounded-previews honesty note (the
+// previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about the
+// conversation, not the client), every branch inline (glyph + label + goal +
+// current/last tool + count + usage; the SELECTED row carries the "›" cursor the `x`
+// cancel key addresses, the WINNER row a "★") with its interleaved trace in the Team
+// focus format below its roster line, and the preserved winner fork path. A focused
+// ParentCallID with no matching group reads as a muted note.
 func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, height int) string {
 	muted := th.Style("muted")
 	g := findParallelGroup(groups, st.group)
@@ -855,7 +836,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 		out.WriteString("\n" + muted.Render("run stop: "+subagentStopLabel(g.stop)))
 	}
 	out.WriteString("\n")
-	out.WriteString(muted.Render("  branch args/results hidden (context-isolated)"))
+	out.WriteString(muted.Render("  " + boundedPreviewsParNote))
 	out.WriteString("\n\n")
 
 	// Branch events arrive concurrently and OUT OF ORDER on the wire (branch-2's events can
@@ -864,27 +845,23 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	ordered := branchesByIndex(g.branches)
 	cursor := clampCursor(st.branchCursor, len(ordered))
 	rows := teamFocusRows(height)
-	shown := 0
+	used := 0
 	cancellable := false
+	r := &renderer{th: th} // a width-0 renderer: chips don't wrap, traces render full
 	for i := range ordered {
-		if rows > 0 && shown >= rows {
-			out.WriteString(muted.Render(fmt.Sprintf("  · +%d more branch(es)", len(ordered)-shown)) + "\n")
-			break
-		}
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
 			cancellable = true
 		}
-		line := parallelBranchLine(br)
-		switch {
-		case i == cursor && len(ordered) > 0:
-			out.WriteString(th.Style("askButtonActive").Render("› "+line) + "\n")
-		case br.index == g.winner:
-			out.WriteString(th.Style("askButtonActive").Render("★ "+line) + "\n")
-		default:
-			out.WriteString(muted.Render("  "+line) + "\n")
+		// The branch roster line + its trace block cost rows; a "+K more" tail costs one.
+		// Height-bounded so the header/footer are never pushed off.
+		remaining := rows - used
+		if rows > 0 && remaining < 1+1 { // the roster line itself + at least the tail
+			out.WriteString(muted.Render(fmt.Sprintf("  · +%d more branch(es)", len(ordered)-i)) + "\n")
+			break
 		}
-		shown++
+		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor))
+		used += 1 + renderParallelBranchTrace(&out, th, r, br, remaining)
 	}
 
 	if g.winnerWorkspace != "" {
@@ -903,9 +880,52 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	return out.String()
 }
 
+// renderParallelBranchRow renders one branch's roster line within a focused group: the
+// "›" cursor on the SELECTED row (the one the `x` cancel key addresses), the "★" on the
+// WINNER row, else a muted plain row. It always ends with a newline.
+func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool) string {
+	line := parallelBranchLine(br)
+	switch {
+	case selected:
+		return th.Style("askButtonActive").Render("› "+line) + "\n"
+	case br.index == winner:
+		return th.Style("askButtonActive").Render("★ "+line) + "\n"
+	default:
+		return th.Style("muted").Render("  "+line) + "\n"
+	}
+}
+
+// renderParallelBranchTrace appends a branch's interleaved trace (the Team focus format)
+// below its roster line, height-bounded to the rows that remain: when the budget leaves
+// no row (remaining-1 <= 0) the trace is omitted — a trace can never render in zero
+// lines; when bounded it is clamped ANSI-safely with a "+N more lines" tail
+// (capRenderedLines does not sanitizeTerminal the styling). It returns the number of
+// rows the trace consumed (0 when omitted / empty).
+func renderParallelBranchTrace(out *strings.Builder, th theme.Theme, r *renderer, br *parallelBranch, remaining int) int {
+	trace := r.renderTrace(br.trace)
+	if trace == "" {
+		return 0
+	}
+	traceLines := strings.Count(trace, "\n") + 1
+	if remaining <= 0 { // height unbounded (rows<=0): render full
+		out.WriteString(trace + "\n")
+		return traceLines
+	}
+	if remaining-1 <= 0 { // no row left for the trace: omit it
+		return 0
+	}
+	if traceLines > remaining-1 {
+		trace = capRenderedLines(th, trace, remaining-1)
+		traceLines = remaining - 1
+	}
+	out.WriteString(trace + "\n")
+	return traceLines
+}
+
 // parallelBranchLine is one branch row within a focused group: a state glyph (◐ running /
 // ✓ done / ✗ failed), the branch label, its goal, the current/last tool, the tool count,
-// and token usage. It holds only redacted metadata.
+// and token usage. It holds only redacted metadata; the branch's bounded previews live
+// on the trace rendered below the row, not on the row itself.
 func parallelBranchLine(br *parallelBranch) string {
 	glyph := "◐"
 	if br.done {

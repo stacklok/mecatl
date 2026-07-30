@@ -1466,22 +1466,23 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 	}
 }
 
-// renderSubagent renders a Subagent card's REDACTED subagent region. It has three
-// states, per the agreed UX, and shows only metadata — never the child's interior
-// (args/results/message text are isolated by design):
+// renderSubagent renders a Subagent card's BOUNDED subagent region (ADR 0079 — the
+// previews are bounded, scrubbed, client-only; they never enter the parent
+// conversation). It has three states, per the agreed UX:
 //
 //   - LIVE collapsed (default, not resolved): a calm one-liner under the goal —
-//     "subagent · ↑<in> ↓<out> · N tools · ctrl+t trace". No live current-tool
-//     name, no elapsed clock: counts update as events arrive, no ticker.
-//   - EXPANDED (ctrl+t, not resolved): a wrapped row of glyph+name chips
-//     (✓/✗ per child tool), capped at maxSubagentTrace, under a muted
-//     "args/results hidden" honesty note.
+//     "subagent · <current tool> · ↑<in> ↓<out> · N tools · ctrl+t trace". The line
+//     changes only when the tool actually changes: counts update as events arrive,
+//     no ticker.
+//   - EXPANDED (ctrl+t, not resolved): the capped child trace in the Team format —
+//     glyph+name chips with bounded arg/result previews and capped message lines —
+//     under a muted "bounded previews" honesty note.
 //   - RESOLVED: a single muted stat line —
 //     "subagent · <dur> · ↑<in> ↓<out> · N tools · stop:<reason>".
 //
 // The goal title always leads (a muted line) so a card is self-contained and
 // legible even with several concurrent subagents interleaved. All subagent-derived
-// strings (goal, tool names) are terminal-sanitized.
+// strings (goal, tool names, previews) are terminal-sanitized.
 func (r *renderer) renderSubagent(b *block, expand bool) string {
 	muted := r.th.Style("muted")
 	var out strings.Builder
@@ -1500,10 +1501,10 @@ func (r *renderer) renderSubagent(b *block, expand bool) string {
 	}
 
 	if expand {
-		out.WriteString(muted.Render("subagent · args/results hidden"))
-		if chips := r.renderSubagentChips(b); chips != "" {
+		out.WriteString(muted.Render("subagent · " + boundedPreviewsSubNote))
+		if trace := r.renderTrace(b.subTrace); trace != "" {
 			out.WriteString("\n")
-			out.WriteString(chips)
+			out.WriteString(trace)
 		}
 		return strings.TrimRight(out.String(), "\n")
 	}
@@ -1541,11 +1542,18 @@ func subagentModelLabel(category, routedModel, model string) string {
 	return ""
 }
 
-// subagentLiveLine is the calm, monotonic collapsed status line: token totals and
-// a running tool count, plus the ctrl+t trace affordance. No current-tool name and
-// no elapsed clock, so it updates only as events arrive (no ticker).
+// subagentLiveLine is the calm, monotonic collapsed status line: the child's live
+// current-tool name (when one has run — "…" while it is still working), the token
+// totals, a running tool count, and the ctrl+t trace affordance. No elapsed clock
+// and no heartbeat ticker, so the line changes only when the tool actually changes
+// (ADR 0079 AC3.1). The tool name is sanitized (server-derived).
 func subagentLiveLine(b *block) string {
-	return fmt.Sprintf("subagent · ↑%s ↓%s · %s · ctrl+t trace",
+	current := "…"
+	if b.subCurrent != "" {
+		current = sanitizeTerminal(b.subCurrent)
+	}
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · ctrl+t trace",
+		current,
 		humanizeTokens(b.subUsage.InputTokens),
 		humanizeTokens(b.subUsage.OutputTokens),
 		plural(b.subToolCount, "tool"))
@@ -1565,30 +1573,6 @@ func subagentResolvedLine(b *block) string {
 // chipSep is the two-space gap between adjacent child-tool chips in the expanded
 // trace row.
 const chipSep = "  "
-
-// renderSubagentChips renders the expanded child-tool trace as a wrapped row of
-// glyph+name chips (✓ ok / ✗ error), using the same status glyphs as the tool
-// card. Chips are packed greedily and wrapped BETWEEN chips at the card's content
-// width (measured by visible width, so ANSI styling and the chip glyphs don't
-// throw off the wrap), so a long trace never splits a chip mid-name. Names are
-// sanitized. Returns "" for an empty trace.
-func (r *renderer) renderSubagentChips(b *block) string {
-	if len(b.subTrace) == 0 {
-		return ""
-	}
-	okStyle := r.th.Style("toolOk")
-	errStyle := r.th.Style("toolErr")
-	nameStyle := r.th.Style("toolName")
-	chips := make([]string, 0, len(b.subTrace))
-	for _, c := range b.subTrace {
-		glyph := okStyle.Render("✓")
-		if c.isError {
-			glyph = errStyle.Render("✗")
-		}
-		chips = append(chips, glyph+" "+nameStyle.Render(sanitizeTerminal(c.name)))
-	}
-	return wrapChips(chips, r.chipContentWidth())
-}
 
 // chipContentWidth is the visible width available for the chip row inside the tool
 // card, accounting for the card's border (2) and horizontal padding (2). It floors
@@ -1640,15 +1624,29 @@ func wrapChips(chips []string, width int) string {
 	return b.String()
 }
 
-// maxTeamMessageLen caps how many runes of a member's forwarded message line show
-// in the expanded lane trace; the server already bounds previews, this is a
-// belt-and-braces clamp so one verbose member can't dominate the card.
-const maxTeamMessageLen = 200
+// maxTraceMessageLen caps how many runes of a forwarded child message line show in
+// a delegation lane's expanded trace (Subagent / Team / Parallel — shared per ADR
+// 0079); the server already bounds previews, this is a belt-and-braces clamp so one
+// verbose child can't dominate the card.
+const maxTraceMessageLen = 200
 
-// maxTeamDetailLen caps how many runes of a tool chip's arg/result preview show
-// next to it in the expanded trace. Server-bounded already; this keeps a single
-// chip line scannable.
-const maxTeamDetailLen = 80
+// maxTraceDetailLen caps how many runes of a tool chip's arg/result preview show
+// next to it in the expanded trace. Server-bounded already (≤200 runes); this keeps
+// a single chip line scannable. Shared by the Subagent/Team/Parallel trace
+// renderers per ADR 0079 — the engine cap + this cap is the intentional
+// double-truncation defense-in-depth.
+const maxTraceDetailLen = 80
+
+// boundedPreviewsSubNote / boundedPreviewsParNote are the honesty notes every
+// Subagent / Parallel trace surface carries (ADR 0079): the previews are BOUNDED —
+// clamped + scrubbed server-side, capped again on render, client-only — so the
+// note states the accurate posture instead of the pre-ADR-0079 "content hidden"
+// claim. The parent conversation stays clean (gauntlet #7 is about the
+// conversation, not what a client may observe).
+const (
+	boundedPreviewsSubNote = "bounded previews — child content is clamped + scrubbed, never in the parent conversation"
+	boundedPreviewsParNote = "bounded previews — branch content is clamped + scrubbed, never in the parent conversation"
+)
 
 // maxTeamLanes caps how many member lanes render inline on the card. A larger
 // roster collapses the overflow into a "· +K more" roll-up line so a big team can
@@ -1742,7 +1740,7 @@ func (r *renderer) renderTeam(b *block, expand bool) string {
 		out.WriteString("\n")
 		out.WriteString(muted.Render(teamLaneLine(ln, nameW, false)))
 		if expand {
-			if tr := r.renderTeamTrace(ln); tr != "" {
+			if tr := r.renderTrace(ln.trace); tr != "" {
 				out.WriteString("\n")
 				out.WriteString(tr)
 			}
@@ -1862,13 +1860,17 @@ func teamStopReasonLabel(reason string) string {
 	}
 }
 
-// renderTeamTrace renders a member lane's expanded trace: message lines (clamped,
-// dim, prefixed "  ") interleaved with tool chips (✓/✗ name) carrying their bounded
+// renderTrace renders a delegation lane's expanded trace — the SHARED format for
+// the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
+// lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
+// prefixed "  ") interleave with tool chips (✓/✗ name) carrying their bounded
 // arg/result preview, in arrival order. A chip with a preview gets its own line
 // ("  ✓ Grep — pattern: foo"); bare chips coalesce onto one wrapped row. Returns
-// "" for an empty trace. All text is sanitized.
-func (r *renderer) renderTeamTrace(ln *teamLane) string {
-	if len(ln.trace) == 0 {
+// "" for an empty trace. All text is sanitized; the previews are capped again here
+// (maxTraceDetailLen / maxTraceMessageLen) on top of the server clamp — the
+// intentional double-truncation defense-in-depth.
+func (r *renderer) renderTrace(trace []teamTrace) string {
+	if len(trace) == 0 {
 		return ""
 	}
 	muted := r.th.Style("muted")
@@ -1895,8 +1897,8 @@ func (r *renderer) renderTeamTrace(ln *teamLane) string {
 		}
 		b.WriteString(s)
 	}
-	for i := range ln.trace {
-		t := &ln.trace[i]
+	for i := range trace {
+		t := &trace[i]
 		switch t.kind {
 		case teamTraceTool:
 			glyph := okStyle.Render("✓")
@@ -1906,12 +1908,12 @@ func (r *renderer) renderTeamTrace(ln *teamLane) string {
 			chip := glyph + " " + nameStyle.Render(sanitizeTerminal(t.name))
 			if detail := sanitizeTerminal(oneLine(t.detail)); detail != "" {
 				// A chip with a preview gets a dedicated line so its detail is readable.
-				writeLine("  " + chip + muted.Render(" — "+truncate(detail, maxTeamDetailLen)))
+				writeLine("  " + chip + muted.Render(" — "+truncate(detail, maxTraceDetailLen)))
 			} else {
 				chips = append(chips, chip)
 			}
 		case teamTraceMessage:
-			writeLine("  " + muted.Render(truncate(sanitizeTerminal(oneLine(t.text)), maxTeamMessageLen)))
+			writeLine("  " + muted.Render(truncate(sanitizeTerminal(oneLine(t.text)), maxTraceMessageLen)))
 		}
 	}
 	flush()

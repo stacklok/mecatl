@@ -837,10 +837,9 @@ func noticeLine(msg tea.Msg) string {
 	}
 }
 
-// applySubagent attributes a REDACTED subagent projection to its Subagent tool card by
-// ParentCallID (id match, like resolveTool). A miss is silently dropped: the card
-// carries no child content either way, so a lost subagent event only costs the
-// trace, never correctness or isolation.
+// applySubagent attributes a BOUNDED subagent projection to its Subagent tool card by
+// ParentCallID (id match, like resolveTool). A miss is silently dropped: a lost
+// subagent event only costs the trace, never correctness or isolation.
 func (m *Model) applySubagent(msg client.SubagentMsg) {
 	applySubagentTo(&m.conv, msg)
 	// A BACKGROUND child finishing is otherwise invisible (its Subagent card
@@ -857,40 +856,41 @@ func (m *Model) applySubagent(msg client.SubagentMsg) {
 }
 
 // applySubagentTo is the pure conversation-projection half of applySubagent: it
-// routes a REDACTED subagent projection into the inline Subagent card (keyed by
-// ParentCallID) AND the flat fleet collection (keyed by ChildID) on c. Both are
-// redacted, metadata-only — neither carries child content (gauntlet #7). The live
-// applySubagent delegates here and layers the transient footer status on top; the
-// replay path (applyReplayEvent) calls this directly so the read-only transcript
-// gets the SAME projection without any live-run footer side-effect.
+// routes a BOUNDED subagent projection into the inline Subagent card (keyed by
+// ParentCallID) AND the flat fleet collection (keyed by ChildID) on c. The previews
+// are bounded/scrubbed/client-only — neither surface feeds the parent conversation
+// (gauntlet #7). The live applySubagent delegates here and layers the transient
+// footer status on top; the replay path (applyReplayEvent) calls this directly so
+// the read-only transcript gets the SAME projection without any live-run footer
+// side-effect.
 func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 	switch msg.Kind {
 	case client.SubagentStart:
 		c.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
 		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model, msg.Background)
 	case client.SubagentTool:
-		c.addSubagentTool(msg.ParentCallID, msg.ToolName, msg.IsError, msg.ToolCount)
-		c.fleetTool(msg.ChildID, msg.ToolName, msg.IsError, msg.ToolCount)
+		c.addSubagentTool(msg)
+		c.fleetTool(msg)
 	case client.SubagentEnd:
 		c.setSubagentEnd(msg.ParentCallID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
 		c.fleetEnd(msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
 	}
 }
 
-// applyParallel routes a REDACTED Parallel fork-join projection into the GROUPED
+// applyParallel routes a BOUNDED Parallel fork-join projection into the GROUPED
 // parallelGroups state (keyed by ParentCallID), which backs the fleet footer segment and
 // the ctrl+a Parallel tab. Unlike Subagent it has no second inline-card destination: a
 // Parallel run's deliverable (the winner + fork paths) rides the tool RESULT text the
-// model reads; these events are the client observability channel only. All fields are
-// redacted, metadata-only — none carries branch content (gauntlet #7).
+// model reads; these events are the client observability channel only. The previews
+// are bounded/scrubbed/client-only (gauntlet #7).
 func (m *Model) applyParallel(msg client.ParallelMsg) {
 	applyParallelTo(&m.conv, msg)
 }
 
 // applyParallelTo is the pure conversation-projection half of applyParallel: it
-// routes a REDACTED Parallel fork-join projection into c's parallelGroups (keyed
+// routes a BOUNDED Parallel fork-join projection into c's parallelGroups (keyed
 // by ParentCallID). The live applyParallel delegates here; the replay path calls
-// this directly. All fields are redacted, metadata-only (gauntlet #7).
+// this directly. The previews are bounded/scrubbed/client-only (gauntlet #7).
 func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 	switch msg.Kind {
 	case client.ParallelStart:
@@ -898,7 +898,7 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 	case client.ParallelBranchStart:
 		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
 	case client.ParallelBranchTool:
-		c.parallelBranchTool(msg.ParentCallID, msg.BranchIndex, msg.ToolName, msg.IsError, msg.ToolCount)
+		c.parallelBranchTool(msg)
 	case client.ParallelBranchEnd:
 		c.parallelBranchEnd(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.Failed, msg.Workspace, msg.DurationMs)
 	case client.ParallelEnd:

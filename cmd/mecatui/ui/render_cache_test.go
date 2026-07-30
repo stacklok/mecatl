@@ -96,14 +96,22 @@ var oracleSteps = []struct {
 		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
 		c.setSubagentStart("call-sub", "dig into the code", "", "", "")
 	}},
-	{"addSubagentTool", func(c *conversation) { c.addSubagentTool("call-sub", "Grep", false, 1) }},
+	{"addSubagentTool", func(c *conversation) {
+		c.addSubagentTool(client.SubagentMsg{
+			Kind: client.SubagentTool, ParentCallID: "call-sub", ToolName: "Grep", ToolCount: 1,
+		})
+	}},
 	{"setSubagentEnd", func(c *conversation) {
 		c.setSubagentEnd("call-sub", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
 	}},
 	// The fleet accumulators mutate conversation state OFF the blocks (footer /
 	// ctrl+a roster); they must leave the block render untouched.
 	{"fleetStart", func(c *conversation) { c.fleetStart("child-1", "dig into the code", "", "", "", false) }},
-	{"fleetTool", func(c *conversation) { c.fleetTool("child-1", "Grep", false, 1) }},
+	{"fleetTool", func(c *conversation) {
+		c.fleetTool(client.SubagentMsg{
+			Kind: client.SubagentTool, ChildID: "child-1", ToolName: "Grep", ToolCount: 1,
+		})
+	}},
 	{"fleetEnd", func(c *conversation) {
 		c.fleetEnd("child-1", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
 	}},
@@ -160,7 +168,11 @@ var oracleSteps = []struct {
 	{"parallelBranchStart", func(c *conversation) {
 		c.parallelBranchStart("call-par", 0, "parallel-call-par-0", "fast", "try the fast path", "", "", "")
 	}},
-	{"parallelBranchTool", func(c *conversation) { c.parallelBranchTool("call-par", 0, "Bash", false, 1) }},
+	{"parallelBranchTool", func(c *conversation) {
+		c.parallelBranchTool(client.ParallelMsg{
+			Kind: client.ParallelBranchTool, ParentCallID: "call-par", BranchIndex: 0, ToolName: "Bash", ToolCount: 1,
+		})
+	}},
 	{"parallelBranchEnd", func(c *conversation) {
 		c.parallelBranchEnd("call-par", 0, "parallel-call-par-0",
 			client.Usage{InputTokens: 500, OutputTokens: 90}, 2, "end_turn", false, "/forks/fork-0", 900)
