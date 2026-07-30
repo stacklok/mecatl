@@ -474,12 +474,14 @@ type TurnEndPayload struct {
 
 // The three DELEGATION observability families — SubagentPayload / ParallelPayload /
 // TeamPayload — all project the SAME underlying child-loop LIFECYCLE: a redacted child
-// doing tool work, start → tool → end. The shared scalar lifecycle is the parent call
-// id, a child/branch/member identity, a tool name / error bool / running count, usage,
-// stop reason, and duration; and the per-tool redaction of that lifecycle is shared in
-// EXACTLY ONE place — agent.drainChildObserved (the single redaction chokepoint all
-// three reuse). The three payloads therefore differ ONLY in their AGGREGATION shape, not
-// their lifecycle:
+// doing tool work, start → tool → end. The shared lifecycle is the parent call id, a
+// child/branch/member identity, a tool name / error bool / running count, usage, stop
+// reason, and duration, PLUS — as of ADR 0079 — the bounded preview fields (Text /
+// Detail / InnerKind) all three families now carry for their tool/message events; and
+// the redaction of that lifecycle (previews included) is shared in EXACTLY ONE place —
+// agent.drainChildObserved (the single redaction chokepoint all three reuse, every
+// preview fed through the shared clampPreview). The three payloads therefore differ
+// ONLY in their AGGREGATION shape, not their lifecycle:
 //   - SubagentPayload — a FLAT fleet (one row per child, no grouping).
 //   - ParallelPayload — a fan-out GROUP (branches share a join mode + a single winner +
 //     preserved per-branch fork paths).
@@ -494,16 +496,25 @@ type TurnEndPayload struct {
 
 // SubagentPayload is the REDACTED observability projection carried by the three
 // subagent.* events (EvSubagentStart / EvSubagentTool / EvSubagentEnd). It is the
-// ONLY information about a Subagent tool's child run that surfaces to clients, and
-// it deliberately carries no child content — no message text, no tool args, no
-// tool result bodies — only metadata. This is orthogonal to the context-isolation
-// guarantee (gauntlet #7): forwarding metadata to the event stream never touches
-// the parent's Conversation, so the child's content still never enters the context
-// sent to the LLM.
+// ONLY information about a Subagent tool's child run that surfaces to clients.
+//
+// REDACTION CONTRACT — bounded previews (ADR 0079, superseding the former
+// metadata-only contract): on tool events it deliberately forwards BOUNDED previews
+// of the child's content — Text is a bounded, clamped preview of the child's message
+// text, Detail is a bounded, clamped preview of a child tool call's args or a tool
+// result's body. Every such preview is CAPPED — a control-byte scrub plus a rune cap
+// applied by clampPreview in engine/agent — so an unbounded args/result/message body
+// can never be copied verbatim, and a child's permission.ask is DROPPED entirely: it
+// is NEVER forwarded, so a pending-ask reason (which can quote secrets or sensitive
+// args) never reaches the stream. The forwarding is CLIENT-ONLY: nothing here ever
+// enters the parent Session's Conversation (gauntlet #7 unchanged) — only the
+// Subagent tool's own ToolResult text does, so the LLM's context is untouched.
 //
 // Which fields are set depends on the event kind:
 //   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel], Model.
-//   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount.
+//   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount, and —
+//     when a preview is available — Text / Detail / InnerKind (which inner event kind
+//     the preview came from: message.delta / tool.call / tool.result / result).
 //   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, DurationMs.
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
@@ -551,6 +562,21 @@ type SubagentPayload struct {
 	// ToolCount is the running (EvSubagentTool) or final (EvSubagentEnd) number of
 	// child tool calls observed.
 	ToolCount int
+	// Text is a BOUNDED preview of the child's message/result text — control-byte
+	// scrubbed and rune-capped by clampPreview in engine/agent, never the raw,
+	// unbounded body. Set on EvSubagentTool for the message.delta / result inner
+	// kinds when a preview is available.
+	Text string
+	// Detail is a BOUNDED preview of a child tool call's args (tool.call) or a
+	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
+	// on EvSubagentTool for the tool.call / tool.result inner kinds when a preview
+	// is available.
+	Detail string
+	// InnerKind discriminates which inner child event kind the preview came from
+	// (message.delta / tool.call / tool.result / result). Set on EvSubagentTool
+	// alongside Text / Detail. A child's permission.ask is never projected.
+	InnerKind EventType
 	// Usage is the child run's cumulative token accounting. Set on EvSubagentEnd
 	// only.
 	Usage Usage
@@ -562,12 +588,21 @@ type SubagentPayload struct {
 }
 
 // ParallelPayload is the REDACTED observability projection carried by the parallel.*
-// events (EvParallelStart / EvParallelBranch / EvParallelEnd). Like SubagentPayload it is
-// METADATA ONLY — it carries no branch content (no message text, no tool args, no tool
-// result bodies), only metadata plus the per-branch fork-root PATHS (a handle the model
-// is already given in the Parallel ToolResult text, not branch content). This keeps the
-// context-isolation guarantee (gauntlet #7) intact: forwarding metadata to the event
-// stream never touches the parent's Conversation.
+// events (EvParallelStart / EvParallelBranch / EvParallelEnd).
+//
+// REDACTION CONTRACT — bounded previews (ADR 0079, superseding the former
+// metadata-only contract): on branch tool events it deliberately forwards BOUNDED
+// previews of the branch's content — Text is a bounded, clamped preview of the
+// branch's message text, Detail is a bounded, clamped preview of a branch tool
+// call's args or a tool result's body. Every such preview is CAPPED — a
+// control-byte scrub plus a rune cap applied by clampPreview in engine/agent — so an
+// unbounded args/result/message body can never be copied verbatim, and a branch's
+// permission.ask is DROPPED entirely: it is NEVER forwarded, so a pending-ask reason
+// (which can quote secrets or sensitive args) never reaches the stream. The only
+// other non-scalar it carries is the per-branch fork-root PATHS (a handle the model
+// is already given in the Parallel ToolResult text, not branch content). The
+// forwarding is CLIENT-ONLY: nothing here ever enters the parent Session's
+// Conversation (gauntlet #7 unchanged).
 //
 // Unlike the FLAT SubagentPayload, a Parallel run is a GROUP: N branches of ONE call
 // (keyed by ParentCallID) sharing a join strategy, a single winner (join=first/judge),
@@ -577,7 +612,7 @@ type SubagentPayload struct {
 // Which fields are set depends on the event kind:
 //   - EvParallelStart:                       ParentCallID, Join, BranchCount.
 //   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel], Model.
-//   - EvParallelBranch (Kind=branch_tool):   ParentCallID, Kind, BranchIndex, ToolName, IsError, ToolCount.
+//   - EvParallelBranch (Kind=branch_tool):   ParentCallID, Kind, BranchIndex, ToolName, IsError, ToolCount, and — when a preview is available — Text / Detail / InnerKind.
 //   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed, Workspace.
 //   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, WinnerWorkspace, Usage (run total), Stop.
 type ParallelPayload struct {
@@ -643,6 +678,21 @@ type ParallelPayload struct {
 	// ToolCount is the running (branch_tool) or final (branch_end) number of a branch's
 	// child tool calls observed.
 	ToolCount int
+	// Text is a BOUNDED preview of the branch's message/result text — control-byte
+	// scrubbed and rune-capped by clampPreview in engine/agent, never the raw,
+	// unbounded body. Set on the branch_tool kind for the message.delta / result
+	// inner kinds when a preview is available.
+	Text string
+	// Detail is a BOUNDED preview of a branch tool call's args (tool.call) or a
+	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
+	// on the branch_tool kind for the tool.call / tool.result inner kinds when a
+	// preview is available.
+	Detail string
+	// InnerKind discriminates which inner branch event kind the preview came from
+	// (message.delta / tool.call / tool.result / result). Set on the branch_tool
+	// kind alongside Text / Detail. A branch's permission.ask is never projected.
+	InnerKind EventType
 
 	// Failed reports whether the branch's child run failed (StopError / cancelled /
 	// fork failure). Set on the branch_end kind.
@@ -805,8 +855,9 @@ type TeamMemberDisposition struct {
 // (EvTeamStart / EvTeamMember / EvTeamTasks / EvTeamFindings / EvTeamEnd). It is the ONLY information
 // about an in-process team's run that surfaces to clients on the event stream.
 //
-// REDACTION CONTRACT — fuller-but-bounded. Unlike SubagentPayload (metadata only),
-// a team is meant to be WATCHED, so this payload deliberately forwards member
+// REDACTION CONTRACT — fuller-but-bounded. Like SubagentPayload / ParallelPayload
+// (bounded previews per ADR 0079) but fuller, since a team is meant to be WATCHED:
+// this payload deliberately forwards member
 // CONTENT on team.member events: the member's streamed/terminal message text and
 // BOUNDED previews of its tool calls (name + capped arg preview) and tool results
 // (error bool + capped body preview). Every such preview is CAPPED (see
