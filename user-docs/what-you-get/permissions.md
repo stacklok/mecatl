@@ -232,6 +232,46 @@ Independently of posture, every agent-facing shell runs with the harness's
 credentials **scrubbed** from its environment — even under `auto`/`yolo`, the model
 cannot `echo $OPENROUTER_API_KEY` or `cat /proc/self/environ` to read a provider key.
 
+### Out-of-workspace filesystem access (the path-escape posture)
+
+The FS tools (`Read`/`Write`/`Edit`) are rooted at the session workspace; a path that
+resolves outside it used to be a dead end — the call failed with a path-escape error and
+the model fell back to an opaque Bash `cat /path`, losing the FS tools' invariants and
+audit shape. The posture now decides what an out-of-workspace escape does instead:
+
+| Posture | Read escape | Write escape |
+|---|---|---|
+| `yolo` | allow | allow |
+| `auto` | allow | **ask** |
+| `strict` / `trusted` | **ask** | **ask** |
+
+- **The consent model.** Every ask is an ordinary [Layer 1 `permission.ask`](#the-permissionask-flow):
+  the prompt names the exact path, and approval is **allow-once only** — approving one
+  out-of-workspace call never learns a rule that pre-approves the next one. A configured
+  `deny` or configured `ask` always wins over the posture row (deny-dominance and the
+  configured-Ask floor are untouched), and **plan mode still hard-denies writes first**.
+- **Bash parity.** At `auto`/`yolo` a Bash `cat /outside` already reads the same bytes,
+  so an un-asked read boundary on the FS tools was cosmetic; writes are never silent
+  below `yolo`.
+- **Never relaxed, at any posture:** paths under `/proc`, `/sys`, or `/dev` are a hard
+  deny everywhere. An in-process Read of `/proc/self/environ` would expose the *server's*
+  raw, unscrubbed environment — a channel the env-scrubbed Bash parity path does not
+  provide — so the parity premise does not extend there. **Child agents** (subagents,
+  team members, parallel branches) also never get the relax at any posture: only the
+  main session's workspace carries it, and a child that shares the parent's workspace is
+  handed a non-relaxed view of the same root.
+- **Serving stays contained.** An approved escape is served through the same
+  symlink-checked containment the workspace itself uses (a fresh `os.Root` on the
+  target's parent directory) — the relax widens *which* paths may be served, never *how*.
+- **Optional LLM gate at `auto`.** With a guardrail checker model configured, the
+  operator-tier `guardrails.escape: true` setting (user-global `settings.yaml` only)
+  routes each `auto`-posture escape through the [Layer 2 checker](#layer-2--model-backed-guardrails)
+  first: unsafe → deny; a checker error fails closed to the write-escape ask. Default is
+  off — the plain table above. See
+  [ADR 0080](https://github.com/stacklok/mecatl/blob/main/docs/adr/0080-guardrail-routed-escape-checking.md)
+  and the full operator reference in
+  [`docs/usage.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage.md).
+
 ### Workspace trust
 
 Trust decides whether a **project's** injected authority is admitted. It is a

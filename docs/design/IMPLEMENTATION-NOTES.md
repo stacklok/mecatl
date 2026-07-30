@@ -3933,6 +3933,126 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
   files are body-only in a no-fs session: the body injects fine, asset reads fail honestly
   with not-exist through the nofs workspace (and the posture note tells the model so).
 
+### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
+
+The osfs out-of-root rejection used to be a silent dead-end: `ErrPathEscape` pushed the
+model to an opaque Bash `cat /path`, losing the FS tools' invariants and audit shape. The
+path-escape-posture plan turns that rejection into a **posture-appropriate decision** —
+without ever stripping the osfs containment vetting (ADR-0047's `*os.Root` +
+canonicalize-then-reject is byte-for-byte intact; the relax consults policy BEFORE the
+tool body, never re-opens it after).
+
+**Decision in composition, serving in osfs.** Two halves, deliberately split:
+
+- `internal/app/escapeclassifier.go` (`escapeClassifier`) — a pure composition-layer
+  predicate answering "is this Read/Write/Edit call an out-of-root escape?" into four
+  kinds: in-root / read-root / escape / pseudo-fs. It NEVER reimplements the osfs
+  algorithms — it is built from `internal/adapter/osfs/osfs.go` (`Canonicalize`) and its
+  sibling exported helpers `LocalizeInRoot`, `MatchReadRoot`, and `ResolveRoot` — the SAME
+  canonicalize-then-reject and lexical read-root primitives the tool body runs over the
+  same canonicalized root, so a symlinked absolute path classifies identically to the
+  tool body by construction. Only the three path-carrying FS tools classify: Bash is
+  gated by its own classifiers, Glob/Grep route patterns and stay workspace-confined at
+  every posture (ADR-0047 point 5), and a malformed path arg classifies in-root (the
+  tool body's own validation rejects it — the escape decision never invents a path).
+- `internal/app/escapepolicy.go` (`escapePolicy`) — a root-aware wrapping
+  `port.PermissionPolicy` (a permpolicy sibling over the same seam) that layers ONLY the
+  escape decision on top of the inner fold. It DELEGATES TO THE INNER POLICY FIRST and
+  only ever relaxes a non-deny: an inner Deny (a configured deny, the plan-mode
+  hard-deny — AC4.4, plan mode still wins first) returns verbatim, and an inner Ask with
+  `ConfiguredAsk` returns verbatim (the configured-Ask floor — the relax never
+  suppresses a configured ask, mirroring the bash substitution floor's invariant). The
+  shared engine carries ONE instance; per-session root-awareness comes from the
+  workspace the loop hands it, and the per-root classifier is built once and cached.
+  `Learn` is forwarded to the inner policy EXCEPT for an escape call — the escape relax
+  is posture-derived, never learned, so v1 escape asks are allow-once only (a learned
+  out-of-root Write/Edit rule would silently pre-approve every later write to that
+  path).
+
+**The posture → escape-decision table** (the running behaviour, per posture tier):
+
+| Posture | Read escape | Write escape |
+|---|---|---|
+| `yolo` | allow | allow |
+| `auto` | allow (guardrail-gated iff the escape knob is configured — ADR 0080) | ask (guardrail-gated iff configured) |
+| `strict` / `trusted` | ask | ask |
+| plan mode | allow read | hard deny (plan mode wins first — unchanged) |
+| pseudo-fs (`/proc`,`/sys`,`/dev`) | hard deny, every posture | hard deny, every posture |
+| any child engine | hard deny, every posture | hard deny, every posture |
+
+At `auto`/`yolo` a read escape allows by Bash parity (the Bash channel already reads the
+same bytes, so the FS read boundary was cosmetic); a write escape allows only at `yolo`
+and ASKS everywhere below it (never a silent un-asked mutation). At `strict`/`trusted`
+BOTH read and write escapes now ASK on the FS tool itself (Scenario 4) instead of
+dead-ending — the ask names the path, so the approval is legible, and the escape Ask is
+never `ConfiguredAsk`/`FlooredConfiguredAllow` (it must surface to a human; A2 and the
+floored-allow auto-resolve key off those bits).
+
+**The serving half.** The MAIN session's workspace factory
+(`internal/app/build.go`, `osfsWorkspaceFactory`) builds the workspace
+`internal/adapter/osfs/osfs.go` (`WithRelaxedReads`) + (`WithRelaxedWrites`) at every
+posture and wraps it in `escapeWorkspace` (the SAME classifier instance family as the
+policy — single construction, so workspace and policy can never disagree). The relaxed
+options only make SERVING possible — whether an escape RUNS is the policy's call, and an
+escape left at Ask never reaches the tool body unapproved. At strict/trusted the relaxed
+workspace is what lets an APPROVED escape actually execute (the ask would otherwise be
+un-actionable). Both options serve through a FRESH `*os.Root` opened on the target's
+LEXICAL parent directory — never a bare os.Open/os.WriteFile — so a symlink inside the
+target dir that escapes further is refused by that root's containment, exactly as the
+workspace root's own containment refuses an in-root escape. The relax widens WHICH
+paths may be served, never HOW they are served. `escapeWorkspace` also carries the
+pseudo-fs hard-deny as defense-in-depth at the tool-body boundary, INCLUDING the Edit
+read-ledger (`RecordRead`/`WasReadUnchanged` are overridden — the inner osfs fingerprint
+read would otherwise bypass the guard, AC-W2-F1; the guarded record/check are fail-safe
+no-ops, so a pseudo-fs Edit can never validate its read-before-edit invariant through
+this wrapper).
+
+**Pseudo-fs is never relaxed** (`escapePseudoFS`, distinct from a regular escape at
+every posture): an in-process FS Read of `/proc/self/environ` would return the SERVER's
+raw, unscrubbed environment — a secret-exfiltration channel the envscrub-scrubbed Bash
+parity path (`cat /proc/self/environ` in the child shell) does not provide. Relaxing it
+would break the parity premise, so it hard-denies even at `yolo` — policy first, then
+the tool-body wrapper as defense-in-depth.
+
+**Children never relax.** The relaxed construction options are wired into the MAIN
+session's workspace factory only — `newForkWorkspace` and every fork family build the
+plain non-relaxed workspace, so a forked child keeps the ordinary containment at every
+posture (Scenario 5). The two BASE-SHARING child paths would otherwise inherit the
+relaxed parent workspace verbatim, so composition hands them a NON-relaxed re-view of
+the shared base: `engine/agent/subagent.go` (`WithSharedChildWorkspace`) for the
+shell-less read-only explorer and the `mode:"read-write"` direct-write child, and
+`engine/agent/teamsupervisor.go` (`WithTeamSharedBaseWorkspace`) for a base-sharing
+shell-less read-only team member — SAME root, SAME per-skill read-only roots, NO relaxed
+options (the exact constructor `newForkWorkspace` uses), wired only at `PostureAuto` and
+above (inert below it, where the parent workspace is never relaxed). A root the
+constructor cannot open yields nil and the child falls back to the parent workspace
+(fail-open to the historical shape).
+
+**ADR-0080 guardrail-routed escape checking.** The plan's "guardrail-gated iff the knob
+is configured" clause is a composition-level PRE-CHECK inside the escape policy
+(`escapeGuardrailRoute`, armed by `withEscapeGuardrailRoute`), NOT a path-scoped
+guardrail rule — the modelhook matcher keys on tool name only, and a hook-path decision
+could not honour the configured-Ask floor or plan-mode precedence the policy wrapper
+guarantees. At posture `auto` with the operator-tier `guardrails.escape: true` knob set
+(`Config.GuardrailsEscape` — operator-global `settings.yaml` only; the project-tier
+block is already ignored wholesale, and the knob implies nothing without a configured
+checker model), a non-denied escape routes through the SAME engine-backed
+`modelhook.VerdictChecker` the hook-path Runner uses (`engine/agent/guardrailcheck.go`
+(`RunGuardrailCheck`) over a tool-less one-turn checker engine +
+`internal/adapter/modelhook/verdict.go` (`ParseVerdict`) — the dual-LLM quarantine, with
+the escape's raw args JSON fenced via `agent.WriteUntrustedBlock` under an
+escape-specific rubric). Verdict mapping: safe → falls through to the ordinary `auto`
+row (read allow / write ask); unsafe → DENY (a checker block is a veto, mirroring the
+hook-path PreToolUse block); checker error/timeout/unparseable → fail CLOSED to the
+write-escape Ask (surfaces to a human, deny-safe headless) — never a silent allow, never
+a plain pass-through of the read-allow row. The route is auto-only (`withEscapeGuardrailRoute`
+refuses to arm at any other posture — `yolo` demotes guardrails to advisory per ADR 0062
+and never spends a checker call; strict/trusted keep their own Scenario-4 Ask),
+main-engine-only (a child never relaxes escapes at all, so there is no child route), and
+deny-dominant (the inner fold runs first — a configured Deny or configured Ask never
+reaches the checker). Default `false` is the byte-identical un-routed posture table. See
+`docs/adr/0080-guardrail-routed-escape-checking.md`.
+
 ### Worktree binding (issue #102, `docs/adr/0032-worktree-binding.md`)
 
 A session may bind to an EXISTING git worktree (not just the launch root) so all
