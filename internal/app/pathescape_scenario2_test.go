@@ -222,8 +222,13 @@ func TestPathEscapePosture_Scenario2_ReadEscapeAuditParity(t *testing.T) {
 
 // TestPathEscapePosture_Scenario2_StrictReadUnchanged pins AC2.4: at posture
 // strict, a Read escape does NOT silently succeed in this wave — behaviour is
-// unchanged from today (the tool returns ErrPathEscape; the ask lands in
-// Scenario 4).
+// unchanged from today. Scenario 4 later moved the strict/trusted escape onto
+// the FS-tool ASK (never a silent allow, and never the ErrPathEscape
+// dead-end), so "unchanged" pins the two halves that survive: no ask means
+// the run still dead-ends (the cancellation-waits below would hang forever if
+// the ask were missing), and the result is never the file's contents. With
+// the ask wired (post-Scenario-4), a DENY verdict records a deny result and
+// never reads the file — still not a silent success.
 func TestPathEscapePosture_Scenario2_StrictReadUnchanged(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
@@ -236,15 +241,47 @@ func TestPathEscapePosture_Scenario2_StrictReadUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	result, _ := runOneTurn(t, built, sess.ID)
-	if result == nil {
-		t.Fatal("no EvToolResult emitted for the Read call")
+	run, err := built.Service.StartRun(context.Background(), sess.ID, "read the file outside the workspace")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
 	}
-	if !result.IsError {
-		t.Fatalf("strict Read escape SUCCEEDED with content %q — must stay ErrPathEscape in this wave (the ask is Scenario 4)", result.Content)
+	var askSeen, cancelled bool
+	var result *session.ToolResult
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && !askSeen {
+			askSeen = true
+			run.Approve(ev.Ask.AskID, session.VerdictDeny)
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
+			result = ev.ToolResult
+		}
+		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+			cancelled = true
+		}
 	}
-	if !strings.Contains(result.Content, "escapes workspace root") && !strings.Contains(result.Content, "path escapes") {
-		t.Fatalf("strict Read escape error = %q, want the ErrPathEscape surface (unchanged behaviour)", result.Content)
+	built.Service.FinishRun(sess.ID, run)
+	if result != nil && !result.IsError {
+		t.Fatalf("strict Read escape SUCCEEDED with content %q — a strict escape must never silently succeed (it asks, or dead-ends)", result.Content)
+	}
+	if askSeen {
+		// Scenario 4 landed: the escape surfaced the FS-tool ask and the deny
+		// verdict refused it. The deny result must name WHY (the escape ask
+		// reason), never the file contents.
+		if result == nil {
+			t.Fatal("no tool result after the denied escape ask — the denied read must record a deny result")
+		}
+		if !strings.Contains(result.Content, "denied by user") && !strings.Contains(result.Content, "outside the workspace") {
+			t.Fatalf("denied strict escape result = %q, want the deny surface (never the file contents)", result.Content)
+		}
+	} else if !cancelled {
+		// Pre-Scenario-4 shape: no ask surfaced, so the read dead-ended on
+		// ErrPathEscape and the run COMPLETED (StopEndTurn) — never a cancel.
+		if result == nil {
+			t.Fatal("no EvToolResult emitted for the Read call")
+		}
+		if !strings.Contains(result.Content, "escapes workspace root") && !strings.Contains(result.Content, "path escapes") {
+			t.Fatalf("strict Read escape error = %q, want the ErrPathEscape surface", result.Content)
+		}
 	}
 }
 

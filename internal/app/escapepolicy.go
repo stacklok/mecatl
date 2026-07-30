@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/stacklok/mecatl/engine/governance"
@@ -12,20 +13,23 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// escapepolicy.go is the path-escape-posture Scenario 2+3 decision half
+// escapepolicy.go is the path-escape-posture Scenario 2+3+4 decision half
 // (docs/acceptance/path-escape-posture.md): a root-aware wrapping
 // port.PermissionPolicy that relaxes an out-of-root READ escape at the
-// yolo/auto operator postures (Scenario 2) and an out-of-root WRITE escape at
-// yolo (Allow) / auto (Ask — Scenario 3). It is COMPOSITION, not domain — the
-// escape decision is a posture/policy concern, and the osfs containment
-// vetting is never stripped (the relaxed workspace still
-// canonicalize-then-rejects and serves through a fresh *os.Root).
+// yolo/auto operator postures (Scenario 2), an out-of-root WRITE escape at
+// yolo (Allow) / auto (Ask — Scenario 3), and resolves a strict/trusted
+// out-of-root read OR write escape to ASK (Scenario 4 — instead of today's
+// hard ErrPathEscape dead-end that only pushes the model to an opaque Bash
+// `cat /path`). It is COMPOSITION, not domain — the escape decision is a
+// posture/policy concern, and the osfs containment vetting is never stripped
+// (the relaxed workspace still canonicalize-then-rejects and serves through
+// a fresh *os.Root).
 //
 // Deny-dominance is preserved by construction: the wrapper DELEGATES TO THE
 // INNER POLICY FIRST and only ever relaxes a non-deny — it NEVER converts an
 // inner Deny (a configured deny, the plan-mode hard-deny, or a configured
-// Ask) into an escape Allow. At strict/trusted it returns the inner decision
-// verbatim (the strict/trusted Ask is Scenario 4).
+// Ask) into an escape Allow/Ask. The plan-mode hard-deny inside permpolicy's
+// EvaluateWith therefore runs BEFORE any escape decision (AC4.4).
 
 // escapePolicy wraps an inner port.PermissionPolicy with the posture-derived
 // out-of-root read-escape decision, keyed to the session workspace root on
@@ -51,9 +55,9 @@ type escapePolicy struct {
 
 // newEscapePolicy builds the shared-engine wrapper. readRoots are the session's
 // WithReadRoots read-only roots (the skills carve-out), so each per-root
-// classifier's read-root verdict matches the workspace's. It is a NO-OP
-// pass-through below PostureAuto (strict/trusted change nothing this wave) —
-// the caller may still install it uniformly and rely on the posture gate.
+// classifier's read-root verdict matches the workspace's. It is active at EVERY
+// posture (the caller installs it uniformly): at strict/trusted it converts a
+// non-denied escape into the Scenario-4 escape Ask.
 func newEscapePolicy(inner port.PermissionPolicy, posture Posture, readRoots []string) port.PermissionPolicy {
 	return &escapePolicy{
 		inner:     inner,
@@ -101,11 +105,13 @@ func (p *escapePolicy) classifierFor(ws tool.WorkspaceReader) *escapeClassifier 
 //     category — an in-process Read of /proc/self/environ would return the
 //     SERVER's raw, unscrubbed environment, a channel the envscrub-scrubbed
 //     Bash parity path does not provide);
-//  4. an out-of-root READ escape at auto/yolo → Allow (Bash parity);
-//  5. an out-of-root WRITE escape → Allow at yolo, Ask at auto (Scenario 3 —
-//     never a silent un-asked mutation below yolo);
-//  6. everything else → the inner decision verbatim (strict/trusted unchanged
-//     this wave — their escape Ask is Scenario 4).
+//  4. an out-of-root READ escape at auto/yolo → Allow (Bash parity); at
+//     strict/trusted → Ask (Scenario 4 — the legible FS-tool ask instead of
+//     the ErrPathEscape dead-end);
+//  5. an out-of-root WRITE escape → Allow at yolo, Ask at auto AND at
+//     strict/trusted (Scenarios 3+4 — never a silent un-asked mutation below
+//     yolo);
+//  6. everything else → the inner decision verbatim.
 func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
 	decision := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
 	if decision.Effect == governance.Deny {
@@ -129,26 +135,41 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			Reason: "path lies under a pseudo-filesystem (/proc, /sys, /dev): an in-process FS read would expose the server's raw environment — never relaxed at any posture",
 		}
 	case escapeEscape:
-		if p.posture >= PostureAuto && c.Name == "Read" {
-			// Bash parity: at auto/yolo Bash already reads the same bytes, so
-			// the FS read boundary was cosmetic. The relaxed workspace serves
-			// the read; the wrapper only has to not stand in its way.
-			return governance.PermissionDecision{Effect: governance.Allow}
-		}
-		if c.Name == "Write" || c.Name == "Edit" {
-			// Scenario 3 (docs/acceptance/path-escape-posture.md): a WRITE
-			// escape is allowed at yolo and ASKS at auto — never a silent
-			// un-asked mutation below yolo (strict/trusted ask in Scenario 4).
+		path := escapePath(c.Args)
+		switch c.Name {
+		case "Read":
+			if p.posture >= PostureAuto {
+				// Bash parity: at auto/yolo Bash already reads the same bytes, so
+				// the FS read boundary was cosmetic. The relaxed workspace serves
+				// the read; the wrapper only has to not stand in its way.
+				return governance.PermissionDecision{Effect: governance.Allow}
+			}
+			// Scenario 4 (docs/acceptance/path-escape-posture.md): at
+			// strict/trusted a READ escape ASKS on the FS tool itself instead
+			// of dead-ending on ErrPathEscape (which only pushed the model to
+			// an opaque Bash `cat /path`). The inner policy already ran first:
+			// a configured Deny and a configured Ask both returned above
+			// (deny-dominance + the configured-Ask floor), so the escape Ask
+			// only ever replaces an inner ALLOW — Read's built-in floor. The
+			// escape Ask is never ConfiguredAsk/FlooredConfiguredAllow: it
+			// must surface to a human (A2 and the floored-allow auto-resolve
+			// both key off those bits), and an allow-always verdict learns
+			// NOTHING out-of-root (the Learn guard below — v1 asks are
+			// allow-once only).
+			return governance.PermissionDecision{
+				Effect: governance.Ask,
+				Reason: fmt.Sprintf("out-of-workspace read: %q lies outside the workspace root — approve to read it through the FS tool (a Bash cat of the same path is NOT a substitute)", path),
+			}
+		case "Write", "Edit":
+			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
+			// never a silent un-asked mutation below yolo. Scenario 4 extends
+			// the SAME ask to strict/trusted (whose Write/Edit floor Ask
+			// previously surfaced the un-actionable "approval required by
+			// rule" and then dead-ended on ErrPathEscape even when approved).
 			// The inner policy already ran first: a configured Deny and a
 			// configured Ask both returned above (deny-dominance + the
 			// configured-Ask floor), so the relax only ever replaces an inner
 			// ALLOW or an unconfigured floor Ask — never a configured one.
-			//
-			// The escape Ask is never ConfiguredAsk/FlooredConfiguredAllow:
-			// it must surface to a human (A2 and the floored-allow
-			// auto-resolve both key off those bits), and an allow-always
-			// verdict learns NOTHING out-of-root (the Learn guard below —
-			// v1 asks are allow-once only).
 			if p.posture >= PostureYolo {
 				return governance.PermissionDecision{Effect: governance.Allow}
 			}
@@ -158,9 +179,25 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 					Reason: "out-of-workspace write: the path escapes the session workspace root (posture auto allows reads but never writes silently)",
 				}
 			}
+			return governance.PermissionDecision{
+				Effect: governance.Ask,
+				Reason: fmt.Sprintf("out-of-workspace write: %q lies outside the workspace root — approve to write it through the FS tool (never a silent un-asked mutation below yolo)", path),
+			}
 		}
 	}
 	return decision
+}
+
+// escapePath extracts the FS path from a Read/Write/Edit call's args for the
+// escape-ask reason (the ask must NAME the path so the approval is legible).
+// A malformed arg yields "" (the classify step already treated the call as
+// in-root then, so this is only ever reached with a well-formed path).
+func escapePath(args json.RawMessage) string {
+	var a fsPathArg
+	if err := json.Unmarshal(args, &a); err != nil {
+		return ""
+	}
+	return a.Path
 }
 
 // Learn forwards rule-learning to the inner policy (an "allow always" verdict

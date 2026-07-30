@@ -182,7 +182,7 @@ func TestPathEscapePosture_Scenario5_GlobGrepConfined(t *testing.T) {
 			// exact object whose Glob/Grep must stay confined. Confinement is a
 			// workspace-body property (not a policy one), so this is the honest
 			// seam; the factory is the single construction site.
-			ws := osfsWorkspaceFactory(port.NopDiagnostics{}, nil, posture)(f.workspace)
+			ws := osfsWorkspaceFactory(port.NopDiagnostics{}, nil)(f.workspace)
 			if ws == nil {
 				t.Fatalf("osfsWorkspaceFactory returned a nil workspace at %s", posture)
 			}
@@ -277,7 +277,7 @@ func TestPathEscapePosture_Scenario5_ChildEnginesNeverRelaxed(t *testing.T) {
 					// posture — the exact object a Subagent/member/branch
 					// receives as its parent ws. If the child workspace
 					// inherited the relax, the out-of-root read below succeeds.
-					base := osfsWorkspaceFactory(port.NopDiagnostics{}, nil, posture)(f.workspace)
+					base := osfsWorkspaceFactory(port.NopDiagnostics{}, nil)(f.workspace)
 					if base == nil {
 						t.Fatalf("relaxed base workspace is nil at %s", posture)
 					}

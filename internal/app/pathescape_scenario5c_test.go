@@ -112,7 +112,7 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 			// itself still serves the read — the member denial above is a real
 			// base-share propagation boundary, not a vacuous "the relax was
 			// never on".
-			relaxed := osfsWorkspaceFactory(port.NopDiagnostics{}, nil, posture)(f.workspace)
+			relaxed := osfsWorkspaceFactory(port.NopDiagnostics{}, nil)(f.workspace)
 			if relaxed == nil {
 				t.Fatalf("relaxed base workspace is nil at %s", posture)
 			}
@@ -151,7 +151,7 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 			writeRepoFile(t, f.workspace, "inroot.txt", "in-root\n")
 			gitCommitTest(t, f.workspace, "add inroot")
 
-			base := osfsWorkspaceFactory(port.NopDiagnostics{}, nil, posture)(f.workspace)
+			base := osfsWorkspaceFactory(port.NopDiagnostics{}, nil)(f.workspace)
 			if base == nil {
 				t.Fatalf("relaxed base workspace is nil at %s", posture)
 			}

@@ -1350,7 +1350,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	svcCfg := server.Config{
 		Engine:           engine,
 		Store:            store,
-		Workspaces:       osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots, cfg.Posture),
+		Workspaces:       osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots),
 		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		Worktrees:        buildWorktreeLister(cfg),
 		DefaultLimits:    defaultLimits(),
@@ -6708,19 +6708,21 @@ func defaultLimits() session.Limits {
 // an activated skill's files by absolute path. A root that cannot be opened
 // yields a nil Workspace; tool calls against it return errors the model can read.
 //
-// PATH-ESCAPE POSTURE (docs/acceptance/path-escape-posture.md Scenarios 2+3):
-// at the auto/yolo postures the MAIN session's workspace is built
-// WithRelaxedReads AND WithRelaxedWrites (the osfs out-of-root carve-outs)
-// and wrapped with the session's escape classifier (newEscapeWorkspace), so
-// the workspace and the permission wrapper classify over the SAME root.
-// Whether a given escape actually RUNS is the POLICY's call (read: allow at
-// auto/yolo; write: allow at yolo, ask at auto) — the relaxed workspace only
-// SERVES the path the policy already authorized, and a write escape the
-// policy leaves at Ask never reaches the tool body unapproved. Below auto the
-// workspace is the ordinary deny-on-escape osfs workspace. The SAME factory
-// is the create-time AND the rehydration workspace source (the run-entry seam
+// PATH-ESCAPE POSTURE (docs/acceptance/path-escape-posture.md Scenarios 2–4):
+// at EVERY posture the MAIN session's workspace is built WithRelaxedReads AND
+// WithRelaxedWrites (the osfs out-of-root carve-outs) and wrapped with the
+// session's escape classifier (newEscapeWorkspace), so the workspace and the
+// permission wrapper classify over the SAME root. The relaxed options only
+// make SERVING possible — whether a given escape actually RUNS is the
+// POLICY's call (read: allow at auto/yolo, ask at strict/trusted; write:
+// allow at yolo, ask everywhere below), and an escape the policy leaves at
+// Ask never reaches the tool body unapproved. At strict/trusted the relaxed
+// workspace is what lets an APPROVED escape execute (the Scenario-4 ask would
+// otherwise be un-actionable — approve and still hit ErrPathEscape); a
+// NON-approved escape still dead-ends exactly as before. The SAME factory is
+// the create-time AND the rehydration workspace source (the run-entry seam
 // rebuilds from the persisted root through Workspaces), so a restarted
-// relaxed session rehydrates the SAME relaxed workspace. Child engines never
+// session rehydrates the SAME escape-capable workspace. Child engines never
 // see this factory (their workspaces come from newForkWorkspace), so the
 // relax is main-session-only by construction.
 //
@@ -6732,26 +6734,26 @@ func defaultLimits() session.Limits {
 // the defense a FUTURE caller cannot bypass: it serves the honest no-filesystem
 // workspace and logs loudly, because reaching it means a no-fs guard upstream
 // regressed.
-func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string, posture Posture) server.WorkspaceFactory {
+func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string) server.WorkspaceFactory {
 	return func(root string) tool.Workspace {
 		if root == "" {
 			d.Log(context.Background(), port.LevelError,
 				"workspace factory: EMPTY root reached the shared osfs factory (a no-fs session bypassed its workspace override?); serving the no-filesystem workspace instead of the process cwd")
 			return nofs.New()
 		}
-		if posture >= PostureAuto {
-			clf, cerr := newEscapeClassifier(root, skillReadRoots...)
-			if cerr != nil {
-				d.Log(context.Background(), port.LevelError, "workspace factory: cannot build the escape classifier for a relaxed workspace; serving the deny-on-escape workspace", "root", root, "err", cerr)
-			} else {
-				ws, err := osfs.NewWorkspace(root, osfs.WithReadRoots(skillReadRoots...), osfs.WithRelaxedReads(), osfs.WithRelaxedWrites())
-				if err != nil {
-					d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)
-					return nil
-				}
-				return newEscapeWorkspace(ws, clf)
+		// The relaxed SERVING options ride every posture (the escape DECISION is
+		// the policy wrapper's — the workspace only serves what the policy
+		// already authorized; at strict/trusted that is an APPROVED escape ask).
+		clf, cerr := newEscapeClassifier(root, skillReadRoots...)
+		if cerr == nil {
+			ws, err := osfs.NewWorkspace(root, osfs.WithReadRoots(skillReadRoots...), osfs.WithRelaxedReads(), osfs.WithRelaxedWrites())
+			if err != nil {
+				d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)
+				return nil
 			}
+			return newEscapeWorkspace(ws, clf)
 		}
+		d.Log(context.Background(), port.LevelError, "workspace factory: cannot build the escape classifier for a relaxed workspace; serving the deny-on-escape workspace", "root", root, "err", cerr)
 		ws, err := osfs.NewWorkspace(root, osfs.WithReadRoots(skillReadRoots...))
 		if err != nil {
 			d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)

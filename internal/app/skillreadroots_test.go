@@ -128,7 +128,7 @@ func TestSkillReadRootsWiring(t *testing.T) {
 	ctx := context.Background()
 
 	// The per-session factory (server.Config.Workspaces).
-	factory := osfsWorkspaceFactory(Config{}.diag(), roots, PostureStrict)
+	factory := osfsWorkspaceFactory(Config{}.diag(), roots)
 	mainWS := factory(t.TempDir())
 	if mainWS == nil {
 		t.Fatal("workspace factory returned nil")

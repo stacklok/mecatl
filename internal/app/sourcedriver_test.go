@@ -611,7 +611,7 @@ func TestDriverAssetReadableThroughEarlyWorkspace(t *testing.T) {
 
 	// Workspace FIRST: the factory opens its read roots at construction; the
 	// cache root exists (eager MkdirTemp) but holds nothing yet.
-	ws := osfsWorkspaceFactory(Config{}.diag(), seam.readRoots, PostureStrict)(t.TempDir())
+	ws := osfsWorkspaceFactory(Config{}.diag(), seam.readRoots)(t.TempDir())
 	if ws == nil {
 		t.Fatal("workspace factory returned nil")
 	}
