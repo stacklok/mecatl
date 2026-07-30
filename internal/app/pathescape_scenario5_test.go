@@ -112,12 +112,16 @@ func TestPathEscapePosture_Scenario5_ChildReadEscapeDenied(t *testing.T) {
 					}
 					parentReadOK = true
 				}
-				// The child's Read is projected metadata-only on subagent.tool
-				// (name + error bool): its IsError must be TRUE. If a future
-				// change relaxed the child workspace, the read would succeed
-				// (IsError=false) and the content would fold into the Subagent
-				// ToolResult — both pinned below.
-				if ev.Type == session.EvSubagentTool && ev.Subagent != nil && ev.Subagent.ToolName == "Read" {
+				// The child's Read outcome rides the tool.RESULT projection
+				// (ADR 0079: the projection now also emits tool.call previews and
+				// message/result text previews, so the ok/error outcome is
+				// attributed on the tool.result projection — a tool.call preview
+				// always reads IsError=false). Its IsError must be TRUE. If a
+				// future change relaxed the child workspace, the read would
+				// succeed (IsError=false) and the content would fold into the
+				// Subagent ToolResult — both pinned below.
+				if ev.Type == session.EvSubagentTool && ev.Subagent != nil &&
+					ev.Subagent.InnerKind == session.EvToolResult && ev.Subagent.ToolName == "Read" {
 					if !ev.Subagent.IsError {
 						t.Fatalf("child out-of-root Read SUCCEEDED at %s — the relax must not propagate to a read-only child", posture)
 					}
