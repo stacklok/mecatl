@@ -241,18 +241,27 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 
 	saw := map[string]bool{}
 	for _, p := range toolEv {
-		switch p.ToolName {
-		case "Read", "Bash":
-			if !p.IsError {
-				t.Errorf("no-FS child's %s call SUCCEEDED — the file/shell tool leaked into the child catalog", p.ToolName)
-			}
-		case "Remember":
-			if p.IsError {
-				t.Error("no-FS child's Remember call failed — the memory six must be in the child catalog")
-			}
-		case "mcp__globe__echo":
-			if p.IsError {
-				t.Error("no-FS child's global-MCP call failed — the shared global MCP tools must be in the child catalog")
+		// ADR 0079: the projection also carries message.delta / result text previews
+		// with no ToolName — only tool.call / tool.result projections are
+		// tool-attributed. The ok/error outcome is attributed on the tool.RESULT
+		// projection (a tool.call preview always reads IsError=false).
+		if p.InnerKind != session.EvToolCall && p.InnerKind != session.EvToolResult {
+			continue
+		}
+		if p.InnerKind == session.EvToolResult {
+			switch p.ToolName {
+			case "Read", "Bash":
+				if !p.IsError {
+					t.Errorf("no-FS child's %s call SUCCEEDED — the file/shell tool leaked into the child catalog", p.ToolName)
+				}
+			case "Remember":
+				if p.IsError {
+					t.Error("no-FS child's Remember call failed — the memory six must be in the child catalog")
+				}
+			case "mcp__globe__echo":
+				if p.IsError {
+					t.Error("no-FS child's global-MCP call failed — the shared global MCP tools must be in the child catalog")
+				}
 			}
 		}
 		saw[p.ToolName] = true

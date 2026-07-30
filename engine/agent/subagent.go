@@ -3077,31 +3077,67 @@ func truncateGoal(s string) string {
 // handleChildEvent, and returns the terminal result text, stop reason, the
 // child's cumulative usage, and the number of child tool calls observed.
 //
-// When emit is non-nil it ALSO forwards a REDACTED projection of the child's
-// activity: on each child tool RESULT it emits an EvSubagentTool carrying ONLY
-// the tool name (looked up from the matching tool.call) + the error bool + a
-// running count. It forwards NO child tool args, NO child result content, and NO
-// child message.delta text. This keeps gauntlet #7 intact while giving the UI
-// metadata-only visibility. With a nil emit it discards every intermediate event
-// exactly as the original drainChild did.
+// When emit is non-nil it ALSO forwards a REDACTED, BOUNDED projection of the
+// child's activity (ADR 0079): a tool NAME + error bool + running count, plus
+// BOUNDED previews — a tool.call's args and a tool.result's body ride Detail
+// (clamped by clampPreview), a message.delta's and the terminal result's text
+// ride Text (clamped), with InnerKind naming the inner kind the preview came
+// from. Every preview passes through clampPreview (control-byte scrub + rune
+// cap), and a child's permission.ask (like every other kind outside the four
+// projected ones) is DROPPED — its possibly secret-bearing reason never
+// reaches the stream. This keeps gauntlet #7 intact: the projection is
+// client-only and nothing enters the parent's Conversation. With a nil emit
+// it discards every intermediate event exactly as the original drainChild
+// did.
 func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childID string, posture childPosture) (finalText string, stop session.StopReason, usage session.Usage, toolCount int) {
 	// Track child callID → tool name so a tool.result can be attributed to its
-	// tool.call name without forwarding the call's (redacted) args.
+	// tool.call name without re-deriving it from the (clamped) args preview.
 	names := map[session.ToolCallID]string{}
 	for ev := range run.Events() {
 		if emit != nil {
-			switch {
-			case ev.Type == session.EvToolCall && ev.ToolCall != nil:
-				names[ev.ToolCall.ID] = ev.ToolCall.Name
-			case ev.Type == session.EvToolResult && ev.ToolResult != nil:
-				toolCount++
-				emit(session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{
-					ParentCallID: parentCallID,
-					ChildID:      childID,
-					ToolName:     names[ev.ToolResult.CallID],
-					IsError:      ev.ToolResult.IsError,
-					ToolCount:    toolCount,
-				}})
+			payload := &session.SubagentPayload{
+				ParentCallID: parentCallID,
+				ChildID:      childID,
+				InnerKind:    ev.Type,
+			}
+			project := false
+			switch ev.Type {
+			case session.EvToolCall:
+				if ev.ToolCall != nil {
+					names[ev.ToolCall.ID] = ev.ToolCall.Name
+					payload.ToolName = ev.ToolCall.Name
+					payload.Detail = clampPreview(string(ev.ToolCall.Args))
+					project = true
+				}
+			case session.EvToolResult:
+				if ev.ToolResult != nil {
+					toolCount++
+					payload.ToolName = names[ev.ToolResult.CallID]
+					payload.IsError = ev.ToolResult.IsError
+					payload.ToolCount = toolCount
+					payload.Detail = clampPreview(ev.ToolResult.Content)
+					project = true
+				}
+			case session.EvMessageDelta:
+				if strings.TrimSpace(ev.Text) != "" {
+					payload.Text = clampPreview(ev.Text)
+					project = true
+				}
+			case session.EvResult:
+				if ev.Result != nil {
+					payload.Text = clampPreview(ev.Result.Text)
+					payload.ToolCount = toolCount
+					project = true
+				}
+			default:
+				// permission.ask, turn.start, turn.end, hook, compaction,
+				// reasoning.delta, session.init, subagent.*, team.* and any future
+				// kind are NOT projected — a child's permission.ask in particular
+				// is dropped so its (possibly secret-bearing) reason never
+				// reaches the stream.
+			}
+			if project {
+				emit(session.Event{Type: session.EvSubagentTool, Subagent: payload})
 			}
 		}
 		if text, st, ok := handleChildEvent(run, ev, posture); ok {

@@ -298,12 +298,19 @@ func (p *canaryProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.
 	}, nil
 }
 
-// TestParallelNoContentLeakBehavioral is the gauntlet-#7 behavioral guard: a branch whose
-// child tool args, tool result, and message text all contain a sentinel canary. Assert the
-// canary NEVER appears in ANY string field of ANY emitted parallel.* event — only redacted
-// metadata (tool names, labels, fork paths) crosses.
+// TestParallelNoContentLeakBehavioral is the gauntlet-#7 behavioral guard (ADR 0079
+// shape): a branch whose child tool args, tool result, and message text all contain a
+// sentinel canary longer than the clampPreview cap and laced with control bytes. Assert
+// the canary NEVER appears VERBATIM in ANY string field of ANY emitted parallel.* event —
+// only its clamped, control-byte-scrubbed prefix may cross, plus the redacted metadata
+// (tool names, labels, fork paths).
 func TestParallelNoContentLeakBehavioral(t *testing.T) {
-	const canary = "TOPSECRETCANARY"
+	// The head is short enough to survive clamping intact; the tail pushes every
+	// content body past the 200-rune cap, so verbatim carriage is what the test
+	// disproves.
+	canaryHead := "TOPSECRETCANARY-" + strings.Repeat("h", 220)
+	canaryTail := "-TAIL-" + strings.Repeat("z", 600)
+	canary := canaryHead + canaryTail + "\x1b[7m"
 	childRead := &fakeTool{name: "Read", readOnly: true,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "result body "+canary), nil
@@ -324,41 +331,55 @@ func TestParallelNoContentLeakBehavioral(t *testing.T) {
 	for _, p := range collectParallel(evs) {
 		saw = true
 		// Scan EVERY string-kinded field by REFLECTION (not a hand-maintained list),
-		// so a future payload field (e.g. ChildID) is covered the moment it exists —
-		// the behavioral sentinel can never go stale against the structural
-		// allow-list in TestParallelPayloadHasNoContentFields.
+		// so a future payload field is covered the moment it exists — the behavioral
+		// sentinel can never go stale against the structural allow-list in
+		// TestParallelPayloadHasNoContentFields.
 		rv := reflect.ValueOf(*p)
 		for i := 0; i < rv.NumField(); i++ {
 			f := rv.Field(i)
 			if f.Kind() != reflect.String {
 				continue
 			}
-			if s := f.String(); strings.Contains(s, canary) {
-				t.Fatalf("canary leaked into parallel.* field %s: %q", rv.Type().Field(i).Name, s)
+			s := f.String()
+			if strings.Contains(s, canaryTail) {
+				t.Fatalf("canary leaked UNBOUNDED into parallel.* field %s: %q", rv.Type().Field(i).Name, s)
+			}
+			for _, c := range s {
+				if c < 0x20 || (c >= 0x7f && c <= 0x9f) {
+					t.Fatalf("control byte leaked into parallel.* field %s: %q", rv.Type().Field(i).Name, s)
+				}
 			}
 		}
 	}
 	if !saw {
 		t.Fatal("no parallel.* events emitted; the leak guard did not exercise")
 	}
-	// A branch_tool DID fire (so the assert above was meaningful): the tool name crossed
-	// but never the args.
-	sawTool := false
+	// A branch_tool DID fire carrying a CLAMPED preview: the tool name crossed, the
+	// canary head survives only inside a clamped Detail, and the tail never does.
+	var sawTool, sawClampedPreview bool
 	for _, p := range collectParallel(evs) {
 		if p.Kind == session.ParallelBranchTool && p.ToolName == "Read" {
 			sawTool = true
 		}
+		if p.Kind == session.ParallelBranchTool && strings.Contains(p.Detail, "TOPSECRETCANARY-hhh") && !strings.Contains(p.Detail, canaryTail) {
+			sawClampedPreview = true
+		}
 	}
 	if !sawTool {
-		t.Fatal("expected a branch_tool(Read) event to confirm metadata-only forwarding")
+		t.Fatal("expected a branch_tool(Read) event to confirm metadata forwarding")
+	}
+	if !sawClampedPreview {
+		t.Fatal("expected a branch_tool event with a clamped canary-head preview (ADR 0079)")
 	}
 }
 
 // TestParallelPayloadHasNoContentFields is the gauntlet-#7 STRUCTURAL guard: assert the
-// ParallelPayload struct exposes NO field that could carry a branch tool-arg or
-// result/message BODY. Only the documented metadata fields exist; the string fields are an
-// allow-list of names that are either ids/labels/enums or filesystem-path handles, never a
-// content body. This trips if a future change adds e.g. a Text/Detail/Args field.
+// ParallelPayload struct's field set is exactly the documented metadata + bounded-preview
+// allow-list (ADR 0079). The preview fields (Text/Detail/InnerKind) are content-shaped but
+// are fed ONLY through clampPreview (control-byte scrub + rune cap) at the single
+// drainChildObserved chokepoint, and are client-only — never the parent's Conversation.
+// Raw-content fields (Args/Content/Summary/FailReason) remain BANNED. This trips if a
+// future change adds an unreviewed field.
 func TestParallelPayloadHasNoContentFields(t *testing.T) {
 	allowed := map[string]bool{
 		"ParentCallID": true, "Kind": true, "Join": true, "BranchCount": true,
@@ -380,22 +401,31 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// Model (issue #112 / ADR 0035) is the concrete MODEL id this branch ACTUALLY ran
 		// on, regardless of how it was chosen — bare metadata, never branch content.
 		"Model": true,
+		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields: Text
+		// carries a clamped child message/result-text preview, Detail a clamped
+		// tool-call-args or tool-result-body preview, InnerKind the inner event kind
+		// the preview came from. Both content fields are fed ONLY through clampPreview
+		// (control-byte scrub + maxTeamPreview rune cap) at the single
+		// drainChildObserved chokepoint (re-tagged by branchTool), are client-only,
+		// and never enter the parent's Conversation — the behavioral canary suite
+		// (TestParallelNoContentLeakBehavioral) proves the raw body never crosses.
+		"Text": true, "Detail": true, "InnerKind": true,
 	}
 	rt := reflect.TypeOf(session.ParallelPayload{})
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
 		if !allowed[f.Name] {
 			t.Fatalf("ParallelPayload grew an unexpected field %q (%s): a new field MUST be reviewed "+
-				"against gauntlet #7 — no branch content (tool args / result bodies / message text) "+
-				"may cross. If it is legitimate redacted metadata, add it to the allow-list with a "+
-				"justification.", f.Name, f.Type)
+				"against gauntlet #7 — branch content may cross only as a clampPreview-bounded, "+
+				"client-only preview (ADR 0079). If it is legitimate redacted metadata or a bounded "+
+				"preview, add it to the allow-list with a justification.", f.Name, f.Type)
 		}
 	}
-	// Spot-check: the content-shaped names that Team carries (Text/Detail) must NOT exist
-	// on ParallelPayload — Parallel is metadata-only.
-	for _, banned := range []string{"Text", "Detail", "Args", "Content", "Summary", "FailReason"} {
+	// Spot-check: RAW content fields remain banned — only the clampPreview-fed preview
+	// fields (Text/Detail) may carry branch-derived text.
+	for _, banned := range []string{"Args", "Content", "Summary", "FailReason"} {
 		if _, ok := rt.FieldByName(banned); ok {
-			t.Fatalf("ParallelPayload must not carry a content field %q (gauntlet #7)", banned)
+			t.Fatalf("ParallelPayload must not carry a raw content field %q (gauntlet #7)", banned)
 		}
 	}
 }

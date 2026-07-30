@@ -608,8 +608,9 @@ func (e branchEmitter) end(join string, branchCount, winner int, winnerWorkspace
 
 // branchTool builds the per-branch translation closure handed to drainChildObserved.
 // drainChildObserved (the SINGLE redaction chokepoint, shared with Subagent) emits ONLY
-// EvSubagentTool events carrying name+error+count; this closure RE-TAGS each into a
-// parallel.branch{branch_tool} event for branch i, copying only those already-redacted
+// EvSubagentTool events carrying name+error+count plus the ADR-0079 bounded previews
+// (Text/Detail/InnerKind, all clamped by clampPreview); this closure RE-TAGS each into
+// a parallel.branch{branch_tool} event for branch i, copying only those already-redacted
 // fields — it opens NO new content path. branch_start/branch_end are emitted by the
 // Parallel run itself (it owns the branch label/goal/workspace/failed metadata that
 // drainChildObserved does not know about), so this closure handles exactly the tool kind.
@@ -628,6 +629,9 @@ func (e branchEmitter) branchTool(i int) func(session.Event) {
 			ToolName:     ev.Subagent.ToolName,
 			IsError:      ev.Subagent.IsError,
 			ToolCount:    ev.Subagent.ToolCount,
+			Text:         ev.Subagent.Text,
+			Detail:       ev.Subagent.Detail,
+			InnerKind:    ev.Subagent.InnerKind,
 		}})
 	}
 }

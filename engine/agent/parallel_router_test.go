@@ -367,14 +367,19 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 	}
 }
 
-// GAUNTLET #7: no branch-AUTHORED content (the child's summary/output) rides ANY
-// parallel.* event when the router classifies. The routed branch's child returns a secret
-// SUMMARY; that child output must never surface on the observability stream — only the
-// bare routed category/model metadata. (The parent-authored task prompt legitimately rides
-// the existing Goal metadata field and is benign here, so the secret lives ONLY in the
-// child's summary — the content gauntlet #7 protects.)
+// GAUNTLET #7 (ADR 0079 shape): no branch-AUTHORED content rides ANY parallel.* event
+// UNBOUNDED when the router classifies. The routed branch's child returns a secret
+// SUMMARY longer than the clampPreview cap, laced with control bytes; the projection may
+// carry only its clamped, scrubbed prefix — the full raw body and every control byte
+// must be gone. (The parent-authored task prompt legitimately rides the existing Goal
+// metadata field and is benign here, so the secret lives ONLY in the child's summary —
+// the content gauntlet #7 protects.)
 func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
-	const secret = "SECRET-BRANCH-SUMMARY-OUTPUT"
+	// The head is short enough to survive clamping intact; the tail pushes the body
+	// past the 200-rune cap so verbatim carriage is impossible.
+	secretHead := "SECRET-BRANCH-SUMMARY-OUTPUT-" + strings.Repeat("h", 220)
+	secretTail := "-TAIL-" + strings.Repeat("x", 600)
+	secret := secretHead + secretTail + "\x1b[31m"
 	// The ROUTED branch child returns the secret as its summary text. Its Model is a
 	// benign marker id (issue #112 surfaces Model as bare metadata on branch_start —
 	// it must NOT carry the secret summary); only the LLM turn text holds the secret.
@@ -409,8 +414,12 @@ func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 			sawRouted = true
 		}
 		blob, _ := json.Marshal(ev.Parallel)
-		if strings.Contains(string(blob), secret) {
-			t.Fatalf("a parallel.* event leaked branch SUMMARY content (%q) in payload: %s", secret, blob)
+		s := string(blob)
+		if strings.Contains(s, secretTail) {
+			t.Fatalf("a parallel.* event leaked the branch summary UNBOUNDED (tail present): %s", s)
+		}
+		if strings.Contains(s, "\x1b") || strings.Contains(s, "\\u001b") {
+			t.Fatalf("a parallel.* event leaked a control byte (scrub failed): %s", s)
 		}
 	}
 	if !sawRouted {

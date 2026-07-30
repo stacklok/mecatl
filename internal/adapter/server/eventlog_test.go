@@ -224,20 +224,31 @@ func typeNames(evs []session.Event) []string {
 }
 
 // childSecretSentinel is a secret-SHAPED stand-in for a child tool call's args
-// (gauntlet #7): it is an innocuous literal that must NEVER surface in any logged
-// event body — the redaction-leak detector asserts on its ABSENCE (per the repo
-// rule against destructive strings in test literals, this is a harmless token,
-// not a real secret).
-const childSecretSentinel = "SENTINEL_child_arg_must_not_leak_9f3a"
+// (gauntlet #7): it is an innocuous literal that must NEVER surface VERBATIM in any
+// logged event body — the redaction-leak detector asserts on the ABSENCE of its full
+// form (ADR 0079: the delegation projection now forwards a clampPreview-BOUNDED,
+// control-byte-scrubbed preview, so only a clamped head of the sentinel may cross,
+// never the whole thing). Per the repo rule against destructive strings in test
+// literals, this is a harmless token, not a real secret.
+//
+// The sentinel is longer than the clampPreview cap (200 runes) so verbatim carriage
+// is impossible by construction: if the projection ever forwarded the raw args, the
+// FULL sentinel (head + tail) would appear; a clamped preview drops the tail.
+var childSecretSentinel = "SENTINEL_child_arg_must_not_leak_9f3a" + strings.Repeat("_pad", 120) + "_TAIL"
+
+// childSecretSentinelTail is the part of the sentinel that clamping MUST remove.
+const childSecretSentinelTail = "_TAIL"
 
 // TestEventLogInheritsStreamRedaction is the gauntlet-#7 subtest: a Subagent
-// delegation's child makes a tool call whose args carry a secret-shaped sentinel.
-// The delegation events the relay records (subagent.*) are metadata-only, so the
-// sentinel must NOT appear in ANY logged event's serialized body. The log inherits
-// the stream's redaction; it adds none of its own.
+// delegation's child makes a tool call whose args carry a secret-shaped sentinel
+// longer than the preview cap. The delegation events the relay records (subagent.*)
+// are BOUNDED previews (ADR 0079), so the sentinel's TAIL must NOT appear in ANY
+// logged event's serialized body — the log inherits the stream's redaction; it adds
+// none of its own.
 //
 // MUTATION-INTENT: if a future change forwarded raw child args on a delegation
-// event, the serialized log would contain the sentinel and this fails.
+// event, the serialized log would contain the full sentinel (tail included) and this
+// fails.
 func TestEventLogInheritsStreamRedaction(t *testing.T) {
 	log := memstore.NewEventLog()
 
@@ -315,9 +326,12 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 	if len(logged) == 0 {
 		t.Fatal("no events logged for the parent session")
 	}
-	// Serialize the WHOLE logged stream and assert the sentinel never appears: the
-	// log stores already-redacted events, so a child's tool args never cross.
+	// Serialize the WHOLE logged stream and assert the sentinel never appears
+	// VERBATIM: the log stores already-redacted events, so a child's tool args cross
+	// only as a clamped, scrubbed preview (ADR 0079) — the tail clamping removes
+	// must never surface.
 	sawSubagent := false
+	sawClampedPreview := false
 	for _, ev := range logged {
 		if strings.HasPrefix(string(ev.Type), "subagent.") {
 			sawSubagent = true
@@ -326,12 +340,18 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 		if merr != nil {
 			t.Fatalf("marshal logged event: %v", merr)
 		}
-		if strings.Contains(string(blob), childSecretSentinel) {
-			t.Fatalf("REDACTION LEAK: child arg sentinel surfaced in a logged %s event: %s", ev.Type, blob)
+		if strings.Contains(string(blob), childSecretSentinelTail) {
+			t.Fatalf("REDACTION LEAK: child arg sentinel surfaced UNBOUNDED in a logged %s event: %s", ev.Type, blob)
+		}
+		if strings.HasPrefix(string(ev.Type), "subagent.") && strings.Contains(string(blob), "SENTINEL_child_arg_must_not_leak") {
+			sawClampedPreview = true
 		}
 	}
 	if !sawSubagent {
 		t.Fatalf("expected at least one subagent.* event in the log (delegation lifecycle): %v", typeNames(logged))
+	}
+	if !sawClampedPreview {
+		t.Fatal("expected a logged subagent.* event carrying a clamped arg preview (ADR 0079); the redaction guard did not exercise")
 	}
 }
 

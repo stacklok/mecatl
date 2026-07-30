@@ -252,20 +252,27 @@ func kindNames(set map[session.EventType]bool) []session.EventType {
 }
 
 // childLeakSentinel is a secret-SHAPED stand-in for a Subagent child's tool arg
-// (gauntlet #7): an innocuous literal that must NEVER surface in any durable log
-// event — the no-leak mutation-verify asserts on its ABSENCE.
-const childLeakSentinel = "SENTINEL_phase3_child_arg_must_not_leak_7b2e"
+// (gauntlet #7): an innocuous literal that must NEVER surface VERBATIM in any durable
+// log event — the no-leak mutation-verify asserts on the ABSENCE of its full form
+// (ADR 0079: the delegation projection forwards a clampPreview-BOUNDED preview, so
+// only a clamped head may cross). It is longer than the clampPreview cap (200 runes)
+// so verbatim carriage is impossible by construction.
+var childLeakSentinel = "SENTINEL_phase3_child_arg_must_not_leak_7b2e" + strings.Repeat("_pad", 120) + "_TAIL"
+
+// childLeakSentinelTail is the part of the sentinel that clamping MUST remove.
+const childLeakSentinelTail = "_TAIL"
 
 // TestPhase3LogNoChildLeak is the Phase 3 GATE's no-leak mutation-verify: a
 // Subagent delegation's child makes a tool call whose args carry a secret-shaped
-// sentinel. The delegation events the relay records (subagent.*) are metadata-only,
-// so the sentinel must NOT appear in ANY durable-log event's serialized body. The
+// sentinel. The delegation events the relay records (subagent.*) are BOUNDED
+// previews (ADR 0079), so the sentinel's TAIL must NOT appear in ANY durable-log
+// event's serialized body. The
 // log inherits the stream's redaction; it adds none of its own — and the
 // compaction archive carries only the PARENT's conversation, never child content.
 //
 // MUTATION-INTENT: if a future change forwarded raw child args on a delegation
 // event (or folded child content into the parent conversation the archive carries),
-// the serialized log would contain the sentinel and this fails.
+// the serialized log would contain the full sentinel (tail included) and this fails.
 func TestPhase3LogNoChildLeak(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
@@ -340,8 +347,8 @@ func TestPhase3LogNoChildLeak(t *testing.T) {
 		if merr != nil {
 			t.Fatalf("marshal logged event: %v", merr)
 		}
-		if strings.Contains(string(blob), childLeakSentinel) {
-			t.Fatalf("REDACTION LEAK: child arg sentinel surfaced in a logged %s event: %s", ev.Type, blob)
+		if strings.Contains(string(blob), childLeakSentinelTail) {
+			t.Fatalf("REDACTION LEAK: child arg sentinel surfaced UNBOUNDED in a logged %s event: %s", ev.Type, blob)
 		}
 	}
 

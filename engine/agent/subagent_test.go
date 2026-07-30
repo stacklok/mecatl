@@ -212,22 +212,39 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 	if starts != 1 || ends != 1 {
 		t.Fatalf("want exactly one subagent.start and one subagent.end; got %d/%d", starts, ends)
 	}
-	if len(toolEvents) != 1 {
-		t.Fatalf("want one subagent.tool event for the child's single Read; got %d", len(toolEvents))
+	// ADR 0079: the projection now carries bounded previews — one tool.call preview +
+	// one tool.result preview + message.delta texts + the terminal result text. The
+	// child's single Read yields exactly two tool-kind projections (call + result).
+	var callPreview, resultPreview *session.SubagentPayload
+	for _, tev := range toolEvents {
+		switch tev.InnerKind {
+		case session.EvToolCall:
+			callPreview = tev
+		case session.EvToolResult:
+			resultPreview = tev
+		}
 	}
-	// The redacted tool event carries the child tool NAME and nothing else that is
-	// content: no args, no result body anywhere on the payload.
-	tev := toolEvents[0]
-	if tev.ToolName != "Read" {
-		t.Fatalf("subagent.tool name = %q, want Read", tev.ToolName)
+	if callPreview == nil || resultPreview == nil {
+		t.Fatalf("want a tool.call and a tool.result projection; got %+v", toolEvents)
 	}
-	if tev.IsError {
+	// The tool projections carry the child tool NAME plus a CLAMPED args/result
+	// preview — bounded, never the raw blob (the args are short here, so the preview
+	// equals the clamped input).
+	if resultPreview.ToolName != "Read" {
+		t.Fatalf("subagent.tool name = %q, want Read", resultPreview.ToolName)
+	}
+	if resultPreview.IsError {
 		t.Fatalf("subagent.tool unexpectedly flagged error")
 	}
-	// Defensive: the payload struct has no field that could carry child content;
-	// confirm the goal-bearing field is empty on a tool event (goal is start-only).
-	if tev.Goal != "" {
-		t.Fatalf("subagent.tool unexpectedly carried a goal: %q", tev.Goal)
+	if !strings.Contains(callPreview.Detail, "main.go") {
+		t.Fatalf("tool.call Detail preview = %q, want the clamped args", callPreview.Detail)
+	}
+	if !strings.Contains(resultPreview.Detail, "child read the file") {
+		t.Fatalf("tool.result Detail preview = %q, want the clamped body", resultPreview.Detail)
+	}
+	// Defensive: the goal-bearing field is empty on a tool event (goal is start-only).
+	if resultPreview.Goal != "" {
+		t.Fatalf("subagent.tool unexpectedly carried a goal: %q", resultPreview.Goal)
 	}
 }
 
@@ -376,6 +393,12 @@ func TestSubagentConcurrentAttribution(t *testing.T) {
 		case session.EvSubagentStart:
 			starts[p]++
 		case session.EvSubagentTool:
+			// ADR 0079: the projection now also carries message.delta / result text
+			// previews, which have no ToolName — only the tool.call / tool.result
+			// projections are tool-attributed.
+			if ev.Subagent.InnerKind != session.EvToolCall && ev.Subagent.InnerKind != session.EvToolResult {
+				continue
+			}
 			if got := ev.Subagent.ToolName; got != wantTool[p] {
 				t.Fatalf("subagent.tool for parent %q has tool %q, want %q (cross-attribution)", p, got, wantTool[p])
 			}
