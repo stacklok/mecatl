@@ -159,10 +159,12 @@ func toProto(ev session.Event) *mecatlv1.Event {
 }
 
 // toProtoParallel maps a session.ParallelPayload to its proto Parallel form: the
-// redacted, metadata-only projection of a Parallel fork-join run. Usage is always
-// emitted (zero on the start/branch_start/branch_tool kinds); the per-kind field
-// population mirrors the domain payload's documented contract. It copies only the
-// already-redacted scalars — no branch content — preserving gauntlet #7.
+// bounded-preview projection of a Parallel fork-join run. Usage is always emitted
+// (zero on the start/branch_start/branch_tool kinds); the per-kind field population
+// mirrors the domain payload's documented contract. It copies only the already-
+// redacted scalars and the already-clamped previews (Text / Detail / InnerKind —
+// inner_kind a STRING passthrough, mirroring toProtoTeam) — never unbounded branch
+// content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 	return &mecatlv1.Parallel{
 		ParentCallId:    p.ParentCallID,
@@ -179,6 +181,9 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		ToolName:        p.ToolName,
 		IsError:         p.IsError,
 		ToolCount:       ClampInt32(p.ToolCount),
+		InnerKind:       string(p.InnerKind),
+		Text:            p.Text,
+		Detail:          p.Detail,
 		Failed:          p.Failed,
 		Workspace:       p.Workspace,
 		Stop:            string(p.Stop),
@@ -401,9 +406,11 @@ func toProtoTeamTaskSnapshot(t session.TeamTaskSnapshot) *mecatlv1.TeamTask {
 }
 
 // toProtoSubagent maps a session.SubagentPayload to its proto Subagent form: the
-// redacted, metadata-only projection of a Subagent child run. Usage is always emitted
-// (zero on the start/tool kinds); the per-kind field population mirrors the domain
-// payload's documented contract.
+// bounded-preview projection of a Subagent child run. Usage is always emitted (zero
+// on the start/tool kinds); the per-kind field population mirrors the domain
+// payload's documented contract. The bounded previews (Text / Detail / InnerKind —
+// inner_kind a STRING passthrough, mirroring toProtoTeam) are copied verbatim:
+// already clamped by the single redaction chokepoint upstream in engine/agent.
 func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 	return &mecatlv1.Subagent{
 		ParentCallId:   p.ParentCallID,
@@ -416,6 +423,9 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		ToolName:       p.ToolName,
 		IsError:        p.IsError,
 		ToolCount:      ClampInt32(p.ToolCount),
+		InnerKind:      string(p.InnerKind),
+		Text:           p.Text,
+		Detail:         p.Detail,
 		Usage:          toProtoUsage(p.Usage),
 		Stop:           string(p.Stop),
 		DurationMs:     p.DurationMs,

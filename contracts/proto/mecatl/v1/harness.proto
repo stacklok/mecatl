@@ -1130,6 +1130,19 @@ message Subagent {
   // content crosses). When the router classified this delegation, model ==
   // routed_model. Mirrors session.SubagentPayload.Model.
   string model = 13;
+  // inner_kind discriminates which inner child event kind the preview came from
+  // (message.delta / tool.call / tool.result / result); set on subagent.tool
+  // alongside text / detail (ADR 0079 bounded previews). A child's permission.ask
+  // is never projected. STRING passthrough, mirroring Team.inner_kind.
+  string inner_kind = 14;
+  // text is a BOUNDED preview of the child's message/result text (subagent.tool,
+  // for the message.delta / result inner kinds) — control-byte scrubbed and
+  // rune-capped upstream in engine/agent, never the raw, unbounded body.
+  string text = 15;
+  // detail is a BOUNDED preview of a child tool call's args (tool.call) or a tool
+  // result's body (tool.result) — control-byte scrubbed and rune-capped upstream,
+  // never the raw, unbounded args/result body (subagent.tool).
+  string detail = 16;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -1246,14 +1259,16 @@ message Team {
   string member_session_id = 18;
 }
 
-// Parallel is the REDACTED observability projection carried by the three parallel.*
+// Parallel is the BOUNDED observability projection carried by the three parallel.*
 // events (parallel.start / parallel.branch / parallel.end). Mirrors
-// session.ParallelPayload. Like Subagent it carries metadata ONLY — no branch message
-// text, tool args, or result bodies — so a client can render a Parallel fork-join run's
-// activity (a join strategy, a grouped roster of branches with tool traces, a winner
-// highlight, and fork paths) without ever seeing branch content, preserving context
-// isolation. The fork-root paths it carries are the no-auto-merge handles already
-// surfaced in the Parallel tool result, not branch content.
+// session.ParallelPayload. Like Subagent it now forwards BOUNDED previews (ADR 0079)
+// on branch_tool events — text is a rune-capped preview of the branch's message
+// text, detail a rune-capped preview of a branch tool call's args or result body —
+// so a client can render a Parallel fork-join run's activity (a join strategy, a
+// grouped roster of branches with tool traces, a winner highlight, and fork paths)
+// without ever seeing unbounded branch content, preserving context isolation. The
+// fork-root paths it carries are the no-auto-merge handles already surfaced in the
+// Parallel tool result, not branch content.
 //
 // Unlike the FLAT Subagent fleet, a Parallel run is a GROUP: N branches of ONE call
 // (keyed by parent_call_id) sharing a join strategy + a single winner + preserved
@@ -1263,7 +1278,8 @@ message Team {
 // Which fields are set depends on the event kind:
 //   - parallel.start:                  parent_call_id, join, branch_count.
 //   - parallel.branch (branch_start):  parent_call_id, kind, branch_index, branch_label, goal, routed_category, routed_model, model.
-//   - parallel.branch (branch_tool):   parent_call_id, kind, branch_index, tool_name, is_error, tool_count.
+//   - parallel.branch (branch_tool):   parent_call_id, kind, branch_index, tool_name, is_error, tool_count,
+//                                      and — when a preview is available — text / detail / inner_kind.
 //   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed, workspace.
 //   - parallel.end:                    parent_call_id, join, branch_count, winner, winner_workspace, usage (run total), stop.
 message Parallel {
@@ -1289,8 +1305,9 @@ message Parallel {
   // model-authored branch prompt — the parent's own instruction, never branch
   // content); set on branch_start.
   string goal = 7;
-  // tool_name is the name of a branch's child tool that just ran (branch_tool) — the
-  // name alone, never branch args or result.
+  // tool_name is the name of a branch's child tool that just ran (branch_tool) —
+  // the name alone, never branch args or result (the bounded previews ride the
+  // text / detail fields).
   string tool_name = 8;
   // is_error reports whether that branch tool call failed (branch_tool).
   bool is_error = 9;
@@ -1338,6 +1355,19 @@ message Parallel {
   // context-isolation safe (gauntlet #7: no branch content crosses). When the router
   // classified this branch, model == routed_model. Mirrors session.ParallelPayload.Model.
   string model = 21;
+  // inner_kind discriminates which inner branch event kind the preview came from
+  // (message.delta / tool.call / tool.result / result); set on branch_tool
+  // alongside text / detail (ADR 0079 bounded previews). A branch's permission.ask
+  // is never projected. STRING passthrough, mirroring Team.inner_kind.
+  string inner_kind = 22;
+  // text is a BOUNDED preview of the branch's message/result text (branch_tool,
+  // for the message.delta / result inner kinds) — control-byte scrubbed and
+  // rune-capped upstream in engine/agent, never the raw, unbounded body.
+  string text = 23;
+  // detail is a BOUNDED preview of a branch tool call's args (tool.call) or a tool
+  // result's body (tool.result) — control-byte scrubbed and rune-capped upstream,
+  // never the raw, unbounded args/result body (branch_tool).
+  string detail = 24;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors

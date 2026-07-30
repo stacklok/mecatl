@@ -222,6 +222,43 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
+			// ADR 0079 bounded previews: the tool/message preview fields (Text / Detail /
+			// InnerKind) the delegation chokepoint now populates on subagent.tool events
+			// round-trip verbatim over the wire. Already redacted upstream (clamped in
+			// engine/agent), so the mapper copies them unchanged; inner_kind is a STRING
+			// passthrough, mirroring Team.inner_kind.
+			name: "subagent.tool with bounded previews",
+			in: session.Event{Type: session.EvSubagentTool, Seq: 23, Turn: 1,
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+					ToolName: "Grep", ToolCount: 2, InnerKind: session.EvToolCall,
+					Detail: `{"pattern":"foo","path":"main.go"}`}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				s := got.GetSubagent()
+				if s == nil || s.GetInnerKind() != "tool.call" ||
+					s.GetDetail() != `{"pattern":"foo","path":"main.go"}` {
+					t.Fatalf("subagent.tool preview payload mismatch: %+v", s)
+				}
+				if s.GetText() != "" {
+					t.Fatalf("subagent.tool tool.call preview should carry Detail, not Text: %+v", s)
+				}
+			},
+		},
+		{
+			name: "subagent.tool message preview",
+			in: session.Event{Type: session.EvSubagentTool, Seq: 24, Turn: 1,
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+					ToolCount: 2, InnerKind: session.EvMessageDelta, Text: "scanning src/…"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				s := got.GetSubagent()
+				if s == nil || s.GetInnerKind() != "message.delta" || s.GetText() != "scanning src/…" {
+					t.Fatalf("subagent.tool message preview mismatch: %+v", s)
+				}
+				if s.GetDetail() != "" {
+					t.Fatalf("subagent.tool message preview should carry Text, not Detail: %+v", s)
+				}
+			},
+		},
+		{
 			name: "subagent.end",
 			in: session.Event{Type: session.EvSubagentEnd, Seq: 22, Turn: 1,
 				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", ToolCount: 5,
@@ -490,6 +527,41 @@ func TestToProtoTable(t *testing.T) {
 				if p == nil || p.GetKind() != "branch_tool" || p.GetToolName() != "Grep" ||
 					!p.GetIsError() || p.GetToolCount() != 2 {
 					t.Fatalf("parallel branch_tool payload mismatch: %+v", p)
+				}
+			},
+		},
+		{
+			// ADR 0079 bounded previews: the branchTool re-tag now projects Text / Detail /
+			// InnerKind on branch_tool events; they round-trip verbatim (already clamped
+			// upstream in engine/agent). inner_kind is a STRING passthrough.
+			name: "parallel.branch branch_tool with bounded previews",
+			in: session.Event{Type: session.EvParallelBranch, Seq: 46, Turn: 1,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchTool,
+					BranchIndex: 1, ToolName: "Read", ToolCount: 3, InnerKind: session.EvToolResult,
+					Detail: "package main …"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				p := got.GetParallel()
+				if p == nil || p.GetKind() != "branch_tool" || p.GetInnerKind() != "tool.result" ||
+					p.GetDetail() != "package main …" {
+					t.Fatalf("parallel branch_tool preview payload mismatch: %+v", p)
+				}
+				if p.GetText() != "" {
+					t.Fatalf("parallel branch_tool tool.result preview should carry Detail, not Text: %+v", p)
+				}
+			},
+		},
+		{
+			name: "parallel.branch branch_tool message preview",
+			in: session.Event{Type: session.EvParallelBranch, Seq: 47, Turn: 1,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchTool,
+					BranchIndex: 1, ToolCount: 3, InnerKind: session.EvResult, Text: "branch summary"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				p := got.GetParallel()
+				if p == nil || p.GetInnerKind() != "result" || p.GetText() != "branch summary" {
+					t.Fatalf("parallel branch_tool message preview mismatch: %+v", p)
+				}
+				if p.GetDetail() != "" {
+					t.Fatalf("parallel branch_tool result preview should carry Text, not Detail: %+v", p)
 				}
 			},
 		},
