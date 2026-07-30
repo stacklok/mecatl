@@ -56,41 +56,81 @@ check who acted, for whom, with what scope), and multi-tenancy becomes
 principal). This is the difference between "trust our logs" and "verify the
 chain yourself."
 
+## What breaks today (and why that is the point)
+
+The design is not abstract — mecatl's current multi-user posture already
+leaks, and the identity layer is what closes it. Honest inventory:
+
+- **`ListSessions` returns every stored session with a title derived from
+  that session's first user prompt** (clamped to 120 runes) — inventory and
+  prompt content, no id needed. On Redis it takes the slow path (loads every
+  session per request).
+- **`GET /v1/sessions/{id}/events` relays `EvUserPrompt` and
+  `EvCompactionArchive` verbatim** — every prompt plus entire pre-compaction
+  conversations. Right for a single-user harness; exactly the assumption
+  that breaks on a shared store.
+- **Fair framing:** today mecatl has no tenants — one shared operator token
+  means one principal — so this is cross-*session* context isolation, not a
+  cross-tenant vulnerability, and a missing session owner is the
+  harness-tier norm (Claude Code, Codex, LangGraph all list without a
+  principal). But ADR 0048's shared Redis moved mecatl into the
+  multi-tenant-server category while the code stayed single-user. Google
+  ADK shows the fix: its primary key is `(app_name, user_id, session_id)`
+  and `list_sessions` can't be called without a `user_id` — **put the
+  principal in the signature**, so enumeration is scoped by construction.
+- **A scheduled fire has no user by construction.** `makeFireFunc` creates a
+  session in-process from a leader-elected goroutine — it never crosses any
+  edge interceptor, so an edge-only principal binding misses it. The owner
+  record must be primary and the edge one writer of it; a cron fire's owner
+  is `client_credentials` ("the schedule did this"), not a fake user.
+
+Worth stealing from Entra: it hard-blocks specific permissions from ever
+being granted to an agent identity, even by an admin who wants to — a
+ceiling independent of any issuer's correctness, stronger than narrowing at
+the issuer and trusting the issuer.
+
 ## Why SPIRE alone is not enough
 
 SPIRE is excellent at what it is for, and this design **keeps it** — for
-infrastructure. What it cannot do is the job above:
+infrastructure. The decisive reason it cannot do the job above is about
+*what can be attested*, not about features:
 
-- **SPIRE attests workloads, not delegations.** Its identity unit is the
-  workload (a pod, a service account). A multi-tenant harness is *one*
-  workload serving many users. The standard deployment gives every session
-  the same pod identity — precisely the "one process, one identity" floor we
-  need to escape.
-- **The SPIFFE identity model has no on-behalf-of.** An SVID says *who* a
-  workload is, never *for whom it acts*. There is no delegation chain, no
-  `act` claim, no user principal anywhere in the spec. JWT-SVID §3 defines
-  `sub`, `aud`, `exp` and stops there. The user→agent→subagent chain that
-  is the whole point of this design is simply outside SPIFFE's vocabulary.
-- **No attenuation semantics.** SPIRE's delegation is structural
-  (parent→child registration entries); a child cannot self-mint a broader
-  identity. But nothing expresses "this specific token carries a strict
-  subset of its parent's authority" in a way a verifier can check — the
-  narrowing lives in the server config, not in a portable, verifiable
-  credential.
-- **The escape hatches are the wrong shape for us.** The Delegated Identity
-  API lets a trusted process impersonate *any* workload — too broad. The
-  newer Broker API vends SVIDs for *referenced* workloads but is
-  experimental, keyed to Kubernetes objects (a poor fit for sessions that
-  migrate pods), and still mints identity-only SVIDs with no delegation
-  claims. Even at its best, the Broker API answers "give this workload an
-  identity" — not "prove this chain of narrowing delegation happened."
-
-The research forced a conclusion: the identity half (SPIFFE IDs, JWT-SVID
-shape, bundle distribution, federation) is worth adopting wholesale. The
-delegation half (chain, attenuation, user principal, parkable lifecycle)
-does not exist in the SPIFFE world and must be built. So mecatl builds it
-as its own issuer, on top of the SPIFFE envelope, rather than waiting for
-SPIRE to grow a feature set that is not on its roadmap.
+- **The attestation unit is a process; our principals are goroutines.**
+  SPIRE establishes workload identity by introspecting the *calling process*
+  — the Workload Endpoint identifies callers via kernel socket state (§5),
+  and workload attestors select on process attributes (uid/gid/path from
+  `/proc/<pid>`). A mecatl pod is *one* process serving many users,
+  sessions, and subagents. No SPIFFE mechanism — and no SPIRE attestor —
+  can attest an *in-process* principal: even the Broker API's custom
+  reference types must resolve to something the server can independently
+  verify through `/proc` or the container runtime, which a goroutine is
+  not. **Only the harness itself can attest its own sub-principals.** That
+  is the portable, spec-level reason mecatl must be its own issuer.
+- **The on-behalf-of that exists doesn't reach us.** SPIFFE *does* have a
+  delegation mechanism — the Broker API lets a trusted component act "on
+  behalf of" workloads it references (PID or Kubernetes object). But it
+  vends *identity-only* SVIDs (`sub`/`aud`/`exp` and nothing else — no
+  chain, no user principal, no attenuation), it is `Incubating`, and its
+  references resolve to processes and k8s objects, not goroutines. It
+  answers "give this referenced workload an identity," not "prove this
+  chain of narrowing delegation happened."
+- **The implementation levers are admin-gated and non-portable.** SPIRE
+  *can* mint arbitrary SPIFFE IDs (`MintJWTSVID`, no registration-entry
+  lookup) and *can* inject private claims (`CredentialComposer` server
+  plugins). Both are SPIRE implementation details, not SPIFFE spec — and
+  both are gated by an `allow_admin` boolean over the *entire* trust
+  domain, not scoped to a path prefix. Building on them means asking
+  operators for a credential strictly more powerful than the one we are
+  trying to build, and it works only in SPIRE's world — not with
+  cert-manager's csi-driver-spiffe, Istio's istiod, or a managed SPIFFE
+  platform, none of which share that plugin surface.
+- **The conclusion is portability, not capability.** We adopt the SPIFFE
+  *envelope* wholesale — the ID format, the JWT-SVID shape, bundle
+  distribution, federation — all spec-level surfaces every implementation
+  speaks. We build the delegation layer (chain, attenuation, user
+  principal, parkable lifecycle) ourselves, in our own trust domain,
+  because no spec carries it and no issuer can attest our principals for
+  us. SPIRE stays for exactly one thing: attesting the pod.
 
 ## Prior art, honestly assessed
 
@@ -103,15 +143,57 @@ converged on the three-tier identity segmentation** this design uses (see
 below) — Microsoft's Entra Agent ID (blueprint / identity / user account),
 OpenAI's Assistants API (assistant / thread / run), A2A (AgentCard / task),
 and WIMSE (workload / workload instance / service) all draw the same lines.
-Third, **nobody has solved multi-tier agent delegation with attenuation**.
-The A2A and MCP protocols explicitly punt on it. WIMSE's architecture draft
-describes user→AI-agent→AI-agent→workload chains (§3.4.11, "AI and ML-Based
-Intermediaries") as *requirements* — no protocol, no claims, no
-implementation. RFC 8693 gives the `act` chain as an audit artifact but
-normatively declares nested actors "informational only". There is no standard
-agent capability vocabulary, no standard attenuation algorithm, and no
-credential lifecycle for an interruptible, human-in-the-loop workload. Those
-gaps are called out per-section below as **innovation ground**.
+Third, **the attenuation picture is more nuanced than "nobody has solved
+it."** No *ratified* standard mandates attenuation: RFC 8693 only *suggests*
+scope narrowing as an abuse mitigation (§5), `draft-ietf-oauth-identity-chaining`
+expects non-escalation in non-normative prose and leaves claim representation
+undefined, and ID-JAG makes narrowing a policy MAY (§4.3.3). But several
+individual drafts *do* mandate it — and they are worth citing rather than
+pretending the space is empty:
+
+- **`draft-mcguinness-oauth-actor-profile-00`** (the closest overlap) mandates
+  non-escalation on every path, specifies a chain construction and validation
+  algorithm with append-only as a MUST, enforces a depth limit, and has
+  `sub_profile: "ai_agent"` with a "user → orchestrator → agent → tool"
+  reference architecture. Its §3.2 also states the invariant RFC 8693 never
+  does: "`sub` is the authorizing principal."
+- **`draft-mcguinness-oauth-ai-agent-instance-00`** (same author) makes this
+  doc's definition/instance split in near-identical words: "A platform
+  registers a single `client_id` and then runs many concurrent agent
+  instances under it," with a REQUIRED `agent_instance_id` and provenance
+  claims. This is the closest analog for the tier model itself.
+- **`draft-liu-agent-operation-authorization-02`** and
+  **`draft-liu-oauth-chain-delegation-00`** both name a `delegation_chain`
+  claim and enforce strict-narrower server-side, the second with a depth cap
+  of 5 — prior art for this doc's chain name and `max_depth`.
+- **Macaroons** (Birgisson et al., 2014) and **Biscuit** are the actual
+  origin of *holder-side* attenuation: the holder appends a narrowing block
+  offline and the verifier rejects any block that widens. Biscuit gives a
+  cryptographic guarantee rather than a runtime policy. This doc's model is
+  the inverse — issuer-side enforcement at the mint seam — which is the
+  correct call for a harness that IS the issuer (a compromised child runtime
+  must not be able to decline to attenuate); the comparison is drawn in
+  "Build vs buy."
+
+All four are individual submissions with Standards-Track intent, none
+WG-adopted; only `draft-ietf-oauth-identity-chaining` and ID-JAG carry that.
+**What survives as genuinely unspecified everywhere:** every attenuation MUST
+in actor-profile cites "[RFC8693], Section 4" for the *method* — and §4 is
+the claims registry, where §4.2 defines `scope` as a space-separated string.
+No reduction algorithm anywhere. So even the draft with the hardest MUSTs
+mandates the *requirement* and points at a section with no *method*.
+Containment over a structured authority model (tool names, a posture ladder,
+delegation rights, workspace resources) — and who is obliged to refuse a
+widening — is the genuinely unclaimed ground, and it is where this doc's
+`authorization_details` subset computation sits.
+
+WIMSE's architecture draft describes user→AI-agent→AI-agent→workload chains
+(§3.4.11, "AI and ML-Based Intermediaries") as *requirements* — no protocol,
+no claims, no implementation. RFC 8693 gives the `act` chain as an audit
+artifact but normatively declares nested actors "informational only". There
+is no standard agent capability vocabulary and no credential lifecycle for an
+interruptible, human-in-the-loop workload. Those gaps are called out
+per-section below as **innovation ground**.
 
 The five questions the rest of this doc adjudicates, with their verdicts:
 
@@ -151,30 +233,61 @@ SPIFFE IDs in mecatl's own trust domain (name is a config knob):
 
 ```
 spiffe://<td>/user/<uid>
-spiffe://<td>/agent/<def-name>
+spiffe://<td>/agent/<def>
 spiffe://<td>/agent/<def>/inst/<sessionID>
-spiffe://<td>/agent/<def>/inst/<sessionID>/child/<childID>
-spiffe://<td>/agent/<def>/inst/<sessionID>/child/<childID>/child/<grandchildID>
+spiffe://<td>/agent/<def>/inst/<sessionID>/child/<childSessionID>
 ```
 
-The three levels shown are illustrative; actual nesting is bounded by
-`max_depth` on the chain — the issuer enforces the bound at every hop.
+**The path names a principal; the delegation topology lives in the claims,
+not the path.** SPIFFE-ID §2.2 leaves path semantics to the administrator and
+explicitly sanctions opaque paths ("the most general case"); §4.1.1 warns
+that only assertions stable for the SVID's lifetime belong in the credential,
+and delegation topology is runtime-emergent (children park, resume, and
+outlive runs). mecatl already carries the authoritative topology twice — the
+signed `delegation_chain` claim and the event log's `ParentCallID` — so
+embedding it again in the path is speculative generality. Child identities
+therefore embed the **verbatim runtime child session id** under one flat
+`child/` segment: `subagent-<callID>`, `parallel-<callID>-<i>`,
+`team-<teamID>-<member>` (minted by `engine/agent/teamsupervisor.go`
+(`MemberSessionID`)). The identity graph and the runtime delegation graph are
+the same string, so they cannot drift, and audit correlation needs no scheme
+knowledge. Family and team structure stay claims-and-log data. An issuer-side
+invariant keeps team and call ids dash-free hex (already true), so the packed
+`team-<teamID>-<member>` form stays prefix-queryable for audit. Grandchildren
+recurse the same `child/<id>` append, bounded by `max_depth` and the
+2048-byte SPIFFE-ID §2.3 ceiling (~40 bytes/level — tens of levels, a
+non-issue, stated so the budget is explicit). Depth is enforced by the issuer
+at every hop.
+
+The one place structure *is* enforced is the durable, user-controlled,
+policy-targeted **definition name**: it is admitted only if it already
+conforms to the §2.2 segment charset `[a-zA-Z0-9.-_]` (round-trip reject at
+def load). Accepting a lossy sanitize would let two distinct definitions
+collapse to one SPIFFE id — silently breaking attribution, the property the
+whole model exists to provide. (Session ids are already hex; provider call
+ids are issuer-minted and stay inside the family prefixes by construction.)
 
 - **Definition identities** (`agent/<def>`) are the durable "who" — the anchor
   for operator policy ("what may a `tdd-worker` ever do?"), exactly the
   ServiceAccount/blueprint role in the platform analogs. They are never
   minted as credentials; they exist as path structure and as policy targets.
+  Honest gap: today `CreateSessionRequest` has no agent field, so `<def>`
+  would resolve to a constant for every default session. The fix is an
+  optional `agent` field plus a synthetic default-definition id (never the
+  telemetry `roleFamily` bucket — that label is deliberately lossy and would
+  collapse every definition into six buckets, destroying the policy anchor).
 - **Instance identities** (`inst/<sessionID>`) are where SVIDs live. A session
   — including a reopened, recovered, or pod-migrated one — is one instance;
   rehydration re-mints the *same* instance identity. N concurrent sessions of
   one definition are N instance SVIDs under one definition identity: audit
   can group by definition ("what did code-reviewers do this week?") or by
   instance ("what did *this* delegation do?").
-- **Child identities** extend the parent's *instance* path with `child/<id>`,
-  reusing the existing child session ID schemes: `subagent-<callID>`,
-  `parallel-<callID>-<i>`, and `team-<teamID>-<member>` (minted by
-  `engine/agent/teamsupervisor.go` (`MemberSessionID`)). This ensures the
-  identity graph and the runtime delegation graph cannot drift.
+- **Child identities** extend the parent's *instance* path with
+  `child/<childSessionID>` (the verbatim runtime id, per the block above).
+  Within one instance the identity graph and the
+  runtime delegation graph cannot drift; across instances the child id is
+  not globally unique (provider call ids are per-conversation), which is
+  exactly why the instance tier must qualify them.
 - **Runs are not identities.** A run carries the instance credential plus a
   per-run `txn` claim; resumption re-proves the instance, it does not create
   one.
@@ -189,65 +302,81 @@ already has.
 ## The credential: a JWT-SVID with a delegation vocabulary
 
 Instance SVIDs are SPIFFE JWT-SVIDs with private claims — spec-shaped (`sub`,
-`aud`, `exp`, bundle-published signing keys). JWT-SVID §3 explicitly permits
-this ("reliance on claims not defined here may impact interoperability" —
-accepted; this vocabulary is ours to carry):
+`aud`, `exp`, bundle-published signing keys). JWT-SVID §3 permits this in so
+many words ("Registered claims not described in this document, in addition to
+private claims, MAY be used as implementers see fit"), then warns that
+reliance on them may impact interoperability — accepted; this vocabulary is
+ours to carry. Private claims use collision-resistant names
+(`https://mecatl.dev/claims/…`, the JWT private-claim convention); the table
+uses short names for readability:
 
 | Claim | Meaning |
 |---|---|
 | `sub` | the instance SPIFFE ID (spec) |
 | `aud` | intended verifier(s) (spec; single-audience preferred per JWT-SVID §7.2) |
 | `exp`/`iat`/`jti` | short TTL, unique per mint (spec) |
-| `dlg` | delegation chain: ordered `{id, def, scope}` entries, user → … → parent. Append-only, signed at mint. **This is RFC 8693 `act` nesting made first-class** — same semantics (see below), explicit instead of emergent |
-| `scope` | the effective authority of this instance — see vocabulary below. Issuer-enforced invariant: **strict subset of the parent's** |
-| `depth` / `max_depth` | how much further this identity may delegate (the RFC 3820 `pCPathLenConstraint` idea, in JWT form) |
-| `txn` | immutable correlation ID for this run (Txn-Token vocabulary); parent's `txn` is recorded in `dlg`, preserving the tree without one giant ID |
+| `delegation_chain` | ordered `{id, def, authorization_details}` entries, user → … → parent. Append-only, signed at mint. 8693 `act`-nesting semantics (below), explicit and carrying a per-hop scope snapshot. The name mirrors `draft-liu-agent-operation-authorization` / `draft-liu-oauth-chain-delegation` |
+| `authorization_details` | the effective authority of this instance — RFC 9396's registered claim for structured authorization (see vocabulary below). Issuer-enforced invariant: **strict subset of the parent's** |
+| `depth` / `max_depth` | how much further this identity may delegate (the RFC 3820 `pCPathLenConstraint` idea, in JWT form; absorbed into `authorization_details.constraints` if 9396 is adopted wholesale) |
+| `txn` | immutable correlation ID for this run — **registered in RFC 8417 §2.2**, borrowed by the Txn-Token draft; parent's `txn` is recorded in the chain, preserving the tree without one giant ID |
+| `cnf` | proof-of-possession binding for outbound presentation — RFC 9449 `cnf` with a `jkt` thumbprint, not a new claim (Phase 3) |
 
-### The RFC 8693 contract (`act` / `may_act`)
+### The delegation semantics (8693-derived, stated in our vocabulary)
 
-The delegation semantics are not invented here — they are RFC 8693's,
-adopted verbatim, then extended where 8693 is silent. Three normative
-commitments:
+The semantics are RFC 8693's, but the **evaluation rule must be stated in
+this token's own terms** — quoting 8693 §4.1 verbatim would be wrong here,
+because this token's shape differs from 8693's in the one place that rule
+keys on. In canonical 8693, `sub` is the *delegator* and the outermost
+`act.sub` is the *current actor*; §4.1 keys access control to "the token's
+top-level claims and the party identified as the current actor," with prior
+(nested) actors "informational only." This token has no top-level `act`, and
+its `sub` *is* the current actor (JWT-SVID §3.1 requires `sub` = the holder's
+own SPIFFE ID). So the rule, restated for this shape:
 
-1. **`dlg` IS `act` nesting.** RFC 8693 §4.1 defines the `act` (actor)
-   claim — name the current actor, nest one deeper per delegation hop.
-   In 8693 deployments the chain is *emergent*: each token exchange nests
-   one level, and the full trail only exists across the sequence of
-   exchanges. `dlg` carries the same `{sub, act: {sub, …}}` structure
-   **explicitly**, so a verifier reads the whole user→…→parent tree from
-   one credential instead of reconstructing it.
-2. **The chain is audit, never authority.** 8693 §4.1 is normative:
-   consumers "MUST only consider the token's top-level claims and the
-   party identified as the current actor… prior actors identified by any
-   nested act claims are informational only." We honor exactly that:
-   authorization keys off `sub` (the acting instance) + `scope` (its
-   effective authority). `dlg` entries are informational — the audit
-   trail, not an authz input. This is how every deployed 8693 STS (AWS,
-   Azure, GCP SA impersonation) already evaluates tokens, and it is what
-   keeps a compromised or confused deep actor from re-asserting rights
-   via the chain.
-3. **Delegation, never impersonation.** 8693 §1.1 separates the two:
+1. **Authorization keys off `sub` + `authorization_details`.** `sub` is the
+   acting instance (the credential holder); `authorization_details` is the
+   authority the issuer bound to *this* instance at mint. A verifier grants
+   only what the issuer bound — never a right re-derived from the chain.
+2. **The chain is signed provenance, never an authz input.** Prior actors in
+   `delegation_chain` are audit only — the same posture 8693 §4.1 and
+   actor-profile §3.2 both take toward nested actors. The issuer's mint-time
+   subset invariant is what makes `authorization_details` trustworthy; the
+   chain is the verifiable *proof that the narrowing happened*, not a source
+   of rights.
+3. **The current actor IS an authority input — and here it is `sub`.**
+   actor-profile-00 §14.5 warns that evaluating *only* the subject when a
+   delegation is present is a confused-deputy risk, and §3.2 makes the
+   current actor part of the decision. This token honors that: the acting
+   instance (`sub`) plus its bound authority (`authorization_details`) *are*
+   the evaluated pair. The confused-deputy reading doesn't bite because the
+   verifier trusts the issuer's narrowing, not the bare identity.
+4. **Delegation, never impersonation.** 8693 §1.1 separates the two:
    impersonation makes the issued token's `sub` the delegator (the actor
-   vanishes); delegation keeps `sub` = delegator and names the actor.
-   The model is strictly delegation — the user is always at the root of
-   `dlg`, the acting instance always named. (The industry counterexample
-   is GitHub Copilot's coding agent: commits attributed to the user, no
-   visible actor — impersonation with no audit trail. We refuse that
-   shape.)
+   vanishes); delegation names the actor. The model is strictly delegation —
+   the user is always at the root of `delegation_chain`, the acting instance
+   always named. (The industry counterexample is GitHub Copilot's coding
+   agent: commits attributed to the user, no visible actor — impersonation
+   with no audit trail. We refuse that shape.)
 
 **Why a private claim instead of RFC 8693's `act` itself.** The two specs
-assign `sub` incompatible meanings: JWT-SVID §3 requires `sub` to be the
+assign `sub` incompatible meanings: JWT-SVID §3.1 requires `sub` to be the
 credential holder's own SPIFFE ID (the acting instance), while 8693
-delegation requires `sub` to be the *delegator* (the user) with the actor
-in `act`. A single token cannot be simultaneously a conformant JWT-SVID and
-a conformant 8693 delegation token. So the chain rides a private claim with
-explicitly 8693-derived semantics; `act` is honored as the semantic contract
-(above) rather than reused as the on-the-wire name. A secondary reason:
-8693 §4.1 confines `act`-subobject claims to identity ("claims within the
-act claim pertain only to the identity of the actor"), while our chain
-entries carry a per-hop **scope snapshot** — the basis of attenuation audit
-and of the resume invariant. If a WIMSE/8693 agent profile ratifies a
-resolution to the `sub` collision, we adopt it.
+delegation (§4.1, Appendix A.2.5) puts the *delegator* in `sub` with the
+actor in `act`. (8693 states this as "typically" plus an illustrative
+appendix rather than a single normative MUST — but §4.1 does define `act` as
+the party *to whom* authority was delegated and keys access control to it,
+which is the load-bearing text.) A single token cannot be simultaneously a
+conformant JWT-SVID and a conformant 8693 delegation token. So the chain
+rides a private claim with 8693-derived semantics; `act` is honored as the
+semantic contract rather than reused as the on-the-wire name. A secondary
+reason: 8693 §4.1 confines `act`-subobject claims to identity ("claims
+within the act claim pertain only to the identity of the actor"), while our
+chain entries carry a per-hop **scope snapshot** — the basis of attenuation
+audit and of the resume invariant — which could not ride `act` conformantly
+either. Note also that 8693's nested `act` already *is* a history trail in
+the token; the honest difference here is not "explicit vs emergent" but that
+`delegation_chain` is **issuer-enforced** (not AS-discretionary) and carries
+the per-hop scope snapshot `act` forbids.
 
 **Revisit triggers** — conditions under which this choice flips to a
 standard-`act` shape, recorded so a future reader knows when to reopen it:
@@ -260,84 +389,131 @@ deployed JWT audit tool emerges that deep-walks multi-hop `act` chains
 Phase-3 external verifier ecosystem (`scoped-resource-grants.md`
 consumers, federated domains) demands `act`-named claims for interop;
 (e) SPIFFE issues guidance letting delegation-carrying tokens set `sub`
-to the delegator. Until one fires, `dlg` stands: an 8693-trained reader
-misreads an inverted `act` *confidently*, and confident misreading in an
-audit context is worse than a private claim.
+to the delegator. One is already live: actor-profile-00 §3.2 ratifies
+"`sub` is the authorizing principal" — the 8693 side — so if that profile
+is adopted, the collision resolves *against* this doc's current `sub` =
+acting-instance choice; flag it, don't hide it. Until one fires,
+`delegation_chain` stands: an 8693-trained reader misreads an inverted
+`act` *confidently*, and confident misreading in an audit context is worse
+than a private claim.
 
-**`may_act` (8693 §4.4)** — the claim that pre-authorizes *which* actors
-may delegate for a subject — is played by **definition-tier policy**, not
-a token claim: "user U may spawn definition D", "D may spawn children of
-definitions {…}". Those are the three nested envelopes (user grant ⊇
-definition policy ⊇ instance scope ⊇ child scope) from the tier model.
-Same consent-hook semantics as `may_act`, expressed as issuer policy
+**`may_act` (8693 §4.4)** — the claim that pre-authorizes which actors may
+**act for** a subject (it covers impersonation as well as delegation, and it
+is near-dead in deployment — Keycloak gates it behind an experimental flag
+and doesn't support `actor_token` at all) — is played by **definition-tier
+policy**, not a token claim: "user U may spawn definition D", "D may spawn
+children of definitions {…}". Those are the three nested envelopes (user
+grant ⊇ definition policy ⊇ instance scope ⊇ child scope) from the tier
+model. Same consent-hook semantics as `may_act`, expressed as issuer policy
 because our exchange is in-process (below) rather than an STS the user
-consents through.
+consents through — and because `may_act` itself is barely deployed.
 
 **Where 8693 ends and the novel part begins.** 8693 *permits* scope
 narrowing at exchange; nothing structurally enforces it (a misconfigured
-STS can mint wider). Our issuer **refuses** to mint a child whose `scope`
-is not a strict subset — attenuation as an invariant, not a policy
-option. And the exchange itself is in-process: a child mint happens at
-the delegation seams (`buildChildSession`, the team member factory), so
-8693's wire protocol (`grant_type=token-exchange`, `subject_token` /
-`actor_token`) never runs — it only enters if the issuer is later exposed
-as a network STS for external consumers, at which point these claims slot
-into 8693's envelope unchanged (an instance JWT-SVID is already a valid
-`actor_token` of type `urn:ietf:params:oauth:token-type:jwt`). `depth`/
-`max_depth` and `txn` have no 8693 analog — they come from RFC 3820 and
-the Txn-Token draft respectively.
+STS can mint wider). Our issuer **refuses** to mint a child whose
+`authorization_details` is not a strict subset — attenuation as an
+invariant, not a policy option. And the exchange itself is in-process: a
+child mint happens at the delegation seams (`buildChildSession`, the team
+member factory), so 8693's wire protocol (`grant_type=token-exchange`,
+`subject_token` / `actor_token`) never runs — it only enters if the issuer
+is later exposed as a network STS for external consumers, at which point
+these claims slot into 8693's envelope unchanged (an instance JWT-SVID is
+already a valid `actor_token` of type
+`urn:ietf:params:oauth:token-type:jwt`). `depth`/`max_depth` has no 8693
+analog — it comes from RFC 3820. A JWT is immutable once signed, so a
+holder cannot attenuate its own token — narrowing always means the issuer
+mints a new one; that is cheap here because minting is a local signing
+call (see the lifecycle section), not a network round-trip.
 
 ### The parkable credential lifecycle (innovation ground — Q2)
 
 No standard or published deployment models a credential lifecycle for a
 workload that parks mid-operation for an indeterminate human-in-the-loop
 wait and resumes on a different host. The converged TTL floor: SPIRE
-defaults (X.509 1h, JWT 5m, rotate at half-life), WIMSE WIT "hours, PoP
-minutes, never bearer". But a mecatl session can **park for hours awaiting
-a human approval and resume on a different pod** — and no standard models
+defaults (X.509 1h, JWT 5m — and JWT-SVIDs are minted fresh per request, so
+there is no rotation schedule to inherit; mint-per-request *is* the
+"credential ephemeral" half of the contract below), WIMSE WIT "hours, PoP
+minutes, never bearer". A mecatl session can **park for hours awaiting a
+human approval and resume on a different pod** — and no standard models
 that. WIMSE's practices draft says tokens "SHOULD be invalidated when the
-workload *pauses*" and explicitly leaves the mechanism out of scope; the
-two live IETF schools (vault/broker re-attestation; Zhu's async-delegated
-refresh tokens with monotonic scope + absolute max lifetime) both assume the
-token holder persists.
+workload *pauses*" and explicitly leaves the mechanism out of scope. Two
+live IETF schools are adjacent: vault/broker re-attestation, and Zhu's
+async-delegated refresh tokens (short TTL + re-derive from durable state,
+monotonic scope, absolute max lifetime). This design **converges with** Zhu
+on the re-derivation — what is genuinely new is the parked-and-resumed-on-
+another-pod lifecycle, not the re-derivation itself.
 
 The design: **chain durable, credential ephemeral.**
 
 - Instance SVID TTL is minutes; the harness re-mints on demand (it is the
-  issuer — minting is a local signing call, not a network dependency).
+  issuer — minting is a local signing call over the in-memory intermediate
+  key, not a network dependency; see the issuer section).
 - A parked session's SVID simply expires. Nothing is revoked because nothing
-  needs to be: TTL ≪ any useful attack window.
+  needs to be: TTL ≪ any useful attack window. TTL-only is a *considered and
+  rejected* alternative to a revocation list — Sweeney's delegation draft
+  has the only fully worked revocation design in this space, and it is
+  heavier than the risk window a minutes-long TTL leaves.
 - Resume (the existing `rehydrateSession` seam) re-mints the **same instance
-  identity with the same `dlg` chain and a scope no wider than pre-park**.
+  identity with the same `delegation_chain` and an
+  `authorization_details` no wider than pre-park**.
   This enforces monotonic attenuation across resume, issuer-side, against the
-  persisted chain. This state machine — active/parked, re-attest-on-resume,
-  attenuation preserved across pod boundaries — is genuinely novel; the doc
-  treats it as a named contribution, not an implementation detail.
+  persisted chain. Two refinements, from review: (a) where a *live caller*
+  exists (an approval click, a parent turn resuming a child), authority is
+  derived from the live caller and the persisted chain is only the *bound*
+  it is checked against — the record is a cache, the live binding is the
+  authority; (b) where the chain itself must be authoritative (the scheduled
+  fire, the one case with no live caller), the issuer signs the chain at
+  mint and verifies it before re-mint, so the row proves its own integrity
+  rather than being trusted for being in the database. This state machine —
+  active/parked, re-attest-on-resume, attenuation preserved across pod
+  boundaries — is genuinely novel; the doc treats it as a named
+  contribution, not an implementation detail.
 - Session GC (PrunableStore) plus short TTL bounds the
   deleted-session-but-live-token window without a revocation list; internal
   verifiers may additionally check `jti`↔session-liveness against Redis
-  (cheap in-cluster), external verifiers stay offline/TTL-only.
+  (cheap in-cluster — a liveness hint, not revocation, since the harness
+  re-mints on demand), external verifiers stay offline/TTL-only.
 
 ### The scope vocabulary (innovation ground — Q4)
 
 Nobody has standardized what an agent may *do* in a token: MCP scopes are
 server-defined strings, A2A says "agent-defined", Entra reuses Graph resource
-scopes, Cedar/OPA are app-defined. The v1 vocabulary is deliberately minimal
-and maps onto machinery mecatl already enforces:
+scopes, Cedar/OPA are app-defined. The claim itself is **not** a private
+invention: RFC 8693 §4.2 registers `scope` as a space-separated *string*
+(RFC 6749 §3.3), which cannot carry structured authority — so the structured
+payload rides **RFC 9396 `authorization_details`**, the registered,
+production-proven (FAPI) claim for exactly this. A v1 entry:
 
-- **tool names** — the catalog names the permission evaluator already
+```json
+{"type": "mecatl_agent",
+ "operations": ["Read", "Grep", "Bash"],
+ "resources": ["/workspace/repo"],
+ "constraints": {"posture_ceiling": "auto", "max_depth": 3}}
+```
+
+- **`operations`** — the catalog tool names the permission evaluator already
   resolves (`engine/governance` — the deny-dominant, scope-ordered rule
   evaluator; its `Audience` enum already distinguishes main- vs
   subagent-bound rules — the closest existing thing to an attenuation
   channel);
-- **a posture ceiling** — the `strict < trusted < auto < yolo` ladder from
-  `internal/app/posture.go`; a child's ceiling ≤ its parent's;
-- **delegation rights** — whether this instance may mint children at all
-  (`max_depth`), and with which definition identities.
+- **`resources`** — the workspace roots this instance may touch, with prefix
+  containment after canonicalisation. This axis is *required*, not optional:
+  a model-created session (a scheduled fire) can name an arbitrary workspace
+  root today (`validateScheduleSpec` checks non-emptiness only), so a child
+  narrowed on tools and posture could otherwise read a strictly *larger*
+  filesystem than its parent. Construction is exactly what a scoped
+  principal must not be able to widen.
+- **`constraints`** — the posture ceiling (the `strict < trusted < auto <
+  yolo` ladder from `internal/app/posture.go`; a child's ceiling ≤ its
+  parent's) and delegation rights (`max_depth`, which definition identities
+  it may spawn).
 
-Workspace paths are *not* claims: the workspace is a property of the
-session's construction (the osfs root + read-roots), not of its identity.
 Providers/models and egress are candidates for a later vocabulary revision.
+The subset computation over this structure — and who is obliged to refuse a
+widening — is the genuinely unspecified part (see "Prior art"): the issuer
+computes containment over `operations` (set), `resources` (canonicalised
+prefix), and `constraints` (posture rank, depth integer) and refuses to mint
+on any widening.
 
 ### Projection, not authority (converged pattern — Q3)
 
@@ -361,6 +537,37 @@ plus its own proof-of-possession. Only the pod tier holds keys; everything
 below is signed claims. No per-subagent key material, no PoP problem below
 the pod.
 
+## Build vs buy
+
+Becoming an issuer does not mean writing subtle security code from scratch.
+The principle: build on proven libraries for everything cryptographic;
+build only the parts that are genuinely ours (the claim vocabulary, the
+attenuation invariant, the lifecycle). The stack:
+
+- **go-spiffe/v2** — SPIFFE ID and trust-domain parsing, bundle sources,
+  federation, the Workload API client, and JWT-SVID *verification*. Note:
+  its `jwtsvid` package is parse-and-validate only — there is no minting
+  helper, so the issuing side is genuinely ours to write (a small signer).
+- **go-jose/v4** — signing and JWKS serialization. This is what SPIRE
+  itself uses, and it is already in mecatl's module graph.
+- **sigstore/sigstore `pkg/signature/kms`** — key custody. Its
+  `SignerVerifier` exposes a `crypto.Signer` over AWS, Azure, GCP, and
+  Vault behind go-cloud-style URIs, so KMS choice becomes config rather
+  than four integrations. Apache-2.0, OpenSSF, and cosign runs on it.
+- **Housekeeping** — mecatl already pulls several JWT/JOSE libraries
+  transitively (go-jose v3+v4, golang-jwt v5, lestrrat-go/jwx v3,
+  cristalhq/jwt v4). Pick one, make it direct, drop the rest.
+
+The one area with real existing art worth a spike before building:
+**Biscuit** (public-key, offline, holder-side attenuation via Datalog
+blocks). Its model is the inverse of ours — the *holder* appends narrowing
+blocks, whereas our invariant is enforced *issuer-side* at the mint seam.
+Issuer-side is the correct model for a harness that IS the issuer (a
+compromised subagent runtime must not be able to decline to attenuate, and
+only the harness holds the signing key). But the Go implementation is small
+(~89 stars) — a timeboxed spike to read its subset-checking before
+hand-rolling our own, not a dependency decision.
+
 ## The issuer in a Kubernetes deployment
 
 mecak8s ([ADR 0048](adr/0048-mecak8s.md) — the storage-free, Redis-backed,
@@ -370,46 +577,68 @@ leases, any pod rehydrates any session. The industry pattern for issuer HA in
 exactly this shape is **converged** (Q1): stateless replicas, signing keys
 that never leave a signing service.
 
-- **Key custody**: one logical issuer; the signing key lives in a KMS/Vault
-  Transit-style signing service (SPIRE's `aws_kms`/`gcp_kms`/`vault` upstream
-  authority pattern; cert-manager's external-issuer pattern). Every pod can
-  sign; no pod holds key material longer than a signing operation. Per-pod
-  intermediate keys are rejected. The community settled on "protect the key
-  in KMS; handle blast radius via identity granularity."
-- **Residual risk, named**: a compromised pod cannot exfiltrate the key but
-  can request signatures. Defenses: KMS-layer audit logging of every sign
-  request, short pod lifetimes, and the fact that minting a *valid-looking*
-  but unauthorized identity still fails at the session store. The identity
-  references a session that must exist in Redis.
+- **Key custody**: one logical issuer. The root key lives in a KMS/Vault
+  Transit-style signing service; **each pod signs locally with a short-lived
+  intermediate key the KMS signs at startup and rotation** — the SPIRE
+  upstream-authority pattern (KMS as root, in-memory intermediate for
+  workload signing). This resolves an apparent contradiction: KMS-per-mint
+  would make every delegation a 10–50ms network call, and bare software keys
+  would put the root in pod memory. The intermediate gives KMS-rooted trust
+  with local-signing performance, and its blast radius is bounded by the
+  rotation window. (SPIRE's KMS-backed signing lives in its *key manager*
+  plugins — `aws_kms`/`azure_key_vault`/`gcp_kms`/`hashicorp_vault` — with
+  the upstream-authority plugins as the CA side; cert-manager's
+  external-issuer pattern is the same shape.)
+- **Residual risk, named**: a compromised pod cannot exfiltrate the root key
+  but can request signatures while it runs — and can *write* sessions too.
+  There is no "the identity must reference an existing session" backstop:
+  the session store is attacker-writable in the same compromise, so the
+  honest statement is the one in the risks section — **the pod that can sign
+  is the pod that can impersonate any session.** Defenses: KMS-layer audit
+  logging of every sign request, short pod lifetimes, short intermediate
+  TTLs, and Redis auth/TLS (below — a prerequisite, since on resume all
+  authority comes out of Redis, making it the root of trust for the model).
 - **Bundle distribution**: the public JWKS is served by any pod (they are
   stateless) and cached in Redis / a ConfigMap; in-cluster verifiers fetch
-  once. Cross-cluster = SPIFFE federation (bundle exchange) — free because we
-  stay spec-shaped.
+  once. Cross-cluster is SPIFFE federation — **not free**: a bundle endpoint
+  needs either the `https_web` profile (a public-CA cert) or `https_spiffe`
+  (the endpoint presents its own X.509-SVID — a real addition in a JWT-only
+  design, and this doc picks no profile yet), and federation is bilateral
+  registration of each domain's bundle endpoint, not discovery. The JWKS
+  endpoint's own SLO is an open operator question, resolved here rather
+  than deferred.
 - **Composition**: the issuer is a sibling of the existing stores in
-  `internal/app` (`Build`), injected as a port; the engine loop stays
-  identity-agnostic (the same storage-agnostic discipline as
-  `port.EventLog`). Session gains an inert `Principal` label, same pattern
-  as the existing `Profile`/`ProviderID`/`ModelID` snapshot labels
-  (`engine/session/session.go`), persisted so rehydration re-derives the same
-  identity. `port.SessionLease.Owner` — already an opaque identity string —
-  becomes the pod's issuer identity, making single-writer exclusion
-  attributable. Child minting hooks into the existing delegation seams:
-  `engine/agent/subagent.go` (`buildChildSession`) and the team member
-  factory, where parent claims flow in, the subset invariant is enforced, and
-  the child session carries its identity.
+  `internal/app` (`Build`), and child minting happens in
+  **composition-supplied factory closures** on the delegation seams — the
+  same idiom as `WithSubagentEngineFactory` and the team member factory —
+  with `engine/agent` carrying only an opaque identity string on
+  `parentCaps` (the `forkHistory` precedent). The engine loop stays
+  identity-agnostic; the EventLog analogy (loop emits, relay persists) does
+  *not* hold for spawn, because the child is constructed and driven inside
+  dispatch — there is no downstream seam. Session gains an inert `Principal`
+  label, same pattern as the existing `Profile`/`ProviderID`/`ModelID`
+  snapshot labels (`engine/session/session.go`), persisted so rehydration
+  re-derives the same identity — and propagated to children (reject-empty:
+  an empty principal must not silently mean "single-user deployment").
+  `port.SessionLease.Owner` is *not* overloaded with the issuer identity —
+  exclusion needs per-Build distinctness while attribution needs sharing;
+  an additive field carries the principal instead.
 
 ## The edge: where users come from
 
-The one piece with no existing seam. The driver protocol today carries no
-tenant, principal, session, or namespace field on any RPC (recorded as a
-decision in [ADR 0027](adr/0027-cloud-native.md), the disposable-process
-arc), and mecated/mecak8s have TLS/auth/rate-limit but no *user*
-concept. The design needs an **edge auth interceptor** (gRPC/HTTP): the
-caller authenticates with an OIDC bearer from the corporate IdP (or mTLS
-client cert), and `CreateSession` binds the session to that user principal —
-the `user/<uid>` at the root of every `dlg` chain. The driver protocol gains
-an additive `principal` field on store/event-log RPCs — the one proto-level
-change.
+The one piece with no existing seam. mecated/mecak8s have
+TLS/auth/rate-limit but no *user* concept. The design needs an **edge auth
+interceptor** (gRPC/HTTP): the caller authenticates with an OIDC bearer from
+the corporate IdP (or mTLS client cert), and `CreateSession` binds the
+session to that user principal — the `user/<uid>` at the root of every
+`delegation_chain`. That requires a `principal` field on `CreateSessionRequest`
+(the one wire-level addition; the session-store driver RPCs already carry
+`session_id`, and a principal on the *snapshot* needs no proto change since
+`sessnap` is additive opaque JSON — the event-log `principal` annotation is
+the other additive change). But the edge is **one writer, not the only
+source**: the durable owner record on the session is primary, and work that
+starts itself (a scheduled fire) writes it directly rather than finding
+nothing (see "What breaks today").
 
 ## Audit: the delegation tree, durably
 
@@ -437,20 +666,32 @@ end first; mecatl's background subagents don't).
 
 ## Phasing
 
-Each step is independently useful; nothing is big-bang.
+Each step is independently useful; nothing is big-bang. Phase 1 is
+deliberately **unsigned-and-honest**: it ships the audit trail as a plain
+`principal` annotation on the event log — a durable record of which
+principal did what, on a seam (`Service.appendEvent`) that already exists —
+with no signature inviting trust it hasn't earned. The alternative
+(signed-and-enforcing immediately) would sign claims like
+"`authorization_details` is a strict subset" while nothing enforces them —
+a signed claim that isn't true yet, which is worse than an unsigned honest
+one. The one-way commitments (the KMS dependency, the JWKS endpoint's SLO,
+the trust-domain name) move behind the first enforcing phase, so they land
+after something has been learned about whether the novel parts work.
 
-1. **Issuer skeleton** — trust domain config, KMS-backed signing, JWKS
-   endpoint, per-session instance SVIDs with `dlg`/`txn` (no scope
-   enforcement), `Principal` on the aggregate, event annotation, edge
-   principal binding. Delivers durable multi-user identity + audit.
-2. **Attenuation engine** — the `scope` vocabulary mapped onto governance;
-   issuer-side subset enforcement at the child-minting seams; `depth` limits;
+1. **Audit trail (unsigned)** — `Principal` on the aggregate, propagated to
+   children (reject-empty); the `principal` event annotation; the edge
+   interceptor binding users on `CreateSession`; the owner record on
+   `ScheduleSpec`. Delivers durable multi-user attribution.
+2. **Issuer + attenuation engine (signed, enforcing)** — trust domain config,
+   KMS-backed intermediates, JWKS endpoint, per-session instance SVIDs with
+   `delegation_chain`/`authorization_details`/`txn`; the subset invariant
+   enforced at the child-minting seams; `depth` limits;
    attenuation-preserved re-mint across resume. Delivers the delegation
-   model.
+   model — the first phase whose signatures mean something.
 3. **External surface** — outbound presentation (subagent-attributed SVID +
-   harness PoP, DPoP/WPT-shaped), verification middleware recipe for
-   downstream consumers (the `scoped-resource-grants.md` integration point),
-   optional Rekor anchoring.
+   harness PoP via `cnf`/`jkt`, DPoP/WPT-shaped), verification middleware
+   recipe for downstream consumers (the `scoped-resource-grants.md`
+   integration point), optional Rekor anchoring.
 
 ## Honest costs and risks
 
@@ -465,42 +706,98 @@ Each step is independently useful; nothing is big-bang.
   trust-domain renaming has a migration story or is a one-time choice best
   locked early. A rename orphans every SPIFFE ID in the historical audit log.
   Standard issuer-operator concerns; none novel.
+- **Claim-name drift**: `delegation_chain`/`depth` are pre-standard (URI-named
+  to mark that); `txn` is *not* — it is registered in RFC 8417 §2.2.
+  `delegation_chain` is structurally RFC 8693 `act`-shaped by design and the
+  scope/audience semantics are 8693's, so ratification of Txn-Token / WIMSE
+  agent work — or interop with a plain 8693 STS — is a rename + envelope
+  adapter, not a rebuild.
+- **Multi-tenant trust reduces to "the issuer doesn't lie."** This is the
+  same trust a token-exchange STS already carries, but it must be stated:
+  the pod that can sign is the pod that can impersonate any session. The
+  signature adds tamper-evidence and offline verifiability, not truth — a
+  compromised issuer can sign anything. What it buys is that a forge's or
+  KMS's audit log and mecatl's event log can be cross-checked, and an
+  auditor with the bundle can verify a chain without trusting the harness's
+  word.
+- **Redis is the root of trust on resume.** All authority comes out of the
+  session store at rehydration; the store today dials with no auth, no TLS,
+  no keyspace scoping, and `sessnap` is plain JSON with no MAC. Redis
+  auth/TLS is a prerequisite for any of this meaning anything, and the
+  chain-integrity mitigation (issuer signs the chain at mint, verifies
+  before re-mint) is what stops "monotonic attenuation across resume is one
+  `HSET`."
+- **Deployment scale honesty.** This layer is over-engineered for a
+  single-user or single-org deployment and table stakes for a multi-org
+  platform. It should be **optional** (`--identity-domain`, empty = off),
+  like session leasing — the operational cost is paid only by deployments
+  that need verifiable identity.
+- **JWT size budget.** `delegation_chain` grows one entry per hop, and JWTs
+  ride HTTP headers (commonly capped at 4–8KB). Deep delegation trees could
+  exceed this. Mitigation: bounded `max_depth`, scope snapshots kept small,
+  and — if needed — truncating the chain to the last N hops with earlier
+  hops referenced by `txn`. State the budget explicitly when the vocabulary
+  lands.
+- **Key-compromise recovery** is unwritten today: rotate the root, publish a
+  new JWKS, let old SVIDs expire within their (minutes-long) TTL, re-mint on
+  next session operation. The procedure exists but must be documented and
+  rehearsed.
+- **Definition drift across resume.** A project-tier `AgentDef` is read from
+  a mutable workspace, and instance identity is deliberately stable across
+  reopen and migration — so a resumed instance can run a different catalog
+  than its credential was minted for. `draft-goswami-agentic-jwt-01`
+  derives identity from a hash of prompt+tools+config and forces
+  re-registration on change (caveats: TOCTOU under template substitution;
+  patent-pending). Deferred, named.
 - **The scope vocabulary is ours to get right.** It is the highest-leverage
   design surface in the doc and the least guided by prior art. v1 is
   minimal for that reason.
-- **Claim-name drift**: `dlg`/`txn`/`depth` are pre-standard. `dlg` is
-  structurally RFC 8693 `act`-shaped by design and the scope/audience
-  semantics are 8693's, so ratification of Txn-Token / WIMSE agent work —
-  or interop with a plain 8693 STS — is a rename + envelope adapter, not
-  a rebuild.
-- **Multi-tenant trust reduces to "the issuer doesn't lie."** This is the
-  same trust a token-exchange STS already carries, but it must be stated:
-  the pod that can sign is the pod that can impersonate any session.
 - **Entra/Okta/A2A/MCP could converge on a vocabulary that isn't ours.**
   Mitigation: the claims are private by design; interop is a mapping layer
   later, and the doc avoids claiming our vocabulary as a standard.
 
 ## References
 
-- SPIFFE specs: `github.com/spiffe/spiffe` standards — `SPIFFE-ID.md`,
-  `JWT-SVID.md` (§3 private claims, §7.2 single-audience), `X509-SVID.md`,
-  `SPIFFE_Workload_Endpoint.md` (§5: no client auth; local agent is the
-  authority)
-- RFC 8693 (OAuth 2.0 Token Exchange: `act` §4.1, `may_act` §4.4,
-  nested-actor informational-only rule)
-- RFC 3820 (X.509 proxy certificates: `pCPathLenConstraint` — prior art for
-  `depth`/`max_depth`; cite the idea, not the mechanism)
+- SPIFFE specs: `github.com/spiffe/spiffe` standards — `SPIFFE-ID.md` (§2.2
+  path semantics + segment charset, §2.3 length, §4.1.1 temporal accuracy),
+  `JWT-SVID.md` (§3.1 `sub` = holder, §3 private-claims MAY, §7.2
+  single-audience), `X509-SVID.md`, `SPIFFE_Workload_Endpoint.md` (§5: no
+  client auth; local agent is the authority), `SPIFFE_Broker_API.md`
+  (on-behalf-of for referenced workloads)
+- RFC 8693 (OAuth 2.0 Token Exchange: §1.1 delegation vs impersonation, §4.1
+  `act` + nested-actor informational-only rule, §4.4 `may_act`, §5 scope
+  suggestion, A.2.5 delegation example)
+- RFC 8417 (Secure Event Token: `txn` claim, §2.2), RFC 9396 (Rich
+  Authorization Requests: `authorization_details`), RFC 9449 (DPoP: `cnf` +
+  `jkt`), RFC 3820 (X.509 proxy certificates: `pCPathLenConstraint` §3.8.1 +
+  rights-intersection §3.8.2 — prior art for `depth`/`max_depth` and for the
+  attenuation itself)
 - IETF drafts: `draft-ietf-wimse-arch` (§3.4.11 AI intermediaries; Identity
   Proxy; egress generalization), `draft-ietf-wimse-wpt`,
   `draft-ietf-oauth-transaction-tokens` (`txn`, MUST-narrow replacement
-  §14.11.1), `draft-ietf-wimse-workload-identity-practices` (§5.4–5.5 pause
-  language), `draft-zhu-oauth-async-delegation` (monotonic scope across
-  rotation), `draft-hartman-credential-broker-4-agents` (closest published
-  analog: per-session agent SVIDs)
+  §13.14 in -09), `draft-ietf-wimse-workload-identity-practices` (§5.4–5.5
+  pause language), `draft-ietf-oauth-identity-chaining` (non-escalation
+  expectation), `draft-ietf-oauth-identity-assertion-authz-grant` (ID-JAG,
+  narrowing as policy MAY §4.3.3), `draft-zhu-oauth-async-delegation`
+  (monotonic scope across rotation), `draft-hartman-credential-broker-4-agents`
+  (CB4A: per-session agent SVIDs, non-renewable re-attestation)
+- Individual drafts (attenuation prior art):
+  `draft-mcguinness-oauth-actor-profile-00` (non-escalation MUSTs,
+  append-only chain, `sub` = authorizing principal §3.2, confused-deputy
+  §14.5), `draft-mcguinness-oauth-ai-agent-instance-00` (definition/instance
+  split, `agent_instance_id`), `draft-liu-agent-operation-authorization-02` +
+  `draft-liu-oauth-chain-delegation-00` (`delegation_chain`, depth cap 5),
+  `draft-sweeney-wimse-credential-delegation-00` (revocation design),
+  `draft-goswami-agentic-jwt-01` (def-drift hash)
+- Holder-side attenuation: Macaroons (Birgisson et al., 2014), Biscuit
+  (`eclipse-biscuit/biscuit`)
 - Microsoft Entra Agent ID docs (blueprint / identity / user account);
   OpenAI Assistants API (assistant/thread/run); A2A spec (AgentCard/task)
-- SPIRE docs: upstream authority plugins (`aws_kms`/`gcp_kms`/`vault`), HA
-  guide, defaults (`default_jwt_svid_ttl=5m`, rotation at half-life)
+- SPIRE docs: key-manager plugins (`aws_kms`/`azure_key_vault`/`gcp_kms`/
+  `hashicorp_vault`) + upstream-authority plugins, HA guide, defaults
+  (`default_jwt_svid_ttl=5m`, JWT-SVIDs minted fresh per request — no
+  rotation schedule), `MintJWTSVID` + `CredentialComposer` (implementation
+  details, `allow_admin`-gated)
 - Repo: [ADR 0027](adr/0027-cloud-native.md) (disposable-process arc, event
   log, leasing), [ADR 0048](adr/0048-mecak8s.md) (k8s-native storage-free
   topology), [`docs/scoped-resource-grants.md`](scoped-resource-grants.md)
