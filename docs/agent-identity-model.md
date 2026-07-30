@@ -468,10 +468,9 @@ The design: **chain durable, credential ephemeral.**
   scheduled fire, the one case with no live caller), the issuer signs the
   chain at mint and verifies it before re-mint. That way the row proves
   its own integrity rather than being trusted for being in the database.
-  This state
-  machine — active/parked, re-attest-on-resume, attenuation preserved
-  across pod boundaries — is genuinely novel; the doc treats it as a named
-  contribution, not an implementation detail.
+  This state machine — active/parked, re-attest-on-resume, attenuation
+  preserved across pod boundaries — is genuinely novel; the doc treats it
+  as a named contribution, not an implementation detail.
 - Session GC (PrunableStore) plus short TTL bounds the
   deleted-session-but-live-token window without a revocation list. Internal
   verifiers may additionally check `jti`↔session-liveness against Redis
@@ -610,8 +609,9 @@ that never leave a signing service.
   endpoint needs either the `https_web` profile (a public-CA cert) or
   `https_spiffe` (the endpoint presents its own X.509-SVID, a real addition
   in a JWT-only design — and this doc picks no profile yet). Federation is
-  bilateral registration of each domain's bundle endpoint, not discovery. The JWKS endpoint's own SLO is an open operator question,
-  resolved here rather than deferred.
+  bilateral registration of each domain's bundle endpoint, not discovery.
+  The JWKS endpoint's own SLO is an open operator question, named here
+  rather than deferred.
 - **Composition**: the issuer is a sibling of the existing stores in
   `internal/app` (`Build`). Child minting happens in
   **composition-supplied factory closures** on the delegation seams — the
