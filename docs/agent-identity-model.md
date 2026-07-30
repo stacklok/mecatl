@@ -614,8 +614,8 @@ attenuation *enforceable* by parties who do not have to take its word.
 
 ### What the adversary can and cannot do
 
-The adversary model has three actors, and the design says something
-different about each:
+The adversary model has three actors the design speaks to directly, and
+several more it must name honestly. First the three:
 
 - **A compromised subagent runtime (prompt injection reaching a child).**
   Cannot mint a wider credential: it holds no key, only the harness does,
@@ -623,7 +623,13 @@ different about each:
   *can* abuse the authority its own SVID already carries — which is exactly
   why that authority is a narrow subset, and why the ceiling is Entra-style
   hard-blockable independent of the issuer. Contained by attenuation, not
-  by trusting the child.
+  by trusting the child. **Honesty note:** "the issuer refuses to mint
+  wider" is the Phase-2 mechanism. Today nothing is minted; a child's
+  authority is scoped by the catalog composition builds for it plus the
+  audience-pinned, deny-dominant evaluator (`engine/governance`) — real and
+  tested, but a convention, not a cryptographic containment. The
+  containment claim is only as strong as that distinction, and the doc's
+  phasing carries it.
 - **A compromised pod (can request signatures, can write Redis).** This is
   the honest worst case, and the design does not pretend otherwise: **the
   pod that can sign is the pod that can impersonate any session** (see
@@ -636,11 +642,48 @@ different about each:
   replayed. Cross-checking the SVID against the forge's or KMS's own audit
   log is what turns "trust our logs" into "verify the chain."
 
-What the design does **not** defend: a malicious or confused *user* with
-legitimate authority (that is policy, not identity); the harness lying
-about what a user asked (the signature adds tamper-evidence, not truth —
-the user's consent is out-of-band); and anything below the pod it cannot
-attest (the goroutine boundary is why it is its own issuer, not a defense).
+Five more the model must name, or it is incomplete for a multi-tenant AI
+harness:
+
+- **Prompt injection at the *main* agent (P1).** Strictly more dangerous
+  than at a child: the main agent holds the full tool set, spawns children,
+  sets their mode and prompts. Cryptographic identity does not help here —
+  the attacker is driving the harness's own prompt, inside the pod. The
+  containment is the harness's existing defenses (guardrails, the
+  deny-dominant fold, the plan-mode gate), which live at this boundary, not
+  the identity layer. Named so nobody expects the SVID to save them here.
+- **A malicious tenant (P2).** A user with legitimate authority is the
+  relevant multi-tenant threat: valid credentials, can create sessions and
+  run agents. The identity layer makes their actions *attributable* but
+  does not *confine* them — tenant isolation (User A reading User B's
+  session) needs tenant-scoped `ListSessions`, tenant-scoped event-log
+  reads, and a tenant-aware edge, i.e. policy, not identity. "What breaks
+  today" describes the symptom; the adversary is named here.
+- **A mis-binding edge (P3).** A compromised or misconfigured edge
+  interceptor could bind a session to `user/alice` when the OIDC token was
+  Bob's — and every SVID minted under the wrong principal inherits the
+  error, undetectably downstream. Mitigation: the edge writes a signed
+  binding claim, the session store records it, and audit cross-checks the
+  two — the binding must be independently verifiable, not trusted because
+  the edge asserted it.
+- **A compromised downstream credential store (P4).** Scenario B has
+  ToolHive storing Alice's upstream credentials. A compromised ToolHive
+  leaks the credential itself. The identity layer limits *attribution* (you
+  learn which delegation used it) but does not protect the credential —
+  the store is its own trust domain, and the boundary must be named so
+  operators know where credential protection ends.
+- **Event-log replay / exfiltration (P5).** The log persists unauthenticated
+  JSON (prompts, pre-compaction conversations, verdicts). An attacker with
+  Redis read access reconstructs every delegation tree. The log carries no
+  MAC; Rekor-style transparency anchoring (Phase 3) is a future integrity
+  measure, not a current defense.
+
+What the design does **not** defend: a malicious or confused *user* acting
+within legitimately granted authority (that is policy, not identity); the
+harness lying about what a user asked (the signature adds tamper-evidence,
+not truth — the user's consent is out-of-band); and anything below the pod
+it cannot attest (the goroutine boundary is why it is its own issuer, not a
+defense).
 
 ## Two end-to-end scenarios (ToolHive as the testing ground)
 
@@ -657,18 +700,30 @@ testing ground where the integration points already exist.
 
 The cast for both: **Alice** (user) → **her mecatl agent** (session
 instance `agent/main/inst/<sid>`) → **a code-reviewer subagent**
-(`.../child/subagent-<cid>`) → **ToolHive vMCP** → **a backend MCP server**
-(e.g. the GitHub MCP server).
+(`.../child/subagent-<cid>`) → **ToolHive vMCP** → a backend MCP server.
+The two scenarios use different backends on purpose, because they exercise
+different grants: Scenario A needs an authorization server that accepts
+ID-JAG (an *enterprise* service federated with the org's IdP — public SaaS
+like GitHub does not), Scenario B uses the GitHub MCP server (which the
+plain credential-store path genuinely serves).
 
 ### Scenario A — the XAA / ID-JAG path
 
 Here the backend's authorization server does not trust mecatl's trust
 domain directly, so the delegation crosses domains via the Identity
 Assertion JWT Authorization Grant. mecatl's chain rides the token the
-whole way.
+whole way. **The backend must be an enterprise service whose AS implements
+the ID-JAG target grant** — the canonical case is an internal corporate API
+or an Okta-federated enterprise app (ID-JAG,
+`draft-ietf-oauth-identity-assertion-authz-grant`, is an Okta-authored
+enterprise-IdP→enterprise-app grant). A public SaaS is *not* a valid
+example: GitHub's authorization server supports only `authorization_code`
+and `device_code` — it accepts no token-exchange and no ID-JAG, so this
+flow would stop at step 5b. That is why Scenario A uses a corporate
+code-review service, and GitHub appears only in Scenario B.
 
 ```
- Alice                mecatl (issuer)         ToolHive vMCP          backend AS + MCP
+ Alice                mecatl (issuer)         ToolHive vMCP       enterprise AS + MCP
   │                        │                       │                      │
   │ 1. OIDC login          │                       │                      │
   │───────────────────────>│                       │                      │
@@ -679,7 +734,7 @@ whole way.
   │                        │    authorization_details ⊂ parent's          │
   │                        │    delegation_chain=[alice, agent]           │
   │                        │                       │                      │
-  │                        │ 4. subagent's work needs a GitHub MCP call   │
+  │                        │ 4. subagent's work needs a code-review call  │
   │                        │──────────────────────>│                      │
   │                        │   child SVID + harness PoP (cnf/jkt)         │
   │                        │                       │                      │
@@ -727,7 +782,11 @@ What to notice:
 Here there is no cross-domain grant; the backend accepts the user's own
 upstream credential, which ToolHive stores keyed off the originating user.
 mecatl's job is to make sure the *right* user's credential is used, and
-that the delegation that led there is auditable.
+that the delegation that led there is auditable. **GitHub is a realistic
+backend here** precisely because it needs no special grant: the user does a
+standard 3LO OAuth consent, ToolHive stores the resulting token, and the
+GitHub MCP server accepts an ordinary Bearer access token — the path XAA
+cannot take.
 
 ```
  Alice                mecatl (issuer)         ToolHive vMCP          upstream IdP + MCP
@@ -767,18 +826,26 @@ that the delegation that led there is auditable.
 
 What to notice:
 
-- **The credential is keyed off the originating user, not the agent.**
-  ToolHive's token validator extracts Alice's `tsid` from the inbound token
-  and loads *her* stored upstream credentials (`loadUpstreamTokens` →
-  `GetAllUpstreamCredentials(tsid)`), and the `upstream_inject` strategy
-  injects the provider token from `identity.UpstreamTokens`. The agent
-  never holds Alice's GitHub token; it only triggers its use.
-- **mecatl's identity layer is what makes "the right user" provable.** The
-  inbound token carries Alice as `sub` and the agent/subagent in the chain,
-  so the `tsid` ToolHive resolves is bound to the same user the delegation
-  started from — not to ambient process identity. Without that binding, a
-  multi-tenant harness cannot show whose stored credential a subagent's
-  work just exercised.
+- **The credential is keyed off the originating user's consent session, not
+  the agent.** ToolHive's token validator extracts the `tsid` from the
+  inbound token and loads the stored upstream credentials
+  (`loadUpstreamTokens` → `GetAllUpstreamCredentials(tsid)`), and the
+  `upstream_inject` strategy injects the provider token from
+  `identity.UpstreamTokens`. The agent never holds Alice's GitHub token; it
+  only triggers its use.
+- **The binding is honest about where it is enforced — and it is not
+  ToolHive's read path.** The `tsid` is signature-verified (only ToolHive's
+  AS can mint it), and the stored row carries `UserID`/`UpstreamSubject`
+  fields. But the `tsid`-keyed read does **not** re-check the inbound `sub`
+  against those fields (`ErrInvalidBinding` is declared, never returned on
+  this path). And under this design's own tier model the inbound `sub` is
+  the *acting instance*, not Alice — she rides `delegation_chain`. So
+  "the right user's credential" is a property **mecatl must guarantee
+  unilaterally**: bind the `tsid` it emits to Alice-rooted chains only, and
+  never re-issue a `tsid` to a chain rooted at a different user. The cleaner
+  fix is on ToolHive's side — re-check the inbound `sub` (or the chain's
+  root user) against `stored.UserID` at the read seam — and that is a gap to
+  file, not a property already present. Naming it beats overclaiming it.
 - **The audit trail closes the loop.** mecatl's event log records the
   chain (Alice → agent → subagent) with `txn`; ToolHive's audit captures
   the delegation chain from the inbound token. The `txn` correlation id is
