@@ -187,8 +187,8 @@ func WithRelaxedReads() Option {
 // policy already authorized.
 //
 // Serving opens a FRESH *os.Root on the target's LEXICAL parent directory
-// (vetted by the same vetRelaxedParent ancestor walk the relaxed read uses)
-// and writes the leaf through it — never a bare os.WriteFile — so a symlinked
+// (vetted by the same Canonicalize-based vetRelaxedParent containment check
+// the relaxed read uses) and writes the leaf through it — never a bare os.WriteFile — so a symlinked
 // component that escapes further is refused by that root's containment,
 // exactly as the workspace root's own containment refuses an in-root escape
 // (ADR-0047). Glob and Grep stay workspace-confined regardless of this
@@ -398,14 +398,15 @@ func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 //  1. SERVE: a symlink inside the target dir that escapes further is refused
 //     by the serving root's own traversal (mapEscape at the call site),
 //     exactly as the workspace root refuses an in-root escape.
-//  2. VET: before opening, the resolveInRoot ancestor algorithm (deepest
-//     EXISTING ancestor + EvalSymlinks) canonicalizes the verbatim PARENT dir
-//     with the containment comparison inside the walk: any resolved ancestor
-//     that jumps ABOVE the not-yet-resolved verbatim prefix means a symlinked
-//     component escapes the verbatim path — refuse, so the relax never
-//     becomes a channel for a symlink escape the in-root path would reject.
-//     (EvalSymlinks alone on the whole path resolves to the target and launders
-//     the escape; the ancestor walk vets each component's jump.)
+//  2. VET: before opening, vetRelaxedParent canonicalizes the verbatim PARENT
+//     dir via the shared Canonicalize (deepest EXISTING ancestor +
+//     EvalSymlinks) and compares the canonical form against the verbatim
+//     cleaned prefix: any resolved ancestor that jumps ABOVE that prefix means
+//     a symlinked component escapes the verbatim path — refuse, so the relax
+//     never becomes a channel for a symlink escape the in-root path would
+//     reject. (EvalSymlinks alone on the whole path resolves to the target
+//     and launders the escape; the canonicalize-then-compare vets each
+//     component's jump.)
 //
 // It only ever fires after resolvePath AND allowedReadRoot declined, so the
 // target is provably outside the workspace root and every read root. An
@@ -431,33 +432,28 @@ func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
 	return rr, leaf, true
 }
 
-// vetRelaxedParent canonicalizes the verbatim parent dir with the
-// resolveInRoot ancestor walk, refusing when ANY resolved ancestor jumps
-// above the not-yet-resolved verbatim prefix (a symlinked component that
-// escapes the verbatim path). The parent itself need not exist yet (the read
-// then fails not-exist at the root open); an unverifiable ancestor fails safe.
+// vetRelaxedParent canonicalizes the verbatim parent dir and refuses when the
+// canonical form jumps ABOVE the verbatim cleaned prefix (a symlinked
+// component that escapes the verbatim path). It delegates the ancestor walk to
+// the already-extracted Canonicalize (AC-W2-F2) — no third hand-rolled walk —
+// so a future semantic change to the canonicalization algorithm cannot drift
+// this containment check. The parent itself need not exist yet (Canonicalize
+// re-appends the unresolved tail, and the read then fails not-exist at the
+// root open). A canonicalization failure (an unverifiable ancestor) fails
+// safe: refuse — the relax never serves a path it cannot vet.
 func vetRelaxedParent(parent string) bool {
-	existing := parent
-	remainder := ""
-	for {
-		if _, err := os.Lstat(existing); err == nil {
-			break
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return false
-		}
-		next := filepath.Dir(existing)
-		if next == existing {
-			return true // reached the fs root: every component stays under it
-		}
-		remainder = filepath.Base(existing) + string(filepath.Separator) + remainder
-		existing = next
-	}
-	resolved, err := filepath.EvalSymlinks(existing)
+	canon, err := Canonicalize("", parent)
 	if err != nil {
 		return false
 	}
-	prefix := strings.TrimSuffix(parent, remainder)
-	return resolved == prefix || strings.HasPrefix(resolved, prefix+string(filepath.Separator))
+	cleaned := filepath.Clean(parent)
+	// Containment in the direction that vets the verbatim path: canon must
+	// stay under (or equal) the verbatim cleaned prefix. canon is never a
+	// STRICT prefix of cleaned (the verbatim path is already clean, so
+	// canonicalization resolves its components to the same or a LONGER form);
+	// an escaping symlink resolves to a sibling elsewhere, failing the check.
+	return canon == cleaned ||
+		(len(canon) < len(cleaned) && strings.HasPrefix(cleaned, canon+string(filepath.Separator)))
 }
 
 // allowedReadRoot tests an absolute path against the explicit read-only allowed
@@ -513,8 +509,9 @@ func (f *FileSystem) Write(_ context.Context, path string, data []byte) error {
 // relaxedWriteRoot serves an out-of-root ABSOLUTE write under the
 // WithRelaxedWrites option (default off — a zero-value FileSystem never
 // reaches here). It mirrors relaxedReadRoot exactly: the SAME vetRelaxedParent
-// ancestor walk refuses a verbatim parent whose resolved ancestor escapes the
-// verbatim prefix, then a FRESH *os.Root on the lexical parent serves the leaf,
+// Canonicalize-based containment vet refuses a verbatim parent whose resolved
+// ancestor escapes the verbatim prefix, then a FRESH *os.Root on the lexical
+// parent serves the leaf,
 // so a symlinked component inside the parent that escapes further is refused
 // by that root's own traversal (mapEscape at the call site) — the write never
 // becomes a bare os.WriteFile that would follow the symlink out.
