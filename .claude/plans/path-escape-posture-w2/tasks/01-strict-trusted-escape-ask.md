@@ -2,8 +2,8 @@
 id: 01-strict-trusted-escape-ask
 title: strict/trusted resolve out-of-root escapes to Ask (Scenario 4)
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-path-escape-posture-w2/01-strict-trusted-escape-ask"
 worktree: ""
 issue: ""
 retries: 0
