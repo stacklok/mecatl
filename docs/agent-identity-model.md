@@ -540,6 +540,264 @@ plus its own proof-of-possession. Only the pod tier holds keys; everything
 below is signed claims. No per-subagent key material, no PoP problem below
 the pod.
 
+## Threat model and trust boundaries
+
+Before the worked examples, the boundaries this design draws and what it
+does and does not defend. The point of the identity layer is not to make the
+harness trustworthy — it is to make its delegations *verifiable* and its
+attenuation *enforceable* by parties who do not have to take its word.
+
+### Trust boundaries
+
+```
+                        ┌─────────────────────────────────────────────┐
+                        │              UNTRUSTED / PUBLIC             │
+                        │   (the internet, a forge's other tenants,   │
+                        │    a downstream service's other callers)    │
+                        └───────────────▲─────────────────────────────┘
+                                        │ outbound call + SVID + PoP
+        ═══════════════  BOUNDARY 3: the trust-domain edge  ═══════════════
+                        │               (verifiable by bundle)        │
+┌───────────────────────┴───────────────────────────────────────────┐
+│  TRUST DOMAIN: the mecatl deployment (one issuer, one bundle)     │
+│                                                                   │
+│   ┌──────────────┐   gRPC/HTTP + OIDC bearer   ┌───────────────┐  │
+│   │   the user   │ ──────────────────────────► │  edge auth    │  │
+│   │  (browser /  │   BOUNDARY 1: the user edge │  interceptor  │  │
+│   │   CLI client)│                             └───────┬───────┘  │
+│   └──────────────┘                                     │ binds principal
+│                                                        ▼          │
+│   ┌──────────────────────────────────────────────────────────┐   │
+│   │  a mecatl pod (any autoscaled replica)                   │   │
+│   │                                                          │   │
+│   │   issuer (KMS root ──► in-memory intermediate)           │   │
+│   │     │ mints                                              │   │
+│   │     ▼                                                    │   │
+│   │   session instance SVID ──► subagent SVID ──► grandchild │   │
+│   │   (attenuation enforced HERE, at the mint seam)          │   │
+│   │                                                          │   │
+│   │   session aggregate + governance evaluator = authority   │   │
+│   └──────────────┬───────────────────────────────┬───────────┘   │
+│                  │ BOUNDARY 2a: state            │ BOUNDARY 2b:   │
+│                  ▼                               ▼ downstream     │
+│        ┌───────────────────┐          ┌──────────────────────┐    │
+│        │  Redis (sessions, │          │  ToolHive vMCP / a   │    │
+│        │  event log) — the │          │  backend MCP server  │    │
+│        │  root of trust on │          │  (separate trust     │    │
+│        │  resume           │          │  domain, verifies    │    │
+│        └───────────────────┘          │  the SVID)           │    │
+│                                       └──────────────────────┘    │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+- **Boundary 1 — the user edge.** The user authenticates to the edge
+  interceptor (OIDC bearer / mTLS); the edge binds the session to
+  `user/<uid>`. Everything downstream trusts that binding. This is the one
+  place a human's identity enters, so it must be right: a mis-issued
+  principal here poisons every chain rooted at it. (Scheduled fires bypass
+  it by construction — see "What breaks today" — so the owner record, not
+  the edge, is primary.)
+- **Boundary 2a — state.** Redis holds sessions and the event log; on
+  resume *all* authority is re-derived from it. It is the root of trust for
+  the whole model, which is why its current unauthenticated, unencrypted,
+  un-MAC'd state is a prerequisite fix (B5), and why the chain carries
+  issuer-signed integrity rather than trusting the row (the resume
+  invariant).
+- **Boundary 2b — downstream.** A backend service (ToolHive vMCP, a forge,
+  a memory/filesystem service) is a *separate* trust domain. It does not
+  trust the harness's word; it verifies the presented SVID against the
+  bundle, offline. This is the boundary the whole design exists to serve.
+- **Boundary 3 — the trust-domain edge.** The line between "inside, where
+  the issuer is believed" and "outside, where only the signature speaks."
+  Inside, the session aggregate is the authority; outside, the SVID is a
+  verifiable projection of it.
+
+### What the adversary can and cannot do
+
+The adversary model has three actors, and the design says something
+different about each:
+
+- **A compromised subagent runtime (prompt injection reaching a child).**
+  Cannot mint a wider credential: it holds no key, only the harness does,
+  and the issuer refuses to mint outside the strict-subset invariant. It
+  *can* abuse the authority its own SVID already carries — which is exactly
+  why that authority is a narrow subset, and why the ceiling is Entra-style
+  hard-blockable independent of the issuer. Contained by attenuation, not
+  by trusting the child.
+- **A compromised pod (can request signatures, can write Redis).** This is
+  the honest worst case, and the design does not pretend otherwise: **the
+  pod that can sign is the pod that can impersonate any session** (see
+  "Honest costs and risks"). Mitigations are about blast radius and
+  detection — KMS-rooted short-lived intermediates, KMS-layer signing
+  audit, short TTLs, Redis auth/TLS — not about making the pod trustworthy.
+- **An external party holding a leaked SVID.** Bounded by TTL (minutes) and
+  by the PoP binding (Phase 3 `cnf`/`jkt`): a bearer token alone is not
+  enough to act, and a parked session's token expires before it can be
+  replayed. Cross-checking the SVID against the forge's or KMS's own audit
+  log is what turns "trust our logs" into "verify the chain."
+
+What the design does **not** defend: a malicious or confused *user* with
+legitimate authority (that is policy, not identity); the harness lying
+about what a user asked (the signature adds tamper-evidence, not truth —
+the user's consent is out-of-band); and anything below the pod it cannot
+attest (the goroutine boundary is why it is its own issuer, not a defense).
+
+## Two end-to-end scenarios (ToolHive as the testing ground)
+
+These walk the model through a real downstream: **ToolHive's vMCP**, which
+has already implemented most of the delegation/identity constructs this
+design must interface with — an embedded authorization server that mints
+nested-`act` delegation tokens, an outgoing-strategy registry, an
+XAA/ID-JAG strategy, and a Cedar authorization layer that already evaluates
+SPIFFE IDs in `act.sub`. ToolHive is the example **not** because it is the
+only way — the same shape applies to any downstream that supports these
+constructs, such as a memory service or the filesystem abstraction from
+`docs/scoped-resource-grants.md` — but because it is a live, code-complete
+testing ground where the integration points already exist.
+
+The cast for both: **Alice** (user) → **her mecatl agent** (session
+instance `agent/main/inst/<sid>`) → **a code-reviewer subagent**
+(`.../child/subagent-<cid>`) → **ToolHive vMCP** → **a backend MCP server**
+(e.g. the GitHub MCP server).
+
+### Scenario A — the XAA / ID-JAG path
+
+Here the backend's authorization server does not trust mecatl's trust
+domain directly, so the delegation crosses domains via the Identity
+Assertion JWT Authorization Grant. mecatl's chain rides the token the
+whole way.
+
+```
+ Alice                mecatl (issuer)         ToolHive vMCP          backend AS + MCP
+  │                        │                       │                      │
+  │ 1. OIDC login          │                       │                      │
+  │───────────────────────>│                       │                      │
+  │                        │ 2. mint instance SVID │                      │
+  │                        │    sub=agent/main/inst/<sid>                 │
+  │                        │    delegation_chain=[{user/alice}]           │
+  │                        │ 3. spawn subagent, mint child SVID           │
+  │                        │    authorization_details ⊂ parent's          │
+  │                        │    delegation_chain=[alice, agent]           │
+  │                        │                       │                      │
+  │                        │ 4. subagent's work needs a GitHub MCP call   │
+  │                        │──────────────────────>│                      │
+  │                        │   child SVID + harness PoP (cnf/jkt)         │
+  │                        │                       │                      │
+  │                        │                       │ 5. XAA strategy:     │
+  │                        │                       │  a) IdP exchange     │
+  │                        │                       │     (RFC 8693):      │
+  │                        │                       │     identity.        │
+  │                        │                       │     UpstreamIDTokens │
+  │                        │                       │     [alice] ────────>│
+  │                        │                       │     → ID-JAG (aud=   │
+  │                        │                       │       backend AS)    │
+  │                        │                       │  b) target grant     │
+  │                        │                       │     (RFC 7523):      │
+  │                        │                       │     ID-JAG ─────────>│
+  │                        │                       │     → backend-scoped │
+  │                        │                       │       access token   │
+  │                        │                       │                      │
+  │                        │                       │ 6. call backend MCP  │
+  │                        │                       │─────────────────────>│
+  │                        │                       │  Authorization:      │
+  │                        │                       │  Bearer <token, sub= │
+  │                        │                       │   alice, act=...>    │
+```
+
+What to notice:
+
+- **The user never disappears.** Alice authenticates once at the mecatl
+  edge; her identity is the `sub` of every downstream token, and the
+  mecatl chain (`delegation_chain=[alice, agent]`) is the verifiable record
+  of who narrowed what on the way. The backend sees `sub=alice` with the
+  agent in the actor position — delegation, never impersonation.
+- **Crossing domains is XAA's job, not mecatl's.** mecatl does not ask the
+  backend's AS to trust its trust domain; the ID-JAG is the standard
+  bridge. mecatl's SVID is what the vMCP validates to know *which* agent
+  instance is calling; the XAA strategy then does what it already does for
+  any caller.
+- **The attenuation is enforceable by the backend.** The child SVID's
+  `authorization_details` is a strict subset of the parent's, signed at the
+  mint seam. The backend (or vMCP's Cedar layer, which already evaluates
+  SPIFFE IDs in actor claims) can check that the acting agent holds only
+  narrowed authority — it does not have to trust mecatl's say-so.
+
+### Scenario B — ToolHive with a credential store keyed off the user
+
+Here there is no cross-domain grant; the backend accepts the user's own
+upstream credential, which ToolHive stores keyed off the originating user.
+mecatl's job is to make sure the *right* user's credential is used, and
+that the delegation that led there is auditable.
+
+```
+ Alice                mecatl (issuer)         ToolHive vMCP          upstream IdP + MCP
+  │                        │                       │                      │
+  │ 1. OIDC login          │                       │                      │
+  │───────────────────────>│                       │                      │
+  │                        │ 2. mint SVIDs as in A (attenuated child)     │
+  │                        │                       │                      │
+  │  (earlier: Alice did a 3LO consent; ToolHive stored her upstream     │
+  │   credential under her token-session id `tsid`)                      │
+  │                        │                       │                      │
+  │                        │ 3. subagent needs a GitHub MCP call          │
+  │                        │──────────────────────>│                      │
+  │                        │   child SVID + harness PoP                   │
+  │                        │                       │                      │
+  │                        │                       │ 4. validate inbound  │
+  │                        │                       │    token, extract    │
+  │                        │                       │    `tsid` claim      │
+  │                        │                       │ 5. loadUpstreamTokens│
+  │                        │                       │  GetAllUpstreamCreds │
+  │                        │                       │  (tsid) ────────────>│
+  │                        │                       │  → identity.         │
+  │                        │                       │    UpstreamTokens    │
+  │                        │                       │    ["github"]        │
+  │                        │                       │                      │
+  │                        │                       │ 6. upstream_inject   │
+  │                        │                       │    strategy reads    │
+  │                        │                       │    UpstreamTokens    │
+  │                        │                       │    ["github"]        │
+  │                        │                       │                      │
+  │                        │                       │ 7. call backend MCP  │
+  │                        │                       │─────────────────────>│
+  │                        │                       │  Authorization:      │
+  │                        │                       │  Bearer <alice's     │
+  │                        │                       │   github token>      │
+```
+
+What to notice:
+
+- **The credential is keyed off the originating user, not the agent.**
+  ToolHive's token validator extracts Alice's `tsid` from the inbound token
+  and loads *her* stored upstream credentials (`loadUpstreamTokens` →
+  `GetAllUpstreamCredentials(tsid)`), and the `upstream_inject` strategy
+  injects the provider token from `identity.UpstreamTokens`. The agent
+  never holds Alice's GitHub token; it only triggers its use.
+- **mecatl's identity layer is what makes "the right user" provable.** The
+  inbound token carries Alice as `sub` and the agent/subagent in the chain,
+  so the `tsid` ToolHive resolves is bound to the same user the delegation
+  started from — not to ambient process identity. Without that binding, a
+  multi-tenant harness cannot show whose stored credential a subagent's
+  work just exercised.
+- **The audit trail closes the loop.** mecatl's event log records the
+  chain (Alice → agent → subagent) with `txn`; ToolHive's audit captures
+  the delegation chain from the inbound token. The `txn` correlation id is
+  the join key that lets an auditor answer "which delegation used Alice's
+  GitHub credential, and was it narrowed all the way down?"
+
+### Why ToolHive and not only ToolHive
+
+Both scenarios lean on constructs ToolHive already ships: the embedded AS's
+nested-`act` delegation minting, the outgoing-strategy registry (XAA,
+upstream_inject, token_exchange), the user-keyed upstream credential store,
+and Cedar's SPIFFE-aware actor evaluation. That makes it the shortest path
+to a working proof. But nothing in the design is ToolHive-specific: any
+downstream that (a) validates a JWT-SVID against the bundle, (b) carries a
+delegation chain, and (c) enforces an authorization decision from the actor
+plus a structured scope can play the same role — a memory service, the
+filesystem grant substrate, or another gateway. The identity model is the
+portable part; ToolHive is just where we plug it in first.
+
 ## Build vs buy
 
 So how much of an issuer do we actually have to write? Less than it sounds:
