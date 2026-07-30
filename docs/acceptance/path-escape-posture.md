@@ -1,7 +1,7 @@
 # Path-escape posture relax — acceptance plan
 
 **Phase:** capability / FS-tool out-of-workspace access
-**Status:** in-progress, 2026-07-29. Design discussion (osfs containment value) settled the posture table.
+**Status:** landed, 2026-07-30. Design discussion (osfs containment value) settled the posture table.
 **Accumulator branch:** `acc/path-escape-posture` (off `main`).
 
 The smallest set of work that turns the osfs out-of-root rejection from a silent
