@@ -1281,7 +1281,8 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 				return false
 			}
 		}
-		e.terminateComplete(ctx, r, sess, stop, lastText, total)
+		e.terminateComplete(ctx, r, sess, stop, lastText, total,
+			stopTerminalCause(stop, lastText))
 		return true
 	}
 
@@ -1294,7 +1295,8 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 				fmt.Errorf("agent: model ended turn with no output and a terminal stop reason %q", streamStop))
 			return true
 		}
-		e.terminateComplete(ctx, r, sess, streamStop, lastText, total)
+		e.terminateComplete(ctx, r, sess, streamStop, lastText, total,
+			stopTerminalCause(streamStop, lastText))
 		return true
 	}
 
@@ -1306,7 +1308,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 	if nudgeCap < 0 || *noProgressNudges >= nudgeCap {
 		e.emit(r, session.Event{Type: session.EvNoProgress, Turn: turnIdx,
 			Text: "no progress after continuation attempts; ending run"})
-		e.terminateComplete(ctx, r, sess, session.StopNoProgress, lastText, total)
+		e.terminateComplete(ctx, r, sess, session.StopNoProgress, lastText, total, "")
 		return true
 	}
 
@@ -1506,7 +1508,7 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 		return true
 	}
 	if e.budgetExhausted(r, sess.Usage) {
-		e.terminateComplete(ctx, r, sess, session.StopBudget, lastText, total)
+		e.terminateComplete(ctx, r, sess, session.StopBudget, lastText, total, "")
 		return true
 	}
 	return false
@@ -2170,18 +2172,22 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 func (e *Engine) planApprovalTerminal(ctx context.Context, r *Run, sess *session.Session, lastText string, total session.Usage) bool {
 	switch {
 	case r.planApprovedTarget != "":
-		e.terminateComplete(ctx, r, sess, session.StopPlanApproved, lastText, total)
+		e.terminateComplete(ctx, r, sess, session.StopPlanApproved, lastText, total, "")
 		return true
 	case r.planIterateRequested:
-		e.terminateComplete(ctx, r, sess, session.StopPlanIterate, lastText, total)
+		e.terminateComplete(ctx, r, sess, session.StopPlanIterate, lastText, total, "")
 		return true
 	}
 	return false
 }
 
 // terminateComplete ends the run successfully (the model finished its turn),
-// recording the explicit stop reason and emitting the result Event.
-func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage) {
+// recording the explicit stop reason and emitting the result Event. errMsg is the
+// terminal cause (empty for a clean end): a text-bearing turn that ended on a
+// NON-benign stop chunk (StopError / StopCancelled) carries one, synthesised by
+// stopTerminalCause at the call site, so a delegation never renders the child's
+// last text AS the failure on this path either (the #319 terminateComplete shape).
+func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string) {
 	e.drainChildren(ctx, r)
 	if !sess.State.IsTerminal() {
 		_ = sess.Stop(reason)
@@ -2199,8 +2205,38 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 		e.save(ctx, sess)
 	}
 	e.fireStop(ctx, r, sess, reason)
-	e.emitResult(r, sess, reason, text, usage, "")
+	e.emitResult(r, sess, reason, text, usage, errMsg)
 	e.save(ctx, sess)
+}
+
+// stopTerminalCause synthesises the terminal REASON for a run that ended on a
+// provider stop CHUNK (no Go error) — the terminateComplete counterpart of the
+// error terminate() carries. Both adapters relay a real terminal condition
+// (max_tokens / refusal / incomplete / failed → StopError; cancelled →
+// StopCancelled) on the ChunkDone stop, NOT as a Go error, so without this the
+// ResultPayload.Error is empty and a delegation's subagentErrorBody renders the
+// child's last text AS the failure — the exact #319 presentation on the
+// terminateComplete path (reachable only WITH text: the empty shape already
+// routes through terminate with a cause). The phrase deliberately matches the
+// empty-shape terminate cause ("agent: model ended turn with no output and a
+// terminal stop reason %q") so both stop-only terminals read alike. It is
+// harness-authored metadata (a stop label + a shape note), never model text, so
+// it is gauntlet-#7 safe on the same footing as every other cause. It is
+// StopError-ONLY: the SubagentPayload.Cause contract is "empty on every other
+// terminal", and a cancellation already names itself everywhere it matters (the
+// Subagent timeout path renders its own time-budget note BEFORE the cause is
+// consulted; Parallel's cancelled-branch arm overrides with "cancelled"). It
+// returns "" for a benign stop (end_turn / a clean limit), where a cause would
+// be noise — StopBudget/StopMaxTurns/StopNoProgress already carry their own
+// honest notes.
+func stopTerminalCause(stop session.StopReason, text string) string {
+	if stop != session.StopError {
+		return ""
+	}
+	if strings.TrimSpace(text) != "" {
+		return fmt.Sprintf("agent: provider ended the turn with terminal stop reason %q after partial output — the text below is TRUNCATED or refused, not a finished answer", stop)
+	}
+	return fmt.Sprintf("agent: model ended turn with no output and a terminal stop reason %q", stop)
 }
 
 // emitResult publishes the single terminal result Event. errMsg carries the

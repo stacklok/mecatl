@@ -863,7 +863,7 @@ is the ONLY channel, since its Subagent call already returned the started-result
 `maxSubagentCausePreview` = 400 runes — larger than `maxTeamPreview`
 because a truncated provider error is unactionable, still bounded so a pathological body cannot dump
 onto the event stream. It is harness/provider metadata, never child-authored output, so gauntlet #7
-holds; it rides `Subagent.cause` (proto field 14) → `toProtoSubagent` → `client.SubagentMsg.Cause` →
+holds; it rides `Subagent.cause` (proto field 17) → `toProtoSubagent` → `client.SubagentMsg.Cause` →
 the mecatui fleet lane, and the SAME payload field is appended to the ACP `subagent finished:` line
 (`internal/adapter/acp/projector.go`, `projectSubagent`) so the two projections of one event agree.
 `ParallelPayload` deliberately gains NO proto field: a branch failure already

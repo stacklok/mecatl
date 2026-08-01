@@ -187,6 +187,25 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Changed
 
+- **A text-bearing `StopError` turn now carries a terminal CAUSE** (issue #319
+  review-audit follow-up) — BEHAVIOUR only; no exported signature moved and
+  `engine/api/*.txt` is unaffected. `Engine.terminateComplete` gains an internal
+  `errMsg` parameter (it is unexported), and the loop's `finishTurnNoTools`
+  synthesises the cause for a text-bearing turn that ended on a terminal stop
+  CHUNK (`max_tokens` / `refusal` / `incomplete` / `failed` → `StopError`,
+  relayed by both adapters' `mapStop` on the `ChunkDone` stop, NOT as a Go
+  error) via the new unexported `stopTerminalCause`. Before this, such a turn
+  emitted an EMPTY `session.ResultPayload.Error`, so a delegation's
+  `subagentErrorBody` rendered the child's truncated/refused text AS the failure
+  — the exact #319 presentation on the `terminateComplete` path (the empty-turn
+  shape already routed through `terminate` with a cause). The synthesised cause
+  is harness-authored metadata (a stop label + a "TRUNCATED or refused" shape
+  note), never model text, so it is gauntlet-#7 safe, and it is `StopError`-only
+  (a clean limit / cancellation keeps an empty cause, honouring the
+  `SubagentPayload.Cause` "empty on every other terminal" contract). Consumers
+  asserting that a text-bearing `StopError` delegation result led with the
+  child's last text must adjust. No new exported symbol.
+
 - **Model-facing next-action wording on the Subagent failure terminals** (issue #319 /
   #318 review round) — BEHAVIOUR/COPY only; no exported signature moved and
   `engine/api/*.txt` is unaffected. Three strings a consumer might be matching on

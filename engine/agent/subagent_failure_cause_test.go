@@ -114,6 +114,50 @@ func TestSubagentFailureWithNoChildTextStillSurfacesCause(t *testing.T) {
 	}
 }
 
+// TestSubagentTruncatedTurnStillSurfacesAReason is the terminateComplete-SHAPE sibling
+// of the two tests above: the provider ends the turn on a terminal STOP CHUNK (no Go
+// error) AFTER the child streamed visible text — the Anthropic max_tokens / refusal
+// shape (both mapStop to StopError and yield a stop, not an error; unlike OpenAI's
+// incomplete/failed, which return a Go error and take the terminate path). The loop's
+// finishTurnNoTools routes a text-bearing StopError through terminateComplete, which
+// used to emit an EMPTY cause — so subagentErrorBody fell through to rendering the
+// child's truncated text AS the failure, the exact #319 presentation on a different
+// terminal. The reason is now synthesised from the stop itself, so the model reads
+// WHY (truncated by the provider) and the partial text is demoted to labelled context.
+func TestSubagentTruncatedTurnStillSurfacesAReason(t *testing.T) {
+	const truncated = "I was in the middle of analysing when the provider cut me"
+	childLLM := mockllm.New(
+		mockllm.ChunksTurn(
+			mockllm.TextChunk(truncated),
+			mockllm.UsageChunk(session.Usage{}),
+			mockllm.DoneChunk(session.StopError), // a terminal stop chunk, NOT a Go error
+		),
+	)
+	childEngine := childEngineWith(childLLM, catalogWith(t))
+	task := agent.NewSubagentTool(childEngine)
+
+	results, _ := subagentParentResults(t, task,
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	if len(results) != 1 || !results[0].IsError {
+		t.Fatalf("want 1 errored tool result, got %+v", results)
+	}
+	res := results[0]
+	// The reason must be named — not the bare truncated text leading the body.
+	body := strings.TrimPrefix(res.Content, "Subagent: ")
+	if strings.HasPrefix(body, truncated) {
+		t.Fatalf("the truncated text must not lead the error body (the terminateComplete #319 shape), got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "terminal stop reason") {
+		t.Fatalf("the synthesised reason must name the terminal stop, got:\n%s", res.Content)
+	}
+	// The partial text may still appear, but only as labelled context.
+	if strings.Contains(res.Content, truncated) && !strings.Contains(res.Content, "Last activity before the failure: "+truncated) {
+		t.Fatalf("the truncated text may only appear as labelled context, got:\n%s", res.Content)
+	}
+}
+
 // TestSubagentEndEventCarriesClampedCause pins the OBSERVABILITY half: the redacted
 // subagent.end projection carries the cause (so a client — the mecatui fleet pane, or
 // any gRPC consumer — can show WHY a delegation failed), and it is NORMALISED at the emit
