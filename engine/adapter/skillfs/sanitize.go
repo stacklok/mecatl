@@ -1,16 +1,9 @@
-package skills
+package skillfs
 
 import (
 	"regexp"
 	"strings"
-
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
-
-// maxBodyBytes caps a drafted skill's body. A skill body loads into the
-// conversation on activation, so it shares the adapter-layer output cap: an
-// oversized body is flagged (and truncated on activation by the Skill tool).
-const maxBodyBytes = toolkit.MaxOutputBytes
 
 // injectionMarkers is the deny-list of instruction-injection / role-override
 // patterns scanned for in a candidate skill's description AND body. A drafted

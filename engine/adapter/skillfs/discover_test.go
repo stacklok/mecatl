@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
 // writeSkill creates <dir>/<name>/SKILL.md with the given content. It is an
@@ -213,7 +211,7 @@ func TestDiscoverCapsOversizedDescription(t *testing.T) {
 
 func TestDiscoverWarnsOnOversizedBody(t *testing.T) {
 	dir := t.TempDir()
-	bigBody := strings.Repeat("x", toolkit.MaxOutputBytes+1000)
+	bigBody := strings.Repeat("x", MaxOutputBytes+1000)
 	writeSkill(t, dir, "huge", "---\nname: huge\ndescription: a big skill\n---\n"+bigBody+"\n")
 
 	got, skips, err := Discover(dir)
@@ -225,7 +223,7 @@ func TestDiscoverWarnsOnOversizedBody(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("oversize body should not drop the skill, got %d", len(got))
 	}
-	if len(got[0].Body) <= toolkit.MaxOutputBytes {
+	if len(got[0].Body) <= MaxOutputBytes {
 		t.Error("discovery must not pre-trim the body (it is trimmed on activation)")
 	}
 	if !hasReasonContaining(skips, "body") || !hasReasonContaining(skips, "truncated") {

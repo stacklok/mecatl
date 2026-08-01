@@ -1,11 +1,9 @@
-package skills
+package skillfs
 
 import (
 	"errors"
 	"path/filepath"
 	"testing"
-
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 // dirs extracts the resolved DirSource directories (in precedence order) so a
@@ -25,7 +23,7 @@ func dirs(t *testing.T, sources []Source) []string {
 
 func TestResolveSourcesOptInByDefault(t *testing.T) {
 	// Zero options: strictly opt-in — no explicit dirs, conventional OFF.
-	got := resolveSourcesEnv(ResolveOptions{}, xdgconfig.ResolveEnv{
+	got := resolveSourcesEnv(ResolveOptions{}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return "/home/u", nil },
 	})
@@ -37,7 +35,7 @@ func TestResolveSourcesOptInByDefault(t *testing.T) {
 func TestResolveSourcesExplicitOnly(t *testing.T) {
 	got := resolveSourcesEnv(ResolveOptions{
 		Explicit: []string{"/one", "", "/two"}, // empty entries dropped
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return "/home/u", nil },
 	})
@@ -57,7 +55,7 @@ func TestResolveSourcesConventionalPrecedenceOrder(t *testing.T) {
 		Conventional:       true,
 		Workspace:          ws,
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" }, // no XDG_CONFIG_HOME -> ~/.config
 		UserHomeDir: func() (string, error) { return home, nil },
 	})
@@ -80,7 +78,7 @@ func TestResolveSourcesHonorsXDGConfigHome(t *testing.T) {
 		Conventional:       true,
 		Workspace:          "/ws",
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv: func(k string) string {
 			if k == "XDG_CONFIG_HOME" {
 				return xdg
@@ -105,7 +103,7 @@ func TestResolveSourcesNoWorkspaceSkipsProject(t *testing.T) {
 	got := resolveSourcesEnv(ResolveOptions{
 		Conventional: true,
 		// Workspace empty: project-level sources are skipped, user-level remain.
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return home, nil },
 	})
@@ -123,7 +121,7 @@ func TestResolveSourcesNoHomeSkipsUser(t *testing.T) {
 		Conventional:       true,
 		Workspace:          "/ws",
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return "", errNoHome },
 	})
@@ -146,7 +144,7 @@ func TestResolveSourcesUntrustedDropsProjectTier(t *testing.T) {
 		Conventional:       true,
 		Workspace:          ws,
 		IncludeProjectTier: false, // untrusted
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return home, nil },
 	})
@@ -173,7 +171,7 @@ func TestResolveSourcesTrustedKeepsProjectTier(t *testing.T) {
 		Conventional:       true,
 		Workspace:          ws,
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return home, nil },
 	})

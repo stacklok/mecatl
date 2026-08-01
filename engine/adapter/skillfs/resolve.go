@@ -1,10 +1,9 @@
-package skills
+package skillfs
 
 import (
 	"path/filepath"
 
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 // Conventional skills sub-paths (Claude-Code-style "extra paths"). A skills
@@ -74,11 +73,11 @@ type ResolveOptions struct {
 // (true when trusted, false when untrusted — Phase 2a / R2.5); set it true to keep
 // the historical "project tier always admitted" behaviour.
 func ResolveSources(opts ResolveOptions) []Source {
-	return resolveSourcesEnv(opts, xdgconfig.OSEnv)
+	return resolveSourcesEnv(opts, OSEnv)
 }
 
 // resolveSourcesEnv is ResolveSources with an injectable environment, for tests.
-func resolveSourcesEnv(opts ResolveOptions, env xdgconfig.ResolveEnv) []Source {
+func resolveSourcesEnv(opts ResolveOptions, env ResolveEnv) []Source {
 	var sources []Source
 
 	// Highest precedence: explicit operator-configured paths, in order. Each
@@ -106,7 +105,7 @@ func resolveSourcesEnv(opts ResolveOptions, env xdgconfig.ResolveEnv) []Source {
 	}
 
 	// User-level (lowest precedence). XDG-respecting for the mecatl path.
-	if cfg := xdgconfig.UserConfigDir(env); cfg != "" {
+	if cfg := UserConfigDir(env); cfg != "" {
 		sources = append(sources, DirSource{Dir: filepath.Join(cfg, userSubdirMecatl), Label: "user(xdg)", Tier: tool.SkillOriginUser})
 	}
 	if home, err := env.UserHomeDir(); err == nil && home != "" {

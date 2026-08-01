@@ -1,4 +1,4 @@
-package agents
+package agentfs
 
 import (
 	"os"

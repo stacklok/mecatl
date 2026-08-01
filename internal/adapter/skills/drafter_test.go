@@ -49,7 +49,7 @@ func TestDraftHappyPath(t *testing.T) {
 		t.Fatalf("read written skill: %v", rerr)
 	}
 	// It must parse with the existing parser.
-	sk, reason, _ := parseSkill(raw, res.Path)
+	sk, reason, _ := ParseSkill(raw, res.Path)
 	if reason != "" {
 		t.Fatalf("written skill failed to parse: %s", reason)
 	}
@@ -150,7 +150,7 @@ func TestDraftSizeCaps(t *testing.T) {
 			t.Errorf("expected a truncation warning, got %v", res.Warnings)
 		}
 		raw, _ := os.ReadFile(res.Path)
-		sk, reason, _ := parseSkill(raw, res.Path)
+		sk, reason, _ := ParseSkill(raw, res.Path)
 		if reason != "" {
 			t.Fatalf("written skill failed to parse: %s", reason)
 		}
@@ -173,7 +173,7 @@ func TestDraftSizeCaps(t *testing.T) {
 		// Invariant: the Drafter writes the body UN-truncated; truncation is deferred
 		// to Skill-tool activation. Read it back and confirm it still exceeds the cap.
 		raw, _ := os.ReadFile(res.Path)
-		sk, reason, _ := parseSkill(raw, res.Path)
+		sk, reason, _ := ParseSkill(raw, res.Path)
 		if reason != "" {
 			t.Fatalf("written skill failed to parse: %s", reason)
 		}

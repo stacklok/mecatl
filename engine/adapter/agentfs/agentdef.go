@@ -1,4 +1,4 @@
-// Package agents implements configurable AGENT DEFINITIONS — named subagent
+// Package agentfs implements configurable AGENT DEFINITIONS — named subagent
 // specialists (a prompt persona + a scoped tool allowlist + a model + a
 // permission mode + run limits) discovered from operator-controlled markdown
 // files. It is the agents analogue of the skills Source seam
@@ -6,6 +6,10 @@
 // directories, a forgiving frontmatter parser, and a name-indexed Registry the
 // composition root threads into BOTH the Subagent tool and (in a later slice)
 // the team-member factory.
+//
+// This package graduated from internal/adapter/agents into the importable
+// engine module (engine/adapter/agentfs) per #328; the root package re-exports
+// it via alias.
 //
 // ONE DEFINITION, TWO CONSUMERS. A `<name>.md` file under a conventional dir is
 // reusable as a Subagent delegate (Subagent(agent="<name>")) and, in a following slice,
@@ -24,7 +28,7 @@
 // system prompt, NOT the untrusted-user channel. Conventional dirs are therefore
 // strict opt-in (mirroring skills), and there is no model-writable agent-draft
 // path in this tier.
-package agents
+package agentfs
 
 import "github.com/stacklok/mecatl/engine/tool"
 

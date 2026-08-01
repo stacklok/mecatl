@@ -75,7 +75,7 @@ func Promote(quarantineDir, activeDir, name string) error {
 	}
 
 	// Re-validate structure and re-scan for injection at the gate.
-	sk, reason, _ := parseSkill(raw, srcFile)
+	sk, reason, _ := ParseSkill(raw, srcFile)
 	if reason != "" {
 		return fmt.Errorf("refusing to promote %q: %s", name, reason)
 	}

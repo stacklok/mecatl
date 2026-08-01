@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
 // ToolName is the catalog name of the single skills tool.
@@ -101,7 +100,7 @@ func (t Tool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ToolName,
 		Description: t.description,
-		Schema: toolkit.Schema(`{
+		Schema: Schema(`{
   "type": "object",
   "properties": {
     "name": {"type": "string", "description": "Exact name of the skill to activate, as listed in this tool's description."}
@@ -134,7 +133,7 @@ func (Tool) ReadOnly() bool { return true }
 // the skill and the available alternatives.
 func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 	var args skillArgs
-	if msg, ok := toolkit.ParseArgs(in, &args); !ok {
+	if msg, ok := ParseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
 	}
 	name := strings.TrimSpace(args.Name)
@@ -163,7 +162,7 @@ func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace
 	}
 	b.WriteString("\n")
 	b.WriteString(act.Body)
-	return session.NewToolResult(in.ID, toolkit.Truncate(b.String(), toolkit.MaxOutputBytes)), nil
+	return session.NewToolResult(in.ID, Truncate(b.String(), MaxOutputBytes)), nil
 }
 
 // availableHint returns a short "available skills are: ..." sentence (or a clear

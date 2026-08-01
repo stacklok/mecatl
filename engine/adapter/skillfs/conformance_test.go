@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"

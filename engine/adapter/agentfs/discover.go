@@ -1,4 +1,4 @@
-package agents
+package agentfs
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
 // AgentFileExt is the conventional extension of an agent-definition file. A def
@@ -347,7 +346,7 @@ func Discover(dir string) ([]Discovered, []SkipError, error) {
 // catalog-free. An unknown tool name becomes a resolve-time diagnostic in
 // internal/app (against a concrete catalog), never a parse failure.
 func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
-	fmText, body, ok := toolkit.SplitFrontmatter(string(raw))
+	fmText, body, ok := SplitFrontmatter(string(raw))
 	if !ok {
 		return AgentDef{}, "missing YAML frontmatter (expected a leading '---' delimited block)", nil
 	}
@@ -369,7 +368,7 @@ func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
 		notes = append(notes, fmt.Sprintf(
 			"description is %d bytes; truncated to the always-in-context cap of %d bytes",
 			len(desc), maxDescriptionBytes))
-		desc = toolkit.TruncateRunes(desc, maxDescriptionBytes)
+		desc = TruncateRunes(desc, maxDescriptionBytes)
 	}
 
 	trimmedBody := strings.TrimSpace(body)
@@ -377,7 +376,7 @@ func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
 		notes = append(notes, fmt.Sprintf(
 			"body is %d bytes; truncated to the prompt-body cap of %d bytes (it is in-context every turn)",
 			len(trimmedBody), maxPromptBodyBytes))
-		trimmedBody = toolkit.TruncateRunes(trimmedBody, maxPromptBodyBytes)
+		trimmedBody = TruncateRunes(trimmedBody, maxPromptBodyBytes)
 	}
 
 	// Per-entry mcpServers diagnostics (a skipped stdio/nameless entry) are

@@ -232,7 +232,7 @@ type SkillSource interface {
 }
 ```
 
-A `SkillSource` deals in **logical bundles** — no path, directory, or root concept is present on the port. A filesystem-backed source (`internal/adapter/skills.FSSource`) derives per-skill directories from the discovery walk; a remote driver source materializes assets to a cache. The engine cannot tell the two apart.
+A `SkillSource` deals in **logical bundles** — no path, directory, or root concept is present on the port. A filesystem-backed source (`engine/adapter/skillfs.FSSource`) derives per-skill directories from the discovery walk; a remote driver source materializes assets to a cache. The engine cannot tell the two apart.
 
 Skills may have **assets**: auxiliary payloads (scripts, data files, reference documents) identified by a logical name like `references/api.md`. Asset names are slash-separated relative identifiers with no `..` or empty segments — validated by `tool.ValidSkillAssetName`. The harness serves skill assets as read-only allowed roots on the workspace so a skill's instruction body can reference them by logical path.
 
@@ -242,9 +242,9 @@ Activating a skill does **not** register new tools in the catalog. A skill's `SK
 
 ### The filesystem source
 
-`internal/adapter/skills.FSSource` is the reference `SkillSource` implementation. It discovers `SKILL.md` files under a directory at construction time and takes a **snapshot** — `ListSkills` is stable for the life of the source. There is no watch seam: skills are resolved once at `app.Build` and do not change mid-process. This is deliberate: the build-once trust-gate invariant depends on skills being resolved at a known trust level before any session starts.
+`engine/adapter/skillfs.FSSource` is the reference `SkillSource` implementation (graduated into the importable engine module per #328; the in-repo binaries consume it through `internal/adapter/skills`, which re-exports it via alias). It discovers `SKILL.md` files under a directory at construction time and takes a **snapshot** — `ListSkills` is stable for the life of the source. There is no watch seam: skills are resolved once at `app.Build` and do not change mid-process. This is deliberate: the build-once trust-gate invariant depends on skills being resolved at a known trust level before any session starts.
 
-Skill sources are registered per tier (explicit, project, user, driver) and are trust-gated at construction. The project tier is only admitted when workspace trust is granted. See `internal/adapter/skills` for `FSSource`, `DirSource`, and the trust-tier resolution logic.
+Skill sources are registered per tier (explicit, project, user, driver) and are trust-gated at construction. The project tier is only admitted when workspace trust is granted. See `engine/adapter/skillfs` for `FSSource`, `DirSource`, and the trust-tier resolution logic.
 
 ```mermaid
 flowchart LR

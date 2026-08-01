@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
 // sampleSkills is a small fixed set used across the tool tests.
@@ -112,7 +111,7 @@ func TestToolExecuteRendersBaseDirectory(t *testing.T) {
 	// The advertised dir must be the CANONICAL (abs + symlink-evaluated) form —
 	// the exact key the osfs read-root allowlist matches on (t.TempDir on macOS
 	// and symlinked-home setups otherwise diverge from the discovery path).
-	canon, err := osfs.ResolveRoot(filepath.Join(dir, "with-files"))
+	canon, err := resolveRoot(filepath.Join(dir, "with-files"))
 	if err != nil {
 		t.Fatalf("resolve %q: %v", dir, err)
 	}
@@ -149,7 +148,7 @@ func TestToolExecuteBaseDirectoryResolvesSymlinkAlias(t *testing.T) {
 		t.Fatalf("discover: %v skips=%v n=%d", err, skips, len(discovered))
 	}
 	rawDir := filepath.Clean(filepath.Dir(discovered[0].Path))
-	resolved, err := osfs.ResolveRoot(filepath.Join(realDir, "aliased"))
+	resolved, err := resolveRoot(filepath.Join(realDir, "aliased"))
 	if err != nil {
 		t.Fatalf("resolve real dir: %v", err)
 	}

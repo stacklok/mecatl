@@ -15,6 +15,7 @@ package toolkit
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -56,20 +57,11 @@ func Truncate(s string, maxBytes int) string {
 		return s
 	}
 	cut := maxBytes
-	for cut > 0 && !utf8RuneStart(s[cut]) {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut] + TruncationMarker
 }
-
-// utf8RuneStart reports whether b is the first byte of a UTF-8 rune (i.e. not a
-// continuation byte 0b10xxxxxx). It delegates to the exported UTF8RuneStart.
-func utf8RuneStart(b byte) bool { return UTF8RuneStart(b) }
-
-// UTF8RuneStart reports whether b is the first byte of a UTF-8 rune (i.e. not a
-// continuation byte 0b10xxxxxx). It is the single source of truth for the
-// rune-boundary check shared by the adapter-layer truncation helpers.
-func UTF8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
 // TruncateRunes trims s to at most maxBytes on a rune boundary and appends a
 // single-character ellipsis ("…"). Unlike Truncate (which appends a verbose,
@@ -85,7 +77,7 @@ func TruncateRunes(s string, maxBytes int) string {
 	if cut < 0 {
 		cut = 0
 	}
-	for cut > 0 && !UTF8RuneStart(s[cut]) {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut] + ellipsis

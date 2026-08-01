@@ -118,9 +118,9 @@ func TestMyAgentSource(t *testing.T) {
 }
 ```
 
-### `internal/adapter/agents` — production filesystem source
+### `engine/adapter/agentfs` — production filesystem source (importable)
 
-The production adapter reads flat `<name>.md` files from one or more directories. The main types:
+The production adapter reads flat `<name>.md` files from one or more directories. It graduated into the importable engine module (`engine/adapter/agentfs`, issue #328) so an external consumer can compose its own sources directly; the in-repo binaries consume it through the `internal/adapter/agents` package, which re-exports it via thin aliases (there is no second copy to drift). The main types:
 
 | Type | Role |
 |---|---|

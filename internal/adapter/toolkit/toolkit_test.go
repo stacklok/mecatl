@@ -99,20 +99,17 @@ func TestMaxOutputBytes(t *testing.T) {
 	}
 }
 
-func TestUTF8RuneStart(t *testing.T) {
-	// ASCII and lead bytes are rune starts; continuation bytes (0b10xxxxxx) are not.
-	if !UTF8RuneStart('a') {
+func TestRuneStartBoundary(t *testing.T) {
+	// The truncation helpers cut on utf8.RuneStart boundaries: ASCII and lead
+	// bytes are rune starts; continuation bytes (0b10xxxxxx) are not.
+	if !utf8.RuneStart('a') {
 		t.Fatalf("ASCII byte should be a rune start")
 	}
-	if !UTF8RuneStart(0xC3) { // lead byte of "é"
+	if !utf8.RuneStart(0xC3) { // lead byte of "é"
 		t.Fatalf("lead byte should be a rune start")
 	}
-	if UTF8RuneStart(0xA9) { // continuation byte of "é"
+	if utf8.RuneStart(0xA9) { // continuation byte of "é"
 		t.Fatalf("continuation byte must not be a rune start")
-	}
-	// The unexported helper delegates to the exported one.
-	if utf8RuneStart('a') != UTF8RuneStart('a') || utf8RuneStart(0xA9) != UTF8RuneStart(0xA9) {
-		t.Fatalf("utf8RuneStart must delegate to UTF8RuneStart")
 	}
 }
 

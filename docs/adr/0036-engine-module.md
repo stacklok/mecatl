@@ -31,6 +31,11 @@ this change:
 
 - `golang.org/x/sync` — direct (`engine/agent` uses `errgroup`).
 - `github.com/bmatcuk/doublestar/v4` — direct, via `engine/adapter/memfs`.
+- `github.com/robfig/cron/v3` — direct, via `engine/adapter/cronparse` (the
+  scheduled-tasks parser, ADR 0059).
+- `go.yaml.in/yaml/v3` — direct, via `engine/adapter/agentfs` /
+  `engine/adapter/skillfs` (the agent-def and SKILL.md frontmatter parsers,
+  #328).
 - `go.uber.org/goleak` — test-only, via the engine's leak-check `TestMain`.
 
 No `engine/...` package imports a root non-engine package, an LLM SDK, gRPC, or
@@ -52,9 +57,10 @@ Split `engine/` into its own Go module, kept in the same repository as a monorep
 via a committed Go workspace.
 
 - **`engine/go.mod`** declares module `github.com/stacklok/mecatl/engine`, `go`
-  directive `1.26.3` (matched EXACTLY to the root), and exactly three requires:
-  `doublestar/v4`, `x/sync`, `goleak` (plus goleak's small test-only transitive
-  set — testify/go-spew/go-difflib/yaml.v3). `engine/go.sum` is correspondingly
+  directive `1.26.3` (matched EXACTLY to the root), and exactly the requires the
+  engine closure needs: `doublestar/v4`, `robfig/cron/v3`, `go.yaml.in/yaml/v3`,
+  `x/sync`, `goleak` (plus goleak's small test-only transitive set —
+  testify/go-spew/go-difflib/yaml.v3). `engine/go.sum` is correspondingly
   tiny. The versions are pinned to the root's so the two graphs agree under the
   workspace.
 - **`go.work`** is COMMITTED at the repo root (`use ./` + `use ./engine`). The
@@ -90,7 +96,8 @@ apidiff CI gate over those tags are issue #114 — out of scope here (see
 ## Consequences
 
 - **Easier for consumers.** An external project importing `engine/agent` now
-  resolves only `{doublestar, x/sync, goleak}` (+ goleak's test transitive), not
+  resolves only the engine's small closure (`doublestar`, `robfig/cron`,
+  `go.yaml.in/yaml/v3`, `x/sync`, `goleak` + goleak's test transitive), not
   mecatl's ~250-line require cone. Their SBOM, vulnerability surface, and
   licence-audit weight shrink to what the engine actually links. This is the
   whole point of the change — it unblocks the downstream-consumer convergence cleanly.

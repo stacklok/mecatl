@@ -47,7 +47,8 @@ application consumes (`port`), the application use-case layer that is the agent
 loop (`agent`), and adapters that implement the ports (`adapter/*`). The core
 tiers (domain, ports, agent loop) plus a small set of stdlib-only REFERENCE
 adapters (`engine/adapter/*`: `mockllm`, `memfs`, `nofs`, `memstore`, `sessnap`,
-`permpolicy`, `permstore`, `wallclock`, `search` (a fake web-search backend), plus
+`permpolicy`, `permstore`, `wallclock`, `search` (a fake web-search backend),
+`fstools` (the FS tool bodies), `agentfs` (the filesystem agent-def discovery adapter), `skillfs` (the read-only skills discovery core + Skill tool body), plus
 the conformance-as-contract suites `fsconformance`, `memconformance`,
 `storeconformance`, `sourceconformance`, `eventlogconformance`) live
 under `engine/` — the
@@ -57,7 +58,7 @@ consumers — while the heavy adapters and the composition layer stay under
 `internal/`. `engine/` **is its own Go module**
 (`github.com/stacklok/mecatl/engine`), kept in this repo as a monorepo via a
 committed `go.work`; its standalone dependency closure is just `doublestar` +
-`x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
+`robfig/cron` + `go.yaml.in/yaml/v3` + `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
 pulls in that small set rather than mecatl's full require cone (see
 [ADR 0036](adr/0036-engine-module.md)). The exported identifiers of the **seven
 core packages** (`session`, `governance`, `tool`, `prompt`, `port`, `team`,

@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -53,19 +53,26 @@ func (a snapshotActivator) Activate(ctx context.Context, name string) (Activatio
 	return Activation{Body: body, BaseDir: dir}, nil
 }
 
+// assetProvisioner is the consumer-side seam for the remote-driver asset
+// materializer, which stays in the root module (internal/adapter/skills,
+// out of scope for #328). Root *AssetMaterializer satisfies it implicitly.
+type assetProvisioner interface {
+	Provision(ctx context.Context, skill string) (string, error)
+}
+
 // NewSourceActivator returns the driver activator over the PORT only: the body
 // loads via SkillBody and the payloads materialize through mat (lazily, on
 // FIRST activation of each skill — a never-activated skill transfers zero
 // bytes). A successful activation is cached (body + BaseDir), so repeat
 // activations in one process re-render from memory. mat may be nil for a
 // payload-less deployment; every activation then has BaseDir "".
-func NewSourceActivator(src tool.SkillSource, mat *AssetMaterializer) Activator {
+func NewSourceActivator(src tool.SkillSource, mat assetProvisioner) Activator {
 	return &sourceActivator{src: src, mat: mat, cache: make(map[string]Activation)}
 }
 
 type sourceActivator struct {
 	src tool.SkillSource
-	mat *AssetMaterializer
+	mat assetProvisioner
 
 	mu    sync.Mutex
 	cache map[string]Activation // by skill name, successes only

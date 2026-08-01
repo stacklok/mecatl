@@ -1,11 +1,9 @@
-package agents
+package agentfs
 
 import (
 	"errors"
 	"path/filepath"
 	"testing"
-
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 func dirs(t *testing.T, sources []AgentSource) []string {
@@ -35,7 +33,7 @@ func assertDirs(t *testing.T, got []AgentSource, want []string) {
 }
 
 func TestResolveSourcesOptInByDefault(t *testing.T) {
-	got := resolveSourcesEnv(ResolveOptions{}, xdgconfig.ResolveEnv{
+	got := resolveSourcesEnv(ResolveOptions{}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return "/home/u", nil },
 	})
@@ -52,7 +50,7 @@ func TestResolveSourcesConventionalPrecedenceOrder(t *testing.T) {
 		Conventional:       true,
 		Workspace:          ws,
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return home, nil },
 	})
@@ -73,7 +71,7 @@ func TestResolveSourcesHonorsXDGConfigHome(t *testing.T) {
 		Conventional:       true,
 		Workspace:          "/ws",
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv: func(k string) string {
 			if k == "XDG_CONFIG_HOME" {
 				return xdg
@@ -103,7 +101,7 @@ func TestResolveSourcesNoHomeSkipsUser(t *testing.T) {
 		Conventional:       true,
 		Workspace:          "/ws",
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return "", errors.New("no home") },
 	})
@@ -125,7 +123,7 @@ func TestResolveSourcesUntrustedDropsProjectTier(t *testing.T) {
 		Conventional:       true,
 		Workspace:          ws,
 		IncludeProjectTier: false, // untrusted
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return home, nil },
 	})
@@ -153,7 +151,7 @@ func TestResolveSourcesTrustedKeepsProjectTier(t *testing.T) {
 		Conventional:       true,
 		Workspace:          ws,
 		IncludeProjectTier: true,
-	}, xdgconfig.ResolveEnv{
+	}, ResolveEnv{
 		Getenv:      func(string) string { return "" },
 		UserHomeDir: func() (string, error) { return home, nil },
 	})

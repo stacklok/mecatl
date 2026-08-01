@@ -25,6 +25,17 @@ const QuarantineSubdir = "skills-quarantine"
 // decides whether to refine or proceed.
 const DefaultSimilarityThreshold = 0.5
 
+// maxDescriptionBytes is the package-internal alias of the graduated
+// MaxDescriptionBytes (skillfs.MaxDescriptionBytes), retained so the writable
+// half's existing lowercase references compile unchanged against the alias.
+const maxDescriptionBytes = MaxDescriptionBytes
+
+// maxBodyBytes caps a drafted skill's body. It mirrors
+// engine/adapter/skillfs.MaxOutputBytes (== toolkit.MaxOutputBytes) — the draft
+// body shares the adapter-layer output cap; a root-local const because skillfs
+// does not export a draft-specific cap.
+const maxBodyBytes = 25_000
+
 // nameRE is the activation-name validator: lowercase Agent-Skills style, so it
 // blocks whitespace, control characters, uppercase, and path-traversal name
 // attacks (".."/"."/"/"). A name is 1..64 chars, starting alphanumeric.

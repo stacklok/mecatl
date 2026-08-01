@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
 // TestFSSourceAssetDirsPerSkillDedupCanonical pins the AssetDirs computation
@@ -24,12 +23,12 @@ func TestFSSourceAssetDirsPerSkillDedupCanonical(t *testing.T) {
 		t.Fatalf("NewFSSource: %v", err)
 	}
 	roots := src.AssetDirs()
-	wantAlpha, _ := osfs.ResolveRoot(filepath.Join(dir, "alpha"))
-	wantBeta, _ := osfs.ResolveRoot(filepath.Join(dir, "beta"))
+	wantAlpha, _ := resolveRoot(filepath.Join(dir, "alpha"))
+	wantBeta, _ := resolveRoot(filepath.Join(dir, "beta"))
 	if len(roots) != 2 || roots[0] != wantAlpha || roots[1] != wantBeta {
 		t.Errorf("AssetDirs = %v, want [%q %q] (per-skill, name-ordered)", roots, wantAlpha, wantBeta)
 	}
-	sourceDir, _ := osfs.ResolveRoot(dir)
+	sourceDir, _ := resolveRoot(dir)
 	for _, r := range roots {
 		if r == sourceDir {
 			t.Errorf("the skills SOURCE dir %q must never be an asset dir (per-skill granularity)", sourceDir)
@@ -62,7 +61,7 @@ func TestFSSourceAssetDirResolvesSymlinkAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFSSource: %v", err)
 	}
-	resolved, err := osfs.ResolveRoot(filepath.Join(realDir, "aliased"))
+	resolved, err := resolveRoot(filepath.Join(realDir, "aliased"))
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

@@ -119,7 +119,7 @@ repo's **injected steering/authority** (gated):
     `~/.claude` — the user soul, user agent defs, user commands, user skills,
     user-global permission rules. None of this is repo-sourced; an untrusted
     repo cannot touch it (each adapter already separates a USER tier from a
-    PROJECT tier — e.g. `internal/adapter/skills/resolve.go:76-90`);
+    PROJECT tier — e.g. `engine/adapter/skillfs/resolve.go:76-90`);
   - every **DENY / ASK** rule from any scope (they only tighten);
   - the permission prompt itself. On an untrusted repo the agent still runs;
     it just **asks** for the tool calls the repo would have auto-allowed.
@@ -224,12 +224,12 @@ anchor** (persona/commands/skills/soul) does re-prompt.
 (`soulselect.go:262-266`). It does **NOT** gate:
 
 - **agent definitions** — `agentdefs`/`agents` discovery
-  (`internal/adapter/agents/agentdef.go:22-26` calls them "operator-controlled" and gates only
+  (`engine/adapter/agentfs/agentdef.go:22-26` calls them "operator-controlled" and gates only
   on the conventional **on/off** toggle, not on trust);
 - **slash commands** — `prompt.NewDirCommandExpander` (`build.go:775-781`),
   on/off only;
 - **skills** — `skills.ResolveSources` (`build.go:1115-1147`,
-  `internal/adapter/skills/resolve.go:42-58`) mixes **project** and **user** conventional paths
+  `engine/adapter/skillfs/resolve.go:42-58`) mixes **project** and **user** conventional paths
   in one ordered list with **no trust split** — the project tier is admitted
   whenever `Conventional` is on.
 
@@ -632,7 +632,7 @@ admission gate and identity-anchor drift.
 - `internal/app/build.go` — gate project-tier agents (agentdefs source
   resolution), commands (`buildCommandExpander`, `:775-781`), skills
   (`registerSkills`, `:1115-1147`) on `decision.Trusted`.
-- `internal/adapter/skills/resolve.go` — add `ResolveOptions.IncludeProjectTier`
+- `engine/adapter/skillfs/resolve.go` — add `ResolveOptions.IncludeProjectTier`
   (default true).
 - `cmd/mecatui/main.go` — add the pre-TUI detect+prompt+write in `run()`; a
   sanitizing echo helper.

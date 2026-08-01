@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"sort"
 
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
 // FSSource is the FILESYSTEM implementation of the tool.SkillSource port: a
@@ -255,7 +254,7 @@ func (s *FSSource) AssetDirs() []string {
 
 // skillBaseDir returns the CANONICAL directory containing the skill's SKILL.md,
 // or "" when the skill has no source path (hand-constructed test values).
-// Canonicalization goes through osfs.ResolveRoot — the EXACT resolver the
+// Canonicalization goes through resolveRoot — the EXACT resolver the
 // Workspace's read-root allowlist is keyed on — so the path the model is told
 // matches the allowlist byte-for-byte even when the discovery path crosses a
 // symlink (e.g. /home → /var/home); a cleaned-but-unresolved Dir would advertise
@@ -265,7 +264,7 @@ func skillBaseDir(path string) string {
 		return ""
 	}
 	dir := filepath.Dir(path)
-	if resolved, err := osfs.ResolveRoot(dir); err == nil {
+	if resolved, err := resolveRoot(dir); err == nil {
 		return resolved
 	}
 	return filepath.Clean(dir)

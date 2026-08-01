@@ -3965,7 +3965,10 @@ the scoped WRITE path is deferred** (see below).
 
 - **The field is pure DATA in the domain.** `tool.AgentDef.Memory` is a raw string (`""` /
   `"user"` / `"project"`), NEVER a path/locator — same discipline as `Origin`/`Model`/`Provider`.
-  The frontmatter parser (`agents/discover.go`) is forgiving: `""`/`user`/`project` are accepted
+  The frontmatter parser (`engine/adapter/agentfs/discover.go`, graduated
+  from the former `internal/adapter/agents/discover.go` per #328 — the root
+  package re-exports it via alias) is forgiving: `""`/`user`/`project` are
+  accepted
   (case-insensitively), anything else (notably the **deliberately deferred** `local`) is a
   non-fatal skip note + `Memory=""` (the mcpServers skip-note posture). It is resolved to a
   concrete directory ONLY in composition.

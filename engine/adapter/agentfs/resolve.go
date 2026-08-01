@@ -1,10 +1,9 @@
-package agents
+package agentfs
 
 import (
 	"path/filepath"
 
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 // Conventional agent-def sub-paths (Claude-Code-style "extra paths"). A def is
@@ -61,13 +60,13 @@ type ResolveOptions struct {
 // overrides both. Each location becomes a labelled DirSource; missing directories
 // are harmless. When Conventional is false only the Explicit paths are included.
 func ResolveSources(opts ResolveOptions) []AgentSource {
-	return resolveSourcesEnv(opts, xdgconfig.OSEnv)
+	return resolveSourcesEnv(opts, OSEnv)
 }
 
 // resolveSourcesEnv is ResolveSources with an injectable environment, for tests.
 // Each source carries its admission TIER (AgentDef.Origin on the port) — a
 // closed label, never a location.
-func resolveSourcesEnv(opts ResolveOptions, env xdgconfig.ResolveEnv) []AgentSource {
+func resolveSourcesEnv(opts ResolveOptions, env ResolveEnv) []AgentSource {
 	var sources []AgentSource
 
 	for _, dir := range opts.Explicit {
@@ -90,7 +89,7 @@ func resolveSourcesEnv(opts ResolveOptions, env xdgconfig.ResolveEnv) []AgentSou
 		)
 	}
 
-	if cfg := xdgconfig.UserConfigDir(env); cfg != "" {
+	if cfg := UserConfigDir(env); cfg != "" {
 		sources = append(sources, DirSource{Dir: filepath.Join(cfg, userSubdirMecatl), Label: "user(xdg)", Tier: tool.AgentOriginUser})
 	}
 	if home, err := env.UserHomeDir(); err == nil && home != "" {

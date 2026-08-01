@@ -1,6 +1,11 @@
-// Package skills implements Agent Skills — progressive-disclosure instruction
+// Package skillfs implements Agent Skills — progressive-disclosure instruction
 // units (Claude Code / Agent Skills style) — as an OPT-IN adapter exposing a
-// single tool.Tool to the model.
+// single tool.Tool to the model. This is the READ-ONLY skills core (discovery,
+// source, tool, snapshot activator).
+//
+// This package graduated from internal/adapter/skills into the importable
+// engine module (engine/adapter/skillfs) per #328; the root package re-exports
+// it via alias and keeps the writable half (drafter/promote/assetcache).
 //
 // PROGRESSIVE DISCLOSURE (corpus pattern 9, applied to INSTRUCTIONS rather than
 // tool schemas): the cheap, always-in-context layer is each skill's METADATA
@@ -37,7 +42,7 @@
 // covers Write/Edit only; cmd/mecated warns when SkillDraft and Bash are enabled
 // together. This mirrors mecatl's existing posture that the OS sandbox is the
 // deferred wrap point for the command-execution seam.
-package skills
+package skillfs
 
 import "github.com/stacklok/mecatl/engine/tool"
 

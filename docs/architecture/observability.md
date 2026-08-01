@@ -248,12 +248,12 @@ drift from the in-process semantics:
 | `memconformance` | flock `memory.Store` | `internal/adapter/memory/conformance_test.go` |
 | `memconformance` | grpcdriver → bufconn → `NewMemoryStoreServer(memory.Store)` | `internal/adapter/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunSkillSource` | in-memory `NewFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
-| `sourceconformance.RunSkillSource` | `skills.FSSource` over a written-out fixture tree | `internal/adapter/skills/conformance_test.go` |
+| `sourceconformance.RunSkillSource` | `skills.FSSource` over a written-out fixture tree | `engine/adapter/skillfs/conformance_test.go` |
 | `sourceconformance.RunSkillSource` | grpcdriver → bufconn → `NewSkillSourceServer(NewFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunSoulSource` | `soul.Store` (temp file) | `internal/adapter/soul/conformance_test.go` |
 | `sourceconformance.RunSoulSource` | grpcdriver → bufconn → `NewSoulSourceServer(verbatim fake)` | `internal/adapter/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunAgentSource` | in-memory `NewAgentFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
-| `sourceconformance.RunAgentSource` | `agents.FSSource` over a written-out fixture tree | `internal/adapter/agents/conformance_test.go` |
+| `sourceconformance.RunAgentSource` | `agents.FSSource` over a written-out fixture tree | `engine/adapter/agentfs/conformance_test.go` |
 | `sourceconformance.RunAgentSource` | grpcdriver → bufconn → `NewAgentSourceServer(NewAgentFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunCommandSource` | in-memory `NewCommandFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
 | `sourceconformance.RunCommandSource` | grpcdriver → bufconn → `NewCommandSourceServer(NewCommandFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |

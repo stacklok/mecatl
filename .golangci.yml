@@ -178,6 +178,31 @@ linters:
           deny:
             - pkg: os
               desc: 'fstools are the core FS tool bodies over the injected tool.Workspace/CommandRunner; they must not touch the real OS'
+        engine-adapter-agentfs:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/agentfs/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/tool
+            - go.yaml.in/yaml/v3
+          deny:
+            - pkg: os/exec
+              desc: 'agentfs discovers agent-def files via os.ReadDir/ReadFile; it must never spawn processes'
+        engine-adapter-skillfs:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/skillfs/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/tool
+            - go.yaml.in/yaml/v3
+          deny:
+            - pkg: os/exec
+              desc: 'skillfs discovers SKILL.md trees via os.ReadDir/ReadFile; it must never spawn processes'
         engine-adapter-nofs:
           list-mode: strict
           files:

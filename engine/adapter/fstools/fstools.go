@@ -57,6 +57,7 @@ package fstools
 
 import (
 	"encoding/json"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -134,15 +135,11 @@ func truncate(s string, maxBytes int) string {
 		return s
 	}
 	cut := maxBytes
-	for cut > 0 && !utf8RuneStart(s[cut]) {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut] + TruncationMarker
 }
-
-// utf8RuneStart reports whether b is the first byte of a UTF-8 rune (i.e. not a
-// continuation byte 0b10xxxxxx).
-func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
 // schema wraps a static JSON-schema literal as json.RawMessage for a ToolSpec.
 // The literals are authored by hand and are valid JSON.

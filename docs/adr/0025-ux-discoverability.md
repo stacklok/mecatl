@@ -147,7 +147,7 @@ catalog) and the wired Config seams. Add one method and call it from the
 | `slash_commands` | `s.cfg.Commands != nil` | The same nil-check `ListCommands` gates on (`service.go:885`). |
 | `teams` | `s.cfg.MemberEngine != nil` | The same nil-check the team methods gate on (`team.go:99`, the `ErrTeamsDisabled` source). |
 | `memory` | `catalogHas("Remember")` | The Remember tool's registered name (`internal/adapter/memory/tools.go:114`). Registered ⇔ memory on. |
-| `skills` | `catalogHas("Skill")` | `skills.ToolName == "Skill"` (`internal/adapter/skills/tool.go:15`). |
+| `skills` | `catalogHas("Skill")` | `skills.ToolName == "Skill"` (`engine/adapter/skillfs/tool.go:14`). |
 | `bash` | `catalogHas("Bash")` | The Bash tool name (`internal/adapter/tools/bash.go:87`); absent under `--no-bash`. |
 
 The catalog is reachable as `s.cfg.Engine.Catalog` (the public field,

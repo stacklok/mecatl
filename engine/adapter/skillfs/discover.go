@@ -1,4 +1,4 @@
-package skills
+package skillfs
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
 // SkillFileName is the conventional file every skill directory contains. A skill
@@ -121,7 +120,7 @@ func (s DirSource) Skills(_ context.Context) ([]Skill, []SkipError, error) {
 			skips = append(skips, SkipError{Path: path, Reason: fmt.Sprintf("cannot read: %v", rerr)})
 			continue
 		}
-		sk, perr, notes := parseSkill(raw, path)
+		sk, perr, notes := ParseSkill(raw, path)
 		if perr != "" {
 			skips = append(skips, SkipError{Path: path, Reason: perr})
 			continue
@@ -165,7 +164,7 @@ func Discover(dir string) ([]Skill, []SkipError, error) {
 	return DirSource{Dir: dir}.Skills(context.Background())
 }
 
-// parseSkill splits raw into YAML frontmatter and a markdown body and validates
+// ParseSkill splits raw into YAML frontmatter and a markdown body and validates
 // the required header fields. It returns:
 //   - a fatal reason string (with a zero Skill) on any structural problem, so the
 //     caller records a SkipError and EXCLUDES the skill; reason is "" on success.
@@ -175,11 +174,16 @@ func Discover(dir string) ([]Skill, []SkipError, error) {
 //
 // The description is capped HERE (at parse time) to maxDescriptionBytes because it
 // lives in the always-in-context tool spec; the body is NOT trimmed here (the
-// Skill tool truncates it on activation against the shared toolkit cap), but an
-// oversized body is flagged so the author knows it will be truncated. parseSkill
+// Skill tool truncates it on activation against the shared output cap), but an
+// oversized body is flagged so the author knows it will be truncated. ParseSkill
 // is filesystem-free so every Source implementation can reuse it.
-func parseSkill(raw []byte, path string) (Skill, string, []string) {
-	fmText, body, ok := toolkit.SplitFrontmatter(string(raw))
+//
+// Exported so the root writable half (internal/adapter/skills/promote.go) can
+// re-run the promotion-gate structural validation through the SAME parser the
+// read-only core uses, without importing this adapter (the root package aliases
+// it). Behaviour is byte-identical to the pre-graduation parseSkill.
+func ParseSkill(raw []byte, path string) (Skill, string, []string) {
+	fmText, body, ok := SplitFrontmatter(string(raw))
 	if !ok {
 		return Skill{}, "missing YAML frontmatter (expected a leading '---' delimited block)", nil
 	}
@@ -201,14 +205,14 @@ func parseSkill(raw []byte, path string) (Skill, string, []string) {
 		notes = append(notes, fmt.Sprintf(
 			"description is %d bytes; truncated to the always-in-context cap of %d bytes (a skill description should be a single line)",
 			len(desc), maxDescriptionBytes))
-		desc = toolkit.TruncateRunes(desc, maxDescriptionBytes)
+		desc = TruncateRunes(desc, maxDescriptionBytes)
 	}
 
 	trimmedBody := strings.TrimSpace(body)
-	if len(trimmedBody) > toolkit.MaxOutputBytes {
+	if len(trimmedBody) > MaxOutputBytes {
 		notes = append(notes, fmt.Sprintf(
 			"body is %d bytes; it will be truncated to %d bytes when the skill is activated",
-			len(trimmedBody), toolkit.MaxOutputBytes))
+			len(trimmedBody), MaxOutputBytes))
 	}
 
 	return Skill{
