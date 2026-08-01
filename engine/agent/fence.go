@@ -209,7 +209,7 @@ func lineNeedsFold(s string) bool {
 		strings.IndexByte(s, '\f') >= 0 {
 		return true
 	}
-	if strings.IndexAny(s, "\u2028\u2029\u0085") >= 0 {
+	if strings.ContainsAny(s, "\u2028\u2029\u0085") {
 		return true
 	}
 	for _, r := range s {
@@ -261,32 +261,10 @@ func lineMayBeHeader(ln string) bool {
 	if ln == "" {
 		return false
 	}
-	// A line starting with decoration could hide a marker behind the retry; a
-	// whitespace run or space-before-colon is what canonLine collapses into or out
-	// of a match. Admit all three conservatively (they pay the full normalisation).
-	if strings.IndexByte(leadingDecoration, ln[0]) >= 0 ||
-		strings.Contains(ln, "  ") || strings.Contains(ln, " :") {
-		return true
-	}
-	// A line canonLine would CHANGE — a tab, or a Cf/Cc code point anywhere —
-	// must be admitted: the strip can reveal a hidden marker (a leading ZWSP or
-	// bidi override before "agentId:" is exactly the forgery canonLine exists to
-	// catch). Ruling such a line out here would reopen the invisible-character
-	// bypass, so it always takes the full normalisation. Pinned by
-	// TestFramingHeaderNormalisesBeforeMatching's invisible cases.
-	if strings.IndexByte(ln, '\t') >= 0 {
-		return true
-	}
-	for _, r := range ln {
-		if (r < 0x20 && r != '\n') || (r >= 0x7f && (unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r))) {
-			return true
-		}
-	}
-	// An ordered-list marker ("1. agentId:") is decoration stripLeadingDecoration
-	// removes after the punctuation pass, but its FIRST byte is a digit — outside
-	// leadingDecoration — so the punctuation check above misses it. Admit a
-	// digit-led line too; a bare number is never a marker, so this is cheap.
-	if ln[0] >= '0' && ln[0] <= '9' {
+	// The conservative admits: any line that decoration, canonLine's whitespace
+	// handling, or an invisible/format character could turn INTO a marker pays the
+	// full normalisation, so the gate can never pre-empt a hidden match.
+	if lineNeedsFullScan(ln) {
 		return true
 	}
 	// Bracketed / scaffold / fence markers open with punctuation, not a letter.
@@ -315,6 +293,32 @@ func lineMayBeHeader(ln string) bool {
 	}
 	for _, lw := range markerLeaderWords {
 		if equalFoldASCII(w, lw) {
+			return true
+		}
+	}
+	return false
+}
+
+// lineNeedsFullScan reports the conservative half of lineMayBeHeader: the line
+// shapes that MUST reach the full normalise-then-match because the gate cannot
+// rule them out. Each is a way a marker hides from the raw first-word test —
+// leading decoration (the retry strips it), a whitespace run or space-before-
+// colon (canonLine collapses it), a tab or Cf/Cc code point (canonLine strips
+// it, revealing a hidden marker — the invisible-character bypass), or a leading
+// digit (an ordered-list marker "1. agentId:", whose decoration strip sees the
+// number after the punctuation pass). Admitting all of them keeps the gate
+// conservative: it only ever skips a line that is provably plain prose.
+func lineNeedsFullScan(ln string) bool {
+	if strings.IndexByte(leadingDecoration, ln[0]) >= 0 ||
+		strings.Contains(ln, "  ") || strings.Contains(ln, " :") ||
+		strings.IndexByte(ln, '\t') >= 0 {
+		return true
+	}
+	if ln[0] >= '0' && ln[0] <= '9' {
+		return true
+	}
+	for _, r := range ln {
+		if (r < 0x20 && r != '\n') || (r >= 0x7f && (unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r))) {
 			return true
 		}
 	}
