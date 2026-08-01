@@ -3995,18 +3995,25 @@ func (t *SubagentTool) persistChild(ctx context.Context, child *session.Session)
 	if t.store == nil {
 		return
 	}
-	// Cancel-DETACHED with its own short deadline (the port.EventLog appendEvent
-	// precedent). Two of the four call sites are TERMINAL persists on paths where ctx is
-	// already dead — the per-call timeout_ms fired, or the parent run was cancelled — and
-	// this save is the ONLY thing that makes the child resumable afterwards, which the
-	// harness now advertises to the model on exactly those terminals
-	// (subagentTimeoutResumeHint, writableSubagentTimeoutNote). The in-tree stores ignore
-	// ctx on Save, but redisstore.Save passes it straight to HSet and
-	// grpcdriver.SessionStore.Save to the RPC, so on a mecak8s/Redis or remote-driver
-	// deployment the advertised resume came back as "no subagent found for resume id" — an
-	// advertised affordance that cannot succeed, the exact defect resumeSupported() exists
-	// to prevent, one layer down. The deadline is what makes detaching safe: with no live
-	// ctx to cancel it, a wedged store would otherwise block the tool call indefinitely.
+	// Only detach when the caller's ctx is already DONE. The common persist — a
+	// foreground or background child ending on a still-live ctx — needs no new
+	// context, so it takes the fast path below with zero allocation (the perf
+	// scenario hammers exactly this shape). The detach exists for the two TERMINAL
+	// persists whose ctx is already dead: the per-call timeout_ms fired, or the
+	// parent run was cancelled. This save is the ONLY thing that makes the child
+	// resumable afterwards, which the harness now advertises to the model on exactly
+	// those terminals (subagentTimeoutResumeHint, writableSubagentTimeoutNote). The
+	// in-tree stores ignore ctx on Save, but redisstore.Save passes it straight to
+	// HSet and grpcdriver.SessionStore.Save to the RPC, so on a mecak8s/Redis or
+	// remote-driver deployment the advertised resume came back as "no subagent found
+	// for resume id" — an advertised affordance that cannot succeed, the exact defect
+	// resumeSupported() exists to prevent, one layer down. The deadline is what makes
+	// detaching safe: with no live ctx to cancel it, a wedged store would otherwise
+	// block the tool call indefinitely.
+	if ctx.Err() == nil {
+		_ = t.store.Save(ctx, child)
+		return
+	}
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), childPersistTimeout)
 	defer cancel()
 	_ = t.store.Save(saveCtx, child)
