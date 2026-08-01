@@ -174,15 +174,183 @@ func NeutraliseFraming(s string) string {
 // surface (see framingSurface). Every caller outside this file goes through
 // NeutraliseFraming (surfaceAll) — the narrowing exists for neutraliseChildText.
 func neutraliseFramingOn(s string, surf framingSurface) string {
+	// WHOLE-STRING fast path: when nothing in the body can change (no fence, no
+	// fold-worthy line break or Cf/Cc code point) AND no line is even a marker
+	// candidate, the slow path's two rewrites are no-ops and every per-line match
+	// is false — so the result is s verbatim. This is the overwhelmingly common
+	// case (clean child prose), and it costs a few scans instead of two Replacer
+	// passes + a Split + a Join + per-line normalisation. The candidate scan uses
+	// the SAME lineMayBeHeader gate as the slow path, so the verdict is identical.
+	if !strings.Contains(s, UntrustedFence) && !lineNeedsFold(s) && !anyLineMayBeHeader(s) {
+		return s
+	}
 	s = strings.ReplaceAll(s, UntrustedFence, redactedMarker)
 	s = lineBreaks.Replace(s)
 	lines := strings.Split(s, "\n")
 	for i, ln := range lines {
+		if !lineMayBeHeader(ln) {
+			continue // fast path: provably no marker; skip the normalising passes.
+		}
 		if framingHeaderOn(strings.ToLower(canonLine(ln)), surf) {
 			lines[i] = redactedFraming
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// lineNeedsFold reports whether s contains ANY code point lineBreaks.Replace would
+// rewrite (\r, U+2028, U+2029, U+0085, \v, \f) or canonLine would strip (a Cf/Cc
+// character). When it is false AND there is no UntrustedFence, the slow path's two
+// rewrites (ReplaceAll + lineBreaks) are byte-identical no-ops, so the whole-string
+// fast path is safe. strings.IndexByte covers the single-byte cases; the three
+// multi-byte ones (\u2028/\u2029/\u0085) plus Cf/Cc go through one pass.
+func lineNeedsFold(s string) bool {
+	if strings.IndexByte(s, '\r') >= 0 || strings.IndexByte(s, '\v') >= 0 ||
+		strings.IndexByte(s, '\f') >= 0 {
+		return true
+	}
+	if strings.IndexAny(s, "\u2028\u2029\u0085") >= 0 {
+		return true
+	}
+	for _, r := range s {
+		if r < 0x20 && r != '\t' && r != '\n' {
+			return true // a C0 control canonLine strips (LF is the split point).
+		}
+		if r >= 0x7f && (unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r)) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyLineMayBeHeader scans s line-by-line (allocation-free, via IndexByte) and
+// reports whether ANY line is a marker candidate per lineMayBeHeader. Used by the
+// whole-string fast path; identical verdict to running the gate inside the split
+// loop, at the cost of one scan instead of an allocation-heavy Split+Join.
+func anyLineMayBeHeader(s string) bool {
+	for {
+		i := strings.IndexByte(s, '\n')
+		var ln string
+		if i < 0 {
+			ln = s
+		} else {
+			ln = s[:i]
+		}
+		if lineMayBeHeader(ln) {
+			return true
+		}
+		if i < 0 {
+			return false
+		}
+		s = s[i+1:]
+	}
+}
+
+// lineMayBeHeader is the allocation-free candidate gate for the per-line
+// normalise-then-match above. It reports whether a line COULD match a
+// framingHeaderSurfaces marker — false only when the line provably cannot, so
+// the expensive canonLine+ToLower passes run only on genuine candidates.
+//
+// It is CONSERVATIVE — a line it cannot rule out returns true and pays the full
+// normalisation, so the match verdict is unchanged on every input; the only thing
+// the gate removes is work on lines (the vast majority of child prose) that begin
+// with an ordinary non-marker word. Completeness is enforced by
+// TestLineMayBeHeaderNeverDropsAMarker: a future marker whose leading word is not
+// admitted fails that test before the forgery hole ships.
+func lineMayBeHeader(ln string) bool {
+	if ln == "" {
+		return false
+	}
+	// A line starting with decoration could hide a marker behind the retry; a
+	// whitespace run or space-before-colon is what canonLine collapses into or out
+	// of a match. Admit all three conservatively (they pay the full normalisation).
+	if strings.IndexByte(leadingDecoration, ln[0]) >= 0 ||
+		strings.Contains(ln, "  ") || strings.Contains(ln, " :") {
+		return true
+	}
+	// A line canonLine would CHANGE — a tab, or a Cf/Cc code point anywhere —
+	// must be admitted: the strip can reveal a hidden marker (a leading ZWSP or
+	// bidi override before "agentId:" is exactly the forgery canonLine exists to
+	// catch). Ruling such a line out here would reopen the invisible-character
+	// bypass, so it always takes the full normalisation. Pinned by
+	// TestFramingHeaderNormalisesBeforeMatching's invisible cases.
+	if strings.IndexByte(ln, '\t') >= 0 {
+		return true
+	}
+	for _, r := range ln {
+		if (r < 0x20 && r != '\n') || (r >= 0x7f && (unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r))) {
+			return true
+		}
+	}
+	// An ordered-list marker ("1. agentId:") is decoration stripLeadingDecoration
+	// removes after the punctuation pass, but its FIRST byte is a digit — outside
+	// leadingDecoration — so the punctuation check above misses it. Admit a
+	// digit-led line too; a bare number is never a marker, so this is cheap.
+	if ln[0] >= '0' && ln[0] <= '9' {
+		return true
+	}
+	// Bracketed / scaffold / fence markers open with punctuation, not a letter.
+	switch ln[0] {
+	case '[', '=', '(', '<', '-':
+		return true
+	}
+	// The letter-led markers all open with one of a handful of distinct leading
+	// WORDS. Test the line's first word (up to the first space or colon) against
+	// that set — cheap, allocation-free, and tight enough that ordinary prose
+	// ("recommendation:", "reviewed", "Done:", "Consolidated") is ruled out while
+	// every marker is admitted. The match is case-insensitive (the production
+	// matcher lower-cases) but must NOT allocate a lowered copy, so the comparison
+	// folds ASCII case inline.
+	w := ln
+	if i := strings.IndexAny(w, " :"); i >= 0 {
+		w = w[:i]
+	}
+	if len(w) > 12 { // no marker's leading word exceeds this
+		return false
+	}
+	// The scoreboard row ("branch-1 [ok] …") has a digit-suffixed leading word;
+	// its marker family is "branch-N", so admit any "branch-<digits>" prefix.
+	if len(w) > 7 && equalFoldASCII(w[:7], "branch-") {
+		return true
+	}
+	for _, lw := range markerLeaderWords {
+		if equalFoldASCII(w, lw) {
+			return true
+		}
+	}
+	return false
+}
+
+// markerLeaderWords is the lower-cased set of leading WORDS that open a
+// letter-led framingHeaderSurfaces marker. It is the candidate gate's admit
+// list; completeness is enforced by TestLineMayBeHeaderNeverDropsAMarker.
+var markerLeaderWords = []string{
+	"agentid", "branch", "parallel", "judge", "winner",
+	"team", "policy", "tool", "requested", "categories", "category", "task",
+	"recorded", "messages", "new", "your", "you", "findings", "last", "completed",
+	"note", "execution", "why", "if", "respond", "other",
+}
+
+// equalFoldASCII reports ASCII case-insensitive equality without allocating.
+// The leader words are pure ASCII, so a byte-wise fold is exact (no Unicode
+// folding needed — a non-ASCII byte simply never equals a letter).
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
 
 // neutraliseChildText is NeutraliseFraming for the model-influenced text a harness-composed
