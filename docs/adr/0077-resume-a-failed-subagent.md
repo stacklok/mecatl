@@ -27,7 +27,7 @@ The team supervisor encoded the same policy differently: it skipped `Reopen` ent
 a `StopError` round and set `memberRT.nonResumable`, permanently benching the member.
 
 **Issue #318 falsified the premise with production evidence.** Two independent
-`mode:"read-write"` children (direct-write, [ADR 0041](./0041-direct-write-subagent.md))
+`mode:"read-write"` children (direct-write, [ADR 0077](./0077-direct-write-subagent.md))
 died on the terminal 180s stream-idle stall after 58 and 52 turns, ~5M and ~3.5M
 cumulative input tokens, and ~15 minutes of wall clock — with **mutations already applied
 to the real workspace**. The accumulated cost was not "no cost"; it was strictly larger
@@ -340,7 +340,7 @@ rather than the benign clean-finish one.
 
 ## See also
 
-- [ADR 0041](./0041-direct-write-subagent.md) — the direct-write child whose applied
+- [ADR 0077](./0077-direct-write-subagent.md) — the direct-write child whose applied
   mutations make a discarded failed child expensive.
 - [ADR 0070](./0070-model-visible-affordance-gate.md) — the model-visible-affordance rule
   the resume hint satisfies.

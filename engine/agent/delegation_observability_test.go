@@ -310,6 +310,12 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 		// (TestInvariant_delegation_previews_bounded_scrubbed) prove the raw body
 		// never crosses.
 		"Text": true, "Detail": true, "InnerKind": true,
+		// Cause (issue #319) is the child run's FAILURE DETAIL — the loop's
+		// ResultPayload.Error, a harness/provider error string, NOT child-authored
+		// model output. Set on EvSubagentEnd only, clamped at the emit sites to
+		// maxSubagentCausePreview, client-only like Stop/Usage. It is metadata about
+		// HOW the delegation failed, on the same gauntlet-#7 footing as Stop.
+		"Cause": true,
 	}
 	rt := reflect.TypeOf(session.SubagentPayload{})
 	for i := 0; i < rt.NumField(); i++ {
