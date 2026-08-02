@@ -11,11 +11,12 @@ import (
 // WriteFixtures lays the checked-in templates (e2e/fixtures/) out into the
 // ephemeral root the local mecated is spawned against:
 //
-//	fixtures/skills/greet/SKILL.md     → <root>/home/.claude/skills/greet/SKILL.md      (user-global lane)
-//	fixtures/skills/repo-fact/SKILL.md → <root>/workspace/.claude/skills/repo-fact/...  (workspace lane)
-//	fixtures/soul.md                   → <root>/soul/soul.md                            (--soul-file)
-//	fixtures/permissions.yaml          → <root>/permissions.yaml                        (--permission-config)
-//	fixtures/workspace/*               → <root>/workspace/                              (repo content)
+//	fixtures/skills/greet/SKILL.md     → <root>/home/.claude/skills/greet/SKILL.md       (user-global lane)
+//	fixtures/skills/repo-fact/SKILL.md → <root>/workspace/.claude/skills/repo-fact/...   (workspace lane)
+//	fixtures/agents/fruit-reader.md    → <root>/workspace/.claude/agents/fruit-reader.md (workspace lane)
+//	fixtures/soul.md                   → <root>/soul/soul.md                             (--soul-file)
+//	fixtures/permissions.yaml          → <root>/permissions.yaml                         (--permission-config)
+//	fixtures/workspace/*               → <root>/workspace/                               (repo content)
 //
 // Fixture content is harness-authored and deterministic; the specs assert on
 // EVENTS and side effects, never on model prose about the fixtures.
@@ -24,6 +25,7 @@ func WriteFixtures(repoRoot, root string) error {
 	copies := []struct{ src, dst string }{
 		{filepath.Join(fx, "skills", "greet", "SKILL.md"), filepath.Join(root, "home", ".claude", "skills", "greet", "SKILL.md")},
 		{filepath.Join(fx, "skills", "repo-fact", "SKILL.md"), filepath.Join(root, "workspace", ".claude", "skills", "repo-fact", "SKILL.md")},
+		{filepath.Join(fx, "agents", "fruit-reader.md"), filepath.Join(root, "workspace", ".claude", "agents", "fruit-reader.md")},
 		{filepath.Join(fx, "soul.md"), filepath.Join(root, "soul", "soul.md")},
 		{filepath.Join(fx, "permissions.yaml"), filepath.Join(root, "permissions.yaml")},
 		{filepath.Join(fx, "workspace", "README.md"), filepath.Join(root, "workspace", "README.md")},
