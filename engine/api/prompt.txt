@@ -4,6 +4,7 @@
     ifacemethod func (CommandSource).ListCommands(ctx context.Context) ([]Command, error)
     ifacemethod func (InstructionAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
     ifacemethod func (MemoryIndexSource).Index(ctx context.Context) ([]tool.MemoryEntry, error)
+    ifacemethod func (RulesSource).ListRules(ctx context.Context) ([]Rule, error)
     ifacemethod func (SoulSource).Load(ctx context.Context) (string, error)
     ifacemethod func (UserModelSource).Index(ctx context.Context) ([]tool.MemoryEntry, error)
     method func (*DirCommandExpander).Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)
@@ -18,9 +19,14 @@
     method func (NoopExpander).Expand(_ context.Context, _ tool.Workspace, input string) (string, bool, error)
     method func (NoopExpander).List(_ context.Context, _ tool.Workspace) ([]Command, error)
     method func (RootAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
+    method func (RulesAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
     method func (SoulAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
     method func (UserModelAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
 const MaxCommandDescriptionRunes untyped int = 80
+const MaxRuleBytes untyped int = 20480
+const RuleOriginDriver RuleOrigin = "driver"
+const RuleOriginProject RuleOrigin = "project"
+const RuleOriginUser RuleOrigin = "user"
 func Build(cfg Config) Layered
 func DefaultRole() string
 func DefaultTone() string
@@ -31,6 +37,7 @@ func NewDirCommandExpander(dirs ...string) *DirCommandExpander
 func NewMultiAssembler(assemblers ...InstructionAssembler) MultiAssembler
 func NewMultiExpander(expanders ...CommandExpander) *MultiExpander
 func NewSourceExpander(src CommandSource) *SourceExpander
+func RulesHeader() string
 func ValidCommandName(name string) bool
 type Builder func(Config) Layered
 type Command struct{Name string; Description string}
@@ -48,6 +55,10 @@ type MultiAssembler struct{Assemblers []InstructionAssembler}
 type MultiExpander struct{}
 type NoopExpander struct{}
 type RootAssembler struct{}
+type Rule struct{Name string; Body string; Paths []string; Origin RuleOrigin}
+type RuleOrigin string
+type RulesAssembler struct{Src RulesSource; MaxBytes int; MaxCount int}
+type RulesSource interface{ListRules(ctx context.Context) ([]Rule, error)}
 type SoulAssembler struct{Src SoulSource}
 type SoulSource interface{Load(ctx context.Context) (string, error)}
 type SourceExpander struct{}

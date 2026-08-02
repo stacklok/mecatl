@@ -9,9 +9,9 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// scriptedSoul / scriptedIndex are minimal sources so the test drives the REAL
-// render path of each assembler — IsInjectedTurn0Fragment is asserted against the
-// actual rendered bytes, not a hand-copied header literal, so it cannot drift from
+// scriptedSoul / scriptedIndex / scriptedRules are minimal sources so the test drives
+// the REAL render path of each assembler — IsInjectedTurn0Fragment is asserted against
+// the actual rendered bytes, not a hand-copied header literal, so it cannot drift from
 // what the assemblers emit.
 type scriptedSoul struct{ body string }
 
@@ -21,9 +21,13 @@ type scriptedIndex struct{ entries []tool.MemoryEntry }
 
 func (s scriptedIndex) Index(context.Context) ([]tool.MemoryEntry, error) { return s.entries, nil }
 
-// TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput drives each of the four
-// turn-0 assemblers (project instructions / soul / memory index / user model) and
-// asserts IsInjectedTurn0Fragment recognises the message each ACTUALLY renders,
+type scriptedRules struct{ rules []prompt.Rule }
+
+func (s scriptedRules) ListRules(context.Context) ([]prompt.Rule, error) { return s.rules, nil }
+
+// TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput drives each of the five
+// turn-0 assemblers (project instructions / rules / soul / memory index / user model)
+// and asserts IsInjectedTurn0Fragment recognises the message each ACTUALLY renders,
 // while rejecting a genuine user instruction. Because the input is the real render
 // output, a header reword in an assembler that also missed turn0.go's
 // source-of-truth const would surface here.
@@ -54,6 +58,7 @@ func TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput(t *testing.T) {
 	}{
 		{"project-instructions (AGENTS.md)", render(prompt.RootAssembler{}, agentsWS)},
 		{"project-instructions (CLAUDE.md)", render(prompt.RootAssembler{}, claudeWS)},
+		{"rules", render(prompt.RulesAssembler{Src: scriptedRules{rules: []prompt.Rule{{Name: "r1", Body: "body\n", Origin: prompt.RuleOriginProject}}}}, nil)},
 		{"soul", render(prompt.SoulAssembler{Src: scriptedSoul{body: "terse engineer"}}, agentsWS)},
 		{"memory-index", render(prompt.MemoryIndexAssembler{Src: scriptedIndex{entries: entries}}, agentsWS)},
 		{"user-model", render(prompt.UserModelAssembler{Src: scriptedIndex{entries: entries}}, agentsWS)},

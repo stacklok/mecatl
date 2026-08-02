@@ -102,7 +102,7 @@ func TestBuildSoulSourceDefaultOnAndDisable(t *testing.T) {
 		if src != nil {
 			t.Fatalf("buildSoulSource(Config{NoSoul:true}) = %v, want nil (soul disabled)", src)
 		}
-		asm := buildInstructionAssembler(src, nil, nil)
+		asm := buildInstructionAssembler(nil, src, nil, nil)
 		if _, ok := asm.(prompt.RootAssembler); !ok {
 			t.Fatalf("with nil soul + nil memStore, buildInstructionAssembler returned %T, want a bare prompt.RootAssembler (typed-nil guard)", asm)
 		}

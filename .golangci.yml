@@ -203,6 +203,18 @@ linters:
           deny:
             - pkg: os/exec
               desc: 'skillfs discovers SKILL.md trees via os.ReadDir/ReadFile; it must never spawn processes'
+        engine-adapter-rulesfs:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/rulesfs/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/prompt
+            - go.yaml.in/yaml/v3
+          deny:
+            - pkg: os/exec
+              desc: 'rulesfs discovers <name>.md rule files via os.ReadDir/ReadFile; it must never spawn processes'
         engine-adapter-nofs:
           list-mode: strict
           files:

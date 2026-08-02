@@ -12,10 +12,11 @@ import (
 // in the composition layer (an untrusted workspace's project tier is never
 // constructed); Origin exists for observability and inspection only.
 //
-// NOTE: this deliberately mirrors SkillOrigin rather than sharing a type — a
-// THIRD origin-bearing seam is the point to extract a shared Origin type, not
-// before (two parallel closed label sets are cheaper than a premature
-// abstraction the third seam might not fit).
+// NOTE: this deliberately mirrors SkillOrigin rather than sharing a type. The
+// THIRD origin-bearing seam has since arrived (prompt.RuleOrigin, issue #329)
+// and extraction was re-evaluated and DEFERRED: the label sets are not
+// identical (RuleOrigin has no "explicit" tier — rules carry no operator-flag
+// lane), so a shared type would force a superset one seam must never mint.
 type AgentOrigin string
 
 // The CLOSED admission-tier label set — implementations must never mint a new

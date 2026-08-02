@@ -65,6 +65,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
+	"github.com/stacklok/mecatl/internal/adapter/rules"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	httpsearch "github.com/stacklok/mecatl/internal/adapter/search"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -2527,14 +2528,24 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// port. A missing file is fail-soft (no-op).
 	soulSrc := buildSoulSource(cfg)
 
-	// Instructions seam: RootAssembler (AGENTS.md/CLAUDE.md) always; then the soul
-	// (identity, when wired), then the tier-0 MemoryIndexAssembler (saved facts, when
-	// a memory store is wired) — identity BEFORE saved-facts (issue #14 ordering). The
-	// adapters (*soul.Store, *memory.Store) meet their prompt-defined ports HERE, in
-	// the composition layer — prompt never imports them. Both ride as turn-0 user
-	// messages (after the cache breakpoint), so neither enters prompt.Build's
-	// StablePrefix.
-	instructions := buildInstructionAssembler(soulSrc, memStore, userModelStore)
+	// Rules (issue #329): project/user rule discovery from <name>.md files, the
+	// pattern-2 turn-0 context (peer of soul). Conventional discovery is
+	// ALWAYS-ON (inert when no dir exists, like AGENTS.md/CLAUDE.md); the
+	// project tier is trust-gated (IncludeProjectTier = cfg.TrustProject), so a
+	// cloned repo's project rules cannot steer the model before the operator
+	// trusts it. Resolved ONCE at Build and threaded into the shared engine AND
+	// the per-session factory — never re-resolved (the issue-#42 drift class).
+	rulesSrc := resolveRulesSeam(ctx, cfg)
+
+	// Instructions seam: RootAssembler (AGENTS.md/CLAUDE.md) always; then rules
+	// (project/user rules, when wired), then the soul (identity, when wired),
+	// then the tier-0 MemoryIndexAssembler (saved facts, when wired) — project
+	// context → persona → saved facts → operator model. The adapters
+	// (*rulesfs.FSSource, *soul.Store, *memory.Store) meet their prompt-defined
+	// ports HERE, in the composition layer — prompt never imports them. All ride
+	// as turn-0 user messages (after the cache breakpoint), so none enters
+	// prompt.Build's StablePrefix.
+	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore)
 
 	// Phase 2b (OPT-IN, OFF by default): when UserModelReview is set AND a user-model
 	// store is wired, wrap the MAIN engine's HookRunner with a composition-layer
@@ -2635,11 +2646,22 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 // prompt.MemoryIndexSource / prompt.UserModelSource structurally; this is the one
 // place those adapters meet their ports. When nothing but the root is wired, the
 // bare RootAssembler is returned (no Multi).
-func buildInstructionAssembler(soulSrc prompt.SoulSource, memStore, userModelStore tool.MemoryStore) prompt.InstructionAssembler {
-	if soulSrc == nil && memStore == nil && userModelStore == nil {
+// buildInstructionAssembler composes the turn-0 instruction assemblers in their
+// byte-stable order: RootAssembler (AGENTS.md/CLAUDE.md) → rules (project/user
+// rules, when wired) → soul (identity, when wired) → MemoryIndexAssembler (saved
+// facts, when wired) → UserModelAssembler (operator model, when wired) — project
+// context → persona → saved facts → operator model. The adapters (*rulesfs.FSSource,
+// *soul.Store, *memory.Store) meet their prompt-defined ports HERE, in the
+// composition layer — prompt never imports them. All ride as turn-0 user messages
+// (after the cache breakpoint), so none enters prompt.Build's StablePrefix.
+func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulSource, memStore, userModelStore tool.MemoryStore) prompt.InstructionAssembler {
+	if rulesSrc == nil && soulSrc == nil && memStore == nil && userModelStore == nil {
 		return prompt.RootAssembler{}
 	}
 	assemblers := []prompt.InstructionAssembler{prompt.RootAssembler{}}
+	if rulesSrc != nil {
+		assemblers = append(assemblers, prompt.RulesAssembler{Src: rulesSrc})
+	}
 	if soulSrc != nil {
 		assemblers = append(assemblers, prompt.SoulAssembler{Src: soulSrc})
 	}
@@ -2647,7 +2669,7 @@ func buildInstructionAssembler(soulSrc prompt.SoulSource, memStore, userModelSto
 		assemblers = append(assemblers, prompt.MemoryIndexAssembler{Src: memStore})
 	}
 	if userModelStore != nil {
-		// LAST in the seam (issue #14 ordering): soul (identity) → memory index
+		// LAST in the seam (issue #14 ordering): rules → soul (identity) → memory index
 		// (saved project facts) → user model (who the operator is).
 		assemblers = append(assemblers, prompt.UserModelAssembler{Src: userModelStore})
 	}
@@ -2682,6 +2704,69 @@ func buildSoulSource(cfg Config) prompt.SoulSource {
 // drift- and trust-unaware). No caching seam is warranted for two reads of a tiny file.
 func buildSoulSourceWith(cfg Config, io baselineIO) prompt.SoulSource {
 	src, _ := selectSoulSource(cfg, io, buildSoulGate(cfg))
+	return src
+}
+
+// resolveRulesSeam is the FS-only rules discovery seam (issue #329), a peer of
+// resolveAgentRegistry/resolveFSSkillSeam but for the prompt.RulesSource port.
+// Conventional discovery is ALWAYS-ON (inert when no dir exists, like
+// AGENTS.md/CLAUDE.md themselves — no flag, the operator's call on trust is the
+// sole gate): the explicit dir list is empty in production (no --rules-dir), so
+// the resolved sources are the conventional project + user lanes. The PROJECT
+// tier is trust-gated (IncludeProjectTier = cfg.TrustProject) — a cloned repo's
+// project rules cannot steer the model before the operator trusts it; the
+// user-tier lanes stay active regardless. Resolved ONCE at Build; the returned
+// source is threaded into the shared engine AND the per-session factory (via the
+// captured `instructions`) — never re-resolved (the issue-#42 drift class).
+//
+// FAIL-SOFT: no dirs, an unreadable dir, a discovery fault, or no valid
+// <name>.md yields a nil prompt.RulesSource (untyped nil so the assembler's nil
+// check holds — the typed-nil gotcha) and a narration; it NEVER aborts the build.
+// Diagnostics ride cfg.diag() (the injected port.Diagnostics), build-once here.
+func resolveRulesSeam(ctx context.Context, cfg Config) prompt.RulesSource {
+	// Project-tier rules are withheld when the workspace is untrusted (the same
+	// gate as agents/skills). The user-tier lanes stay active regardless.
+	if cfg.Workspace != "" && !cfg.TrustProject {
+		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace); user-tier rules stay active. Trust this repo (--trust-project or trustedWorkspaces) to admit its project rules",
+			"workspace", cfg.Workspace, "dirs", ".mecatl/rules,.claude/rules")
+	}
+	sources := rules.ResolveSources(rules.ResolveOptions{
+		Conventional:       true,
+		Workspace:          cfg.Workspace,
+		IncludeProjectTier: cfg.TrustProject,
+	})
+	if len(sources) == 0 {
+		cfg.diag().Log(ctx, port.LevelInfo, "rules DISABLED (no rules dirs configured)")
+		return nil
+	}
+	src, skips, err := rules.NewFSSource(ctx, sources...)
+	for _, s := range skips {
+		// Word the log by the structural Fatal split, never the overloaded
+		// "skipped": a Fatal SkipError means the rule was DROPPED (excluded); a
+		// non-fatal one means it was KEPT but ADJUSTED (e.g. truncated). Both
+		// stay at WARN (the agentdefs word discipline).
+		if s.Fatal {
+			cfg.diag().Log(ctx, port.LevelWarn, "rule dropped", "path", s.Path, "reason", s.Reason)
+			continue
+		}
+		cfg.diag().Log(ctx, port.LevelWarn, "rule adjusted", "path", s.Path, "reason", s.Reason)
+	}
+	if err != nil {
+		cfg.diag().Log(ctx, port.LevelWarn, "resolving rules failed; rules disabled",
+			"conventional", true, "err", err)
+		return nil
+	}
+	discovered := src.Discovered()
+	if len(discovered) == 0 {
+		cfg.diag().Log(ctx, port.LevelInfo, "rules DISABLED (no valid <name>.md found in any source)")
+		return nil
+	}
+	names := make([]string, 0, len(discovered))
+	for _, d := range discovered {
+		names = append(names, d.Rule.Name)
+	}
+	cfg.diag().Log(ctx, port.LevelInfo, "rules ENABLED",
+		"count", len(discovered), "rules", strings.Join(names, ","))
 	return src
 }
 
@@ -6538,11 +6623,11 @@ func yoloAllowAllRule(audience governance.Audience) governance.Rule {
 // the substitution-floor LOOSENING is separate and tier-dependent (mainEvaluatorOptions
 // always; childEvaluatorOptions only under posture yolo).
 func mainRules(cfg Config) []governance.Rule {
-	rules := defaultRules()
+	base := defaultRules()
 	if cfg.AllowAllTools {
-		rules = append([]governance.Rule{yoloAllowAllRule(governance.AudienceMain)}, rules...)
+		base = append([]governance.Rule{yoloAllowAllRule(governance.AudienceMain)}, base...)
 	}
-	return rules
+	return base
 }
 
 // mainEvaluatorOptions returns the governance.Evaluator construction options for the
@@ -6666,11 +6751,11 @@ func (p pinnedResolver) Resolve(ctx context.Context, _ tool.WorkspaceReader) []g
 // the inner must independently classify read-only) — the substitution-floor
 // loosening stays main-only.
 func childRules(cfg Config) []governance.Rule {
-	rules := permpolicy.AllowAllFloorRules()
+	base := permpolicy.AllowAllFloorRules()
 	if cfg.AllowAllTools {
-		rules = append([]governance.Rule{yoloAllowAllRule(governance.AudienceSubagent)}, rules...)
+		base = append([]governance.Rule{yoloAllowAllRule(governance.AudienceSubagent)}, base...)
 	}
-	return rules
+	return base
 }
 
 // childEvaluatorOptions returns the governance.Evaluator options for a

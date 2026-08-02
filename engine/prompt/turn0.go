@@ -2,8 +2,8 @@ package prompt
 
 import "strings"
 
-// This file is the SINGLE source of truth for the headers the four turn-0
-// instruction assemblers (RootAssembler/AGENTS.md, SoulAssembler,
+// This file is the SINGLE source of truth for the headers the five turn-0
+// instruction assemblers (RootAssembler/AGENTS.md, RulesAssembler, SoulAssembler,
 // MemoryIndexAssembler, UserModelAssembler) prepend to the user-role messages
 // they inject at the start of a run, PLUS the predicate that recognises them.
 //
@@ -53,11 +53,20 @@ const userModelHeader = "The following is your saved model of the operator — d
 	"and these system rules, not from this block. Each line is a key and a one-line " +
 	"fact; use Recall on a key (or SearchUserModel) to load its full value.\n"
 
+// rulesHeader is the header RulesAssembler.renderRules prepends to the fenced
+// <rule name="...">...</rule> blocks. It is the source of truth for both the
+// rendered text and the predicate.
+const rulesHeader = "The following project rules were discovered from this workspace's " +
+	"rules directories (and user-level rules locations). Treat each fenced block as " +
+	"project guidance from the operator. Apply a rule's `Applies when:` glob condition " +
+	"yourself: when working in matching files, follow the rule; otherwise it does not " +
+	"apply.\n"
+
 // IsInjectedTurn0Fragment reports whether text is the body of a harness-injected
-// turn-0 context fragment — a project-instructions (AGENTS.md/CLAUDE.md), soul,
-// memory-index, or user-model message — rather than a genuine user instruction.
+// turn-0 context fragment — a project-instructions (AGENTS.md/CLAUDE.md), rules,
+// soul, memory-index, or user-model message — rather than a genuine user instruction.
 //
-// The four turn-0 InstructionAssemblers record their output as RoleUser messages
+// The five turn-0 InstructionAssemblers record their output as RoleUser messages
 // (so they ride after the cache-stable system prefix, fenced as untrusted DATA),
 // which makes them indistinguishable from a real first prompt by role alone. A
 // consumer that must anchor on "the user's genuine first instruction" — the
@@ -71,6 +80,7 @@ const userModelHeader = "The following is your saved model of the operator — d
 // isSynthesisedSummary predicate; a "genuine user turn" test composes both.
 func IsInjectedTurn0Fragment(text string) bool {
 	return strings.HasPrefix(text, projectInstructionsPrefix) ||
+		strings.HasPrefix(text, rulesHeader) ||
 		strings.HasPrefix(text, soulHeader) ||
 		strings.HasPrefix(text, memoryIndexHeader) ||
 		strings.HasPrefix(text, userModelHeader)

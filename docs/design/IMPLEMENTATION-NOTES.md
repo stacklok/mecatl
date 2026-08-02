@@ -154,15 +154,19 @@ tools (`InspectSubagent`/`InspectMember`/`SubagentStatus`) carry the same floor-
 Two-layer prompt assembly + AGENTS.md/CLAUDE.md discovery; the turn-0 `InstructionAssembler`
 chain and its consumer-local ports (`MemoryIndexSource`, `SoulSource` — issue #14 Phase 1's
 read-only persona seam, `UserModelSource` — issue #14 Phase 2's cross-project operator-FACTS
-seam). Turn-0 ORDER is soul → memory index → user model (identity → saved project facts →
-operator model), all on the volatile turn-0 user-message seam (never `StablePrefix`). As of
+seam, `RulesSource` — issue #329's `.claude/rules` discovery seam, the pattern-2 instance
+for turn-0 context). Turn-0 ORDER is rules → soul → memory index → user model (project
+context → identity → saved project facts → operator model), all on the volatile turn-0
+user-message seam (never `StablePrefix`). As of
 [ADR 0043](../adr/0043-ephemeral-turn0-instruction-fragments.md) these fragments are
 EPHEMERAL: `engine/agent/loop.go` (`buildRequest`) assembles the chain ONCE per run (cached
 on the `Run`), PREPENDS the fragments ahead of `Conversation.Messages` on every turn
 (including resume), and NEVER persists them into the conversation, event-carries them, or
 snapshots them — `recordPrompt` records only the genuine prompt. The fragments are present on
 every run unconditionally, and the snapshot + event-sourced rehydration paths converge
-fragment-free.
+fragment-free. `RulesSource` is eager v1 (all rules at turn 0, `paths:` stated as a
+model-applied condition; the `Paths` field rides the port from day one so a future lazy,
+path-triggered activation is additive) — see [ADR 0081](../adr/0081-rules-source-port.md).
 
 **`SoulSource` stays trust-/provenance-UNAWARE** (issue #14 Phase 3 Item 2): the soul's
 USER-vs-PROJECT provenance + `--trust-project` gate + USER-WINS precedence are decided in

@@ -105,6 +105,36 @@ of `--trust-project`. (Note: the embedded TUI server defaults `--trust-project` 
 unified with `mecated`, so a project `.mecatl/soul.md` is
 honoured only when you pass `--trust-project` to `mecatui`.)
 
+### Project rules (`.claude/rules`)
+
+A **project/user rule** fragment — markdown rule files (`<name>.md`) discovered from
+the conventional locations and injected as a **turn-0 user message** (after the
+cache-stable system prefix, between the root instructions and the soul — project
+context before persona). Each rule is fenced in a `<rule name="…">…</rule>` block
+with an `Applies when:` condition, and the model is told to apply a rule's `paths:`
+glob itself ("when working in matching files, follow the rule; otherwise it does
+not apply"). This is the pattern-2 instance of scoped context assembly; see
+[ADR 0081](../adr/0081-rules-source-port.md).
+
+Discovery is **always-on**, like AGENTS.md/CLAUDE.md themselves — no flag, and inert
+when no directory exists. The conventional lanes, in descending precedence, are:
+
+- `<workspace>/.mecatl/rules` and `<workspace>/.claude/rules` — the **project** tier
+  (a project rule overrides a personal one of the same name);
+- `$XDG_CONFIG_HOME/mecatl/rules` (fallback `~/.config/mecatl/rules`) and
+  `~/.claude/rules` — the **user** tier.
+
+The **project tier is trust-gated**: a rule under `<workspace>/.claude/rules` in an
+**untrusted** workspace is withheld (with a WARN) until you trust the repo
+(`--trust-project` or `trustedWorkspaces`). The user-tier lanes are never gated —
+your own `~/.claude/rules` always applies.
+
+The whole load is **fail-soft**: a missing dir, an unreadable file, malformed
+frontmatter, or a discovery fault degrades to no fragment, never an error that
+aborts a run. A single rule body is capped at 20 KiB; the combined rule fragment is
+capped at 40 KiB across 32 rules, and rules beyond the cap are dropped with a
+footer and a WARN.
+
 ### User model (`~/.config/mecatl/usermodel`)
 
 A **user-scoped, cross-project** model of durable **FACTS about the operator** — who

@@ -105,7 +105,7 @@ func TestUserModelE2E(t *testing.T) {
 	}
 	// soulSrc + project memStore nil — isolate the user-model block (matches the old
 	// NoSoul:true). The cast mirrors composition (the adapter satisfies the port).
-	asm := buildInstructionAssembler(nil, nil, storeB)
+	asm := buildInstructionAssembler(nil, nil, nil, storeB)
 
 	obs := &observedReq{}
 	prov := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(obs.observer())}, mockllm.TextTurn("done"))

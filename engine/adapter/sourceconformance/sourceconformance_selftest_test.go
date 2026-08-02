@@ -34,6 +34,14 @@ func TestCommandFixtureSourceConformance(t *testing.T) {
 	})
 }
 
+// TestRuleFixtureSourceConformance self-tests the rules suite against the
+// in-memory reference source — same rationale as the agent self-test.
+func TestRuleFixtureSourceConformance(t *testing.T) {
+	RunRulesSource(t, func(_ *testing.T) prompt.RulesSource {
+		return NewRuleFixtureSource()
+	})
+}
+
 // TestFixtureCoversTheThreeShapes pins the canonical fixture's shape contract
 // (the suite's docs promise it): at least one skill with both a text and an
 // executable asset, one asset-less skill, and one multi-segment logical name —
