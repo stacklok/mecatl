@@ -184,6 +184,16 @@ through it; the compaction summarizer (`engine/agent/cascade.go`) builds its own
 `prompt.Layered{StablePrefix: summarizerSystemPrompt}` directly and is explicitly NOT routed
 through the host builder (the summarizer's structured-output contract is host-independent).
 
+**One default tone; no active output-economy tier (issue #337, ADR 0082).**
+`engine/prompt/builder.go` (`defaultTone`) remains byte-for-byte unchanged: concise
+final delivery is separated from investigation/reasoning depth, and the minimum-change,
+read-before-edit, trust-boundary-validation, and safety clauses remain always on. The former
+composition-only `terse` delta, app config fields/fold, and dedicated perf scenario are gone.
+For one release only, the three cmd parsers still accept hidden `--output-economy` as a
+warning no-op, and `internal/adapter/permconfig/schema.go` (`OutputEconomy`) keeps the
+lenient top-level YAML key solely to warn through `port.Diagnostics`; neither value reaches
+`prompt.Config.Tone`. Generated config artifacts deliberately omit the compatibility key.
+
 ## Port — `engine/port/`
 
 The PORT interfaces the loop consumes (`LLMProvider`, `SessionStore`, `HookRunner`,

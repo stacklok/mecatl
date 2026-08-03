@@ -1,14 +1,35 @@
 package main
 
 import (
+	"bytes"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/app"
 )
+
+func TestLegacyOutputEconomyFlagIsNoOpAndWarns(t *testing.T) {
+	f, err := parseFlags([]string{"--prompt", "hi", "--output-economy", "terse"})
+	if err != nil {
+		t.Fatalf("legacy --output-economy must remain parseable for one release: %v", err)
+	}
+	if !f.outputEconomyFlagSet || f.outputEconomy != "terse" {
+		t.Fatalf("legacy flag capture = (%q, %v), want (terse, true)", f.outputEconomy, f.outputEconomyFlagSet)
+	}
+	if _, ok := reflect.TypeOf(appConfig(f, nil)).FieldByName("OutputEconomy"); ok {
+		t.Fatal("app.Config unexpectedly exposes OutputEconomy; legacy CLI value could affect behavior")
+	}
+	var warning bytes.Buffer
+	warnDeprecatedOutputEconomy(&warning, true)
+	if got := warning.String(); !strings.Contains(got, "--output-economy is deprecated and has no effect") || !strings.Contains(got, "remove it") {
+		t.Fatalf("deprecation warning missing no-effect/removal guidance: %q", got)
+	}
+}
 
 // TestParseFlagsPromptInputs covers the prompt-input validation matrix: a literal
 // prompt, a prompt file, both, neither (error), and an unreadable file (error).
@@ -322,4 +343,32 @@ func TestAppConfigMapping(t *testing.T) {
 			t.Error("a present OPENAI_API_KEY should flip UseOpenAI on (mecated parity)")
 		}
 	})
+}
+
+// TestHelpOutputExcludesDeprecatedOutputEconomyFlag exercises the ACTUAL help
+// output: it calls the usageEpilogue helper parseFlags wires (cmd/mecatequi/flags.go
+// line 189) and asserts the deprecated --output-economy flag is absent while a
+// real flag (--workspace) is present. Without this, a call-site regression (e.g.
+// switching PrintDefaultsHide to PrintDefaults) would re-expose the flag in
+// --help without a failing test.
+func TestHelpOutputExcludesDeprecatedOutputEconomyFlag(t *testing.T) {
+	fs := flag.NewFlagSet("mecatequi", flag.ContinueOnError)
+	var buf bytes.Buffer
+	fs.SetOutput(&buf)
+
+	// Register the deprecated flag + a control flag so we can assert real flags
+	// ARE printed.
+	fs.String("output-economy", "", "DEPRECATED")
+	fs.String("workspace", "", "workspace root")
+
+	// The EXACT Usage closure parseFlags wires (cmd/mecatequi/flags.go:189).
+	usageEpilogue(fs)()
+
+	out := buf.String()
+	if strings.Contains(out, "--output-economy") || strings.Contains(out, "-output-economy") {
+		t.Fatalf("help output must not advertise the deprecated --output-economy flag:\n%s", out)
+	}
+	if !strings.Contains(out, "-workspace") {
+		t.Fatalf("help output missing the -workspace control flag (flags are not being printed at all):\n%s", out)
+	}
 }

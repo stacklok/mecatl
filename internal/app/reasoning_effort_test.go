@@ -118,7 +118,7 @@ func TestResolveSessionEffortPrecedence(t *testing.T) {
 	}
 }
 
-// TestFoldOperatorReasoningEffortCLIOutRanksYAML mirrors foldOperatorOutputEconomy:
+// TestFoldOperatorReasoningEffortCLIOutRanksYAML mirrors foldOperatorPosture:
 // a CLI flag (ReasoningEffortFlagSet) wins; a nil resolver is a no-op; a YAML key
 // folds when no CLI flag.
 func TestFoldOperatorReasoningEffortCLIOutRanksYAML(t *testing.T) {

@@ -446,15 +446,16 @@ type config struct {
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
-	// outputEconomy is the operator-tier output-economy token (ADR 0041): "" (unset
-	// → the default tone already carries the economy contract), "normal" (explicit
-	// no-op), or "terse" (adds the answer-length clause for explanatory turns). An
-	// unknown value fail-softs to "" with a WARN. Operator-tier only: the
-	// operator-global settings.yaml output-economy: key folds in, a project-tier key
-	// is WARN-ignored.
+	// outputEconomy is a DEPRECATED legacy CLI flag (ADR 0041, superseded). It is
+	// still PARSED so a legacy `--output-economy` invocation does not fail, but it
+	// has NO EFFECT on agent behaviour: the "terse" tone delta was removed and the
+	// default system prompt already carries the prose-economy / minimum-code /
+	// safety carveout guidance. When set, run() emits a deprecation WARN telling
+	// the operator to remove it. Marked for follow-up removal.
 	outputEconomy string
-	// outputEconomyFlagSet is true when --output-economy was passed explicitly, so
-	// composition lets CLI out-rank the settings.yaml output-economy: key.
+	// outputEconomyFlagSet is true when --output-economy was passed explicitly,
+	// gating the deprecation WARN (only warn when the operator actually used the
+	// legacy flag).
 	outputEconomyFlagSet bool
 	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055): ""
 	// or "auto" (unset → the provider default) or low/medium/high/xhigh/max.
@@ -694,6 +695,11 @@ func run(mode commandMode, remaining []string) error {
 	// nothing. Done AFTER the slog default is installed so the warning lands on the
 	// operator-visible log path, before any listener binds.
 	emitLegacyWarning(os.Stderr, mode, cfg.acp)
+
+	// Deprecation WARN for the legacy --output-economy flag (ADR 0041, superseded):
+	// the flag still PARSES (so a legacy invocation does not fail) but has NO EFFECT
+	// on agent behaviour. Warn once at startup when the operator passed it explicitly.
+	warnDeprecatedOutputEconomy(diag, cfg.outputEconomyFlagSet)
 
 	// Operator posture: print/refuse/WARN for the AUTHORITATIVE composed tier (the
 	// --posture flag + --yolo/--trust-project aliases + the operator-global
@@ -997,10 +1003,6 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// YAML-only allow-all tier cannot escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
-		// Output-economy tier (ADR 0041): operator-tier only; outputEconomyFlagSet
-		// lets CLI out-rank the operator-global settings.yaml output-economy: key.
-		OutputEconomy:        cfg.outputEconomy,
-		OutputEconomyFlagSet: cfg.outputEconomyFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
@@ -1035,6 +1037,35 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 	}
 	cfg.toolhiveLLMFlags.Apply(&out)
 	return out
+}
+
+// mecatedUsage returns a fs.Usage closure that prints the mecated usage banner: a
+// header line, the offline subcommands (config init, skills promote, perf-mcp
+// print-config), a "Flags:" header, and the flag defaults minus the deprecated
+// --output-economy flag. Callers that want to assert the banner is the real one
+// (not a dead copy) wire this helper rather than duplicating the closure.
+func mecatedUsage(fs *flag.FlagSet) func() {
+	return func() {
+		out := fs.Output()
+		_, _ = fmt.Fprintf(out, "Usage: mecated [flags]\n       mecated <command> [args]\n\n")
+		_, _ = fmt.Fprintf(out, "Commands:\n")
+		_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
+		_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
+		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n\n")
+		_, _ = fmt.Fprintf(out, "Flags:\n")
+		// Hide the deprecated --output-economy flag from normal --help output. It
+		// stays PARSEABLE (cliconfig.PrintDefaultsHide omits only the named
+		// flags) so a legacy invocation does not fail, but is not advertised.
+		cliconfig.PrintDefaultsHide(fs, "output-economy")
+	}
+}
+
+func warnDeprecatedOutputEconomy(diag port.Diagnostics, set bool) {
+	if !set {
+		return
+	}
+	diag.Log(context.Background(), port.LevelWarn,
+		"--output-economy is deprecated and has no effect; remove it (the output-economy terse prompt delta was removed)")
 }
 
 // applyPostureCLI resolves the AUTHORITATIVE posture tier (the --posture flag +
@@ -1301,7 +1332,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.printPosture, "print-posture", false, "print the resolved operator posture tier and a plain-English line per defense, then exit (does not start the server)")
 
 	fs.StringVar(&cfg.outputEconomy, "output-economy", "",
-		"OPERATOR OUTPUT-ECONOMY TIER (ADR 0041): normal (default — the system prompt already carries the prose-economy + minimum-code ladder + safety carveout) or terse (additionally caps purely-explanatory answers to a few sentences, offering to elaborate rather than elaborating unprompted — the most over-steer-prone rule, so opt-in). Empty = unset (honours the operator-global settings.yaml output-economy: key if present). Operator-tier only; a project-tier output-economy: key is ignored with a WARN. An unknown value fail-softs to the default with a WARN.")
+		"DEPRECATED, NO EFFECT (ADR 0041, superseded): the output-economy \"terse\" tone delta and this flag's behaviour were removed — the default system prompt already carries the prose-economy scope, the minimum-code ladder, and the safety carveout. Kept parseable for legacy invocations; remove this flag from your command line. A legacy top-level settings.yaml `output-economy:` key is likewise parsed and warned, with no effect.")
 
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider's own default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only, so xhigh/max are clamped down to high (with a WARN); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key if present). A per-session CreateSession reasoning_effort out-ranks this default. A model with no reasoning support drops it. Operator-tier only; a project-tier reasoning-effort: key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")

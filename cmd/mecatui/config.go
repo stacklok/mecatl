@@ -158,10 +158,10 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
-	// outputEconomy is the operator-tier output-economy token (ADR 0041) for the
-	// EMBEDDED server. outputEconomyFlagSet records an explicit --output-economy so
-	// CLI out-ranks the operator-global settings.yaml output-economy: key. Mapped
-	// onto app.Config.OutputEconomy/OutputEconomyFlagSet in embeddedConfig.
+	// outputEconomy is a DEPRECATED legacy CLI flag (ADR 0041, superseded) for
+	// parser compatibility. It still PARSES so an existing invocation does not fail,
+	// but has NO EFFECT on the embedded server prompt. outputEconomyFlagSet gates the
+	// pre-TUI deprecation warning. Marked for follow-up removal.
 	outputEconomy        string
 	outputEconomyFlagSet bool
 	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055) for
@@ -336,7 +336,7 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.posture, "posture", "",
 		"embedded server only: OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted = --trust-project; auto adds allow-all + main substitution loosening (child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF). --yolo/--trust-project are aliases. auto/yolo refused as root outside MECATL_SANDBOX. Unknown value fails closed to strict.")
 	fs.StringVar(&cfg.outputEconomy, "output-economy", "",
-		"embedded server only: OPERATOR OUTPUT-ECONOMY TIER (ADR 0041): normal (default — the system prompt already carries the prose-economy + minimum-code ladder + safety carveout) or terse (additionally caps purely-explanatory answers to a few sentences, offering to elaborate rather than elaborating unprompted). Empty = unset (honours the operator-global settings.yaml output-economy: key if present). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to the default with a WARN.")
+		"DEPRECATED, NO EFFECT (ADR 0041, superseded): the output-economy \"terse\" tone delta and this flag's behaviour were removed. Kept parseable for legacy invocations; remove this flag from your command line.")
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"embedded server only: OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). A per-session /effort out-ranks it. Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
 	fs.BoolVar(&cfg.quiet, "quiet", false,
@@ -362,6 +362,8 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: loopback listen address for the --perf admin surface (empty = the fixed default 127.0.0.1:9099, predictable so an MCP-client config can hardcode the /mcp URL; distinct from mecated's :9090). Pass another host:port, or 127.0.0.1:0 for an ephemeral port. On a port clash, start FAILS with guidance. Only consulted with --perf")
 	fs.IntVar(&cfg.perfGoroutineWarnThreshold, "perf-goroutine-warn-threshold", 0, "embedded server only: arm the live goroutine-leak watchdog — log a Warn whenever runtime.NumGoroutine() exceeds this count (decision 10). 0 (default) disables the alarm; the /metrics goroutine-count series is exported regardless. Only consulted with --perf")
 	fs.BoolVar(&cfg.perfMCP, "perf-mcp", false, "embedded server only: mount the read-only perf MCP server at /mcp on the --perf admin surface, so an agent can introspect THIS process's runtime/latency/profile state over MCP (list_slow_turns, runtime/heap/CPU profiles, FlightRecorder). Only meaningful with --perf. SECURITY: loopback-bound, UNAUTHENTICATED (decision 6) — embed REFUSES a non-loopback --perf-addr with this set")
+
+	fs.Usage = mecatuiUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
@@ -409,9 +411,8 @@ func parseFlags(args []string) (config, error) {
 	}
 	// Validate --terminal-title and resolve it onto terminalTitleOff. Accepted
 	// values: on/true/1/"" → on (the default); off/false/0 → off; anything else
-	// fails fast (match the validated-string convention posture/output-economy
-	// use, but those fail-soft — a title toggle is binary, so an unknown value is
-	// a genuine config error, not a soft-degrade case).
+	// fails fast (unlike posture's fail-soft behavior, a title toggle is binary, so
+	// an unknown value is a genuine config error, not a soft-degrade case).
 	switch cfg.terminalTitle {
 	case "on", "true", "1", "":
 		cfg.terminalTitleOff = false
@@ -455,6 +456,20 @@ func parseFlags(args []string) (config, error) {
 	}
 	cfg.subagentAskReviewerPolicy = policy
 	return cfg, nil
+}
+
+// mecatuiUsage returns a fs.Usage closure that prints the mecatui usage banner: a
+// header line and the flag defaults minus the deprecated --output-economy flag.
+// Callers that want to assert the banner is the real one (not a dead copy) wire
+// this helper rather than duplicating the closure.
+func mecatuiUsage(fs *flag.FlagSet) func() {
+	return func() {
+		out := fs.Output()
+		_, _ = fmt.Fprintf(out, "Usage of %s:\n", fs.Name())
+		// Legacy parser compatibility only: --output-economy remains accepted for
+		// one release but is deliberately absent from normal help.
+		cliconfig.PrintDefaultsHide(fs, "output-economy")
+	}
 }
 
 // readAskReviewerPolicy reads the --subagent-ask-reviewer-policy rubric file and

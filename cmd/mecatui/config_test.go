@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	goflag "flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,24 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
 )
+
+func TestLegacyOutputEconomyFlagIsNoOpAndWarns(t *testing.T) {
+	cfg, err := parseFlags([]string{"--workspace", "/ws", "--output-economy", "terse"})
+	if err != nil {
+		t.Fatalf("legacy --output-economy must remain parseable for one release: %v", err)
+	}
+	if !cfg.outputEconomyFlagSet || cfg.outputEconomy != "terse" {
+		t.Fatalf("legacy flag capture = (%q, %v), want (terse, true)", cfg.outputEconomy, cfg.outputEconomyFlagSet)
+	}
+	if _, ok := reflect.TypeOf(embeddedConfig(cfg, port.NopDiagnostics{})).FieldByName("OutputEconomy"); ok {
+		t.Fatal("app.Config unexpectedly exposes OutputEconomy; legacy CLI value could affect behavior")
+	}
+	var warning bytes.Buffer
+	warnDeprecatedOutputEconomy(&warning, true)
+	if got := warning.String(); !strings.Contains(got, "--output-economy is deprecated and has no effect") || !strings.Contains(got, "remove it") {
+		t.Fatalf("deprecation warning missing no-effect/removal guidance: %q", got)
+	}
+}
 
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
 // agent-definition discovery (consistent with EnableTeams/EnableParallel; inert until a
@@ -1021,5 +1042,31 @@ func TestValidateAllowAllServerGuard(t *testing.T) {
 		if err := refused.validate(); err == nil {
 			t.Error("embedded + allow-all as root without a sandbox should be refused")
 		}
+	}
+}
+
+// TestHelpOutputExcludesDeprecatedOutputEconomyFlag exercises the REAL help
+// output: it calls the mecatuiUsage helper parseFlags wires and asserts the
+// deprecated --output-economy flag is absent while a real flag (--workspace) is
+// present. A call-site regression (e.g. switching PrintDefaultsExcluding to
+// PrintDefaults) would re-expose the flag in --help and fail this test.
+func TestHelpOutputExcludesDeprecatedOutputEconomyFlag(t *testing.T) {
+	fs := goflag.NewFlagSet("mecatui", goflag.ContinueOnError)
+	var buf bytes.Buffer
+	fs.SetOutput(&buf)
+
+	// Register the deprecated flag + a control flag so we can assert real flags
+	// ARE printed.
+	fs.String("output-economy", "", "DEPRECATED")
+	fs.String("workspace", "", "workspace root")
+
+	mecatuiUsage(fs)()
+
+	out := buf.String()
+	if strings.Contains(out, "--output-economy") || strings.Contains(out, "-output-economy") {
+		t.Fatalf("help output must not advertise the deprecated --output-economy flag:\n%s", out)
+	}
+	if !strings.Contains(out, "-workspace") {
+		t.Fatalf("help output missing the -workspace control flag (flags are not being printed at all):\n%s", out)
 	}
 }

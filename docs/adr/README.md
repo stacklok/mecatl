@@ -107,6 +107,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)
+- [0082 — Remove the output-economy control surface](./0082-remove-output-economy-control.md) *(supersedes 0041)*
 - [0055 — Reasoning-effort knob](./0055-reasoning-effort.md)
 
 ### UX & forge

@@ -288,6 +288,15 @@ Two deliberate cycle-breaks worth noting, documented in code:
   `governance` without a cycle); the `Evaluator` works on primitive args, and
   the `permpolicy` adapter bridges `session` types into it.
 
+**Default prompt behavior.** `engine/prompt/builder.go` (`defaultTone`) owns one
+cache-stable default tone. Its concise-delivery guidance is explicitly scoped away
+from investigation and reasoning depth, while the minimum-change ladder,
+read-before-edit discipline, trust-boundary validation, and safety carveouts remain
+always on. There is no active output-economy tier: the former `terse` delta and its
+public flag/config surface were removed by [ADR 0082](adr/0082-remove-output-economy-control.md).
+For one release, legacy `--output-economy` and top-level `output-economy:` inputs
+remain parser-compatible no-ops that warn; they do not alter `prompt.Config.Tone`.
+
 **Typed tool results.** A `session.ToolResult` may carry typed content blocks on
 `ToolResult.Parts` (`[]session.Content`, additive — a zero-value `Parts` is the
 legacy string-only shape). Composition projects them to the model via

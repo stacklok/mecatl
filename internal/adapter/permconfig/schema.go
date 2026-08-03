@@ -86,24 +86,26 @@ type Config struct {
 	// slot keys fail-soft). A nil Models means the key was absent. The composition
 	// layer reads the maps; permconfig only carries them.
 	Models *ModelsSection `yaml:"models"`
-	// OutputEconomy is the OPERATOR-TIER output-economy scalar (ADR 0041: "" / "normal"
-	// / "terse"). Like Posture it is honoured ONLY from the user-global + CLI tiers; a
-	// project-tier file's output-economy: key is IGNORED with a WARN (operator-tier
-	// only, for consistency with posture/guardrails). Empty = absent (the resolver
-	// returns "" and composition keeps the default tone). The composition layer
-	// interprets the token; permconfig only reads the scalar.
+	// OutputEconomy is a DEPRECATED top-level scalar (ADR 0041, superseded). It is
+	// still PARSED (lenient top-level settings decoding) so a legacy settings.yaml
+	// carrying `output-economy:` does not fail, but it has NO EFFECT on agent
+	// behaviour at any tier: the output-economy "terse" tone delta and its
+	// --output-economy flag were removed. A non-empty value emits a deprecation WARN
+	// through the resolver diagnostics at every tier it appears (operator or
+	// project); the captured value is NOT consumed by composition. Marked for
+	// follow-up removal.
 	OutputEconomy string `yaml:"output-economy"`
 	// ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (ADR 0055: the
 	// neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max").
-	// Like Posture/OutputEconomy it is honoured ONLY from the user-global + CLI
-	// tiers; a project-tier file's reasoning-effort: key is IGNORED with a WARN
+	// Like Posture it is honoured ONLY from the user-global + CLI tiers; a
+	// project-tier file's reasoning-effort: key is IGNORED with a WARN
 	// (operator-tier only, for consistency — a project cannot raise the model's
 	// reasoning spend). Empty = absent (the resolver returns "" and composition uses
 	// the provider default). The composition layer interprets + clamps the token;
 	// permconfig only reads the scalar.
 	ReasoningEffort string `yaml:"reasoning-effort"`
 	// PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue
-	// #206 Wave 6a). Like Posture/OutputEconomy/ReasoningEffort it is honoured ONLY
+	// #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY
 	// from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve:
 	// key is IGNORED with a WARN (operator-tier only — a project repo enabling
 	// autonomous plan approval is a security DOWNGRADE). false = absent (the resolver

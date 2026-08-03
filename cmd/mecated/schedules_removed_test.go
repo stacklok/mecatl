@@ -12,10 +12,8 @@ import (
 // dispatch and no HTTP client left in the binary, so a bare `mecated schedules`
 // falls through to normal daemon startup (the deleted dispatch no longer
 // intercepts os.Args[1]=="schedules"), and the usage banner no longer
-// advertises the removed subcommand. The gRPC/REST schedule surface the
-// (removed) CLI dialed is RETAINED — it is now reached by the in-chat Schedule
-// tool and out-of-band REST/gRPC clients, pinned by
-// TestScheduleTool_WireSurvivesSettingsCLIRemoval in internal/adapter/server.
+// advertises the removed subcommand. This test wires the REAL writeTopLevelHelp
+// helper so a change that re-adds the subcommand to the banner fails here.
 func TestScheduleTool_SchedulesCLIRemoved(t *testing.T) {
 	// The usage banner must not advertise a removed subcommand (no presence
 	// marker — the removal is clean). Assert against the REAL production help

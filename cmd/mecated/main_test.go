@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime/trace"
 	"strings"
 	"testing"
@@ -17,9 +19,11 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
+	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -36,6 +40,29 @@ func seedQuarantine(t *testing.T, quarantine, name, body string) {
 	content := "---\nname: " + name + "\ndescription: \"a seeded candidate\"\norigin: model\ndrafted_at: 2026-01-01T00:00:00Z\n---\n\n" + body + "\n"
 	if err := os.WriteFile(filepath.Join(dir, skills.SkillFileName), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLegacyOutputEconomyFlagIsNoOpAndWarns(t *testing.T) {
+	cfg, err := parseFlags([]string{"--output-economy", "terse"})
+	if err != nil {
+		t.Fatalf("legacy --output-economy must remain parseable for one release: %v", err)
+	}
+	if !cfg.outputEconomyFlagSet || cfg.outputEconomy != "terse" {
+		t.Fatalf("legacy flag capture = (%q, %v), want (terse, true)", cfg.outputEconomy, cfg.outputEconomyFlagSet)
+	}
+
+	// appConfig deliberately has no output-economy mapping; the legacy token stops
+	// at the cmd parser and therefore cannot change prompt composition.
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
+	if _, ok := reflect.TypeOf(ac).FieldByName("OutputEconomy"); ok {
+		t.Fatal("app.Config unexpectedly exposes OutputEconomy; legacy CLI value could affect behavior")
+	}
+
+	var buf bytes.Buffer
+	warnDeprecatedOutputEconomy(slogdiag.New(&buf, false, port.LevelDebug), true)
+	if got := buf.String(); !strings.Contains(got, "--output-economy is deprecated and has no effect") || !strings.Contains(got, "remove it") {
+		t.Fatalf("deprecation warning missing no-effect/removal guidance: %q", got)
 	}
 }
 
@@ -924,5 +951,31 @@ func TestAdminMuxMountsPerfMCP(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("POST /mcp status = %d, want 404 when --perf-mcp is off", resp.StatusCode)
+	}
+}
+
+// TestHelpOutputExcludesDeprecatedOutputEconomyFlag exercises the REAL help
+// output: it calls the mecatedUsage helper parseFlags wires and asserts the
+// deprecated --output-economy flag is absent while a real flag (--workspace) is
+// present. A call-site regression (e.g. switching PrintDefaultsExcluding to
+// PrintDefaults) would re-expose the flag in --help and fail this test.
+func TestHelpOutputExcludesDeprecatedOutputEconomyFlag(t *testing.T) {
+	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
+	var buf bytes.Buffer
+	fs.SetOutput(&buf)
+
+	// Register the deprecated flag + a control flag so we can assert real flags
+	// ARE printed.
+	fs.String("output-economy", "", "DEPRECATED")
+	fs.String("workspace", "", "workspace root")
+
+	mecatedUsage(fs)()
+
+	out := buf.String()
+	if strings.Contains(out, "--output-economy") || strings.Contains(out, "-output-economy") {
+		t.Fatalf("help output must not advertise the deprecated --output-economy flag:\n%s", out)
+	}
+	if !strings.Contains(out, "-workspace") {
+		t.Fatalf("help output missing the -workspace control flag (flags are not being printed at all):\n%s", out)
 	}
 }

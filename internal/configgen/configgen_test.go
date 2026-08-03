@@ -41,8 +41,8 @@ func authoritativeKeys() []string {
 	collect("models.router.categories", permconfig.RouterCategory{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
-	// output-economy is likewise a bare scalar Config field (ADR 0041).
-	keys = append(keys, "output-economy")
+	// output-economy is deliberately absent: it is a deprecated, top-level-lenient
+	// parser-compatibility field only and MUST NOT appear in generated artifacts.
 	// reasoning-effort is likewise a bare scalar Config field (ADR 0055).
 	keys = append(keys, "reasoning-effort")
 	return keys
@@ -129,11 +129,25 @@ func TestEmbeddedSkeletonMatchesFreshRender(t *testing.T) {
 }
 
 // nonSectionConfigFields is the EXPLICIT allowlist of permconfig.Config yaml-tagged
-// fields that are deliberately NOT rendered as settings.yaml subtrees. It is empty
-// today; if a future Config field is intentionally excluded (e.g. an internal toggle),
-// add it here WITH a comment justifying why operators don't see it — the test then
-// stays green only for a CONSCIOUS exclusion, never a silent omission.
-var nonSectionConfigFields = map[string]bool{}
+// fields that are deliberately NOT rendered as settings.yaml subtrees. A field may
+// appear here only with a reason operators should not see it.
+var nonSectionConfigFields = map[string]bool{
+	// Deprecated parser compatibility for one release: accepted only to WARN and
+	// ignored, so advertising it in the skeleton/reference would be misleading.
+	"output-economy": true,
+}
+
+func TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	for name, artifact := range map[string]string{
+		"skeleton":  configgen.RenderSkeleton(model),
+		"reference": configgen.RenderReference(model),
+	} {
+		if strings.Contains(artifact, "output-economy") {
+			t.Errorf("%s advertises deprecated output-economy compatibility input", name)
+		}
+	}
+}
 
 // TestEveryConfigSubtreeHasAModel closes the SUBTREE-grain drift gap: it reflects over
 // permconfig.Config DIRECTLY (the real top-level surface) and asserts every yaml-tagged
@@ -173,7 +187,6 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"permissions":            configgen.TierProject,  // allow/ask/deny + subagent: project-settable (allows trust-gated)
 		"guardrails":             configgen.TierOperator, // operator-only: a project cannot weaken a security checker
 		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
-		"output-economy":         configgen.TierOperator, // operator-only: a project cannot raise the automation posture (ADR 0041)
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)

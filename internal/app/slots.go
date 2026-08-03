@@ -369,7 +369,7 @@ func foldOperatorSubagentModel(cfg Config, cliKeys cliModelKeys) Config {
 // captureModels discipline) onto cfg.DefaultProvider. A CLI --default-provider
 // (cfg.DefaultProviderFlagSet) OUT-RANKS the YAML value. It is a no-op when no
 // operator-tier models.default_provider: key was configured. Mirrors
-// foldOperatorModelDefault / foldOperatorPosture / foldOperatorOutputEconomy. cfg is
+// foldOperatorModelDefault / foldOperatorPosture. cfg is
 // taken and returned by value.
 //
 // The value feeds the UNCHANGED preferredDefaultProvider ladder as an explicit

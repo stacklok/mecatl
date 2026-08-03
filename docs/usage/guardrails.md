@@ -208,22 +208,6 @@ a **project-tier `posture:` is ignored with a WARN** (security-critical fail-clo
 A `--posture` flag (or its `--yolo`/`--trust-project` aliases) **out-ranks** the YAML
 value; an unknown value fails closed to `strict` with a WARN.
 
-#### The operator-global `output-economy:` setting
-
-The output-economy tier (ADR 0041) can likewise be set once in the **user-global**
-`settings.yaml`, via an optional top-level `output-economy:` string:
-
-```yaml
-# ~/.config/mecatl/settings.yaml  (user-global only)
-output-economy: terse   # normal | terse
-```
-
-Like `posture:`/`guardrails:`, it is **operator-tier ONLY** — read from the user-global
-`settings.yaml` + the CLI, **never** the project-tier file (a project-tier
-`output-economy:` is ignored with a WARN, for consistency with posture/guardrails; a
-project can still influence prose style via `AGENTS.md`). A `--output-economy` flag
-**out-ranks** the YAML value; an unknown value fail-softs to the default with a WARN.
-
 #### The operator-global `reasoning-effort:` setting
 
 The reasoning-effort tier ([ADR 0055](../adr/0055-reasoning-effort.md)) can likewise be
@@ -238,7 +222,7 @@ reasoning-effort: high   # auto | low | medium | high | xhigh | max
 `auto` (or empty) means unset — the provider's own default applies. **OpenAI** supports
 `low`/`medium`/`high` only, so `xhigh`/`max` are **clamped down to `high`** with a WARN
 naming the requested and clamped-to values; **Anthropic** maps all five. Like
-`posture:`/`output-economy:`, it is **operator-tier ONLY** — read from the user-global
+`posture:`, it is **operator-tier ONLY** — read from the user-global
 `settings.yaml` + the CLI, **never** the project-tier file (a project-tier
 `reasoning-effort:` is ignored with a WARN — a project cannot raise the model's reasoning
 spend). A `--reasoning-effort` flag **out-ranks** the YAML value, and a per-session

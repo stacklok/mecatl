@@ -160,7 +160,7 @@ type Config struct {
 	// DefaultProviderFlagSet records whether the operator passed an explicit
 	// --default-provider flag. When true, foldOperatorDefaultProvider leaves the
 	// operator-YAML models.default_provider: value alone (CLI out-ranks YAML, mirroring
-	// posture/output-economy/reasoning-effort). Set by the cmd mains alongside
+	// posture/reasoning-effort). Set by the cmd mains alongside
 	// DefaultProvider. The YAML value folds onto DefaultProvider so an operator can
 	// declare "toolhive is my default despite my API key" persistently in settings.yaml.
 	DefaultProviderFlagSet bool
@@ -702,25 +702,11 @@ type Config struct {
 	// (CLI out-ranks YAML) and resolvePosture WARNs if an alias raised above the
 	// explicit value. Set by the cmd mains alongside Posture.
 	PostureFlagSet bool
-	// OutputEconomy is the operator-tier output-economy token (ADR 0041): "" (unset
-	// → the default tone already carries the ADR 0041 economy contract), "normal"
-	// (explicit default, a no-op), or "terse" (adds the answer-length clause for
-	// explanatory turns — the most over-steer-prone rule, so opt-in). It is folded
-	// from the operator-YAML output-economy: key by foldOperatorOutputEconomy (CLI
-	// out-ranks YAML, mirroring posture) and applied as a TONE delta in promptConfig
-	// (composition only — the prompt package stays economy-agnostic). Operator-tier
-	// only: a project-tier output-economy: key is WARN-ignored by permconfig.
-	OutputEconomy string
-	// OutputEconomyFlagSet records whether the operator passed an explicit
-	// --output-economy flag. When true, foldOperatorOutputEconomy leaves the
-	// operator-YAML value alone (CLI out-ranks YAML). Set by the cmd mains alongside
-	// OutputEconomy.
-	OutputEconomyFlagSet bool
 	// ReasoningEffort is the OPERATOR-TIER reasoning-effort default (ADR 0055): the
 	// neutral vocabulary "" / "auto" (unset — provider default) / "low" / "medium" /
 	// "high" / "xhigh" / "max". It is folded from the operator-YAML reasoning-effort:
-	// key by foldOperatorReasoningEffort (CLI out-ranks YAML, mirroring posture/
-	// output-economy) and threaded into the provider registry as the DEFAULT effort
+	// key by foldOperatorReasoningEffort (CLI out-ranks YAML, mirroring posture)
+	// and threaded into the provider registry as the DEFAULT effort
 	// each adapter is built with; a per-session CreateSession.reasoning_effort
 	// OUT-RANKS it (resolveSessionEffort), re-minting the adapter via the engine
 	// factory when it differs. Operator-tier only: a project-tier reasoning-effort:
@@ -1084,7 +1070,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the TrustProject floor.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg = foldOperatorPosture(cfg)
-	cfg = foldOperatorOutputEconomy(cfg)
 	cfg = foldOperatorReasoningEffort(cfg)
 	cfg = foldOperatorPlanModeAutoApprove(cfg)
 	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
@@ -6270,61 +6255,7 @@ func promptConfig(cfg Config, gitStatus string) prompt.Config {
 	if d := agencyDelta(cfg.Model); d != "" {
 		pc.Role = prompt.DefaultRole() + "\n\n" + d
 	}
-	// The output-economy TONE delta is supplied HERE (the prompt package stays
-	// economy-tier-agnostic); fold it onto the default tone. The default tone
-	// already carries the ADR 0041 economy contract (prose scope, ladder, safety
-	// carveout); "terse" adds the answer-length clause for explanatory turns — the
-	// most over-steer-prone rule, so opt-in. "normal"/"" are no-ops.
-	if d := outputEconomyToneDelta(cfg.OutputEconomy); d != "" {
-		pc.Tone = d
-	}
 	return pc
-}
-
-// outputEconomyToneDelta returns the tone override for the operator-tier
-// output-economy setting (ADR 0041). "" and "normal" return "" (no override — the
-// default defaultTone already carries the economy contract, so Build falls through
-// to it). "terse" returns the default tone PLUS the answer-length clause for
-// explanatory turns, the most over-steer-prone rule (so it is opt-in, not the
-// always-on default). An unknown token WARN-falls to "" (no override) — fail-soft,
-// never a boot refusal.
-func outputEconomyToneDelta(token string) string {
-	switch strings.ToLower(strings.TrimSpace(token)) {
-	case "", "normal":
-		return ""
-	case "terse":
-		// The terse delta is the default tone (ADR 0041) PLUS the answer-length
-		// clause — the one rule too over-steer-prone for the always-on default.
-		// Built from prompt.DefaultTone() so it never drifts from the default.
-		return prompt.DefaultTone() + "\n\n" +
-			"For a purely explanatory answer (no code change requested), answer in " +
-			"at most a few sentences unless the asker requests depth. Offer to " +
-			"elaborate rather than elaborating unprompted."
-	default:
-		return ""
-	}
-}
-
-// foldOperatorOutputEconomy merges the OPERATOR-TIER `output-economy:` YAML scalar
-// (read by the permconfig resolver from the user-global + CLI tiers ONLY — never the
-// project file, which is IGNORED with a WARN) onto cfg.OutputEconomy. A CLI
-// --output-economy (cfg.OutputEconomyFlagSet) OUT-RANKS the YAML value. It is a no-op
-// when no operator-tier output-economy: key was configured. Mirrors
-// foldOperatorPosture. cfg is taken and returned by value.
-func foldOperatorOutputEconomy(cfg Config) Config {
-	if cfg.OutputEconomyFlagSet {
-		return cfg // CLI wins; YAML cannot override an explicit flag.
-	}
-	res, ok := cfg.permResolver.(*permconfig.Resolver)
-	if !ok || res == nil {
-		return cfg
-	}
-	yamlEconomy := strings.TrimSpace(res.OperatorOutputEconomy())
-	if yamlEconomy == "" {
-		return cfg
-	}
-	cfg.OutputEconomy = yamlEconomy
-	return cfg
 }
 
 // foldOperatorReasoningEffort merges the OPERATOR-TIER `reasoning-effort:` YAML
@@ -6332,7 +6263,7 @@ func foldOperatorOutputEconomy(cfg Config) Config {
 // never the project file, which is IGNORED with a WARN) onto cfg.ReasoningEffort.
 // A CLI --reasoning-effort (cfg.ReasoningEffortFlagSet) OUT-RANKS the YAML value.
 // It is a no-op when no operator-tier reasoning-effort: key was configured.
-// Mirrors foldOperatorOutputEconomy. cfg is taken and returned by value (ADR 0055).
+// Mirrors foldOperatorPosture. cfg is taken and returned by value (ADR 0055).
 func foldOperatorReasoningEffort(cfg Config) Config {
 	if cfg.ReasoningEffortFlagSet {
 		return cfg // CLI wins; YAML cannot override an explicit flag.
@@ -6352,12 +6283,12 @@ func foldOperatorReasoningEffort(cfg Config) Config {
 // foldOperatorPlanModeAutoApprove merges the OPERATOR-TIER plan-mode-auto-approve:
 // YAML bool (read by the permconfig resolver from the user-global + CLI tiers
 // ONLY — never the project file, which is IGNORED with a WARN) onto
-// cfg.PlanModeAutoApprove. Unlike posture/output-economy (string folds with CLI
+// cfg.PlanModeAutoApprove. Unlike posture/reasoning-effort (string folds with CLI
 // out-rank), a bool has no CLI flag twin in the fold path — the CLI flag sets
 // Config.PlanModeAutoApprove directly, and this fold only raises it when the
 // operator YAML says true and the flag left it false. It is a no-op when no
 // operator-tier key was configured or the flag already set it. Mirrors
-// foldOperatorPosture/foldOperatorOutputEconomy. cfg is taken and returned by
+// foldOperatorPosture. cfg is taken and returned by
 // value (issue #206 Wave 6a).
 func foldOperatorPlanModeAutoApprove(cfg Config) Config {
 	if cfg.PlanModeAutoApprove {

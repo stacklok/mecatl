@@ -291,8 +291,12 @@ func TestEnvBlockGitStatusSubBlock(t *testing.T) {
 	}
 }
 
-// TestDefaultToneOutputEconomy pins the output-economy contract (ADR 0041, as
-// rebalanced by ADR 0054) in the default StablePrefix. It asserts the load-bearing
+// TestDefaultToneSafetyAndCorrectnessClauses pins the surviving default-tone
+// contract (ADR 0041 as rebalanced by ADR 0054, the prose-economy control surface
+// removed by the ADR superseding 0041) in the default StablePrefix. The
+// output-economy "terse" operator knob was REMOVED; these clauses — the
+// investigation-depth / minimum-change / safety / read-before-edit / trust-boundary
+// guidance baked into the always-on defaultTone — STAY. It asserts the load-bearing
 // clauses are present: (1) brevity scoped to the FINAL message to the client, with
 // reasoning named as a PROTECTED channel and an explicit exemption list — the
 // interleaved-reasoning regression (Claude Code #32508/#42796) where "be brief"
@@ -304,7 +308,7 @@ func TestEnvBlockGitStatusSubBlock(t *testing.T) {
 // (ponytail Axis 2); (5) the Edit-over-Write nudge — the mecatl-native economy
 // lever. All live in StablePrefix (cache-stable, gauntlet #6). If any clause is
 // silently dropped or weakened in a future tone rewrite, this fails.
-func TestDefaultToneOutputEconomy(t *testing.T) {
+func TestDefaultToneSafetyAndCorrectnessClauses(t *testing.T) {
 	got := prompt.Build(prompt.Config{Tools: sampleTools()}).StablePrefix
 
 	for _, want := range []string{
@@ -326,7 +330,7 @@ func TestDefaultToneOutputEconomy(t *testing.T) {
 		"Prefer Edit (emit only the change) over Write",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("output-economy clause missing %q\nprefix=%q", want, got)
+			t.Errorf("defaultTone clause missing %q\nprefix=%q", want, got)
 		}
 	}
 }

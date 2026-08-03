@@ -23,7 +23,6 @@ func BuildModel(docs Docs) *Model {
 		permissionsSubtree(docs),
 		guardrailsSubtree(docs),
 		postureSubtree(docs),
-		outputEconomySubtree(docs),
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
 		modelsSubtree(docs),
@@ -159,26 +158,6 @@ func postureSubtree(docs Docs) *Subtree {
 			Default:      "(empty)",
 			Doc:          docFor(docs, "Config.Posture", "the posture-ladder tier (strict/trusted/auto/yolo)"),
 			ExampleValue: "trusted",
-		}},
-	}
-}
-
-func outputEconomySubtree(docs Docs) *Subtree {
-	return &Subtree{
-		Key:  "output-economy",
-		Tier: TierOperator,
-		Doc: "OPERATOR-TIER output-economy scalar (ADR 0041): \"\" / \"normal\" / \"terse\". " +
-			"\"terse\" slims the agent's prose (the ladder + prose scope + safety carveout); " +
-			"a project-tier output-economy: is IGNORED with a WARN (a project cannot raise " +
-			"the automation posture). Empty = keep the CLI/default tone.",
-		CommentedOut: true,
-		Scalar:       true,
-		Fields: []*Field{{
-			Key:          "output-economy",
-			Type:         "string",
-			Default:      "(empty)",
-			Doc:          docFor(docs, "Config.OutputEconomy", "the output-economy tier (normal/terse)"),
-			ExampleValue: "terse",
 		}},
 	}
 }

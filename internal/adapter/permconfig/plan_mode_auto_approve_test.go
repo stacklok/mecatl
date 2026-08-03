@@ -31,7 +31,7 @@ func TestOperatorPlanModeAutoApproveFromCLIHonoured(t *testing.T) {
 // NEVER become the operator value — a project repo (attacker-influenceable) must not
 // be able to enable autonomous plan approval, which bypasses the human plan-review
 // gate (a security DOWNGRADE). The resolver WARNs naming why, mirroring the sibling
-// operator-tier scalars (guardrails/posture/reasoning-effort/output-economy).
+// operator-tier scalars (guardrails/posture/reasoning-effort).
 func TestProjectPlanModeAutoApproveIgnoredWithWarn(t *testing.T) {
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)

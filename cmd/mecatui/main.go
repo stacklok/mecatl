@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -67,6 +68,7 @@ func run(args []string) error {
 	// stray ambient/third-party slog line corrupt. The host-embedded branch later refines
 	// this floor to the mecatui.log file writer. See docs/adr/0020-diagnostics.md.
 	installBaselineSlog(cfg.quiet)
+	warnDeprecatedOutputEconomy(os.Stderr, cfg.outputEconomyFlagSet)
 
 	// Operator-posture WARN: mecatui has no slog and runs on the alt screen, so emit a
 	// single pre-TUI stderr line (it lands in scrollback before the alt screen takes
@@ -223,6 +225,13 @@ func keyOverridesFromConfig(cfg config) map[string][]string {
 		}
 	}
 	return out
+}
+
+func warnDeprecatedOutputEconomy(w io.Writer, set bool) {
+	if !set {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "mecatui: WARNING: --output-economy is deprecated and has no effect; remove it (the output-economy terse prompt delta was removed)")
 }
 
 func resolveTransport(ctx context.Context, cfg config) (target string, dial client.DialConfig, cleanup func(), err error) {
@@ -482,10 +491,6 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
-		// Output-economy tier (ADR 0041): operator-tier only; outputEconomyFlagSet
-		// lets CLI out-rank the operator-global settings.yaml output-economy: key.
-		OutputEconomy:        cfg.outputEconomy,
-		OutputEconomyFlagSet: cfg.outputEconomyFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,

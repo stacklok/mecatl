@@ -128,8 +128,10 @@ type flags struct {
 	// explicit --posture so composition lets CLI out-rank the settings.yaml key.
 	posture        string
 	postureFlagSet bool
-	// Output-economy tier (ADR 0041). outputEconomyFlagSet records an explicit
-	// --output-economy so composition lets CLI out-rank the settings.yaml key.
+	// Output-economy tier (ADR 0041, DEPRECATED/superseded): the flag still PARSES
+	// so a legacy invocation does not fail, but has NO EFFECT on agent behaviour.
+	// outputEconomyFlagSet gates the startup deprecation WARN. Marked for
+	// follow-up removal.
 	outputEconomy        string
 	outputEconomyFlagSet bool
 	// Reasoning-effort tier (ADR 0055). reasoningEffortFlagSet records an explicit
@@ -197,7 +199,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.StringVar(&f.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a TRUSTED policy rubric file for --subagent-ask-reviewer; its CONTENT replaces the built-in rubric. Read once at startup; an unreadable file fails startup")
 
 	fs.StringVar(&f.posture, "posture", "", "OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate — and a headless single-shot run has NO approver, so a main-agent ask CANCELS the run (exit 1). For an autonomous CI run use --posture auto (allow-all, child injection-defense ON) or trusted/yolo. trusted honours a project's ALLOW rules; auto adds allow-all + main substitution loosening; yolo additionally auto-runs $()/backtick/heredoc in children. An unknown value fails closed to strict")
-	fs.StringVar(&f.outputEconomy, "output-economy", "", "OPERATOR OUTPUT-ECONOMY TIER (ADR 0041): normal (default — the system prompt already carries the prose-economy + minimum-code ladder + safety carveout) or terse (additionally caps purely-explanatory answers to a few sentences, offering to elaborate rather than elaborating unprompted). Empty = unset (honours the operator-global settings.yaml output-economy: key if present). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to the default with a WARN")
+	fs.StringVar(&f.outputEconomy, "output-economy", "", "DEPRECATED, NO EFFECT (ADR 0041, superseded): the output-economy \"terse\" tone delta and this flag's behaviour were removed — the default system prompt already carries the prose-economy scope, the minimum-code ladder, and the safety carveout. Kept parseable for legacy invocations; remove this flag from your command line")
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN")
 
 	fs.Usage = usageEpilogue(fs)
@@ -319,7 +321,9 @@ func usageEpilogue(fs *flag.FlagSet) func() {
 		_, _ = fmt.Fprintf(out, "mecatequi — single-shot, headless mecatl runner for CI / batch use.\n\n")
 		_, _ = fmt.Fprintf(out, "Usage: mecatequi --prompt <text> [flags]\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
-		fs.PrintDefaults()
+		// Hide the deprecated --output-economy flag from normal --help output. It
+		// stays PARSEABLE so a legacy invocation does not fail, but is not advertised.
+		cliconfig.PrintDefaultsHide(fs, "output-economy")
 		_, _ = fmt.Fprintf(out, `
 Output routing:
   --out-summary defaults to stdout ("-"); --out-diff and --out-events are opt-in
@@ -379,10 +383,6 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 
 		Posture:        app.ParsePosture(f.posture),
 		PostureFlagSet: f.postureFlagSet,
-		// Output-economy tier (ADR 0041): operator-tier only; outputEconomyFlagSet
-		// lets CLI out-rank the operator-global settings.yaml output-economy: key.
-		OutputEconomy:        f.outputEconomy,
-		OutputEconomyFlagSet: f.outputEconomyFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        f.reasoningEffort,

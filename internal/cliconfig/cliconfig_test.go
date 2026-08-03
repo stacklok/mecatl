@@ -316,3 +316,51 @@ func TestToolhiveLLMFlags_ApplyNilReceiver(t *testing.T) {
 		t.Errorf("nil-receiver Apply mutated cfg: %+v", cfg)
 	}
 }
+
+// TestPrintDefaultsHideHidesDeprecatedFlag proves the help-text seam used to
+// keep legacy/deprecated flags PARSEABLE yet HIDDEN from normal --help output:
+// PrintDefaultsHide emits the stdlib PrintDefaults format for every flag
+// EXCEPT the named deprecated ones, which are omitted entirely. It compares the
+// included-flag lines to the stdlib's own PrintDefaults output byte-for-byte so a
+// formatting drift fails the test.
+func TestPrintDefaultsHideHidesDeprecatedFlag(t *testing.T) {
+	stdlib := flag.NewFlagSet("stdlib", flag.ContinueOnError)
+	var stdlibHidden, stdlibKept string
+	var stdlibBool bool
+	stdlib.StringVar(&stdlibHidden, "deprecated-thing", "", "a deprecated flag that should be hidden")
+	stdlib.StringVar(&stdlibKept, "kept-thing", "def", "a kept flag that should still appear")
+	stdlib.BoolVar(&stdlibBool, "x", false, "a one-letter bool flag")
+
+	filtered := flag.NewFlagSet("filtered", flag.ContinueOnError)
+	var filtHidden, filtKept string
+	var filtBool bool
+	filtered.StringVar(&filtHidden, "deprecated-thing", "", "a deprecated flag that should be hidden")
+	filtered.StringVar(&filtKept, "kept-thing", "def", "a kept flag that should still appear")
+	filtered.BoolVar(&filtBool, "x", false, "a one-letter bool flag")
+
+	var stdlibOut, filtOut strings.Builder
+	stdlib.SetOutput(&stdlibOut)
+	filtered.SetOutput(&filtOut)
+	stdlib.PrintDefaults()
+	PrintDefaultsHide(filtered, "deprecated-thing")
+
+	// The deprecated flag must be ABSENT from the filtered output.
+	if strings.Contains(filtOut.String(), "deprecated-thing") {
+		t.Errorf("filtered --help still contains the deprecated flag:\n%s", filtOut.String())
+	}
+	// Every stdlib line that is NOT part of the deprecated flag's block must appear
+	// verbatim in the filtered output (byte-for-byte format parity with the stdlib).
+	// The deprecated flag's first line ("-deprecated-thing string") is already
+	// excluded by the Contains check above; skip its continuation line by name.
+	for _, line := range strings.Split(stdlibOut.String(), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "deprecated-thing") || strings.Contains(line, "deprecated flag that should be hidden") {
+			continue
+		}
+		if !strings.Contains(filtOut.String(), line) {
+			t.Errorf("filtered --help missing stdlib line %q (format drift)\nstdlib:\n%s\nfiltered:\n%s", line, stdlibOut.String(), filtOut.String())
+		}
+	}
+}

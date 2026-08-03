@@ -15,7 +15,7 @@ import (
 
 // TestOperatorReasoningEffortFromCLIHonoured: an OPERATOR-TIER (CLI explicit)
 // reasoning-effort: scalar is read and returned by OperatorReasoningEffort()
-// (ADR 0055), mirroring the output-economy operator-tier test.
+// (ADR 0055), mirroring the posture operator-tier test.
 func TestOperatorReasoningEffortFromCLIHonoured(t *testing.T) {
 	const yaml = "reasoning-effort: high\n"
 	env := envWithExplicit("/etc/mecatl/effort.yaml", yaml)

@@ -98,13 +98,6 @@
 #| cannot raise the automation posture). Empty = keep the CLI/default.
 # posture: trusted
 
-#| === output-economy === (tier: operator)
-#| OPERATOR-TIER output-economy scalar (ADR 0041): "" / "normal" / "terse". "terse"
-#| slims the agent's prose (the ladder + prose scope + safety carveout); a project-tier
-#| output-economy: is IGNORED with a WARN (a project cannot raise the automation
-#| posture). Empty = keep the CLI/default tone.
-# output-economy: terse
-
 #| === reasoning-effort === (tier: operator)
 #| OPERATOR-TIER reasoning-effort scalar (ADR 0055): "" / "auto" (unset — the provider
 #| default) / "low" / "medium" / "high" / "xhigh" / "max". OpenAI clamps xhigh/max down

@@ -198,6 +198,16 @@ See [Permissions & guardrails](/what-you-get/permissions.md) for the full rule
 engine. Posture is read from the operator-global `settings.yaml` (`posture:` key)
 and out-ranked by the CLI flag when both are set.
 
+### Output-economy migration
+
+The former output-economy tier has been removed. There is now one default prompt tone,
+which keeps the investigation-depth, minimum-change, read-before-edit, trust-boundary,
+and safety guidance. For one compatibility release, stale `--output-economy` flags and
+top-level `output-economy:` settings are accepted as no-ops and emit a warning; remove
+them from scripts and configuration. The compatibility input is hidden from normal help
+and generated configuration. This applies to `mecated`, embedded `mecatui`, and
+`mecatequi`.
+
 ### Guardrails
 
 | Flag | Default | Notes |

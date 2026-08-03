@@ -13,25 +13,32 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
-// TestOperatorOutputEconomyFromCLIHonoured: an OPERATOR-TIER (CLI explicit)
-// output-economy: scalar is read and returned by OperatorOutputEconomy(). Mirrors
-// the posture operator-tier test (ADR 0041).
-func TestOperatorOutputEconomyFromCLIHonoured(t *testing.T) {
-	const yaml = "output-economy: terse\n"
-	env := envWithExplicit("/etc/mecatl/economy.yaml", yaml)
-	r := newWithEnv(Options{ExplicitFiles: []string{"/etc/mecatl/economy.yaml"}}, env)
+// TestOperatorOutputEconomyDeprecatedWarns: an OPERATOR-TIER (CLI explicit)
+// output-economy: scalar is PARSED (legacy compatibility) but has NO EFFECT — the
+// resolver emits a DEPRECATION WARN through its diagnostics. The captured value is
+// not surfaced (no OperatorOutputEconomy accessor; composition does not read it).
+func TestOperatorOutputEconomyDeprecatedWarns(t *testing.T) {
+	var buf bytes.Buffer
+	diag := slogdiag.New(&buf, false, port.LevelDebug)
+	env := envWithExplicit("/etc/mecatl/economy.yaml", "output-economy: terse\n")
+	r := newWithEnv(Options{
+		ExplicitFiles: []string{"/etc/mecatl/economy.yaml"},
+		Diagnostics:   diag,
+	}, env)
 	if r == nil {
 		t.Fatal("resolver should be non-nil with an explicit file")
 	}
-	if got := r.OperatorOutputEconomy(); got != "terse" {
-		t.Fatalf("operator-tier output-economy must be honoured from CLI/explicit; got %q", got)
+	_ = r.Resolve(context.Background(), &countingWS{Workspace: memfs.NewWorkspace("/repo")})
+	log := buf.String()
+	if !strings.Contains(log, "output-economy: DEPRECATED and has no effect") {
+		t.Fatalf("expected a DEPRECATION WARN for the legacy output-economy: scalar; got:\n%s", log)
 	}
 }
 
-// TestProjectOutputEconomyIgnoredWithWarn: a PROJECT-TIER output-economy: scalar
-// must NEVER become the operator value, and the resolver WARNs naming why
-// (operator-tier only — ADR 0041, for consistency with posture/guardrails).
-func TestProjectOutputEconomyIgnoredWithWarn(t *testing.T) {
+// TestProjectOutputEconomyDeprecatedWarns: a PROJECT-TIER output-economy: scalar
+// is likewise parsed and emits the SAME deprecation WARN (output-economy has no
+// effect at any tier now).
+func TestProjectOutputEconomyDeprecatedWarns(t *testing.T) {
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)
 
@@ -41,18 +48,17 @@ func TestProjectOutputEconomyIgnoredWithWarn(t *testing.T) {
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, Diagnostics: diag}, fakeEnv())
 	_ = r.Resolve(context.Background(), ws)
 
-	if got := r.OperatorOutputEconomy(); got != "" {
-		t.Fatalf("a PROJECT-tier output-economy must NOT become the operator value; got %q", got)
-	}
 	log := buf.String()
-	if !strings.Contains(log, "IGNORING a project-tier output-economy") {
-		t.Fatalf("expected an ignore-WARN naming the project tier; got:\n%s", log)
+	if !strings.Contains(log, "output-economy: DEPRECATED and has no effect") {
+		t.Fatalf("expected a DEPRECATION WARN for the project-tier output-economy: scalar; got:\n%s", log)
 	}
 }
 
-// TestOutputEconomyCLIOutranksUser: CLI out-ranks user-global (first-non-empty keeps CLI).
-func TestOutputEconomyCLIOutranksUser(t *testing.T) {
-	const cliYAML = "output-economy: normal\n"
+// TestUserGlobalOutputEconomyDeprecatedWarns: a USER-GLOBAL output-economy: scalar
+// emits the deprecation WARN (the operator tier is not special-cased — output-economy
+// is deprecated everywhere). CLI out-ranks user-global on first-non-empty, but BOTH
+// emit the deprecation WARN at most once (first-seen).
+func TestUserGlobalOutputEconomyDeprecatedWarns(t *testing.T) {
 	const userYAML = "output-economy: terse\n"
 	env := xdgconfig.ResolveEnv{
 		Getenv: func(k string) string {
@@ -63,26 +69,17 @@ func TestOutputEconomyCLIOutranksUser(t *testing.T) {
 		},
 		UserHomeDir: func() (string, error) { return "/home/u", nil },
 		ReadFile: func(p string) ([]byte, error) {
-			switch p {
-			case "/cli/economy.yaml":
-				return []byte(cliYAML), nil
-			case "/cfg/mecatl/settings.yaml":
+			if p == "/cfg/mecatl/settings.yaml" {
 				return []byte(userYAML), nil
 			}
 			return nil, errors.New("not found")
 		},
 	}
-	r := newWithEnv(Options{Conventional: true, ExplicitFiles: []string{"/cli/economy.yaml"}}, env)
-	if got := r.OperatorOutputEconomy(); got != "normal" {
-		t.Fatalf("CLI output-economy must out-rank user-global; got %q", got)
-	}
-}
-
-// TestOperatorOutputEconomyNilResolver pins the nil-safe accessor (a typed-nil
-// resolver returns "" not a panic), matching OperatorPosture.
-func TestOperatorOutputEconomyNilResolver(t *testing.T) {
-	var r *Resolver
-	if got := r.OperatorOutputEconomy(); got != "" {
-		t.Fatalf("nil resolver OperatorOutputEconomy = %q, want empty", got)
+	var buf bytes.Buffer
+	diag := slogdiag.New(&buf, false, port.LevelDebug)
+	r := newWithEnv(Options{Conventional: true, Diagnostics: diag}, env)
+	_ = r.Resolve(context.Background(), &countingWS{Workspace: memfs.NewWorkspace("/repo")})
+	if !strings.Contains(buf.String(), "output-economy: DEPRECATED and has no effect") {
+		t.Fatalf("expected a DEPRECATION WARN for the user-global output-economy: scalar; got:\n%s", buf.String())
 	}
 }

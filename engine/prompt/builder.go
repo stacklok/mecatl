@@ -115,10 +115,10 @@ const (
 func DefaultRole() string { return defaultRole }
 
 // DefaultTone returns the built-in tone/style block Build uses when Config.Tone is
-// empty. It is exported so the composition layer can compose an economy-tier delta
-// (ADR 0041: the "terse" posture appends an answer-length clause) onto the SAME
-// default tone the prompt uses, rather than carrying a private verbatim copy that
-// could silently diverge if the default is reworded.
+// empty. It is exported so the composition layer composes its own posture/model
+// deltas (e.g. the per-model agencyDelta) onto the SAME default tone the prompt
+// uses, rather than carrying a private verbatim copy that could silently diverge
+// if the default is reworded.
 func DefaultTone() string { return defaultTone }
 
 // Build assembles a Layered system prompt from cfg. The StablePrefix holds the

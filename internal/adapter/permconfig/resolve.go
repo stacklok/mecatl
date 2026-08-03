@@ -142,18 +142,19 @@ type Resolver struct {
 	// files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorPosture string
 
-	// operatorOutputEconomy is the OPERATOR-TIER output-economy: scalar (ADR 0041),
-	// read ONCE at construction from the user-global + CLI tiers ONLY. A project-tier
-	// file's output-economy: key is deliberately IGNORED (operator-tier only, for
-	// consistency with posture/guardrails — loadProjectRules WARNs when it sees one).
-	// Empty when no operator-tier file carried an output-economy: scalar. CLI
-	// (explicit files) out-ranks user-global (first-non-empty keeps CLI).
+	// operatorOutputEconomy is the DEPRECATED top-level output-economy: scalar (ADR
+	// 0041, superseded). It is still captured at construction so a legacy settings.yaml
+	// carrying `output-economy:` does not fail, but the value has NO EFFECT on agent
+	// behaviour: the "terse" tone delta and the --output-economy flag were removed. A
+	// non-empty value emits a deprecation WARN through the resolver diagnostics. CLI
+	// (explicit files) is parsed before user-global; first-non-empty wins. Marked for
+	// follow-up removal.
 	operatorOutputEconomy string
 
 	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar (ADR
 	// 0055), read ONCE at construction from the user-global + CLI tiers ONLY. A
 	// project-tier file's reasoning-effort: key is deliberately IGNORED (operator-
-	// tier only, for consistency with posture/output-economy — loadProjectRules WARNs
+	// tier only, for consistency with posture — loadProjectRules WARNs
 	// when it sees one). Empty when no operator-tier file carried a reasoning-effort:
 	// scalar. CLI (explicit files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorReasoningEffort string
@@ -204,24 +205,11 @@ func (r *Resolver) OperatorPosture() string {
 	return r.operatorPosture
 }
 
-// OperatorOutputEconomy returns the operator-tier output-economy: scalar (user-global
-// + CLI only), or "" when none was configured (ADR 0041). It is the SOLE accessor the
-// composition layer uses to read output-economy from config — by construction it never
-// returns a project-tier value (a project output-economy: is ignored with a WARN in
-// loadProjectRules). nil-safe.
-func (r *Resolver) OperatorOutputEconomy() string {
-	if r == nil {
-		return ""
-	}
-	return r.operatorOutputEconomy
-}
-
 // OperatorReasoningEffort returns the operator-tier reasoning-effort: scalar
 // (user-global + CLI only), or "" when none was configured (ADR 0055). It is the
 // SOLE accessor the composition layer uses to read reasoning-effort from config —
 // by construction it never returns a project-tier value (a project reasoning-effort:
-// is ignored with a WARN in loadProjectRules). nil-safe. Mirrors
-// OperatorOutputEconomy().
+// is ignored with a WARN in loadProjectRules). nil-safe. Mirrors OperatorPosture().
 func (r *Resolver) OperatorReasoningEffort() string {
 	if r == nil {
 		return ""
@@ -234,7 +222,7 @@ func (r *Resolver) OperatorReasoningEffort() string {
 // Wave 6a). It is the SOLE accessor the composition layer uses to read the flag
 // from config — by construction it never returns a project-tier value (a project
 // plan-mode-auto-approve: is ignored with a WARN in loadProjectRules). nil-safe.
-// Mirrors OperatorPosture()/OperatorOutputEconomy().
+// Mirrors OperatorPosture().
 func (r *Resolver) OperatorPlanModeAutoApprove() bool {
 	if r == nil {
 		return false
@@ -468,19 +456,19 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set posture in your user-global settings.yaml or via --posture)",
 				"file", src.path, "root", ws.Root(), "ignored_value", strings.TrimSpace(cfg.Posture))
 		}
-		// OutputEconomy is OPERATOR-TIER ONLY (ADR 0041), for consistency with posture/
-		// guardrails: a project file's output-economy: scalar is IGNORED with a loud
-		// WARN. It is a style/cost preference, not a security control, but keeping it
-		// operator-tier-only matches the established pattern and prevents a project
-		// from silently changing agent output behavior; a project can still influence
-		// prose style via AGENTS.md.
+		// OutputEconomy is DEPRECATED (ADR 0041, superseded): the output-economy
+		// "terse" tone delta and the --output-economy flag were removed, so a
+		// top-level output-economy: scalar has NO EFFECT at any tier. It is still
+		// parsed (lenient top-level decoding) so a legacy settings.yaml does not
+		// fail; a non-empty value emits a deprecation WARN here. Marked for
+		// follow-up removal.
 		if strings.TrimSpace(cfg.OutputEconomy) != "" {
 			r.diag.Log(context.Background(), port.LevelWarn,
-				"output-economy: IGNORING a project-tier output-economy: scalar (operator-tier only — set output-economy in your user-global settings.yaml or via --output-economy)",
+				"output-economy: DEPRECATED and has no effect; the --output-economy flag and the output-economy: setting were removed — remove this key from your settings.yaml",
 				"file", src.path, "root", ws.Root(), "ignored_value", strings.TrimSpace(cfg.OutputEconomy))
 		}
 		// ReasoningEffort is OPERATOR-TIER ONLY (ADR 0055), for consistency with
-		// posture/output-economy: a project file's reasoning-effort: scalar is IGNORED
+		// posture: a project file's reasoning-effort: scalar is IGNORED
 		// with a loud WARN. It is a cost/quality preference, not a security control,
 		// but keeping it operator-tier-only matches the established pattern and prevents
 		// a project from silently changing the model's reasoning spend.
@@ -677,8 +665,10 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureGuardrails(cfg.Guardrails)
 		// Operator-tier posture: same first-non-empty-keeps-CLI discipline as guardrails.
 		r.capturePosture(cfg.Posture)
-		// Operator-tier output-economy (ADR 0041): same discipline as posture.
-		r.captureOutputEconomy(cfg.OutputEconomy)
+		// Operator-tier output-economy (ADR 0041, DEPRECATED/superseded): the value
+		// has no effect; capture emits a deprecation WARN. Kept for legacy parse
+		// compatibility.
+		r.captureOutputEconomy(cfg.OutputEconomy, path)
 		// Operator-tier reasoning-effort (ADR 0055): same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
 		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
@@ -706,8 +696,10 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureGuardrails(cfg.Guardrails)
 				// User-global posture: captured only if no higher CLI file already did.
 				r.capturePosture(cfg.Posture)
-				// User-global output-economy (ADR 0041): same discipline as posture.
-				r.captureOutputEconomy(cfg.OutputEconomy)
+				// User-global output-economy (ADR 0041, DEPRECATED/superseded): the value
+				// has no effect; capture emits a deprecation WARN. Kept for legacy parse
+				// compatibility.
+				r.captureOutputEconomy(cfg.OutputEconomy, path)
 				// User-global reasoning-effort (ADR 0055): same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
 				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
@@ -765,11 +757,13 @@ func (r *Resolver) capturePosture(p string) {
 
 // captureOutputEconomy records the FIRST operator-tier output-economy: scalar seen
 // during construction (CLI files are parsed before user-global, so CLI wins on
-// first-non-empty). It is called only from loadUserRules — the operator (user-global
-// + CLI) tiers — never from loadProjectRules, so a project file can never supply
-// output-economy (operator-tier only, for consistency with posture/guardrails). A
-// whitespace-only value is treated as absent.
-func (r *Resolver) captureOutputEconomy(p string) {
+// first-non-empty) and emits a DEPRECATION WARN. The output-economy "terse" tone
+// delta and the --output-economy flag were removed (ADR 0041, superseded), so the
+// captured value has NO EFFECT on agent behaviour; it is kept only so a legacy
+// settings.yaml carrying `output-economy:` does not fail and the operator gets a
+// WARN telling them to remove it. file is the source path for the WARN. A
+// whitespace-only value is treated as absent. Marked for follow-up removal.
+func (r *Resolver) captureOutputEconomy(p, file string) {
 	if r.operatorOutputEconomy != "" {
 		return
 	}
@@ -777,6 +771,9 @@ func (r *Resolver) captureOutputEconomy(p string) {
 		return
 	}
 	r.operatorOutputEconomy = strings.TrimSpace(p)
+	r.diag.Log(context.Background(), port.LevelWarn,
+		"output-economy: DEPRECATED and has no effect; the --output-economy flag and the output-economy: setting were removed — remove this key from your settings.yaml",
+		"file", file, "ignored_value", r.operatorOutputEconomy)
 }
 
 // captureReasoningEffort records the FIRST operator-tier reasoning-effort: scalar
@@ -784,7 +781,7 @@ func (r *Resolver) captureOutputEconomy(p string) {
 // on first-non-empty). It is called only from loadUserRules — the operator
 // (user-global + CLI) tiers — never from loadProjectRules, so a project file can
 // never supply reasoning-effort (operator-tier only, for consistency with
-// posture/output-economy — ADR 0055). A whitespace-only value is treated as absent.
+// posture — ADR 0055). A whitespace-only value is treated as absent.
 func (r *Resolver) captureReasoningEffort(p string) {
 	if r.operatorReasoningEffort != "" {
 		return
