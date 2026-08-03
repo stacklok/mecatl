@@ -553,11 +553,20 @@ time, so GitHub applies its own limits and none of ours. Every constraint this d
 sits upstream of the only party that could enforce one against the actual API call — see
 [later phases](#later-phases).
 
-**Where the chain stops.** RFC 8693 §2.1 is explicit that an exchange "is a one-time event
-and does not create a tight linkage between the input and output tokens", so a backend cannot
-walk it back. Verifiability is scoped to **the gateway** — the only place where the claimed
+**Where the chain stops.** Two reasons, and an earlier version of this document gave a third
+that was wrong. RFC 8693 §4.1 requires a consumer to consider only the token's top-level
+claims and the party identified as the **current** actor, so a chain is present in the token
+and a conformant consumer still evaluates one hop of it — which also means policy at the
+gateway may not conformantly intersect a nested `act`. And the backend never receives that
+token at all: it receives a provider credential, so there is nothing there to walk.
+
+Verifiability is therefore scoped to **the gateway** — the only place where the claimed
 authority and the credential are both visible, and the only hop where refusing prevents
 anything.
+
+The claim this replaces cited §2.1's "one-time event... does not create a tight linkage between
+the input and output tokens" as meaning a backend cannot reconstruct the chain. That sentence is
+about lifecycle coupling between the two tokens, not about what the output carries.
 
 > **Today, with one strategy that breaks the rule.** Four of five outbound strategies derive
 > a credential without reading the inbound claims. **The AWS STS strategy reads them, and the
