@@ -732,14 +732,7 @@ func startEmbeddedBuiltServer(t *testing.T, cfg app.Config) (target string, buil
 		cancel()
 		t.Fatalf("app.Build: %v", err)
 	}
-	dir, err := os.MkdirTemp(t.TempDir(), "mecatui-")
-	if err != nil {
-		b.Close()
-		cancel()
-		t.Fatalf("create runtime dir: %v", err)
-	}
-	sock := filepath.Join(dir, "mecated.sock")
-	lis, err := net.Listen("unix", sock)
+	lis, target, dir, err := embed.NewUnixSocketListenerForTest()
 	if err != nil {
 		b.Close()
 		cancel()
@@ -749,10 +742,11 @@ func startEmbeddedBuiltServer(t *testing.T, cfg app.Config) (target string, buil
 	mecatlv1.RegisterHarnessServiceServer(grpcSrv, server.NewHarnessServer(b.Service))
 	mecatlv1.RegisterScheduleServiceServer(grpcSrv, server.NewScheduleServer(b.Service))
 	go func() { _ = grpcSrv.Serve(lis) }()
-	return "unix://" + sock, b, func() {
+	return target, b, func() {
 		grpcSrv.GracefulStop()
 		b.Close()
 		cancel()
+		_ = os.RemoveAll(dir)
 	}
 }
 

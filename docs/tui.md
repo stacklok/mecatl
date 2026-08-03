@@ -43,7 +43,9 @@ bin/mecatui --mock --workspace "$PWD"
 With no `--server`, mecatui runs in **auto** mode: it first probes the loopback
 default `127.0.0.1:8080` and **reuses a `mecated` already running there**; only if
 none answers does it host an **embedded** server itself (a UNIX socket in
-`$XDG_RUNTIME_DIR`, torn down on exit). The embedded provider is **auto-detected**
+`$XDG_RUNTIME_DIR` or the OS temporary directory, torn down on exit). On macOS,
+an overlong runtime path falls back to a private directory directly under `/tmp`
+to stay within Darwin's UNIX-socket path limit. The embedded provider is **auto-detected**
 from the environment — `ANTHROPIC_API_KEY` enables the `anthropic` provider (the
 native Messages API), `OPENAI_API_KEY` the `openai` provider, `OPENROUTER_API_KEY`
 the `openrouter` provider (set several, and you pick between their models in the

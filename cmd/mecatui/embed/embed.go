@@ -160,20 +160,11 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 		return nil, err
 	}
 
-	dir, err := os.MkdirTemp(runtimeDir(), "mecatui-")
+	lis, dir, sock, err := newUnixSocketListener()
 	if err != nil {
 		built.Close()
 		ps.teardown(ctx)
-		return nil, fmt.Errorf("create runtime dir: %w", err)
-	}
-	sock := filepath.Join(dir, socketName)
-
-	lis, err := net.Listen("unix", sock)
-	if err != nil {
-		built.Close()
-		_ = os.RemoveAll(dir)
-		ps.teardown(ctx)
-		return nil, fmt.Errorf("listen unix %q: %w", sock, err)
+		return nil, err
 	}
 
 	// No auth/TLS interceptors: the socket lives in a private, user-owned temp dir
@@ -544,4 +535,41 @@ func runtimeDir() string {
 		return d
 	}
 	return ""
+}
+
+// newUnixSocketListener creates the private socket directory and validates the
+// final path before binding. Darwin's sockaddr_un leaves only 103 bytes for a
+// pathname; a long XDG_RUNTIME_DIR or TMPDIR therefore falls back to a private
+// directory directly beneath /tmp. Other platforms retain the existing
+// runtime-directory selection unchanged.
+func newUnixSocketListener() (net.Listener, string, string, error) {
+	dir, err := os.MkdirTemp(runtimeDir(), "mecatui-")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("create runtime dir: %w", err)
+	}
+	sock := filepath.Join(dir, socketName)
+	if !unixSocketPathFits(sock) {
+		if err := os.RemoveAll(dir); err != nil {
+			return nil, "", "", fmt.Errorf("remove overlong runtime dir %q: %w", dir, err)
+		}
+		dir, err = os.MkdirTemp(darwinShortSocketBase, "mecatui-")
+		if err != nil {
+			return nil, "", "", fmt.Errorf("create short Darwin runtime dir: %w", err)
+		}
+		sock = filepath.Join(dir, socketName)
+	}
+	if !unixSocketPathFits(sock) {
+		_ = os.RemoveAll(dir)
+		return nil, "", "", fmt.Errorf(
+			"unix socket path %q is %d bytes; Darwin supports at most %d",
+			sock, len(sock), unixSocketPathLimit-1,
+		)
+	}
+
+	lis, err := net.Listen("unix", sock)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, "", "", fmt.Errorf("listen unix %q: %w", sock, err)
+	}
+	return lis, dir, sock, nil
 }
