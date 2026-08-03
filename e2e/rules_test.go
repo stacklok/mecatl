@@ -36,6 +36,26 @@ func ruleSpecs() {
 				"the rules ENABLED log must name the discovered 'testing' rule")
 		})
 
+		ginkgo.It("withholds project-tier rules on an untrusted workspace", func() {
+			// The trust gate is the ONE boundary for always-on conventional
+			// discovery (ADR 0081 §5): a second mecated spawned with
+			// --trust-project=false (Go's flag pkg: last wins over the standard
+			// args' --trust-project) must WITHHOLD the workspace lane
+			// (<workspace>/.claude/rules/testing.md) — the WARN is the
+			// deterministic composition fact, and "rules ENABLED" must NOT
+			// appear (the harness's fake-HOME user lanes carry no rules, so
+			// withholding the project tier leaves zero sources).
+			untrusted, err := harness.NewLocalWith("--trust-project=false")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawning an untrusted mecated failed")
+			defer func() { _ = untrusted.Close() }()
+
+			tail := untrusted.LogTail(64 * 1024)
+			gomega.Expect(tail).To(gomega.ContainSubstring("project-tier rules WITHHELD (untrusted workspace)"),
+				"an untrusted workspace must log the project-tier-withheld WARN; the trust gate on rules discovery is broken")
+			gomega.Expect(tail).NotTo(gomega.ContainSubstring("rules ENABLED"),
+				"rules were ENABLED on an untrusted workspace — a malicious repo's .claude/rules would reach the model")
+		})
+
 		ginkgo.It("behavioural marker: reply carries the rule's RULES-OK prefix",
 			ginkgo.Label("quarantine"), ginkgo.SpecTimeout(150*time.Second),
 			func(ctx ginkgo.SpecContext) {

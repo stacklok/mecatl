@@ -245,8 +245,11 @@ func (l *Local) start() error {
 		// workspace (fixtures.go laid them out): ~/.claude/skills (user-global
 		// lane) and <workspace>/.claude/skills (project lane, trust-gated).
 		"--skills-conventional",
-		// Honour the project tier (project skills + any project allows) — the
-		// workspace is harness-authored, so it is trusted by construction.
+		// Honour the project tier (project skills, agent defs, rules, and any
+		// project allows) — the workspace is harness-authored, so it is trusted
+		// by construction. The rules-untrusted spec overrides this with an
+		// appended --trust-project=false (Go's flag pkg: last wins) to prove
+		// the project tier is withheld on an untrusted workspace.
 		"--trust-project",
 		// CLI-scope permission config: allows for the ask-floor tools the
 		// scenarios exercise (Skill/Parallel/Team). Everything else keeps the
