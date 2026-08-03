@@ -405,6 +405,9 @@ type config struct {
 	// listeners. When set, mecated speaks JSON-RPC 2.0 to an ACP editor (Zed, etc.)
 	// that spawned it as a subprocess; the normal network daemon path is skipped.
 	acp bool
+	// acpFlagSet is true when --acp was passed explicitly (set after parse via
+	// fs.Visit), so we can detect conflicts with the canonical 'serve'/'acp' subcommands.
+	acpFlagSet bool
 
 	// ToolHive: discover MCP servers from the running ToolHive workloads (the
 	// embedded ToolHive library lists already-running workloads and reads their
@@ -481,73 +484,39 @@ func (l *stringList) Set(v string) error {
 }
 
 func main() {
-	if handled := dispatchSubcommand(); handled {
+	res := resolveCommand(os.Args)
+
+	// A usage error (unknown command / unknown-or-missing subcommand) fails
+	// closed BEFORE the daemon boots: print the actionable error and exit
+	// non-zero without constructing any listener.
+	if res.err != nil {
+		fmt.Fprintln(os.Stderr, "mecated:", res.err)
+		os.Exit(2)
+	}
+
+	// A fully-handled one-shot offline subcommand: run it against the real
+	// streams and exit with its error. --help from a subcommand is a successful
+	// action (flag.ErrHelp): usage already printed, exit 0.
+	if res.handled {
+		if err := res.run(os.Stdin, os.Stdout, os.Stderr); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			slog.Error("mecated subcommand failed", "err", err)
+			os.Exit(1)
+		}
 		return
 	}
-	if err := run(); err != nil {
+
+	// Daemon path: thread the resolved mode + remaining argv into run() explicitly.
+	if err := run(res.mode, res.remaining); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// --help already printed usage; exit success.
+			return
+		}
 		slog.Error("mecated exited with error", "err", err)
 		os.Exit(1)
 	}
-}
-
-// dispatchSubcommand inspects os.Args for an offline CLI subcommand (skills
-// promote / perf-mcp print-config / config) and runs it, returning
-// true when it handled the invocation (so main skips booting the daemon). A
-// subcommand parse error or a usage error exits the process directly from here.
-// It is split out of main so main's cyclomatic complexity stays bounded.
-func dispatchSubcommand() bool {
-	// Subcommand dispatch: `mecated skills promote ...` is the OPERATOR gate that
-	// moves a model-authored candidate skill out of quarantine into an active
-	// skills dir. It is a one-shot offline CLI action (no daemon), kept here so it
-	// shares the binary and the skills adapter.
-	if len(os.Args) >= 3 && os.Args[1] == "skills" && os.Args[2] == "promote" {
-		if err := runSkillsPromote(os.Args[3:], os.Stdin, os.Stderr); err != nil {
-			slog.Error("skills promote failed", "err", err)
-			os.Exit(1)
-		}
-		return true
-	}
-	// `mecated perf-mcp print-config` prints a paste-ready client .mcp.json snippet
-	// for the loopback perf MCP server. Loopback + no auth (decision 6), so the
-	// snippet carries NO Authorization header. One-shot offline CLI action.
-	if len(os.Args) >= 3 && os.Args[1] == "perf-mcp" && os.Args[2] == "print-config" {
-		if err := runPerfMCPPrintConfig(os.Args[3:], os.Stdout); err != nil {
-			slog.Error("perf-mcp print-config failed", "err", err)
-			os.Exit(1)
-		}
-		return true
-	}
-	// `mecated config ...` is the config-management subcommand group. The ONLY
-	// subcommand is `config init` (issue #140), which writes/prints a fully-commented
-	// operator settings.yaml skeleton (the embedded generated artifact — no go/ast in
-	// this binary). A bare `config` or an UNKNOWN `config <x>` must NOT fall through to
-	// run() and boot the daemon (a typo starting an unauthenticated server is a nasty
-	// surprise): it prints the available subcommand and exits non-zero.
-	if len(os.Args) >= 2 && os.Args[1] == "config" {
-		if len(os.Args) >= 3 && os.Args[2] == "init" {
-			if err := runConfigInit(os.Args[3:], os.Stdout); err != nil {
-				if errors.Is(err, flag.ErrHelp) {
-					return true // --help is a successful action: usage already printed, exit 0
-				}
-				slog.Error("config init failed", "err", err)
-				os.Exit(1)
-			}
-			return true
-		}
-		sub := ""
-		if len(os.Args) >= 3 {
-			sub = os.Args[2]
-		}
-		if sub == "" {
-			fmt.Fprintln(os.Stderr, "mecated config: missing subcommand")
-		} else {
-			fmt.Fprintf(os.Stderr, "mecated config: unknown subcommand %q\n", sub)
-		}
-		fmt.Fprintln(os.Stderr, "available subcommands:")
-		fmt.Fprintln(os.Stderr, "  config init    write/print the operator settings.yaml skeleton (--print, --force)")
-		os.Exit(2)
-	}
-	return false
 }
 
 // runConfigInit implements `mecated config init [--print] [--force]`: it writes the
@@ -683,13 +652,22 @@ func runPerfMCPPrintConfig(argv []string, out io.Writer) error {
 }
 
 // run parses flags, builds the engine/service via internal/app, and serves until a
-// termination signal arrives. It is separated from main so it can return errors
-// cleanly.
-func run() error {
-	cfg, err := parseFlags(os.Args[1:])
+// termination signal arrives. mode is the resolved canonical command word ("",
+// "serve", "acp") and remaining is the flag tail (argv with the command word
+// already stripped). It is separated from main so it can return errors cleanly.
+func run(mode commandMode, remaining []string) error {
+	cfg, err := parseFlagsMode(mode, remaining)
 	if err != nil {
 		return err
 	}
+
+	// Resolve the canonical subcommand vs the --acp flag into a final acp value,
+	// failing closed on a conflicting combination (`serve --acp`, `acp --acp=false`).
+	acp, merr := applyCommandMode(cfg, mode)
+	if merr != nil {
+		return merr
+	}
+	cfg.acp = acp
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	// slog.SetDefault stays for the daemon: this is the DELIBERATE, PERMANENT
@@ -706,6 +684,13 @@ func run() error {
 	// rather than slog.Default().
 	diag := slogdiag.NewFromLogger(logger)
 
+	// Legacy bare/`--acp` invocation: emit the once-per-startup deprecation
+	// warning through the SAME stderr logger installed above (the cmd main owns the
+	// sink; no package-level slog in internal/). Canonical `serve`/`acp` warn
+	// nothing. Done AFTER the slog default is installed so the warning lands on the
+	// operator-visible log path, before any listener binds.
+	emitLegacyWarning(os.Stderr, mode, cfg.acp)
+
 	// Operator posture: print/refuse/WARN for the AUTHORITATIVE composed tier (the
 	// --posture flag + --yolo/--trust-project aliases + the operator-global
 	// settings.yaml posture: key — the SAME tier app.Build resolves). Checked AFTER the
@@ -720,11 +705,99 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Observability: install the OTel metrics pipeline (always on) + the OTLP
-	// trace exporter/global TracerProvider (when --otlp-endpoint is set) BEFORE
-	// building the sinks below. Setup returns the meter provider feeding the
-	// domain instruments, the prometheus registry to serve at /metrics, the
-	// tracer provider, and a combined shutdown that flushes both.
+	// Observability: install the OTel metrics + tracing pipeline, the process
+	// gauges, the runtime profiling knobs, the flight recorder, and the goroutine-
+	// leak watchdog. Extracted into one helper so run()'s cyclomatic complexity
+	// stays under the lint gate; the helper owns the setup branches and returns
+	// the handles run() threads into app.Build and serve(). run() owns the
+	// shutdown defers (telemetry flush + flight-recorder stop) so they unwind on
+	// the daemon's exit, not the helper's.
+	obs, err := setupObservability(ctx, cfg, diag)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if serr := obs.providers.Shutdown(shutdownCtx); serr != nil {
+			slog.Warn("telemetry shutdown", "err", serr)
+		}
+	}()
+	if obs.recorder != nil {
+		defer obs.recorder.Stop()
+	}
+
+	tracing := telemetry.NewTracing(otel.GetTracerProvider())
+
+	// Role-scoped main pair (issue #47): the MAIN engine records through the
+	// role="main" view so EVERY series carries the role label uniformly —
+	// children get their own bounded-family views via the scoper below.
+	mainScoped := obs.metrics.WithRole(telemetry.RoleMain)
+
+	// Slow-turn ring buffer: when the perf MCP server is mounted it observes
+	// EvTurnEnd as one more EventSink fanned out alongside metrics/tracing, so its
+	// list_slow_turns tool sees the SAME TurnEndPayload the latency histograms do.
+	// It stores scalars only (redaction by shape) and spawns no goroutine. Built
+	// only when --perf-mcp is set so a bare daemon carries no extra sink. Main
+	// turns enter it with role="main"; child turns ride the scoper's fan-out.
+	var slowTurns *telemetry.SlowTurnBuffer
+	sinks := []port.EventSink{mainScoped, tracing}
+	if cfg.perfMCP {
+		slowTurns = telemetry.NewSlowTurnBuffer(telemetry.DefaultSlowTurnCapacity, time.Now)
+		sinks = append(sinks, slowTurns.WithRole(telemetry.RoleMain))
+	}
+	sink := telemetry.NewSink(sinks...)
+
+	// Child role scoper (issue #47): the composition hands each CHILD engine a
+	// role-scoped (EventSink, ToolCallRecorder) pair keyed on the BOUNDED family
+	// label internal/app's roleFamily already resolved ("subagent"/"member"/…).
+	// The returned sink ALSO fans into the shared slow-turn ring buffer (when
+	// mounted) so child turns appear in list_slow_turns carrying their role.
+	roleScoper := func(familyRole string) (port.EventSink, port.ToolCallRecorder) {
+		scoped := obs.metrics.WithRole(familyRole)
+		childSinks := []port.EventSink{scoped}
+		if slowTurns != nil {
+			childSinks = append(childSinks, slowTurns.WithRole(familyRole))
+		}
+		return telemetry.NewSink(childSinks...), scoped
+	}
+
+	built, err := app.Build(ctx, appConfig(cfg, sink, mainScoped, roleScoper, obs.metrics, diag))
+	if err != nil {
+		return err
+	}
+	defer built.Close()
+
+	// ACP mode: serve the Agent Client Protocol over stdio instead of the network
+	// daemon. The same engine/service assembly (app.Build) backs it; only the wire
+	// surface differs. No TLS/auth/rate-limit — stdio is a local parent-process
+	// boundary. Logs still go to stderr (set above), keeping stdout pure JSON-RPC.
+	if cfg.acp {
+		// session/load (resume) is offered only when a durable session store is
+		// configured: the in-memory store would lose snapshots across a restart, so
+		// loadSession stays false there. A remote session-store driver is durable
+		// (it replaces the JSONL dir), so it qualifies too.
+		return serveACP(ctx, built.Service, cfg.storeDir != "" || cfg.sessionStoreURL != "", diag)
+	}
+
+	return serve(ctx, cfg, built.Service, obs.providers.Registry, obs.recorder, slowTurns)
+}
+
+// observability holds the handles setupObservability returns and run() threads
+// into app.Build / serve / serveACP.
+type observability struct {
+	providers telemetry.Providers
+	metrics   *telemetry.Metrics
+	recorder  *telemetry.FlightRecorder
+}
+
+// setupObservability installs the OTel metrics pipeline (always on) + the OTLP
+// trace exporter (when --otlp-endpoint is set), the process gauges, the runtime
+// profiling knobs, the FlightRecorder, and the goroutine-leak watchdog. It
+// returns the handles run() needs; the caller owns the providers.Shutdown and
+// recorder.Stop defers (so shutdown winds down on the daemon's exit, not here).
+// Extracted from run() to keep its cyclomatic complexity under the lint gate.
+func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) (observability, error) {
 	providers, err := telemetry.Setup(ctx, telemetry.OTLPConfig{
 		Endpoint:    cfg.otlpEndpoint,
 		Protocol:    cfg.otlpProtocol,
@@ -732,33 +805,24 @@ func run() error {
 		ServiceName: "mecatl",
 	})
 	if err != nil {
-		return fmt.Errorf("setup telemetry: %w", err)
+		return observability{}, fmt.Errorf("setup telemetry: %w", err)
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if serr := providers.Shutdown(shutdownCtx); serr != nil {
-			slog.Warn("telemetry shutdown", "err", serr)
-		}
-	}()
 	if cfg.otlpEndpoint == "" {
 		slog.Info("tracing disabled (--otlp-endpoint empty); metrics + runtime collector active")
 	} else {
 		slog.Info("tracing enabled (OTLP exporter installed)", "endpoint", cfg.otlpEndpoint, "protocol", cfg.otlpProtocol, "insecure", cfg.otlpInsecure)
 	}
 
-	// Observability: the OTel meter provider feeds the EventSink/Logger adapter;
-	// its prometheus exporter renders those series on providers.Registry, served
-	// by the /metrics handler. Tracing uses the global OTel TracerProvider
-	// installed by telemetry.Setup above (a no-op when tracing is disabled).
+	// The OTel meter provider feeds the EventSink/Logger adapter; its prometheus
+	// exporter renders those series on providers.Registry, served by /metrics.
 	metrics, err := telemetry.NewMetrics(providers.Meter)
 	if err != nil {
-		return fmt.Errorf("setup metrics: %w", err)
+		return observability{}, fmt.Errorf("setup metrics: %w", err)
 	}
 	// Process-RSS gauge (mecatl.process.rss): Linux-only, no-op elsewhere. It
 	// rides the same MeterProvider so it renders on /metrics (decision 9).
 	if rerr := telemetry.RegisterProcessGauges(providers.Meter, diag); rerr != nil {
-		return fmt.Errorf("setup process gauges: %w", rerr)
+		return observability{}, fmt.Errorf("setup process gauges: %w", rerr)
 	}
 
 	// Runtime profiling knobs: arm mutex/block sampling only when explicitly
@@ -792,7 +856,6 @@ func run() error {
 		default:
 			recorder = rec
 			slog.Info("flight recorder armed (loopback /debug/flightrecorder)")
-			defer recorder.Stop()
 		}
 	}
 
@@ -805,61 +868,7 @@ func run() error {
 		telemetry.StartGoroutineWatchdog(ctx, cfg.goroutineWarnThreshold, cfg.goroutineWarnInterval, runtime.NumGoroutine, slog.Default())
 		slog.Info("goroutine-leak watchdog armed", "threshold", cfg.goroutineWarnThreshold, "interval", cfg.goroutineWarnInterval)
 	}
-
-	tracing := telemetry.NewTracing(otel.GetTracerProvider())
-
-	// Role-scoped main pair (issue #47): the MAIN engine records through the
-	// role="main" view so EVERY series carries the role label uniformly —
-	// children get their own bounded-family views via the scoper below.
-	mainScoped := metrics.WithRole(telemetry.RoleMain)
-
-	// Slow-turn ring buffer: when the perf MCP server is mounted it observes
-	// EvTurnEnd as one more EventSink fanned out alongside metrics/tracing, so its
-	// list_slow_turns tool sees the SAME TurnEndPayload the latency histograms do.
-	// It stores scalars only (redaction by shape) and spawns no goroutine. Built
-	// only when --perf-mcp is set so a bare daemon carries no extra sink. Main
-	// turns enter it with role="main"; child turns ride the scoper's fan-out.
-	var slowTurns *telemetry.SlowTurnBuffer
-	sinks := []port.EventSink{mainScoped, tracing}
-	if cfg.perfMCP {
-		slowTurns = telemetry.NewSlowTurnBuffer(telemetry.DefaultSlowTurnCapacity, time.Now)
-		sinks = append(sinks, slowTurns.WithRole(telemetry.RoleMain))
-	}
-	sink := telemetry.NewSink(sinks...)
-
-	// Child role scoper (issue #47): the composition hands each CHILD engine a
-	// role-scoped (EventSink, ToolCallRecorder) pair keyed on the BOUNDED family
-	// label internal/app's roleFamily already resolved ("subagent"/"member"/…).
-	// The returned sink ALSO fans into the shared slow-turn ring buffer (when
-	// mounted) so child turns appear in list_slow_turns carrying their role.
-	roleScoper := func(familyRole string) (port.EventSink, port.ToolCallRecorder) {
-		scoped := metrics.WithRole(familyRole)
-		childSinks := []port.EventSink{scoped}
-		if slowTurns != nil {
-			childSinks = append(childSinks, slowTurns.WithRole(familyRole))
-		}
-		return telemetry.NewSink(childSinks...), scoped
-	}
-
-	built, err := app.Build(ctx, appConfig(cfg, sink, mainScoped, roleScoper, metrics, diag))
-	if err != nil {
-		return err
-	}
-	defer built.Close()
-
-	// ACP mode: serve the Agent Client Protocol over stdio instead of the network
-	// daemon. The same engine/service assembly (app.Build) backs it; only the wire
-	// surface differs. No TLS/auth/rate-limit — stdio is a local parent-process
-	// boundary. Logs still go to stderr (set above), keeping stdout pure JSON-RPC.
-	if cfg.acp {
-		// session/load (resume) is offered only when a durable session store is
-		// configured: the in-memory store would lose snapshots across a restart, so
-		// loadSession stays false there. A remote session-store driver is durable
-		// (it replaces the JSONL dir), so it qualifies too.
-		return serveACP(ctx, built.Service, cfg.storeDir != "" || cfg.sessionStoreURL != "", diag)
-	}
-
-	return serve(ctx, cfg, built.Service, providers.Registry, recorder, slowTurns)
+	return observability{providers: providers, metrics: metrics, recorder: recorder}, nil
 }
 
 // appConfig maps the CLI/env config onto the shared app.Config build contract,
@@ -1108,8 +1117,18 @@ func renderPostureReport(p app.Posture) string {
 	return b.String()
 }
 
-// parseFlags turns argv into a config, resolving env-derived defaults.
+// parseFlags turns argv into a config, resolving env-derived defaults. The
+// --help hook renders the concise top-level command page (the legacy/bare form);
+// canonical `mecated serve --help` / `mecated acp --help` use parseFlagsMode so
+// their hook renders the exhaustive flag list. Existing callers that exercise
+// the flag-parsing logic (not the help-renderer selection) use this entry point.
 func parseFlags(argv []string) (config, error) {
+	return parseFlagsMode(modeLegacy, argv)
+}
+
+// parseFlagsMode is parseFlags with an explicit command mode, selecting which
+// help renderer the --help hook invokes. run() calls it with the resolved mode.
+func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
 	var cfg config
 
@@ -1278,18 +1297,17 @@ func parseFlags(argv []string) (config, error) {
 	fs.Float64Var(&cfg.rateLimit, "rate-limit", 0, "sustained per-client request rate in req/s (0 disables rate limiting)")
 	fs.IntVar(&cfg.rateBurst, "rate-burst", 0, "rate-limit token-bucket burst size (0 derives a sane default from --rate-limit)")
 
-	// Top-level --help lists the subcommands too, so the offline CLI actions (config
-	// init / skills promote / perf-mcp print-config) are discoverable from --help, not
-	// only from the docs (issue #140: config init is invisible to operators otherwise).
+	// Top-level --help shows a concise command-oriented entry page; canonical
+	// `mecated serve --help` / `mecated acp --help` show the exhaustive flag list.
+	// The renderers are package-local functions shared with the tests so the test
+	// suite exercises the REAL production output, never a copied helper.
 	fs.Usage = func() {
 		out := fs.Output()
-		_, _ = fmt.Fprintf(out, "Usage: mecated [flags]\n       mecated <command> [args]\n\n")
-		_, _ = fmt.Fprintf(out, "Commands:\n")
-		_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
-		_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
-		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n\n")
-		_, _ = fmt.Fprintf(out, "Flags:\n")
-		fs.PrintDefaults()
+		if mode == modeLegacy {
+			writeTopLevelHelp(out)
+			return
+		}
+		writeServeHelp(out, mode, fs)
 	}
 
 	if err := fs.Parse(argv); err != nil {
@@ -1299,29 +1317,7 @@ func parseFlags(argv []string) (config, error) {
 	// Record whether --posture was set EXPLICITLY (vs left at its empty default) so
 	// composition can let CLI out-rank the operator-global settings.yaml posture: key
 	// and WARN if an alias raised above an explicit lower --posture.
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "posture":
-			cfg.postureFlagSet = true
-		case "subagent-model-router":
-			// Tri-state (ADR 0042): record that the kill-switch flag was given so
-			// appConfig can distinguish "unset" (router governed by the taxonomy) from
-			// "=false" (kill-switch); "=true/bare" is inert (the taxonomy still governs).
-			cfg.subagentModelRouterSet = true
-		}
-		if f.Name == "output-economy" {
-			cfg.outputEconomyFlagSet = true
-		}
-		if f.Name == "reasoning-effort" {
-			cfg.reasoningEffortFlagSet = true
-		}
-		if f.Name == "schedule-fire-retention" {
-			cfg.scheduleFireRetentionSet = true
-		}
-		if f.Name == "default-provider" {
-			cfg.defaultProviderFlagSet = true
-		}
-	})
+	recordExplicitFlags(fs, &cfg)
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
 	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
@@ -1405,6 +1401,38 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, fmt.Errorf("--websearch %q: only \"off\" is accepted (the kill switch); web search is ON by default (Exa anonymous tier). Set SEARXNG_URL or BRAVE_API_KEY to switch backends, or --websearch-url for an explicit endpoint. Leave --websearch unset to keep web search enabled", cfg.websearchMode)
 	}
 	return cfg, nil
+}
+
+// recordExplicitFlags walks the parsed FlagSet and records which operator-knob
+// flags were set EXPLICITLY (vs left at their empty default), so composition can
+// let the CLI out-rank the operator-global settings.yaml keys. Extracted from
+// parseFlagsMode to keep its cyclomatic complexity under the lint gate.
+func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "posture":
+			cfg.postureFlagSet = true
+		case "subagent-model-router":
+			// Tri-state (ADR 0042): record that the kill-switch flag was given so
+			// appConfig can distinguish "unset" (router governed by the taxonomy) from
+			// "=false" (kill-switch); "=true/bare" is inert (the taxonomy still governs).
+			cfg.subagentModelRouterSet = true
+		case "acp":
+			cfg.acpFlagSet = true
+		}
+		if f.Name == "output-economy" {
+			cfg.outputEconomyFlagSet = true
+		}
+		if f.Name == "reasoning-effort" {
+			cfg.reasoningEffortFlagSet = true
+		}
+		if f.Name == "schedule-fire-retention" {
+			cfg.scheduleFireRetentionSet = true
+		}
+		if f.Name == "default-provider" {
+			cfg.defaultProviderFlagSet = true
+		}
+	})
 }
 
 // applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days

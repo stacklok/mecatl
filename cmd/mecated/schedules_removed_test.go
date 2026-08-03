@@ -18,16 +18,25 @@ import (
 // TestScheduleTool_WireSurvivesSettingsCLIRemoval in internal/adapter/server.
 func TestScheduleTool_SchedulesCLIRemoved(t *testing.T) {
 	// The usage banner must not advertise a removed subcommand (no presence
-	// marker — the removal is clean).
-	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
+	// marker — the removal is clean). Assert against the REAL production help
+	// renderer (writeTopLevelHelp) — the same one parseFlags' Usage hook invokes
+	// — not a vacuous string check against an output that never named "schedules".
 	var buf bytes.Buffer
-	fs.SetOutput(&buf)
-	cfg, err := parseFlags([]string{"--help"})
-	if err != flag.ErrHelp {
-		t.Fatalf("parseFlags(--help) = (%v, %v), want flag.ErrHelp", cfg, err)
+	writeTopLevelHelp(&buf)
+	out := buf.String()
+	if strings.Contains(out, "schedules") {
+		t.Fatalf("top-level help still advertises a `schedules` subcommand:\n%s", out)
 	}
-	if out := buf.String(); strings.Contains(out, "schedules <verb>") {
-		t.Fatalf("usage banner still advertises the removed `schedules <verb>` subcommand:\n%s", out)
+	// Sanity: the real renderer DID render the known commands, so the absence
+	// check above is not vacuously true on an empty output.
+	for _, want := range []string{"serve", "acp", "config init", "skills promote", "perf-mcp print-config"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("top-level help (real renderer) missing %q — the absence check is vacuous:\n%s", want, out)
+		}
+	}
+	// And the help path through parseFlags still resolves to flag.ErrHelp.
+	if _, err := parseFlags([]string{"--help"}); err != flag.ErrHelp {
+		t.Fatalf("parseFlags(--help) err = %v, want flag.ErrHelp", err)
 	}
 }
 

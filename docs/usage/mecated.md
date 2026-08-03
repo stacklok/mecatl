@@ -10,7 +10,7 @@ and serves the resulting `HarnessService` over gRPC and HTTP/SSE concurrently.
 
 ```console
 $ export OPENAI_API_KEY=sk-...
-$ go run ./cmd/mecated --openai --workspace "$PWD"
+$ go run ./cmd/mecated serve --openai --workspace "$PWD"
 ```
 
 ### Flags
@@ -223,7 +223,7 @@ The key is **never logged**.
 
 ```sh
 export BRAVE_API_KEY=…      # the secret; sent in a header, never the query string
-mecated                     # …plus your usual flags — Brave is now the backend
+mecated serve               # …plus your usual flags — Brave is now the backend
 ```
 
 **Switching to SearXNG (no API key):** [SearXNG](https://docs.searxng.org/)
@@ -248,7 +248,7 @@ docker run --rm -d -p 8080:8080 -v "$PWD/searxng:/etc/searxng" searxng/searxng
 
 # 3. point mecated at it (env tier — wins over the Exa default)
 export SEARXNG_URL=http://localhost:8080/search
-mecated                                                # …plus your usual flags
+mecated serve                                          # …plus your usual flags
 ```
 
 **A generic / commercial search API (explicit override):** `--websearch-url` speaks a
@@ -259,7 +259,7 @@ flag — it's a secret); tune the header and query parameter for the endpoint:
 
 ```sh
 export WEBSEARCH_API_KEY=…          # the secret; sent in a header, never in the URL/query
-mecated --websearch-url https://api.search.brave.com/res/v1/web/search \
+mecated serve --websearch-url https://api.search.brave.com/res/v1/web/search \
         --websearch-auth-header X-Subscription-Token \   # default "Authorization" (Bearer); set this for a raw-key header
         --websearch-query-param q                        # default "q"
 ```

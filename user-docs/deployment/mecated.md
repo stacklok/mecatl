@@ -21,12 +21,19 @@ default and is purpose-built for no-PVC pod deployments.
 
 ## Quick start
 
-The minimal invocation starts the server on loopback with an in-memory session
-store. No persistence, no auth — the single-user localhost trust model:
+The canonical invocation is `mecated serve`:
 
 ```sh
-mecated
+mecated serve
 ```
+
+For backward compatibility, bare `mecated` (without a command word) and
+`mecated --acp` still work, but are deprecated and emit a once-per-startup
+warning. Prefer `mecated serve` for the network daemon and `mecated acp` for
+the ACP stdio mode.
+
+The minimal invocation starts the server on loopback with an in-memory session
+store. No persistence, no auth — the single-user localhost trust model:
 
 Default addresses:
 
@@ -39,7 +46,7 @@ Default addresses:
 A slightly more configured invocation for unattended local operation:
 
 ```sh
-mecated \
+mecated serve \
   --store-dir ~/.local/share/mecatl/sessions \
   --auth-token "$(cat ~/.mecatl/token)" \
   --posture auto
@@ -271,7 +278,7 @@ development and single-shot clients.
 Enable JSONL persistence by pointing `--store-dir` at a directory:
 
 ```sh
-mecated --store-dir /var/lib/mecatl/sessions
+mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
 The store writes one JSONL file per session as a snapshot, plus a `.events.jsonl`
@@ -337,9 +344,16 @@ and cancel the session.
 
 ## Operator subcommands
 
-`mecated` ships three one-shot offline subcommands that do not start the daemon:
+`mecated` ships several subcommands. Two start the daemon, the rest are
+one-shot offline actions:
 
 ```sh
+# Start the network daemon (gRPC + HTTP/SSE) — canonical
+mecated serve [flags]
+
+# Serve the Agent Client Protocol over stdio (JSON-RPC 2.0) for an editor
+mecated acp [flags]
+
 # Write the operator settings.yaml skeleton to ~/.config/mecatl/settings.yaml
 mecated config init
 
@@ -355,6 +369,10 @@ mecated skills promote \
 # Print a paste-ready .mcp.json snippet for the loopback perf MCP server
 mecated perf-mcp print-config
 ```
+
+Bare `mecated [flags]` and `mecated --acp [flags]` still work for backward
+compatibility but emit a deprecation warning; prefer `mecated serve` and
+`mecated acp`.
 
 `mecated skills promote` is the only path from a model-authored quarantine skill
 (`--skills-draft-dir`) into the trusted, live catalog (`--skills-dir`). It shows the
