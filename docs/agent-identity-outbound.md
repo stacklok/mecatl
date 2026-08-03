@@ -461,16 +461,27 @@ the rule constrain *which* repository.
 
 ### Hop 6 — credential resolution
 
-This doc does not say how vMCP stores credentials. It requires two things of the read.
+This doc does not say how vMCP stores credentials. It requires three things of the read.
 
 **Read one credential, and read it only after the gate has allowed the call.** The gateway
 allowed a specific call against a specific target. The credential it reads is the one that
 target needs. If the target were worked out a second time after the decision, the credential
 could belong to a backend the gate never saw.
 
-This is where the scope limit either applies or does not. Leg 2 issued a token confined to
-`repo:read`. If the gateway loads every credential the user has and sends GitHub a full-scope
-token, that limit changed nothing about what GitHub was asked to do.
+This is where the scope limit either applies or does not. Call 3 issued a token confined to
+`cap:github.read`. If the gateway loads every credential the user has and sends the provider a
+full-scope token, that limit changed nothing about what the provider was asked to do.
+
+**Gate the read on the acting agent, using one stored credential.** Every agent acting for Alice
+otherwise reaches every integration she has connected. The fix is a read policy naming the
+agent, not a copy of the credential per agent: a per-agent copy of her provider token still
+carries her whole grant, so duplicating it reduces nothing while multiplying consent screens,
+rotation points and revocation calls.
+
+The reader holds a token naming both parties, but the store need only check one. Admission has
+already established the user by the time the read happens, so the store's question is whether
+*this agent* may reach *this integration*. A store whose policy language cannot address a nested
+actor claim is therefore not a constraint here.
 
 **The key is the user, not the token session id.** vMCP keys stored credentials on a `tsid`
 claim — a login-session pointer. An agent can never carry one, for two independent reasons,
