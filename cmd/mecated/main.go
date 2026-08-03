@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -45,6 +46,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
+	"github.com/stacklok/mecatl/internal/adapter/daemonconfig"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -474,6 +476,17 @@ type config struct {
 	// headless (--headless); an interactive deployment surfaces the plan to the
 	// human instead.
 	planModeAutoApprove bool
+
+	// configPath is the explicit --config PATH selecting a daemon config file (issue
+	// #338). Empty = no file loaded; the daemon runs from flags+env as before. It
+	// is accepted only for serve/legacy; `mecated acp --config` is rejected.
+	configPath string
+	// configPathFlagSet is true when --config was passed explicitly (set after parse
+	// via fs.Visit), so we can reject it in ACP mode and log the selected path.
+	configPathFlagSet bool
+	// cliExplicit tracks which migrated flags (now also settable via daemon config)
+	// were set explicitly on the CLI. Keyed by flag name, populated via fs.Visit.
+	cliExplicit map[string]bool
 }
 
 // stringList is a repeatable string flag.Value, preserving order across multiple
@@ -674,6 +687,25 @@ func run(mode commandMode, remaining []string) error {
 	}
 	cfg.acp = acp
 
+	// Daemon config file (issue #338): load ONLY when --config is explicitly
+	// supplied (no auto-load). Rejected for ACP mode (listener topology does not
+	// apply). Loaded AFTER flag parse and BEFORE effective-value validation /
+	// TLS / logging, so a malformed or unknown-key file fails before app.Build /
+	// listener creation. The load/merge step is a testable helper with an injected
+	// loader (review fix #2); effective-value cross-validation runs AFTER the
+	// merge so a file-supplied value cannot bypass the guards (review fix #1).
+	if err := loadAndMergeDaemonConfig(&cfg, acp, daemonconfig.Load); err != nil {
+		return err
+	}
+	// Effective-value validation (perf-MCP loopback/empty-metrics + rate-limit
+	// sanity) runs on the POST-merge config, before app.Build / listener binding.
+	// This is the pure helper that closes the file-source bypass: validating in
+	// parseFlagsMode (CLI-only values) left metrics_addr: 0.0.0.0:9090 + --perf-mcp
+	// able to slip through via the file (review fix #1).
+	if err := validateEffectiveConfig(cfg); err != nil {
+		return err
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	// slog.SetDefault stays for the daemon: this is the DELIBERATE, PERMANENT
 	// third-party-slog bridge — a server's operational output belongs on
@@ -695,6 +727,13 @@ func run(mode commandMode, remaining []string) error {
 	// nothing. Done AFTER the slog default is installed so the warning lands on the
 	// operator-visible log path, before any listener binds.
 	emitLegacyWarning(os.Stderr, mode, cfg.acp)
+
+	// Log the selected daemon config path when one was loaded (issue #338).
+	// The path was validated during merge; log it so operators can confirm
+	// which file was read.
+	if cfg.configPathFlagSet {
+		slog.Info("daemon config loaded", "path", cfg.configPath)
+	}
 
 	// Deprecation WARN for the legacy --output-economy flag (ADR 0041, superseded):
 	// the flag still PARSES (so a legacy invocation does not fail) but has NO EFFECT
@@ -1152,6 +1191,109 @@ func renderPostureReport(p app.Posture) string {
 	return b.String()
 }
 
+// mergeDaemonConfig folds the daemon config file (loaded only when --config is
+// explicitly supplied) into the parsed CLI config. For each migrated field, the
+// config file value is applied IFF the corresponding CLI flag was NOT explicitly
+// set (tracked in cfg.cliExplicit). An explicit CLI empty/zero overrides the file
+// value. Built-in defaults < config file < explicit CLI. The daemon config's RAW
+// content and any secret-bearing fields are never logged; effective security-
+// POSTURE values (addresses, TLS presence, rate-limit) may be — see the
+// daemonconfig package doc. Extracted from run() to keep cyclomatic complexity
+// under the lint gate.
+func mergeDaemonConfig(cfg *config, dc *daemonconfig.Config) {
+	if cfg.cliExplicit == nil {
+		cfg.cliExplicit = make(map[string]bool)
+	}
+	if !cfg.cliExplicit["grpc-addr"] && dc.GRPCAddr != nil {
+		cfg.grpcAddr = *dc.GRPCAddr
+	}
+	if !cfg.cliExplicit["http-addr"] && dc.HTTPAddr != nil {
+		cfg.httpAddr = *dc.HTTPAddr
+	}
+	if !cfg.cliExplicit["metrics-addr"] && dc.MetricsAddr != nil {
+		cfg.metricsAddr = *dc.MetricsAddr
+	}
+	if !cfg.cliExplicit["tls-cert"] && dc.TLSCert != nil {
+		cfg.tlsCert = *dc.TLSCert
+	}
+	if !cfg.cliExplicit["tls-key"] && dc.TLSKey != nil {
+		cfg.tlsKey = *dc.TLSKey
+	}
+	if !cfg.cliExplicit["client-ca"] && dc.ClientCA != nil {
+		cfg.clientCA = *dc.ClientCA
+	}
+	if !cfg.cliExplicit["rate-limit"] && dc.RateLimit != nil {
+		cfg.rateLimit = *dc.RateLimit
+	}
+	if !cfg.cliExplicit["rate-burst"] && dc.RateBurst != nil {
+		cfg.rateBurst = *dc.RateBurst
+	}
+}
+
+// configLoader is the daemon config file-loading seam. The production caller
+// passes daemonconfig.Load; tests inject a stub to prove the --config path is
+// rejected in ACP, never auto-loaded when --config is absent, and merged on
+// success — without touching the filesystem.
+type configLoader func(path string) (*daemonconfig.Config, error)
+
+// loadAndMergeDaemonConfig is the explicit-config load/reject/merge step,
+// extracted from run() so it is unit-testable with an injected loader. It loads
+// the daemon config file ONLY when --config was supplied explicitly, rejects it
+// in ACP mode (listener topology does not apply to stdio), and folds the file
+// into cfg. When --config is absent it is a no-op (no conventional auto-load),
+// preserving byte-identical zero-config behaviour. It runs BEFORE
+// validateEffectiveConfig so a malformed/unknown-key file fails before any
+// effective-value validation, TLS build, or listener binding.
+func loadAndMergeDaemonConfig(cfg *config, acp bool, load configLoader) error {
+	if !cfg.configPathFlagSet {
+		return nil // no --config ⇒ no auto-load, byte-identical to pre-config behaviour
+	}
+	if acp {
+		return fmt.Errorf("--config is not supported in ACP mode (listener topology does not apply to stdio)")
+	}
+	dc, err := load(cfg.configPath)
+	if err != nil {
+		return err
+	}
+	mergeDaemonConfig(cfg, dc)
+	return nil
+}
+
+// validateEffectiveConfig runs the EFFECTIVE-value cross-validation that must
+// see the post-merge config: the perf-MCP loopback/empty-metrics guard and the
+// rate-limit/rate-burst sanity bounds. It is a PURE helper (no I/O, no side
+// effects) called in run() AFTER loadAndMergeDaemonConfig and BEFORE app.Build /
+// listener binding, so a file-supplied metrics_addr or rate_limit that bypassed
+// the earlier CLI-only guard is still caught (review fix #1). The rate_limit=0
+// and rate_burst=0 meanings (disable / derive) are preserved: only negative and
+// non-finite (NaN/Inf) values are rejected (review fix #5).
+func validateEffectiveConfig(cfg config) error {
+	// --perf-mcp rides the admin listener, so it is meaningless without one.
+	if cfg.perfMCP && cfg.metricsAddr == "" {
+		return errors.New("--perf-mcp requires --metrics-addr (the loopback admin listener it mounts /mcp on)")
+	}
+	// FAIL CLOSED on a non-loopback --metrics-addr with --perf-mcp set, BEFORE
+	// serve() binds any listener, so the refusal is a pure config error with no
+	// side effects (matching the embed path). The /mcp surface is UNAUTHENTICATED
+	// and can embed goroutine-derived function names and timing (decision 6 + the
+	// security review's CWE-306 Low finding), so it must never be reachable off
+	// loopback — including via a file-supplied metrics_addr.
+	if cfg.perfMCP && !isLoopbackHostPort(cfg.metricsAddr) {
+		return fmt.Errorf("--perf-mcp refuses a non-loopback --metrics-addr=%s: it exposes unauthenticated runtime data; bind loopback or add auth (future work)", cfg.metricsAddr)
+	}
+	// Rate-limit/burst sanity: 0 is meaningful (disable / derive), but a negative
+	// or non-finite value is an operator misconfiguration. Reject before the
+	// server is constructed so a malformed file or CLI value never reaches the
+	// rate limiter.
+	if cfg.rateLimit < 0 || math.IsNaN(cfg.rateLimit) || math.IsInf(cfg.rateLimit, 0) {
+		return fmt.Errorf("rate_limit %v is invalid: must be >= 0 and finite (0 disables rate limiting)", cfg.rateLimit)
+	}
+	if cfg.rateBurst < 0 {
+		return fmt.Errorf("rate_burst %d is invalid: must be >= 0 (0 derives a sane default from rate_limit)", cfg.rateBurst)
+	}
+	return nil
+}
+
 // parseFlags turns argv into a config, resolving env-derived defaults. The
 // --help hook renders the concise top-level command page (the legacy/bare form);
 // canonical `mecated serve --help` / `mecated acp --help` use parseFlagsMode so
@@ -1351,6 +1493,10 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.helpAll, "help-all", false,
 		"show the exhaustive flag reference (every registered flag) and exit")
 
+	// Daemon config (issue #338): explicit operator-selected config file.
+	// Only accepted for serve/legacy; ACP mode rejects it.
+	fs.StringVar(&cfg.configPath, "config", "", "path to a daemon config YAML file (v1 schema: grpc_addr, http_addr, metrics_addr, tls_cert, tls_key, client_ca, rate_limit, rate_burst). Explicit CLI flags override file values; auth TOKEN is not accepted in YAML")
+
 	// Top-level --help shows a concise command-oriented entry page; canonical
 	// `mecated serve --help` / `mecated acp --help` show progressive task-oriented
 	// common help.  --help-all (above) shows the exhaustive reference.  The
@@ -1402,20 +1548,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// disabled).
 	applyScheduleFireRetentionDefault(&cfg)
 
-	// --perf-mcp rides the admin listener, so it is meaningless without one.
-	if cfg.perfMCP && cfg.metricsAddr == "" {
-		return nil, config{}, errors.New("--perf-mcp requires --metrics-addr (the loopback admin listener it mounts /mcp on)")
-	}
-	// FAIL CLOSED on a non-loopback --metrics-addr with --perf-mcp set, here in
-	// config validation — BEFORE serve() binds any listener — so the refusal is a
-	// pure config error with no side effects (matching the embed path, which
-	// validates before arming any telemetry/listener). The /mcp surface is
-	// UNAUTHENTICATED and can embed goroutine-derived function names and timing
-	// (decision 6 + the security review's CWE-306 Low finding), so it must never
-	// be reachable off loopback.
-	if cfg.perfMCP && !isLoopbackHostPort(cfg.metricsAddr) {
-		return nil, config{}, fmt.Errorf("--perf-mcp refuses a non-loopback --metrics-addr=%s: it exposes unauthenticated runtime data; bind loopback or add auth (future work)", cfg.metricsAddr)
-	}
+	// --perf-mcp / --metrics-addr effective-value cross-validation (loopback,
+	// non-empty) is deferred to validateEffectiveConfig, called in run() AFTER
+	// the daemon config merge so a file-supplied metrics_addr: 0.0.0.0:9090 with
+	// --perf-mcp cannot bypass the loopback guard. Validating here (on CLI-only
+	// values) would leave the file-source bypass open — see review fix #1.
 
 	// The three provider credentials (OPENAI/OPENROUTER/ANTHROPIC_API_KEY) are read by
 	// cliconfig.ProviderFlags.Apply (called from appConfig), keeping the env reads +
@@ -1483,7 +1620,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 // let the CLI out-rank the operator-global settings.yaml keys. Extracted from
 // parseFlagsMode to keep its cyclomatic complexity under the lint gate.
 func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
+	cfg.cliExplicit = make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) {
+		cfg.cliExplicit[f.Name] = true
 		switch f.Name {
 		case "posture":
 			cfg.postureFlagSet = true
@@ -1494,6 +1633,8 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.subagentModelRouterSet = true
 		case "acp":
 			cfg.acpFlagSet = true
+		case "config":
+			cfg.configPathFlagSet = true
 		}
 		if f.Name == "output-economy" {
 			cfg.outputEconomyFlagSet = true

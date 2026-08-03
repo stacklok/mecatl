@@ -75,6 +75,7 @@ var hiddenFlags = map[string]bool{
 // from ALL rendered help via hiddenFlags.
 var flagMetaByFlag = map[string]flagMeta{
 	// ── Server (serve-only) ───────────────────────────────────────────────
+	"config":       {group: groupServer, common: false, acp: acpExclude},
 	"grpc-addr":    {group: groupServer, common: true, acp: acpExclude},
 	"http-addr":    {group: groupServer, common: true, acp: acpExclude},
 	"metrics-addr": {group: groupServer, common: false, acp: acpExclude},

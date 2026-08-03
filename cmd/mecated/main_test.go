@@ -720,9 +720,10 @@ func TestAppConfigPostureMapping(t *testing.T) {
 	}
 }
 
-// TestParseFlagsPerfMCP asserts --perf-mcp defaults OFF, parses ON, and that
-// --perf-mcp with an EMPTY --metrics-addr is a fatal config error (it rides the
-// admin listener).
+// TestParseFlagsPerfMCP asserts --perf-mcp defaults OFF and parses ON. The
+// effective-value cross-validation (empty / non-loopback --metrics-addr) moved
+// to validateEffectiveConfig (review fix #1) so a file-supplied metrics_addr
+// cannot bypass it; see TestValidateEffectiveConfigPerfMCP.
 func TestParseFlagsPerfMCP(t *testing.T) {
 	def, err := parseFlags(nil)
 	if err != nil {
@@ -739,36 +740,48 @@ func TestParseFlagsPerfMCP(t *testing.T) {
 	if !on.perfMCP {
 		t.Errorf("perfMCP = false, want true (--perf-mcp)")
 	}
-
-	if _, err := parseFlags([]string{"--perf-mcp", "--metrics-addr", ""}); err == nil {
-		t.Error("parseFlags(--perf-mcp with empty --metrics-addr) should be a fatal config error")
-	}
 }
 
-// TestParseFlagsPerfMCPRefusesNonLoopback is the mecated-side fail-closed proof
+// TestValidateEffectiveConfigPerfMCP is the mecated-side fail-closed proof
 // (mirroring embed's TestStartPerfMCPRefusesNonLoopback): --perf-mcp on a
-// non-loopback --metrics-addr (0.0.0.0 wildcard or a public IP) is rejected as a
-// fatal CONFIG error in parseFlags — BEFORE serve() binds any listener. Because
-// the refusal lives in config validation (finding #1), proving the address never
-// reaches serve() is exactly proving no listener is bound. A loopback address
-// with --perf-mcp must still parse cleanly.
-func TestParseFlagsPerfMCPRefusesNonLoopback(t *testing.T) {
+// non-loopback or empty --metrics-addr is rejected as a fatal CONFIG error in
+// validateEffectiveConfig — the PURE helper run AFTER the daemon config merge and
+// BEFORE serve() binds any listener. Because the refusal lives in the post-merge
+// validation, proving the address never reaches serve() is exactly proving no
+// listener is bound. A loopback address with --perf-mcp must still validate.
+func TestValidateEffectiveConfigPerfMCP(t *testing.T) {
+	// Empty --metrics-addr with --perf-mcp is a fatal error.
+	empty, err := parseFlags([]string{"--perf-mcp", "--metrics-addr", ""})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if verr := validateEffectiveConfig(empty); verr == nil {
+		t.Error("validateEffectiveConfig(--perf-mcp with empty --metrics-addr) should be a fatal config error")
+	}
+
 	nonLoopback := []string{"0.0.0.0:9090", "192.168.1.10:9090", "example.com:9090"}
 	for _, addr := range nonLoopback {
-		_, err := parseFlags([]string{"--perf-mcp", "--metrics-addr", addr})
-		if err == nil {
-			t.Errorf("parseFlags(--perf-mcp --metrics-addr %s) = nil error, want a non-loopback refusal (fail-closed, no listener bound)", addr)
+		cfg, err := parseFlags([]string{"--perf-mcp", "--metrics-addr", addr})
+		if err != nil {
+			t.Fatalf("parseFlags(--metrics-addr %s): %v", addr, err)
+		}
+		if verr := validateEffectiveConfig(cfg); verr == nil {
+			t.Errorf("validateEffectiveConfig(--perf-mcp --metrics-addr %s) = nil error, want a non-loopback refusal (fail-closed, no listener bound)", addr)
 			continue
 		}
-		if !strings.Contains(err.Error(), "non-loopback") {
-			t.Errorf("parseFlags(--perf-mcp --metrics-addr %s) error = %q, want a non-loopback refusal", addr, err)
+		if !strings.Contains(validateEffectiveConfig(cfg).Error(), "non-loopback") {
+			t.Errorf("validateEffectiveConfig(--perf-mcp --metrics-addr %s) error should mention non-loopback", addr)
 		}
 	}
 
-	// A loopback address with --perf-mcp still parses cleanly (the gate is targeted).
+	// A loopback address with --perf-mcp still validates cleanly (the gate is targeted).
 	for _, addr := range []string{"127.0.0.1:9090", "[::1]:9090", "localhost:9090"} {
-		if _, err := parseFlags([]string{"--perf-mcp", "--metrics-addr", addr}); err != nil {
-			t.Errorf("parseFlags(--perf-mcp --metrics-addr %s) = %v, want loopback to pass", addr, err)
+		cfg, err := parseFlags([]string{"--perf-mcp", "--metrics-addr", addr})
+		if err != nil {
+			t.Fatalf("parseFlags(--metrics-addr %s): %v", addr, err)
+		}
+		if verr := validateEffectiveConfig(cfg); verr != nil {
+			t.Errorf("validateEffectiveConfig(--perf-mcp --metrics-addr %s) = %v, want loopback to pass", addr, verr)
 		}
 	}
 }
