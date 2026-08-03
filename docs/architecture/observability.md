@@ -289,7 +289,7 @@ now carries an **`Error`** field, so a provider failure is reported to the calle
 rather than swallowed.
 
 Mid-stream stalls are bounded separately, by `Config.StreamIdleTimeout`
-(`--llm-stream-idle-timeout`, default 120s, 0 disables), NOT by
+(`--llm-stream-idle-timeout`, default 180s, 0 disables), NOT by
 `PerAttemptTimeout`: after the first chunk a per-chunk watchdog caps the idle
 gap between consecutive chunks and synthesizes a terminal `*StreamIdleError`
 (`errors.Is(_, context.DeadlineExceeded)`) when it fires — the wrapper must

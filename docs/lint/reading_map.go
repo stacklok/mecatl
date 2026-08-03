@@ -85,8 +85,8 @@ func CheckReadingMap(readingMD string, archPages map[string]string) []MissingLab
 // listedArchPages extracts architecture/*.md entries from READING.md.
 // It scans markdown links of the form `[title](architecture/<name>.md)`.
 func listedArchPages(md string) []ReadingMapPage {
-	// Find the topic-branch table: between "### Topic branches" and "### After the architecture pages"
-	// or the next heading. Look for markdown links of the form `[text](architecture/*.md)`.
+	// Scan all markdown links of the form `[text](architecture/*.md)`; the
+	// foundation spine and topic-branch table are both part of the map.
 	var pages []ReadingMapPage
 	// Simple scan: find lines with `](architecture/` and extract the name + title.
 	lines := strings.Split(md, "\n")

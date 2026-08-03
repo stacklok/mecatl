@@ -6,7 +6,7 @@
 
 **Prerequisites:** [the agent loop](agent-loop.md) — the loop triggers compaction at the turn boundary.
 
-**Follow-on:** [memory](memory.md) — cross-session recall independent of compaction.
+**Follow-on:** return to the [reading map](../READING.md) and choose another topic branch. **Related:** [memory](memory.md) covers cross-session recall, which is independent of compaction.
 
 Two seams keep a long run inside the model's context window:
 
@@ -50,9 +50,11 @@ Two seams keep a long run inside the model's context window:
 
 ## Follow-on reading
 
-- [Memory — cross-session recall](memory.md)
+- Return to the [reading map](../READING.md) and choose another topic branch.
 
 ## Related
+
+- [Memory — cross-session recall](memory.md)
 
 - [Providers — the per-model token counter & window](providers.md)
 - [Observability & persistence](observability.md) — `EvCompactionArchive` is the durable, non-destructive bridge: compaction emits the pre-compaction conversation to the event log.

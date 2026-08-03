@@ -146,7 +146,8 @@ The extensibility story is not only "swap an adapter inside mecatl" — `engine/
 is **its own Go module** (`github.com/stacklok/mecatl/engine`), so an external
 consumer can import the loop, the domain, and the ports directly without pulling
 in mecatl's full dependency cone. The engine module's standalone closure is
-deliberately tiny — `doublestar` + `x/sync` (+ test-only `goleak`) — versus the
+deliberately tiny — `doublestar` + `robfig/cron` + `go.yaml.in/yaml/v3` +
+`x/sync` (+ test-only `goleak`) — versus the
 toolhive/k8s/OTel/gRPC cone the root module carries; an embedding host brings its
 own adapters. The exported identifiers of the **seven core packages** (`session`,
 `governance`, `tool`, `prompt`, `port`, `team`, `agent`) are the engine's STABLE
