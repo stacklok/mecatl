@@ -99,7 +99,7 @@ func TestCheckReadingMap_Fixtures(t *testing.T) {
 			reading: `### Topic branches
 | [ghost](architecture/ghost.md) | x |
 `,
-			pages: map[string]string{},
+			pages:    map[string]string{},
 			wantMsgs: []string{"file exists in docs/architecture/"},
 		},
 		{
