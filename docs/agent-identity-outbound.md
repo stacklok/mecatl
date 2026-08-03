@@ -391,11 +391,15 @@ X-Correlation-Id: sess-8812/sub-3/call-7
 ### Hop 5 — the gate
 
 ```cedar
-permit ( principal, action == Action::"call_tool", resource )
-when {
-    context.claim_act.sub == "spiffe://mecatl.example.com/agent/code-reviewer" &&
+entity Agent { grantedScopes: Set<String> };
+
+permit (
+    principal == Agent::"spiffe://mecatl.example.com/agent/code-reviewer",
+    action == Action::"call_tool",
+    resource
+) when {
     resource.readOnlyHint == true &&
-    context.claimset_scope.contains("repo:read")
+    principal.grantedScopes.containsAll(resource.requiredScopes)
 };
 ```
 
@@ -409,11 +413,25 @@ it.
 out of one of them, and nothing reveals the omission until someone looks. A single gate can
 be wrong, but it cannot be missing from a path that has only it.
 
-**Set membership, not substring.** Claims reach Cedar twice over: `claim_scope` is a
-space-delimited string, so `like "*repo:read*"` would also match `repo:readwrite`, while
-`claimset_scope` is a set with exact-element matching. Use the set. It requires naming `scope`
-in the authorizer's multi-valued claims, and a rule referencing a set that was never built
-errors and denies — refuse-on-a-missing-input, working as designed.
+**The agent is a typed entity, not a string in context.** Comparing
+`context.claim_act.sub` against a literal is stringly typed the whole way down: a policy naming
+a nonexistent agent, or one whose casing or path segments drift from what the token carries,
+matches nothing and reports no error. Making the agent the `principal` lets Cedar's schema
+validator reject that when the policy is written rather than silently at evaluation time, and it
+makes entity membership available for grouping agents.
+
+**Set membership, not substring.** Where scope does reach Cedar as a claim, it arrives twice
+over: `claim_scope` is a space-delimited string, so `like "*cap:github.read*"` also matches
+`cap:github.readwrite`, while `claimset_scope` is a set with exact-element matching. Use the
+set. It requires naming the claim in the authorizer's multi-valued claims, and a rule
+referencing a set that was never built errors and denies — refuse-on-a-missing-input working as
+designed.
+
+**`grantedScopes` cannot be derived by Cedar.** `containsAll` does the comparison, but the value
+it compares has to be written into the entity store before the decision, from the scope the
+authorization server actually issued. A stale or absent value means the rule enforces nothing.
+Here that value comes from the token on the request, so it cannot drift — which is the reason
+the narrowing lives at call 2 rather than in policy.
 
 **The scope test is the only comparison policy makes** — one axis, not a subset algorithm
 over a schema, because definition and operation are named directly. In [later
