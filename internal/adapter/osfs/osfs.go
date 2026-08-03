@@ -398,15 +398,13 @@ func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 //  1. SERVE: a symlink inside the target dir that escapes further is refused
 //     by the serving root's own traversal (mapEscape at the call site),
 //     exactly as the workspace root refuses an in-root escape.
-//  2. VET: before opening, vetRelaxedParent canonicalizes the verbatim PARENT
-//     dir via the shared Canonicalize (deepest EXISTING ancestor +
-//     EvalSymlinks) and compares the canonical form against the verbatim
-//     cleaned prefix: any resolved ancestor that jumps ABOVE that prefix means
-//     a symlinked component escapes the verbatim path — refuse, so the relax
-//     never becomes a channel for a symlink escape the in-root path would
-//     reject. (EvalSymlinks alone on the whole path resolves to the target
-//     and launders the escape; the canonicalize-then-compare vets each
-//     component's jump.)
+//  2. VET: before opening, vetRelaxedParent walks the verbatim PARENT one
+//     component at a time through the shared Canonicalize (deepest EXISTING
+//     ancestor + EvalSymlinks). Each resolved component must remain at or
+//     below its resolved predecessor. This permits a top-level system alias
+//     such as macOS /var -> /private/var while rejecting a nested symlink that
+//     jumps outside the directory reached before it. Canonicalizing only the
+//     whole path would resolve to the target and launder that escape.
 //
 // It only ever fires after resolvePath AND allowedReadRoot declined, so the
 // target is provably outside the workspace root and every read root. An
@@ -432,41 +430,99 @@ func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
 	return rr, leaf, true
 }
 
-// vetRelaxedParent canonicalizes the verbatim parent dir and refuses when the
-// canonical form jumps ABOVE the verbatim cleaned prefix (a symlinked
-// component that escapes the verbatim path). It delegates the ancestor walk to
-// the already-extracted Canonicalize (AC-W2-F2) — no third hand-rolled walk —
-// so a future semantic change to the canonicalization algorithm cannot drift
-// this containment check. The parent itself need not exist yet (Canonicalize
-// re-appends the unresolved tail, and the read then fails not-exist at the
-// root open). A canonicalization failure (an unverifiable ancestor) fails
-// safe: refuse — the relax never serves a path it cannot vet.
+// vetRelaxedParent canonicalizes the verbatim parent dir one component at a
+// time and refuses when a component resolves above or outside its canonical
+// predecessor. Starting at the filesystem root deliberately permits a
+// top-level system alias such as macOS /var -> /private/var; all later
+// components are constrained by the canonical directory reached before them.
+// It delegates every resolution to the already-extracted Canonicalize
+// (AC-W2-F2) — no third hand-rolled ancestor-resolution algorithm — so future
+// canonicalization changes cannot drift this containment check. The parent
+// itself need not exist yet (Canonicalize re-appends unresolved tails). Any
+// unverifiable component fails safe.
 func vetRelaxedParent(parent string) bool {
-	canon, err := Canonicalize("", parent)
+	cleaned := filepath.Clean(parent)
+	if !filepath.IsAbs(cleaned) {
+		return false
+	}
+
+	volume := filepath.VolumeName(cleaned)
+	prefix := volume + string(filepath.Separator)
+	previous, err := Canonicalize("", prefix)
 	if err != nil {
 		return false
 	}
-	cleaned := filepath.Clean(parent)
-	// Containment in the direction that vets the verbatim path: canon must
-	// stay under (or equal) the verbatim cleaned prefix. canon is never a
-	// STRICT prefix of cleaned (the verbatim path is already clean, so
-	// canonicalization resolves its components to the same or a LONGER form);
-	// an escaping symlink resolves to a sibling elsewhere, failing the check.
-	return canon == cleaned ||
-		(len(canon) < len(cleaned) && strings.HasPrefix(cleaned, canon+string(filepath.Separator)))
+
+	rel, err := filepath.Rel(prefix, cleaned)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		prefix = filepath.Join(prefix, component)
+		canon, err := Canonicalize("", prefix)
+		if err != nil || !pathAtOrBelow(previous, canon) {
+			return false
+		}
+		previous = canon
+	}
+	return true
+}
+
+func pathAtOrBelow(base, candidate string) bool {
+	rel, err := filepath.Rel(base, candidate)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// normalizeTopLevelAlias resolves only the first component below the volume
+// root, then re-appends the remaining lexical path. This makes OS-provided
+// aliases such as macOS /var -> /private/var comparable with canonical roots
+// without resolving a nested caller-controlled symlink and laundering it into
+// an allowed read root.
+func normalizeTopLevelAlias(path string) (string, bool) {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return "", false
+	}
+	volume := filepath.VolumeName(cleaned)
+	root := volume + string(filepath.Separator)
+	rel, err := filepath.Rel(root, cleaned)
+	if err != nil {
+		return "", false
+	}
+	if rel == "." {
+		return root, true
+	}
+	components := strings.Split(rel, string(filepath.Separator))
+	canonicalTop, err := Canonicalize("", filepath.Join(root, components[0]))
+	if err != nil {
+		return "", false
+	}
+	if len(components) == 1 {
+		return canonicalTop, true
+	}
+	return filepath.Join(append([]string{canonicalTop}, components[1:]...)...), true
 }
 
 // allowedReadRoot tests an absolute path against the explicit read-only allowed
 // roots and, on a match, returns that root's os.Root plus the root-relative
-// remainder ("." for the root itself). Matching is lexical on the CLEANED path
-// against each canonical root — exact equality or containment under the root.
-// A symlink INSIDE an allowed root that escapes it is refused later by that
-// root's os.Root (mapEscape), the same containment the workspace root has.
+// remainder ("." for the root itself). Matching is lexical after resolving
+// only a top-level system alias, so macOS /var paths match roots stored as
+// /private/var while a nested symlink is still handed verbatim to os.Root and
+// refused there if it escapes.
 func (f *FileSystem) allowedReadRoot(path string) (*os.Root, string, bool) {
 	if len(f.readRoots) == 0 || !filepath.IsAbs(path) {
 		return nil, "", false
 	}
-	cleaned := filepath.Clean(path)
+	cleaned, ok := normalizeTopLevelAlias(path)
+	if !ok {
+		return nil, "", false
+	}
 	for _, ar := range f.readRoots {
 		if cleaned == ar.path {
 			return ar.r, ".", true
@@ -528,7 +584,7 @@ func (f *FileSystem) relaxedWriteRoot(path string) (*os.Root, string, bool) {
 	if !f.relaxedWrites || !filepath.IsAbs(path) {
 		return nil, "", false
 	}
-	if _, _, ok := f.allowedReadRoot(path); ok {
+	if f.readRootContainsOrUnverifiable(path) {
 		return nil, "", false // a READ-ONLY root never serves a write, relaxed or not
 	}
 	cleaned := filepath.Clean(path)
@@ -548,6 +604,27 @@ func (f *FileSystem) relaxedWriteRoot(path string) (*os.Root, string, bool) {
 		return nil, "", false
 	}
 	return rr, leaf, true
+}
+
+// readRootContainsOrUnverifiable protects canonical read roots from a relaxed
+// write whose lexical spelling traverses a system symlink (for example macOS
+// /var when the stored root is /private/var). A failed canonicalization also
+// refuses the write: with read roots configured, ambiguity must not turn a
+// read-only carve-out writable.
+func (f *FileSystem) readRootContainsOrUnverifiable(path string) bool {
+	if len(f.readRoots) == 0 {
+		return false
+	}
+	canon, err := Canonicalize("", path)
+	if err != nil {
+		return true
+	}
+	for _, ar := range f.readRoots {
+		if pathAtOrBelow(ar.path, canon) {
+			return true
+		}
+	}
+	return false
 }
 
 // Stat returns metadata for the file at the session-relative path (or, like
@@ -784,17 +861,19 @@ func LocalizeInRoot(path string) (string, bool) {
 }
 
 // MatchReadRoot reports whether the ABSOLUTE path lies under one of the
-// CANONICAL read-only roots, using the exact LEXICAL match allowedReadRoot
-// performs for Read/Stat (cleaned-path equality or containment, never
-// canonicalized): a symlinked absolute path whose lexical form walks through
-// a read root matches exactly as the tool body serves it. No *os.Root is
-// opened and no stat is performed; whether a matched path may actually be
-// served (Read/Stat only) stays the tool body's business.
+// CANONICAL read-only roots, using the exact top-level-alias-normalized lexical
+// match allowedReadRoot performs for Read/Stat. It recognizes macOS /var and
+// /private/var as the same system location without resolving nested symlinks.
+// No *os.Root is opened; whether a matched path may actually be served
+// (Read/Stat only) stays the tool body's business.
 func MatchReadRoot(path string, readRoots []string) bool {
 	if len(readRoots) == 0 || !filepath.IsAbs(path) {
 		return false
 	}
-	cleaned := filepath.Clean(path)
+	cleaned, ok := normalizeTopLevelAlias(path)
+	if !ok {
+		return false
+	}
 	for _, root := range readRoots {
 		if cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
 			return true

@@ -4,18 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
 // osfs_vetrelaxedparent_test.go pins the Wave-1 panel-review follow-up
 // AC-W2-F2 (docs/acceptance/path-escape-posture.md): vetRelaxedParent — the
 // containment vet the relaxed read/write roots run on the verbatim parent
-// dir — delegates to the already-extracted Canonicalize rather than
-// hand-rolling a THIRD ancestor walk, so a future semantic change to the
-// canonicalization algorithm cannot drift the containment check. These
-// cases pin the behavioural contract the delegation must preserve:
-// vet == "Canonicalize(parent) stays under the verbatim cleaned prefix".
+// dir — delegates each component to the already-extracted Canonicalize rather
+// than hand-rolling a THIRD ancestor-resolution algorithm. These cases pin
+// the behavioural contract: every canonical component must remain at or below
+// its canonical predecessor.
 
 func TestPathEscapePosture_VetRelaxedParentSharesCanonicalize(t *testing.T) {
 	t.Parallel()
@@ -50,17 +48,31 @@ func TestPathEscapePosture_VetRelaxedParentSharesCanonicalize(t *testing.T) {
 		if got := vetRelaxedParent(tc.parent); got != tc.want {
 			t.Errorf("%s: vetRelaxedParent(%q) = %v, want %v", tc.label, tc.parent, got, tc.want)
 		}
-		// The delegation contract: vet must AGREE with the Canonicalize-based
-		// containment check it now shares — canonicalize the parent, compare
-		// against the verbatim cleaned prefix (the prefix of the verbatim path
-		// that survives canonicalization; a resolved ancestor jumping above it
-		// means a symlinked component escaped the verbatim path).
-		canon, err := Canonicalize("", tc.parent)
-		cleaned := filepath.Clean(tc.parent)
-		shared := err == nil && (canon == cleaned ||
-			(len(canon) < len(cleaned) && strings.HasPrefix(cleaned, canon+string(filepath.Separator))))
-		if got := vetRelaxedParent(tc.parent); got != shared {
-			t.Errorf("%s: vetRelaxedParent(%q) = %v, but the shared Canonicalize containment check = %v — the two must never disagree", tc.label, tc.parent, got, shared)
+	}
+}
+
+func TestPathEscapePosture_VetRelaxedParentAcceptsDarwinSystemAlias(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS system-symlink regression")
+	}
+
+	lexical := t.TempDir()
+	canonical, err := Canonicalize("", lexical)
+	if err != nil {
+		t.Fatalf("Canonicalize(%q): %v", lexical, err)
+	}
+	if canonical == filepath.Clean(lexical) {
+		t.Skipf("temporary directory %q does not traverse a system symlink", lexical)
+	}
+
+	for _, parent := range []string{
+		lexical,
+		canonical,
+		filepath.Join(lexical, "not-yet-existing", "tail"),
+		filepath.Join(canonical, "not-yet-existing", "tail"),
+	} {
+		if !vetRelaxedParent(parent) {
+			t.Errorf("vetRelaxedParent(%q) = false; lexical and canonical system paths must agree", parent)
 		}
 	}
 }

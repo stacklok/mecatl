@@ -106,3 +106,30 @@ func TestMatchReadRoot_Lexical(t *testing.T) {
 		t.Fatal("no roots configured: MatchReadRoot must be false")
 	}
 }
+
+func TestMatchReadRoot_DarwinSystemAlias(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS system-symlink regression")
+	}
+	lexicalBase := t.TempDir()
+	canonicalBase, err := filepath.EvalSymlinks(lexicalBase)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", lexicalBase, err)
+	}
+	if canonicalBase == filepath.Clean(lexicalBase) {
+		t.Skipf("temporary directory %q does not traverse a system symlink", lexicalBase)
+	}
+
+	lexicalRoot := filepath.Join(lexicalBase, "skills")
+	canonicalRoot := filepath.Join(canonicalBase, "skills")
+	for _, path := range []string{
+		lexicalRoot,
+		filepath.Join(lexicalRoot, "SKILL.md"),
+		canonicalRoot,
+		filepath.Join(canonicalRoot, "SKILL.md"),
+	} {
+		if !MatchReadRoot(path, []string{canonicalRoot}) {
+			t.Errorf("MatchReadRoot(%q, canonical root %q) = false", path, canonicalRoot)
+		}
+	}
+}

@@ -257,6 +257,14 @@ func TestRelaxedWrites_ReadRootsStayReadOnly(t *testing.T) {
 	if _, err := os.Stat(target); err == nil {
 		t.Fatalf("Write created %q inside a READ-ONLY root", target)
 	}
+	canonicalTarget, err := filepath.EvalSymlinks(outside)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", outside, err)
+	}
+	canonicalTarget = filepath.Join(canonicalTarget, "skill-canonical.txt")
+	if err := relaxed.Write(t.Context(), canonicalTarget, []byte("nope")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("Write into canonical read root = %v, want ErrPathEscape", err)
+	}
 }
 
 // TestRelaxedWrites_SymlinkedLeafRefused pins AC3.5's osfs half: the relaxed

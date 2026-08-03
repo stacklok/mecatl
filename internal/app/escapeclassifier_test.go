@@ -159,17 +159,17 @@ func TestPathEscapePosture_Scenario1_ClassifierMatchesResolveInRoot(t *testing.T
 // TestPathEscapePosture_Scenario1_ReadRootClassification pins AC1.2: an
 // absolute path under a configured WithReadRoots read-only root classifies as
 // read-root — distinct from both in-root and escape — using allowedReadRoot's
-// LEXICAL match, so a symlinked absolute path whose lexical form walks through
-// the read root classifies EXACTLY as the tool body serves it (lexically under
-// the root → served read-only; canonical escape → ErrPathEscape).
+// top-level-alias-normalized LEXICAL match, so macOS /var and /private/var
+// spellings agree while a nested symlink remains lexical and is confined by
+// the serving os.Root.
 func TestPathEscapePosture_Scenario1_ReadRootClassification(t *testing.T) {
 	t.Parallel()
 	root, outside, skillRoot, linkRoot := setupScenario1FS(t)
 	c := newScenario1Classifier(t, root, skillRoot)
 
 	// Lexically under the read root → read-root, whether the path exists or
-	// not (allowedReadRoot matches the cleaned lexical form, never
-	// canonicalizes).
+	// not (allowedReadRoot matches the cleaned lexical form after normalizing
+	// only a top-level system alias).
 	for label, path := range map[string]string{
 		"read-root file":             filepath.Join(skillRoot, "s.txt"),
 		"read-root dir itself":       skillRoot,
