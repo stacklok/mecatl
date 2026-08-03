@@ -2500,6 +2500,38 @@ write path (`config init`) and the read path (the resolver's `loadUserRules`) sh
 ONE relative-path const (`permconfig.UserSettingsRelPath`, re-exported as
 `configgen.SettingsRelPath`), so they provably resolve the same file.
 
+### `daemonconfig` (explicit daemon.yaml — issue #338, ADR 0084)
+
+`internal/adapter/daemonconfig` is the strict, versioned, operator-selected
+daemon config file loaded ONLY when `mecated serve --config PATH` (or the
+legacy bare `mecated --config PATH`) is supplied. It is a DISTINCT file from
+`settings.yaml` (POLICY/trust) and carries NO auth token value (the bearer
+token stays `MECATL_AUTH_TOKEN`/`--auth-token`). Schema v1 is the small
+API-edge slice — `version` (required, `v1`), `grpc_addr`, `http_addr`,
+`metrics_addr`, `tls_cert`, `tls_key`, `client_ca`, `rate_limit`, `rate_burst`
+— parsed strictly (`KnownFields(true)`; unknown keys, missing/unsupported
+version, multi-document all rejected). Pointer fields distinguish absent
+(`nil`) from explicit zero/empty, so precedence is exact: **defaults < file <
+explicit CLI** (`mergeDaemonConfig` in `cmd/mecated/main.go` folds the file
+into the cmd-mecated serve-time fields; `cliExplicit` tracks explicit flags —
+NO `app.Config` widening). There is **no conventional auto-load** — a
+`daemon.yaml` at the conventional path is inert until `--config` names it.
+
+The UX/docs half (task B): `mecated config daemon init [--print] [--force]`
+scaffolds the embedded commented skeleton
+(`internal/adapter/daemonconfig/daemon.skeleton.yaml`, `//go:embed`-ed) at the
+documented conventional path `<XDG_CONFIG_HOME>/mecatl/daemon.yaml`
+(`DaemonConfigRelPath`), reusing the SAME `xdgconfig` resolution as `config
+init`; it does NOT cause loading. `mecated config daemon validate [--file
+PATH]` strictly parses + semantically validates (`daemonconfig.Validate`:
+rate-limit/burst bounds, the SAME bound the serve path's
+`validateEffectiveConfig` applies) and never prints secrets/raw content.
+`config daemon` extends the `config` namespace (no top-level `daemon`
+command); `config init` keeps ownership of `settings.yaml`. Command resolution
+fails closed for a missing/unknown `config daemon` subcommand — it never
+reaches `run()`/listeners. `--config` stays an advanced serve-only, explicit
+flag; ACP help excludes it. See ADR 0084.
+
 ### `modelhook` (guardrails — LLM-backed tool-content checker, issue #27 — see `GUARDRAILS.md`)
 
 The `modelhook.Runner` is a `port.HookRunner` **decorator** that inspects

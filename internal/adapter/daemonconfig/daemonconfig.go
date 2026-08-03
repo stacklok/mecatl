@@ -21,9 +21,11 @@ package daemonconfig
 
 import (
 	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -31,6 +33,54 @@ import (
 
 // SchemaVersionV1 is the only supported config version.
 const SchemaVersionV1 = "v1"
+
+// DaemonConfigRelPath is the conventional daemon.yaml location relative to the
+// XDG config base (`mecatl/daemon.yaml`), re-exported so the WRITE paths
+// (`mecated config daemon init` / `config daemon validate`) and the docs agree
+// on a single relative path. It is NEVER used for auto-load — the daemon config
+// is loaded ONLY when --config is supplied explicitly (issue #338, ADR 0084).
+// Re-exporting it here keeps the conventional path in the SAME package that owns
+// the schema, mirroring the configgen/permconfig SettingsRelPath pattern.
+const DaemonConfigRelPath = "mecatl/daemon.yaml"
+
+// daemonSkeleton is the committed, commented v1 daemon.yaml skeleton, embedded so
+// `mecated config daemon init` can write it without a runtime renderer. It is the
+// minimal, runnable skeleton: version plus loopback defaults and concise commented
+// TLS/rate examples. No secret values ever appear in it (the auth TOKEN is env-only).
+//
+//go:embed daemon.skeleton.yaml
+var daemonSkeleton string
+
+// Skeleton returns the committed commented daemon.yaml skeleton that
+// `mecated config daemon init` writes (or prints with --print). It is the embedded
+// artifact, NOT a fresh render.
+func Skeleton() string {
+	return daemonSkeleton
+}
+
+// Validate runs the EFFECTIVE semantic validation possible WITHOUT starting or
+// binding the server: rate_limit/rate_burst sanity bounds. The schema (unknown
+// keys, version, types) is already enforced by Load/parse; Validate adds the
+// cross-field bounds that mirror the runtime validateEffectiveConfig rate checks
+// so a `mecated config daemon validate` catches the same misconfiguration before
+// serve. 0 values are meaningful (disable / derive); only negative and
+// non-finite (NaN/Inf) values are rejected. It does NOT validate listener
+// binding (loopback/perf-mcp guards) — those depend on the full effective config
+// + CLI flags, not the file alone.
+func Validate(c *Config) error {
+	if c.RateLimit != nil {
+		v := *c.RateLimit
+		if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("rate_limit %v is invalid: must be >= 0 and finite (0 disables rate limiting)", v)
+		}
+	}
+	if c.RateBurst != nil {
+		if *c.RateBurst < 0 {
+			return fmt.Errorf("rate_burst %d is invalid: must be >= 0 (0 derives a sane default from rate_limit)", *c.RateBurst)
+		}
+	}
+	return nil
+}
 
 // Config is the parsed daemon configuration. It carries only the API-edge slice
 // for v1. Every pointer field distinguishes absent (nil) from an explicitly
@@ -97,9 +147,12 @@ func Load(path string) (*Config, error) {
 // would have been pure duplication.
 func parse(data []byte, path string) (*Config, error) {
 	// Strict (KnownFields) decode: an unrecognized key in the document is a
-	// parse error, not a silently-ignored typo. The error message deliberately
-	// does NOT echo the raw YAML content (the library's TypeError can include
-	// source text), naming only the path.
+	// parse error, not a silently-ignored typo. Both error paths deliberately
+	// do NOT echo raw YAML content: a *yaml.TypeError (unknown key / wrong type)
+	// carries only the key name by construction; a plain decode error (syntax /
+	// bad indentation / stray marker) embeds the offending source line in its
+	// message, so it must NOT be passed through with %w (CWE-209). Both paths
+	// name only the path and the operator-visible resolution.
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 
@@ -108,12 +161,15 @@ func parse(data []byte, path string) (*Config, error) {
 		// Distinguish a schema error (unknown key / wrong type) from a YAML
 		// syntax error so operator guidance is accurate. yaml.v3 returns a
 		// *yaml.TypeError for unknown-key/type mismatches and a plain error
-		// (carrying line/column) for malformed-document syntax problems.
+		// (carrying line/column AND the offending source text) for malformed-
+		// document syntax problems. The syntax-equals-failure branch below must
+		// NOT wrap the raw error: its message embeds the source line, which
+		// leaks file content to a caller (CWE-209).
 		var typeErr *yaml.TypeError
 		if errors.As(err, &typeErr) {
 			return nil, fmt.Errorf("parsing daemon config %s: does not match the expected schema (unknown key or type); the only recognized keys are version, grpc_addr, http_addr, metrics_addr, tls_cert, tls_key, client_ca, rate_limit, and rate_burst", path)
 		}
-		return nil, fmt.Errorf("parsing daemon config %s: %w (the document must be valid YAML matching the v1 schema)", path, err)
+		return nil, fmt.Errorf("parsing daemon config %s: invalid YAML syntax (the document must be valid YAML matching the v1 schema)", path)
 	}
 
 	// Reject a multi-document file or trailing content. A single decode above

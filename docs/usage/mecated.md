@@ -514,6 +514,85 @@ yourself. This is also the anticipated future home for OAuth-based provider
 auth (an access/refresh token pair per provider), which is why it's a
 dedicated file with room to grow rather than a flat per-provider flag.
 
+### Daemon config file (`daemon.yaml`)
+
+The serve-time LISTENER TOPOLOGY — gRPC/HTTP/metrics listen addresses, TLS
+cert/key/CA paths, and rate-limit/burst — is a small, versioned slice you can
+put in a file instead of repeating on every invocation. The file is a DISTINCT
+file from `settings.yaml` (which is POLICY/TRUST — permissions, posture,
+guardrails, model taxonomy) and is loaded ONLY when you start the server with an
+explicit `--config PATH`. There is **no conventional auto-load**: a `daemon.yaml`
+at the conventional path is inert until `--config` names it.
+
+**Scaffold and validate offline** (never starts the server):
+
+```sh
+# Write a minimal, commented v1 skeleton at the conventional path
+# $XDG_CONFIG_HOME/mecatl/daemon.yaml (default ~/.config/mecatl/daemon.yaml)
+mecated config daemon init
+
+# Print the skeleton to stdout without writing (paste-ready reference)
+mecated config daemon init --print
+
+# Strictly validate a file (default: the conventional path)
+mecated config daemon validate
+mecated config daemon validate --file /etc/mecatl/daemon.yaml
+```
+
+`config init` still owns the operator `settings.yaml` (POLICY); `config daemon`
+owns `daemon.yaml` (TOPOLOGY). The help distinguishes the two surfaces.
+
+**Start with it:**
+
+```sh
+mecated serve --config ~/.config/mecatl/daemon.yaml
+```
+
+#### v1 fields
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `version` | _(required)_ | the schema version; must be exactly `v1`. Any other value or a missing key is a parse error. |
+| `grpc_addr` | `127.0.0.1:8080` | gRPC listen address (host:port). |
+| `http_addr` | `127.0.0.1:8081` | HTTP/SSE listen address (host:port). |
+| `metrics_addr` | `127.0.0.1:9090` | metrics/admin listen address (host:port). An explicit empty string (`""`) DISABLES the metrics endpoint. |
+| `tls_cert` | `""` | PEM server certificate; with `tls_key` enables TLS on gRPC + HTTP. |
+| `tls_key` | `""` | PEM server private key (paired with `tls_cert`). |
+| `client_ca` | `""` | PEM client-CA bundle; enables mutual TLS (require + verify client certs). Requires `tls_cert`/`tls_key`. |
+| `rate_limit` | `0` | sustained per-client request rate (req/s); `0` disables rate limiting. |
+| `rate_burst` | `0` | token-bucket burst size; `0` derives a sane default from `rate_limit`. |
+
+The schema is **strict**: an unknown top-level key is a parse error (not a
+silently-ignored typo), a multi-document file is refused, and a missing or
+unsupported `version` is rejected. `config daemon validate` runs the strict
+parse plus the effective semantic validation possible without
+starting/binding (rate-limit/burst bounds).
+
+#### Precedence: defaults < file < explicit CLI
+
+- A field **absent** from the file keeps the built-in default (the loopback
+  addresses above).
+- A field **present** in the file overrides the built-in default.
+- An **explicit CLI flag** overrides the file value, including an explicit
+  empty/zero — so `mecated serve --config daemon.yaml --metrics-addr ""` disables
+  metrics even if the file sets `metrics_addr`, and `--grpc-addr 0.0.0.0:8080`
+  overrides a file `grpc_addr`.
+
+#### Security
+
+- The API bearer **token is NOT accepted in `daemon.yaml`**. Set it via
+  `export MECATL_AUTH_TOKEN=...` or `--auth-token` — the same env/CLI sources as
+  without a config file. There is no `token:`/`password:` key in the v1 schema.
+- A **non-loopback** bind without authentication/TLS still exposes
+  UNAUTHENTICATED command/file execution to the network and logs a prominent
+  WARNING. `daemon.yaml` changes topology, not the trust model — enable auth
+  (`MECATL_AUTH_TOKEN`/`--auth-token`) and/or TLS (`tls_cert`/`tls_key`) before
+  binding a non-loopback address.
+- `config daemon validate` never prints secrets or raw file content; the success
+  line carries only the file path and version.
+
+See [ADR 0084](../adr/0084-daemon-config-file.md) for the rationale.
+
 ### Provider selection
 
 A provider is **required** — the server has nothing to do without one. The server

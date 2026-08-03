@@ -585,6 +585,100 @@ func runConfigInit(argv []string, out io.Writer) error {
 	return nil
 }
 
+// runConfigDaemonInit implements `mecated config daemon init [--print] [--force]`:
+// it scaffolds a minimal, commented v1 daemon.yaml (issue #338, ADR 0084) at the
+// documented conventional path <XDG_CONFIG_HOME>/mecatl/daemon.yaml. It does NOT
+// cause automatic loading — the file is loaded ONLY when `mecated serve --config
+// PATH` is supplied explicitly. --print emits the skeleton to out and writes
+// NOTHING; without --force it REFUSES to overwrite an existing file (the error
+// names the path); --force overwrites. It reuses the daemonconfig schema (the
+// embedded skeleton) and the SAME xdgconfig resolution as config init, so the
+// write path equals the conventional path `config daemon validate` defaults to.
+// `config init` keeps ownership of settings.yaml; this owns daemon topology only.
+func runConfigDaemonInit(argv []string, out io.Writer) error {
+	fs := flag.NewFlagSet("mecated config daemon init", flag.ContinueOnError)
+	fs.SetOutput(out)
+	var printOnly, force bool
+	fs.BoolVar(&printOnly, "print", false, "print the daemon.yaml skeleton to stdout and write NO file (a paste-ready reference)")
+	fs.BoolVar(&force, "force", false, "overwrite an existing daemon.yaml (default: refuse, naming the path)")
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+
+	skeleton := daemonconfig.Skeleton()
+	if printOnly {
+		_, err := io.WriteString(out, skeleton)
+		return err
+	}
+
+	cfgDir := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
+	if cfgDir == "" {
+		return fmt.Errorf("cannot resolve the user config directory (set $XDG_CONFIG_HOME or $HOME); use --print to emit the skeleton to stdout instead")
+	}
+	path := filepath.Join(cfgDir, daemonconfig.DaemonConfigRelPath)
+
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s already exists; pass --force to overwrite it (or --print to emit to stdout without writing)", path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("checking %s: %w", path, err)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating config directory %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(skeleton), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	_, _ = fmt.Fprintf(out, "wrote daemon config skeleton to %s\n", path)
+	_, _ = fmt.Fprintf(out, "it is NOT auto-loaded; start the server with 'mecated serve --config %s' to use it.\n", path)
+	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See docs/usage/mecated.md for the full reference.\n")
+	return nil
+}
+
+// runConfigDaemonValidate implements `mecated config daemon validate [--file
+// PATH]`: it strictly parses and validates a daemon.yaml file (schema + the
+// effective semantic validation possible WITHOUT starting/binding). --file
+// selects the file (default: the conventional <XDG_CONFIG_HOME>/mecatl/daemon.yaml
+// for convenience). On success it names the file + version and reminds how to use
+// it; on failure it reports the schema/semantic error. It NEVER prints secrets or
+// raw file content — the daemon config carries no token value, and the success
+// line carries only the path + version. It reuses daemonconfig.Load (strict parse)
+// + daemonconfig.Validate (rate-limit/burst bounds), the SAME schema/runtime
+// validation the serve path applies, so a validated file provably loads.
+func runConfigDaemonValidate(argv []string, out io.Writer) error {
+	fs := flag.NewFlagSet("mecated config daemon validate", flag.ContinueOnError)
+	fs.SetOutput(out)
+	var file string
+	fs.StringVar(&file, "file", "", "path to the daemon.yaml to validate (default: the conventional $XDG_CONFIG_HOME/mecatl/daemon.yaml)")
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+
+	path := file
+	if path == "" {
+		// Default to the conventional path for convenience (NOT auto-load — this
+		// is a validate action, not a serve path).
+		cfgDir := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
+		if cfgDir == "" {
+			return fmt.Errorf("cannot resolve the user config directory (set $XDG_CONFIG_HOME or $HOME); pass --file PATH to name the daemon.yaml to validate")
+		}
+		path = filepath.Join(cfgDir, daemonconfig.DaemonConfigRelPath)
+	}
+
+	cfg, err := daemonconfig.Load(path)
+	if err != nil {
+		return err
+	}
+	if err := daemonconfig.Validate(cfg); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "%s: valid daemon config (version %s)\n", path, cfg.Version)
+	_, _ = fmt.Fprintf(out, "start the server with 'mecated serve --config %s' to use it.\n", path)
+	return nil
+}
+
 // runSkillsPromote implements `mecated skills promote --skills-draft-dir
 // <quarantine> --skills-dir <active> [--yes] <name>`: the operator-trust action that
 // shows the full candidate, asks for confirmation (unless --yes), re-validates it
@@ -1089,6 +1183,8 @@ func mecatedUsage(fs *flag.FlagSet) func() {
 		_, _ = fmt.Fprintf(out, "Usage: mecated [flags]\n       mecated <command> [args]\n\n")
 		_, _ = fmt.Fprintf(out, "Commands:\n")
 		_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
+		_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
+		_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
 		_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
 		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")

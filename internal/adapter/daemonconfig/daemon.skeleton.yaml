@@ -1,0 +1,48 @@
+# mecatl daemon.yaml — minimal commented v1 skeleton.
+#
+# Written by 'mecated config daemon init'. Place at
+# <XDG_CONFIG_HOME>/mecatl/daemon.yaml (default ~/.config/mecatl/daemon.yaml).
+# This file is loaded ONLY when you start the server with an explicit
+# 'mecated serve --config PATH' (or the legacy bare 'mecated --config PATH');
+# it is NEVER auto-discovered. See 'mecated config daemon validate'.
+#
+# Precedence: built-in defaults < this file < explicit CLI flags.
+#   - A field ABSENT from this file keeps the built-in default.
+#   - A field PRESENT here overrides the built-in default.
+#   - An explicit CLI flag (e.g. --grpc-addr) overrides the file value, including
+#     an explicit empty/zero (so '--metrics-addr ""' disables metrics even if this
+#     file sets metrics_addr).
+#
+# SECURITY: the API bearer TOKEN is NOT accepted in this file. Set it via
+#   export MECATL_AUTH_TOKEN=...
+# or the --auth-token flag. Never put a secret value in daemon.yaml.
+# Binding a non-loopback address WITHOUT authentication/TLS exposes
+# command/file execution to the network — enable auth and/or TLS first.
+#
+# The v1 schema is the small API-edge slice below. Unknown keys are REJECTED
+# (strict parse). See docs/usage/mecated.md for the full reference.
+
+version: v1
+
+# gRPC listen address (host:port). Default 127.0.0.1:8080 (loopback).
+# grpc_addr: 127.0.0.1:8080
+
+# HTTP/SSE listen address (host:port). Default 127.0.0.1:8081 (loopback).
+# http_addr: 127.0.0.1:8081
+
+# Metrics/admin listen address (host:port). Default 127.0.0.1:9090 (loopback).
+# An explicit empty string ("") DISABLES the metrics endpoint.
+# metrics_addr: 127.0.0.1:9090
+
+# --- Transport security (TLS / mutual TLS) -----------------------------------
+# Uncomment all three together to enable TLS. --client-ca additionally enables
+# mutual TLS (require + verify client certs). Paths are PEM files on disk.
+# tls_cert: /etc/mecatl/tls/server.crt
+# tls_key:  /etc/mecatl/tls/server.key
+# client_ca: /etc/mecatl/tls/clients-ca.crt
+
+# --- Rate limiting -----------------------------------------------------------
+# Per-client sustained request rate (req/s). 0 disables rate limiting.
+# rate_limit: 0
+# Token-bucket burst size. 0 derives a sane default from rate_limit.
+# rate_burst: 0

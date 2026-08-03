@@ -105,6 +105,35 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--rate-limit` | `0` (off) | Sustained per-client request rate in req/s |
 | `--rate-burst` | `0` (derived) | Token-bucket burst; zero derives a sane default from `--rate-limit` |
 
+#### Daemon config file (`daemon.yaml`)
+
+The listener topology above (gRPC/HTTP/metrics addresses, TLS cert/key/CA,
+rate-limit/burst) can live in a small, strict, versioned YAML file instead of
+repeated flags. The file is a DISTINCT file from `settings.yaml` (which is
+POLICY: permissions, posture, guardrails, models) and is loaded ONLY when you
+start with `mecated serve --config PATH` — there is **no conventional
+auto-load**. Scaffold and validate it offline:
+
+```sh
+mecated config daemon init                          # write the conventional skeleton
+mecated config daemon init --print                  # print it to stdout, no file
+mecated config daemon validate                      # validate the conventional path
+mecated config daemon validate --file /etc/mecatl/daemon.yaml
+mecated serve --config ~/.config/mecatl/daemon.yaml # start with it
+```
+
+The v1 fields are `version` (required, `v1`), `grpc_addr`, `http_addr`,
+`metrics_addr`, `tls_cert`, `tls_key`, `client_ca`, `rate_limit`, `rate_burst`.
+The schema is strict (unknown keys are rejected). Precedence is
+**defaults < file < explicit CLI** — an explicit flag overrides the file,
+including an explicit empty/zero.
+
+**Security:** the API bearer **token is NOT accepted in `daemon.yaml`** — keep
+using `MECATL_AUTH_TOKEN` / `--auth-token`. A **non-loopback** bind still
+requires auth/TLS (it logs a prominent WARNING otherwise); `daemon.yaml`
+changes topology, not the trust model. `config daemon validate` never prints
+secrets or raw file content. See [ADR 0084](https://stacklok.github.io/mecatl/adr/0084-daemon-config-file) for the rationale.
+
 ### Session state
 
 | Flag | Default | Notes |
@@ -365,10 +394,24 @@ mecated serve [flags]
 mecated acp [flags]
 
 # Write the operator settings.yaml skeleton to ~/.config/mecatl/settings.yaml
+# (POLICY: permissions, posture, guardrails, models)
 mecated config init
 
-# Print the skeleton to stdout without writing (paste-ready reference)
+# Print the settings.yaml skeleton to stdout without writing (paste-ready reference)
 mecated config init --print
+
+# Write the daemon.yaml listener-topology skeleton to
+# ~/.config/mecatl/daemon.yaml (loopback defaults + commented TLS/rate examples).
+# It is NOT auto-loaded; start with `mecated serve --config <path>` to use it.
+mecated config daemon init
+
+# Print the daemon.yaml skeleton to stdout without writing
+mecated config daemon init --print
+
+# Strictly validate a daemon.yaml (default: the conventional path). Never
+# starts the server; never prints secrets/raw file content.
+mecated config daemon validate
+mecated config daemon validate --file /etc/mecatl/daemon.yaml
 
 # Promote a model-authored candidate skill out of quarantine
 mecated skills promote \

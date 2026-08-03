@@ -21,6 +21,18 @@ and `cmd/mecated` wires the knobs:
 - **Health** — HTTP `/healthz` (liveness) + `/readyz` (readiness) mounted outside
   auth/rate-limit, plus standard `grpc_health_v1` `SERVING` (`internal/adapter/server/health.go`).
 - **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.
+- **Daemon config file (`daemon.yaml`, ADR 0084)** — the serve-time topology
+  slice (gRPC/HTTP/metrics listen addresses, TLS cert/key/CA paths,
+  rate-limit/burst) is optionally carried by a small, strict, versioned YAML
+  file loaded ONLY when `mecated serve --config PATH` is supplied explicitly
+  (`internal/adapter/daemonconfig`). There is NO conventional auto-load.
+  `mecated config daemon init` scaffolds the v1 skeleton at
+  `<XDG_CONFIG_HOME>/mecatl/daemon.yaml`; `mecated config daemon validate`
+  strictly parses + semantically validates a file offline. It is a DISTINCT file
+  from `settings.yaml` (POLICY/trust) and carries NO auth token value (the
+  bearer token stays `MECATL_AUTH_TOKEN`/`--auth-token`); a non-loopback bind
+  still requires auth/TLS. Precedence: defaults < file < explicit CLI. It folds
+  into the cmd-mecated serve-time fields (no `app.Config` widening).
 
 Deployment artifacts: a hardened **GitHub Actions** CI plus a **ko**-based release
 that signs images with **cosign** and emits an **SBOM** and **SLSA provenance**

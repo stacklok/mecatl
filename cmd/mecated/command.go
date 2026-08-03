@@ -100,10 +100,12 @@ func resolveCommand(argv []string) commandResolution {
 		return commandResolution{err: perfMCPUsageError(args)}
 	}
 
-	// `mecated config ...` is the config-management subcommand group. The ONLY
-	// subcommand is `config init`. A bare `config` or an unknown `config <x>` is
-	// a usage error (a typo starting an unauthenticated server is a nasty
-	// surprise): fail closed before the daemon boots.
+	// `mecated config ...` is the config-management subcommand group. The
+	// subcommands are `config init` (settings.yaml skeleton) and `config daemon
+	// <init|validate>` (daemon topology YAML). A bare `config`, an unknown
+	// `config <x>`, or an unknown/missing `config daemon <x>` is a usage error
+	// (a typo starting an unauthenticated server is a nasty surprise): fail
+	// closed before the daemon boots — never fall through to run().
 	if first == "config" {
 		if len(args) >= 3 && args[2] == "init" {
 			return commandResolution{
@@ -112,6 +114,28 @@ func resolveCommand(argv []string) commandResolution {
 					return runConfigInit(args[3:], stdout)
 				}),
 			}
+		}
+		// `config daemon <init|validate>` — the daemon topology config group
+		// (issue #338, ADR 0084). A bare `config daemon` or an unknown
+		// `config daemon <x>` is a usage error (fail closed).
+		if len(args) >= 3 && args[2] == "daemon" {
+			if len(args) >= 4 && args[3] == "init" {
+				return commandResolution{
+					handled: true,
+					run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+						return runConfigDaemonInit(args[4:], stdout)
+					}),
+				}
+			}
+			if len(args) >= 4 && args[3] == "validate" {
+				return commandResolution{
+					handled: true,
+					run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+						return runConfigDaemonValidate(args[4:], stdout)
+					}),
+				}
+			}
+			return commandResolution{err: configDaemonUsageError(args)}
 		}
 		return commandResolution{err: configUsageError(args)}
 	}
@@ -203,6 +227,8 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
+	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
+	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
 	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
 	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
 	_, _ = fmt.Fprintf(out, "\nCompatibility: bare 'mecated [flags]' and 'mecated --acp [flags]' still work but\n")
@@ -216,15 +242,31 @@ func unknownCommandError(arg string) error {
 }
 
 // configUsageError builds the error message for a bare/unknown `config` invocation.
+// It distinguishes the two config surfaces: `config init` owns the operator
+// settings.yaml (permissions/trust POLICY), `config daemon` owns the daemon.yaml
+// (listener TOPOLOGY) — see ADR 0084.
 func configUsageError(argv []string) error {
 	sub := ""
 	if len(argv) >= 3 {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("config: missing subcommand\navailable subcommands:\n  config init    write/print the operator settings.yaml skeleton (--print, --force)")
+		return errors.New("config: missing subcommand\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config daemon <init|validate>  manage the daemon.yaml listener topology")
 	}
-	return fmt.Errorf("config: unknown subcommand %q\navailable subcommands:\n  config init    write/print the operator settings.yaml skeleton (--print, --force)", sub)
+	return fmt.Errorf("config: unknown subcommand %q\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config daemon <init|validate>  manage the daemon.yaml listener topology", sub)
+}
+
+// configDaemonUsageError builds the error message for a bare/unknown
+// `config daemon` invocation.
+func configDaemonUsageError(argv []string) error {
+	sub := ""
+	if len(argv) >= 4 {
+		sub = argv[3]
+	}
+	if sub == "" {
+		return errors.New("config daemon: missing subcommand\navailable subcommands:\n  config daemon init      write/print the daemon.yaml skeleton (--print, --force)\n  config daemon validate  strictly validate a daemon.yaml (--file PATH; default conventional path)")
+	}
+	return fmt.Errorf("config daemon: unknown subcommand %q\navailable subcommands:\n  config daemon init      write/print the daemon.yaml skeleton (--print, --force)\n  config daemon validate  strictly validate a daemon.yaml (--file PATH; default conventional path)", sub)
 }
 
 // skillsUsageError builds the error message for a bare/unknown `skills` invocation.
