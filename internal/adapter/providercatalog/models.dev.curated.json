@@ -2132,22 +2132,22 @@
       "gpt-5.6-luna": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.1,
-          "cache_write": 1.25,
+          "cache_read": 0.02,
+          "cache_write": 0.25,
           "context_over_200k": {
-            "cache_read": 0.2,
-            "cache_write": 2.5,
-            "input": 2,
-            "output": 9
+            "cache_read": 0.04,
+            "cache_write": 0.5,
+            "input": 0.4,
+            "output": 1.8
           },
-          "input": 1,
-          "output": 6,
+          "input": 0.2,
+          "output": 1.2,
           "tiers": [
             {
-              "cache_read": 0.2,
-              "cache_write": 2.5,
-              "input": 2,
-              "output": 9,
+              "cache_read": 0.04,
+              "cache_write": 0.5,
+              "input": 0.4,
+              "output": 1.8,
               "tier": {
                 "size": 272000,
                 "type": "context"
@@ -2160,10 +2160,10 @@
           "modes": {
             "fast": {
               "cost": {
-                "cache_read": 0.2,
-                "cache_write": 2.5,
-                "input": 2,
-                "output": 12
+                "cache_read": 0.04,
+                "cache_write": 0.5,
+                "input": 0.4,
+                "output": 2.4
               },
               "provider": {
                 "body": {
@@ -2318,22 +2318,22 @@
       "gpt-5.6-terra": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.25,
-          "cache_write": 3.125,
+          "cache_read": 0.2,
+          "cache_write": 2.5,
           "context_over_200k": {
-            "cache_read": 0.5,
-            "cache_write": 6.25,
-            "input": 5,
-            "output": 22.5
+            "cache_read": 0.4,
+            "cache_write": 5,
+            "input": 4,
+            "output": 18
           },
-          "input": 2.5,
-          "output": 15,
+          "input": 2,
+          "output": 12,
           "tiers": [
             {
-              "cache_read": 0.5,
-              "cache_write": 6.25,
-              "input": 5,
-              "output": 22.5,
+              "cache_read": 0.4,
+              "cache_write": 5,
+              "input": 4,
+              "output": 18,
               "tier": {
                 "size": 272000,
                 "type": "context"
@@ -2346,10 +2346,10 @@
           "modes": {
             "fast": {
               "cost": {
-                "cache_read": 0.5,
-                "cache_write": 6.25,
-                "input": 5,
-                "output": 30
+                "cache_read": 0.4,
+                "cache_write": 5,
+                "input": 4,
+                "output": 24
               },
               "provider": {
                 "body": {
@@ -3900,7 +3900,7 @@
         ],
         "release_date": "2026-07-24",
         "structured_output": true,
-        "temperature": true,
+        "temperature": false,
         "tool_call": true
       },
       "anthropic/claude-opus-5-fast": {
@@ -4286,7 +4286,17 @@
         "attachment": true,
         "cost": {
           "input": 0.25,
-          "output": 2
+          "output": 2,
+          "tiers": [
+            {
+              "input": 0.5,
+              "output": 4,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Multimodal reasoning model for visual analysis, planning, and tool use",
         "family": "seed",
@@ -4319,7 +4329,17 @@
         "attachment": true,
         "cost": {
           "input": 0.075,
-          "output": 0.3
+          "output": 0.3,
+          "tiers": [
+            {
+              "input": 0.1,
+              "output": 0.8,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Multimodal reasoning model for visual analysis, planning, and tool use",
         "family": "seed",
@@ -4352,7 +4372,17 @@
         "attachment": true,
         "cost": {
           "input": 0.25,
-          "output": 2
+          "output": 2,
+          "tiers": [
+            {
+              "input": 0.5,
+              "output": 4,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Multimodal reasoning model for visual analysis, planning, and tool use",
         "family": "seed",
@@ -4395,7 +4425,17 @@
         "attachment": true,
         "cost": {
           "input": 0.1,
-          "output": 0.4
+          "output": 0.4,
+          "tiers": [
+            {
+              "input": 0.2,
+              "output": 0.8,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Multimodal reasoning model for visual analysis, planning, and tool use",
         "family": "seed",
@@ -4686,8 +4726,8 @@
       "deepseek/deepseek-chat": {
         "attachment": false,
         "cost": {
-          "input": 0.2002,
-          "output": 0.8001
+          "input": 0.2574,
+          "output": 1.0287
         },
         "description": "DeepSeek chat model for instruction following, coding, and analysis",
         "family": "deepseek",
@@ -5034,6 +5074,48 @@
         "temperature": true,
         "tool_call": true
       },
+      "deepseek/deepseek-v4-flash-0731": {
+        "attachment": false,
+        "cost": {
+          "cache_read": 0.018,
+          "input": 0.09,
+          "output": 0.18
+        },
+        "description": "Official DeepSeek V4 Flash release with enhanced agentic capabilities and integrated DSpark speculative decoding",
+        "family": "deepseek-flash",
+        "id": "deepseek/deepseek-v4-flash-0731",
+        "knowledge": "2025-05",
+        "last_updated": "2026-07-31",
+        "limit": {
+          "context": 1048576,
+          "output": 65536
+        },
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "name": "DeepSeek V4 Flash 0731",
+        "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "high",
+              "max"
+            ]
+          }
+        ],
+        "release_date": "2026-07-31",
+        "structured_output": true,
+        "temperature": true,
+        "tool_call": true
+      },
       "deepseek/deepseek-v4-pro": {
         "attachment": false,
         "cost": {
@@ -5214,9 +5296,25 @@
         "cost": {
           "cache_read": 0.125,
           "cache_write": 0.375,
+          "context_over_200k": {
+            "cache_read": 0.25,
+            "input": 2.5,
+            "output": 15
+          },
           "input": 1.25,
           "output": 10,
-          "reasoning": 10
+          "reasoning": 10,
+          "tiers": [
+            {
+              "cache_read": 0.25,
+              "input": 2.5,
+              "output": 15,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Google's proven reasoning model for coding, math, and multimodal analysis",
         "family": "gemini-pro",
@@ -5259,9 +5357,25 @@
         "cost": {
           "cache_read": 0.125,
           "cache_write": 0.375,
+          "context_over_200k": {
+            "cache_read": 0.25,
+            "input": 2.5,
+            "output": 15
+          },
           "input": 1.25,
           "output": 10,
-          "reasoning": 10
+          "reasoning": 10,
+          "tiers": [
+            {
+              "cache_read": 0.25,
+              "input": 2.5,
+              "output": 15,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Advanced Gemini model for complex reasoning, coding, and multimodal analysis",
         "family": "gemini",
@@ -5303,9 +5417,25 @@
         "cost": {
           "cache_read": 0.125,
           "cache_write": 0.375,
+          "context_over_200k": {
+            "cache_read": 0.25,
+            "input": 2.5,
+            "output": 15
+          },
           "input": 1.25,
           "output": 10,
-          "reasoning": 10
+          "reasoning": 10,
+          "tiers": [
+            {
+              "cache_read": 0.25,
+              "input": 2.5,
+              "output": 15,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Advanced Gemini model for complex reasoning, coding, and multimodal analysis",
         "family": "gemini-pro",
@@ -5615,7 +5745,7 @@
         "last_updated": "2026-06-30",
         "limit": {
           "context": 65536,
-          "output": 66000
+          "output": 65536
         },
         "modalities": {
           "input": [
@@ -6136,9 +6266,8 @@
       "google/gemma-4-26b-a4b-it": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.05,
-          "input": 0.14,
-          "output": 0.42
+          "input": 0.07,
+          "output": 0.34
         },
         "description": "Open Gemma instruction model for efficient chat and self-hosted deployments",
         "family": "gemma",
@@ -6146,7 +6275,7 @@
         "last_updated": "2026-04-02",
         "limit": {
           "context": 262144,
-          "output": 262144
+          "output": 16384
         },
         "modalities": {
           "input": [
@@ -6211,8 +6340,9 @@
       "google/gemma-4-31b-it": {
         "attachment": true,
         "cost": {
-          "input": 0.14,
-          "output": 0.4
+          "cache_read": 0.1,
+          "input": 0.1,
+          "output": 0.34
         },
         "description": "Largest Gemma 4 instruction model for open, self-hosted chat and reasoning",
         "family": "gemma",
@@ -7439,40 +7569,6 @@
         "temperature": true,
         "tool_call": true
       },
-      "mistralai/devstral-2512": {
-        "attachment": true,
-        "cost": {
-          "cache_read": 0.04,
-          "input": 0.4,
-          "output": 2
-        },
-        "description": "Mistral's coding-agent model for repository work, terminal tasks, and software fixes",
-        "family": "devstral",
-        "id": "mistralai/devstral-2512",
-        "knowledge": "2025-12",
-        "last_updated": "2025-12-09",
-        "limit": {
-          "context": 262144,
-          "output": 262144
-        },
-        "modalities": {
-          "input": [
-            "text",
-            "pdf"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "Devstral 2",
-        "open_weights": true,
-        "reasoning": false,
-        "release_date": "2025-12-09",
-        "status": "deprecated",
-        "structured_output": true,
-        "temperature": true,
-        "tool_call": true
-      },
       "mistralai/ministral-14b-2512": {
         "attachment": true,
         "cost": {
@@ -7950,9 +8046,8 @@
       "mistralai/mistral-small-3.2-24b-instruct": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.01,
-          "input": 0.1,
-          "output": 0.3
+          "input": 0.075,
+          "output": 0.2
         },
         "description": "Efficient Mistral model for fast chat, extraction, and production assistants",
         "family": "mistral-small",
@@ -8184,9 +8279,9 @@
       "moonshotai/kimi-k2.6": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.1088,
-          "input": 0.646,
-          "output": 2.72
+          "cache_read": 0.2,
+          "input": 0.6,
+          "output": 3.41
         },
         "description": "Multimodal Kimi workhorse for agent loops, coding tasks, and visual context",
         "family": "kimi-k2",
@@ -8557,6 +8652,7 @@
       "nvidia/nemotron-3-nano-30b-a3b": {
         "attachment": false,
         "cost": {
+          "cache_read": 0.03,
           "input": 0.05,
           "output": 0.2
         },
@@ -8566,7 +8662,7 @@
         "last_updated": "2025-12-15",
         "limit": {
           "context": 262144,
-          "output": 228000
+          "output": 262144
         },
         "modalities": {
           "input": [
@@ -9488,50 +9584,6 @@
         "temperature": false,
         "tool_call": true
       },
-      "openai/gpt-5-codex": {
-        "attachment": true,
-        "cost": {
-          "cache_read": 0.125,
-          "input": 1.25,
-          "output": 10
-        },
-        "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
-        "family": "gpt-codex",
-        "id": "openai/gpt-5-codex",
-        "knowledge": "2024-09-30",
-        "last_updated": "2025-09-15",
-        "limit": {
-          "context": 400000,
-          "input": 272000,
-          "output": 128000
-        },
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "GPT-5-Codex",
-        "open_weights": false,
-        "reasoning": true,
-        "reasoning_options": [
-          {
-            "type": "effort",
-            "values": [
-              "low",
-              "medium",
-              "high"
-            ]
-          }
-        ],
-        "release_date": "2025-09-15",
-        "structured_output": true,
-        "temperature": false,
-        "tool_call": true
-      },
       "openai/gpt-5-image": {
         "attachment": true,
         "cost": {
@@ -9778,40 +9830,6 @@
             ]
           }
         ],
-        "release_date": "2025-11-13",
-        "structured_output": true,
-        "temperature": false,
-        "tool_call": true
-      },
-      "openai/gpt-5.1-chat": {
-        "attachment": true,
-        "cost": {
-          "cache_read": 0.13,
-          "input": 1.25,
-          "output": 10
-        },
-        "description": "Chat-tuned GPT model for conversational assistance, writing, and tool workflows",
-        "family": "gpt-codex",
-        "id": "openai/gpt-5.1-chat",
-        "knowledge": "2024-09-30",
-        "last_updated": "2025-11-13",
-        "limit": {
-          "context": 128000,
-          "output": 32000
-        },
-        "modalities": {
-          "input": [
-            "pdf",
-            "image",
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "GPT-5.1 Chat",
-        "open_weights": false,
-        "reasoning": false,
         "release_date": "2025-11-13",
         "structured_output": true,
         "temperature": false,
@@ -10204,8 +10222,24 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.25,
+          "context_over_200k": {
+            "cache_read": 0.5,
+            "input": 5,
+            "output": 22.5
+          },
           "input": 2.5,
-          "output": 15
+          "output": 15,
+          "tiers": [
+            {
+              "cache_read": 0.5,
+              "input": 5,
+              "output": 22.5,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Agent-ready GPT for coding and computer-use workflows at a lower cost",
         "family": "gpt",
@@ -10390,8 +10424,22 @@
       "openai/gpt-5.4-pro": {
         "attachment": true,
         "cost": {
+          "context_over_200k": {
+            "input": 60,
+            "output": 270
+          },
           "input": 30,
-          "output": 180
+          "output": 180,
+          "tiers": [
+            {
+              "input": 60,
+              "output": 270,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "More exact GPT-5.4 tier for demanding professional reasoning and agent tasks",
         "family": "gpt-pro",
@@ -10435,8 +10483,24 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.5,
+          "context_over_200k": {
+            "cache_read": 1,
+            "input": 10,
+            "output": 45
+          },
           "input": 5,
-          "output": 30
+          "output": 30,
+          "tiers": [
+            {
+              "cache_read": 1,
+              "input": 10,
+              "output": 45,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Default frontier GPT for coding, computer use, research, and knowledge work",
         "family": "gpt",
@@ -10481,8 +10545,22 @@
       "openai/gpt-5.5-pro": {
         "attachment": true,
         "cost": {
+          "context_over_200k": {
+            "input": 60,
+            "output": 270
+          },
           "input": 30,
-          "output": 180
+          "output": 180,
+          "tiers": [
+            {
+              "input": 60,
+              "output": 270,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Highest-accuracy GPT-5.5 tier for slower, precision-heavy reasoning and coding",
         "family": "gpt-pro",
@@ -10525,10 +10603,28 @@
       "openai/gpt-5.6-luna": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.05,
-          "cache_write": 0.625,
-          "input": 0.5,
-          "output": 3
+          "cache_read": 0.01,
+          "cache_write": 0.125,
+          "context_over_200k": {
+            "cache_read": 0.02,
+            "cache_write": 0.25,
+            "input": 0.2,
+            "output": 0.9
+          },
+          "input": 0.1,
+          "output": 0.6,
+          "tiers": [
+            {
+              "cache_read": 0.02,
+              "cache_write": 0.25,
+              "input": 0.2,
+              "output": 0.9,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
         "family": "gpt-luna",
@@ -10574,10 +10670,28 @@
       "openai/gpt-5.6-luna-pro": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.05,
-          "cache_write": 0.625,
-          "input": 0.5,
-          "output": 3
+          "cache_read": 0.01,
+          "cache_write": 0.125,
+          "context_over_200k": {
+            "cache_read": 0.02,
+            "cache_write": 0.25,
+            "input": 0.2,
+            "output": 0.9
+          },
+          "input": 0.1,
+          "output": 0.6,
+          "tiers": [
+            {
+              "cache_read": 0.02,
+              "cache_write": 0.25,
+              "input": 0.2,
+              "output": 0.9,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Frontier GPT model for professional reasoning, coding, and multimodal work",
         "family": "gpt-luna",
@@ -10625,8 +10739,26 @@
         "cost": {
           "cache_read": 0.5,
           "cache_write": 6.25,
+          "context_over_200k": {
+            "cache_read": 1,
+            "cache_write": 12.5,
+            "input": 10,
+            "output": 45
+          },
           "input": 5,
-          "output": 30
+          "output": 30,
+          "tiers": [
+            {
+              "cache_read": 1,
+              "cache_write": 12.5,
+              "input": 10,
+              "output": 45,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
         "family": "gpt-sol",
@@ -10674,8 +10806,26 @@
         "cost": {
           "cache_read": 0.5,
           "cache_write": 6.25,
+          "context_over_200k": {
+            "cache_read": 1,
+            "cache_write": 12.5,
+            "input": 10,
+            "output": 45
+          },
           "input": 5,
-          "output": 30
+          "output": 30,
+          "tiers": [
+            {
+              "cache_read": 1,
+              "cache_write": 12.5,
+              "input": 10,
+              "output": 45,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Frontier GPT model for professional reasoning, coding, and multimodal work",
         "family": "gpt-sol",
@@ -10721,10 +10871,28 @@
       "openai/gpt-5.6-terra": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.125,
-          "cache_write": 1.5625,
-          "input": 1.25,
-          "output": 7.5
+          "cache_read": 0.1,
+          "cache_write": 1.25,
+          "context_over_200k": {
+            "cache_read": 0.2,
+            "cache_write": 2.5,
+            "input": 2,
+            "output": 9
+          },
+          "input": 1,
+          "output": 6,
+          "tiers": [
+            {
+              "cache_read": 0.2,
+              "cache_write": 2.5,
+              "input": 2,
+              "output": 9,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
         "family": "gpt-terra",
@@ -10770,10 +10938,28 @@
       "openai/gpt-5.6-terra-pro": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.125,
-          "cache_write": 1.5625,
-          "input": 1.25,
-          "output": 7.5
+          "cache_read": 0.1,
+          "cache_write": 1.25,
+          "context_over_200k": {
+            "cache_read": 0.2,
+            "cache_write": 2.5,
+            "input": 2,
+            "output": 9
+          },
+          "input": 1,
+          "output": 6,
+          "tiers": [
+            {
+              "cache_read": 0.2,
+              "cache_write": 2.5,
+              "input": 2,
+              "output": 9,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Frontier GPT model for professional reasoning, coding, and multimodal work",
         "family": "gpt-terra",
@@ -10956,8 +11142,9 @@
       "openai/gpt-oss-20b": {
         "attachment": false,
         "cost": {
+          "cache_read": 0.03,
           "input": 0.03,
-          "output": 0.14
+          "output": 0.13
         },
         "description": "Open-weight GPT model for self-hosted reasoning and instruction-following workloads",
         "family": "gpt-oss",
@@ -11196,41 +11383,6 @@
         "temperature": false,
         "tool_call": true
       },
-      "openai/o3-deep-research": {
-        "attachment": true,
-        "cost": {
-          "cache_read": 2.5,
-          "input": 10,
-          "output": 40
-        },
-        "description": "Research model for long-horizon investigation, synthesis, and analytical reports",
-        "family": "o",
-        "id": "openai/o3-deep-research",
-        "knowledge": "2024-05",
-        "last_updated": "2024-06-26",
-        "limit": {
-          "context": 200000,
-          "output": 100000
-        },
-        "modalities": {
-          "input": [
-            "image",
-            "text",
-            "pdf"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "o3-deep-research",
-        "open_weights": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "release_date": "2024-06-26",
-        "structured_output": true,
-        "temperature": true,
-        "tool_call": true
-      },
       "openai/o3-mini": {
         "attachment": true,
         "cost": {
@@ -11400,41 +11552,6 @@
         "release_date": "2025-04-16",
         "structured_output": true,
         "temperature": false,
-        "tool_call": true
-      },
-      "openai/o4-mini-deep-research": {
-        "attachment": true,
-        "cost": {
-          "cache_read": 0.5,
-          "input": 2,
-          "output": 8
-        },
-        "description": "Research model for long-horizon investigation, synthesis, and analytical reports",
-        "family": "o-mini",
-        "id": "openai/o4-mini-deep-research",
-        "knowledge": "2024-05",
-        "last_updated": "2024-06-26",
-        "limit": {
-          "context": 200000,
-          "output": 100000
-        },
-        "modalities": {
-          "input": [
-            "pdf",
-            "image",
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "o4-mini-deep-research",
-        "open_weights": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "release_date": "2024-06-26",
-        "structured_output": true,
-        "temperature": true,
         "tool_call": true
       },
       "openai/o4-mini-high": {
@@ -11808,78 +11925,12 @@
         "temperature": true,
         "tool_call": false
       },
-      "poolside/laguna-m.1": {
-        "attachment": false,
-        "cost": {
-          "cache_read": 0.1,
-          "input": 0.2,
-          "output": 0.4
-        },
-        "description": "Poolside's open-weight model for agentic coding and long-horizon work",
-        "family": "laguna",
-        "id": "poolside/laguna-m.1",
-        "last_updated": "2026-06-13",
-        "limit": {
-          "context": 262144,
-          "output": 32768
-        },
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "Laguna M.1",
-        "open_weights": true,
-        "reasoning": true,
-        "reasoning_options": [],
-        "release_date": "2026-04-28",
-        "structured_output": false,
-        "temperature": true,
-        "tool_call": true
-      },
-      "poolside/laguna-m.1:free": {
-        "attachment": false,
-        "cost": {
-          "input": 0,
-          "output": 0
-        },
-        "description": "Free provider route for experiments, demos, and cost-sensitive chat workloads",
-        "family": "laguna",
-        "id": "poolside/laguna-m.1:free",
-        "interleaved": {
-          "field": "reasoning_content"
-        },
-        "last_updated": "2026-06-13",
-        "limit": {
-          "context": 262144,
-          "output": 32768
-        },
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "name": "Laguna M.1 (free)",
-        "open_weights": true,
-        "reasoning": true,
-        "reasoning_options": [],
-        "release_date": "2026-04-28",
-        "structured_output": false,
-        "temperature": true,
-        "tool_call": true
-      },
       "poolside/laguna-s-2.1": {
         "attachment": false,
         "cost": {
-          "cache_read": 0.01,
-          "input": 0.1,
-          "output": 0.2
+          "cache_read": 0.009,
+          "input": 0.09,
+          "output": 0.18
         },
         "description": "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
         "family": "laguna-s",
@@ -12034,8 +12085,8 @@
       "qwen/qwen-2.5-7b-instruct": {
         "attachment": false,
         "cost": {
-          "input": 0.04,
-          "output": 0.1
+          "input": 0.1,
+          "output": 0.2
         },
         "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
         "family": "qwen",
@@ -12098,8 +12149,26 @@
         "cost": {
           "cache_read": 0.052,
           "cache_write": 0.325,
+          "context_over_200k": {
+            "cache_read": 0.156,
+            "cache_write": 0.975,
+            "input": 0.78,
+            "output": 2.34
+          },
           "input": 0.26,
-          "output": 0.78
+          "output": 0.78,
+          "tiers": [
+            {
+              "cache_read": 0.156,
+              "cache_write": 0.975,
+              "input": 0.78,
+              "output": 2.34,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
         "family": "qwen",
@@ -12129,8 +12198,22 @@
       "qwen/qwen-plus-2025-07-28": {
         "attachment": false,
         "cost": {
+          "context_over_200k": {
+            "input": 0.78,
+            "output": 2.34
+          },
           "input": 0.26,
-          "output": 0.78
+          "output": 0.78,
+          "tiers": [
+            {
+              "input": 0.78,
+              "output": 2.34,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
         "family": "qwen",
@@ -12160,9 +12243,25 @@
       "qwen/qwen-plus-2025-07-28:thinking": {
         "attachment": false,
         "cost": {
-          "cache_write": 0.325,
-          "input": 0.26,
-          "output": 0.78
+          "cache_write": 0.5,
+          "context_over_200k": {
+            "cache_write": 1.5,
+            "input": 1.2,
+            "output": 3.6
+          },
+          "input": 0.4,
+          "output": 1.2,
+          "tiers": [
+            {
+              "cache_write": 1.5,
+              "input": 1.2,
+              "output": 3.6,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen reasoning model for deliberate problem solving, math, and coding",
         "family": "qwen",
@@ -12340,8 +12439,8 @@
       "qwen/qwen3-235b-a22b-thinking-2507": {
         "attachment": false,
         "cost": {
-          "input": 0.3,
-          "output": 3
+          "input": 0.23,
+          "output": 2.3
         },
         "description": "Qwen reasoning model for deliberate problem solving, math, and coding",
         "family": "qwen",
@@ -12401,7 +12500,7 @@
           }
         ],
         "release_date": "2025-04-28",
-        "structured_output": true,
+        "structured_output": false,
         "temperature": true,
         "tool_call": true
       },
@@ -12439,8 +12538,8 @@
       "qwen/qwen3-30b-a3b-thinking-2507": {
         "attachment": false,
         "cost": {
-          "input": 0.13,
-          "output": 1.56
+          "input": 0.2,
+          "output": 2.4
         },
         "description": "Qwen reasoning model for deliberate problem solving, math, and coding",
         "family": "qwen",
@@ -12576,7 +12675,7 @@
         "attachment": false,
         "cost": {
           "input": 0.07,
-          "output": 0.27
+          "output": 0.28
         },
         "description": "Smaller Qwen coder for efficient local agents and repo-level fixes",
         "family": "qwen",
@@ -12585,7 +12684,7 @@
         "last_updated": "2025-04",
         "limit": {
           "context": 262144,
-          "output": 32768
+          "output": 262144
         },
         "modalities": {
           "input": [
@@ -12609,7 +12708,29 @@
           "cache_read": 0.039,
           "cache_write": 0.24375,
           "input": 0.195,
-          "output": 0.975
+          "output": 0.975,
+          "tiers": [
+            {
+              "cache_read": 0.065,
+              "cache_write": 0.40625,
+              "input": 0.325,
+              "output": 1.625,
+              "tier": {
+                "size": 32000,
+                "type": "context"
+              }
+            },
+            {
+              "cache_read": 0.104,
+              "cache_write": 0.65,
+              "input": 0.52,
+              "output": 2.6,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen coding model for software agents, repository edits, and code reasoning",
         "family": "qwen",
@@ -12640,7 +12761,7 @@
         "attachment": false,
         "cost": {
           "cache_read": 0.07,
-          "input": 0.11,
+          "input": 0.12,
           "output": 0.8
         },
         "description": "Qwen coding model for software agents, repository edits, and code reasoning",
@@ -12673,7 +12794,29 @@
           "cache_read": 0.13,
           "cache_write": 0.8125,
           "input": 0.65,
-          "output": 3.25
+          "output": 3.25,
+          "tiers": [
+            {
+              "cache_read": 0.234,
+              "cache_write": 1.4625,
+              "input": 1.17,
+              "output": 5.85,
+              "tier": {
+                "size": 32000,
+                "type": "context"
+              }
+            },
+            {
+              "cache_read": 0.39,
+              "cache_write": 2.4375,
+              "input": 1.95,
+              "output": 9.75,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Hosted Qwen coder for software agents, repo edits, and long-context code",
         "family": "qwen",
@@ -12706,7 +12849,29 @@
           "cache_read": 0.156,
           "cache_write": 0.975,
           "input": 0.78,
-          "output": 3.9
+          "output": 3.9,
+          "tiers": [
+            {
+              "cache_read": 0.312,
+              "cache_write": 1.95,
+              "input": 1.56,
+              "output": 7.8,
+              "tier": {
+                "size": 32000,
+                "type": "context"
+              }
+            },
+            {
+              "cache_read": 0.39,
+              "cache_write": 2.4375,
+              "input": 1.95,
+              "output": 9.75,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Flagship Qwen3 model for coding agents, complex reasoning, and tool use",
         "family": "qwen",
@@ -12715,7 +12880,7 @@
         "last_updated": "2025-09-23",
         "limit": {
           "context": 262144,
-          "output": 32768
+          "output": 65536
         },
         "modalities": {
           "input": [
@@ -12737,7 +12902,25 @@
         "attachment": false,
         "cost": {
           "input": 0.78,
-          "output": 3.9
+          "output": 3.9,
+          "tiers": [
+            {
+              "input": 1.56,
+              "output": 7.8,
+              "tier": {
+                "size": 32000,
+                "type": "context"
+              }
+            },
+            {
+              "input": 1.95,
+              "output": 9.75,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen reasoning model for deliberate problem solving, math, and coding",
         "family": "qwen",
@@ -12745,7 +12928,7 @@
         "last_updated": "2026-02-09",
         "limit": {
           "context": 262144,
-          "output": 32768
+          "output": 65536
         },
         "modalities": {
           "input": [
@@ -12805,8 +12988,8 @@
       "qwen/qwen3-next-80b-a3b-thinking": {
         "attachment": false,
         "cost": {
-          "input": 0.0975,
-          "output": 0.78
+          "input": 0.15,
+          "output": 1.2
         },
         "description": "Efficient Qwen thinking model for local reasoning, math, and coding agents",
         "family": "qwen",
@@ -12870,8 +13053,8 @@
       "qwen/qwen3-vl-235b-a22b-thinking": {
         "attachment": true,
         "cost": {
-          "input": 0.26,
-          "output": 2.6
+          "input": 0.4,
+          "output": 4
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen",
@@ -12903,8 +13086,8 @@
       "qwen/qwen3-vl-30b-a3b-instruct": {
         "attachment": true,
         "cost": {
-          "input": 0.15,
-          "output": 0.6
+          "input": 0.13,
+          "output": 0.52
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen",
@@ -12913,7 +13096,7 @@
         "last_updated": "2025-10-06",
         "limit": {
           "context": 262144,
-          "output": 16384
+          "output": 32768
         },
         "modalities": {
           "input": [
@@ -12935,8 +13118,8 @@
       "qwen/qwen3-vl-30b-a3b-thinking": {
         "attachment": true,
         "cost": {
-          "input": 0.13,
-          "output": 1.56
+          "input": 0.2,
+          "output": 2.4
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen",
@@ -13030,8 +13213,8 @@
       "qwen/qwen3-vl-8b-thinking": {
         "attachment": true,
         "cost": {
-          "input": 0.117,
-          "output": 1.365
+          "input": 0.18,
+          "output": 2.1
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen",
@@ -13136,8 +13319,7 @@
       "qwen/qwen3.5-35b-a3b": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.05,
-          "input": 0.15,
+          "input": 0.14,
           "output": 1
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
@@ -13290,8 +13472,22 @@
       "qwen/qwen3.5-plus-02-15": {
         "attachment": true,
         "cost": {
+          "context_over_200k": {
+            "input": 0.325,
+            "output": 1.95
+          },
           "input": 0.26,
-          "output": 1.56
+          "output": 1.56,
+          "tiers": [
+            {
+              "input": 0.325,
+              "output": 1.95,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen",
@@ -13334,8 +13530,24 @@
         "attachment": true,
         "cost": {
           "cache_write": 0.375,
+          "context_over_200k": {
+            "cache_write": 0.46875,
+            "input": 0.375,
+            "output": 2.25
+          },
           "input": 0.3,
-          "output": 1.8
+          "output": 1.8,
+          "tiers": [
+            {
+              "cache_write": 0.46875,
+              "input": 0.375,
+              "output": 2.25,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen3.5",
@@ -13452,8 +13664,24 @@
         "attachment": true,
         "cost": {
           "cache_write": 0.234375,
+          "context_over_200k": {
+            "cache_write": 0.9375,
+            "input": 0.75,
+            "output": 3
+          },
           "input": 0.1875,
-          "output": 1.125
+          "output": 1.125,
+          "tiers": [
+            {
+              "cache_write": 0.9375,
+              "input": 0.75,
+              "output": 3,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen3.6",
@@ -13494,9 +13722,20 @@
       "qwen/qwen3.6-max-preview": {
         "attachment": false,
         "cost": {
-          "cache_write": 1.3,
-          "input": 1.04,
-          "output": 6.24
+          "cache_write": 1.28375,
+          "input": 1.027,
+          "output": 6.162,
+          "tiers": [
+            {
+              "cache_write": 1.975,
+              "input": 1.58,
+              "output": 9.48,
+              "tier": {
+                "size": 128000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Flagship Qwen model for complex reasoning, coding, and agentic workflows",
         "family": "qwen",
@@ -13537,8 +13776,24 @@
         "attachment": true,
         "cost": {
           "cache_write": 0.40625,
+          "context_over_200k": {
+            "cache_write": 1.625,
+            "input": 1.3,
+            "output": 3.9
+          },
           "input": 0.325,
-          "output": 1.95
+          "output": 1.95,
+          "tiers": [
+            {
+              "cache_write": 1.625,
+              "input": 1.3,
+              "output": 3.9,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Earlier Qwen multimodal workhorse for million-token agent and document tasks",
         "family": "qwen",
@@ -13583,14 +13838,37 @@
           "cache_read": 0.006,
           "cache_write": 0.038,
           "input": 0.03,
-          "output": 0.13
+          "output": 0.13,
+          "tiers": [
+            {
+              "cache_read": 0.02,
+              "cache_write": 0.125,
+              "input": 0.1,
+              "output": 0.4,
+              "tier": {
+                "size": 32000,
+                "type": "context"
+              }
+            },
+            {
+              "cache_read": 0.04,
+              "cache_write": 0.25,
+              "input": 0.2,
+              "output": 0.8,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
         "family": "qwen",
         "id": "qwen/qwen3.7-flash",
-        "last_updated": "2026-07-27",
+        "last_updated": "2026-07-15",
         "limit": {
           "context": 1000000,
+          "input": 991000,
           "output": 65536
         },
         "modalities": {
@@ -13611,7 +13889,7 @@
             "type": "budget_tokens"
           }
         ],
-        "release_date": "2026-07-27",
+        "release_date": "2026-07-15",
         "structured_output": false,
         "temperature": true,
         "tool_call": true
@@ -13630,7 +13908,7 @@
         "last_updated": "2026-05-21",
         "limit": {
           "context": 1000000,
-          "output": 65536
+          "output": 131072
         },
         "modalities": {
           "input": [
@@ -13663,8 +13941,26 @@
         "cost": {
           "cache_read": 0.064,
           "cache_write": 0.4,
+          "context_over_200k": {
+            "cache_read": 0.192,
+            "cache_write": 1.2,
+            "input": 0.96,
+            "output": 3.84
+          },
           "input": 0.32,
-          "output": 1.28
+          "output": 1.28,
+          "tiers": [
+            {
+              "cache_read": 0.192,
+              "cache_write": 1.2,
+              "input": 0.96,
+              "output": 3.84,
+              "tier": {
+                "size": 256000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Multimodal Qwen workhorse for long-context agents, visual inputs, and coding",
         "family": "qwen",
@@ -13673,7 +13969,7 @@
         "last_updated": "2026-06-02",
         "limit": {
           "context": 1000000,
-          "output": 65536
+          "output": 131072
         },
         "modalities": {
           "input": [
@@ -13828,13 +14124,29 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.5,
+          "context_over_200k": {
+            "cache_read": 1,
+            "input": 10,
+            "output": 45
+          },
           "input": 5,
-          "output": 30
+          "output": 30,
+          "tiers": [
+            {
+              "cache_read": 1,
+              "input": 10,
+              "output": 45,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Quality-first multi-agent model for hard research, analysis, and competitions",
         "family": "fugu",
         "id": "sakana/fugu-ultra",
-        "last_updated": "2026-06-24",
+        "last_updated": "2026-06-15",
         "limit": {
           "context": 1000000,
           "output": 128000
@@ -13855,13 +14167,13 @@
           {
             "type": "effort",
             "values": [
-              "max",
+              "high",
               "xhigh",
-              "high"
+              "max"
             ]
           }
         ],
-        "release_date": "2026-06-24",
+        "release_date": "2026-06-15",
         "structured_output": true,
         "temperature": false,
         "tool_call": true
@@ -14144,7 +14456,7 @@
           }
         ],
         "release_date": "2026-04-20",
-        "structured_output": false,
+        "structured_output": true,
         "temperature": true,
         "tool_call": true
       },
@@ -14251,7 +14563,7 @@
         "knowledge": "2024-04-30",
         "last_updated": "2024-11-08",
         "limit": {
-          "context": 32768,
+          "context": 1024000,
           "output": 32768
         },
         "modalities": {
@@ -14312,6 +14624,52 @@
           }
         ],
         "release_date": "2026-07-15",
+        "structured_output": false,
+        "temperature": true,
+        "tool_call": true
+      },
+      "thinkingmachines/inkling-small": {
+        "attachment": true,
+        "cost": {
+          "cache_read": 0.1,
+          "input": 0.5,
+          "output": 1.2
+        },
+        "description": "Multimodal reasoning model for visual analysis, planning, and tool use",
+        "family": "ling",
+        "id": "thinkingmachines/inkling-small",
+        "last_updated": "2026-07-30",
+        "limit": {
+          "context": 524288,
+          "output": 262144
+        },
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "audio"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "name": "Inkling Small",
+        "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ]
+          }
+        ],
+        "release_date": "2026-07-30",
         "structured_output": false,
         "temperature": true,
         "tool_call": true
@@ -14412,8 +14770,24 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.2,
+          "context_over_200k": {
+            "cache_read": 0.4,
+            "input": 2.5,
+            "output": 5
+          },
           "input": 1.25,
-          "output": 2.5
+          "output": 2.5,
+          "tiers": [
+            {
+              "cache_read": 0.4,
+              "input": 2.5,
+              "output": 5,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Grok model for agentic tool use, reasoning, coding, and live assistance",
         "family": "grok",
@@ -14447,8 +14821,24 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.2,
+          "context_over_200k": {
+            "cache_read": 0.4,
+            "input": 2.5,
+            "output": 5
+          },
           "input": 1.25,
-          "output": 2.5
+          "output": 2.5,
+          "tiers": [
+            {
+              "cache_read": 0.4,
+              "input": 2.5,
+              "output": 5,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Grok model for agentic tool use, reasoning, coding, and live assistance",
         "family": "grok",
@@ -14553,7 +14943,7 @@
         "cost": {
           "cache_read": 0.3,
           "context_over_200k": {
-            "cache_read": 1,
+            "cache_read": 0.6,
             "input": 4,
             "output": 12
           },
@@ -14561,7 +14951,7 @@
           "output": 6,
           "tiers": [
             {
-              "cache_read": 1,
+              "cache_read": 0.6,
               "input": 4,
               "output": 12,
               "tier": {
@@ -14611,8 +15001,24 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.2,
+          "context_over_200k": {
+            "cache_read": 0.4,
+            "input": 2,
+            "output": 4
+          },
           "input": 1,
-          "output": 2
+          "output": 2,
+          "tiers": [
+            {
+              "cache_read": 0.4,
+              "input": 2,
+              "output": 4,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Fast Grok coding model tuned for agentic engineering and iterative edits",
         "family": "grok-build",
@@ -15084,9 +15490,9 @@
       "z-ai/glm-5.2": {
         "attachment": false,
         "cost": {
-          "cache_read": 0.13702,
-          "input": 0.7378,
-          "output": 2.3188
+          "cache_read": 0.05278,
+          "input": 0.2842,
+          "output": 0.8932
         },
         "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
         "family": "glm",
@@ -15341,6 +15747,47 @@
         "temperature": false,
         "tool_call": true
       },
+      "~deepseek/deepseek-v4-flash-latest": {
+        "attachment": false,
+        "cost": {
+          "cache_read": 0.018,
+          "input": 0.09,
+          "output": 0.18
+        },
+        "description": "Fast DeepSeek model for efficient chat, coding help, and agent loops",
+        "family": "deepseek",
+        "id": "~deepseek/deepseek-v4-flash-latest",
+        "last_updated": "2026-08-01",
+        "limit": {
+          "context": 1048576,
+          "output": 65536
+        },
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "name": "DeepSeek V4 Flash Latest",
+        "open_weights": false,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "high",
+              "max"
+            ]
+          }
+        ],
+        "release_date": "2026-08-01",
+        "structured_output": true,
+        "temperature": true,
+        "tool_call": true
+      },
       "~google/gemini-flash-latest": {
         "attachment": true,
         "cost": {
@@ -15457,9 +15904,9 @@
       "~moonshotai/kimi-latest": {
         "attachment": true,
         "cost": {
-          "cache_read": 0.3,
-          "input": 3,
-          "output": 15
+          "cache_read": 0.29,
+          "input": 2.9,
+          "output": 14
         },
         "description": "Kimi multimodal agent model for visual understanding, coding, and planning",
         "family": "kimi",
@@ -15501,8 +15948,26 @@
         "cost": {
           "cache_read": 0.5,
           "cache_write": 6.25,
+          "context_over_200k": {
+            "cache_read": 1,
+            "cache_write": 12.5,
+            "input": 10,
+            "output": 45
+          },
           "input": 5,
-          "output": 30
+          "output": 30,
+          "tiers": [
+            {
+              "cache_read": 1,
+              "cache_write": 12.5,
+              "input": 10,
+              "output": 45,
+              "tier": {
+                "size": 272000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
         "family": "gpt",
@@ -15594,8 +16059,24 @@
         "attachment": true,
         "cost": {
           "cache_read": 0.3,
+          "context_over_200k": {
+            "cache_read": 0.6,
+            "input": 4,
+            "output": 12
+          },
           "input": 2,
-          "output": 6
+          "output": 6,
+          "tiers": [
+            {
+              "cache_read": 0.6,
+              "input": 4,
+              "output": 12,
+              "tier": {
+                "size": 200000,
+                "type": "context"
+              }
+            }
+          ]
         },
         "description": "Grok model for agentic tool use, reasoning, coding, and live assistance",
         "family": "grok",
