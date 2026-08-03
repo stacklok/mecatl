@@ -84,9 +84,16 @@ resolution and credential selection consumes it. Nothing re-resolves in between.
 **Constrain, never grant.** A binding may not let a holder reach past the authority the
 credential already states. A session pointer fails this; a holder key satisfies it.
 
-**No key below the pod.** The pod is the workload and the key holder. A subagent gets an
-identity from mecatl, real inside mecatl's trust domain, and no private key, because
-siblings share a process and cannot hold one separately.
+**No key below the pod, and none inside the agent loop.** Two facts, and the second is the
+one that closes call 1.
+
+Nothing below the pod holds a key. A subagent gets an identity from mecatl, real inside
+mecatl's trust domain, and no private key, because siblings share a process and cannot hold
+one separately.
+
+The pod is the workload, but it is not where the key sits. A key in the agent loop's address
+space is readable by a shell that loop can spawn, so the key lives in a broker process at a
+uid the loop does not have. The workload identity is the pod's; custody is the broker's.
 
 **Refuse on a missing input.** When something a decision needs is absent, whether that is a policy, a
 resolved target, or an annotation saying whether a tool writes, deny rather than guess. Absent
