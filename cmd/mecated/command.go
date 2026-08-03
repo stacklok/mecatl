@@ -5,14 +5,13 @@
 // path explicitly, and owns the one app.Build path.
 //
 // The pure shape (resolveCommand + applyCommandMode + warnLegacyMode +
-// writeTopLevelHelp/writeServeHelp) is what the tests exercise; main wires the
+// writeTopLevelHelp) is what the tests exercise; main wires the
 // io/os.Exit side effects around it.
 
 package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -208,16 +207,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
 	_, _ = fmt.Fprintf(out, "\nCompatibility: bare 'mecated [flags]' and 'mecated --acp [flags]' still work but\n")
 	_, _ = fmt.Fprintf(out, "are deprecated; prefer 'mecated serve' / 'mecated acp'.\n")
-	_, _ = fmt.Fprintf(out, "\nRun 'mecated <command> --help' for the full flag list.\n")
-}
-
-// writeServeHelp renders the exhaustive flag list shown by `mecated serve --help`
-// and `mecated acp --help`. mode names the command word printed in the Usage
-// line ("serve" or "acp"). It is the production renderer used by parseFlags'
-// Usage hook AND by the tests.
-func writeServeHelp(out io.Writer, mode commandMode, fs *flag.FlagSet) {
-	_, _ = fmt.Fprintf(out, "Usage: mecated %s [flags]\n\nFlags:\n", mode)
-	fs.PrintDefaults()
+	_, _ = fmt.Fprintf(out, "\nRun 'mecated <command> --help' for common flags and 'mecated <command> --help-all' for the exhaustive reference.\n")
 }
 
 // unknownCommandError builds the error message for an unknown leading bare word.

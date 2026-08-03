@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"strings"
@@ -172,33 +173,48 @@ func TestResolveConfigWrongSubFailsClosed(t *testing.T) {
 
 // --- Requirement 3: production help renderers used by tests ----------------
 
-// helpCapture builds a FlagSet the way parseFlags does and invokes the SAME
-// production Usage hook (so the test exercises the real renderer, not a copy).
-func helpCapture(t *testing.T, mode commandMode, argv []string) string {
+// helpRenderOut drives the REAL parseFlagsModeOut (the injected-writer seam)
+// with the full production FlagSet — every flag parseFlagsMode registers — and
+// returns the rendered help output. It is the seam item 3 asks for: tests
+// capture the actual parseFlagsMode/Usage output rather than a synthetic subset,
+// so common-help / help-all assertions hold against the full real FlagSet.
+func helpRenderOut(t *testing.T, mode commandMode, argv []string) string {
 	t.Helper()
-	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
-	var cfg config
-	// Register just the acp flag so the serve/acp flag list is non-empty enough
-	// to assert the "Flags:" section header; the real parseFlags registers all.
-	fs.BoolVar(&cfg.acp, "acp", false, "serve the Agent Client Protocol (ACP) over stdio")
 	var buf strings.Builder
-	fs.SetOutput(&buf)
-	fs.Usage = func() {
-		out := fs.Output()
-		if mode == modeLegacy {
-			writeTopLevelHelp(out)
-			return
-		}
-		writeServeHelp(out, mode, fs)
-	}
-	if err := fs.Parse(argv); err != nil && err != flag.ErrHelp {
-		t.Fatalf("parse: %v", err)
+	_, _, err := parseFlagsModeOut(mode, argv, &buf)
+	if err != nil && !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseFlagsModeOut(%v, %v): %v", mode, argv, err)
 	}
 	return buf.String()
 }
 
+// hasFlagHeader reports whether the rendered help output contains the flag's own
+// header line ("  -<name>" at the start of a line, followed by a space, tab, or
+// newline) — distinguishing the flag's own entry from a bare mention of "-<name>"
+// inside ANOTHER flag's description (e.g. "--headless" appears in the
+// --plan-mode-auto-approve description, and "--session-store-url" appears in the
+// --child-retention description).
+func hasFlagHeader(out, name string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		// flag.PrintDefaults emits the header as "  -<name>" possibly followed by
+		// " <type>" then a tab or newline.
+		rest := strings.TrimPrefix(line, "  -"+name)
+		if rest == line {
+			continue // not this flag's header line
+		}
+		// The header line ends after the name: the next char is a space (before a
+		// type name), a tab (one-byte bool), or end-of-line. A longer flag whose
+		// name starts with this prefix (e.g. "headless" vs "headless-foo") would
+		// leave a non-empty rest that is not a separator.
+		if rest == "" || rest[0] == ' ' || rest[0] == '\t' {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
-	out := helpCapture(t, modeLegacy, []string{"--help"})
+	out := helpRenderOut(t, modeLegacy, []string{"--help"})
 	for _, want := range []string{
 		"Usage: mecated <command> [flags]",
 		"serve                   start the network daemon",
@@ -216,26 +232,39 @@ func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
 }
 
 func TestServeHelpRealRendererShowsFlagList(t *testing.T) {
-	out := helpCapture(t, modeServe, []string{"--help"})
+	out := helpRenderOut(t, modeServe, []string{"--help"})
 	if !strings.Contains(out, "Usage: mecated serve [flags]") {
 		t.Errorf("serve help missing 'Usage: mecated serve [flags]':\n%s", out)
 	}
-	if !strings.Contains(out, "Flags:") {
-		t.Errorf("serve help missing 'Flags:' section:\n%s", out)
+	if !strings.Contains(out, "Common flags grouped by task") {
+		t.Errorf("serve help missing common-help header:\n%s", out)
 	}
-	// The exhaustive list must NOT show the concise command page markers.
+	if !strings.Contains(out, "--help-all") {
+		t.Errorf("serve common help missing pointer to --help-all:\n%s", out)
+	}
+	// The common help must NOT show the exhaustive flag list.
 	if strings.Contains(out, "Compatibility: bare 'mecated") {
 		t.Errorf("serve help leaked the legacy compatibility note (should be concise only):\n%s", out)
 	}
 }
 
 func TestAcpHelpRealRendererShowsFlagList(t *testing.T) {
-	out := helpCapture(t, modeACP, []string{"--help"})
+	out := helpRenderOut(t, modeACP, []string{"--help"})
 	if !strings.Contains(out, "Usage: mecated acp [flags]") {
 		t.Errorf("acp help missing 'Usage: mecated acp [flags]':\n%s", out)
 	}
-	if !strings.Contains(out, "Flags:") {
-		t.Errorf("acp help missing 'Flags:' section:\n%s", out)
+	if !strings.Contains(out, "Common flags for ACP") {
+		t.Errorf("acp help missing ACP common-help header:\n%s", out)
+	}
+	if !strings.Contains(out, "--help-all") {
+		t.Errorf("acp common help missing pointer to --help-all:\n%s", out)
+	}
+	// ACP common help must NOT show server-boundary flags.
+	if strings.Contains(out, "grpc-addr") {
+		t.Errorf("acp common help leaked server-boundary flag 'grpc-addr':\n%s", out)
+	}
+	if strings.Contains(out, "http-addr") {
+		t.Errorf("acp common help leaked server-boundary flag 'http-addr':\n%s", out)
 	}
 }
 
@@ -452,5 +481,238 @@ func TestResolveUnknownCommandDoesNotConstructRunner(t *testing.T) {
 		if res.mode != modeLegacy {
 			t.Errorf("%v: unknown command mode = %q, want legacy/empty (so run() is never reached)", argv, res.mode)
 		}
+	}
+}
+
+// ── Progressive help tests (over the FULL real FlagSet) ──────────────────
+
+// ── Requirement: serve --help is common, grouped, bounded, deterministic ────
+
+func TestServeCommonHelpIsGroupedAndBounded(t *testing.T) {
+	out := helpRenderOut(t, modeServe, []string{"--help"})
+
+	// Must contain the renamed group headings (Workspace & Session, not
+	// Invocation; no single-entry "Deployment Mode" group).
+	for _, grp := range []string{"Workspace & Session:", "Provider:", "Permissions:"} {
+		if !strings.Contains(out, grp) {
+			t.Errorf("serve common help missing group %q", grp)
+		}
+	}
+	if strings.Contains(out, "Invocation:") {
+		t.Errorf("serve common help still uses implementation-vocabulary group 'Invocation':\n%s", out)
+	}
+	if strings.Contains(out, "Deployment Mode:") {
+		t.Errorf("serve common help still has the folded single-entry 'Deployment Mode' group:\n%s", out)
+	}
+
+	// Must point to --help-all.
+	if !strings.Contains(out, "--help-all") {
+		t.Errorf("serve common help missing discovery text pointing to --help-all")
+	}
+
+	// Must NOT contain representative expert/advanced flags.
+	for _, expert := range []string{
+		"llm-breaker-cooldown",
+		"otlp-endpoint",
+		"driver-tls",
+		"scheduler-tick-interval",
+	} {
+		if strings.Contains(out, expert) {
+			t.Errorf("serve common help leaked expert flag %q", expert)
+		}
+	}
+}
+
+// TestServeCommonHelpGroupOrderingIsDeterministic proves flags WITHIN a group
+// are sorted by name (deterministic, independent of registration order). It
+// renders the full serve common help and checks the Workspace & Session group
+// lists its flags alphabetically.
+func TestServeCommonHelpGroupOrderingIsDeterministic(t *testing.T) {
+	out := helpRenderOut(t, modeServe, []string{"--help"})
+	// The Workspace & Session common flags are headless + workspace; sorted
+	// alphabetically that is "headless" before "workspace".
+	idxGroup := strings.Index(out, "Workspace & Session:")
+	if idxGroup < 0 {
+		t.Fatal("missing Workspace & Session group")
+	}
+	rest := out[idxGroup:]
+	idxHeadless := strings.Index(rest, "headless")
+	idxWorkspace := strings.Index(rest, "workspace")
+	if idxHeadless < 0 || idxWorkspace < 0 {
+		t.Fatalf("Workspace & Session group missing headless/workspace:\n%s", rest)
+	}
+	if idxHeadless > idxWorkspace {
+		t.Errorf("Workspace & Session flags not sorted alphabetically: headless (idx %d) after workspace (idx %d)", idxHeadless, idxWorkspace)
+	}
+}
+
+// ── Requirement: ACP common help excludes server-boundary groups ────────────
+
+func TestAcpCommonHelpExcludesServerBoundary(t *testing.T) {
+	out := helpRenderOut(t, modeACP, []string{"--help"})
+
+	// Server-boundary flags MUST be absent.
+	for _, sb := range []string{
+		"grpc-addr",
+		"http-addr",
+		"tls-cert",
+		"tls-key",
+		"auth-token",
+		"rate-limit",
+		"metrics-addr",
+		"otlp-endpoint",
+		"driver-tls",
+		"session-store-url",
+		"scheduler-tick-interval",
+		"flight-recorder",
+		"headless",
+	} {
+		if strings.Contains(out, sb) {
+			t.Errorf("acp common help leaked server-boundary flag %q", sb)
+		}
+	}
+
+	// ACP-applicable common flags MUST be present.
+	for _, acpFlag := range []string{
+		"workspace",
+		"model",
+	} {
+		if !strings.Contains(out, acpFlag) {
+			t.Errorf("acp common help missing acp-applicable flag %q", acpFlag)
+		}
+	}
+}
+
+// ── Requirement: help-all over the FULL real FlagSet ────────────────────────
+
+// TestServeHelpAllRendersFullRealFlagSet verifies serve --help-all against the
+// FULL real parseFlagsMode FlagSet: every public metadata-covered flag MUST
+// appear, and the hidden --output-economy MUST NOT appear.
+func TestServeHelpAllRendersFullRealFlagSet(t *testing.T) {
+	out := helpRenderOut(t, modeServe, []string{"--help-all"})
+
+	if !strings.Contains(out, "Flags:") {
+		t.Errorf("serve --help-all missing 'Flags:' header")
+	}
+
+	// Every flag with metadata (i.e. every public flag) MUST appear in the
+	// exhaustive reference. This is the full-set assertion, not a subset.
+	for name := range flagMetaByFlag {
+		if !hasFlagHeader(out, name) {
+			t.Errorf("serve --help-all missing public flag %q", name)
+		}
+	}
+
+	// The hidden legacy flag MUST be absent from ALL help.
+	if strings.Contains(out, "output-economy") {
+		t.Errorf("serve --help-all leaked hidden flag 'output-economy'")
+	}
+}
+
+// TestAcpHelpAllExcludesServerBoundaryOverFullFlagSet verifies acp --help-all
+// against the FULL real FlagSet: server-boundary flags are absent, ACP-
+// applicable flags are present, the hidden flag is absent, and --acp itself is
+// excluded (the command already selects the mode; --acp=false conflicts).
+func TestAcpHelpAllExcludesServerBoundaryOverFullFlagSet(t *testing.T) {
+	out := helpRenderOut(t, modeACP, []string{"--help-all"})
+
+	// Server-boundary (acpExclude) flags MUST be absent — checked by header
+	// line so a mention inside another flag's description does not false-pass.
+	for name, m := range flagMetaByFlag {
+		if m.acp != acpExclude {
+			continue
+		}
+		if hasFlagHeader(out, name) {
+			t.Errorf("acp --help-all leaked server-boundary flag %q", name)
+		}
+	}
+
+	// ACP-applicable flags MUST be present (every non-excluded, non-hidden flag).
+	for name, m := range flagMetaByFlag {
+		if m.acp == acpExclude || name == "acp" {
+			continue
+		}
+		if !hasFlagHeader(out, name) {
+			t.Errorf("acp --help-all missing ACP-applicable flag %q", name)
+		}
+	}
+
+	// --acp MUST be excluded from the canonical acp --help-all reference.
+	if hasFlagHeader(out, "acp") {
+		t.Errorf("acp --help-all leaked --acp (the command already selects mode; --acp=false conflicts):\n%s", out)
+	}
+
+	// The hidden legacy flag MUST be absent.
+	if strings.Contains(out, "output-economy") {
+		t.Errorf("acp --help-all leaked hidden flag 'output-economy'")
+	}
+}
+
+// ── Requirement: help paths return success/pre-run (exit 0, no listener) ────
+
+func TestHelpAllReturnsErrHelp(t *testing.T) {
+	for _, mode := range []commandMode{modeLegacy, modeServe, modeACP} {
+		_, err := parseFlagsMode(mode, []string{"--help-all"})
+		if !errors.Is(err, flag.ErrHelp) {
+			t.Errorf("%v --help-all: got err=%v, want flag.ErrHelp", mode, err)
+		}
+	}
+}
+
+func TestHelpReturnsErrHelp(t *testing.T) {
+	for _, mode := range []commandMode{modeLegacy, modeServe, modeACP} {
+		_, err := parseFlagsMode(mode, []string{"--help"})
+		if !errors.Is(err, flag.ErrHelp) {
+			t.Errorf("%v --help: got err=%v, want flag.ErrHelp", mode, err)
+		}
+	}
+}
+
+// ── Requirement: bare --help-all provides the exhaustive reference ───────────
+
+func TestLegacyHelpAllProvidesExhaustiveReference(t *testing.T) {
+	out := helpRenderOut(t, modeLegacy, []string{"--help-all"})
+
+	// The --help-all flag description promises an EXHAUSTIVE reference, so the
+	// bare form must provide the serve-compatible flag reference, not only
+	// pointers.
+	if !strings.Contains(out, "Exhaustive serve-compatible flag reference") {
+		t.Errorf("legacy --help-all missing the exhaustive flag-reference header:\n%s", out)
+	}
+	if !strings.Contains(out, "Flags:") {
+		t.Errorf("legacy --help-all missing the 'Flags:' exhaustive listing:\n%s", out)
+	}
+	// A representative public flag must appear in the exhaustive listing.
+	if !strings.Contains(out, "-workspace") {
+		t.Errorf("legacy --help-all exhaustive listing missing -workspace:\n%s", out)
+	}
+	// The brief compatibility note must still point to the ACP-scoped subset.
+	if !strings.Contains(out, "mecated acp --help-all") {
+		t.Errorf("legacy --help-all missing the ACP compatibility note:\n%s", out)
+	}
+	// The hidden flag must be absent.
+	if strings.Contains(out, "output-economy") {
+		t.Errorf("legacy --help-all leaked hidden flag 'output-economy':\n%s", out)
+	}
+}
+
+// ── Requirement: metadata completeness over the FULL real FlagSet ────────────
+
+// TestFlagMetaCompletenessOverRealFlagSet is the REAL completeness invariant:
+// every registered public flag except the explicitly hidden legacy flags has
+// metadata, and every metadata key names a real registered flag. It drives the
+// validateFlagMeta seam over the FULL real parseFlagsModeOut FlagSet (not a
+// synthetic subset), so a flag added/removed from parseFlagsMode without
+// updating the metadata fails here. parseFlagsModeOut returns the built FlagSet
+// so the test runs validateFlagMeta against the single production registration
+// path — no copied registration block.
+func TestFlagMetaCompletenessOverRealFlagSet(t *testing.T) {
+	var buf strings.Builder
+	fs, _, err := parseFlagsModeOut(modeServe, []string{"--help"}, &buf)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseFlagsModeOut: %v", err)
+	}
+	if err := validateFlagMeta(fs); err != nil {
+		t.Fatalf("validateFlagMeta over the full real FlagSet: %v", err)
 	}
 }

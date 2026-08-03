@@ -409,6 +409,10 @@ type config struct {
 	// fs.Visit), so we can detect conflicts with the canonical 'serve'/'acp' subcommands.
 	acpFlagSet bool
 
+	// helpAll is true when --help-all was passed; it requests exhaustive flag listing
+	// and exits 0 before the daemon starts.
+	helpAll bool
+
 	// ToolHive: discover MCP servers from the running ToolHive workloads (the
 	// embedded ToolHive library lists already-running workloads and reads their
 	// HTTP proxy URLs — mecatl never spawns a workload). Default ON; it fails soft
@@ -1129,7 +1133,21 @@ func parseFlags(argv []string) (config, error) {
 // parseFlagsMode is parseFlags with an explicit command mode, selecting which
 // help renderer the --help hook invokes. run() calls it with the resolved mode.
 func parseFlagsMode(mode commandMode, argv []string) (config, error) {
+	_, cfg, err := parseFlagsModeOut(mode, argv, os.Stderr)
+	return cfg, err
+}
+
+// parseFlagsModeOut is parseFlagsMode with an injected output writer. It returns
+// the built *flag.FlagSet alongside the config so progressive-help tests can run
+// the validateFlagMeta completeness invariant over the FULL real FlagSet (every
+// flag parseFlagsMode registers) instead of a synthetic subset. It is the small
+// test seam: tests capture the REAL Usage / --help / --help-all render output
+// (produced by the production renderers over that full FlagSet) into a
+// strings.Builder, and inspect the FlagSet, without copying the registration
+// block. Production calls it with os.Stderr and discards the returned FlagSet.
+func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.FlagSet, config, error) {
 	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
+	fs.SetOutput(out)
 	var cfg config
 
 	cwd, _ := os.Getwd()
@@ -1297,21 +1315,47 @@ func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 	fs.Float64Var(&cfg.rateLimit, "rate-limit", 0, "sustained per-client request rate in req/s (0 disables rate limiting)")
 	fs.IntVar(&cfg.rateBurst, "rate-burst", 0, "rate-limit token-bucket burst size (0 derives a sane default from --rate-limit)")
 
+	// --help-all requests exhaustive flag listing and exits 0 before the daemon
+	// starts; it is a real flag so it parses normally and is checked post-parse.
+	fs.BoolVar(&cfg.helpAll, "help-all", false,
+		"show the exhaustive flag reference (every registered flag) and exit")
+
 	// Top-level --help shows a concise command-oriented entry page; canonical
-	// `mecated serve --help` / `mecated acp --help` show the exhaustive flag list.
-	// The renderers are package-local functions shared with the tests so the test
-	// suite exercises the REAL production output, never a copied helper.
+	// `mecated serve --help` / `mecated acp --help` show progressive task-oriented
+	// common help.  --help-all (above) shows the exhaustive reference.  The
+	// renderers are package-local functions shared with the tests.
 	fs.Usage = func() {
 		out := fs.Output()
 		if mode == modeLegacy {
 			writeTopLevelHelp(out)
 			return
 		}
-		writeServeHelp(out, mode, fs)
+		if mode == modeACP {
+			writeAcpCommonHelp(out, fs)
+			return
+		}
+		writeServeCommonHelp(out, fs)
 	}
 
 	if err := fs.Parse(argv); err != nil {
-		return config{}, err
+		// Return the fully-registered FlagSet even on a parse/help error so the
+		// progressive-help completeness invariant (validateFlagMeta) can run over
+		// the full real registration path via the --help-triggered ErrHelp path.
+		return fs, config{}, err
+	}
+
+	// --help-all was parsed as a normal flag; render and return ErrHelp (exit 0).
+	if cfg.helpAll {
+		out := fs.Output()
+		switch mode {
+		case modeLegacy:
+			writeLegacyHelpAll(out, fs)
+		case modeACP:
+			writeAcpHelpAll(out, fs)
+		default:
+			writeServeHelpAll(out, fs)
+		}
+		return nil, config{}, flag.ErrHelp
 	}
 
 	// Record whether --posture was set EXPLICITLY (vs left at its empty default) so
@@ -1329,7 +1373,7 @@ func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 
 	// --perf-mcp rides the admin listener, so it is meaningless without one.
 	if cfg.perfMCP && cfg.metricsAddr == "" {
-		return config{}, errors.New("--perf-mcp requires --metrics-addr (the loopback admin listener it mounts /mcp on)")
+		return nil, config{}, errors.New("--perf-mcp requires --metrics-addr (the loopback admin listener it mounts /mcp on)")
 	}
 	// FAIL CLOSED on a non-loopback --metrics-addr with --perf-mcp set, here in
 	// config validation — BEFORE serve() binds any listener — so the refusal is a
@@ -1339,7 +1383,7 @@ func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 	// (decision 6 + the security review's CWE-306 Low finding), so it must never
 	// be reachable off loopback.
 	if cfg.perfMCP && !isLoopbackHostPort(cfg.metricsAddr) {
-		return config{}, fmt.Errorf("--perf-mcp refuses a non-loopback --metrics-addr=%s: it exposes unauthenticated runtime data; bind loopback or add auth (future work)", cfg.metricsAddr)
+		return nil, config{}, fmt.Errorf("--perf-mcp refuses a non-loopback --metrics-addr=%s: it exposes unauthenticated runtime data; bind loopback or add auth (future work)", cfg.metricsAddr)
 	}
 
 	// The three provider credentials (OPENAI/OPENROUTER/ANTHROPIC_API_KEY) are read by
@@ -1372,7 +1416,7 @@ func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 	// failing fast on an unreadable path (loud-misconfig posture).
 	policy, err := readAskReviewerPolicy(cfg.subagentAskReviewerPolicyFile)
 	if err != nil {
-		return config{}, err
+		return nil, config{}, err
 	}
 	cfg.subagentAskReviewerPolicy = policy
 	// Guardrails master switch: only `--guardrails=off` is meaningful (the kill-switch
@@ -1386,7 +1430,7 @@ func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 	case "off":
 		cfg.guardrailsOff = true
 	default:
-		return config{}, fmt.Errorf("--guardrails %q: only \"off\" is accepted (the kill-switch); to ENABLE guardrails set --guardrails-model OR bind the `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — configuring a checker model is the enable (ADR 0046). Leave --guardrails unset to keep guardrails governed by the model/slot config", cfg.guardrailsMode)
+		return nil, config{}, fmt.Errorf("--guardrails %q: only \"off\" is accepted (the kill-switch); to ENABLE guardrails set --guardrails-model OR bind the `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — configuring a checker model is the enable (ADR 0046). Leave --guardrails unset to keep guardrails governed by the model/slot config", cfg.guardrailsMode)
 	}
 	// WebSearch master switch (issue #26): only `--websearch=off` is meaningful (the
 	// kill switch — it forces web search off regardless of the backend ladder). An
@@ -1398,9 +1442,9 @@ func parseFlagsMode(mode commandMode, argv []string) (config, error) {
 	case "off":
 		cfg.websearchOff = true
 	default:
-		return config{}, fmt.Errorf("--websearch %q: only \"off\" is accepted (the kill switch); web search is ON by default (Exa anonymous tier). Set SEARXNG_URL or BRAVE_API_KEY to switch backends, or --websearch-url for an explicit endpoint. Leave --websearch unset to keep web search enabled", cfg.websearchMode)
+		return nil, config{}, fmt.Errorf("--websearch %q: only \"off\" is accepted (the kill switch); web search is ON by default (Exa anonymous tier). Set SEARXNG_URL or BRAVE_API_KEY to switch backends, or --websearch-url for an explicit endpoint. Leave --websearch unset to keep web search enabled", cfg.websearchMode)
 	}
-	return cfg, nil
+	return fs, cfg, nil
 }
 
 // recordExplicitFlags walks the parsed FlagSet and records which operator-knob

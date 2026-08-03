@@ -13,6 +13,25 @@ $ export OPENAI_API_KEY=sk-...
 $ go run ./cmd/mecated serve --openai --workspace "$PWD"
 ```
 
+### Getting help
+
+`mecated` provides progressive, mode-specific help:
+
+- `mecated serve --help` — task-oriented common flags (~20 most-used flags)
+  grouped by user task (workspace & session, provider, permissions, tools,
+  MCP, etc.).  Includes a pointer to `--help-all` for the full reference.
+- `mecated serve --help-all` — exhaustive reference listing every registered
+  public flag with its registered name, default, and description.  Exits 0; does
+  not start a listener.
+- `mecated acp --help` — ACP-specific common flags only (no server-boundary
+  listener/TLS/rate-limit/metrics/OTLP/driver flags).
+- `mecated acp --help-all` — full ACP flag reference (excludes server-boundary
+  flags and the redundant `--acp`, which the `acp` command already selects).
+- `mecated --help` — concise command entry page listing available subcommands.
+- `mecated --help-all` — the exhaustive serve-compatible flag reference (every
+  public flag a `mecated serve` invocation accepts), plus a brief compatibility
+  note pointing to `mecated acp --help-all` for the ACP-scoped subset.
+
 ### Flags
 
 | Flag | Default | Meaning |

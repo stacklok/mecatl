@@ -89,7 +89,7 @@ through `app.Config` into `Build`.
 
 Flags are grouped by area. All have zero-value defaults that produce a working
 loopback-only server. Flags not covered here are advanced operator tuning; run
-`mecated --help` for the full list.
+`mecated serve --help` for common flags grouped by task, or `mecated serve --help-all` for the exhaustive reference.
 
 ### Server
 
