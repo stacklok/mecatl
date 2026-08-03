@@ -44,10 +44,6 @@ does).
 | `model` | `--model` | `""` |
 | `default-provider` | `--default-provider` | `""` |
 | `default-model` | `--default-model` | `""` |
-
-Prefer `model` for newer/passthrough models; `default-model` is catalog-validated and
-rejects ids not in the embedded snapshot. `model` is the per-session passthrough path — it
-accepts any model the provider serves.
 | `openai` | `--openai` (when `true`) | `""` |
 | `openai-base-url` | `--openai-base-url` | `""` |
 | `guardrails-model` | `--guardrails-model` | `""` |
@@ -58,6 +54,10 @@ accepts any model the provider serves.
 | `out-diff` | `--out-diff` | `$RUNNER_TEMP/mecatequi.patch` |
 | `out-summary` | `--out-summary` | `$RUNNER_TEMP/mecatequi.summary.json` |
 | `out-events` | `--out-events` | `$RUNNER_TEMP/mecatequi.events.jsonl` |
+
+Prefer `model` for newer/passthrough models; `default-model` is catalog-validated and
+rejects ids not in the embedded snapshot. `model` is the per-session passthrough path — it
+accepts any model the provider serves.
 
 The `subagent-ask-reviewer` / `subagent-ask-reviewer-max-denies` pair is **escape-hatch-only**
 — it is exposed by the composite action but **not** surfaced by the reusable workflow, so reach

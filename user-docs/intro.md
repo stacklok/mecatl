@@ -33,8 +33,10 @@ _Everything here you do not have to build._
 | [Hook system](/what-you-get/hooks.md) | Pre/post-tool, pre/post-turn, session lifecycle |
 | [Memory & knowledge](/what-you-get/memory.md) | Cross-session memory, dream consolidation, user model |
 | [MCP client](/what-you-get/mcp-client.md) | Streaming-HTTP MCP, namespaced tools, reconnect |
+| [Subagents, teams & parallel](/what-you-get/subagents-teams-parallel.md) | One-shot Subagent, Parallel fork-join, Team crew coordination |
 | [Observability & resilience](/what-you-get/observability.md) | OTel traces, LLM resilience decorator, slow-turn ring |
 | [Scheduled tasks](/what-you-get/scheduled-tasks.md) | Autonomous cron/one-shot runs, exactly-once across replicas |
+| [Using mecatui](/what-you-get/mecatui.md) | The optional terminal UI: model/effort switching, sessions, reading the screen |
 
 ### Extension points
 
@@ -63,6 +65,7 @@ _From smallest to largest._
 | [Cloud-native k8s with mecak8s](/deployment/mecak8s.md) | Redis + k8s lease, disposable pod, storage-free binary |
 | [Single-shot CI with mecatequi](/deployment/mecatequi.md) | One prompt → patch + exit code, forge-agnostic |
 | [Drive via gRPC / HTTP](/deployment/grpc-http.md) | Remote clients, the driver protocol, streaming |
+| [mecatui container image (brood-box)](/deployment/mecatui.md) | Signed multi-arch container image importable as a brood-box agent |
 
 ### Cloud-native kit properties
 

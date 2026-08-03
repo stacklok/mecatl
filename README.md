@@ -160,6 +160,7 @@ the composition layer (`internal/app`, called from the `cmd/` mains).
 
 - **[Architecture guide](./docs/architecture.md)** — the system in depth: layers, the loop, ports, sequence diagrams, extension points.
 - **[Usage & operator guide](./docs/usage.md)** — build/run, the demo, `mecated` flags, the gRPC + HTTP/SSE APIs with examples, permissions, hooks, troubleshooting.
+- **[Documentation index](./docs/README.md)** — a short front door routing each audience (contributor, operator, library consumer, researcher) to the right living guide.
 - **[`docs/design/PRODUCTION-READINESS.md`](./docs/design/PRODUCTION-READINESS.md)** — the live status tracker (what's done, what's deferred).
 - **[mecatui terminal-UI guide](./docs/tui.md)** — the optional `mecatui` terminal client.
 - **[`docs/design/README.md`](./docs/design/README.md)** — the indexed catalog of design rationale per feature (`MULTI-PROVIDER.md`, `AGENT-TEAMS-SPIKE.md`, `DIAGNOSTICS.md`, `DRIVERS.md`, `BACKGROUND-SUBAGENTS.md`, `MECATEQUI.md`, the dense per-subsystem `IMPLEMENTATION-NOTES.md`, and the historical spikes).

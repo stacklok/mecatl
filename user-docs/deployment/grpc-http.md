@@ -95,7 +95,7 @@ Teams require `--enable-teams` (the default). See the full field-level reference
 
 ### Scheduled-task RPCs
 
-`mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`) manages cron/one-shot scheduled runs out-of-band from the tick loop: `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule`, `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`. It requires a backend whose store exposes a `ScheduleStore` (jsonlstore or redisstore) — otherwise every RPC reports `Unimplemented`. See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the full surface, the REST equivalent, and the `mecated schedules` CLI.
+`mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`) manages cron/one-shot scheduled runs out-of-band from the tick loop: `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule`, `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`. It requires a backend whose store exposes a `ScheduleStore` (jsonlstore or redisstore) — otherwise every RPC reports `Unimplemented`. The schedule management surface is otherwise the in-chat `Schedule` tool and a REST mirror under `/v1/schedules`; there is no `mecated schedules` CLI (it was removed by ADR 0073). See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the full surface.
 
 ---
 
@@ -240,7 +240,7 @@ The HTTP adapter wraps the same service. Every event is one SSE `data:` line car
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for unknown/finished child |
 | `POST /v1/sessions/{id}/fork` | `{title?}` | `200` `{session_id}` — fork a peer session from a conversation snapshot |
 
-Scheduled-tasks has its own REST surface under `/v1/schedules` — see [Scheduled tasks](/what-you-get/scheduled-tasks.md#managing-schedules-grpc-rest-and-cli).
+Scheduled-tasks has its own REST surface under `/v1/schedules` — see [Scheduled tasks](/what-you-get/scheduled-tasks.md#managing-schedules-in-chat-grpc-and-rest).
 
 ### Creating a session and running a prompt
 

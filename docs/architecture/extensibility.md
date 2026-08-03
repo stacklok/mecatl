@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the `tool.Catalog` registration seam, MCP client (streaming-HTTP only), progressive tool disclosure (`Disclosable` + `ToolSearch`), skills (progressive-disclosure instruction units), the self-improving skill loop (`SkillDraft`), slash commands, the engine-as-library module contract, and the seam summary table.
+
+**Prerequisites:** [the ports](ports.md) — the `tool.Workspace`/`tool.Catalog` seams and the tool contract.
+
+**Follow-on:** [the API surface](api-surface.md) and [subagents & teams](subagents-and-teams.md) — the MCP/inventory endpoints and delegation families that consume the catalog.
+
 The `tool.Catalog` is the single registration seam, so every tool — core, remote,
 or generated — is one uniform `tool.Tool`.
 
@@ -188,11 +194,18 @@ exist as progressive-disclosure instruction units (see above), with bundled
 served through the skill read-root allowlist. The guiding restraint still holds: build the shape, instrument it,
 and resist features before the loop, tools, permissions, hooks, and cache all work.
 
+## Prerequisites
+
+- [The ports](ports.md) — the `tool.Workspace`/`tool.Catalog` seams.
+
+## Follow-on reading
+
+- [The API surface](api-surface.md) — the MCP passthrough RPCs.
+- [Subagents & teams](subagents-and-teams.md) — delegation families that consume the catalog.
+
 ## Related
 
 - [The agent loop that runs the tools](agent-loop.md)
-- [The API surface](api-surface.md)
-- [Subagents & teams](subagents-and-teams.md)
 
 ---
 

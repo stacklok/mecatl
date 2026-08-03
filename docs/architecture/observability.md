@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the `EventSink`/`ToolCallRecorder`/`Diagnostics` instrumentation seams, the OTel telemetry adapter (metrics + optional tracing), the `SessionStore` families (memstore/jsonlstore/redisstore/remote driver) and `sessnap` snapshot format, the `EventLog` durable event timeline (cloud-native Phase 3), the `SessionLease` single-writer seam (Phase 4), the remote store + content-source driver protocol (`grpcdriver`), conformance suites, and the `llmresilience` retry/breaker decorator.
+
+**Prerequisites:** [the ports](ports.md) — the ports being instrumented and persisted.
+
+**Follow-on:** [deployment & hardening](deployment-and-hardening.md) — server hardening over these persistence seams.
+
 ## Observability & persistence
 
 - **EventSink** (`port.EventSink`) — an optional secondary relay.
@@ -311,11 +317,18 @@ is loadable; the in-flight *stream* itself is not resumed (the `*agent.Run` is
 in-memory), and an approve/cancel against a stored-but-runless session returns
 `ErrNoActiveRun` (HTTP 409 / gRPC `FailedPrecondition`).
 
+## Prerequisites
+
+- [The ports](ports.md) — the ports being instrumented and persisted.
+
+## Follow-on reading
+
+- [Deployment & server hardening](deployment-and-hardening.md)
+
 ## Related
 
 - [The API surface it instruments](api-surface.md)
 - [Providers — provider resilience](providers.md)
-- [Deployment & server hardening](deployment-and-hardening.md)
 
 ---
 

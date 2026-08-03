@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the `tool.WorkspaceForker` isolation seam, the `Parallel` fan-out tool (branch isolation, join modes, auto-merge), agent-team member workspace policy (force-copy mutating / worktree read-only / sandboxed runners), the team-wide token budget, and worktree binding (operator-owned existing worktrees).
+
+**Prerequisites:** [subagents & teams](subagents-and-teams.md) — the sibling delegation family (Subagent children, team-member workspaces share the same forker/seam).
+
+**Follow-on:** [deployment & hardening](deployment-and-hardening.md) — workspace trust gates and posture ladder interact with forker isolation.
+
 `tool.WorkspaceForker` (`engine/tool/isolation.go`) is the workspace-isolation seam:
 `Fork(ctx, base, label)` returns an isolated child `Workspace` plus a cleanup
 func. The default `internal/adapter/forker` picks its strategy per base —
@@ -140,9 +146,16 @@ separated interfaces:
 Trust stays OPERATOR-tier at launch (worktrees share `.git`); osfs path
 confinement is unchanged.
 
+## Prerequisites
+
+- [Subagents & teams](subagents-and-teams.md) — the sibling delegation families.
+
+## Follow-on reading
+
+- [Deployment & server hardening](deployment-and-hardening.md) — workspace trust and the posture ladder interact with forker isolation.
+
 ## Related
 
-- [Subagents & teams — the sibling delegation families](subagents-and-teams.md)
 - [The agent loop that dispatches branches](agent-loop.md)
 
 ---

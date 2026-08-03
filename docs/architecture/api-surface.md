@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the gRPC `HarnessService`, HTTP/SSE mirror, and ACP (stdio) surfaces that expose the same domain `session.Event` stream; the engine-as-library stability contract; and the `ForkSession` RPC.
+
+**Prerequisites:** [the agent loop](agent-loop.md) — the behavior the API drives and streams.
+
+**Follow-on:** [observability](observability.md) and [deployment & hardening](deployment-and-hardening.md) — the persistence, telemetry, and operational seams the API surfaces depend on.
+
 One `Service` (`service.go`) backs two surfaces, both relaying the same domain
 `session.Event` mapped to one proto `Event` by `toProto` (`mapper.go`). The
 service owns session lifecycle (`CreateSession`, `GetSession`), starts runs
@@ -130,13 +136,19 @@ mount, fs/\* delegation, and learned permissions — are recorded in
 > [ADR 0037](../adr/0037-engine-stability-contract.md)). See
 > [extensibility](extensibility.md) for the engine-as-library framing.
 
-## Related
+## Prerequisites
 
 - [The agent loop behind the API](agent-loop.md)
-- [Hooks & guardrails](hooks-and-guardrails.md)
+
+## Follow-on reading
+
 - [Observability & persistence](observability.md)
-- [Extensibility — MCP & tool meta-surfaces](extensibility.md)
 - [Deployment & server hardening](deployment-and-hardening.md)
+
+## Related
+
+- [Hooks & guardrails](hooks-and-guardrails.md)
+- [Extensibility — MCP & tool meta-surfaces](extensibility.md)
 
 ---
 

@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the token budget (`MaxRunTokens`), `TokenCounter`/`Compactor` seams, the compaction cascade (cost-first tiered), back-snap to recent user turns, forward-snap past leading tool results, and the `ValidateToolPairing` abort guard.
+
+**Prerequisites:** [the agent loop](agent-loop.md) — the loop triggers compaction at the turn boundary.
+
+**Follow-on:** [memory](memory.md) — cross-session recall independent of compaction.
+
 Two seams keep a long run inside the model's context window:
 
 - **`TokenCounter`** (`engine/agent/tokencount.go`) estimates message-slice token cost.
@@ -38,11 +44,17 @@ Two seams keep a long run inside the model's context window:
   compaction failure (keep the uncompacted history, WARN, continue). The aggregate
   itself backstops this: `Session.ReplaceHistory` rejects an unpaired slice.
 
-## Related
+## Prerequisites
 
 - [The agent loop that triggers compaction](agent-loop.md)
-- [Providers — the per-model token counter & window](providers.md)
+
+## Follow-on reading
+
 - [Memory — cross-session recall](memory.md)
+
+## Related
+
+- [Providers — the per-model token counter & window](providers.md)
 - [Observability & persistence](observability.md) — `EvCompactionArchive` is the durable, non-destructive bridge: compaction emits the pre-compaction conversation to the event log.
 
 ---

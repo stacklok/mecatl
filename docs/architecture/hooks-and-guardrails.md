@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the hook lifecycle phases (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SubagentStop, team phases), per-tool and run-level placement, mutation semantics, model-backed guardrails (`internal/adapter/modelhook`), and operator-tier-only guardrail config.
+
+**Prerequisites:** [the agent loop](agent-loop.md) — the loop fires the hooks.
+
+**Follow-on:** [deployment & hardening](deployment-and-hardening.md) — guardrails are operator-tier config.
+
 Hook lifecycle phases (`engine/governance/hookevent.go`): `SessionStart`,
 `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop`, plus the
 three team-coordination phases `TeammateIdle`, `TaskCreated`, `TaskCompleted`. The
@@ -92,11 +98,17 @@ checker engine is built tool-less with no recursion into guardrails. The fence
 helpers it shares with the child-ask reviewer live in `engine/agent/fence.go`
 (exported, single source of truth). Full mechanics: `docs/adr/0021-guardrails.md`.
 
-## Related
+## Prerequisites
 
 - [The agent loop that fires the hooks](agent-loop.md)
-- [The API surface](api-surface.md)
+
+## Follow-on reading
+
 - [Deployment & hardening — operator-tier config](deployment-and-hardening.md)
+
+## Related
+
+- [The API surface](api-surface.md)
 
 ---
 

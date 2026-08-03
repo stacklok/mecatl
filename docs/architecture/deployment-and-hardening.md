@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** server hardening (auth/mTLS, rate limiting, health, graceful shutdown), multi-replica single-writer enforcement (session leasing), permission & bash governance (deny-dominant resolution, posture ladder, workspace trust), the project authority set, and supply-chain scanning.
+
+**Prerequisites:** [the API surface](api-surface.md) — the servers being hardened.
+
+**Follow-on:** [observability](observability.md) — the persistence seams the server depends on.
+
 The server (`internal/adapter/server`) is hardened for off-loopback operation,
 and `cmd/mecated` wires the knobs:
 
@@ -22,7 +28,7 @@ that signs images with **cosign** and emits an **SBOM** and **SLSA provenance**
 (health probes can switch TCP→httpGet against the endpoints above). A **live
 BDD e2e suite** (`e2e/`, `task e2e`, the `e2e-live.yml` workflow) exercises the
 harness against a real model; it is opt-in (real money) and deliberately not
-part of `task test`. The toolchain is **go 1.26.4** (both modules).
+part of `task test`. The toolchain is **go 1.26.5** (both modules).
 
 **Supply-chain scanning** (#118) closes the loop on dependency hygiene:
 **`govulncheck`** runs per-module — the `engine` module is held STRICT-CLEAN,
@@ -196,10 +202,16 @@ deny-dominant in the evaluator). A missing/malformed/unparseable `settings.yaml`
 **or** `trust.yaml` fails safe to untrusted (a corrupt config never grants trust).
 See `docs/adr/0023-workspace-trust.md`.
 
-## Related
+## Prerequisites
 
 - [The API surface being hardened](api-surface.md)
+
+## Follow-on reading
+
 - [Observability & persistence](observability.md)
+
+## Related
+
 - [Hooks & guardrails — operator-tier guardrails](hooks-and-guardrails.md)
 
 ---

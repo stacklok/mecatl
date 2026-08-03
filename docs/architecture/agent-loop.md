@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the `Engine.Run` drive algorithm, read-parallel / mutate-serial dispatch, permission pause/resume (`askRegistry`, `Run.Approve`), the plan-approval gate (`PresentPlan`), the token budget, and bounded no-progress nudging.
+
+**Prerequisites:** [the ports](ports.md) — the seams the loop consumes.
+
+**Follow-on:** [hooks & guardrails](hooks-and-guardrails.md), [subagents & teams](subagents-and-teams.md), [context & compaction](context-and-compaction.md), [memory](memory.md), [extensibility](extensibility.md), and [the API surface](api-surface.md) — subsystems that build on or drive the loop.
+
 ## The agent loop (`engine/agent`)
 
 `Engine` is built from `Deps` (all ports + the application seams + config) via
@@ -224,15 +230,18 @@ askable ask, a serialized provenance marker, and a verdict tail.
   observer (`MaybeAutoApprovePlan`) auto-resolves a parked plan-ask headless
   (DEFAULT OFF, OPERATOR-TIER ONLY, loud "NO HUMAN REVIEW" diagnostic).
 
-## Related
+## Follow-on reading
 
-- [The ports the loop consumes](ports.md)
 - [Hooks & guardrails — the loop's lifecycle gates](hooks-and-guardrails.md)
 - [Subagents & teams — delegation from the loop](subagents-and-teams.md)
 - [Context & compaction — the loop's token management](context-and-compaction.md)
 - [Memory — the index the loop injects each run](memory.md)
 - [Extensibility — the tools & MCP the loop runs](extensibility.md)
 - [The API surface that drives the loop](api-surface.md)
+
+## Related
+
+- [The ports the loop consumes](ports.md)
 
 ---
 

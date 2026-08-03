@@ -297,6 +297,6 @@ A remote gRPC driver implements `mecatl.driver.v1.AgentSourceService` and is wir
 ## What's next
 
 - [Skills](/extension-points/tool-catalog.md#skills) — the skill source port follows the same snapshot seam and shares the conformance-suite pattern.
-- [Subagent delegation](/what-you-get/agent-loop.md) — how the agent loop dispatches child runs and manages concurrency.
+- [Subagent delegation](/what-you-get/subagents-teams-parallel.md) — how the agent loop dispatches child runs and manages concurrency.
 - [Permissions & guardrails](/what-you-get/permissions.md) — how workspace trust gates the project tier and what untrusted mode degrades.
 - [Hook system](/what-you-get/hooks.md) — per-def hooks scoped to a specialist's engine.

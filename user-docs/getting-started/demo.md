@@ -73,7 +73,7 @@ team finished in 2 round(s); quiescent=true
 Consolidated report: the worker confirmed greeting.txt reads cleanly; nothing to fix.
 ```
 
-The report is the lead's synthesis, not a concatenation of member outputs. See [Subagents & teams](/what-you-get/agent-loop.md) for how teams work.
+The report is the lead's synthesis, not a concatenation of member outputs. See [Subagents & teams](/what-you-get/subagents-teams-parallel.md) for how teams work.
 
 :::note
 

@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the port interfaces the loop consumes (`LLMProvider`, `SessionStore`, `PermissionPolicy`, `HookRunner`, `EventSink`, `EventLog`, `ToolCallRecorder`, `Diagnostics`, `Clock`, `SessionLease`), the `LLMRequest`/`Chunk` stream types, and the `tool.Workspace`/`FileSystem`/`CommandRunner` seam (which live in `engine/tool` to break a port↔tool cycle).
+
+**Prerequisites:** [the domain model](domain-model.md) — the value objects the ports carry.
+
+**Follow-on:** [the agent loop](agent-loop.md) — the loop that consumes these ports.
+
 Small interfaces, `context.Context` first. Each has a fake adapter so the loop
 runs with no network and no disk.
 
@@ -19,7 +25,7 @@ runs with no network and no disk.
 | `Clock` (`clock.go`) | abstract wall clock | `Now() time.Time` — the engine core is now FULLY clock-injectable: every core wall-clock read flows through this port (`Engine.now()` for the loop), enforced by the AST guard `engine/arch/clock_test.go` that forbids `time.Now`/`Since`/`Until` in `CorePackages`, so an embedding host can drive the engine deterministically (#116) |
 | `SessionLease` (`lease.go`) | OPTIONAL cross-process single-writer seam (multi-replica readiness, cloud-native Phase 4) — discovered by type assertion like `PrunableStore`, nil otherwise (byte-identical no-lease default); the loop never imports it | `Acquire(ctx, id, owner) (Lease, error)` · `Renew(ctx, l) (Lease, error)` · `Release(ctx, l) error` (`ErrLeaseHeld` = a live competitor, `ErrLeaseUnsupported` = backend can't lease) |
 
-`SessionStore` may additionally implement `PrunableStore` (`List`/`Delete`) for child-session retention ([observability & persistence](observability.md)). That makes **12** port interfaces in `engine/port`; the loop consumes them through injection only.
+`SessionStore` may additionally implement `PrunableStore` (`List`/`Delete`) for child-session retention ([observability & persistence](observability.md)). The interfaces above are the ones the loop consumes directly; several also have **optional capability seams** (`PrunableStore`, `ScheduleStore`, the `PermissionStore`/`EventLog`/`SessionLease` siblings) discovered by type assertion and nil-safe when absent, so the count of *required* ports stays small and a backend wires only what it needs. The loop consumes every port through injection only.
 
 The model-call request and stream types (`llm.go`):
 
@@ -94,9 +100,12 @@ Bash, and an OS sandbox would wrap this seam. `tool.MemoryStore` and
 `tool.WorkspaceForker` live alongside it for the same layering reason (the tools
 that need them depend on the interface, not a `port`).
 
-## Related
+## Prerequisites
 
 - [The domain model — what the ports carry](domain-model.md)
+
+## Follow-on reading
+
 - [The agent loop — the ports' consumer](agent-loop.md)
 - [Providers — the LLMProvider port's adapters](providers.md)
 

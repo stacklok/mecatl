@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the OpenAI Responses adapter (request translation, SSE → Chunk translation, cancellation), the Anthropic native Messages adapter, OpenCode Go Chat Completions, multi-provider registry + per-session routing, model resolution (aliases, per-slot models, the `plan` slot), the semantic model router for delegation, and capability single-source intersection.
+
+**Prerequisites:** [the ports](ports.md) — the `LLMProvider` port this adapter implements.
+
+**Follow-on:** [context & compaction](context-and-compaction.md) and [observability](observability.md) — per-model context-window handling, `llmresilience`, and per-model tokenizers.
+
 ## The OpenAI Responses adapter (`internal/adapter/openai`)
 
 > This section walks one adapter end-to-end. It is **not** the whole LLM story:
@@ -438,9 +444,12 @@ engine) — both through the contamination-safe per-provider path (window/compac
 re-derived), never a clone-and-swap. Fail-soft, decide-once, the breaker, and OFF-is-byte-
 identical all hold per family.
 
-## Related
+## Prerequisites
 
 - [The ports — the LLMProvider seam](ports.md)
+
+## Follow-on reading
+
 - [Context & compaction — per-model context window](context-and-compaction.md)
 - [Observability & reliability — provider resilience](observability.md)
 

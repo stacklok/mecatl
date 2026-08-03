@@ -176,6 +176,6 @@ it with `--no-user-model`.
 
 ---
 
-See also: [workspace trust & posture](workspace-trust.md), or the
-[operator guide index](../usage.md).
+See also: [workspace trust & posture](workspace-trust.md), [example skills](../examples/README.md),
+or the [operator guide index](../usage.md).
 

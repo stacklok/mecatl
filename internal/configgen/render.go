@@ -326,19 +326,20 @@ const flagDrivenSection = "## Flag- / file-configured features (NOT in `settings
 	"\n" +
 	"By design, `settings.yaml` covers the four subtrees above. Several other\n" +
 	"operator features are configured through **CLI flags** (and, for some, their own\n" +
-	"files) rather than this YAML. See the [usage guide](usage.md) §3 (Running the\n" +
-	"server) and §6 (Configuration) for the full flag tables; the pointers below are\n" +
-	"the starting points:\n" +
+	"files) rather than this YAML. See the [running `mecated`](usage/mecated.md) and\n" +
+	"[configuration](usage/configuration.md) pages for the full flag tables; the\n" +
+	"pointers below are the starting points:\n" +
 	"\n" +
 	"| Feature | How it is configured | See |\n" +
 	"| --- | --- | --- |\n" +
-	"| Soul (operator persona) | `--soul-dir` (+ its own `soul.md` / persona files) | usage.md §6 |\n" +
-	"| User-model learning | `--user-model-store` / `--user-model-review` | usage.md §6 |\n" +
-	"| Memory | `--memory-store` (+ the per-project `.mecatl/memory.json`) | usage.md §6 |\n" +
-	"| Slash commands | `--commands-dir` (+ the command `.md` files) | usage.md §6 |\n" +
-	"| Session leasing | `--session-lease-*` | usage.md §3 |\n" +
+	"| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [running `mecated`](usage/mecated.md) |\n" +
+	"| User-model learning | `--user-model-dir` / `--user-model-review` | [running `mecated`](usage/mecated.md) |\n" +
+	"| Memory | `--memory-dir` / `--memory-store-url` | [running `mecated`](usage/mecated.md) |\n" +
+	"| Slash commands | `--commands-dir` (+ the command `.md` files) | [running `mecated`](usage/mecated.md) |\n" +
+	"| Session leasing | `--session-lease-*` | [running `mecated`](usage/mecated.md) |\n" +
 	"\n" +
 	"The model slots / aliases above also have CLI twins (`--model-slot` /\n" +
 	"`--model-alias`); the guardrails checker model has `--guardrails-model`; the\n" +
 	"router kill-switch has `--subagent-model-router=false`. The CLI flag and the\n" +
-	"YAML key are two surfaces for the same setting — see usage.md for precedence.\n"
+	"YAML key are two surfaces for the same setting — see [configuration](usage/configuration.md)\n" +
+	"for precedence.\n"

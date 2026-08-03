@@ -31,11 +31,17 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
+- [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
+- [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md)
 - [0048 — mecak8s: Kubernetes-native agent harness (storage-free, managed-service state)](./0048-mecak8s.md)
 - [0059 — Scheduled tasks](./0059-scheduled-tasks.md)
+- [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)
 - [0073 — Schedule tool](./0073-schedule-tool.md)
 - [0074 — Many loops per server; scheduler shape](./0074-many-loops-scheduler-shape.md)
+- [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md)
+- [0076 — The schedule manager is store-shaped and pre-Service; the shared catalog carries the Schedule tool](./0076-schedule-shared-catalog.md)
+- [0081 — `RulesSource` port for `.claude/rules` discovery](./0081-rules-source-port.md)
 
 ### Memory & context
 - [0008 — Memory on by default](./0008-memory-on-by-default.md)
@@ -48,9 +54,11 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0013 — Agent definitions](./0013-agent-definitions.md)
 - [0014 — Agent teams](./0014-agent-teams.md)
 - [0015 — Background subagents](./0015-background-subagents.md)
+- [0033 — Dirty-aware read-only fork (uncommitted-state overlay)](./0033-dirty-aware-readonly-fork.md)
 - [0039 — Parallel single-branch auto-merge](./0039-parallel-auto-merge.md)
 - [0040 — Writable Subagent mode + serialized merge-back](./0040-writable-subagent-and-serialized-merge.md)
 - [0058 — Writable named-specialist Subagent (`mode:"read-write"` + `agent`)](./0058-writable-named-specialist-subagent.md)
+- [0066 — Route unpinned agent-defs and writable explorers; explicit `inherit` is the pin](./0066-route-unpinned-and-writable-delegations.md)
 - [0077 — Direct-write writable Subagent (no fork, no merge-back)](./0077-direct-write-subagent.md)
 - [0079 — Converge delegation observability on two tiers (bounded previews for Subagent/Parallel)](./0079-delegation-observability-convergence.md)
 - [0077 — A failed delegated child is resumable (Recover, not refuse)](./0077-resume-a-failed-subagent.md)
@@ -64,6 +72,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
 - [0064 — Auto-detect the ToolHive LLM gateway proxy as a native provider](./0064-toolhive-llm-gateway-provider.md)
+- [0067 — OpenAI Chat Completions adapter (OpenCode Go provider)](./0067-openai-chat-completions-adapter.md)
+- [0068 — Change reasoning effort via conversation fork (keep the transcript)](./0068-effort-change-via-fork.md)
+- [0071 — Seamless model switch: always keep the conversation](./0071-seamless-model-switch.md)
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
@@ -75,6 +86,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0018 — Perf observability](./0018-perf-observability.md)
 - [0019 — Perf tracking](./0019-perf-tracking.md)
 - [0020 — Diagnostics](./0020-diagnostics.md)
+- [0045 — Explicit-bucket latency histograms (zero-config quantiles on `/metrics`)](./0045-explicit-bucket-latency-histograms.md)
 
 ### Governance & trust
 - [0021 — Guardrails](./0021-guardrails.md)
@@ -86,12 +98,14 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0060 — Add Bash to the default guardrail rule set with a read-only pre-filter](./0060-guardrails-bash-default.md)
 - [0061 — Human one-shot guardrail override (`/guardrail-allow`)](./0061-guardrails-human-override.md) *(superseded by 0062)*
 - [0062 — Out-of-band approve-once for guardrail blocks](./0062-guardrails-approve-once.md)
+- [0046 — Guardrails slot enables (configure = enable)](./0046-guardrails-slot-enable.md)
 - [0080 — Guardrail-routed path-escape checking (composition pre-check, auto-only)](./0080-guardrail-routed-escape-checking.md)
 - [0069 — Plan-approval gate](./0069-plan-approval-gate.md)
 - [0070 — Model-visible affordance gate](./0070-model-visible-affordance-gate.md)
 - [0022 — Allow-all posture](./0022-allow-all-posture.md)
 - [0023 — Workspace trust](./0023-workspace-trust.md)
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
+- [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)
 - [0055 — Reasoning-effort knob](./0055-reasoning-effort.md)
 

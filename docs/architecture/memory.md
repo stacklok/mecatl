@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** `tool.MemoryStore` (Remember/Recall/SearchMemory across sessions), the file-backed `memory` adapter, the opt-in `dream` consolidation service, the user model (RememberUser/RecallUser/SearchUserModel — cross-project operator FACTS), and the Stop-triggered user-model reviewer.
+
+**Prerequisites:** [the agent loop](agent-loop.md) — the loop injects the memory index each run.
+
+**Follow-on:** [context & compaction](context-and-compaction.md) — memory is independent of the per-run compaction cascade.
+
 `tool.MemoryStore` (`RememberEntry`/`Recall`/`List`/`Forget`/`Index`/`Search`) is
 the seam for conservative, **per-project** memory (every implementation must pass
 the shared `engine/adapter/memconformance` conformance suite). The file-backed
@@ -30,10 +36,13 @@ drives a separate `dream.Consolidator{Prefix:"user/"}`. The user-model is a writ
 instruction FRAGMENT of FACTS, NEVER a governance scope; behaviour comes from the soul +
 system rules, not this block.
 
-## Related
+## Prerequisites
+
+- [The agent loop that injects the memory index](agent-loop.md)
+
+## Follow-on reading
 
 - [Context & compaction](context-and-compaction.md)
-- [The agent loop that injects the memory index](agent-loop.md)
 
 ---
 

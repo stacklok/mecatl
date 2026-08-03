@@ -2,6 +2,12 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
+**What this covers:** the `Subagent` tool (child agent loops, per-call knobs: fork, read-write, background, resume, output_schema, model/agent overrides), the 4-step child permission-ask model, background subagents + `SubagentStatus`, per-child cancel, and agent teams (`Supervisor`/`TeamTool`) as a coordinating delegation family.
+
+**Prerequisites:** [the agent loop](agent-loop.md) — the Subagent tool delegates to child loops built from the same loop.
+
+**Follow-on:** [parallelism](parallelism.md) — the sibling delegation family (fork-join branches).
+
 `SubagentTool` is a `tool.Tool` (catalog name `Subagent`) that delegates a focused,
 self-contained task (multi-step investigation or build/test/git work) to a **child agent loop**. Its `Execute`:
 1. **Workspace selection.** When a child forker is wired (`WithChildForker` — the
@@ -179,10 +185,16 @@ wrap-up turn, then a fallback digest of the child's last non-empty assistant
 text — before the placeholder is ever shown, and the eventual result still names
 the stop reason honestly.
 
-## Related
+## Prerequisites
 
 - [The agent loop the children run](agent-loop.md)
+
+## Follow-on reading
+
 - [Parallelism — fork-join delegation](parallelism.md)
+
+## Related
+
 - [Providers — per-subagent provider routing](providers.md)
 
 ---

@@ -129,19 +129,20 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 
 By design, `settings.yaml` covers the four subtrees above. Several other
 operator features are configured through **CLI flags** (and, for some, their own
-files) rather than this YAML. See the [usage guide](usage.md) §3 (Running the
-server) and §6 (Configuration) for the full flag tables; the pointers below are
-the starting points:
+files) rather than this YAML. See the [running `mecated`](usage/mecated.md) and
+[configuration](usage/configuration.md) pages for the full flag tables; the
+pointers below are the starting points:
 
 | Feature | How it is configured | See |
 | --- | --- | --- |
-| Soul (operator persona) | `--soul-dir` (+ its own `soul.md` / persona files) | usage.md §6 |
-| User-model learning | `--user-model-store` / `--user-model-review` | usage.md §6 |
-| Memory | `--memory-store` (+ the per-project `.mecatl/memory.json`) | usage.md §6 |
-| Slash commands | `--commands-dir` (+ the command `.md` files) | usage.md §6 |
-| Session leasing | `--session-lease-*` | usage.md §3 |
+| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [running `mecated`](usage/mecated.md) |
+| User-model learning | `--user-model-dir` / `--user-model-review` | [running `mecated`](usage/mecated.md) |
+| Memory | `--memory-dir` / `--memory-store-url` | [running `mecated`](usage/mecated.md) |
+| Slash commands | `--commands-dir` (+ the command `.md` files) | [running `mecated`](usage/mecated.md) |
+| Session leasing | `--session-lease-*` | [running `mecated`](usage/mecated.md) |
 
 The model slots / aliases above also have CLI twins (`--model-slot` /
 `--model-alias`); the guardrails checker model has `--guardrails-model`; the
 router kill-switch has `--subagent-model-router=false`. The CLI flag and the
-YAML key are two surfaces for the same setting — see usage.md for precedence.
+YAML key are two surfaces for the same setting — see [configuration](usage/configuration.md)
+for precedence.

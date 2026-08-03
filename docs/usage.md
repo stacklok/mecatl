@@ -18,6 +18,13 @@ an editor that spawned it.
 > (`--tls-cert` / `--tls-key`), mutual TLS (`--client-ca`), and rate limiting
 > (`--rate-limit` / `--rate-burst`) — see [mecated](usage/mecated.md).
 
+> **How to read this guide:** sections 1–4 (install → quickstart → mecated →
+> guardrails) are a **linear new-operator path**; the remaining sections are
+> **independent topic branches** — pick any that cover your area.
+>
+> For the underlying architecture, see the [architecture overview](architecture.md)
+> and the [progressive reading map](READING.md).
+
 ---
 
 ## Table of contents
@@ -41,14 +48,14 @@ an editor that spawned it.
 | 15. Running mecatequi from GitHub Actions | [mecatequi-ci.md](usage/mecatequi-ci.md) |
 | 16. Live e2e suite | [e2e.md](usage/e2e.md) |
 | 17. Troubleshooting / FAQ | [troubleshooting.md](usage/troubleshooting.md) |
-| 18. ToolHive LLM gateway | [§ below](#toolhive-llm-gateway) |
+| 18. ToolHive LLM gateway | [ToolHive LLM gateway](#toolhive-llm-gateway) |
 
 ## Scheduled tasks
 
 `mecated` and `mecak8s` run scheduled agent fires autonomously (issue #189,
-[ADR 0059](adr/0059-scheduled-tasks.md)). The scheduler is **ON by default**
-whenever the configured store exposes a `ScheduleStore` (jsonlstore via
-`--store-dir`, redisstore via `--redis-url`) — no flag needed ([ADR
+[ADR 0059](adr/0059-scheduled-tasks.md)). The scheduler is **ON by default** whenever the configured store exposes a
+`ScheduleStore` (jsonlstore via `--store-dir` on `mecated`; redisstore via
+`--redis-url` on `mecak8s`) — no flag needed ([ADR
 0073](adr/0073-schedule-tool.md)); a store with no `ScheduleStore` (the
 in-memory default) never ticks:
 
