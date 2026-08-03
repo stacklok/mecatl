@@ -112,33 +112,41 @@ sequenceDiagram
     participant V as credential store
     participant B as GitHub
 
-    Note over M: at startup, fetches an X.509-SVID from the Workload API.<br/>The subagent cannot reach that socket.
+    Note over M: at startup, fetches an X.509-SVID from the Workload API.<br/>Identity is the WORKLOAD, spiffe://…/ns/prod/sa/mecatl, not one pod.
 
     Alice->>M: OIDC access token, and "review PR 42"
     Note over M: store the owner on the session
 
-    M->>S: spawn. fewer tools, one repository
-    Note over S: a goroutine in this pod. no key of its own.
-
     rect rgba(128,128,128,0.07)
-    Note over M,AS: leg 1. cached per pod and definition
-    M->>AS: POST /token, grant_type = client_credentials<br/>client authenticates with the pod's SVID<br/>scope = agent:code-reviewer
-    Note over AS: is that definition registered?
-    AS-->>M: agent token. sub = the definition, cnf bound to the pod.<br/>audience is the AS, so it opens nothing on its own.
+    Note over M,AS: root leg 1. once per pod and agent name, cached across users
+    M->>AS: POST /token, grant_type = client_credentials<br/>scope = agent:main cap:github.read cap:github.write
+    AS-->>M: agent token. sub = agent/main<br/>aud = the AS, so it opens nothing at the gateway
     end
 
-    S-->>M: needs the diff
+    M->>S: spawn. a goroutine in this pod. no key of its own.
 
     rect rgba(128,128,128,0.07)
-    Note over M,AS: leg 2. per user and definition
-    M->>AS: POST /token, same client cert<br/>subject_token = Alice's access token<br/>actor_token = the agent token above
-    AS-->>M: access token. sub = Alice, act = the definition,<br/>cnf bound to the pod
+    Note over M,AS: child leg 1. the narrowing step
+    M->>AS: POST /token, token-exchange<br/>subject_token = the agent token above<br/>scope = agent:code-reviewer cap:github.read
+    Note over AS: intersects against the scopes inside that token.<br/>cap:github.write would be refused here.
+    AS-->>M: agent token. sub = agent/code-reviewer, aud = the AS
     end
 
-    M->>G: tools/call for github.read_file
-    Note right of M: the access token above, plus proof the pod holds the bound key<br/>X-Correlation-Id names this subagent and this call
+    rect rgba(128,128,128,0.07)
+    Note over M,AS: leg 2. once per user and agent, cached
+    M->>AS: POST /token, token-exchange<br/>subject_token = Alice's token<br/>actor_token = the child agent token
+    AS-->>M: access token. sub = Alice, act = agent/code-reviewer<br/>aud = the gateway. cnf bound to the pod.
+    end
 
-    Note over G: verify token and certificate binding<br/>resolve the call to one target
+    alt default explorer catalog, no MCP tool
+        S-->>M: needs the diff, asks the parent
+    else no-FS child catalog, has the MCP tools
+        Note over S: calls the gateway itself
+    end
+
+    M->>G: tools/call for github.read_file<br/>bearing the leg-2 token, over mTLS with the pod certificate
+
+    Note over G: verify signature, aud, and the cnf thumbprint against<br/>this connection. resolve the call to one target.
     alt denied, or any decision input missing
         G--xM: refuse. no credential is read.
     end
@@ -151,19 +159,20 @@ sequenceDiagram
     M-->>S: the diff
 ```
 
+
 | Hop | Input | Action | Output | Invariant |
 |---|---|---|---|---|
 | 1 Bind | authenticated caller | resolve to an immutable principal | owned session | owner persisted and enforced |
 | 2 Narrow | parent authority | compute a subset | child authority + limits | only authority travels |
-| 3 Exchange | pod SVID, then subject token + agent token | two legs: mint the agent token, then exchange | sender-bound access token | three identities, each authenticated |
-| 4 Call | access token, holder proof over the same connection | send the tool call | gateway request | correlation is not authority |
+| 3 Exchange | pod SVID; then a parent agent token; then Alice's token | three calls: name the root agent, narrow per spawn, add the user | sender-bound access token | three identities, each authenticated |
+| 4 Call | access token, holder proof on the same connection | send the tool call | gateway request | correlation is not authority |
 | 5 Decide | verified claims, resolved target | admission | allow or deny | refuse on a missing input |
 | 6 Fetch | subject, credential selector | read one credential | provider credential | target binding |
 | 7 Serve | provider credential | call the backend | result | chain stops at the gateway |
 | 8 Resume | live principal or offline grant | re-derive | access token | authority never widens |
 
-Hops 1, 2 and 4 are fully stated by that table, with one exception each recorded below.
-The rest need detail.
+Hops 1 and 2 are fully stated by that table, with one exception each recorded below. The
+rest need detail.
 
 > **Hop 1 today.** Session creation has no owner field, and a scheduled fire constructs its
 > session in-process from a leader-elected goroutine, so it never reaches anything that
@@ -177,213 +186,187 @@ The rest need detail.
 > So `Narrow` is not wiring an existing computation outward — **authority has to be invented
 > as a runtime type first**, and that gates everything the gateway could enforce against.
 >
-> **Hop 4 today.** Correct already: the inbound path reads only protocol headers, and the
-> identity struct has no header-populated field. Worth keeping when the outbound path stops
-> baking a static header map into a client at dial time.
+> **Hop 4 today.** The inbound path reads only protocol headers and the identity struct has no
+> header-populated field, which is correct and worth keeping when the outbound path stops baking
+> a static header map into a client at dial time.
 
 ---
 
-### Hop 3 — the exchange, in two legs
+### Hop 3 — the exchange, in three calls
 
-Two calls to the authorization server, not one. The pod proves itself once and receives a
-token naming the agent; that token is then the actor input to the exchange that brings in the
-user. Splitting them is what puts the authorization server, rather than mecatl, in charge of
-which agents may exist.
+Three requests to the same endpoint, all authenticated by the same pod certificate. They
+differ in what they carry and what comes back.
 
-**Leg 1 — the pod asks for an agent token.**
+**Three scope namespaces meet here**, and conflating them is the easiest mistake to make:
 
-This is `client_credentials` — a client asking for a token for itself, narrowed by scope to
-one agent. The SVID is how the client authenticates, and
-`draft-ietf-oauth-spiffe-client-auth` §3.1.2 is this exact request:
+| Namespace | Issued by | Example | Set by |
+|---|---|---|---|
+| IdP scopes | the company IdP | `agents.delegate` | Alice's login |
+| our scopes | vMCP's AS | `agent:code-reviewer`, `cap:github.read` | the operator, in the client registration |
+| provider scopes | GitHub | `repo` | Alice, at GitHub's consent screen |
+
+`cap:github.read` is ours, not GitHub's. Alice's IdP token carries no `cap:*` scope unless the
+AS is registered as a client at the IdP with our vocabulary, so by default her token proves who
+she is and bounds nothing about capability. The capability ceiling is the client registration.
+
+**Call 1 — which agent the root agent is.** `client_credentials`. No user is involved and none
+is named in the result. Cached per pod and agent name, across all users.
 
 ```http
 POST /token HTTP/1.1
 Host: as.vmcp.example.com
-Content-Type: application/x-www-form-urlencoded
+                    # mTLS. Client certificate is the pod's X.509-SVID.
 
 grant_type=client_credentials
-&client_id=spiffe://mecatl.example.com/pod/mecatl-7f4c
-&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
-&client_assertion=<the pod's JWT-SVID, audienced to this server>
-&scope=agent:code-reviewer
+&client_id=spiffe://mecatl.example.com/ns/prod/sa/mecatl
+&scope=agent:main cap:github.read cap:github.write
 ```
-
-With the X.509 method (§3.2.1) the two assertion parameters disappear and the same request
-goes over mTLS carrying the SVID as the client certificate. Nothing else changes, which is the
-point of the draft: the method is swappable and the grant is unaffected.
 
 ```jsonc
-{
-  "sub": "spiffe://mecatl.example.com/agent/code-reviewer",
-  "aud": "https://as.vmcp.example.com",  // input to leg 2, not a gateway credential
-  "cnf": { "x5t#S256": "..." },          // this pod holds it, and only this pod
-  "exp": 1785298000
-}
+{ "sub": "spiffe://mecatl.example.com/agent/main",
+  "scope": "cap:github.read cap:github.write",
+  "aud": "https://as.vmcp.example.com",   // the AS itself — opens nothing at the gateway
+  "cnf": { "x5t#S256": "9f2c…" } }
 ```
 
-Cached per pod and definition. It names no user and is useless alone — presented to the
-gateway it gets nothing, because its audience is the authorization server.
-
-**Whose identity is `sub` here** is a genuine question, not a detail. RFC 9068 §2.2 says a
-client-credentials token SHOULD carry the client in `sub`, which would make it the pod, with
-the agent named in a separate claim. Putting the definition there instead is what makes
-leg 2's `act.sub` the thing policy names, and it reads as the server asserting an identity
-the pod is registered to run. The SHOULD is not a MUST and the second reading is more useful,
-but it is a deviation and should be argued rather than assumed.
-
-**Leg 2 — the user's authority is added.**
+**Call 2 — narrowing, per spawn.** The parent's agent token is the subject. The AS intersects
+the request against the scopes inside it, so `cap:github.write` is refused here whatever the
+registration says.
 
 ```http
-POST /token HTTP/1.1
-Host: as.vmcp.example.com
-
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-&client_id=spiffe://mecatl.example.com/pod/mecatl-7f4c
-                    # client authenticates exactly as in leg 1 — the method is
-                    # a property of the client, not of the grant
-&subject_token=<Alice's access token>
-&actor_token=<the agent token from leg 1>
-&actor_token_type=urn:ietf:params:oauth:token-type:access_token
-&resource=https://vmcp.example.com
-&scope=repo:read
+&subject_token=<the agent token from call 1>
+&scope=agent:code-reviewer cap:github.read
 ```
 
 ```jsonc
-{
-  "sub": "u_01HQ8Z...",                       // Alice, immutable internal id
-  "act": { "sub": "spiffe://mecatl.example.com/agent/code-reviewer" },
-  "scope": "repo:read",                       // intersected down, never widened
-  "aud": "https://vmcp.example.com",
-  "cnf": { "x5t#S256": "..." },               // bound to the pod certificate
-  "exp": 1785312000
-}
+{ "sub": "spiffe://mecatl.example.com/agent/code-reviewer",
+  "scope": "cap:github.read",
+  "aud": "https://as.vmcp.example.com",
+  "cnf": { "x5t#S256": "9f2c…" } }
 ```
 
-**mecatl holds no key whose signature carries authority.** This is the reason that matters, and
-the rest follow from it.
+**Call 3 — Alice enters.** Cached per user and agent.
 
-In a single call mecatl signs an actor assertion and the server believes it, so the strength of
-the actor claim equals the isolation of mecatl's signing key. There is none: the key is in the
-pod, and the Bash tool an injected model drives runs in that same pod, sharing its address
-space and filesystem namespace. An injected model can therefore sign an assertion naming any
-agent. Every policy rule keyed on `act.sub` is then bypassable by prompt injection, which is
-the actor claim collapsing rather than a key-custody detail.
+```http
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&subject_token=<Alice's IdP token>
+&actor_token=<the agent token from call 2>
+&resource=https://vmcp.example.com
+&scope=cap:github.read
+```
 
-Under two legs mecatl signs nothing. It holds the SVID, which proves the pod, and the pod is
-not what policy discriminates on. An injected model that reaches the SVID can still request
-agent tokens, but only for definitions the server was configured to know, so the blast radius
-is one of the operator's own agents rather than any name the model invents. Bounded, not
-eliminated.
+```jsonc
+{ "sub": "u_01HQ8Z",
+  "act": { "sub": "spiffe://mecatl.example.com/agent/code-reviewer" },
+  "scope": "cap:github.read",
+  "aud": "https://vmcp.example.com",
+  "cnf": { "x5t#S256": "9f2c…" } }
+```
 
-**So the server, not mecatl, is authoritative about which agents exist.** This is a consequence
-of the above and not an independent argument. mecatl could refuse to name untrusted-tier
-definitions itself, and that would close the same hole on paper — but the refusal would run
-inside the process being injected, which is what makes it worthless. Moving the allowlist to
-the server moves it out of reach.
+**Why call 2 exists.** Without it, an injected parent picks the most privileged agent the
+operator registered: it calls `Subagent(agent: "deployer")`, mecatl asks call 1 for
+`agent:deployer cap:github.write`, the AS grants it because the registration lists it, and the
+gateway permits the write. Nothing malfunctions — real pod, real user, registered agent,
+matching policy. Call 2 removes the reward: the child derives from the parent's token, so
+`cap:github.write` is not there to inherit and the agent name stops mattering.
 
-The cost is real. Only registered definitions are nameable in policy, so a per-project
-specialist runs *under* a registered definition rather than *as* one, and an operator has to
-register every agent a rule may name.
+Confirmed independently by three specifications.
+`draft-sweeney-wimse-credential-delegation` §5.2 requires that capabilities in a sub-delegation
+be a strict subset of the parent's. `draft-ietf-wimse-arch` §3.4.11 states that AI
+intermediaries "inherit the upstream principal's security context and are expected to operate
+strictly within the constraints of that delegation". RFC 8693's own scope handling does the
+intersection. RFC 8693 §4.4 `may_act` does **not** help: it sits in the subject token and names
+who may act *for* that subject, which is the opposite direction.
 
-**Two tokens, two lifetimes.** Leg 1 is per pod and definition, leg 2 per user and definition,
-so the workload proof stays off the user's path. A convenience, not a reason.
+**Why call 1's audience is the AS.** A token that only functions as an input to another token
+request is useless to steal. Both comparable platforms do the same — AgentCore's workload
+access token is first-party-only, and Entra's intermediate is only ever a `client_assertion`
+for the next call.
 
-**This trades against a signing sidecar, and the two are alternatives.** Everything above
-assumes the signing key stays reachable from the agent loop. Move it into a separate process
-that holds the key and applies policy about what it will sign, and single-mint's primary
-objection disappears — at which point `agent/<tier>/<name>`, mecatl-signed with provenance in
-the identifier, becomes viable and buys back per-project specialists as nameable principals.
-So for the outbound hop the two are substitutes: pick the sidecar or pick two legs. For
-internal-chain signing, which exists for audit rather than authority, only the sidecar helps,
-and a forged audit record is a different severity from a minted identity.
+**mecatl holds no key whose signature carries authority.** In a single-call design mecatl signs
+the actor assertion itself, so the strength of the actor claim equals the isolation of mecatl's
+signing key. There is no such isolation asserted or tested: the Bash tool an injected model
+drives runs in the same pod. An injected model would sign an assertion naming any agent, and
+every rule keyed on `act.sub` becomes bypassable. Here mecatl signs nothing and the AS decides.
 
-**This is delegation, not impersonation.** Leg 2 carries both parties — Alice in `sub`, the
-agent in `act`. RFC 8693 §1.1 draws that line, and it is the premise of everything here: an
-impersonation token would spend Alice's authority while leaving nothing to say what was
-acting, so the gateway would have nothing to constrain and the log nothing to record.
+**The client id is the workload, not the pod.** `spiffe://mecatl.example.com/ns/prod/sa/mecatl`
+— a namespace and service account, stable across restarts and shared by replicas. A per-pod
+registration would be unmaintainable. The consequence is that all replicas share one ceiling,
+which is why the root grant below is the open problem.
 
-**Three identities, each proved by its own input.** The SVID proves the pod, at both legs.
-Leg 1 turns that into proof of which agent is acting — client authentication cannot do that
-by itself, because the client is the pod and one pod runs many agents. Leg 2 adds the user. A
-server accepting an unauthenticated actor would let a caller request the policy identity of a
-more privileged agent.
+**One client authentication method, not two.** The SPIFFE client-auth draft offers JWT-SVID
+assertion as the fallback for deployments that cannot terminate mTLS at the AS. We terminate
+mTLS on the gateway call already, so using both adds a credential type, a Workload API round
+trip and rotation surface for no additional security.
 
-**`sub` is the user**, by immutable internal identifier rather than an email, which is mutable
-and not unique across issuers. The JWT-SVID rule forcing `sub` to be the holder governs
-credentials *mecatl* issues; both tokens here are minted by the gateway's authorization
-server, so the standard shape applies and nothing traverses a chain to find the user.
+**`cnf` binds each token to the pod's key**, checked at the gateway against the certificate on
+that connection. Without it a token copied from memory or a log replays until expiry. Note the
+direction of travel: WIMSE is specifying WPT, which is DPoP-shaped, and states that WIT/WPT are
+not used with mTLS. Certificate binding is the transition case.
 
-**`act` is the definition, not the instance** — what policy names, and what lets concurrent
-siblings share one credential. The pod is not in `act`: it is the holder, and `cnf` already
-says so.
+**Call 1 is the remaining hole, and it is not a protocol problem.** A shell the injected model
+controls can likely reach the pod's SVID — same uid, socket path inheritable, no in-process
+boundary for a goroutine. It then performs call 1 itself, asks for `agent:deployer
+cap:github.write`, and receives the full registered ceiling with no narrowing. Calls 2 and 3
+bound children; nothing bounds the root.
 
-**Attenuation is by scope, and the exchange enforces it downward.** The issued scope set is
-the intersection of what the client is registered for and what the subject token was granted,
-so no client can request more than the user authorized, and a subject token with no scope
-claim grants none. `repo:read` denies writes.
-
-Scope cannot name a repository. So a reviewer confined to one pull request can read any
-repository the credential reaches — a real residual, bounded by the credential's own scope,
-accepted here and closed in [later phases](#later-phases).
-
-**`cnf` binds each token to a key the pod holds.** Authenticating the client and constraining
-the holder are separate decisions over separate connections, and conflating them is easy:
-
-| Decision | Options | Connection |
-|---|---|---|
-| Authenticate the client | JWT-SVID assertion, X.509-SVID over mTLS, or WIT-SVID | to the token endpoint |
-| Constrain the holder | certificate binding (`x5t#S256`) or DPoP (`jkt`) | to the gateway |
-
-`draft-ietf-oauth-spiffe-client-auth` §4 requires an authorization server to support one of
-the three, so mTLS is a choice rather than an obligation — and a JWT-SVID assertion, being a
-form parameter, survives an L7 ingress that would strip a client certificate. Either holder
-binding works; without one, a token copied from memory or a log replays until it expires.
-
-**One leg-2 credential covers many calls.** It is obtained once per user, definition, authority
-and audience, and reused. Minting per call would put a network round trip in front of every
-tool use.
-
-**Reuse means a narrowing can take effect late.** If authority is reduced mid-session, a
-credential minted before that still carries the wider authority until it expires. The
-bound is the TTL. This doc argues elsewhere that a stored record is never the authority; for
-one TTL, a cached credential is exactly that for outbound calls. Shorter TTLs trade it for
-round trips, revocation lists for a distributed dependency — neither clearly beats a bounded
-window named out loud.
+AgentCore closes the analogous path outright: "Runtime-managed agent identities cannot retrieve
+workload access tokens directly, preventing token extraction and misuse." It pays for that with
+a deployment boundary — one agent, one Runtime, one execution role. The candidates for us are a
+startup-only root grant, a session-bound registration, or one pod per session. Unresolved, and
+tracked as an open question.
 
 > **Today, and none of it is why the design is shaped this way.** The argument above stands or
-> falls on where the signing key sits, which is ours and not ToolHive's. What follows is a work
-> list.
+> falls on where keys sit and what the AS will refuse, which is ours to decide. What follows is
+> a work list.
 >
-> Leg 1's grant does not exist. The server composes authorization-code, refresh
-> and PKCE handlers plus the token-exchange factory — no `client_credentials`. Adding it is
-> the smaller half of leg 1; the registration that says which agents a client may ask for is
-> the larger half, and nothing like it exists either.
+> `client_credentials` does not exist in the authorization server — it composes
+> authorization-code, refresh and PKCE handlers plus the token-exchange factory. Nor does a
+> per-client scope surface: `BaselineClientScopes` is one list applied to every client, so
+> today granting `agent:code-reviewer` grants it to everyone and call 1's refusal never fires.
+> That field is not a refinement of this design, it is its precondition.
 >
-> **And no client that may use either grant can be provisioned:** registration hardcodes
-> clients public and permits only `authorization_code` and `refresh_token`, and discovery
-> advertises neither the grant nor secret-based client authentication, so even a
-> hand-provisioned client is invisible to any library that reads metadata. **This blocks both
-> legs.** Both halves are [#6082](https://github.com/stacklok/toolhive/issues/6082), which
-> also carries the non-secret option: authenticate the client from a verified X.509-SVID and
-> auto-register it with no secret, making the client id the SPIFFE ID. A shared secret would
-> also work and is rejected — it ships the credential-in-the-environment problem this design
-> removes.
+> No client that may use either grant can be provisioned: registration hardcodes clients public
+> and discovery advertises neither the grant nor secret-based client authentication. Both halves
+> are [#6082](https://github.com/stacklok/toolhive/issues/6082), which also carries the
+> non-secret option — authenticate from a verified X.509-SVID and auto-register with the SPIFFE
+> ID as the client id. That option currently grants every registered scope to every client,
+> which would make call 1 and call 2 vacuous, so it cannot be used as-is.
 >
-> That option has a weakness which lands on the scope paragraph above: every auto-registered
-> client receives **all** supported scopes and audiences. That makes the client half of the
-> intersection vacuous and leaves attenuation resting entirely on what the subject token was
-> granted. Phase 1 needs per-identity client scopes to mean anything.
->
-> **Leg 1 needs one change on [#5815](https://github.com/stacklok/toolhive/issues/5815).**
-> That issue requires an actor token to be self-issued — which two legs satisfies, since the
-> server mints it — and additionally requires `actor_token.sub` to equal the authenticated
-> `client_id`. Here `sub` is the definition and the client is the pod, so the check still
-> rejects. The replay attack it defends against is real: a leaked actor token must not be
-> usable by a different client. But `cnf` defends it better. Leg 1's token is already bound
-> to the pod's key, so checking the binding against the presenting client is both stronger
-> than subject equality — a leaked token is useless without the key, not merely
-> attributable — and frees `sub` to name the agent. That is the ask: keep self-issued, bind
-> by `cnf` rather than by `sub`.
+> The actor half is [#5815](https://github.com/stacklok/toolhive/issues/5815). It requires an
+> actor token to be self-issued, which calls 1 and 2 satisfy, and additionally requires
+> `actor_token.sub` to equal the authenticated `client_id`. Here `sub` is the agent and the
+> client is the workload, so the check rejects. The replay attack it defends is real, and `cnf`
+> defends it better: the token is already bound to the pod's key, so a leaked one is useless
+> rather than merely attributable. The ask is to bind by `cnf` rather than by `sub`.
+
+---
+
+### Hop 4 — the call
+
+Both child surfaces run in the same process under the same pod certificate, so the credential
+is identical. What differs is which component issues the call.
+
+The default Subagent explorer's catalog is Read, Grep, Glob and a sandboxed Bash, with no MCP
+tool, so it asks its parent and the parent makes the call. The no-FS child catalog registers
+the global MCP tools, so it calls the gateway itself. Either way the leg-2 token presented
+names the *child* in `act`, so the narrowing from call 2 is what gets enforced.
+
+This is a catalog boundary, not a structural one. A subagent is not architecturally incapable
+of reaching the network — it has whatever its catalog was given, and the default catalog
+includes a shell.
+
+```http
+POST /mcp HTTP/1.1
+Host: vmcp.example.com
+                    # mTLS with the same pod certificate the cnf thumbprint names.
+Authorization: Bearer <the token from call 3>
+X-Correlation-Id: sess-8812/sub-3/call-7
+
+{"method":"tools/call","params":{"name":"github.read_file",
+ "arguments":{"repo":"acme/widgets","path":"README.md"}}}
+```
 
 ---
 
