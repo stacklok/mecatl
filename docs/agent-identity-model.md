@@ -52,9 +52,13 @@ An identity layer changes each of these: actions become **attributable**
 **enforceable** (attenuation is an issuer invariant, not a convention),
 outbound calls become **verifiable offline** (any party with the bundle can
 check who acted, for whom, with what scope), and multi-tenancy becomes
-**provable** (each user/agent/subagent is a distinct cryptographic
-principal). This is the difference between "trust our logs" and "verify the
-chain yourself."
+**provable** (each user/agent/subagent is a distinct principal in the chain).
+One scoping note on that last word: "distinct principal" holds at the
+*internal* tiers that mint identities. At the outbound hop the credential is
+definition-scoped and shared across sibling subagents, so subagents are
+distinct in the signed chain but not each a distinct cryptographic principal
+at the gateway; the gateway enforces per-definition. This is the difference
+between "trust our logs" and "verify the chain yourself."
 
 ## What breaks today (and why that is the point)
 
@@ -139,11 +143,13 @@ A research pass over the standards landscape (2024–2026) established three
 things. First, **the primitives are mature**: SPIFFE/SPIRE is CNCF-graduated,
 RFC 8693 (OAuth token exchange, `act`/`may_act` delegation chains) is a
 standard, and the IETF WIMSE working group is actively standardizing workload
-identity for exactly this deployment shape. Second, **the industry has
-converged on the three-tier identity segmentation** this design uses (see
-below): Microsoft's Entra Agent ID (blueprint / identity / user account),
+identity for exactly this deployment shape. Second, **the industry converges on
+disaggregating durable identity from runtime state** (a definition/instance
+distinction): Microsoft's Entra Agent ID (blueprint / agent identity),
 OpenAI's Assistants API (assistant / thread / run), A2A (AgentCard / task),
-and WIMSE (workload / workload instance / service) all draw the same lines.
+and WIMSE (workload / workload instance) all separate the durable "what it is"
+from the ephemeral "it is running." The run/transaction tier is this doc's own
+elaboration, matching OpenAI's run but not present in every analog.
 Third, **the attenuation picture is more nuanced than "nobody has solved
 it."** No *ratified* standard mandates attenuation: RFC 8693 only *suggests*
 scope narrowing as an abuse mitigation (§5), `draft-ietf-oauth-identity-chaining`
@@ -279,6 +285,13 @@ ids are issuer-minted and stay inside the family prefixes by construction.)
   optional `agent` field plus a synthetic default-definition id (never the
   telemetry `roleFamily` bucket: that label is deliberately lossy and would
   collapse every definition into six buckets, destroying the policy anchor).
+  Second gap: `AgentDef.Origin` carries a trust tier (project/user), but it
+  is carried, not enforced into identity. A project-tier def read from a
+  mutable workspace can take the name of an operator-managed one (project
+  precedence over user), so two legitimately-valid same-name definitions
+  from different-trust sources collide. That is a definition-spoofing path
+  through repository content, separate from the sanitizer collision, and it
+  needs a trust-tier distinction in the path or in policy.
 - **Instance identities** (`inst/<sessionID>`) are where SVIDs live. A session
   (including a reopened, recovered, or pod-migrated one) is one instance;
   rehydration re-mints the *same* instance identity. N concurrent sessions of
@@ -316,7 +329,7 @@ uses short names for readability:
 | Claim | Meaning |
 |---|---|
 | `sub` | the instance SPIFFE ID (spec) |
-| `aud` | intended verifier(s) (spec; single-audience preferred per JWT-SVID §7.2) |
+| `aud` | intended verifier(s) (spec; single-audience strongly recommended per JWT-SVID §7.2, to bound replay) |
 | `exp`/`iat`/`jti` | short TTL, unique per mint (spec) |
 | `delegation_chain` | ordered `{id, def, authorization_details}` entries, user → … → parent. Append-only, signed at mint. 8693 `act`-nesting semantics (below), explicit and carrying a per-hop scope snapshot. The name mirrors `draft-liu-agent-operation-authorization` / `draft-liu-oauth-chain-delegation` |
 | `authorization_details` | the effective authority of this instance, RFC 9396's registered claim for structured authorization (see vocabulary below). Issuer-enforced invariant: **strict subset of the parent's** |
@@ -532,6 +545,13 @@ delegating to an external STS) is a pattern many systems use implicitly.
 Nobody has articulated it as a named primitive. It is called out here because
 the definition/instance/run mapping makes it explicit and testable.
 
+Two projection rules follow. **Single-audience is required, not merely
+preferred.** A downstream that re-presents a child SVID to a sibling backend
+is a confused deputy; requiring single-audience (JWT-SVID §7.2 already
+strongly recommends it, for replay) closes that. And **the SVID's scope
+claims must only ever narrow on re-mint** (the projection must never be the
+path by which authority grows).
+
 A consequence that simplifies everything: **subagents are not network
 entities**. A subagent is a goroutine, not a pod; it never presents its own
 SVID. When the harness makes an outbound call attributable to a subagent
@@ -636,10 +656,11 @@ several more it must name honestly. First the three:
   "Honest costs and risks"). Mitigations are about blast radius and
   detection (KMS-rooted short-lived intermediates, KMS-layer signing
   audit, short TTLs, Redis auth/TLS), not about making the pod trustworthy.
-- **An external party holding a leaked SVID.** Bounded by TTL (minutes) and
-  by the PoP binding (Phase 3 `cnf`/`jkt`): a bearer token alone is not
-  enough to act, and a parked session's token expires before it can be
-  replayed. Cross-checking the SVID against the forge's or KMS's own audit
+- **An external party holding a leaked SVID.** Bounded by TTL (minutes), and
+  a parked session's token expires before it can be replayed. Until Phase 3
+  adds the PoP binding (`cnf`/`jkt`), every instance SVID is a *bearer*
+  token, so "TTL only, until Phase 3" is the accurate statement; PoP is
+  future protection, not present. Cross-checking the SVID against the forge's or KMS's own audit
   log is what turns "trust our logs" into "verify the chain."
 
 Five more the model must name, or it is incomplete for a multi-tenant AI
@@ -647,11 +668,16 @@ harness:
 
 - **Prompt injection at the *main* agent (P1).** Strictly more dangerous
   than at a child: the main agent holds the full tool set, spawns children,
-  sets their mode and prompts. Cryptographic identity does not help here;
-  the attacker is driving the harness's own prompt, inside the pod. The
-  containment is the harness's existing defenses (guardrails, the
-  deny-dominant fold, the plan-mode gate), which live at this boundary, not
-  the identity layer. Named so nobody expects the SVID to save them here.
+  sets their mode and prompts. Cryptographic identity is *mostly* not the
+  defense here; the attacker is driving the harness's own prompt, inside the
+  pod, so the containment is the harness's existing defenses (guardrails, the
+  deny-dominant fold, the plan-mode gate), which live at this boundary. The
+  one identity-carried lever is `constraints.posture_ceiling`: a ceiling on
+  what an injected main agent can grant a child, which the Entra hard-block
+  pattern (a ceiling independent of issuer correctness) makes stronger than
+  trusting the issuer. Note the defenses P1 relies on are themselves
+  posture-conditional (guardrails drop to advisory at the top of the
+  ladder).
 - **A malicious tenant (P2).** A user with legitimate authority is the
   relevant multi-tenant threat: valid credentials, can create sessions and
   run agents. The identity layer makes their actions *attributable* but
@@ -662,10 +688,14 @@ harness:
 - **A mis-binding edge (P3).** A compromised or misconfigured edge
   interceptor could bind a session to `user/alice` when the OIDC token was
   Bob's, and every SVID minted under the wrong principal inherits the
-  error, undetectably downstream. Mitigation: the edge writes a signed
-  binding claim, the session store records it, and audit cross-checks the
-  two. The binding must be independently verifiable, not trusted because
-  the edge asserted it.
+  error, undetectably downstream. The naive mitigation (the edge writes a
+  signed binding, the store records it, audit compares the two) is
+  **circular**: a compromised edge holds the signing key, writes Bob-as-Alice
+  in both places, and the comparison agrees with itself. What actually works
+  is anchoring to something the edge cannot forge: keep the issuer and
+  identifier of the *original* assertion from the identity provider, so an
+  auditor re-checks the binding against the provider, not against the
+  component under suspicion.
 - **A compromised downstream credential store (P4).** Scenario B has
   ToolHive storing Alice's upstream credentials. A compromised ToolHive
   leaks the credential itself. The identity layer limits *attribution* (you
@@ -676,7 +706,31 @@ harness:
   JSON (prompts, pre-compaction conversations, verdicts). An attacker with
   Redis read access reconstructs every delegation tree. The log carries no
   MAC; Rekor-style transparency anchoring (Phase 3) is a future integrity
-  measure, not a current defense.
+  measure, not a current defense. Two refinements: the anchoring must be
+  over *digests only* (anchoring prompt content to a public log is an
+  exfiltration channel, not a defense), and Redis auth/TLS covers the
+  transport-confidentiality half.
+
+Three more the architecture implies, which the first pass missed:
+
+- **A delegated token that carries the credential-store reference.** A
+  narrowed child then reaches the user's *whole* stored credential set at
+  the gateway, so attenuation over tools and resources is bypassed one layer
+  down. This is not P4 (the store being compromised); it is ordinary
+  delegation reaching too far by construction. Closing it is the user-keyed,
+  target-scoped credential read (a refused call reads no credential) from
+  the scenarios.
+- **A store writer who cannot sign.** A leaked database credential against
+  an unauthenticated store is likelier than pod compromise, and this
+  adversary *cannot* forge a signed chain, which is exactly what
+  chain-integrity (issuer signs at mint, verifies before re-mint) defeats.
+  Naming it separately from "the pod that can sign" keeps that mitigation
+  from looking less valuable than it is.
+- **A substituted trust bundle.** The whole value of offline verification
+  collapses if the JWKS endpoint serves a poisoned bundle: every external
+  verifier then accepts forged chains. The costs section raises that
+  endpoint's *availability*; its *integrity* (authenticated, tamper-evident
+  bundle distribution) is the sharper requirement and is named here.
 
 What the design does **not** defend: a malicious or confused *user* acting
 within legitimately granted authority (that is policy, not identity); the
@@ -691,12 +745,26 @@ These walk the model through a real downstream: **ToolHive's vMCP**, which
 has already implemented most of the delegation/identity constructs this
 design must interface with: an embedded authorization server that mints
 nested-`act` delegation tokens, an outgoing-strategy registry, an
-XAA/ID-JAG strategy, and a Cedar authorization layer that already evaluates
-SPIFFE IDs in `act.sub`. ToolHive is the example **not** because it is the
+XAA/ID-JAG strategy, and a Cedar authorization layer that evaluates the
+actor claim (`context.claim_act.sub`, today as a `like`-glob with the user
+as principal). ToolHive is the example **not** because it is the
 only way. The same shape applies to any downstream that supports these
 constructs, such as a memory service or the filesystem abstraction from
 `docs/scoped-resource-grants.md`. It is the example because it is a live,
 code-complete testing ground where the integration points already exist.
+
+**A note on what is fixed and what is ours to change.** The scenarios below
+reference current ToolHive behavior: vMCP validates inbound tokens with a
+self-issued validator only (the multi-issuer validator is unwired), the
+credential lookup is keyed on a `tsid` login-session claim, and Cedar
+matches the actor as a string glob. **These are not constraints to design
+around.** The mecatl team owns ToolHive and its Cedar layer, so each is an
+enhancement with a tracker, not a limitation: the multi-issuer validator
+(#5989), `cnf`-bound agent tokens (#5815), a provisionable confidential
+client (#6082), user-keyed credential reads with an ownership recheck, and
+structured SPIFFE-aware Cedar evaluation. The scenarios describe the model
+as it should work once those land; where current code falls short, the text
+says so rather than pretending otherwise.
 
 The cast for both: **Alice** (user) → **her mecatl agent** (session
 instance `agent/main/inst/<sid>`) → **a code-reviewer subagent**
@@ -721,6 +789,22 @@ example: GitHub's authorization server supports only `authorization_code`
 and `device_code`, accepting no token-exchange and no ID-JAG, so this
 flow would stop at step 5b. That is why Scenario A uses a corporate
 code-review service, and GitHub appears only in Scenario B.
+
+**How mecatl's agent identity reaches the gateway is the part current code
+does not yet do, and it is the trust-placement fork this doc leaves open.**
+vMCP today validates inbound tokens with a self-issued validator and derives
+the actor from the authenticated client, so a mecatl-self-signed SVID is not
+accepted as an outbound actor. Two ways through, both ours to build: (a)
+**two-leg** (the shape jhrozek's outbound doc, `agent-identity-outbound.md`,
+proposes): the pod `client_credentials`-authenticates with its SVID for an
+AS-minted agent token, then RFC 8693 exchanges Alice's token with that agent
+token as actor, so the gateway's AS asserts the agent and mecatl signs
+nothing that crosses the boundary; or (b) **single-mint**: teach vMCP to
+validate mecatl's SVID directly (the multi-issuer validator, #5989, plus a
+`cnf` binding, #5815), so mecatl asserts the agent as its own issuer. The
+diagram below shows the two-leg shape because it works against the AS vMCP
+already has; the fork between them is a real decision (who asserts the
+agent), not a settled one.
 
 ```
  Alice                mecatl (issuer)         ToolHive vMCP       enterprise AS + MCP
@@ -771,11 +855,18 @@ What to notice:
   bridge. mecatl's SVID is what the vMCP validates to know *which* agent
   instance is calling; the XAA strategy then does what it already does for
   any caller.
-- **The attenuation is enforceable by the backend.** The child SVID's
-  `authorization_details` is a strict subset of the parent's, signed at the
-  mint seam. The backend (or vMCP's Cedar layer, which already evaluates
-  SPIFFE IDs in actor claims) can check that the acting agent holds only
-  narrowed authority. It does not have to trust mecatl's say-so.
+- **The attenuation is verifiable by the backend; the credential scope is
+  enforced at the gateway.** The child SVID's `authorization_details` is a
+  strict subset of the parent's, signed at the mint seam, and RFC 8693 §4.1
+  carries the `act` chain *in* the output token, so any consumer (gateway or
+  backend) can verify the delegation. But the *credential* the backend acts
+  on is enforced at the gateway: the backend receives only the provider
+  credential the user granted at connect time, so the only hop that can
+  refuse a call against the actual authority is the gateway. The backend
+  verifies the chain; the gateway enforces the scope. (Cedar evaluates the
+  agent's SPIFFE ID as a `like`-glob on `context.claim_act.sub` with the
+  user as principal, not as trust-domain-aware matching; see the intro note
+  and the work list.)
 
 ### Scenario B: ToolHive with a credential store keyed off the user
 
@@ -826,26 +917,27 @@ cannot take.
 
 What to notice:
 
-- **The credential is keyed off the originating user's consent session, not
-  the agent.** ToolHive's token validator extracts the `tsid` from the
-  inbound token and loads the stored upstream credentials
-  (`loadUpstreamTokens` → `GetAllUpstreamCredentials(tsid)`), and the
-  `upstream_inject` strategy injects the provider token from
-  `identity.UpstreamTokens`. The agent never holds Alice's GitHub token; it
-  only triggers its use.
-- **The binding is honest about where it is enforced, and it is not
-  ToolHive's read path.** The `tsid` is signature-verified (only ToolHive's
-  AS can mint it), and the stored row carries `UserID`/`UpstreamSubject`
-  fields. But the `tsid`-keyed read does **not** re-check the inbound `sub`
-  against those fields (`ErrInvalidBinding` is declared, never returned on
-  this path). And under this design's own tier model the inbound `sub` is
-  the *acting instance*, not Alice; she rides `delegation_chain`. So
-  "the right user's credential" is a property **mecatl must guarantee
-  unilaterally**: bind the `tsid` it emits to Alice-rooted chains only, and
-  never re-issue a `tsid` to a chain rooted at a different user. The cleaner
-  fix is on ToolHive's side: re-check the inbound `sub` (or the chain's
-  root user) against `stored.UserID` at the read seam. That is a gap to
-  file, not a property already present. Naming it beats overclaiming it.
+- **The credential is keyed off the originating user, not the agent, and not
+  a login-session claim.** The mechanism matters here: today ToolHive keys
+  the read on a `tsid` claim minted only in a browser authorization-code
+  flow, which an agent never walks, and the token-exchange handler drops any
+  inherited one. So a delegated (agent) token carries no `tsid`, and the
+  `tsid`-keyed lookup returns an empty map with no error. **That is the gap,
+  and it is ours to close** (it is the current implementation, not a
+  protocol law): the read should key on the *user* (`sub`/`UserID`), the
+  primitive for which already exists (`GetLatestUpstreamTokensForUser`), and
+  re-check the inbound `sub` against the stored `UserID` at the read seam
+  (`ErrInvalidBinding` is declared but never returned on this path). The
+  diagram shows the target shape; the `tsid`-keyed load is what exists
+  today.
+- **Under this design's own tier model the inbound `sub` is the acting
+  instance, not Alice** (she rides `delegation_chain`). So "the right user's
+  credential" rests on the read resolving Alice from the chain's root, not
+  from `sub`. That is exactly the user-keyed read above: the gateway reads
+  Alice's stored credential because the delegation is rooted at her, not
+  because a login session says so. The agent never holds Alice's GitHub
+  token; it only triggers its use, against a lookup keyed on the user the
+  chain proves.
 - **The audit trail closes the loop.** mecatl's event log records the
   chain (Alice → agent → subagent) with `txn`; ToolHive's audit captures
   the delegation chain from the inbound token. The `txn` correlation id is
@@ -878,11 +970,14 @@ attenuation invariant, the lifecycle). The stack:
   its `jwtsvid` package is parse-and-validate only. There is no minting
   helper, so the issuing side is genuinely ours to write (a small signer).
 - **go-jose/v4**: signing and JWKS serialization. This is what SPIRE
-  itself uses, and it is already in mecatl's module graph.
+  itself uses, and it is already in mecatl's module graph (indirect today;
+  make it direct).
 - **sigstore/sigstore `pkg/signature/kms`**: key custody. Its
   `SignerVerifier` exposes a `crypto.Signer` over AWS, Azure, GCP, and
   Vault behind go-cloud-style URIs, so KMS choice becomes config rather
   than four integrations. Apache-2.0, OpenSSF, and cosign runs on it.
+  (Net-new dependency, as is `go-spiffe/v2`; only `go-jose` is already in
+  the graph.)
 - **Housekeeping**: mecatl already pulls several JWT/JOSE libraries
   transitively (go-jose v3+v4, golang-jwt v5, lestrrat-go/jwx v3,
   cristalhq/jwt v4). Pick one, make it direct, drop the rest.
@@ -917,7 +1012,21 @@ that never leave a signing service.
   bounded by the rotation window. (SPIRE's KMS-backed signing lives in its
   *key manager* plugins, `aws_kms`/`azure_key_vault`/`gcp_kms`/
   `hashicorp_vault`, with the upstream-authority plugins as the CA side;
-  cert-manager's external-issuer pattern is the same shape.)
+  cert-manager's external-issuer pattern is the same shape.) **Honesty note
+  on reachability:** local-signing buys audit/integrity and availability,
+  not process isolation. The Bash tool runs in the same filesystem namespace
+  as the process holding the intermediate key, with no OS-level isolation,
+  and `envscrub` is irrelevant to an in-memory `crypto.Signer` (it scrubs
+  secret-shaped env *names*, not a resident key). So a prompt-injected agent
+  could read a key on disk or drive signing through the parent. SPIRE avoids
+  this by splitting agent and server so the signer is never co-located with
+  the attested workload, but that split does not map onto goroutines (SPIRE
+  attests a process; our subagents are not processes). The honest statement:
+  local-signing defends the *internal* chain's integrity; defense against the
+  agent process abusing signing comes from the external-AS model on the
+  outbound hop, or from a policy-enforcing signing sidecar (a separate
+  process holding the key, `SO_PEERCRED` over a unix socket, enforcing its
+  own policy), named here as a later-phase option rather than a v1 claim.
 - **Residual risk, named**: a compromised pod cannot exfiltrate the root
   key but can request signatures while it runs, and can *write* sessions
   too. There is no "the identity must reference an existing session"
@@ -945,7 +1054,11 @@ that never leave a signing service.
   `parentCaps` (the `forkHistory` precedent). The engine loop stays
   identity-agnostic; the EventLog analogy (loop emits, relay persists) does
   *not* hold for spawn, because the child is constructed and driven inside
-  dispatch, and there is no downstream seam. Session gains an inert
+  dispatch, and there is no downstream seam. The closer precedent for the
+  issuer's *lifetime* is `Deps.ChildAskReviewer`: a Build-scoped optional
+  interface declared in `engine/agent`, implemented in composition, consumed
+  per-run, and needing no `engine/port` type (which is the first place a
+  reader greps after "sibling of `port.EventLog`"). Session gains an inert
   `Principal` label, same pattern as the existing
   `Profile`/`ProviderID`/`ModelID` snapshot labels
   (`engine/session/session.go`), persisted so rehydration re-derives the
@@ -984,7 +1097,11 @@ Redis-backed `port.EventLog` is the substrate. The deltas:
   contract that no child-authored content ever crosses into a parent event
   stream is preserved, identity, never child content);
 - `txn` correlates a run across the delegation tree; the tree is
-  reconstructable offline from Redis alone;
+  reconstructable offline from Redis alone. Note `txn` is mecatl's *internal*
+  join key: the credential that crosses to vMCP is minted by the gateway, so
+  nothing mecatl-issued can be inside it, and a separate outbound correlation
+  value joins mecatl's log to the gateway's. Two join keys, two boundaries;
+  neither spans both.
 - optional Rekor-style transparency anchoring of EventLog commits is a later
   consumer, not a dependency.
 
