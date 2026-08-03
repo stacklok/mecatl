@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -59,15 +61,15 @@ func driveStream(p port.LLMProvider) (chunks int, err error) {
 // gateway registry entry's provider must REFUSE to follow it (CWE-918) —
 // the conversation body + Authorization header must never leave loopback.
 //
-// The assertion is the SECURITY property (attacker hit count == 0), not "an
-// error surfaces": empirically, openai-go v3.37.0's request layer only
+// The primary assertion is the SECURITY property (attacker hit count == 0).
+// Empirically, openai-go v3.37.0's request layer only
 // treats status >= 400 as an API error (requestconfig.go), so a 3xx response
 // CheckRedirect leaves as the "final" response is NOT surfaced as an error —
-// the SSE decoder just finds no recognized event lines in the redirect
-// page's body and the stream completes with ZERO chunks. That is the
-// CORRECT, secure outcome (no data left loopback, no attacker-controlled
-// content was ever at risk of being parsed as a real completion) even though
-// it is not an explicit error.
+// the SSE decoder finds no recognized event lines in the redirect page's body.
+// The Responses adapter's terminal-event guard then fails the zero-event EOF
+// closed as a truncation. That is the correct, secure outcome: no data left
+// loopback, no attacker-controlled content was parsed as a completion, and the
+// non-response is no longer silently accepted as a clean turn.
 //
 // Anti-vacuous control (mutation-test-the-drift-guards discipline, in the
 // SAME test): driving the identical redirect through a BARE
@@ -102,8 +104,8 @@ func TestGatewayInferenceRefusesRedirects(t *testing.T) {
 	}
 
 	chunks, streamErr := driveStream(entry.provider)
-	if streamErr != nil {
-		t.Fatalf("gateway inference stream unexpectedly errored: %v", streamErr)
+	if !errors.Is(streamErr, io.ErrUnexpectedEOF) {
+		t.Fatalf("gateway inference stream error = %v, want truncation after the refused redirect", streamErr)
 	}
 	if chunks != 0 {
 		t.Errorf("gateway inference stream yielded %d chunks from a redirect response, want 0", chunks)

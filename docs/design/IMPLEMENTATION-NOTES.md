@@ -2917,38 +2917,65 @@ is stateless across turns) — no port/proto/engine-API change. Live listing rid
 `openCodeLister` (the `openaicompat` lister wrapped to stamp adapter-static text+image
 modalities, so a live refresh can't flip an uncatalogued model's Image capability to false).
 
-**SSE keepalive filter (`ssefilter.go`, fa79f22f/a616f746).** `openai-go`'s `ssestream`
+**SSE keepalive filter (shared `internal/adapter/ssefilter`).** `openai-go`'s `ssestream`
 decoder dispatches an Event on every blank line and `json.Unmarshal`s the accumulated data
-with no empty-payload check, so a bare SSE keepalive comment (`: ping - ...`, observed from
-OpenCode Go on long turns) yields `json.Unmarshal([]byte{}, ...)` → `*json.SyntaxError` → a
-latched decode error. Post-first-committing-chunk this is **terminal** under the no-replay
-rule, not retried — one rare ping killed an otherwise-healthy turn outright. The fix is a
-streaming line filter installed as the OUTERMOST `option.WithMiddleware` on `openaichat.New`
-(not `ssestream.RegisterDecoder`, which is an unsynchronized package-level map and this
-adapter is re-minted per session; middleware is also content-type-agnostic, since the SDK's
-decoder-registry lookup on the RAW header misses `text/event-stream; charset=utf-8`). It
-strips ONLY the blank line that would dispatch an empty payload plus empty-value `data:`
-lines, byte-for-byte otherwise, buffering no more than the current line so SSE arrival
-timing is preserved. Scope is the `opencode` provider slot only — `openai` (Responses),
-`openrouter`, and `anthropic` use different adapters, untouched.
+with no empty-payload check, so any DATA-LESS frame — a bare SSE keepalive comment
+(`: ping - ...`, observed from OpenCode Go on long turns), a bare extra blank line, an
+`event:`-only frame, or an empty-value `data:` line — yields `json.Unmarshal([]byte{}, ...)`
+→ `*json.SyntaxError` → a latched decode error. Post-first-committing-chunk this is
+**terminal** under the no-replay rule, not retried — one rare ping killed an otherwise-healthy
+turn outright. The fix is a WHOLE-FRAME filter installed as the OUTERMOST
+`option.WithMiddleware` on **both** `openaichat.New` (Chat Completions) and `openai.New`
+(Responses) — the mechanism was confirmed to fire on Responses-shaped frames too, so scope is
+`opencode` AND `openai`/`openrouter`/the ToolHive LLM gateway entries (all the same Responses
+wire protocol); only `anthropic` (a different adapter) is untouched. Middleware, not
+`ssestream.RegisterDecoder` (an unsynchronized package-level map, and these adapters are
+re-minted per session; middleware is also content-type-agnostic, since the SDK's
+decoder-registry lookup on the RAW header misses `text/event-stream; charset=utf-8`).
+
+The filter buffers a complete SSE frame (every line up to the blank-line boundary) and at the
+boundary keeps the WHOLE frame iff it carries at least one non-empty `data:` line, else drops
+the frame in its entirety. Whole-frame — not line-at-a-time — is load-bearing: a line filter
+would forward a data-less frame's `event:`/`id:`/comment lines before the boundary decision,
+merging them into the FOLLOWING frame (`event: thread.ping\n\n` becoming the event name of the
+next data frame; `openai-go` special-cases `thread.*`, so that silently corrupts or drops the
+next chunk). Kept frames pass byte-for-byte; the filter holds no more than the current frame,
+and the SDK's own decoder only dispatches on the blank line, so releasing a frame at its
+boundary is exactly when the SDK would have seen it — SSE arrival timing (and `llmresilience`'s
+idle watchdog) is preserved. Exported surface is just `NewKeepaliveFilter()` (the middleware)
+and `New(body)` (direct wrap, for the adapters' test helpers); everything else is unexported.
+
+The Responses adapter additionally FAILS CLOSED on a clean EOF with no terminal Responses
+event (`errTruncatedStream`, wrapping `io.ErrUnexpectedEOF`): the SDK returns `Err()==nil` on
+a plain mid-stream EOF and there is no `[DONE]` sentinel, so without this a truncated turn —
+text → ping → EOF, after the filter removed the ping — would leave `st.done==false` and fall
+through as a benign end, which the engine's `finishTurnNoTools` promotes to a successful
+`StopEndTurn` (accepting a partial answer as complete). The Chat Completions adapter has the
+identically-named guard on its own `finish_reason`.
 
 Sitting the filter IN FRONT OF `ssestream`'s own scanner silently removes that scanner's
 line-length bound (measured: unbounded growth to 1126 MiB buffered / 3338 MiB heap in 5s on
 a newline-less stream, `Read` never returning — an OOM lands before `llmresilience`'s idle
-watchdog would). The filter caps a single buffered line at `bufio.MaxScanTokenSize<<9` (32
-MiB, mirroring the SDK's own scanner bound so the failure point doesn't shift, same posture
-as `maxToolArgsBytes`), via an unexported testable `maxLine` field rather than a mutable
-package global. `errSSELineTooLong` is deliberately a PLAIN error — neither a
-`*json.SyntaxError` nor wrapping `io.ErrUnexpectedEOF` — so `llmresilience.DefaultClassifier`
-(which separately treats a bare `*json.SyntaxError`/wrapped `io.ErrUnexpectedEOF` as
-retryable, `bb706b23` #283, for a truncated/malformed FIRST frame pre-first-chunk) classifies
-it non-retryable: a 32 MiB unterminated line is a broken or hostile endpoint, not a transient
-truncation worth replaying. The oversized partial line is discarded before the error latches
-so `Read`'s trailing-line flush can't swallow it. Tests: an ORACLE fixture (the unfiltered
-stream must still fail with the exact original error — fails if upstream adds its own guard),
-a wiring test through the real `New` → middleware → SDK path (mutation-verified: deleting the
-`option.WithMiddleware` line reproduces the production error), and a bounds test at the
-64-byte testable cap.
+watchdog would). Whole-frame buffering also needs an aggregate frame bound (many individually
+small lines could otherwise grow one frame without limit), so the filter uses the SDK's 32 MiB
+per-line ceiling as its stricter per-FRAME ceiling — the same defensive scale as
+`maxToolArgsBytes`. The cap has an unexported testable `maxFrame` seam rather than a mutable
+package global. The filter also bounds consecutive `(0, nil)` reads from a misbehaving source
+(`errStuckReader`) so a non-progressing reader can't spin `Read` forever. Both `errFrameTooLong`
+and `errStuckReader` are deliberately PLAIN errors — neither a `*json.SyntaxError` nor
+wrapping `io.ErrUnexpectedEOF` — so `llmresilience.DefaultClassifier` (which separately treats
+a bare `*json.SyntaxError`/wrapped `io.ErrUnexpectedEOF` as retryable, `bb706b23` #283, for a
+truncated/malformed FIRST frame pre-first-chunk) classifies them non-retryable: a 32 MiB
+unterminated frame or a stuck reader is a broken or hostile endpoint, not a transient
+truncation worth replaying. The oversized partial frame is discarded before the error latches
+so `Read`'s trailing flush can't swallow it. Tests (per adapter): an ORACLE fixture (the
+unfiltered stream must still fail with the exact original error — fails if upstream adds its
+own guard), a wiring test through the real `New` → middleware → SDK path (mutation-verified:
+deleting the `option.WithMiddleware` line reproduces the production error), and — for the
+Responses adapter — a real-constructor `text → ping → EOF` test proving the truncation guard
+(mutation-verified: removing the `!st.done` check accepts the partial as success). Shared-package
+tests cover byte-identity, every data-less shape, the metadata-merge guard, the per-frame
+bound, and the stuck-reader bound.
 
 ### `openrouter` (LIVE model listing leaf)
 

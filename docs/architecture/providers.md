@@ -104,14 +104,27 @@ was needed. Live model listing rides `openCodeLister` (the `openaicompat` lister
 wrapped to stamp adapter-static text+image modalities, so a live refresh doesn't
 flip an uncatalogued model's Image capability to false).
 
-**SSE keepalive survival.** A bare SSE keepalive comment (`: ping - ...`, which
-OpenCode Go sends on long turns) used to kill the stream outright once it landed
-mid-turn — a rare event on an otherwise-healthy connection, but terminal every
-time it hit, since the no-replay rule can't retry past the first committed chunk.
-`ssefilter.go`, installed as middleware on the `openaichat.New` constructor,
-strips the keepalive line before the SDK's decoder ever sees it, bounding its own
-line buffer so it doesn't reopen the unbounded-read hazard it would otherwise sit
-in front of. Scope is the `opencode` provider slot only. See
+**SSE keepalive survival.** A data-less SSE frame — a keepalive comment
+(`: ping - ...`, which OpenCode Go sends on long turns), a bare extra blank line,
+an `event:`-only frame, or an empty `data:` value — used to kill the stream
+outright once it landed mid-turn: the openai-go `ssestream` decoder dispatches on
+every blank line and `json.Unmarshal`s the empty payload into
+`unexpected end of JSON input`, a latched error. A rare event on an
+otherwise-healthy connection, but terminal every time it hit, since the no-replay
+rule can't retry past the first committed chunk. The shared `internal/adapter/ssefilter`
+package, installed as the OUTERMOST `option.WithMiddleware` on **both** the
+`openaichat.New` (Chat Completions) **and** `openai.New` (Responses) constructors,
+buffers each SSE frame and drops any data-less frame in its entirety before the
+SDK's decoder sees it — whole-frame, not line-at-a-time, so a dropped frame's
+`event:`/`id:` lines can never leak into the following frame. It bounds its own
+per-frame buffer so it doesn't reopen the unbounded-read hazard it would otherwise
+sit in front of. The mechanism is confirmed on Responses-shaped frames too, so
+the Responses adapter (`openai`, `openrouter`, and the ToolHive LLM gateway
+entries — all the same Responses wire protocol) carries the guard as well as the
+`opencode` slot. The Responses adapter additionally fails a stream CLOSED
+(`errTruncatedStream`, wrapping `io.ErrUnexpectedEOF`) when it ends with no
+terminal event, so a truncated turn is never promoted to a successful
+`StopEndTurn`. See
 [`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md)
 and `docs/design/IMPLEMENTATION-NOTES.md` for the exact mechanics.
 `buildProvider` returns the registry **and** its default provider so the shared engine

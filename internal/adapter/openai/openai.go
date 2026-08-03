@@ -29,6 +29,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/ssefilter"
 )
 
 // Provider is a port.LLMProvider backed by the OpenAI Responses API. Construct
@@ -137,7 +138,14 @@ func New(opts ...Option) *Provider {
 	for _, o := range opts {
 		o(&c)
 	}
-	reqOpts := make([]option.RequestOption, 0, len(c.extra)+2)
+	reqOpts := make([]option.RequestOption, 0, len(c.extra)+3)
+	// FIRST, so it is the OUTERMOST middleware and therefore filters the body that
+	// the SDK's ssestream decoder ultimately reads. See internal/adapter/ssefilter
+	// for why an SSE keepalive would otherwise kill a streaming turn outright. The
+	// same guard the openaichat (Chat Completions) adapter installs applies here:
+	// responses.NewStreaming drives the plain ssestream decoder, so it hits the
+	// identical empty-payload json.Unmarshal defect.
+	reqOpts = append(reqOpts, option.WithMiddleware(ssefilter.NewKeepaliveFilter()))
 	if c.apiKey != "" {
 		reqOpts = append(reqOpts, option.WithAPIKey(c.apiKey))
 	}
@@ -194,6 +202,20 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 				return
 			}
 			yield(port.Chunk{}, err)
+			return
+		}
+		if !st.done {
+			// Clean EOF but NO terminal Responses event: the SDK's ssestream
+			// returns Err()==nil on a plain mid-stream EOF, so a dropped connection
+			// is indistinguishable from a normal close here. FAIL CLOSED — do NOT let
+			// this fall through as a benign end, or the engine promotes the partial
+			// text to a successful StopEndTurn (loop.go finishTurnNoTools). Surface
+			// a truncation error instead (retryable pre-commit; terminal once a
+			// committing chunk has gone out, by the no-replay rule).
+			if ctx.Err() != nil {
+				return
+			}
+			yield(port.Chunk{}, errTruncatedStream)
 		}
 	}, nil
 }

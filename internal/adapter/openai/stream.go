@@ -18,8 +18,14 @@ import (
 // per event, so the only carried state is the assembled final response (for the
 // terminal usage/stop), threaded via the events themselves.
 type streamState struct {
-	// done guards against emitting a second ChunkDone if both response.completed
-	// and a later terminal event arrive.
+	// done is set when a TERMINAL Responses event is observed
+	// (response.completed / response.incomplete / response.failed / a top-level
+	// error). It guards against emitting a second ChunkDone if both
+	// response.completed and a later terminal event arrive, AND it is the
+	// truncation signal: a clean EOF with done==false means the stream ended
+	// without a terminal event (e.g. a dropped connection), which Stream fails closed as
+	// errTruncatedStream rather than letting the engine promote partial text to a
+	// successful StopEndTurn.
 	done bool
 
 	// The identity (item_id, output_index, content_index) of the single visible
@@ -34,6 +40,18 @@ type streamState struct {
 	textContentIndex int64
 	textIndexSet     bool
 }
+
+// errTruncatedStream is surfaced when the Responses stream ends cleanly (no error
+// frame) but WITHOUT a terminal event (no response.completed/incomplete/failed).
+// The SDK's ssestream returns Err()==nil on a plain mid-stream EOF — a dropped
+// connection is indistinguishable from a normal close at that layer, and unlike
+// Chat Completions there is no [DONE] sentinel. Failing closed here stops a
+// truncated turn from being promoted to a successful StopEndTurn by the engine
+// (which turns partial text + StopNone into StopEndTurn). It wraps
+// io.ErrUnexpectedEOF so the resilience classifier treats a PRE-commit truncation
+// as retryable (a post-commit one is terminal by the no-replay rule) — the same
+// posture as the openaichat adapter's identically-named error.
+var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a terminal event: %w", io.ErrUnexpectedEOF)
 
 // translate converts a single Responses SSE event into zero or more
 // provider-neutral chunks. It is a pure function (apart from the small carried
