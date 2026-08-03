@@ -305,17 +305,35 @@ that connection. Without it a token copied from memory or a log replays until ex
 direction of travel: WIMSE is specifying WPT, which is DPoP-shaped, and states that WIT/WPT are
 not used with mTLS. Certificate binding is the transition case.
 
-**Call 1 is the remaining hole, and it is not a protocol problem.** A shell the injected model
-controls can likely reach the pod's SVID — same uid, socket path inheritable, no in-process
-boundary for a goroutine. It then performs call 1 itself, asks for `agent:deployer
-cap:github.write`, and receives the full registered ceiling with no narrowing. Calls 2 and 3
-bound children; nothing bounds the root.
+**Call 1's ceiling is the whole registration, so the SVID must not be reachable from the agent
+loop.** A shell the injected model controls otherwise performs call 1 itself, asks for
+`agent:deployer cap:github.write`, and receives the pod's full registered set with no parent
+token to narrow against. Calls 2 and 3 bound children; only reachability bounds the root.
 
-AgentCore closes the analogous path outright: "Runtime-managed agent identities cannot retrieve
-workload access tokens directly, preventing token extraction and misuse." It pays for that with
-a deployment boundary — one agent, one Runtime, one execution role. The candidates for us are a
-startup-only root grant, a session-bound registration, or one pod per session. Unresolved, and
-tracked as an open question.
+Two things a shell could do, and they need different answers. It could **fetch** its own SVID
+from the Workload API — closed by a SPIRE selector that pins issuance to the binary
+(`unix:sha256`), which a model-spawned `/bin/sh` fails. It could **read the key out of the agent
+loop's memory**, since a subprocess sharing a uid can ptrace its parent — closed only by
+`unix:uid`, a uid the agent loop does not have.
+
+So the SVID lives in a **token broker**: a separate process, at its own uid, holding the SVID
+and exposing one call — mint a token for this session under this parent. Calls 1, 2 and 3 are
+made by the broker, not by the agent loop. It pins the accepted peer's pid on top, so a
+subprocess cannot pose as the loop, and its policy for which agent names a session may request
+sits in configuration the loop cannot write.
+
+This is not proof-of-possession machinery and it is not the SPIRE agent/server split applied
+literally — the broker attests nothing and knows nothing about goroutines. It keeps one key out
+of one address space, which is the whole job.
+
+AgentCore reaches the same property by a different route: "Runtime-managed agent identities
+cannot retrieve workload access tokens directly, preventing token extraction and misuse", paid
+for with one agent per Runtime per execution role. A uid boundary buys it without one pod per
+session.
+
+> **Unverified.** Whether a shell in our own deployment can reach the SVID today depends on the
+> registration selector being `unix:uid` and on the socket path being inherited. Neither is
+> checked in our code, and the design should not rest on the answer being favourable.
 
 > **Today, and none of it is why the design is shaped this way.** The argument above stands or
 > falls on where keys sit and what the AS will refuse, which is ours to decide. What follows is
@@ -826,6 +844,7 @@ weaker than a product guarantee, and it is worth being explicit about which thes
 | Requirement | Provider | Consumer | Failure |
 |---|---|---|---|
 | Workload API reachable at startup | SPIFFE deployment | mecatl | no credential for any session |
+| A uid for the token broker that the agent loop and its shells do not have | deployment | mecatl | call 1's ceiling is reachable by an injected shell |
 | A registration naming every definition that may be acted as | operator | vMCP AS | leg 1 refuses, and the agent cannot act at all |
 | AS issuer metadata and keys | vMCP AS | vMCP gateway | every call fails verification |
 | A client authentication method the deployment can carry — mTLS needs TLS terminating at the AS or the ingress forwarding the certificate; a JWT-SVID assertion needs neither | deployment | AS | client authentication impossible; reads as configuration, is topology |
