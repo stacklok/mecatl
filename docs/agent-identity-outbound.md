@@ -844,9 +844,17 @@ The first is already here. An operator can say which agents may call which tools
 credential all of them share.
 
 The second is the gap worth naming plainly: **this design narrows every token except the one
-that reaches the provider.** Leg 2 narrows what mecatl presents to vMCP, and hop 5 decides what
-mecatl may ask for — but GitHub receives whatever Alice granted at connect time. Every
+that reaches the provider.** Call 3 narrows what mecatl presents to vMCP, and hop 5 decides what
+mecatl may ask for, but the provider receives whatever Alice granted at connect time. Every
 constraint sits upstream of the only party that could enforce one.
+
+Whether it can be closed is a property of each provider, not of this design. Nothing can narrow
+a credential it did not mint, so a stored user OAuth token is final. Some providers will issue a
+credential scoped to one resource and one permission from a grant already held — an app
+installation, a session with a scoped policy, an impersonation with explicit scopes — and for
+those the store can derive per call instead of handing over what it stored. Which integrations
+justify moving to such a credential type is a per-provider decision, and for the rest the row
+stays open.
 
 The third is where AWS and Azure both are. Bedrock AgentCore stores vault entries under the
 agent identity and the user together, so a token is scoped to that pair. Entra Agent ID has no
@@ -858,6 +866,13 @@ consented to per agent. Atrium reaches the same place and calls the consent reco
 from its siblings, and a record of the user consenting to a named agent. The second is the
 hard one. Without it there is nothing to check, and a per-agent storage key would partition
 credentials by an agent nobody authorized.
+
+**And the consent record has a shape problem no mechanism solves.** Grant records at
+user-client-scope granularity are ordinary, and per-agent means per-client. But a scheduled run
+has nobody present, and an absent user cannot consent. The only available pattern is an
+administrator deciding in advance that consent is not required for a class of agent, which
+substitutes organizational authorization for Alice's. That is a policy decision someone signs,
+not a technical gap to close, and it should be named as such to whoever signs it.
 
 **Schedules, caching and stronger attribution.** *Un-defers when* unattended work is a
 requirement, when fan-out makes the per-call exchange measurable, and when an auditor needs to
