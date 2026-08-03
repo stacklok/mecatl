@@ -105,37 +105,42 @@ needs the diff from GitHub. GitHub sits behind vMCP, which holds Alice's GitHub 
 sequenceDiagram
     autonumber
     actor Alice
-    participant M as mecatl pod
+    participant M as mecatl agent loop
     participant S as code-reviewer subagent
+    participant K as token broker
     participant AS as vMCP authorization server
     participant G as vMCP gateway
     participant V as credential store
-    participant B as GitHub
+    participant B as the provider
 
-    Note over M: at startup, fetches an X.509-SVID from the Workload API.<br/>Identity is the WORKLOAD, spiffe://…/ns/prod/sa/mecatl, not one pod.
+    Note over M,K: same pod, different uids. the broker fetches the X.509-SVID from the<br/>Workload API and holds the only private key. the loop cannot read it.<br/>Identity is the WORKLOAD, spiffe://…/ns/prod/sa/mecatl, not one pod.
 
     Alice->>M: OIDC access token, and "review PR 42"
     Note over M: store the owner on the session
 
     rect rgba(128,128,128,0.07)
-    Note over M,AS: root leg 1. once per pod and agent name, cached across users
-    M->>AS: POST /token, grant_type = client_credentials<br/>scope = agent:main cap:github.read cap:github.write
-    AS-->>M: agent token. sub = agent/main<br/>aud = the AS, so it opens nothing at the gateway
+    Note over M,AS: call 1. once per pod and agent name, cached across users
+    M->>K: mint a token for agent:main
+    K->>AS: POST /token, grant_type = client_credentials<br/>scope = agent:main cap:github.read cap:github.write
+    AS-->>K: agent token. sub = agent/main<br/>aud = the AS, so it opens nothing at the gateway
     end
 
     M->>S: spawn. a goroutine in this pod. no key of its own.
 
     rect rgba(128,128,128,0.07)
-    Note over M,AS: child leg 1. the narrowing step
-    M->>AS: POST /token, token-exchange<br/>subject_token = the agent token above<br/>scope = agent:code-reviewer cap:github.read
+    Note over M,AS: call 2. the narrowing step
+    M->>K: mint for agent:code-reviewer, parent is agent:main
+    K->>AS: POST /token, token-exchange<br/>subject_token = the agent token above<br/>scope = agent:code-reviewer cap:github.read
     Note over AS: intersects against the scopes inside that token.<br/>cap:github.write would be refused here.
-    AS-->>M: agent token. sub = agent/code-reviewer, aud = the AS
+    AS-->>K: agent token. sub = agent/code-reviewer, aud = the AS
     end
 
     rect rgba(128,128,128,0.07)
-    Note over M,AS: leg 2. once per user and agent, cached
-    M->>AS: POST /token, token-exchange<br/>subject_token = Alice's token<br/>actor_token = the child agent token
-    AS-->>M: access token. sub = Alice, act = agent/code-reviewer<br/>aud = the gateway. cnf bound to the pod.
+    Note over M,AS: call 3. once per user and agent, cached
+    M->>K: mint a gateway token, here is Alice's token
+    K->>AS: POST /token, token-exchange<br/>subject_token = Alice's token<br/>actor_token = the child agent token
+    AS-->>K: access token. sub = Alice, act = agent/code-reviewer<br/>aud = the gateway. cnf bound to the broker's key.
+    K-->>M: that access token
     end
 
     alt default explorer catalog, no MCP tool
@@ -144,20 +149,21 @@ sequenceDiagram
         Note over S: calls the gateway itself
     end
 
-    M->>G: tools/call for github.read_file<br/>bearing the leg-2 token, over mTLS with the pod certificate
+    M->>G: tools/call for github.read_file<br/>bearing the call-3 token, over mTLS with the broker's certificate
 
     Note over G: verify signature, aud, and the cnf thumbprint against<br/>this connection. resolve the call to one target.
     alt denied, or any decision input missing
         G--xM: refuse. no credential is read.
     end
 
-    G->>V: fetch, keyed on Alice and that target
-    V-->>G: one credential
-    G->>B: GET the diff, using Alice's GitHub token
+    G->>V: read, keyed on Alice and that target, gated on this agent
+    V-->>G: the narrowest credential this provider can issue
+    G->>B: fetch the diff with that credential
     B-->>G: the diff
     G-->>M: tool result
     M-->>S: the diff
 ```
+
 
 
 | Hop | Input | Action | Output | Invariant |
