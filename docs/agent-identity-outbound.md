@@ -259,27 +259,43 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 }
 ```
 
-**The authorization server decides which agents may exist.** In a single call mecatl asserts
-its own actor claim and the server believes it — which makes mecatl both the asserter and the
-attack surface, because definitions come from configuration a repository can write. Leg 1
-moves minting to the server, which issues an agent token only for a definition it was
-configured to know. A definition invented in a pull request cannot be named, because nothing
-registered it.
+**mecatl holds no key whose signature carries authority.** This is the reason that matters, and
+the rest follow from it.
 
-That settles a question a single call leaves open: only registered definitions are nameable in
-policy. Per-project specialists still run. They run *under* a registered definition rather
-than *as* one, and lose only the ability to be named in a rule.
+In a single call mecatl signs an actor assertion and the server believes it, so the strength of
+the actor claim equals the isolation of mecatl's signing key. There is none: the key is in the
+pod, and the Bash tool an injected model drives runs in that same pod, sharing its address
+space and filesystem namespace. An injected model can therefore sign an assertion naming any
+agent. Every policy rule keyed on `act.sub` is then bypassable by prompt injection, which is
+the actor claim collapsing rather than a key-custody detail.
 
-What remains is that mecatl still chooses which registered definition to request per spawn, so
-a prompt-injected parent picks among the operator's own agents. That is the ordinary
-attenuation problem the rest of this design handles, not a forgery.
+Under two legs mecatl signs nothing. It holds the SVID, which proves the pod, and the pod is
+not what policy discriminates on. An injected model that reaches the SVID can still request
+agent tokens, but only for definitions the server was configured to know, so the blast radius
+is one of the operator's own agents rather than any name the model invents. Bounded, not
+eliminated.
 
-**mecatl signs nothing.** The server verifies the SVID, which client authentication requires
-of it anyway, and signs what it issues. No keys of mecatl's cross the boundary, and the
-deployment loses a trust relationship rather than gaining one.
+**So the server, not mecatl, is authoritative about which agents exist.** This is a consequence
+of the above and not an independent argument. mecatl could refuse to name untrusted-tier
+definitions itself, and that would close the same hole on paper — but the refusal would run
+inside the process being injected, which is what makes it worthless. Moving the allowlist to
+the server moves it out of reach.
 
-**Two tokens, two lifetimes.** Leg 1 is per pod and definition, leg 2 per user and definition.
-The workload proof happens rarely, and off the user's path.
+The cost is real. Only registered definitions are nameable in policy, so a per-project
+specialist runs *under* a registered definition rather than *as* one, and an operator has to
+register every agent a rule may name.
+
+**Two tokens, two lifetimes.** Leg 1 is per pod and definition, leg 2 per user and definition,
+so the workload proof stays off the user's path. A convenience, not a reason.
+
+**This trades against a signing sidecar, and the two are alternatives.** Everything above
+assumes the signing key stays reachable from the agent loop. Move it into a separate process
+that holds the key and applies policy about what it will sign, and single-mint's primary
+objection disappears — at which point `agent/<tier>/<name>`, mecatl-signed with provenance in
+the identifier, becomes viable and buys back per-project specialists as nameable principals.
+So for the outbound hop the two are substitutes: pick the sidecar or pick two legs. For
+internal-chain signing, which exists for audit rather than authority, only the sidecar helps,
+and a forged audit record is a different severity from a minted identity.
 
 **This is delegation, not impersonation.** Leg 2 carries both parties — Alice in `sub`, the
 agent in `act`. RFC 8693 §1.1 draws that line, and it is the premise of everything here: an
@@ -334,7 +350,11 @@ one TTL, a cached credential is exactly that for outbound calls. Shorter TTLs tr
 round trips, revocation lists for a distributed dependency — neither clearly beats a bounded
 window named out loud.
 
-> **Today.** Leg 1's grant does not exist. The server composes authorization-code, refresh
+> **Today, and none of it is why the design is shaped this way.** The argument above stands or
+> falls on where the signing key sits, which is ours and not ToolHive's. What follows is a work
+> list.
+>
+> Leg 1's grant does not exist. The server composes authorization-code, refresh
 > and PKCE handlers plus the token-exchange factory — no `client_credentials`. Adding it is
 > the smaller half of leg 1; the registration that says which agents a client may ask for is
 > the larger half, and nothing like it exists either.
@@ -810,17 +830,20 @@ assertion and therefore owed the server a trust bundle; splitting the exchange r
 3. Whether [#5815](https://github.com/stacklok/toolhive/issues/5815) will bind the agent token
    by `cnf` rather than by subject equality. Two legs depends on it, and nothing else in this
    design substitutes.
-4. Whether leg 1's `sub` is the agent or the pod. RFC 9068 §2.2 says a client-credentials
+4. Sidecar or two legs. They are alternatives for the outbound hop, and the choice is whether
+   mecatl's signing key leaves the process an injected model can reach. Only the sidecar also
+   protects internal-chain signing, which exists for audit rather than authority.
+5. Whether leg 1's `sub` is the agent or the pod. RFC 9068 §2.2 says a client-credentials
    token SHOULD carry the client; naming the agent is what makes `act` legible to policy.
-5. Definition-based or instance-based external authorization.
-6. Whether per-agent consent is a product requirement, and if so who holds the record. Until
+6. Definition-based or instance-based external authorization.
+7. Whether per-agent consent is a product requirement, and if so who holds the record. Until
    one exists, per-agent credentials cannot be built and the user has no say in which agents
    use her connections.
-7. The exact credential selector, and how uniqueness is enforced.
-8. Whether the access token is a profiled JWT or opaque plus introspection.
-9. Whether signed per-call instance attribution is a product requirement.
-10. How ownerless legacy sessions and schedules are handled.
-11. Who owns the schedule grant broker.
+8. The exact credential selector, and how uniqueness is enforced.
+9. Whether the access token is a profiled JWT or opaque plus introspection.
+10. Whether signed per-call instance attribution is a product requirement.
+11. How ownerless legacy sessions and schedules are handled.
+12. Who owns the schedule grant broker.
 
 ---
 
