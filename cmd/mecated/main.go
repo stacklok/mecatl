@@ -45,7 +45,6 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
-	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -387,8 +386,11 @@ type config struct {
 	// SpawnTeammate / RunTeam). Opt-in, default off.
 	enableTeams bool
 
-	// MCP: remote MCP servers to connect to and register tools from.
-	mcpServers mcpServerList
+	// MCP: remote MCP servers to connect to and register tools from. The
+	// repeatable name=URL flag + the MCP_<NAME>_TOKEN bearer convention live in
+	// the shared cliconfig.MCPServerList (issue #341) so mecated, mecatequi, and
+	// mecak8s cannot drift on the parse/token semantics.
+	mcpServers *cliconfig.MCPServerList
 
 	// MCP resources: register the ListMcpResources/ReadMcpResource meta-tools when
 	// a connected server exposes resources. Default ON — the tools are registered
@@ -464,33 +466,6 @@ type config struct {
 	// headless (--headless); an interactive deployment surfaces the plan to the
 	// human instead.
 	planModeAutoApprove bool
-}
-
-// mcpServerList is a repeatable flag.Value collecting --mcp-server name=URL
-// entries into a slice of mcp.ServerConfig.
-type mcpServerList []mcp.ServerConfig
-
-func (l *mcpServerList) String() string {
-	names := make([]string, 0, len(*l))
-	for _, c := range *l {
-		names = append(names, c.Name)
-	}
-	return strings.Join(names, ",")
-}
-
-// Set parses a single "name=URL" entry. A per-server bearer token is read from
-// the environment variable MCP_<NAME>_TOKEN (name upper-cased) when present.
-func (l *mcpServerList) Set(v string) error {
-	name, url, ok := strings.Cut(v, "=")
-	if !ok || name == "" || url == "" {
-		return fmt.Errorf("invalid --mcp-server %q: want name=URL", v)
-	}
-	cfg := mcp.ServerConfig{Name: name, URL: url}
-	if tok := os.Getenv("MCP_" + strings.ToUpper(name) + "_TOKEN"); tok != "" {
-		cfg.Headers = map[string]string{"Authorization": "Bearer " + tok}
-	}
-	*l = append(*l, cfg)
-	return nil
 }
 
 // stringList is a repeatable string flag.Value, preserving order across multiple
@@ -992,7 +967,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		WebSearchOff:            cfg.websearchOff,
 		ForkPreservedCap:        cfg.forkPreservedCap,
 		EnableTeams:             cfg.enableTeams,
-		MCPServers:              cfg.mcpServers,
+		MCPServers:              cfg.mcpServers.Servers(),
 		MCPResourceTools:        cfg.mcpResourceTools,
 		MCPPrompts:              cfg.mcpPrompts,
 		ToolHiveEnabled:         cfg.toolHiveEnabled,
@@ -1271,7 +1246,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.forkPreservedCap, "fork-preserved-cap", agent.DefaultPreservedForkCap, "max PRESERVED winner forks (join=first/judge) kept on disk at once; the oldest beyond this is LRU-reaped. Preserved forks stay inspectable until reaped")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", true, "register the experimental agent-teams capability (CreateTeam/SpawnTeammate/RunTeam); on by default and inert until a client drives a team. Pass --enable-teams=false to disable")
 
-	fs.Var(&cfg.mcpServers, "mcp-server", "remote MCP server as name=URL (repeatable); auth token read from MCP_<NAME>_TOKEN")
+	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
 	fs.BoolVar(&cfg.mcpResourceTools, "mcp-resource-tools", true, "register the ListMcpResources/ReadMcpResource meta-tools when a connected MCP server exposes resources (no-op when none do). TRUST BOUNDARY: a remote resource's contents enter the model context like any other MCP output — enable only for servers you trust")
 	fs.BoolVar(&cfg.mcpPrompts, "mcp-prompts", true, "expand \"/mcp__<server>__<prompt> key=value\" inputs into the server-rendered prompt (static snapshot taken at connect). TRUST BOUNDARY: an MCP prompt steers the model like a slash command — enable only for servers you trust")
 

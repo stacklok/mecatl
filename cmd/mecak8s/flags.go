@@ -87,9 +87,15 @@ type config struct {
 	// bindings (cliconfig.RegisterModelFlags), threaded onto app.Config.
 	modelAliases *cliconfig.KeyValueList
 	modelSlots   *cliconfig.KeyValueList
-	useMock      bool
-	shell        string
-	noBash       bool
+	// mcpServers holds the repeatable --mcp-server name=URL entries (issue #341,
+	// the factory MCP wiring), via the SAME cliconfig.MCPServerList helper as
+	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
+	// scheduler like titlani injects a short-lived per-run identity there), token
+	// optional. Threaded onto app.Config.MCPServers in appConfig.
+	mcpServers *cliconfig.MCPServerList
+	useMock    bool
+	shell      string
+	noBash     bool
 
 	// Storage-free state (ADR 0048): --redis-url points the session store +
 	// durable event log at a Redis managed service. NO --store-dir.
@@ -241,6 +247,9 @@ func parseFlags(argv []string) (config, error) {
 	// --toolhive-llm-base-url explicitly.
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
 	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
+	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
+	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
+	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
@@ -434,18 +443,21 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		GuardrailsDisabled:            cfg.guardrailsOff,
 		ModelAliases:                  cfg.modelAliases.AsMap(),
 		ModelSlots:                    cfg.modelSlots.AsMap(),
-		EnableParallel:                cfg.enableParallel,
-		EnableTeams:                   cfg.enableTeams,
-		SoulPath:                      cfg.soulFile,
-		NoSoul:                        cfg.noSoul,
-		UserModelDir:                  cfg.userModelDir,
-		NoUserModel:                   cfg.noUserModel,
-		PermissionsConventional:       cfg.permissionsConventional,
-		ImportClaudePermissions:       cfg.importClaudePermissions,
-		TrustProject:                  cfg.trustProject,
-		PermissionConfigs:             cfg.permissionConfigs,
-		Posture:                       app.ParsePosture(cfg.posture),
-		PostureFlagSet:                cfg.postureFlagSet,
+		// Remote MCP servers (issue #341): the static name=URL entries (with any
+		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).
+		MCPServers:              cfg.mcpServers.Servers(),
+		EnableParallel:          cfg.enableParallel,
+		EnableTeams:             cfg.enableTeams,
+		SoulPath:                cfg.soulFile,
+		NoSoul:                  cfg.noSoul,
+		UserModelDir:            cfg.userModelDir,
+		NoUserModel:             cfg.noUserModel,
+		PermissionsConventional: cfg.permissionsConventional,
+		ImportClaudePermissions: cfg.importClaudePermissions,
+		TrustProject:            cfg.trustProject,
+		PermissionConfigs:       cfg.permissionConfigs,
+		Posture:                 app.ParsePosture(cfg.posture),
+		PostureFlagSet:          cfg.postureFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key
 		// (folded by foldOperatorReasoningEffort in app.Build, like posture).

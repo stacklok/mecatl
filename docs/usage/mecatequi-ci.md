@@ -13,6 +13,59 @@ the operator walkthrough.
 > The example workflow is a **template** — copy it into your own repo and review it. This
 > repo does not run it against real issues (no `mecatequi` label, no configured secret).
 
+### The factory invocation profile (scheduler-launched runs)
+
+GitHub Actions is not the only launcher: a **scheduler** (e.g. titlani in the same
+platform) launches mecatequi as a one-shot Kubernetes Job or local subprocess per work
+item, with no human and no forge glue attached
+([ADR 0082](../adr/0082-factory-mcp-wiring.md); the scheduler half is titlani's
+run-contract ADR 0010). The profile such a launcher should use:
+
+```sh
+MCP_TEQUITL_TOKEN=<per-run token> MCP_VMCP_TOKEN=<per-run token> \
+mecatequi \
+  --posture auto \
+  --untrusted-prompt --prompt-file /work/task.md \
+  --timeout 30m \
+  --mcp-server tequitl=https://tequitl.internal/mcp \
+  --mcp-server vmcp=https://vmcp.internal/mcp \
+  --out-summary=-
+```
+
+- **`--posture auto` is required for unattended runs.** The default `strict` asks on
+  every mutating tool call, and a headless run has no approver — the run is CANCELLED
+  on the first ask and exits 1. `auto` is the recommended unattended tier (allow-all,
+  child injection-defense ON).
+- **`--untrusted-prompt`** whenever the task body is externally sourced (an issue body,
+  a task-graph node): the prompt is wrapped in the harness untrusted-data fence so the
+  model treats it as data to act on, not instructions to obey.
+- **`--timeout`** is the wall-clock backstop (orthogonal to `--max-run-tokens` /
+  `--max-turns`); a timed-out run exits 1 with `stop_reason=cancelled`.
+- **`--mcp-server <name>=<url>` + `MCP_<NAME>_TOKEN`** wire the run's MCP endpoints
+  (repeatable). The scheduler injects a **short-lived per-run identity** as
+  `MCP_<NAME>_TOKEN` (name upper-cased); the run presents it as
+  `Authorization: Bearer …` to that server. The token is optional — an entry with no
+  matching env var connects without auth. Names must match `[A-Za-z0-9_]+` and be
+  case-insensitively unique (they derive the env var), and a token-bearing URL must
+  be `https` (or `http` to loopback) so the bearer never travels cleartext off-host.
+  The same flag + env convention works on `mecated` and `mecak8s` — but on the
+  long-lived `mecak8s` daemon the token is read once at startup and shared across
+  sessions, so per-run identity is a mecatequi property
+  ([ADR 0082](../adr/0082-factory-mcp-wiring.md)).
+- **`--out-summary=-`, passed EXPLICITLY**, selects the stdout-compact summary mode:
+  the run summary is emitted as a **single compact JSON line as the FINAL stdout
+  line** (nothing follows it on stdout). The unset default (also stdout) keeps the
+  human-friendly indented JSON — behavior unchanged for existing pipelines.
+  **The guarantee is stdout-only**: a Kubernetes pod log merges stderr (diagnostics,
+  the per-event trace, the verdict line) into the same stream, so a log-tailing
+  consumer must take the **last line that parses as the `Summary` JSON**
+  (`schema_version` present) — not blindly the last line of the pod log. Capturing
+  stdout directly (subprocess pipe, or a container runtime that separates streams)
+  makes the literal last line safe.
+- **`--run-id` / `--task-ref` are deliberately NOT accepted.** mecatequi stays
+  scheduler-agnostic: correlate a run via your own launch identity (Job name, pod
+  labels) plus the `session_id` the Summary already carries.
+
 ### The composite action (`.github/actions/mecatequi`)
 
 The action builds the binary from the action's **own** checkout (`go build -C

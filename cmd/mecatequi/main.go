@@ -170,11 +170,18 @@ func emitDiff(f flags, stdout io.Writer, patch []byte) error {
 }
 
 // emitSummary writes the Summary JSON (indented, trailing newline) to --out-summary
-// ("-" = stdout).
+// ("-" = stdout). Under the stdout-compact mode (an EXPLICIT --out-summary=-, issue
+// #341) it instead emits the Summary as ONE compact JSON line — realMain emits the
+// summary LAST on stdout, so that line is the FINAL stdout line a log-tailing
+// scheduler parses; nothing may be written to stdout after it.
 func emitSummary(f flags, stdout io.Writer, sum Summary) error {
 	return writeTo(f.outSummary, stdout, func(w io.Writer) error {
 		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
+		if !f.summaryCompact {
+			enc.SetIndent("", "  ")
+		}
+		// json.Encoder.Encode without SetIndent emits compact JSON + exactly one
+		// trailing newline — the single-line contract.
 		return enc.Encode(sum)
 	})
 }

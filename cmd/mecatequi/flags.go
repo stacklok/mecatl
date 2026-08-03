@@ -46,6 +46,13 @@ type flags struct {
 	outDiff    string
 	outSummary string
 	outEvents  string
+	// summaryCompact selects the stdout-compact summary mode (issue #341): an
+	// EXPLICIT --out-summary=- (the flag given, value "-") emits the Summary as a
+	// SINGLE compact JSON line as the FINAL stdout line, so a scheduler tailing
+	// pod logs can parse "the last line". The unset default — which also resolves
+	// to "-" — keeps the indented JSON (default behavior unchanged), as does an
+	// explicit file path. Distinguished via fs.Visit in parseFlags.
+	summaryCompact bool
 
 	// timeout is a wall-clock bound on the whole run (defense-in-depth for CI). 0
 	// (default) disables it; a positive value wraps the run ctx in
@@ -69,12 +76,18 @@ type flags struct {
 	// inert by default (register-on-intent finds nothing to register) —
 	// --toolhive-llm=false is still recommended on a SHARED host.
 	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
-	useMock          bool
-	storeDir         string
-	shell            string
-	noBash           bool
-	maxRunTokens     int
-	maxTeamTokens    int
+	// mcpServers holds the repeatable --mcp-server name=URL entries (issue #341,
+	// the factory MCP wiring), via the SAME cliconfig.MCPServerList helper as
+	// mecated/mecak8s: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
+	// scheduler like titlani injects a short-lived per-run identity there), token
+	// optional. Threaded onto app.Config.MCPServers in appConfig.
+	mcpServers    *cliconfig.MCPServerList
+	useMock       bool
+	storeDir      string
+	shell         string
+	noBash        bool
+	maxRunTokens  int
+	maxTeamTokens int
 	// maxTurns caps the session's model calls (the StopMaxTurns terminal). 0
 	// (default/unset) inherits the composition default (internal/app build.go), so
 	// it is NOT mapped onto app.Config — it is a per-SESSION limit threaded to
@@ -142,7 +155,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.BoolVar(&f.untrustedPrompt, "untrusted-prompt", false, "treat the prompt body as UNTRUSTED data (e.g. a task description fetched from an external source): wrap it in the harness untrusted-data fence so the model treats it as data to act on, not instructions to obey. Default off (the prompt is the operator's own trusted task)")
 	fs.StringVar(&f.instructions, "instructions", "", "TRUSTED operator framing emitted OUTSIDE the untrusted-prompt fence (never fenced): high-level instructions such as how to format the final message or to self-verify before finishing. Empty (default) omits it; NOTE the mecatequi GitHub Action sets a NON-EMPTY default (PR-description + self-verify framing — see its `instructions` input), so a CI run injects framing even though this binary's default is empty. Distinct from --prompt/--prompt-file, which carry the task and ARE fenced under --untrusted-prompt")
 
-	fs.StringVar(&f.outSummary, "out-summary", "-", "where to write the run-summary JSON (\"-\" = stdout, the default). The summary is the machine-readable result Pipeline 2 consumes; pipe it to jq")
+	fs.StringVar(&f.outSummary, "out-summary", "-", "where to write the run-summary JSON (\"-\" = stdout, the default). The summary is the machine-readable result Pipeline 2 consumes; pipe it to jq. Passing --out-summary=- EXPLICITLY selects the stdout-COMPACT mode: the Summary is emitted as a SINGLE compact JSON line as the FINAL stdout line (nothing follows it), so a scheduler tailing logs can parse the last line; the unset default keeps the indented JSON")
 	fs.StringVar(&f.outDiff, "out-diff", "", "where to write the working-tree git diff the run produced (\"-\" = stdout). EMPTY (default) disables it — the summary already carries non_empty_diff and diff_bytes; opt in with a path when you want the patch. Cannot share a sink with --out-summary/--out-events")
 	fs.StringVar(&f.outEvents, "out-events", "", "path for the durable event log (JSONL, one redacted session.Event per line). EMPTY (default) disables it. Cannot share a sink with --out-diff/--out-summary")
 	fs.DurationVar(&f.timeout, "timeout", 0, "wall-clock bound on the whole run (e.g. 5m); a run that exceeds it is cancelled and exits 1 with a \"timed out\" message. 0 (default) = no timeout. Defense-in-depth for CI — orthogonal to --max-run-tokens")
@@ -162,6 +175,9 @@ func parseFlags(argv []string) (flags, error) {
 	// ToolHive config file, so this is inert unless the operator explicitly
 	// points --toolhive-llm-base-url at a reachable proxy.
 	f.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
+	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
+	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecak8s.
+	f.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
 	fs.BoolVar(&f.useMock, "mock", false, "use a canned offline mock provider (no network; smoke tests only)")
 	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash")
@@ -200,6 +216,11 @@ func parseFlags(argv []string) (flags, error) {
 			// Tri-state kill-switch (ADR 0042): record that the flag was given so
 			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
 			f.subagentModelRouterSet = true
+		case "out-summary":
+			// Stdout-compact summary mode (issue #341): ONLY an EXPLICIT
+			// --out-summary=- selects it. The unset default also resolves to "-"
+			// but keeps the indented JSON — default behavior unchanged.
+			f.summaryCompact = f.outSummary == "-"
 		}
 		if fl.Name == "output-economy" {
 			f.outputEconomyFlagSet = true
@@ -339,6 +360,11 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 		NoBash:                 f.noBash,
 		MaxRunTokens:           f.maxRunTokens,
 		MaxTeamTokens:          f.maxTeamTokens,
+		// Remote MCP servers (issue #341): the static name=URL entries (with any
+		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time),
+		// consumed by app.Build's static MCP source. Nil-safe when the flag was
+		// never registered (a hand-built test config).
+		MCPServers: f.mcpServers.Servers(),
 
 		GuardrailsModel:    f.guardrailsModel,
 		GuardrailsDisabled: f.guardrailsOff,

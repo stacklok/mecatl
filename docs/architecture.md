@@ -243,10 +243,20 @@ to the opt-in ask-reviewer, and a *main-engine* ask under `posture strict` cance
 with an actionable message (the intended CI posture is `--posture auto`). It is **forge-
 agnostic** — the GitHub-Actions glue that turns an issue into a pull request (a composite
 action + a split-privilege workflow) lives entirely under `.github/` and changes no Go.
+An EXPLICIT `--out-summary=-` selects the stdout-compact summary mode (ADR 0082): the
+`Summary` is emitted as a single compact JSON line as the FINAL stdout line, so a
+scheduler tailing pod logs parses the last line; the unset default keeps the indented
+JSON. `--run-id`/`--task-ref` are deliberately not accepted — a scheduler correlates via
+its own launch identity plus `Summary.session_id`.
 See `docs/adr/0028-mecatequi.md`. The four real-provider mains (`mecated`, `mecatui`,
 `mecatequi`, `mecak8s`) share provider credential + base-URL wiring through `internal/cliconfig`, so
 all four read the same `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`
-environment keys and register the same base-URL flags.
+environment keys and register the same base-URL flags. The daemon/headless mains
+(`mecated`, `mecatequi`, `mecak8s`) also share the repeatable `--mcp-server name=URL`
+flag and its `MCP_<NAME>_TOKEN` bearer convention through the same package
+(`cliconfig.MCPServerList`, ADR 0082) — a scheduler launching one-shot runs injects a
+short-lived per-run identity as the token env and the run presents it to that MCP
+endpoint.
 
 **mecak8s — the storage-free Kubernetes-native agent (`cmd/mecak8s`).** A fifth
 composition root and a *thin peer of `mecated`* over the same `app.Build`: it composes the
