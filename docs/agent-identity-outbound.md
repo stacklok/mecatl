@@ -583,7 +583,7 @@ identity — that converts Alice's job into somebody else's and makes the audit 
 | Adversary | Can | Cannot | Caught at |
 |---|---|---|---|
 | Prompt-injected subagent | choose tool and arguments within the credential's authority, which for now is everything the user granted the provider | change whose authority is presented, which definition is named, or what it permits — fixed before it ran | the gate |
-| Prompt-injected parent | choose a child's authority up to its own | exceed its own; a credential-carried ceiling bounds what it hands out | mint |
+| Prompt-injected parent | name and spawn any agent the operator registered | name an agent nobody registered, or present another user as the subject | the registration — **not** a runtime ceiling, because no value representing the parent's current authority exists (hop 2) |
 | Stolen access token | attempt replay | use it without the pod's certificate | the gateway |
 | Store writer, no signing key | rewrite mutable rows | forge a schedule envelope, or obtain an agent token — that needs the pod's key and a registration | verification |
 | Compromised gateway | use stored credentials; alter its own audit | be distinguished from Alice by the backend | reconciliation with mecatl's log |
@@ -593,6 +593,39 @@ identity — that converts Alice's job into somebody else's and makes the audit 
 path. Correlation gives operational attribution, not cryptographic proof. A compromised
 gateway can both abuse credentials and rewrite its own record of doing so. A compromised pod
 sits inside the accepted workload boundary.
+
+### Revocation, and why no credential names an instance
+
+Three things can be revoked, and none of them is an instance. Removing an agent from the
+client's registered scopes stops the authorization server minting for it. Disconnecting the
+user's provider integration removes what the credential read would return. Ending the session
+stops the run. Each is an operator or user action against a durable object.
+
+An instance is not on that list because **an instance is a goroutine**. Cancelling it is the
+revocation, and mecatl does that directly with no credential involved. A per-instance
+credential would name something no party outside the pod can address, present, or revoke
+independently — so it would be a credential in form and a log field in effect.
+
+This overturns a decision recorded earlier in
+`.scratch/binding-first-principles.md`, which settled on two credentials: a shared one per
+user and agent kind, plus a cheap per-call token naming the individual, on the argument that
+*you cannot revoke a label*. `draft-ietf-oauth-transaction-tokens` was the named mechanism, and
+`draft-mcguinness-oauth-ai-agent-instance` requires revocation keyed on the individual actor.
+
+That argument holds where instances act independently of the harness. Ours do not:
+`draft-ietf-wimse-arch` §2 defines a workload as independently addressable and executable, and
+a goroutine sharing an address space is neither. Attribution is what the instance layer is for
+here, and `X-Correlation-Id` carries it.
+
+*This reverses if instances stop being goroutines.* A subagent in its own process or pod is
+independently addressable, at which point it can hold a key, an external party can revoke it
+alone, and the two-token shape becomes correct. Until then, per-instance revocation solves a
+problem this architecture does not have.
+
+**Revocation is bounded by TTL, not by the revoking action.** Removing a grant does not
+invalidate an access token already issued and still inside its lifetime. Immediate cutoff needs
+the token revoked explicitly as well, and the doc's short TTLs are what actually bound the
+window.
 
 One rule adopted verbatim from the credential-broker draft: *the PDP must not evaluate
 justification text for approval decisions.* Agent-authored prose must never influence a
@@ -682,10 +715,15 @@ before it, since the agent token is its actor input.
 **Then move the credential read behind the gate**, rechecking ownership at the read. This is
 two changes and an interface addition, not a plugin — see below.
 
-**Then prove one slice:** Alice, one code-reviewer, one GitHub read tool. Complete when a
-*write* call is denied before any credential is read — not when the exchange succeeds.
-Denying a call to a different repository is the phase-2 proof; phase 1 cannot express it,
-which is the honest cost of deferring resource-level authority.
+**Then prove one slice:** Alice, **two** agents — `code-reviewer` registered read-only and
+`deployer` registered to write — and one GitHub tool. Complete when `code-reviewer` cannot
+obtain `deployer`'s authority: the spawn is refused, or the token it yields carries no write
+scope, and no credential is read either way.
+
+One agent is not enough to prove anything here. A single-agent run never requests a second
+definition, so the interesting step never executes and the slice passes whether or not it is
+guarded. Denying a call to a *different repository* is the phase-2 proof and phase 1 cannot
+express it, which is the honest cost of deferring resource-level authority.
 
 ### What has to be true of the credential read
 
