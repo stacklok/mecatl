@@ -2,11 +2,11 @@
 
 - Status: Historical
 - Date: 2026-05-29
-- Scope: the twelve agentic-harness patterns from the research corpus — pluggability gaps and DDD-correct seams to close them
+- Scope: twelve recurring agent-harness patterns — pluggability gaps and DDD-correct seams to close them
 
 ## Context
 
-After the v1 core shipped, mecatl was audited against the twelve patterns catalogued in the research corpus to identify which were fully pluggable, which were partial, and which were missing. The audit was conducted by a software-architect agent, verified against source on 2026-05-29. Four patterns were fully pluggable with no gaps; eight had seam or coverage issues requiring additional work packages.
+After the v1 core shipped, mecatl was audited against twelve recurring agent-harness patterns to identify which were fully pluggable, which were partial, and which were missing. The audit was conducted by a software-architect agent, verified against source on 2026-05-29. Four patterns were fully pluggable with no gaps; eight had seam or coverage issues requiring additional work packages.
 
 ## Decision
 
@@ -18,8 +18,7 @@ All five work packages shipped; all gaps in the audit are now closed. The audit 
 
 ---
 
-Audits mecatl against the 12 patterns catalogued in
-`docs/harnesses/02-twelve-patterns.md`. For each pattern: what it is, its
+Audits mecatl against 12 recurring agent-harness patterns. For each pattern: what it is, its
 status in the code, whether it sits behind a DDD seam (a port/interface a new
 adapter can implement) or is hardcoded, and the smallest DDD-correct seam to
 close any gap.

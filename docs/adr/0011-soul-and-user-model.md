@@ -42,9 +42,8 @@ The agent has a stable, operator-controlled identity that survives compaction (r
 >   `--soul-strict`) refuses a drifted soul. The soul ADAPTER still computes the hash but
 >   never writes the baseline — the agent-read-only invariant is intact.
 > - The consumer-local port is named **`SoulSource`** (not `SoulReader`).
-> Research basis: NousResearch/hermes-agent source read (`~/Development/hermes-dir`),
-> the `SOUL.md` community ecosystem, and `docs/harnesses/02` (Twelve Patterns) +
-> `08` (Design Considerations). Sources at end.
+> Research basis: NousResearch/hermes-agent source read (`~/Development/hermes-dir`)
+> and the `SOUL.md` community ecosystem. Sources at end.
 
 ## 1. The framing correction (read this first)
 
@@ -436,8 +435,7 @@ derivable from the docs, not a judgement call left open.
 - Ecosystem: jangyuxue/hermes-soul-governance, prompt-security/clawsec
   (`soul-guardian`), LucioLiu/relic, imphillip/SoulTavern, aaronjmars/soul.md.
 - mecatl: `engine/prompt/{builder,instructions,memoryindex}.go`,
-  `internal/adapter/{memory,dream}`, `engine/governance/permission.go`,
-  `docs/harnesses/02-twelve-patterns.md`, `docs/harnesses/08-design-considerations.md`.
+  `internal/adapter/{memory,dream}`, `engine/governance/permission.go`.
 
 
 ---

@@ -21,8 +21,7 @@ Teams are linearly more expensive than a single session; a per-engine and per-te
 The substrate (kernel, supervisor, coordination tools, Team tool, gRPC/HTTP surface, hook
 phases, budgets, trust gate) is live; this doc retains the spike rationale plus inline
 notes. Companion prototype: `engine/team/` (coordination kernel + tests). Research basis:
-`docs/harnesses/02`, `05`; live survey of Claude Code subagents & agent teams, OpenAI
-Agents SDK, Goose recipes (see "Sources" at end).
+live surveys of Claude Code subagents and agent teams, the OpenAI Agents SDK, and Goose recipes (see "Sources" at end).
 
 ## 1. What we're trying to add, and why
 
@@ -584,7 +583,6 @@ Still deferred (intentional, not oversights):
 - Claude Code — Orchestrate teams of Claude Code sessions: https://code.claude.com/docs/en/agent-teams
 - OpenAI Agents SDK — Orchestration & handoffs: https://developers.openai.com/api/docs/guides/agents/orchestration
 - Goose — Sub-recipes / subagents: https://block.github.io/goose/docs/guides/recipes/sub-recipes/
-- Internal: `docs/harnesses/02-twelve-patterns.md` (patterns 7, 8), `docs/harnesses/05-comparative-harnesses.md`
 
 
 ---

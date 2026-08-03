@@ -14,13 +14,11 @@ not restate it.
 | **Contributor / agent** | [`READING.md`](READING.md) → foundation spine (architecture → domain → ports → loop) → topic branches |
 | **Operator** | [`../README.md`](../README.md) → [usage & install](usage/install.md) → [quickstart](usage/quickstart.md) → [running `mecated`](usage/mecated.md) → [usage guide](usage.md) |
 | **Library consumer** | [User docs intro](https://github.com/stacklok/mecatl/blob/main/user-docs/intro.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
-| **Researcher** | [`harnesses/README.md`](harnesses/README.md) → the [corpus index](harnesses/INDEX.md) |
 
 ## Nearby
 
-- [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, operator/library/researcher routes).
+- [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, and operator/library routes).
 - [`architecture.md`](architecture.md) — the living architecture reference.
 - [`usage.md`](usage.md) — the living usage & operator guide.
 - [`adr/README.md`](adr/README.md) — the frozen ADR index (the *why* archive).
 - [`design/PRODUCTION-READINESS.md`](design/PRODUCTION-READINESS.md) — the live shipped/deferred status tracker.
-- [`harnesses/`](harnesses/) — the research corpus mecatl was built from.

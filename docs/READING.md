@@ -68,12 +68,3 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
 | 3 | [Extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |
-
----
-
-## Researcher (harness-design corpus)
-
-| Step | Page |
-| --- | --- |
-| 1 | [Harnesses README](harnesses/README.md) |
-| 2 | [Corpus index](harnesses/INDEX.md) |

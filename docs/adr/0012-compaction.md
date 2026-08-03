@@ -44,16 +44,13 @@ happens.
 
 The naive fix is a **sliding window**: keep the last N turns verbatim plus the
 system prompt, drop the rest. It is cheap and needs no model call, and it is exactly
-wrong for a coding agent. The research corpus calls this out directly: a sliding
-window "works for chat-style sessions where state is mostly recent; fails for coding
-agents that need to remember the test failure from 30 turns ago"
-(`docs/harnesses/07-context-and-mcp.md` §4). The load-bearing facts of a long coding
+wrong for a coding agent. A sliding window works for chat-style sessions where state is mostly recent, but fails for coding
+agents that need to remember the test failure from 30 turns ago. The load-bearing facts of a long coding
 session — the goal, the plan, the decision made 40 turns ago, the file paths touched
 — are scattered across the whole history, not concentrated in the recent tail.
 Dropping the middle by position throws them away. The other classic failure is
 **compaction without signal preservation** — a naive `summarize-old-messages` that
-loses tool IDs, file paths, and error context (`docs/harnesses/08-design-considerations.md`
-§8). mecatl's compaction is designed against both.
+loses tool IDs, file paths, and error context. mecatl's compaction is designed against both.
 
 ### The trigger
 
@@ -71,8 +68,7 @@ each `maybeCompact` (a nil closure or a `<=0` return **disables** compaction ent
 swap self-corrects the (never-rebuilt) shared engine on the next turn. `Deps.CompactionRatio` defaults to
 `defaultCompactionRatio` = **0.8** (`engine/agent/loop.go`), matching the prior-art
 guidance to trigger at 70–80% of the window rather than waiting for the wall, leaving
-headroom for the summarisation call itself (`docs/harnesses/07-context-and-mcp.md` §4,
-"When to trigger"). The size estimate comes from `Deps.TokenCounter.CountMessages`
+headroom for the summarisation call itself. The size estimate comes from `Deps.TokenCounter.CountMessages`
 (the `engine/agent/tokencount.go` (`TokenCounter`) seam; production wires a tiktoken
 counter, the offline default is `engine/agent/tokencount.go` (`HeuristicTokenCounter`)).
 
@@ -159,10 +155,8 @@ partition).
 | 3 | **collapse** | free | Replace large file-read bodies (over `cascadeMaxCollapseChars`, 1024) with a `<<tool_result_collapsed id=… size=…B; re-run the tool to retrieve it>>` pointer, dropping the body entirely (the model can re-read on demand). `engine/agent/cascade.go` (`collapseToolBody`). |
 | 4 | **summarize** | high | If still over budget AND an `LLMProvider` is injected, ask the model for a compact structured summary of the oldest segment and replace it. `engine/agent/cascade.go` (`summarize`). |
 
-This is the same four-tier shape the prior-art research recommends —
-snip → strip-tool-noise → collapse-reads-to-pointers → LLM-summary, cheapest first
-(`docs/harnesses/08-design-considerations.md` §12; `docs/harnesses/03-claude-code-architecture.md`
-"four-tier strategy applied cheapest-first").
+This is the four-tier shape mecatl adopted:
+snip → strip-tool-noise → collapse-reads-to-pointers → LLM-summary, cheapest first.
 
 ### Stop-when-it-fits
 
@@ -222,10 +216,9 @@ compactors share the same contract, partitioning the history into a preserved
   genuine first instruction fell into the summarised middle and was dropped. The
   count of leading injected fragments is config-variable (0–4+), so a positional
   "first N" cannot work; the anchor must be content-identified. This is the
-  deliberate divergence from Claude Code, whose research note warns "the first user
-  message is summarized away" — put durable rules in CLAUDE.md, not the first prompt
-  (`docs/harnesses/03-claude-code-architecture.md`). mecatl pins it instead. Prior
-  art: Cline / Roo-Code pin the original task.
+  deliberate divergence from harnesses that summarize away the first user message and
+  expect durable rules to live in a standing-instructions file. mecatl pins it instead.
+  Cline and Roo Code similarly pin the original task.
 
   > **Once-per-session injection (related fix).** The turn-0 context fragments are
   > injected ONCE per session lifetime, gated in `engine/agent/loop.go` (`recordPrompt`)
@@ -249,9 +242,8 @@ compactors share the same contract, partitioning the history into a preserved
   - `engine/agent/compaction.go` (`userSnapFloor`) (one past the first-user index):
     the back-snap never reaches into the head, so the first-user pin and the tail
     stay disjoint and the goal is never double-emitted.
-  Prior art: Codex and gemini-cli keep the recent user turns verbatim rather than
-  summarising them (`docs/harnesses/07-context-and-mcp.md` §4;
-  `docs/harnesses/08-design-considerations.md` §8 and §12). `engine/agent/compaction.go`
+  External harnesses commonly keep recent user turns verbatim rather than
+  summarising them. `engine/agent/compaction.go`
   (`isRecentUserTurn`) (an alias of `isGenuineUserTurn`) ensures the back-snap anchors
   only on **genuine** user turns, skipping BOTH the harness-injected turn-0 context
   fragments (via `engine/prompt/turn0.go` (`IsInjectedTurn0Fragment`)) AND the
@@ -273,8 +265,7 @@ compactors share the same contract, partitioning the history into a preserved
   `engine/agent/compaction.go` (`buildSummary`) renders them into one synthesised
   `RoleUser` summary message. The cascade computes `touchedPaths` from the full
   history **first**, so a path survives even if every turn that touched it is later
-  dropped. This is the "re-inject just the file paths after compacting; the model can
-  re-load on demand" pattern (`docs/harnesses/07-context-and-mcp.md` §4).
+  dropped. This lets the model re-load files on demand after compaction.
 
 - **The verbatim recent tail.** Everything from the (back-snapped, boundary-snapped)
   cut to the end is preserved verbatim — the recent working set the model is mid-task
@@ -292,17 +283,15 @@ compactors share the same contract, partitioning the history into a preserved
   **dropped**. `buildSummary`'s wording is deliberately honest: "The original goal
   and the most-recent user instructions are preserved verbatim ... earlier or
   superseded context ... were summarised or dropped." Not every user message survives;
-  the design guarantees the first and the recent, and makes the middle best-effort
-  (`docs/harnesses/07-context-and-mcp.md` §4; `docs/harnesses/08-design-considerations.md`
-  §12).
+  the design guarantees the first and the recent, and makes the middle best-effort.
 
 - **File bodies, verbose tool output, old stack traces.** Truncated (tier 2),
   collapsed to pointers (tier 3), or summarised (tier 4). This is the
   "drop file contents, verbose grep output, old stack traces" half of the corpus
   contract — the agent can re-read on demand.
 
-The "right thing to compact first is tool outputs, not user/assistant text"
-(`docs/harnesses/07-context-and-mcp.md` §4) is exactly the tier ordering: snip drops
+The tier ordering reflects that tool outputs are the largest and least signal-dense
+part of the history: snip drops
 settled turns, then strip/collapse target tool bodies, and only tier 4 — the last
 resort — touches the rest.
 
@@ -341,8 +330,7 @@ easy for the next turn to recover from. Three properties make it safe and comple
   conversation is DATA to be summarised, not instructions to follow — a compaction
   summary is untrusted context, never elevated instructions. Compaction summaries are
   a real attack surface: payloads can be crafted to survive a compaction pass and
-  persist (`docs/harnesses/08-design-considerations.md` §8, citing InversePrompt
-  CVE-2025-54794/54795). The framing is the defence; the summary itself is re-injected
+  persist. The framing is the defence; the summary itself is re-injected
   as a plain `RoleUser` message and never trusted as instruction.
 
 - **Text-only.** `engine/agent/cascade.go` (`deMediaMessages`) substitutes a compact

@@ -39,7 +39,7 @@ The status idiom itself was inconsistent across docs (`> Status: **SHIPPED**`,
 | **Living truth** | `README.md`, `docs/architecture.md`, `docs/usage.md`, `docs/tui.md`, [`docs/architecture/mecatl.modelith.md`](../architecture/mecatl.modelith.md) (generated) | how the system works / is operated **now** | kept current; the single source for current behaviour |
 | **Status tracker** | `docs/design/PRODUCTION-READINESS.md` | what is shipped / in-progress / deferred | the **only** place mutable status lives |
 | **Decision record** | `docs/adr/NNNN-*.md` (new) and `docs/design/*.md` (existing spikes) | *why* a thing is shaped the way it is, captured at a point in time | **frozen**; supersede with a new ADR, never edit to match new code |
-| **Research** | `docs/design/*RESEARCH*.md`, `docs/harnesses/*` | point-in-time study | frozen, dated |
+| **Research** | `docs/design/*RESEARCH*.md` | point-in-time study | frozen, dated |
 
 ### The rules
 

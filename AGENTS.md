@@ -8,8 +8,7 @@ A **headless agentic coding harness** in Go 1.26 (hexagonal/DDD): the streaming 
 loop, ~7 tools, permissions, hooks, and subagents behind a provider-agnostic port.
 Driven over gRPC + HTTP; an optional Bubble Tea TUI (`mecatui`) is a client.
 
-> `docs/harnesses/` is the **research corpus** this was built from, not
-> harness conventions. **Documentation lifecycle (ADR 0002 + ADR 0003):**
+> **Documentation lifecycle (ADR 0002 + ADR 0003):**
 > `docs/architecture.md` is the LIVING "how it works" — update it when behaviour
 > changes; `docs/usage.md` is how to run it; the *why* of every feature is a **frozen
 > ADR** in `docs/adr/` (the former `docs/design/*` records were consolidated there by
@@ -147,8 +146,7 @@ Dependencies point **inward only**, machine-enforced THREE ways (all run under `
 ## Verification
 
 After changes: `task lint && task test` must be green, and `go run ./cmd/mecademo` must still
-print a full offline session (turn → tool.call → permission.ask + approval → result). The 10
-gauntlet items in `docs/harnesses/08-design-considerations.md` each have a passing test — keep them passing.
+print a full offline session (turn → tool.call → permission.ask + approval → result).
 
 ## Workflow
 
@@ -164,5 +162,4 @@ gauntlet items in `docs/harnesses/08-design-considerations.md` each have a passi
 - [Project README](README.md) — the feature overview, quick start, and project layout.
 - [Architecture guide](docs/architecture.md) — how the harness works: layers, the loop, ports, the API surface.
 - [Usage & operator guide](docs/usage.md) — building, running `mecated`, every flag, the gRPC + HTTP/SSE APIs.
-- [Research corpus index](docs/harnesses/INDEX.md) — the harness-design research this was built from.
 - [Engine library contract](engine/COMPATIBILITY.md) — the importable-core stability surface; ADRs [0036](docs/adr/0036-engine-module.md) (module), [0037](docs/adr/0037-engine-stability-contract.md) (API gate), [0038](docs/adr/0038-event-sourced-rehydration.md) (event-sourced rehydration).
