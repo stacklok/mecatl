@@ -86,33 +86,6 @@ func TestEmbeddedConfigMapsSubagentModel(t *testing.T) {
 	}
 }
 
-// TestEmbeddedConfigMapsAskReviewer asserts the issue-#31 headless ask-reviewer
-// mirrors flow through to app.Config (model, breaker threshold, and the policy
-// CONTENT — read from the file by parseFlags, threaded as a string).
-func TestEmbeddedConfigMapsAskReviewer(t *testing.T) {
-	ac := embeddedConfig(config{
-		workspace:                    "/ws",
-		model:                        "m",
-		mock:                         true,
-		subagentAskReviewer:          "gpt-5-mini",
-		subagentAskReviewerMaxDenies: 5,
-		subagentAskReviewerPolicy:    "ALLOW read-only only.",
-	}, port.NopDiagnostics{})
-	if ac.SubagentAskReviewerModel != "gpt-5-mini" {
-		t.Errorf("SubagentAskReviewerModel = %q, want gpt-5-mini", ac.SubagentAskReviewerModel)
-	}
-	if ac.SubagentAskReviewerMaxDenies != 5 {
-		t.Errorf("SubagentAskReviewerMaxDenies = %d, want 5", ac.SubagentAskReviewerMaxDenies)
-	}
-	if ac.SubagentAskReviewerPolicy != "ALLOW read-only only." {
-		t.Errorf("SubagentAskReviewerPolicy = %q", ac.SubagentAskReviewerPolicy)
-	}
-	off := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
-	if off.SubagentAskReviewerModel != "" {
-		t.Errorf("SubagentAskReviewerModel default = %q, want empty (reviewer off)", off.SubagentAskReviewerModel)
-	}
-}
-
 // TestEmbeddedConfigInteractive is the mecatui-embedded coherence fix (issue #31):
 // mecatui IS the interactive client (a human sits at the approval modal), so the
 // embedded server must run INTERACTIVE — a subagent/team-member/branch child's
@@ -123,32 +96,6 @@ func TestEmbeddedConfigInteractive(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
 	if !ac.Interactive {
 		t.Fatalf("embeddedConfig.Interactive = false, want true (mecatui is the interactive client; child asks must surface to the modal, not auto-deny)")
-	}
-}
-
-// TestParseFlagsReadsAskReviewerPolicyFile asserts parseFlags reads the rubric
-// FILE into the config string (and fails fast on an unreadable path).
-func TestParseFlagsReadsAskReviewerPolicyFile(t *testing.T) {
-	policyFile := filepath.Join(t.TempDir(), "rubric.txt")
-	if err := os.WriteFile(policyFile, []byte("ALLOW read-only only."), 0o600); err != nil {
-		t.Fatalf("write rubric: %v", err)
-	}
-	cfg, err := parseFlags([]string{"--workspace", "/ws", "--mock",
-		"--subagent-ask-reviewer", "gpt-5-mini",
-		"--subagent-ask-reviewer-policy", policyFile,
-	})
-	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
-	}
-	if cfg.subagentAskReviewerPolicy != "ALLOW read-only only." {
-		t.Errorf("policy content = %q, want the file's content", cfg.subagentAskReviewerPolicy)
-	}
-	if cfg.subagentAskReviewerMaxDenies != 3 {
-		t.Errorf("subagentAskReviewerMaxDenies default = %d, want 3", cfg.subagentAskReviewerMaxDenies)
-	}
-	if _, err := parseFlags([]string{"--workspace", "/ws", "--mock",
-		"--subagent-ask-reviewer-policy", filepath.Join(t.TempDir(), "absent.txt")}); err == nil {
-		t.Errorf("an unreadable --subagent-ask-reviewer-policy must fail parseFlags")
 	}
 }
 

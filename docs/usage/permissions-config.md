@@ -97,9 +97,10 @@ embedded server** (which is always interactive — a human sits at its approval
 modal) surface every unresolved child ask to the client/modal for a person to
 answer, so a reviewer configured there is inert and the server logs a startup
 WARNING to that effect. To actually use the reviewer, run `mecated --headless
---subagent-ask-reviewer …` (and point `mecatui --server` at it if you want the
-TUI). The flag's model is still validated at startup even when inert, so a typo
-is caught immediately rather than the day `--headless` is added.
+--subagent-ask-reviewer …` (and point `mecatui connect <address>` at it if you
+want the TUI — ADR 0083 removed the inert `--subagent-ask-reviewer*` flags from
+mecatui). The flag's model is still validated at startup even when inert, so a
+typo is caught immediately rather than the day `--headless` is added.
 
 Two hard bounds keep it subordinate to this section's rules: a **configured
 `subagent: ask` is never delegated to the reviewer** (a deliberately-configured

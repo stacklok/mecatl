@@ -227,12 +227,16 @@ already running on `127.0.0.1:8080`, or else **hosts one in-process** over a UNI
 socket (built via the shared composition layer, the same assembly `mecated` uses):
 
 ```sh
-OPENAI_API_KEY=sk-... bin/mecatui --workspace "$PWD"   # embedded (default)
-bin/mecatui --mock --workspace "$PWD"                  # embedded, offline mock
+OPENAI_API_KEY=sk-... bin/mecatui local --workspace "$PWD"   # embedded (canonical)
+bin/mecatui local --mock --workspace "$PWD"                 # embedded, offline mock
 
-bin/mecated &                                          # …or an external server
-bin/mecatui --server 127.0.0.1:8080 --workspace "$PWD"
+bin/mecated &                                               # …or an external server
+bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
 ```
+
+> The bare `bin/mecatui [flags]` and `bin/mecatui --server ADDRESS` forms still
+> work but are deprecated (ADR 0083); prefer `mecatui local` / `mecatui connect
+> ADDRESS`.
 
 The embedded server enables every **free + local** feature by default — memory
 (per-project, under `$XDG_DATA_HOME/mecatui/memory`), server-side slash-command

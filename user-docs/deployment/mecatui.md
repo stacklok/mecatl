@@ -63,6 +63,6 @@ env var through ko's `{{.Env.VERSION}}` ldflag template).
 
 ## What's next
 
-- [Run mecated standalone](mecated.md) — the server `mecatui` embeds in-process or dials over `--server`.
+- [Run mecated standalone](mecated.md) — the server `mecatui` embeds in-process (`mecatui local`) or dials over `mecatui connect ADDRESS` (the legacy `--server` form still works but is deprecated; see ADR 0083).
 - [Drive via gRPC / HTTP](grpc-http.md) — the wire protocol `mecatui` speaks as a client.
 - [Permissions & guardrails](/what-you-get/permissions.md) — the posture ladder and workspace trust behave identically inside the container.

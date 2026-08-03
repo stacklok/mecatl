@@ -20,6 +20,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -45,20 +47,39 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	if err := run(os.Args); err != nil {
+		// --help / --help-all is a successful action: the Usage hook (or the
+		// --help-all renderer) already printed help; mirror mecated's
+		// errors.Is(err, flag.ErrHelp) handling and exit 0 without printing
+		// "mecatui: flag: help requested".
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		fmt.Fprintln(os.Stderr, "mecatui:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
-	cfg, err := parseFlags(args)
+func run(argv []string) error {
+	// Phase 1 of the staged transport migration (ADR 0083): resolve the leading
+	// CLI word into a transport mode (local/connect/legacy) via the PURE
+	// resolveTransportMode seam, then thread the mode + remaining flag tail into
+	// parseTransportFlags. main owns the os.Args read + the os.Exit side effects;
+	// the resolver is pure (no os.Args mutation, no I/O).
+	res := resolveTransportMode(argv)
+	if res.err != nil {
+		return res.err
+	}
+
+	fs, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining)
 	if err != nil {
 		return err
 	}
+	cfg.connectAddress = res.address
 	if err := cfg.validate(); err != nil {
 		return err
 	}
+	_ = fs // returned for tests; production discards it.
 
 	// UNIVERSAL global-slog floor: redirect the stdlib default to io.Discard (or, under
 	// --quiet, still discard) BEFORE any transport resolution or the Bubble Tea program.
@@ -69,14 +90,18 @@ func run(args []string) error {
 	// this floor to the mecatui.log file writer. See docs/adr/0020-diagnostics.md.
 	installBaselineSlog(cfg.quiet)
 	warnDeprecatedOutputEconomy(os.Stderr, cfg.outputEconomyFlagSet)
+	// Legacy bare/`--server` deprecation (ADR 0083 Phase 1): emit a pre-TUI
+	// warning with the exact canonical replacement. Canonical local/connect warn
+	// nothing.
+	emitLegacyTransportWarning(os.Stderr, cfg.transportMode, cfg.server != "")
 
 	// Operator-posture WARN: mecatui has no slog and runs on the alt screen, so emit a
 	// single pre-TUI stderr line (it lands in scrollback before the alt screen takes
-	// over). Only meaningful for the embedded server (an external --server owns its own
-	// posture). Refusal already handled in validate(). The line is tier-specific:
-	// strict/trusted are silent, auto/yolo each warn (yolo names the child-defense-OFF
-	// behaviour change).
-	if cfg.server == "" {
+	// over). Only meaningful for paths that may embed (see config.mayEmbed); connect
+	// and legacy --server own their own posture and skip this. Refusal already
+	// handled in validate(). The line is tier-specific: strict/trusted are silent,
+	// auto/yolo each warn (yolo names the child-defense-OFF behaviour change).
+	if cfg.mayEmbed() {
 		switch embeddedAuthoritativePosture(cfg) {
 		case app.PostureAuto:
 			fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture auto is active; allow-all is ON for the embedded server (the built-in mutate-ask floor + the MAIN agent's substitution floor are waived). A Deny in any scope and any configured Ask still apply. The CHILD prompt-injection defense stays ON. For unattended single-tenant use.")
@@ -237,22 +262,48 @@ func warnDeprecatedOutputEconomy(w io.Writer, set bool) {
 func resolveTransport(ctx context.Context, cfg config) (target string, dial client.DialConfig, cleanup func(), err error) {
 	noop := func() {}
 
-	if cfg.server != "" {
-		return cfg.server, client.DialConfig{
-			Server:    cfg.server,
+	// Phase 1 of the staged transport migration (ADR 0083): the explicit modes
+	// are PURE. `mecatui connect ADDRESS` ALWAYS dials ADDRESS and NEVER
+	// probes/embeds; `mecatui local` ALWAYS embeds and NEVER probes loopback.
+	// The legacy bare/leading-flag path is byte-for-byte today: --server set
+	// dials remote; else AUTO (probe the loopback default, reuse if running,
+	// else host an embedded server).
+	switch cfg.transportMode {
+	case modeConnect:
+		// connect takes its target from the command-word ADDRESS (never --server,
+		// which is rejected as inapplicable in connect mode). It carries the
+		// TLS/auth flags. No probe, no embed fallback.
+		return cfg.connectAddress, client.DialConfig{
+			Server:    cfg.connectAddress,
 			AuthToken: cfg.authToken,
 			UseTLS:    cfg.useTLS,
 			TLSCAFile: cfg.tlsCA,
 			Insecure:  cfg.insecure,
 		}, noop, nil
+	case modeLocal:
+		// local always embeds; fall through to the host-embedded branch below
+		// WITHOUT probing loopback.
+	default:
+		// Legacy: --server set dials remote (the byte-for-byte today path).
+		if cfg.server != "" {
+			return cfg.server, client.DialConfig{
+				Server:    cfg.server,
+				AuthToken: cfg.authToken,
+				UseTLS:    cfg.useTLS,
+				TLSCAFile: cfg.tlsCA,
+				Insecure:  cfg.insecure,
+			}, noop, nil
+		}
+		// Legacy AUTO: probe the loopback default and reuse a server already
+		// running there; only if none answers do we host an embedded server.
+		if client.IsReachable(ctx, defaultProbeAddr) {
+			fmt.Fprintf(os.Stderr, "mecatui: using mecated already running at %s\n", defaultProbeAddr)
+			return defaultProbeAddr, client.DialConfig{Server: defaultProbeAddr}, noop, nil
+		}
 	}
 
-	if client.IsReachable(ctx, defaultProbeAddr) {
-		fmt.Fprintf(os.Stderr, "mecatui: using mecated already running at %s\n", defaultProbeAddr)
-		return defaultProbeAddr, client.DialConfig{Server: defaultProbeAddr}, noop, nil
-	}
-
-	// We are about to HOST an embedded server (the auto-reuse path above returned).
+	// We are about to HOST an embedded server (modeLocal, or legacy AUTO with no
+	// server already running on the loopback default).
 	// This is the pre-TUI window (before the Bubble Tea alt screen starts) where the
 	// first-encounter workspace-trust prompt belongs (Workspace-Trust Phase 2c): if
 	// the workspace is not already trusted but carries a project authority set (or a
@@ -299,7 +350,14 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 		diag.Log(ctx, port.LevelInfo, "mecatui: embedded server diagnostics log opened",
 			"path", resolveDiagLogPath(xdgconfig.OSEnv))
 	}
-	fmt.Fprintf(os.Stderr, "mecatui: no server found; hosting an embedded mecated at %s\n", srv.Target())
+	// The startup message is mode-aware (ADR 0083): local NEVER probed, so it
+	// says "hosting an embedded mecated" without the legacy "no server found"
+	// prefix; legacy AUTO did probe and found nothing, so it keeps the prefix.
+	if cfg.transportMode == modeLocal {
+		fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
+	} else {
+		fmt.Fprintf(os.Stderr, "mecatui: no server found; hosting an embedded mecated at %s\n", srv.Target())
+	}
 	if addr := srv.AdminAddr(); addr != "" {
 		// Mirror mecated's loopback/unauth note: the perf surface can leak prompt
 		// text/file paths/goroutine stacks, so it is loopback-bound only.
@@ -379,11 +437,6 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// map[string]string app.Config expects (nil for an unset flag).
 		ModelAliases: cfg.modelAliases.AsMap(),
 		ModelSlots:   cfg.modelSlots.AsMap(),
-		// Headless ask reviewer (issue #31): the mecated flag mirrors, mapped
-		// verbatim. Empty model = off (the zero-cost default).
-		SubagentAskReviewerModel:     cfg.subagentAskReviewer,
-		SubagentAskReviewerMaxDenies: cfg.subagentAskReviewerMaxDenies,
-		SubagentAskReviewerPolicy:    cfg.subagentAskReviewerPolicy,
 		// Subagent model router (ADR 0042): kill-switch. =false forces the router OFF
 		// (RouterDisabled); a bare flag / =true is a harmless no-op (the router stays
 		// governed by the taxonomy); unset leaves routing governed by the operator-tier
@@ -503,9 +556,11 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// client routes the verdict back to the child via ResumeApproval →
 		// Run.Approve → childAskRouter). It must NOT default headless (which would
 		// auto-deny — or LLM-adjudicate — a child ask the human is right there to
-		// answer). This is why --subagent-ask-reviewer is INERT under mecatui (the
-		// modal always sees the ask): the embedded reviewer flag exists only for
-		// symmetry with mecated and is documented as such.
+		// answer). This is why the headless ask reviewer is a mecated-only flag
+		// (ADR 0083 removed the inert --subagent-ask-reviewer* flags from mecatui:
+		// the modal always sees the ask, so the reviewer never engages here — run
+		// a headless `mecated --headless --subagent-ask-reviewer …` and point
+		// `mecatui connect` at it to use the reviewer).
 		Interactive: true,
 		// Diagnostics is the injected file-backed (or, under --quiet, discarding) sink.
 		// It is NEVER stderr: an operational line on stderr corrupts the Bubble Tea

@@ -116,6 +116,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0028 — mecatequi (single-shot GitHub Action)](./0028-mecatequi.md)
 - [0082 — Factory MCP wiring for the one-shot mains](./0082-factory-mcp-wiring.md)
 - [0032 — First-class worktree binding for a session](./0032-worktree-binding.md)
+- [0083 — Staged mecatui transport migration](./0083-mecatui-staged-transport-migration.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

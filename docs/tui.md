@@ -64,6 +64,47 @@ bin/mecatui --server 127.0.0.1:8080 --workspace "$PWD"
 `--workspace` defaults to the current directory and is always resolved to an
 absolute path (the server requires absolute).
 
+### Canonical transport commands (ADR 0083)
+
+The bare `--server`/auto-probe forms above still work but are **deprecated**.
+Prefer the explicit commands, which are honest about which transport mecatui uses
+and never implicitly probe loopback:
+
+- **`mecatui local [flags]`** — always host an embedded `mecated` in-process over
+  a private UNIX socket. mecatui **never probes** `127.0.0.1:8080` in this mode.
+  All embedded-server flags (`--mock`, `--trust-project`, provider knobs, …) apply.
+
+  ```sh
+  bin/mecatui local --workspace "$PWD"                # embedded, auto-detected provider
+  bin/mecatui local --mock --workspace "$PWD"         # embedded, offline mock
+  ```
+
+- **`mecatui connect ADDRESS [flags]`** — always dial a running `mecated` at
+  `ADDRESS` (host:port). mecatui **never probes** loopback and **never embeds** in
+  this mode; the target must already be serving. Embedded-server flags
+  (`--mock`, `--trust-project`, provider keys, …) are **rejected** here — only
+  shared session/UI flags and remote flags (`--auth-token`, `--tls`, …) apply.
+
+  ```sh
+  bin/mecated &                                       # listens on 127.0.0.1:8080
+  bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+  bin/mecatui connect mecated.internal:443 --tls --auth-token $MECATL_AUTH_TOKEN
+  ```
+
+`ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
+a usage error. An unknown leading command fails closed.
+
+The legacy bare `mecatui [flags]` (auto-probe then embed) and `mecatui --server
+ADDRESS` (dial remote) still work but emit a pre-TUI deprecation warning naming
+the canonical replacement; they may be removed in a future release.
+
+> **Removed flags:** the three `--subagent-ask-reviewer*` flags were inert under
+> `mecatui` (it runs interactive — a child ask surfaces to the approval modal, not
+> the headless reviewer) and have been removed. They are now unknown-flag errors.
+> To use the headless ask reviewer, run a headless `mecated --headless
+> --subagent-ask-reviewer …` and point `mecatui connect` at it. The `--model-slot
+> ask-reviewer=…` model slot is unaffected.
+
 ### Flags
 
 | Flag | Default | Meaning |
