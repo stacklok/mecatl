@@ -1,12 +1,11 @@
 // Command resolution for the mecated binary: a PURE, argv-accepting seam that
-// classifies the leading CLI word into one of {legacy bare/flags, serve, acp, an
-// offline subcommand, an error} WITHOUT touching os.Args or any package-level
-// state. main() calls it once, threads the result into the existing parse/run
-// path explicitly, and owns the one app.Build path.
+// classifies the leading CLI word into one of {serve, acp, an offline
+// subcommand, an error} WITHOUT touching os.Args or any package-level state.
+// main() calls it once, threads the result into the existing parse/run path
+// explicitly, and owns the one app.Build path.
 //
-// The pure shape (resolveCommand + applyCommandMode + warnLegacyMode +
-// writeTopLevelHelp) is what the tests exercise; main wires the
-// io/os.Exit side effects around it.
+// The pure shape (resolveCommand + writeTopLevelHelp) is what the tests
+// exercise; main wires the io/os.Exit side effects around it.
 
 package main
 
@@ -18,23 +17,28 @@ import (
 )
 
 // commandMode is the canonical command mode resolved from the leading CLI word.
-// "" is the legacy bare/flag invocation; "serve" is the network daemon;
-// "acp" is the ACP stdio mode.
+// "serve" is the network daemon; "acp" is the ACP stdio mode. The zero value ""
+// is the no-mode sentinel carried by error resolutions (never a daemon mode).
 type commandMode string
 
 const (
-	modeLegacy commandMode = ""
-	modeServe  commandMode = "serve"
-	modeACP    commandMode = "acp"
+	modeServe commandMode = "serve"
+	modeACP   commandMode = "acp"
 )
+
+// errBareInvocation is the usage error a bare `mecated` (no command word) or a
+// leading-flag invocation resolves to: a command word is REQUIRED. main()
+// recognizes it via errors.Is and prints the top-level help alongside the error.
+var errBareInvocation = errors.New("mecated requires a command: 'serve' for the network daemon or 'acp' for ACP stdio")
 
 // commandResolution is the result of classifying argv[1:]. mode + remaining drive
 // the daemon run() path. When handled is true, the invocation was a one-shot
-// offline subcommand that fully ran (main exits with run's error, if any) — run
-// is the closure executing that subcommand against the supplied streams; it is
-// nil for the non-handled daemon path. When err is non-nil the leading word was
-// a usage error (unknown command, unknown/missing subcommand); main prints it
-// and exits non-zero WITHOUT constructing any listener.
+// offline subcommand or a leading help-flag request that fully ran (main exits
+// with run's error, if any) — run is the closure executing it against the
+// supplied streams; it is nil for the non-handled daemon path. When err is
+// non-nil the leading word was a usage error (unknown command, unknown/missing
+// subcommand); main prints it and exits non-zero WITHOUT constructing any
+// listener.
 type commandResolution struct {
 	mode      commandMode
 	remaining []string
@@ -55,8 +59,8 @@ type subcommandAction func(stdin io.Reader, stdout, stderr io.Writer) error
 func resolveCommand(argv []string) commandResolution {
 	args := argv
 	if len(args) < 2 {
-		// Bare `mecated` with no args: legacy bare daemon invocation.
-		return commandResolution{mode: modeLegacy, remaining: args[1:]}
+		// Bare `mecated` with no args: a usage error — a command word is required.
+		return commandResolution{err: errBareInvocation}
 	}
 	first := args[1]
 
@@ -69,6 +73,14 @@ func resolveCommand(argv []string) commandResolution {
 	// to run()'s ACP stdio path.
 	if first == "acp" {
 		return commandResolution{mode: modeACP, remaining: stripCommandWord(args)}
+	}
+
+	// A leading HELP flag is a help intent, not a usage error: `mecated --help`
+	// renders the top-level command page and exits 0 (the universal --help
+	// contract — mecatui's bare mode already treats it this way). `--help-all`
+	// renders the exhaustive top-level reference. Both are handled one-shots.
+	if first == "-h" || first == "--help" || first == "--help-all" {
+		return commandResolution{handled: true, run: topLevelHelpAction(first == "--help-all")}
 	}
 
 	// `mecated skills promote ...` is the OPERATOR gate. A bare `skills` or an
@@ -100,54 +112,79 @@ func resolveCommand(argv []string) commandResolution {
 		return commandResolution{err: perfMCPUsageError(args)}
 	}
 
-	// `mecated config ...` is the config-management subcommand group. The
-	// subcommands are `config init` (settings.yaml skeleton) and `config daemon
-	// <init|validate>` (daemon topology YAML). A bare `config`, an unknown
-	// `config <x>`, or an unknown/missing `config daemon <x>` is a usage error
-	// (a typo starting an unauthenticated server is a nasty surprise): fail
-	// closed before the daemon boots — never fall through to run().
+	// `mecated config ...` is the config-management subcommand group — see
+	// resolveConfigSubcommand.
 	if first == "config" {
-		if len(args) >= 3 && args[2] == "init" {
-			return commandResolution{
-				handled: true,
-				run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
-					return runConfigInit(args[3:], stdout)
-				}),
-			}
-		}
-		// `config daemon <init|validate>` — the daemon topology config group
-		// (issue #338, ADR 0084). A bare `config daemon` or an unknown
-		// `config daemon <x>` is a usage error (fail closed).
-		if len(args) >= 3 && args[2] == "daemon" {
-			if len(args) >= 4 && args[3] == "init" {
-				return commandResolution{
-					handled: true,
-					run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
-						return runConfigDaemonInit(args[4:], stdout)
-					}),
-				}
-			}
-			if len(args) >= 4 && args[3] == "validate" {
-				return commandResolution{
-					handled: true,
-					run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
-						return runConfigDaemonValidate(args[4:], stdout)
-					}),
-				}
-			}
-			return commandResolution{err: configDaemonUsageError(args)}
-		}
-		return commandResolution{err: configUsageError(args)}
+		return resolveConfigSubcommand(args)
 	}
 
-	// A leading flag (starts with '-') is a valid legacy invocation: `mecated
-	// --workspace …` / `mecated --acp`. Fall through to the daemon path.
+	// Any OTHER leading flag (starts with '-') with no command word is a usage
+	// error: `mecated --workspace …` must be spelled `mecated serve --workspace …`.
 	if strings.HasPrefix(first, "-") {
-		return commandResolution{mode: modeLegacy, remaining: args[1:]}
+		return commandResolution{err: errBareInvocation}
 	}
 
 	// Anything else is an unknown command — fail closed.
 	return commandResolution{err: unknownCommandError(first)}
+}
+
+// topLevelHelpAction is the handled runner for a leading help meta-flag:
+// `--help-all` renders the exhaustive top-level reference over the FULL
+// production serve FlagSet (a registration error is a build bug, so fail loudly
+// rather than render a partial page); `--help`/`-h` render the concise page.
+func topLevelHelpAction(all bool) subcommandAction {
+	return func(_ io.Reader, stdout, _ io.Writer) error {
+		if !all {
+			writeTopLevelHelp(stdout)
+			return nil
+		}
+		fs, _, err := parseFlagsModeOut(modeServe, nil, io.Discard)
+		if err != nil {
+			return fmt.Errorf("build flag set for --help-all: %w", err)
+		}
+		writeTopLevelHelpAll(stdout, fs)
+		return nil
+	}
+}
+
+// resolveConfigSubcommand classifies the `config` subcommand group. The
+// subcommands are `config init` (settings.yaml skeleton) and `config daemon
+// <init|validate>` (daemon topology YAML). A bare `config`, an unknown
+// `config <x>`, or an unknown/missing `config daemon <x>` is a usage error (a
+// typo starting an unauthenticated server is a nasty surprise): fail closed
+// before the daemon boots — never fall through to run().
+func resolveConfigSubcommand(args []string) commandResolution {
+	if len(args) >= 3 && args[2] == "init" {
+		return commandResolution{
+			handled: true,
+			run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+				return runConfigInit(args[3:], stdout)
+			}),
+		}
+	}
+	// `config daemon <init|validate>` — the daemon topology config group
+	// (issue #338, ADR 0084). A bare `config daemon` or an unknown
+	// `config daemon <x>` is a usage error (fail closed).
+	if len(args) >= 3 && args[2] == "daemon" {
+		if len(args) >= 4 && args[3] == "init" {
+			return commandResolution{
+				handled: true,
+				run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+					return runConfigDaemonInit(args[4:], stdout)
+				}),
+			}
+		}
+		if len(args) >= 4 && args[3] == "validate" {
+			return commandResolution{
+				handled: true,
+				run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+					return runConfigDaemonValidate(args[4:], stdout)
+				}),
+			}
+		}
+		return commandResolution{err: configDaemonUsageError(args)}
+	}
+	return commandResolution{err: configUsageError(args)}
 }
 
 // stripCommandWord returns argv with the leading command word (args[1]) removed,
@@ -160,67 +197,11 @@ func stripCommandWord(argv []string) []string {
 	return argv[2:]
 }
 
-// applyCommandMode resolves the canonical subcommand vs the --acp flag into a
-// final acp bool + error. It is PURE: given the parsed config's acp/acpFlagSet
-// and the resolved mode, it returns the effective acp value and a non-nil error
-// on a conflicting combination (`serve --acp`, `acp --acp=false`). The legacy
-// path returns acp unchanged (the --acp flag value stands) so run()'s caller can
-// decide whether to warn.
-func applyCommandMode(cfg config, mode commandMode) (acp bool, err error) {
-	switch mode {
-	case modeServe:
-		if cfg.acpFlagSet && cfg.acp {
-			return false, errors.New(
-				"conflicting options: 'mecated serve' and --acp; use 'mecated acp' for the ACP stdio mode")
-		}
-		return false, nil
-	case modeACP:
-		if cfg.acpFlagSet && !cfg.acp {
-			return false, errors.New(
-				"conflicting options: 'mecated acp' and --acp=false; use 'mecated serve' for the network daemon mode")
-		}
-		return true, nil
-	default:
-		// Legacy bare invocation: the --acp flag value (if any) stands.
-		return cfg.acp, nil
-	}
-}
-
-// isLegacyMode reports whether mode is the legacy bare/flag invocation (the path
-// that emits a deprecation warning).
-func isLegacyMode(mode commandMode) bool {
-	return mode == modeLegacy
-}
-
-// legacyWarning returns the once-per-startup deprecation warning a legacy
-// invocation emits, or "" when mode is canonical (serve/acp). The warning text
-// distinguishes bare `mecated` from `mecated --acp`. It is PURE so tests prove
-// bare and bare-`--acp` warn while canonical serve/acp do not; main() projects
-// it through the injected diagnostics/log seam.
-func legacyWarning(mode commandMode, acp bool) string {
-	if !isLegacyMode(mode) {
-		return ""
-	}
-	if acp {
-		return "DEPRECATED: 'mecated --acp' is deprecated; use 'mecated acp' instead (the flag will be removed in a future release)"
-	}
-	return "DEPRECATED: bare 'mecated' is deprecated; use 'mecated serve' instead (the bare invocation may be removed in a future release)"
-}
-
-// emitLegacyWarning writes the legacy deprecation warning (if any) to w. main()
-// calls it with its slog-backed writer so the warning flows through the same
-// operator-visible log path as the rest of the daemon's startup output, never
-// through a package-level slog call in an internal package.
-func emitLegacyWarning(w io.Writer, mode commandMode, acp bool) {
-	if msg := legacyWarning(mode, acp); msg != "" {
-		_, _ = fmt.Fprintln(w, msg)
-	}
-}
-
-// writeTopLevelHelp renders the concise command-oriented entry page shown by
-// bare `mecated --help` (and `mecated` with no args when help is requested). It
-// is the production renderer used by parseFlags' Usage hook AND by the tests; do
-// not duplicate it in a test helper.
+// writeTopLevelHelp renders the concise command-oriented entry page shown by a
+// leading `mecated --help` (and printed beneath the error line for a bare or
+// other leading-flag invocation). It is the production renderer the resolveCommand
+// help resolution AND main's errBareInvocation arm share with the tests; do not
+// duplicate it in a test helper.
 func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated <command> [flags]\n\n")
 	_, _ = fmt.Fprintf(out, "Commands:\n")
@@ -231,8 +212,6 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
 	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
 	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
-	_, _ = fmt.Fprintf(out, "\nCompatibility: bare 'mecated [flags]' and 'mecated --acp [flags]' still work but\n")
-	_, _ = fmt.Fprintf(out, "are deprecated; prefer 'mecated serve' / 'mecated acp'.\n")
 	_, _ = fmt.Fprintf(out, "\nRun 'mecated <command> --help' for common flags and 'mecated <command> --help-all' for the exhaustive reference.\n")
 }
 

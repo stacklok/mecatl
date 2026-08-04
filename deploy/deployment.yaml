@@ -48,6 +48,8 @@ spec:
           # `ko resolve` / `ko apply`.
           image: ko://github.com/stacklok/mecatl/cmd/mecated
           args:
+            # The network daemon runs under the canonical `serve` command word.
+            - serve
             # Bind 0.0.0.0 inside the pod (the in-code default is loopback).
             - --grpc-addr=0.0.0.0:8080
             - --http-addr=0.0.0.0:8081

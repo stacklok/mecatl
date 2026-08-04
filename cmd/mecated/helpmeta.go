@@ -18,15 +18,14 @@ type flagMeta struct {
 	// common is true when the flag appears in the mode-appropriate common help
 	// (the ~15-20 operator-facing flags).
 	common bool
-	// acp is the ACP-mode policy: "include" (present in both), "exclude"
-	// (server-boundary, absent from ACP help), or "only" (ACP-only).
+	// acp is the ACP-mode policy: "include" (present in both) or "exclude"
+	// (server-boundary, absent from ACP help).
 	acp string
 }
 
 const (
 	acpInclude = "include"
 	acpExclude = "exclude"
-	acpOnly    = "only"
 )
 
 // Group headings for the progressive common-help renderer. Named constants (not
@@ -55,24 +54,12 @@ const (
 	groupInfo             = "Info"
 )
 
-// hiddenFlags is the set of registered flags excluded from ALL rendered help.
-// They are legacy/compatibility surfaces whose public entry points are the
-// canonical commands; listing them in --help would be misleading. The metadata
-// completeness invariant (validateFlagMeta) explicitly allows exactly this set
-// to have no flagMetaByFlag entry.
-var hiddenFlags = map[string]bool{
-	"output-economy": true,
-}
-
 // flagMetaByFlag is the SINGLE source of grouping + common/advanced + ACP
 // membership for every public flag registered in parseFlagsMode. A flag not
 // listed here:
 //   - is ADVANCED (excluded from common help),
 //   - appears in --help-all,
 //   - is acpInclude by default.
-//
-// The hidden --output-economy compatibility flag is NOT listed; it is excluded
-// from ALL rendered help via hiddenFlags.
 var flagMetaByFlag = map[string]flagMeta{
 	// ── Server (serve-only) ───────────────────────────────────────────────
 	"config":       {group: groupServer, common: false, acp: acpExclude},
@@ -234,14 +221,6 @@ var flagMetaByFlag = map[string]flagMeta{
 	"websearch-auth-header": {group: groupWebSearch, common: false, acp: acpInclude},
 	"websearch-query-param": {group: groupWebSearch, common: false, acp: acpInclude},
 
-	// ── ACP (ACP-only) ────────────────────────────────────────────────────
-	// NOTE: --acp is the legacy mode selector kept for backward compatibility.
-	// It is EXCLUDED from the canonical `mecated acp --help-all` reference:
-	// that command already selects ACP mode, and --acp=false conflicts with it
-	// (applyCommandMode rejects `acp --acp=false`). Listing it there would be
-	// a misleading "set --acp to enable the mode you already selected".
-	"acp": {group: groupWorkspaceSession, common: false, acp: acpOnly},
-
 	// ── Info (meta-flags, both modes) ────────────────────────────────────
 	"help-all":      {group: groupInfo, common: false, acp: acpInclude},
 	"print-posture": {group: groupInfo, common: false, acp: acpInclude},
@@ -272,14 +251,8 @@ func commonFlagNames(mode commandMode) map[string]bool {
 		if !m.common {
 			continue
 		}
-		if mode == modeACP {
-			if m.acp == acpExclude {
-				continue
-			}
-		} else {
-			if m.acp == acpOnly {
-				continue
-			}
+		if mode == modeACP && m.acp == acpExclude {
+			continue
 		}
 		names[name] = true
 	}
@@ -287,8 +260,7 @@ func commonFlagNames(mode commandMode) map[string]bool {
 }
 
 // acpExcludedNames returns the set of flag names to exclude from ACP exhaustive
-// help (server-boundary flags). It is the per-flag ACP policy (acpExclude);
-// hiddenFlags (e.g. --output-economy) are excluded from ALL help separately.
+// help (server-boundary flags). It is the per-flag ACP policy (acpExclude).
 func acpExcludedNames() map[string]bool {
 	names := make(map[string]bool)
 	for name, m := range flagMetaByFlag {
@@ -300,9 +272,9 @@ func acpExcludedNames() map[string]bool {
 }
 
 // validateFlagMeta is the REAL completeness invariant over the full production
-// FlagSet. It asserts that every registered public flag except the explicitly
-// hidden legacy flags in hiddenFlags has a flagMetaByFlag entry, AND every
-// flagMetaByFlag key names a real registered flag (no orphans). It is the
+// FlagSet. It asserts that every registered public flag has a flagMetaByFlag
+// entry, AND every flagMetaByFlag key names a real registered flag (no
+// orphans). It is the
 // validation seam called by a real parser/test (TestFlagMetaCompletenessOverRealFlagSet)
 // over the FULL parseFlagsMode FlagSet — not a synthetic subset.
 //
@@ -316,12 +288,9 @@ func validateFlagMeta(fs *flag.FlagSet) error {
 			return fmt.Errorf("flagMetaByFlag has orphan key %q: no such flag is registered in parseFlagsMode", name)
 		}
 	}
-	// Every registered public flag (not hidden) must have metadata.
+	// Every registered public flag must have metadata.
 	var missing []string
 	fs.VisitAll(func(f *flag.Flag) {
-		if hiddenFlags[f.Name] {
-			return
-		}
 		if _, ok := flagMetaByFlag[f.Name]; !ok {
 			missing = append(missing, f.Name)
 		}
@@ -420,37 +389,25 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 }
 
 // writeServeHelpAll renders the exhaustive flag list for `mecated serve --help-all`.
-// It uses the single cliconfig formatter (byte-identical to flag.PrintDefaults),
-// excluding only the hiddenFlags legacy surfaces that must never appear in help.
+// It uses the single cliconfig formatter (byte-identical to flag.PrintDefaults).
 func writeServeHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated serve [flags]\n\nFlags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, hiddenFlags)
+	cliconfig.PrintDefaultsExcluding(out, fs, nil)
 }
 
 // writeAcpHelpAll renders the exhaustive ACP-applicable flag list for
 // `mecated acp --help-all`. It excludes server-boundary flags (acpExcludedNames)
-// AND the hiddenFlags, via the single cliconfig formatter. --acp itself is
-// excluded: the `acp` command already selects ACP mode, and `--acp=false`
-// conflicts with it (applyCommandMode rejects `acp --acp=false`), so listing
-// it as a settable flag would mislead.
+// via the single cliconfig formatter.
 func writeAcpHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated acp [flags]\n\nFlags:\n")
-	exclude := acpExcludedNames()
-	for k := range hiddenFlags {
-		exclude[k] = true
-	}
-	// --acp is acpOnly; exclude it from the canonical acp --help-all reference.
-	exclude["acp"] = true
-	cliconfig.PrintDefaultsExcluding(out, fs, exclude)
+	cliconfig.PrintDefaultsExcluding(out, fs, acpExcludedNames())
 }
 
-// writeLegacyHelpAll renders the help text for bare `mecated --help-all`. The
-// --help-all flag description promises an EXHAUSTIVE reference, so the bare
-// form provides the exhaustive serve-compatible flag reference (every public
-// flag a `mecated serve` invocation accepts) plus a brief compatibility note
-// pointing to `mecated acp --help-all` for the ACP-scoped subset — rather than
-// only pointers.
-func writeLegacyHelpAll(out io.Writer, fs *flag.FlagSet) {
+// writeTopLevelHelpAll renders the exhaustive reference for the top-level
+// command page: the command list plus every public flag a `mecated serve`
+// invocation accepts, and a pointer to `mecated acp --help-all` for the
+// ACP-scoped subset.
+func writeTopLevelHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated <command> [flags]\n\n")
 	_, _ = fmt.Fprintf(out, "Commands:\n")
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
@@ -463,10 +420,8 @@ func writeLegacyHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "\nExhaustive serve-compatible flag reference (every public flag a\n")
 	_, _ = fmt.Fprintf(out, "`mecated serve` invocation accepts):\n\n")
 	_, _ = fmt.Fprintf(out, "Flags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, hiddenFlags)
-	_, _ = fmt.Fprintf(out, "\nCompatibility note: `mecated acp --help-all` lists the ACP-scoped\n")
-	_, _ = fmt.Fprintf(out, "subset (server-boundary flags such as --grpc-addr/--tls-*/--metrics-addr\n")
-	_, _ = fmt.Fprintf(out, "and the scheduler/driver knobs are omitted there). Bare `mecated [flags]`\n")
-	_, _ = fmt.Fprintf(out, "and `mecated --acp [flags]` still work but are deprecated; prefer `mecated\n")
-	_, _ = fmt.Fprintf(out, "serve` / `mecated acp`.\n")
+	cliconfig.PrintDefaultsExcluding(out, fs, nil)
+	_, _ = fmt.Fprintf(out, "\nNote: `mecated acp --help-all` lists the ACP-scoped subset\n")
+	_, _ = fmt.Fprintf(out, "(server-boundary flags such as --grpc-addr/--tls-*/--metrics-addr\n")
+	_, _ = fmt.Fprintf(out, "and the scheduler/driver knobs are omitted there).\n")
 }

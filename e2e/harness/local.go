@@ -232,6 +232,7 @@ func (l *Local) start() error {
 	l.metricsAddr = "127.0.0.1:" + strconv.Itoa(ports[2])
 
 	args := []string{
+		"serve",
 		"--grpc-addr", l.grpcAddr,
 		"--http-addr", l.httpAddr,
 		"--metrics-addr", l.metricsAddr,

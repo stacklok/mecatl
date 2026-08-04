@@ -691,12 +691,10 @@ func TestDaemonConfigNonexistentFileErrorBeforeRun(t *testing.T) {
 	}
 }
 
-// TestDaemonConfigLegacyAndServeProduceIdenticalMerge: a legacy bare
-// `mecated --config PATH` invocation and a canonical `mecated serve --config PATH`
-// invocation parse and merge identically — the same file values are folded into
-// the config, and a non-default file value is proven effective (it overrides the
-// built-in default, not the 0 zero-value) in BOTH modes.
-func TestDaemonConfigLegacyAndServeProduceIdenticalMerge(t *testing.T) {
+// TestDaemonConfigServeMergeIsEffective: a canonical `mecated serve --config PATH`
+// invocation folds the file values into the config — a non-default file value is
+// proven effective (it overrides the built-in default, not the 0 zero-value).
+func TestDaemonConfigServeMergeIsEffective(t *testing.T) {
 	// Write a config file with a non-default rate_limit (42 — well above the 0
 	// default that would be vacuous to assert against) and a non-default grpc_addr,
 	// with NO CLI overrides for those fields, so the merge is the only path that
@@ -706,30 +704,12 @@ grpc_addr: "file:9999"
 rate_limit: 42
 `)
 
-	// Parse in BOTH modes with the same --config flag.
 	serveCfg, err := parseFlagsMode(modeServe, []string{"--config", path})
 	if err != nil {
 		t.Fatalf("parseFlagsMode(serve): %v", err)
 	}
-	legacyCfg, err := parseFlagsMode(modeLegacy, []string{"--config", path})
-	if err != nil {
-		t.Fatalf("parseFlagsMode(legacy): %v", err)
-	}
-
-	// Load and merge for both.
 	if err := loadAndMergeDaemonConfig(&serveCfg, false, daemonconfig.Load); err != nil {
 		t.Fatalf("serve loadAndMergeDaemonConfig: %v", err)
-	}
-	if err := loadAndMergeDaemonConfig(&legacyCfg, false, daemonconfig.Load); err != nil {
-		t.Fatalf("legacy loadAndMergeDaemonConfig: %v", err)
-	}
-
-	// Both modes produce identical merged values for the file-supplied fields.
-	if serveCfg.grpcAddr != legacyCfg.grpcAddr {
-		t.Errorf("grpcAddr: serve=%q legacy=%q — must be identical", serveCfg.grpcAddr, legacyCfg.grpcAddr)
-	}
-	if serveCfg.rateLimit != legacyCfg.rateLimit {
-		t.Errorf("rateLimit: serve=%v legacy=%v — must be identical", serveCfg.rateLimit, legacyCfg.rateLimit)
 	}
 
 	// Prove the non-default file value IS effective (not the built-in 0 default,
@@ -740,20 +720,4 @@ rate_limit: 42
 	if serveCfg.grpcAddr != "file:9999" {
 		t.Errorf("serve grpcAddr = %q, want file:9999 (file value must be effective)", serveCfg.grpcAddr)
 	}
-	if legacyCfg.rateLimit != 42 {
-		t.Errorf("legacy rateLimit = %v, want 42 (non-default oracle — file value must be effective)", legacyCfg.rateLimit)
-	}
-	if legacyCfg.grpcAddr != "file:9999" {
-		t.Errorf("legacy grpcAddr = %q, want file:9999 (file value must be effective)", legacyCfg.grpcAddr)
-	}
-
-	// Legacy mode must still retain its modeLegacy identity (the mode is
-	// NOT altered by the daemon config path — merging is identical, but the
-	// mode stays what it was).
-	// This is proven structurally: parseFlagsMode(modeLegacy, ...) always
-	// returns a config parsed from the legacy flag set; there is no mode field
-	// on the config struct to assert. The parseFlagsMode mode argument only
-	// controls which help renderer to wire and which flags to register
-	// (modeLegacy registers --acp and serve-style --help-all hook), NOT the
-	// config values themselves. The merge step is the same call.
 }

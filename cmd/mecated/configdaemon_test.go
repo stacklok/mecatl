@@ -273,7 +273,7 @@ func TestConfigDaemonResolutionFailClosed(t *testing.T) {
 		if res.handled {
 			t.Errorf("argv %v should NOT be handled (no runner), got handled=true", argv)
 		}
-		if res.mode != modeLegacy {
+		if res.mode != "" {
 			t.Errorf("argv %v should not select a daemon mode, got %v", argv, res.mode)
 		}
 		if !strings.Contains(res.err.Error(), "config daemon") {
@@ -301,7 +301,7 @@ func TestConfigDaemonResolutionInitValidateHandled(t *testing.T) {
 		if !res.handled || res.run == nil {
 			t.Errorf("argv %v should be handled with a runner", c.argv)
 		}
-		if res.mode != modeLegacy {
+		if res.mode != "" {
 			t.Errorf("argv %v should not select a daemon mode", c.argv)
 		}
 	}

@@ -46,39 +46,130 @@ func TestResolveAcpStripsCommandWord(t *testing.T) {
 	}
 }
 
-func TestResolveBareNoArgsIsLegacy(t *testing.T) {
+func TestResolveBareNoArgsIsUsageError(t *testing.T) {
 	res := resolveCommand([]string{"mecated"})
-	if res.handled || res.err != nil {
-		t.Fatalf("bare handled=%v err=%v, want false/nil", res.handled, res.err)
+	if !errors.Is(res.err, errBareInvocation) {
+		t.Fatalf("bare err = %v, want errBareInvocation", res.err)
 	}
-	if res.mode != modeLegacy {
-		t.Errorf("mode = %q, want legacy", res.mode)
+	if res.handled {
+		t.Error("bare invocation must not be handled (no runner); it is a usage error")
 	}
-	if len(res.remaining) != 0 {
-		t.Errorf("remaining = %v, want empty", res.remaining)
+	if res.mode != "" {
+		t.Errorf("bare mode = %q, want the no-mode sentinel", res.mode)
 	}
 }
 
-func TestResolveLeadingFlagIsLegacy(t *testing.T) {
+func TestResolveLeadingFlagIsUsageError(t *testing.T) {
 	res := resolveCommand([]string{"mecated", "--workspace", "/tmp/test"})
-	if res.handled || res.err != nil {
-		t.Fatalf("leading-flag handled=%v err=%v, want false/nil", res.handled, res.err)
+	if !errors.Is(res.err, errBareInvocation) {
+		t.Fatalf("leading-flag err = %v, want errBareInvocation", res.err)
 	}
-	if res.mode != modeLegacy {
-		t.Errorf("mode = %q, want legacy", res.mode)
+	if res.handled {
+		t.Error("leading-flag invocation must not be handled; it is a usage error")
 	}
-	if len(res.remaining) != 2 || res.remaining[0] != "--workspace" {
-		t.Errorf("remaining = %v, want [--workspace /tmp/test]", res.remaining)
+	if res.mode != "" {
+		t.Errorf("leading-flag mode = %q, want the no-mode sentinel", res.mode)
 	}
 }
 
-func TestResolveBareAcpFlagIsLegacy(t *testing.T) {
-	res := resolveCommand([]string{"mecated", "--acp"})
-	if res.handled || res.err != nil {
-		t.Fatalf("bare --acp handled=%v err=%v, want false/nil", res.handled, res.err)
+func TestResolveAcpFlagIsUnknownFlag(t *testing.T) {
+	// The --acp boolean flag is DELETED: `mecated serve --acp` now fails at
+	// flag-parse time with the standard unknown-flag error, and the ACP stdio
+	// mode is selected ONLY by the `acp` command word.
+	_, err := parseFlags([]string{"--acp"})
+	if err == nil {
+		t.Fatal("parseFlags(--acp) = nil error; want 'flag provided but not defined'")
 	}
-	if res.mode != modeLegacy {
-		t.Errorf("mode = %q, want legacy (the --acp flag is a legacy form)", res.mode)
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("parseFlags(--acp) err = %q, want 'flag provided but not defined'", err)
+	}
+}
+
+func TestOutputEconomyFlagIsUnknownFlag(t *testing.T) {
+	// The --output-economy compatibility flag is DELETED (ADR 0085, the clean
+	// break superseding ADR 0082's parse-compat shim): it now fails at flag-parse
+	// time with the standard unknown-flag error instead of parsing as a no-op.
+	_, err := parseFlags([]string{"--output-economy", "terse"})
+	if err == nil {
+		t.Fatal("parseFlags(--output-economy terse) = nil error; want 'flag provided but not defined'")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("parseFlags(--output-economy terse) err = %q, want 'flag provided but not defined'", err)
+	}
+}
+
+// --- Requirement 1b: a leading help meta-flag is a HELP intent (exit 0) ------
+
+// TestResolveLeadingHelpRendersTopLevelHelp pins the universal --help contract at
+// the top level: `mecated -h` / `mecated --help` resolve to a HANDLED help
+// action (not errBareInvocation), render the top-level command page to stdout,
+// and return no error — so main() exits 0 and prints no "mecated:" error line.
+func TestResolveLeadingHelpRendersTopLevelHelp(t *testing.T) {
+	for _, help := range []string{"-h", "--help"} {
+		res := resolveCommand([]string{"mecated", help})
+		if res.err != nil {
+			t.Errorf("%s: err = %v, want nil (help is not a bare-invocation error)", help, res.err)
+		}
+		if !res.handled || res.run == nil {
+			t.Errorf("%s: handled=%v run-nil=%v, want a handled help runner", help, res.handled, res.run == nil)
+			continue
+		}
+		var out strings.Builder
+		if err := res.run(strings.NewReader(""), &out, io.Discard); err != nil {
+			t.Errorf("%s: help runner returned error: %v", help, err)
+		}
+		if !strings.Contains(out.String(), "Usage: mecated <command> [flags]") {
+			t.Errorf("%s: rendered help missing the top-level usage header:\n%s", help, out.String())
+		}
+		if !strings.Contains(out.String(), "serve                   start the network daemon") {
+			t.Errorf("%s: rendered help missing the serve command entry:\n%s", help, out.String())
+		}
+		if strings.Contains(out.String(), "Exhaustive") {
+			t.Errorf("%s: concise help leaked the exhaustive header:\n%s", help, out.String())
+		}
+	}
+}
+
+// TestResolveLeadingHelpAllRendersExhaustiveReference pins `mecated --help-all` as
+// a HANDLED help action rendering the exhaustive top-level reference (reviving
+// writeTopLevelHelpAll as production-referenced) over the FULL real FlagSet.
+func TestResolveLeadingHelpAllRendersExhaustiveReference(t *testing.T) {
+	res := resolveCommand([]string{"mecated", "--help-all"})
+	if res.err != nil {
+		t.Fatalf("--help-all: err = %v, want nil", res.err)
+	}
+	if !res.handled || res.run == nil {
+		t.Fatal("--help-all: want a handled help runner")
+	}
+	var out strings.Builder
+	if err := res.run(strings.NewReader(""), &out, io.Discard); err != nil {
+		t.Fatalf("--help-all runner: %v", err)
+	}
+	s := out.String()
+	for _, want := range []string{
+		"Usage: mecated <command> [flags]",
+		"Exhaustive serve-compatible flag reference",
+		"-workspace",
+		"mecated acp --help-all",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("--help-all rendered reference missing %q", want)
+		}
+	}
+}
+
+// TestResolveNonHelpLeadingFlagStaysBareInvocation guards the carve-out: any
+// OTHER leading flag (e.g. the deleted --acp, or a serve flag at the top level)
+// stays the errBareInvocation usage error (main prints error + help, exit 2).
+func TestResolveNonHelpLeadingFlagStaysBareInvocation(t *testing.T) {
+	for _, tok := range []string{"--acp", "--workspace", "--model"} {
+		res := resolveCommand([]string{"mecated", tok, "x"})
+		if !errors.Is(res.err, errBareInvocation) {
+			t.Errorf("%s: err = %v, want errBareInvocation", tok, res.err)
+		}
+		if res.handled {
+			t.Errorf("%s: must not resolve to a handled help runner", tok)
+		}
 	}
 }
 
@@ -214,7 +305,9 @@ func hasFlagHeader(out, name string) bool {
 }
 
 func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
-	out := helpRenderOut(t, modeLegacy, []string{"--help"})
+	var buf strings.Builder
+	writeTopLevelHelp(&buf)
+	out := buf.String()
 	for _, want := range []string{
 		"Usage: mecated <command> [flags]",
 		"serve                   start the network daemon",
@@ -222,12 +315,16 @@ func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
 		"config init             write/print the operator settings.yaml skeleton",
 		"skills promote          promote a model-authored candidate skill",
 		"perf-mcp print-config   print a paste-ready client",
-		"deprecated",
 		"mecated <command> --help",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("top-level help (real renderer) missing %q\n--- output ---\n%s", want, out)
 		}
+	}
+	// The Compatibility paragraph (bare/deprecated spellings) is gone: a command
+	// word is REQUIRED.
+	if strings.Contains(out, "Compatibility") {
+		t.Errorf("top-level help still carries the Compatibility paragraph:\n%s", out)
 	}
 }
 
@@ -265,134 +362,6 @@ func TestAcpHelpRealRendererShowsFlagList(t *testing.T) {
 	}
 	if strings.Contains(out, "http-addr") {
 		t.Errorf("acp common help leaked server-boundary flag 'http-addr':\n%s", out)
-	}
-}
-
-// --- Requirement 4: real conflict errors -----------------------------------
-
-func TestApplyCommandModeServeWithExplicitAcpConflicts(t *testing.T) {
-	cfg := config{acp: true, acpFlagSet: true}
-	_, err := applyCommandMode(cfg, modeServe)
-	if err == nil {
-		t.Fatal("applyCommandMode(serve, --acp) = nil error; want actionable conflict error")
-	}
-	if !strings.Contains(err.Error(), "serve") || !strings.Contains(err.Error(), "--acp") {
-		t.Errorf("conflict error %q is not actionable (must name both 'serve' and '--acp')", err)
-	}
-}
-
-func TestApplyCommandModeAcpWithAcpFalseConflicts(t *testing.T) {
-	cfg := config{acp: false, acpFlagSet: true}
-	_, err := applyCommandMode(cfg, modeACP)
-	if err == nil {
-		t.Fatal("applyCommandMode(acp, --acp=false) = nil error; want actionable conflict error")
-	}
-	if !strings.Contains(err.Error(), "acp") || !strings.Contains(err.Error(), "--acp=false") {
-		t.Errorf("conflict error %q is not actionable (must name both 'acp' and '--acp=false')", err)
-	}
-}
-
-func TestApplyCommandModeServeWithoutExplicitAcpNoConflict(t *testing.T) {
-	cfg := config{acp: false, acpFlagSet: false}
-	acp, err := applyCommandMode(cfg, modeServe)
-	if err != nil {
-		t.Fatalf("serve without --acp: unexpected error %v", err)
-	}
-	if acp {
-		t.Error("serve mode should yield acp=false")
-	}
-}
-
-func TestApplyCommandModeAcpWithoutExplicitAcpFlagSetsAcp(t *testing.T) {
-	cfg := config{acp: false, acpFlagSet: false}
-	acp, err := applyCommandMode(cfg, modeACP)
-	if err != nil {
-		t.Fatalf("acp without --acp flag: unexpected error %v", err)
-	}
-	if !acp {
-		t.Error("canonical acp mode should set acp=true")
-	}
-}
-
-func TestApplyCommandModeServeWithExplicitAcpFalseNoConflict(t *testing.T) {
-	// `mecated serve --acp=false` is NOT a conflict — explicit false agrees with serve.
-	cfg := config{acp: false, acpFlagSet: true}
-	acp, err := applyCommandMode(cfg, modeServe)
-	if err != nil {
-		t.Fatalf("serve --acp=false: unexpected conflict %v", err)
-	}
-	if acp {
-		t.Error("serve mode should yield acp=false even with --acp=false")
-	}
-}
-
-func TestApplyCommandModeLegacyPassesAcpThrough(t *testing.T) {
-	cfg := config{acp: true, acpFlagSet: true}
-	acp, err := applyCommandMode(cfg, modeLegacy)
-	if err != nil {
-		t.Fatalf("legacy --acp: unexpected error %v", err)
-	}
-	if !acp {
-		t.Error("legacy --acp=true should pass acp=true through")
-	}
-	cfg2 := config{acp: false, acpFlagSet: false}
-	acp2, err := applyCommandMode(cfg2, modeLegacy)
-	if err != nil || acp2 {
-		t.Errorf("legacy bare: acp=%v err=%v, want false/nil", acp2, err)
-	}
-}
-
-// --- Requirement 5: legacy warning projection through an injected seam ------
-
-func TestLegacyWarningBareWarns(t *testing.T) {
-	if msg := legacyWarning(modeLegacy, false); msg == "" {
-		t.Error("legacyWarning(bare) = empty; want a deprecation warning")
-	} else if !strings.Contains(msg, "bare 'mecated'") {
-		t.Errorf("legacyWarning(bare) = %q; want it to name bare 'mecated'", msg)
-	}
-}
-
-func TestLegacyWarningAcpFlagWarns(t *testing.T) {
-	if msg := legacyWarning(modeLegacy, true); msg == "" {
-		t.Error("legacyWarning(--acp) = empty; want a deprecation warning")
-	} else if !strings.Contains(msg, "--acp") {
-		t.Errorf("legacyWarning(--acp) = %q; want it to name --acp", msg)
-	}
-}
-
-func TestLegacyWarningServeDoesNotWarn(t *testing.T) {
-	if msg := legacyWarning(modeServe, false); msg != "" {
-		t.Errorf("legacyWarning(serve) = %q; want empty (canonical serve must not warn)", msg)
-	}
-}
-
-func TestLegacyWarningAcpDoesNotWarn(t *testing.T) {
-	if msg := legacyWarning(modeACP, true); msg != "" {
-		t.Errorf("legacyWarning(acp) = %q; want empty (canonical acp must not warn)", msg)
-	}
-}
-
-func TestEmitLegacyWarningWritesOnlyForLegacy(t *testing.T) {
-	cases := []struct {
-		mode    commandMode
-		acp     bool
-		wantOut bool
-	}{
-		{modeLegacy, false, true},
-		{modeLegacy, true, true},
-		{modeServe, false, false},
-		{modeACP, true, false},
-	}
-	for _, c := range cases {
-		var sb strings.Builder
-		emitLegacyWarning(&sb, c.mode, c.acp)
-		got := sb.String()
-		if c.wantOut && got == "" {
-			t.Errorf("emitLegacyWarning(%v,%v) wrote nothing; want a warning", c.mode, c.acp)
-		}
-		if !c.wantOut && got != "" {
-			t.Errorf("emitLegacyWarning(%v,%v) wrote %q; want nothing (canonical)", c.mode, c.acp, got)
-		}
 	}
 }
 
@@ -478,8 +447,8 @@ func TestResolveUnknownCommandDoesNotConstructRunner(t *testing.T) {
 		if res.run != nil {
 			t.Errorf("%v: unknown command must NOT carry a runner closure", argv)
 		}
-		if res.mode != modeLegacy {
-			t.Errorf("%v: unknown command mode = %q, want legacy/empty (so run() is never reached)", argv, res.mode)
+		if res.mode != "" {
+			t.Errorf("%v: unknown command mode = %q, want the no-mode sentinel (so run() is never reached)", argv, res.mode)
 		}
 	}
 }
@@ -587,7 +556,7 @@ func TestAcpCommonHelpExcludesServerBoundary(t *testing.T) {
 
 // TestServeHelpAllRendersFullRealFlagSet verifies serve --help-all against the
 // FULL real parseFlagsMode FlagSet: every public metadata-covered flag MUST
-// appear, and the hidden --output-economy MUST NOT appear.
+// appear.
 func TestServeHelpAllRendersFullRealFlagSet(t *testing.T) {
 	out := helpRenderOut(t, modeServe, []string{"--help-all"})
 
@@ -603,16 +572,11 @@ func TestServeHelpAllRendersFullRealFlagSet(t *testing.T) {
 		}
 	}
 
-	// The hidden legacy flag MUST be absent from ALL help.
-	if strings.Contains(out, "output-economy") {
-		t.Errorf("serve --help-all leaked hidden flag 'output-economy'")
-	}
 }
 
 // TestAcpHelpAllExcludesServerBoundaryOverFullFlagSet verifies acp --help-all
 // against the FULL real FlagSet: server-boundary flags are absent, ACP-
-// applicable flags are present, the hidden flag is absent, and --acp itself is
-// excluded (the command already selects the mode; --acp=false conflicts).
+// applicable flags are present.
 func TestAcpHelpAllExcludesServerBoundaryOverFullFlagSet(t *testing.T) {
 	out := helpRenderOut(t, modeACP, []string{"--help-all"})
 
@@ -627,31 +591,21 @@ func TestAcpHelpAllExcludesServerBoundaryOverFullFlagSet(t *testing.T) {
 		}
 	}
 
-	// ACP-applicable flags MUST be present (every non-excluded, non-hidden flag).
+	// ACP-applicable flags MUST be present (every non-excluded flag).
 	for name, m := range flagMetaByFlag {
-		if m.acp == acpExclude || name == "acp" {
+		if m.acp == acpExclude {
 			continue
 		}
 		if !hasFlagHeader(out, name) {
 			t.Errorf("acp --help-all missing ACP-applicable flag %q", name)
 		}
 	}
-
-	// --acp MUST be excluded from the canonical acp --help-all reference.
-	if hasFlagHeader(out, "acp") {
-		t.Errorf("acp --help-all leaked --acp (the command already selects mode; --acp=false conflicts):\n%s", out)
-	}
-
-	// The hidden legacy flag MUST be absent.
-	if strings.Contains(out, "output-economy") {
-		t.Errorf("acp --help-all leaked hidden flag 'output-economy'")
-	}
 }
 
 // ── Requirement: help paths return success/pre-run (exit 0, no listener) ────
 
 func TestHelpAllReturnsErrHelp(t *testing.T) {
-	for _, mode := range []commandMode{modeLegacy, modeServe, modeACP} {
+	for _, mode := range []commandMode{modeServe, modeACP} {
 		_, err := parseFlagsMode(mode, []string{"--help-all"})
 		if !errors.Is(err, flag.ErrHelp) {
 			t.Errorf("%v --help-all: got err=%v, want flag.ErrHelp", mode, err)
@@ -660,7 +614,7 @@ func TestHelpAllReturnsErrHelp(t *testing.T) {
 }
 
 func TestHelpReturnsErrHelp(t *testing.T) {
-	for _, mode := range []commandMode{modeLegacy, modeServe, modeACP} {
+	for _, mode := range []commandMode{modeServe, modeACP} {
 		_, err := parseFlagsMode(mode, []string{"--help"})
 		if !errors.Is(err, flag.ErrHelp) {
 			t.Errorf("%v --help: got err=%v, want flag.ErrHelp", mode, err)
@@ -668,39 +622,46 @@ func TestHelpReturnsErrHelp(t *testing.T) {
 	}
 }
 
-// ── Requirement: bare --help-all provides the exhaustive reference ───────────
+// ── Requirement: the top-level --help-all provides the exhaustive reference ──
 
-func TestLegacyHelpAllProvidesExhaustiveReference(t *testing.T) {
-	out := helpRenderOut(t, modeLegacy, []string{"--help-all"})
+func TestTopLevelHelpAllProvidesExhaustiveReference(t *testing.T) {
+	var buf strings.Builder
+	fs, _, err := parseFlagsModeOut(modeServe, []string{"--help"}, &buf)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseFlagsModeOut: %v", err)
+	}
+	buf.Reset()
+	writeTopLevelHelpAll(&buf, fs)
+	out := buf.String()
 
 	// The --help-all flag description promises an EXHAUSTIVE reference, so the
-	// bare form must provide the serve-compatible flag reference, not only
+	// top-level form must provide the serve-compatible flag reference, not only
 	// pointers.
 	if !strings.Contains(out, "Exhaustive serve-compatible flag reference") {
-		t.Errorf("legacy --help-all missing the exhaustive flag-reference header:\n%s", out)
+		t.Errorf("top-level --help-all missing the exhaustive flag-reference header:\n%s", out)
 	}
 	if !strings.Contains(out, "Flags:") {
-		t.Errorf("legacy --help-all missing the 'Flags:' exhaustive listing:\n%s", out)
+		t.Errorf("top-level --help-all missing the 'Flags:' exhaustive listing:\n%s", out)
 	}
 	// A representative public flag must appear in the exhaustive listing.
 	if !strings.Contains(out, "-workspace") {
-		t.Errorf("legacy --help-all exhaustive listing missing -workspace:\n%s", out)
+		t.Errorf("top-level --help-all exhaustive listing missing -workspace:\n%s", out)
 	}
-	// The brief compatibility note must still point to the ACP-scoped subset.
+	// The note must still point to the ACP-scoped subset.
 	if !strings.Contains(out, "mecated acp --help-all") {
-		t.Errorf("legacy --help-all missing the ACP compatibility note:\n%s", out)
+		t.Errorf("top-level --help-all missing the ACP note:\n%s", out)
 	}
-	// The hidden flag must be absent.
-	if strings.Contains(out, "output-economy") {
-		t.Errorf("legacy --help-all leaked hidden flag 'output-economy':\n%s", out)
+	// The compatibility paragraph (deprecated bare spellings) is gone.
+	if strings.Contains(out, "deprecated") {
+		t.Errorf("top-level --help-all still carries the deprecated-spellings note:\n%s", out)
 	}
 }
 
 // ── Requirement: metadata completeness over the FULL real FlagSet ────────────
 
 // TestFlagMetaCompletenessOverRealFlagSet is the REAL completeness invariant:
-// every registered public flag except the explicitly hidden legacy flags has
-// metadata, and every metadata key names a real registered flag. It drives the
+// every registered public flag has metadata, and every metadata key names a
+// real registered flag. It drives the
 // validateFlagMeta seam over the FULL real parseFlagsModeOut FlagSet (not a
 // synthetic subset), so a flag added/removed from parseFlagsMode without
 // updating the metadata fails here. parseFlagsModeOut returns the built FlagSet

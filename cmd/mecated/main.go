@@ -407,9 +407,6 @@ type config struct {
 	// listeners. When set, mecated speaks JSON-RPC 2.0 to an ACP editor (Zed, etc.)
 	// that spawned it as a subprocess; the normal network daemon path is skipped.
 	acp bool
-	// acpFlagSet is true when --acp was passed explicitly (set after parse via
-	// fs.Visit), so we can detect conflicts with the canonical 'serve'/'acp' subcommands.
-	acpFlagSet bool
 
 	// helpAll is true when --help-all was passed; it requests exhaustive flag listing
 	// and exits 0 before the daemon starts.
@@ -448,17 +445,6 @@ type config struct {
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
-	// outputEconomy is a DEPRECATED legacy CLI flag (ADR 0041, superseded). It is
-	// still PARSED so a legacy `--output-economy` invocation does not fail, but it
-	// has NO EFFECT on agent behaviour: the "terse" tone delta was removed and the
-	// default system prompt already carries the prose-economy / minimum-code /
-	// safety carveout guidance. When set, run() emits a deprecation WARN telling
-	// the operator to remove it. Marked for follow-up removal.
-	outputEconomy string
-	// outputEconomyFlagSet is true when --output-economy was passed explicitly,
-	// gating the deprecation WARN (only warn when the operator actually used the
-	// legacy flag).
-	outputEconomyFlagSet bool
 	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055): ""
 	// or "auto" (unset → the provider default) or low/medium/high/xhigh/max.
 	// Operator-tier only: the operator-global settings.yaml reasoning-effort: key
@@ -506,9 +492,15 @@ func main() {
 
 	// A usage error (unknown command / unknown-or-missing subcommand) fails
 	// closed BEFORE the daemon boots: print the actionable error and exit
-	// non-zero without constructing any listener.
+	// non-zero without constructing any listener. A bare/leading-flag
+	// invocation additionally prints the top-level help (the operator needs the
+	// command list, not just the error line).
 	if res.err != nil {
 		fmt.Fprintln(os.Stderr, "mecated:", res.err)
+		if errors.Is(res.err, errBareInvocation) {
+			fmt.Fprintln(os.Stderr)
+			writeTopLevelHelp(os.Stderr)
+		}
 		os.Exit(2)
 	}
 
@@ -764,8 +756,8 @@ func runPerfMCPPrintConfig(argv []string, out io.Writer) error {
 }
 
 // run parses flags, builds the engine/service via internal/app, and serves until a
-// termination signal arrives. mode is the resolved canonical command word ("",
-// "serve", "acp") and remaining is the flag tail (argv with the command word
+// termination signal arrives. mode is the resolved canonical command word
+// ("serve" or "acp") and remaining is the flag tail (argv with the command word
 // already stripped). It is separated from main so it can return errors cleanly.
 func run(mode commandMode, remaining []string) error {
 	cfg, err := parseFlagsMode(mode, remaining)
@@ -773,13 +765,9 @@ func run(mode commandMode, remaining []string) error {
 		return err
 	}
 
-	// Resolve the canonical subcommand vs the --acp flag into a final acp value,
-	// failing closed on a conflicting combination (`serve --acp`, `acp --acp=false`).
-	acp, merr := applyCommandMode(cfg, mode)
-	if merr != nil {
-		return merr
-	}
-	cfg.acp = acp
+	// The canonical command word selects the mode: `mecated acp` runs the ACP
+	// stdio surface; `mecated serve` runs the network daemon.
+	cfg.acp = mode == modeACP
 
 	// Daemon config file (issue #338): load ONLY when --config is explicitly
 	// supplied (no auto-load). Rejected for ACP mode (listener topology does not
@@ -788,7 +776,7 @@ func run(mode commandMode, remaining []string) error {
 	// listener creation. The load/merge step is a testable helper with an injected
 	// loader (review fix #2); effective-value cross-validation runs AFTER the
 	// merge so a file-supplied value cannot bypass the guards (review fix #1).
-	if err := loadAndMergeDaemonConfig(&cfg, acp, daemonconfig.Load); err != nil {
+	if err := loadAndMergeDaemonConfig(&cfg, cfg.acp, daemonconfig.Load); err != nil {
 		return err
 	}
 	// Effective-value validation (perf-MCP loopback/empty-metrics + rate-limit
@@ -815,24 +803,12 @@ func run(mode commandMode, remaining []string) error {
 	// rather than slog.Default().
 	diag := slogdiag.NewFromLogger(logger)
 
-	// Legacy bare/`--acp` invocation: emit the once-per-startup deprecation
-	// warning through the SAME stderr logger installed above (the cmd main owns the
-	// sink; no package-level slog in internal/). Canonical `serve`/`acp` warn
-	// nothing. Done AFTER the slog default is installed so the warning lands on the
-	// operator-visible log path, before any listener binds.
-	emitLegacyWarning(os.Stderr, mode, cfg.acp)
-
 	// Log the selected daemon config path when one was loaded (issue #338).
 	// The path was validated during merge; log it so operators can confirm
 	// which file was read.
 	if cfg.configPathFlagSet {
 		slog.Info("daemon config loaded", "path", cfg.configPath)
 	}
-
-	// Deprecation WARN for the legacy --output-economy flag (ADR 0041, superseded):
-	// the flag still PARSES (so a legacy invocation does not fail) but has NO EFFECT
-	// on agent behaviour. Warn once at startup when the operator passed it explicitly.
-	warnDeprecatedOutputEconomy(diag, cfg.outputEconomyFlagSet)
 
 	// Operator posture: print/refuse/WARN for the AUTHORITATIVE composed tier (the
 	// --posture flag + --yolo/--trust-project aliases + the operator-global
@@ -1172,37 +1148,6 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 	return out
 }
 
-// mecatedUsage returns a fs.Usage closure that prints the mecated usage banner: a
-// header line, the offline subcommands (config init, skills promote, perf-mcp
-// print-config), a "Flags:" header, and the flag defaults minus the deprecated
-// --output-economy flag. Callers that want to assert the banner is the real one
-// (not a dead copy) wire this helper rather than duplicating the closure.
-func mecatedUsage(fs *flag.FlagSet) func() {
-	return func() {
-		out := fs.Output()
-		_, _ = fmt.Fprintf(out, "Usage: mecated [flags]\n       mecated <command> [args]\n\n")
-		_, _ = fmt.Fprintf(out, "Commands:\n")
-		_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
-		_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
-		_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
-		_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
-		_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n\n")
-		_, _ = fmt.Fprintf(out, "Flags:\n")
-		// Hide the deprecated --output-economy flag from normal --help output. It
-		// stays PARSEABLE (cliconfig.PrintDefaultsHide omits only the named
-		// flags) so a legacy invocation does not fail, but is not advertised.
-		cliconfig.PrintDefaultsHide(fs, "output-economy")
-	}
-}
-
-func warnDeprecatedOutputEconomy(diag port.Diagnostics, set bool) {
-	if !set {
-		return
-	}
-	diag.Log(context.Background(), port.LevelWarn,
-		"--output-economy is deprecated and has no effect; remove it (the output-economy terse prompt delta was removed)")
-}
-
 // applyPostureCLI resolves the AUTHORITATIVE posture tier (the --posture flag +
 // --yolo/--trust-project aliases + the operator-global settings.yaml posture: key) and
 // runs its print / refuse / WARN surface, extracted from run() to keep that function's
@@ -1390,13 +1335,13 @@ func validateEffectiveConfig(cfg config) error {
 	return nil
 }
 
-// parseFlags turns argv into a config, resolving env-derived defaults. The
-// --help hook renders the concise top-level command page (the legacy/bare form);
-// canonical `mecated serve --help` / `mecated acp --help` use parseFlagsMode so
-// their hook renders the exhaustive flag list. Existing callers that exercise
-// the flag-parsing logic (not the help-renderer selection) use this entry point.
+// parseFlags turns argv into a config, resolving env-derived defaults. It is
+// the serve-mode test seam: it parses exactly as `mecated serve` would (the
+// serve --help hook renders the serve common help). Existing callers that
+// exercise the flag-parsing logic (not the help-renderer selection) use this
+// entry point.
 func parseFlags(argv []string) (config, error) {
-	return parseFlagsMode(modeLegacy, argv)
+	return parseFlagsMode(modeServe, argv)
 }
 
 // parseFlagsMode is parseFlags with an explicit command mode, selecting which
@@ -1569,13 +1514,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		"OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted honours a project's ALLOW rules (= --trust-project); auto adds allow-all + main substitution loosening (recommended UNATTENDED default, child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF, isolated single-tenant only). --yolo/--trust-project are aliases. auto/yolo are refused as root outside MECATL_SANDBOX. An unknown value fails closed to strict with a WARN.")
 	fs.BoolVar(&cfg.printPosture, "print-posture", false, "print the resolved operator posture tier and a plain-English line per defense, then exit (does not start the server)")
 
-	fs.StringVar(&cfg.outputEconomy, "output-economy", "",
-		"DEPRECATED, NO EFFECT (ADR 0041, superseded): the output-economy \"terse\" tone delta and this flag's behaviour were removed — the default system prompt already carries the prose-economy scope, the minimum-code ladder, and the safety carveout. Kept parseable for legacy invocations; remove this flag from your command line. A legacy top-level settings.yaml `output-economy:` key is likewise parsed and warned, with no effect.")
-
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider's own default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only, so xhigh/max are clamped down to high (with a WARN); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key if present). A per-session CreateSession reasoning_effort out-ranks this default. A model with no reasoning support drops it. Operator-tier only; a project-tier reasoning-effort: key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
-
-	fs.BoolVar(&cfg.acp, "acp", false, "serve the Agent Client Protocol (ACP) over stdio for an editor that spawned mecated as a subprocess (JSON-RPC 2.0 on stdin/stdout). Skips the TCP/HTTP listeners; the single session workspace is the editor-provided cwd. No TLS/auth/rate-limit (stdio is a local, parent-process trust boundary)")
 
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token required on every gRPC/HTTP request (or MECATL_AUTH_TOKEN; empty disables auth)")
 	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "PEM server certificate; with --tls-key enables TLS on the gRPC + HTTP servers")
@@ -1593,16 +1533,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// Only accepted for serve/legacy; ACP mode rejects it.
 	fs.StringVar(&cfg.configPath, "config", "", "path to a daemon config YAML file (v1 schema: grpc_addr, http_addr, metrics_addr, tls_cert, tls_key, client_ca, rate_limit, rate_burst). Explicit CLI flags override file values; auth TOKEN is not accepted in YAML")
 
-	// Top-level --help shows a concise command-oriented entry page; canonical
 	// `mecated serve --help` / `mecated acp --help` show progressive task-oriented
 	// common help.  --help-all (above) shows the exhaustive reference.  The
 	// renderers are package-local functions shared with the tests.
 	fs.Usage = func() {
 		out := fs.Output()
-		if mode == modeLegacy {
-			writeTopLevelHelp(out)
-			return
-		}
 		if mode == modeACP {
 			writeAcpCommonHelp(out, fs)
 			return
@@ -1620,12 +1555,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// --help-all was parsed as a normal flag; render and return ErrHelp (exit 0).
 	if cfg.helpAll {
 		out := fs.Output()
-		switch mode {
-		case modeLegacy:
-			writeLegacyHelpAll(out, fs)
-		case modeACP:
+		if mode == modeACP {
 			writeAcpHelpAll(out, fs)
-		default:
+		} else {
 			writeServeHelpAll(out, fs)
 		}
 		return nil, config{}, flag.ErrHelp
@@ -1727,13 +1659,8 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			// appConfig can distinguish "unset" (router governed by the taxonomy) from
 			// "=false" (kill-switch); "=true/bare" is inert (the taxonomy still governs).
 			cfg.subagentModelRouterSet = true
-		case "acp":
-			cfg.acpFlagSet = true
 		case "config":
 			cfg.configPathFlagSet = true
-		}
-		if f.Name == "output-economy" {
-			cfg.outputEconomyFlagSet = true
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
