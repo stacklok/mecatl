@@ -4,7 +4,7 @@
 - Date: 2026-06-21
 - Scope: the `defaultTone` constant in `engine/prompt/builder.go` (the default system-prompt tone block, part of the cache-stable `StablePrefix`)
 - Supersedes: none (extends the prompt-content work landed in [ADR 0024](./0024-system-prompt-research.md))
-- Superseded by: [ADR 0082](./0082-remove-output-economy-control.md) — removes the optional `terse` output-economy control surface while keeping the load-bearing `defaultTone` guidance byte-for-byte. The dedicated `output_economy` perf scenario cited below was removed by that ADR.
+- Superseded by: [ADR 0086](./0086-remove-output-economy-control.md) — removes the optional `terse` output-economy control surface while keeping the load-bearing `defaultTone` guidance byte-for-byte. The dedicated `output_economy` perf scenario cited below was removed by that ADR.
 
 ## Context
 
@@ -87,7 +87,7 @@ messages).
   "native platform feature" room and more irreducible backend logic where ponytail's win
   was ~0%). The honest claim is: big where there's bloat to cut, near-zero on minimal
   code, never at the cost of a safety guard. The `output_economy` perf scenario
-  (`perf/scenarios/output_economy_test.go` <!-- lint:not-a-citation: removed by ADR 0082; historical reference in a frozen ADR -->) was the measurement harness for before/after
+  (`perf/scenarios/output_economy_test.go` <!-- lint:not-a-citation: removed by ADR 0086; historical reference in a frozen ADR -->) was the measurement harness for before/after
   comparison.
 - An operator-tier `--output-economy terse` posture knob (an answer-length default for
   explanatory turns) is **shipped**: the `--output-economy` flag (mecated, mecatui,
@@ -104,4 +104,4 @@ messages).
   (role/tone/safety rewrite, `toolDisciplineHints`, `agencyDelta`).
 - `docs/architecture.md` — the two-layer prompt assembly (living doc).
 - `engine/prompt/builder.go` (`defaultTone`) — the constant this decision shapes.
-- `perf/scenarios/output_economy_test.go` <!-- lint:not-a-citation: removed by ADR 0082; historical reference in a frozen ADR --> — the measurement harness.
+- `perf/scenarios/output_economy_test.go` <!-- lint:not-a-citation: removed by ADR 0086; historical reference in a frozen ADR --> — the measurement harness.

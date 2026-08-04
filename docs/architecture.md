@@ -294,8 +294,8 @@ cache-stable default tone. Its concise-delivery guidance is explicitly scoped aw
 from investigation and reasoning depth, while the minimum-change ladder,
 read-before-edit discipline, trust-boundary validation, and safety carveouts remain
 always on. There is no output-economy surface at all: the former `terse` delta and its
-public flag/config surface were removed by [ADR 0082](adr/0082-remove-output-economy-control.md),
-and the one-release parse-compat shim was deleted by [ADR 0085](adr/0085-cli-clean-break-grammar.md) —
+public flag/config surface were removed by [ADR 0086](adr/0086-remove-output-economy-control.md),
+and the one-release parse-compat shim was deleted by [ADR 0089](adr/0089-cli-clean-break-grammar.md) —
 a legacy `--output-economy` is now an unknown-flag error, and a top-level `output-economy:`
 settings.yaml key is a named unknown-key rejection.
 

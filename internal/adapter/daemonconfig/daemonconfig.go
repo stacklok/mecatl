@@ -1,7 +1,7 @@
 // Package daemonconfig is a strict, versioned, operator-selected daemon
-// configuration file loaded ONLY when `mecated serve --config PATH` (or the
-// legacy bare daemon invocation with `--config`) is explicitly supplied. No
-// conventional auto-load, no project discovery, no app.Config widening.
+// configuration file loaded ONLY when `mecated serve --config PATH` is
+// explicitly supplied. No conventional auto-load, no project discovery, no
+// app.Config widening.
 //
 // Schema v1 is a small API-edge subset: gRPC listen address, HTTP/SSE listen
 // address, metrics/admin address, TLS cert/key/CA paths, and rate-limit/burst.
@@ -38,7 +38,7 @@ const SchemaVersionV1 = "v1"
 // XDG config base (`mecatl/daemon.yaml`), re-exported so the WRITE paths
 // (`mecated config daemon init` / `config daemon validate`) and the docs agree
 // on a single relative path. It is NEVER used for auto-load — the daemon config
-// is loaded ONLY when --config is supplied explicitly (issue #338, ADR 0084).
+// is loaded ONLY when --config is supplied explicitly (issue #338, ADR 0088).
 // Re-exporting it here keeps the conventional path in the SAME package that owns
 // the schema, mirroring the configgen/permconfig SettingsRelPath pattern.
 const DaemonConfigRelPath = "mecatl/daemon.yaml"

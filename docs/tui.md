@@ -87,12 +87,14 @@ or fallback:
   ```
 
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
-a usage error. An unknown leading command fails closed.
+a usage error, with one carve-out: `mecatui connect --help` renders the connect
+help instead of the missing-ADDRESS usage error. An unknown leading command fails
+closed.
 
 > **Removed flags:** the three `--subagent-ask-reviewer*` flags were inert under
 > `mecatui` (it runs interactive — a child ask surfaces to the approval modal, not
 > the headless reviewer) and have been removed. They are now unknown-flag errors.
-> To use the headless ask reviewer, run a headless `mecated --headless
+> To use the headless ask reviewer, run a headless `mecated serve --headless
 > --subagent-ask-reviewer …` and point `mecatui connect` at it. The `--model-slot
 > ask-reviewer=…` model slot is unaffected.
 
@@ -1132,7 +1134,7 @@ Select it with `--theme midnight` (or set `theme` / `MECATUI_THEME`).
 
 - `cmd/mecatui/client/` — touches `contracts/gen` + grpc: dial, `CreateSession`,
   the `Converse` stream wrapper (serialised sends), the reader goroutine, the
-  `Event → tea.Msg` mapper, and the `IsReachable` health probe for auto mode.
+  `Event → tea.Msg` mapper.
 - `cmd/mecatui/embed/` — hosts the embedded server: `embed.Start(ctx, app.Config)`
   builds the harness via `internal/app` and serves it over a UNIX socket. The only
   TUI package besides `client`/main that imports `internal/...` + grpc.

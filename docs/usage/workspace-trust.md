@@ -207,13 +207,13 @@ and prompt less:
 | `yolo` | **on** (main + children) | loosened | **loosened** (child defence **OFF**) | on | a disposable, isolated, single-tenant sandbox |
 
 Pick the tier with `--posture <strict|trusted|auto|yolo>` on `mecated` or the
-embedded `mecatui` server (it is **ignored when `mecatui` dials an external
-server via `connect`** — that server owns its own posture). `--yolo` is an **alias for
+embedded `mecatui` server (it is **rejected when `mecatui` dials an external
+server via `connect`** — the dialed server owns its own posture). `--yolo` is an **alias for
 `--posture yolo`** and `--trust-project` is an **alias for `trusted`**; passing
 both a `--posture` value and an alias resolves to the **higher tier** with a
 `WARN`, an unknown `--posture` value fails closed to `strict` with a `WARN`, and a
 CLI flag out-ranks the user-global `posture:` setting (below). Confirm what a given
-combination resolves to with `mecated --print-posture` (prints the tier + the
+combination resolves to with `mecated serve --print-posture` (prints the tier + the
 per-defence breakdown and exits).
 
 **`auto` is the recommended unattended default.** It is allow-all for the main

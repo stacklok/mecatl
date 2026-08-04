@@ -52,7 +52,7 @@ models:
 Defining the `models.router:` taxonomy above is all it takes to enable the router
 (ADR 0042 — configure = enable, the guardrails-parity model). To keep the taxonomy but
 turn routing off, set `models.router.disabled: true` or launch with
-`mecated --subagent-model-router=false` (the kill-switch). With no `models.router:` block
+`mecated serve --subagent-model-router=false` (the kill-switch). With no `models.router:` block
 at all, every call keeps the session model — the default is byte-identical.
 
 **Verifying it's wired.** On startup mecated logs one build-once fact per active slot

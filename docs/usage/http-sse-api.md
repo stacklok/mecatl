@@ -49,7 +49,7 @@ share one event shape.
 | `GET /v1/teams/{id}` | — | team snapshot (roster, tasks, quiescence) |
 | `DELETE /v1/teams/{id}` | — | clean up the team |
 
-All examples below were captured against a live `mecated --mock`.
+All examples below were captured against a live `mecated serve --mock`.
 
 ### Create a session
 

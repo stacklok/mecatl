@@ -11,8 +11,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
-// The top-level `output-economy:` key was REMOVED (ADR 0085, the clean break
-// superseding ADR 0082's parse-compat shim). parseYAML is deliberately lenient
+// The top-level `output-economy:` key was REMOVED (ADR 0089, the clean break
+// superseding ADR 0086's parse-compat shim). parseYAML is deliberately lenient
 // at the top level (plain
 // yaml.Unmarshal), so the removed key gets a TARGETED named rejection that rides
 // the existing invalid-file path (WARN + skip). These tests pin the error text

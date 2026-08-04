@@ -86,8 +86,8 @@ func TestResolveAcpFlagIsUnknownFlag(t *testing.T) {
 }
 
 func TestOutputEconomyFlagIsUnknownFlag(t *testing.T) {
-	// The --output-economy compatibility flag is DELETED (ADR 0085, the clean
-	// break superseding ADR 0082's parse-compat shim): it now fails at flag-parse
+	// The --output-economy compatibility flag is DELETED (ADR 0089, the clean
+	// break superseding ADR 0086's parse-compat shim): it now fails at flag-parse
 	// time with the standard unknown-flag error instead of parsing as a no-op.
 	_, err := parseFlags([]string{"--output-economy", "terse"})
 	if err == nil {

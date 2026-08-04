@@ -11,7 +11,7 @@ import (
 )
 
 // flagApplicability annotates a registered mecatui flag for mode-specific
-// applicability (ADR 0083) and progressive help. The applicability axis
+// applicability (ADR 0087) and progressive help. The applicability axis
 // is BY NAME: a flag explicitly passed in a mode where it is not applicable is
 // REJECTED (connect rejects embedded-only flags; the bare/local mode rejects
 // remote-only flags). A flag NOT listed here is treated as advanced (excluded

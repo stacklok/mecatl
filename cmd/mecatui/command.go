@@ -4,7 +4,7 @@
 // once, threads the result into the existing parse/run path explicitly, and owns
 // the one transport-resolution path.
 //
-// Final grammar (ADR 0083): bare `mecatui [flags]` is the canonical default — it
+// Final grammar (ADR 0089): bare `mecatui [flags]` is the canonical default — it
 // ALWAYS hosts an embedded server and NEVER probes loopback. `mecatui connect
 // ADDRESS` ALWAYS dials ADDRESS and NEVER probes/embeds; it is the ONLY
 // subcommand. There is no compatibility path: `mecatui local` is an unknown

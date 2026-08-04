@@ -32,7 +32,7 @@ acp` for the ACP stdio mode. Bare `mecated` prints the command help and exits
 with a usage error.
 
 The minimal invocation starts the server on loopback with an in-memory session
-store. No persistence, no auth — the single-user localhost trust model:
+store. No persistence, no auth — the single-user localhost trust model.
 
 Default addresses:
 
@@ -108,8 +108,8 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 
 The listener topology above (gRPC/HTTP/metrics addresses, TLS cert/key/CA,
 rate-limit/burst) can live in a small, strict, versioned YAML file instead of
-repeated flags. The file is a DISTINCT file from `settings.yaml` (which is
-POLICY: permissions, posture, guardrails, models) and is loaded ONLY when you
+repeated flags. The file is a **distinct** file from `settings.yaml` (which is
+**policy**: permissions, posture, guardrails, models) and is loaded ONLY when you
 start with `mecated serve --config PATH` — there is **no conventional
 auto-load**. Scaffold and validate it offline:
 
@@ -131,7 +131,7 @@ including an explicit empty/zero.
 using `MECATL_AUTH_TOKEN` / `--auth-token`. A **non-loopback** bind still
 requires auth/TLS (it logs a prominent WARNING otherwise); `daemon.yaml`
 changes topology, not the trust model. `config daemon validate` never prints
-secrets or raw file content. See [ADR 0084](https://stacklok.github.io/mecatl/adr/0084-daemon-config-file) for the rationale.
+secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/blob/main/docs/adr/0088-daemon-config-file.md) for the rationale.
 
 ### Session state
 
@@ -225,15 +225,6 @@ Two things worth knowing before you rely on it:
 See [Permissions & guardrails](/what-you-get/permissions.md) for the full rule
 engine. Posture is read from the operator-global `settings.yaml` (`posture:` key)
 and out-ranked by the CLI flag when both are set.
-
-### Output-economy migration
-
-The former output-economy tier has been removed. There is now one default prompt tone,
-which keeps the investigation-depth, minimum-change, read-before-edit, trust-boundary,
-and safety guidance. Stale `--output-economy` flags now fail at startup with the
-standard unknown-flag error, and a top-level `output-economy:` settings.yaml key is
-rejected with a named unknown-key error; remove them from scripts and configuration.
-This applies to `mecated`, embedded `mecatui`, and `mecatequi`.
 
 ### Guardrails
 

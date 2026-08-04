@@ -184,7 +184,7 @@ through it; the compaction summarizer (`engine/agent/cascade.go`) builds its own
 `prompt.Layered{StablePrefix: summarizerSystemPrompt}` directly and is explicitly NOT routed
 through the host builder (the summarizer's structured-output contract is host-independent).
 
-**One default tone; no output-economy surface at all (issue #337, ADR 0082 + the
+**One default tone; no output-economy surface at all (issue #337, ADR 0086 + the
 clean-break follow-up).** `engine/prompt/builder.go` (`defaultTone`) remains byte-for-byte
 unchanged: concise final delivery is separated from investigation/reasoning depth, and the
 minimum-change, read-before-edit, trust-boundary-validation, and safety clauses remain
@@ -2502,7 +2502,7 @@ write path (`config init`) and the read path (the resolver's `loadUserRules`) sh
 ONE relative-path const (`permconfig.UserSettingsRelPath`, re-exported as
 `configgen.SettingsRelPath`), so they provably resolve the same file.
 
-### `daemonconfig` (explicit daemon.yaml — issue #338, ADR 0084)
+### `daemonconfig` (explicit daemon.yaml — issue #338, ADR 0088)
 
 `internal/adapter/daemonconfig` is the strict, versioned, operator-selected
 daemon config file loaded ONLY when `mecated serve --config PATH` is supplied. It is a DISTINCT file from
@@ -2531,16 +2531,16 @@ rate-limit/burst bounds, the SAME bound the serve path's
 command); `config init` keeps ownership of `settings.yaml`. Command resolution
 fails closed for a missing/unknown `config daemon` subcommand — it never
 reaches `run()`/listeners. `--config` stays an advanced serve-only, explicit
-flag; ACP help excludes it. See ADR 0084.
+flag; ACP help excludes it. See ADR 0088.
 
-### CLI transport grammar (ADR 0085 — the clean break)
+### CLI transport grammar (ADR 0089 — the clean break)
 
 One canonical spelling per action, no aliases/shims. **mecatui** (`cmd/mecatui/command.go`
 `resolveTransportMode`): bare `mecatui [flags]` (incl. a leading flag) ALWAYS hosts the
 embedded mecated (never probes loopback — the AUTO probe is deleted); `mecatui connect
 ADDRESS [flags]` ALWAYS dials (never embeds; ADDRESS must immediately follow `connect` — a
 missing/flag-first token fails closed, the one exception being the help meta-flags, so
-`connect --help` renders help with no ADDRESS). The ADR-0083 `local` subcommand and the
+`connect --help` renders help with no ADDRESS). The ADR-0087 `local` subcommand and the
 `--server` flag are DELETED (unknown command / unknown-flag errors). Mode-keyed flag
 applicability (`flagApplicabilityByFlag`, `rejectInapplicableFlags`) rejects embedded-only
 flags in connect mode and remote-only flags (`--auth-token`/`--tls*`/`--insecure`) in the

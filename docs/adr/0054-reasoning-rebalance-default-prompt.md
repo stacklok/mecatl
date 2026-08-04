@@ -98,4 +98,4 @@ keeping the rest of ADR 0041 verbatim:
 - [ADR 0024](./0024-system-prompt-research.md) — the system-prompt research this builds on.
 - `engine/prompt/builder.go` — the `defaultTone` constant.
 - `internal/app/build.go` — `agencyDelta`, the per-model task-persistence/same-turn-action contract.
-- `perf/scenarios/output_economy_test.go` <!-- lint:not-a-citation: removed by ADR 0082; historical reference in a frozen ADR --> — the offline output-economy scenario benchmark.
+- `perf/scenarios/output_economy_test.go` <!-- lint:not-a-citation: removed by ADR 0086; historical reference in a frozen ADR --> — the offline output-economy scenario benchmark.

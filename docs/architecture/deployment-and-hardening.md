@@ -21,7 +21,7 @@ and `cmd/mecated` wires the knobs:
 - **Health** — HTTP `/healthz` (liveness) + `/readyz` (readiness) mounted outside
   auth/rate-limit, plus standard `grpc_health_v1` `SERVING` (`internal/adapter/server/health.go`).
 - **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.
-- **Daemon config file (`daemon.yaml`, ADR 0084)** — the serve-time topology
+- **Daemon config file (`daemon.yaml`, ADR 0088)** — the serve-time topology
   slice (gRPC/HTTP/metrics listen addresses, TLS cert/key/CA paths,
   rate-limit/burst) is optionally carried by a small, strict, versioned YAML
   file loaded ONLY when `mecated serve --config PATH` is supplied explicitly

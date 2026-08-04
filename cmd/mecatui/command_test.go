@@ -298,7 +298,7 @@ func TestFlagApplicabilityCompletenessOverRealFlagSet(t *testing.T) {
 
 // Default unknown metadata must fail closed (reject), not silently include.
 func TestUnknownMetadataFailsClosed(t *testing.T) {
-	// A flag not in flagApplicabilityByFlag and not in hiddenMecatuiFlags is
+	// A flag not in flagApplicabilityByFlag is
 	// rejected in BOTH explicit modes. --help is registered by the stdlib flag
 	// parser implicitly but is NOT in our metadata; however it is handled by
 	// fs.Parse (returns flag.ErrHelp) BEFORE the applicability check runs. So we
@@ -328,8 +328,8 @@ func TestAskReviewerFlagsAreUnknownFlagErrors(t *testing.T) {
 }
 
 func TestOutputEconomyFlagIsUnknownFlagError(t *testing.T) {
-	// The --output-economy compatibility flag is DELETED (ADR 0085, the clean
-	// break superseding ADR 0082's parse-compat shim): it now fails at flag-parse
+	// The --output-economy compatibility flag is DELETED (ADR 0089, the clean
+	// break superseding ADR 0086's parse-compat shim): it now fails at flag-parse
 	// time with the standard unknown-flag error instead of parsing as a no-op —
 	// in BOTH modes (unregistration is total).
 	for _, mode := range []transportMode{modeLocal, modeConnect} {

@@ -18,7 +18,7 @@ type config struct {
 	// transportMode is the resolved canonical transport mode (local/connect)
 	// threaded explicitly from resolveTransportMode through parse and validate.
 	// It drives the transport path (no-probe/no-embed) and the
-	// trust/provider/posture validation gating (ADR 0083).
+	// trust/provider/posture validation gating (ADR 0087).
 	transportMode transportMode
 	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for the
 	// bare/local mode). Set by resolveTransportMode; consumed by resolveTransport.
@@ -387,7 +387,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 		return nil, config{}, flag.ErrHelp
 	}
 
-	// By-name applicability rejection (ADR 0083): connect rejects embedded-only
+	// By-name applicability rejection (ADR 0087): connect rejects embedded-only
 	// flags; the bare/local mode rejects remote-only flags.
 	if err := rejectInapplicableFlags(fs, mode); err != nil {
 		return fs, config{}, err
@@ -535,7 +535,7 @@ func (c config) validate() error {
 	default:
 		return fmt.Errorf("invalid --mode %q (want default|plan|accept-edits)", c.mode)
 	}
-	// Provider/posture checks apply ONLY to paths that may embed (ADR 0083 Phase
+	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
 	// 1); the predicate + its rationale live once on config.mayEmbed.
 	mayEmbed := c.mayEmbed()
 	// When hosting an embedded server the provider must be resolvable: an OpenAI,
@@ -573,7 +573,7 @@ func (c config) validate() error {
 // mayEmbed reports whether this run may host an embedded server, and so is
 // subject to the provider/posture checks in validate() and the pre-TUI posture
 // WARN in run(). The bare/local mode always embeds; `connect` never embeds, so
-// it skips those checks (ADR 0083). It is the single predicate both guards key
+// it skips those checks (ADR 0087). It is the single predicate both guards key
 // on, so the gating rationale lives in one place.
 func (c config) mayEmbed() bool {
 	return c.transportMode == modeLocal

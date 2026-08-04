@@ -75,7 +75,7 @@ func main() {
 
 func run(argv []string) error {
 	// Resolve the leading CLI word into a transport mode (bare-local/connect)
-	// via the PURE resolveTransportMode seam (ADR 0083), then thread the mode +
+	// via the PURE resolveTransportMode seam (ADR 0087), then thread the mode +
 	// remaining flag tail into parseTransportFlags. main owns the os.Args read +
 	// the os.Exit side effects; the resolver is pure (no os.Args mutation, no
 	// I/O).
@@ -269,7 +269,7 @@ func keyOverridesFromConfig(cfg config) map[string][]string {
 func resolveTransport(ctx context.Context, cfg config) (target string, dial client.DialConfig, cleanup func(), err error) {
 	noop := func() {}
 
-	// The two modes are PURE (ADR 0083): `mecatui connect ADDRESS` ALWAYS dials
+	// The two modes are PURE (ADR 0087): `mecatui connect ADDRESS` ALWAYS dials
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
@@ -531,7 +531,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// Run.Approve → childAskRouter). It must NOT default headless (which would
 		// auto-deny — or LLM-adjudicate — a child ask the human is right there to
 		// answer). This is why the headless ask reviewer is a mecated-only flag
-		// (ADR 0083 removed the inert --subagent-ask-reviewer* flags from mecatui:
+		// (ADR 0089 removed the inert --subagent-ask-reviewer* flags from mecatui:
 		// the modal always sees the ask, so the reviewer never engages here — run
 		// a headless `mecated --headless --subagent-ask-reviewer …` and point
 		// `mecatui connect` at it to use the reviewer).

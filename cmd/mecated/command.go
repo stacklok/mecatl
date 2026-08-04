@@ -163,7 +163,7 @@ func resolveConfigSubcommand(args []string) commandResolution {
 		}
 	}
 	// `config daemon <init|validate>` — the daemon topology config group
-	// (issue #338, ADR 0084). A bare `config daemon` or an unknown
+	// (issue #338, ADR 0088). A bare `config daemon` or an unknown
 	// `config daemon <x>` is a usage error (fail closed).
 	if len(args) >= 3 && args[2] == "daemon" {
 		if len(args) >= 4 && args[3] == "init" {
@@ -223,7 +223,7 @@ func unknownCommandError(arg string) error {
 // configUsageError builds the error message for a bare/unknown `config` invocation.
 // It distinguishes the two config surfaces: `config init` owns the operator
 // settings.yaml (permissions/trust POLICY), `config daemon` owns the daemon.yaml
-// (listener TOPOLOGY) — see ADR 0084.
+// (listener TOPOLOGY) — see ADR 0088.
 func configUsageError(argv []string) error {
 	sub := ""
 	if len(argv) >= 3 {

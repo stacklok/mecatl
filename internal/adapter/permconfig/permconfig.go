@@ -44,8 +44,8 @@ func parseYAML(data []byte) (Config, error) {
 	}
 	// TARGETED unknown-key rejection (the top-level decode is deliberately
 	// lenient — plain yaml.Unmarshal — so removed keys must be named
-	// individually): `output-economy:` was REMOVED (ADR 0085, the clean break
-	// superseding ADR 0082's parse-compat shim; ADR 0041 INTRODUCED the
+	// individually): `output-economy:` was REMOVED (ADR 0089, the clean break
+	// superseding ADR 0086's parse-compat shim; ADR 0041 INTRODUCED the
 	// setting). Error precisely so the invalid-file WARN names the key to
 	// delete.
 	if err := rejectRemovedTopLevelKeys(data); err != nil {

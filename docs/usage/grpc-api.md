@@ -257,8 +257,8 @@ non-loopback `--perf-addr` with `--perf-mcp` is refused). This is the in-process
 way to profile a freeze in the embedded server itself.
 The embedded server also accepts `--yolo` (the
 allow-all operator posture — same semantics, root refusal, and `MECATL_SANDBOX`/
-`IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **ignored in
-`connect` mode** — the dialled server owns its own posture. Note the TUI's **built-in slash commands**
+`IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **rejected in
+`connect` mode** — the dialed server owns its own posture. Note the TUI's **built-in slash commands**
 (`/clear`, `/help`, and the caps-gated `/mcp`, `/agents`, `/team`, `/skills`,
 `/soul`, `/usermodel`, `/models`, `/effort`, `/worktrees` — in that fixed palette order) still work
 regardless — they act on the TUI itself, not the server, so typing `/` always

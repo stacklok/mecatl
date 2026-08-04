@@ -578,7 +578,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 }
 
 // runConfigDaemonInit implements `mecated config daemon init [--print] [--force]`:
-// it scaffolds a minimal, commented v1 daemon.yaml (issue #338, ADR 0084) at the
+// it scaffolds a minimal, commented v1 daemon.yaml (issue #338, ADR 0088) at the
 // documented conventional path <XDG_CONFIG_HOME>/mecatl/daemon.yaml. It does NOT
 // cause automatic loading — the file is loaded ONLY when `mecated serve --config
 // PATH` is supplied explicitly. --print emits the skeleton to out and writes
