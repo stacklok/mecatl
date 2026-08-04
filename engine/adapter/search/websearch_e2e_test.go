@@ -1,4 +1,4 @@
-package tools_test
+package search_test
 
 import (
 	"context"
@@ -9,12 +9,11 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
-	refsearch "github.com/stacklok/mecatl/engine/adapter/search"
+	"github.com/stacklok/mecatl/engine/adapter/search"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // TestWebSearchModelFacingE2E is the headline OFFLINE model-facing flow: the model
@@ -23,13 +22,13 @@ import (
 // WebSearchTool over a fake provider through the REAL agent loop (mockllm) — no
 // network.
 //
-// MUTATION-VERIFY: replace the provider with refsearch.Unavailable{} (so no real
+// MUTATION-VERIFY: replace the provider with search.Unavailable{} (so no real
 // results return) — the assertion that the discovered URL reached the loop fails,
 // proving the provider call + result formatting are load-bearing for the flow.
 func TestWebSearchModelFacingE2E(t *testing.T) {
 	const discoveredURL = "https://go.dev/doc/go1.26"
 
-	fake := refsearch.NewFake(
+	fake := search.NewFake(
 		tool.SearchResult{
 			Title:   "Go 1.26 Release Notes",
 			URL:     discoveredURL,
@@ -38,7 +37,7 @@ func TestWebSearchModelFacingE2E(t *testing.T) {
 		},
 	)
 	cat := tool.NewCatalog()
-	cat.MustRegister(tools.NewWebSearchTool(fake))
+	cat.MustRegister(search.NewWebSearchTool(fake))
 
 	llm := mockllm.New(
 		// Turn 1: the model decides to search.

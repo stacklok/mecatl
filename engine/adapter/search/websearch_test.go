@@ -1,16 +1,40 @@
-package tools
+package search
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	refsearch "github.com/stacklok/mecatl/engine/adapter/search"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
+
+// call builds a ToolCall with JSON args marshalled from m.
+//
+// mirrors engine/adapter/fstools/fstools_test.go call EXACTLY — keep byte-identical.
+func call(t *testing.T, name string, m map[string]any) session.ToolCall {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	return session.NewToolCall(session.ToolCallID("id-"+name), name, raw)
+}
+
+// exec runs a tool and fails the test on a harness-level (Go) error.
+//
+// mirrors engine/adapter/fstools/fstools_test.go exec EXACTLY — keep byte-identical.
+func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) session.ToolResult {
+	t.Helper()
+	res, err := tl.Execute(context.Background(), in, ws)
+	if err != nil {
+		t.Fatalf("%s: unexpected harness error: %v", tl.Spec().Name, err)
+	}
+	return res
+}
 
 // TestWebSearchReadOnly pins WebSearch as a read-only tool so the dispatcher runs
 // it in the read-parallel batch (gauntlet #4).
@@ -35,7 +59,7 @@ func TestWebSearchFormatsBoundedResults(t *testing.T) {
 			Source:  "example.com",
 		})
 	}
-	fake := refsearch.NewFake(results...)
+	fake := NewFake(results...)
 	tl := NewWebSearchTool(fake)
 
 	res := exec(t, tl, call(t, "WebSearch", map[string]any{"query": "anything", "limit": 3}), nil)
@@ -56,7 +80,7 @@ func TestWebSearchFormatsBoundedResults(t *testing.T) {
 		t.Fatal("snippet was not truncated")
 	}
 	// Total-bytes cap: never exceeds the shared MaxOutputBytes envelope.
-	if len(res.Content) > toolkit.MaxOutputBytes+200 {
+	if len(res.Content) > MaxOutputBytes+200 {
 		t.Fatalf("output exceeded the shared byte cap: %d bytes", len(res.Content))
 	}
 }
@@ -87,19 +111,18 @@ func TestWebSearchOutputBytesCapTrips(t *testing.T) {
 			Source:  "example.com",
 		})
 	}
-	res := exec(t, NewWebSearchTool(refsearch.NewFake(results...)),
+	res := exec(t, NewWebSearchTool(NewFake(results...)),
 		call(t, "WebSearch", map[string]any{"query": "x", "limit": webSearchMaxLimit}), nil)
 	if res.IsError {
 		t.Fatalf("unexpected error result: %q", res.Content)
 	}
 	// The body, before the cap, would be > MaxOutputBytes (10 × ~6.5 KB). The wrapper
 	// MUST clamp it to within the shared envelope.
-	if len(res.Content) > toolkit.MaxOutputBytes+200 {
-		t.Fatalf("byte cap did not trip: output is %d bytes (cap %d)", len(res.Content), toolkit.MaxOutputBytes)
+	if len(res.Content) > MaxOutputBytes+200 {
+		t.Fatalf("byte cap did not trip: output is %d bytes (cap %d)", len(res.Content), MaxOutputBytes)
 	}
-	// And the result must carry the truncation marker the shared toolkit.Truncate
-	// emits when it trims — proving the cap actually fired (not merely that the body
-	// happened to fit).
+	// And the result must carry the truncation marker truncate emits when it trims —
+	// proving the cap actually fired (not merely that the body happened to fit).
 	const truncMarker = "[output truncated:"
 	if !strings.Contains(res.Content, truncMarker) {
 		t.Fatalf("expected the truncation marker %q in the capped output (len %d)", truncMarker, len(res.Content))
@@ -111,7 +134,7 @@ func TestWebSearchOutputBytesCapTrips(t *testing.T) {
 // the fake's captured query.
 func TestWebSearchArgValidation(t *testing.T) {
 	t.Run("missing query is a model-facing error, not a Go error", func(t *testing.T) {
-		fake := refsearch.NewFake()
+		fake := NewFake()
 		res := exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{}), nil)
 		if !res.IsError {
 			t.Fatalf("expected an error result for a missing query; got %q", res.Content)
@@ -122,7 +145,7 @@ func TestWebSearchArgValidation(t *testing.T) {
 	})
 
 	t.Run("absent limit uses the default", func(t *testing.T) {
-		fake := refsearch.NewFake(tool.SearchResult{Title: "x"})
+		fake := NewFake(tool.SearchResult{Title: "x"})
 		exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
 		if got := fake.LastQuery().Limit; got != webSearchDefaultLimit {
 			t.Fatalf("absent limit => default %d, got %d", webSearchDefaultLimit, got)
@@ -130,7 +153,7 @@ func TestWebSearchArgValidation(t *testing.T) {
 	})
 
 	t.Run("oversized limit clamps to the hard max", func(t *testing.T) {
-		fake := refsearch.NewFake(tool.SearchResult{Title: "x"})
+		fake := NewFake(tool.SearchResult{Title: "x"})
 		exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{"query": "go", "limit": 99}), nil)
 		if got := fake.LastQuery().Limit; got != webSearchMaxLimit {
 			t.Fatalf("oversized limit => hard max %d, got %d", webSearchMaxLimit, got)
@@ -148,7 +171,7 @@ func TestWebSearchArgValidation(t *testing.T) {
 		{"negative uses the default", -5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := refsearch.NewFake(tool.SearchResult{Title: "x"})
+			fake := NewFake(tool.SearchResult{Title: "x"})
 			exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{"query": "go", "limit": tc.limit}), nil)
 			if got := fake.LastQuery().Limit; got != webSearchDefaultLimit {
 				t.Fatalf("limit %d => default %d, got %d", tc.limit, webSearchDefaultLimit, got)
@@ -157,7 +180,7 @@ func TestWebSearchArgValidation(t *testing.T) {
 	}
 
 	t.Run("site and freshness pass through verbatim", func(t *testing.T) {
-		fake := refsearch.NewFake(tool.SearchResult{Title: "x"})
+		fake := NewFake(tool.SearchResult{Title: "x"})
 		exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{
 			"query": "go", "site": "go.dev", "freshness": "week",
 		}), nil)
@@ -177,7 +200,7 @@ func TestWebSearchDisabled(t *testing.T) {
 		provider tool.SearchProvider
 	}{
 		{"nil provider", nil},
-		{"ErrSearchUnavailable", refsearch.Unavailable{}},
+		{"ErrSearchUnavailable", Unavailable{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := exec(t, NewWebSearchTool(tc.provider), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
@@ -198,7 +221,7 @@ func TestWebSearchDisabled(t *testing.T) {
 // the model-facing backend-down message (the mandatory-degradation path) naming the
 // upgrade env vars — NOT a Go error and NOT an error result.
 func TestWebSearchBackendDown(t *testing.T) {
-	fake := refsearch.NewFakeError(tool.ErrSearchBackendDown)
+	fake := NewFakeError(tool.ErrSearchBackendDown)
 	res := exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
 	if res.IsError {
 		t.Fatalf("backend-down should not be an error result: %q", res.Content)
@@ -213,7 +236,7 @@ func TestWebSearchBackendDown(t *testing.T) {
 // TestWebSearchEmptyResults asserts the "no results" message (like Grep's
 // no-matches), distinct from not-configured.
 func TestWebSearchEmptyResults(t *testing.T) {
-	res := exec(t, NewWebSearchTool(refsearch.NewFake()), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
+	res := exec(t, NewWebSearchTool(NewFake()), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
 	if res.IsError {
 		t.Fatalf("empty results should not be an error: %q", res.Content)
 	}
@@ -225,7 +248,7 @@ func TestWebSearchEmptyResults(t *testing.T) {
 // TestWebSearchBackendError maps a non-sentinel provider error to a model-facing
 // error result (not a Go error).
 func TestWebSearchBackendError(t *testing.T) {
-	fake := refsearch.NewFakeError(context.DeadlineExceeded)
+	fake := NewFakeError(context.DeadlineExceeded)
 	res := exec(t, NewWebSearchTool(fake), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
 	if !res.IsError {
 		t.Fatalf("a backend fault should be an error result; got %q", res.Content)
@@ -240,10 +263,10 @@ func TestWebSearchBackendError(t *testing.T) {
 // goal:) must be neutralised in the rendered output, so the model cannot be tricked
 // into treating injected text as harness instructions or escaping the fence.
 //
-// MUTATION-VERIFY: disable toolkit.FenceUntrusted in formatSearchResults (return
+// MUTATION-VERIFY: disable agent.FenceUntrusted in formatSearchResults (return
 // the raw body) and this test fails — proving the fence is load-bearing.
 func TestWebSearchNeutralisesInjection(t *testing.T) {
-	forged := refsearch.NewFake(tool.SearchResult{
+	forged := NewFake(tool.SearchResult{
 		// The Title ALSO carries a forged bare fence marker (and a framing-header
 		// token). oneLine collapses newlines, so a multi-line header forgery via Title
 		// can't survive — but the bare <<<UNTRUSTED marker token does, and must be
@@ -268,6 +291,21 @@ func TestWebSearchNeutralisesInjection(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "[redacted-marker]") {
 		t.Fatal("forged inner fence marker was not neutralised to [redacted-marker]")
+	}
+
+	// The snippet's multi-line header forgery (Tool:/Team goal:/Requested command: on
+	// their own lines) is defeated by oneLine collapsing the snippet to a single line —
+	// so the forged headers can never reach the model as whole-line headers (the only
+	// form NeutraliseFraming redacts; a mid-line header is the accepted residual of the
+	// deliberate oneLine collapse). Assert that whole-line-header prevention: the output
+	// must contain NO newline-followed-by-forged-header sequence, i.e. the snippet was
+	// collapsed onto one display line. The fence-marker neutralisation above is the
+	// load-bearing half this test exists to pin (MUTATION-VERIFY: drop FenceUntrusted
+	// and the <<<UNTRUSTED count + [redacted-marker] assertions fail).
+	for _, forgedHeader := range []string{"\nTool:", "\nTeam goal:", "\nRequested command:"} {
+		if strings.Contains(res.Content, forgedHeader) {
+			t.Fatalf("forged framing header %q survived as a whole line in the tool's output:\n%s", forgedHeader, res.Content)
+		}
 	}
 }
 

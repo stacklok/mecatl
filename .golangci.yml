@@ -401,9 +401,13 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/engine/session
+            # engine/agent: FenceUntrusted (the single-source-of-truth untrusted-content fence, LLM01). Accepted dep-cone cost: the first engine/adapter to import the agent loop; search is also the first outbound-network adapter. Follow-up: relocate fence primitives to engine/governance to shrink the cone.
+            - github.com/stacklok/mecatl/engine/agent
+            - golang.org/x/sync/semaphore
           deny:
             - pkg: os
-              desc: 'the search reference adapter (fakesearch) is the scripted OFFLINE SearchProvider; it must not touch the OS or the network'
+              desc: 'the search adapter providers touch the network (HTTP) but must not touch the host OS/filesystem; the fake is the scripted OFFLINE SearchProvider'
         engine-adapter-cronparse:
           list-mode: strict
           files:

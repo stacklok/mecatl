@@ -3618,9 +3618,10 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   and `Unavailable{}` (every Search returns `ErrSearchUnavailable` — the
   composition's not-configured sentinel, the SearchProvider analogue of the no-shell
   CommandRunner). Under `engine/adapter/*` so core test files may import it; a new
-  strict depguard rule (`engine-adapter-search`) pins it to `$gostd` + `engine/tool`,
-  no `os`, no network.
-- **Tool (ADAPTER):** `internal/adapter/tools/websearch.go` — `WebSearchTool` over a
+  strict depguard rule (`engine-adapter-search`) pins it to `$gostd` + `engine/tool` +
+  `engine/session` + `engine/agent` + `golang.org/x/sync/semaphore`, `os` denied
+  (providers touch the network but not the host OS/filesystem).
+- **Tool (ADAPTER):** `engine/adapter/search/websearch.go` — `WebSearchTool` over a
   `tool.SearchProvider`; `ReadOnly()==true` (read-parallel batch, same as WebFetch).
   `Execute` validates (missing query → model-facing error result, NOT a Go error),
   CLAMPS limit (default 5 absent/≤0; hard max 10), calls the provider, and handles
@@ -3628,17 +3629,19 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   error result — the tool exists, the backend just isn't set up) and empty → "no
   results" (like Grep). **Bounding lives in the tool** (the choke point — the provider
   may over-return): count → min(limit, hardMax), each snippet rune-truncated, then the
-  whole FENCED block through `toolkit.MaxOutputBytes`.
+  whole FENCED block through a local carried `MaxOutputBytes` const (byte-identical to
+  `toolkit.MaxOutputBytes`; carried because engine must not import the root module
+  per the fstools precedent, #269).
 - **Fencing (LLM01):** results are UNTRUSTED external content, wrapped via
-  `toolkit.FenceUntrusted` — a BYTE-IDENTICAL reproduction of `agent.WriteUntrustedBlock`
-  for the adapter layer (which cannot import `engine/agent`). The single-source-of-
-  truth drift risk is mitigated by `TestFenceUntrustedMatchesAgentFence`
-  (mutation-verified), which diffs the adapter copy against the real
-  `agent.WriteUntrustedBlock` over a corpus including the forged marker + every
-  framing header. The adversarial `TestWebSearchNeutralisesInjection` (also
-  mutation-verified) proves a forged inner fence + `Tool:`/`Team goal:` headers are
-  neutralised so a result can't break out and smuggle instructions.
-- **HTTP adapter (heavy):** `internal/adapter/search/httpsearch.go` — vendor-neutral
+  `agent.FenceUntrusted` — the canonical single-source-of-truth fence in `engine/agent`
+  (the same one modelhook and the team/ask-review prompts use). The tool body now lives
+  in `engine/adapter/search` and imports `engine/agent` directly (the #363 Option B
+  decision, accepting the dep-cone cost of the first engine/adapter→agent import).
+  Follow-up: relocate fence primitives to `engine/governance` to shrink the cone. The
+  adversarial `TestWebSearchNeutralisesInjection` (mutation-verified) proves a forged
+  inner fence + `Tool:`/`Team goal:` headers are neutralised so a result can't break
+  out and smuggle instructions.
+- **HTTP adapter (heavy):** `engine/adapter/search/httpsearch.go` — vendor-neutral
   GET/POST JSON search (a SearXNG-style or generic `{"results":[…]}` endpoint, with
   permissive field aliases: content/snippet/description, publishedDate/date,
   engine/source). It carries its OWN per-call timeout (10s, honoring ctx) AND a
@@ -3651,7 +3654,7 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   `httpResponse.merged()` folds Brave's NESTED `{"web":{"results":[…]}}` shape into the
   flat results (the prior round registered the Brave endpoint but never parsed its body
   — it returned zero hits). Tests use `httptest.Server` only — never a live endpoint.
-- **Exa client (TIER-1 default, heavy):** `internal/adapter/search/exasearch.go` —
+- **Exa client (TIER-1 default, heavy):** `engine/adapter/search/exasearch.go` —
   `ExaProvider`, a MINIMAL DEDICATED streamable-HTTP JSON-RPC MCP client for Exa's
   anonymous endpoint (`https://mcp.exa.ai/mcp` → `tools/call web_search_exa`). It is
   deliberately NOT the general MCP manager: **the no-OAuth-discovery caveat** — Exa

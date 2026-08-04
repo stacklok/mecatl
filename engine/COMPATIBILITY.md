@@ -50,8 +50,9 @@ ignores internal churn:
   suites). These ship as offline test doubles and sane defaults, not as a
   stable API. `fstools` (the Read/Edit/Write/Grep/Glob/Bash tool bodies),
   `agentfs` (the filesystem `.claude/agents` agent-def discovery adapter), and
-  `skillfs` (the read-only `.claude/skills` discovery core + Skill tool body),
-  graduated into the importable module per #269 / #328, are reference bundles: a
+  `skillfs` (the read-only `.claude/skills` discovery core + Skill tool body), and
+  `search` (the WebSearch tool body + Exa/HTTP/SearXNG providers + offline fake),
+  graduated into the importable module per #269 / #328 / #363, are reference bundles: a
   consumer composes its own sources/catalog and may take, subset, swap-by-name,
   or ignore them (see the package docs), so their surface may change without a
   CHANGELOG note. **Note:** the conformance suites' real CONTRACT is the port

@@ -1,16 +1,95 @@
-package tools
+package search
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
+
+// Carry-over helpers that previously lived in the root module
+// (internal/adapter/toolkit). They are carried here rather than imported so the
+// engine module's adapter tree remains self-contained — the engine module must
+// not import the root module (the fstools precedent, #269).
+//
+// mirrors internal/adapter/toolkit EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+
+// MaxOutputBytes caps the byte length of a single tool's textual result. It is
+// the fstools output cap; tools append a truncation marker (see truncate) when
+// they trim to it.
+//
+// mirrors internal/adapter/toolkit.MaxOutputBytes EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+const MaxOutputBytes = 25_000
+
+// TruncationMarker is the suffix truncate appends when it trims a body to the
+// byte cap.
+//
+// mirrors internal/adapter/toolkit.TruncationMarker EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+const TruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"
+
+// parseArgs unmarshals a tool call's JSON arguments into dst. It delegates to the
+// canonical session.ParseArgs, returning a model-facing error string (not a Go
+// error) describing a malformed payload.
+//
+// mirrors internal/adapter/toolkit.ParseArgs EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+func parseArgs(in session.ToolCall, dst any) (string, bool) {
+	return session.ParseArgs(in, dst)
+}
+
+// truncateBytes trims s to at most MaxOutputBytes on a rune boundary, appending
+// TruncationMarker when it does.
+func truncateBytes(s string) string {
+	return truncate(s, MaxOutputBytes)
+}
+
+// truncate trims s to at most maxBytes, appending TruncationMarker when it does.
+// It cuts on a rune boundary so the result is never invalid UTF-8.
+//
+// mirrors internal/adapter/toolkit.Truncate EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+func truncate(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + TruncationMarker
+}
+
+// schema wraps a static JSON-schema literal as json.RawMessage for a ToolSpec.
+// The literals are authored by hand and are valid JSON.
+//
+// mirrors internal/adapter/toolkit.Schema EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+func schema(s string) json.RawMessage { return json.RawMessage(s) }
+
+// truncateRunes trims s to at most maxBytes on a rune boundary and appends a
+// single-character ellipsis ("…"). Unlike truncate (which appends a verbose,
+// byte-count marker for tool output), this is the compact form used to cap
+// always-in-context metadata. When s already fits within maxBytes it is returned
+// unchanged.
+//
+// mirrors internal/adapter/toolkit.TruncateRunes EXACTLY — keep byte-identical; carried because engine must not import the root module (fstools precedent, #269).
+func truncateRunes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	const ellipsis = "…"
+	cut := maxBytes - len(ellipsis)
+	if cut < 0 {
+		cut = 0
+	}
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + ellipsis
+}
 
 // WebSearch result-shaping bounds. These keep a single search result set compact
 // and bounded BEFORE the shared output-bytes cap (the tool is the choke point —
@@ -207,7 +286,7 @@ func formatSearchResults(results []tool.SearchResult, limit int) string {
 			fmt.Fprintf(&b, "   Source: %s%s\n", oneLine(r.Source), dateSuffix(r.Date))
 		}
 		if r.Snippet != "" {
-			snip := toolkit.TruncateRunes(oneLine(r.Snippet), webSearchSnippetMaxBytes)
+			snip := truncateRunes(oneLine(r.Snippet), webSearchSnippetMaxBytes)
 			fmt.Fprintf(&b, "   %s\n", snip)
 		}
 	}

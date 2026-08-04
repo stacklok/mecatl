@@ -69,7 +69,7 @@ application consumes (`port`), the application use-case layer that is the agent
 loop (`agent`), and adapters that implement the ports (`adapter/*`). The core
 tiers (domain, ports, agent loop) plus a small set of stdlib-only REFERENCE
 adapters (`engine/adapter/*`: `mockllm`, `memfs`, `nofs`, `memstore`, `sessnap`,
-`permpolicy`, `permstore`, `wallclock`, `search` (a fake web-search backend),
+`permpolicy`, `permstore`, `wallclock`, `search` (the graduated web-search tool body + Exa/HTTP/SearXNG providers + offline fake, #363),
 `fstools` (the FS tool bodies), `agentfs` (the filesystem agent-def discovery adapter), `skillfs` (the read-only skills discovery core + Skill tool body), `rulesfs` (the `.claude/rules` discovery adapter, issue #329 — the pattern-2 turn-0 context instance), plus
 the conformance-as-contract suites `fsconformance`, `memconformance`,
 `storeconformance`, `sourceconformance`, `eventlogconformance`) live

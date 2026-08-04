@@ -13,6 +13,14 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`engine/adapter/search` graduated** (#363) — the WebSearch tool body
+  (`WebSearchTool` / `NewWebSearchTool`), the Exa/HTTP/SearXNG search providers
+  (`ExaProvider` / `HTTPProvider` / `BackendDown`), and the offline `Fake` /
+  `Unavailable` SearchProvider now travel with the importable engine module under
+  `engine/adapter/search/` (mirroring the #269 fstools precedent). The
+  `internal/adapter/tools` package re-exports the tool body via a type/function
+  alias so existing callers compile unchanged.
+
 - **`agent.BashTool` / `agent.NewBashTool`** (background-Bash feature, tasks 1–2) —
   the agent-loop `Bash` tool: the foreground half is byte-identical to the fstools
   Bash body's orchestration (same arg validation, timeout ctx, `runner.Run`,

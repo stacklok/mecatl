@@ -359,9 +359,9 @@ func parseJSONRPC(body []byte, contentType string) (jsonRPCResponse, error) {
 //
 // This is a SECOND, intentionally minimal SSE parser — it deliberately does NOT
 // reuse the openai adapter's decodeSSE (internal/adapter/openai/stream.go): that one
-// is unexported, bound to the OpenAI Responses event union, and depguard-isolated to
-// its package. A tiny field-level parser here is the right scope for a single
-// JSON-RPC-over-SSE response, not an oversight.
+// is unexported, bound to the OpenAI Responses event union, and lives in the root
+// module (unimportable from engine/). A tiny field-level parser here is the right
+// scope for a single JSON-RPC-over-SSE response, not an oversight.
 func parseSSEData(body []byte) ([]byte, error) {
 	var data []string
 	for _, line := range strings.Split(string(body), "\n") {

@@ -11,8 +11,9 @@
 //     layer's responsibility, not this adapter's — it must never inspect/rewrite the
 //     query, and it never sends the configured secret as part of the query.
 //
-// This file lives in internal/adapter (heavy) — distinct from engine/adapter/search's
-// fakesearch.go (the offline reference fake that travels with the engine core).
+// This file graduated from internal/adapter/search into the importable engine
+// module (issue #363) — it sits alongside engine/adapter/search's fakesearch.go
+// (the offline reference fake) so engine consumers get working web search by import.
 package search
 
 import (

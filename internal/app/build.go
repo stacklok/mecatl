@@ -67,7 +67,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/rules"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
-	httpsearch "github.com/stacklok/mecatl/internal/adapter/search"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
@@ -4326,7 +4325,7 @@ const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"
 // A construction error on a CONFIGURED HTTP tier (a bad URL / invalid config) does
 // NOT degrade to the kill-switch "disabled" sentinel — the operator INTENDED a
 // backend, it is just unusable, which is backend-down semantics. It fails soft to
-// httpsearch.BackendDown (the tool reports the backend is down, naming the upgrade
+// refsearch.BackendDown (the tool reports the backend is down, naming the upgrade
 // path) with a WARN (the harness still boots). Only the kill switch (WebSearchOff)
 // resolves to refsearch.Unavailable / the "disabled by operator" message.
 func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
@@ -4336,7 +4335,7 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 		return refsearch.Unavailable{}
 
 	case strings.TrimSpace(cfg.WebSearchURL) != "":
-		provider, err := httpsearch.NewHTTPProvider(httpsearch.HTTPConfig{
+		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{
 			BaseURL:    cfg.WebSearchURL,
 			APIKey:     cfg.WebSearchAPIKey,
 			AuthHeader: cfg.WebSearchAuthHeader,
@@ -4344,22 +4343,22 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 		})
 		if err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
-			return httpsearch.BackendDown{}
+			return refsearch.BackendDown{}
 		}
 		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with explicit HTTP backend (--websearch-url; wins over env/default)", "endpoint", cfg.WebSearchURL)
 		return provider
 
 	case strings.TrimSpace(cfg.SearXNGURL) != "":
-		provider, err := httpsearch.NewHTTPProvider(httpsearch.HTTPConfig{BaseURL: cfg.SearXNGURL})
+		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{BaseURL: cfg.SearXNGURL})
 		if err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
-			return httpsearch.BackendDown{}
+			return refsearch.BackendDown{}
 		}
 		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (SEARXNG_URL)", "endpoint", cfg.SearXNGURL)
 		return provider
 
 	case strings.TrimSpace(cfg.BraveAPIKey) != "":
-		provider, err := httpsearch.NewHTTPProvider(httpsearch.HTTPConfig{
+		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{
 			BaseURL:    braveSearchEndpoint,
 			APIKey:     cfg.BraveAPIKey,
 			AuthHeader: "X-Subscription-Token",
@@ -4367,14 +4366,14 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 		})
 		if err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch Brave backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
-			return httpsearch.BackendDown{}
+			return refsearch.BackendDown{}
 		}
 		// NEVER log the key — only the fixed endpoint.
 		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with Brave backend (BRAVE_API_KEY)", "endpoint", braveSearchEndpoint)
 		return provider
 
 	default:
-		provider := httpsearch.NewExaProvider(httpsearch.ExaConfig{APIKey: cfg.ExaAPIKey})
+		provider := refsearch.NewExaProvider(refsearch.ExaConfig{APIKey: cfg.ExaAPIKey})
 		// NEVER log the key — only the fixed base endpoint + the paid-tier boolean.
 		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED (Exa anonymous default; set SEARXNG_URL/BRAVE_API_KEY to switch backends, or --websearch=off to disable)", "endpoint", provider.BaseEndpoint(), "paid_tier", provider.PaidTier())
 		return provider
