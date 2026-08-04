@@ -52,6 +52,23 @@ mecatequi \
   long-lived `mecak8s` daemon the token is read once at startup and shared across
   sessions, so per-run identity is a mecatequi property
   ([ADR 0082](../adr/0082-factory-mcp-wiring.md)).
+- **`--mcp-server-insecure-http <name>`** (repeatable) is the EXPLICIT per-server
+  opt-out of that https rule for in-cluster plain-http Services
+  ([ADR 0090](../adr/0090-mcp-insecure-http-optin.md)): it lets the named server's
+  bearer ride `http` to a non-loopback host — acknowledging the token travels
+  **cleartext on the network path**, with network-layer controls
+  (NetworkPolicy / namespace trust) plus the short-lived token as the operator's
+  mitigations. It relaxes ONLY the http scheme gate, ONLY for that name, and is
+  **order-independent** of where its `--mcp-server` appears on argv (a scheduler
+  composing flags need not order them). Naming a server that is not registered — or
+  whose URL is already `https` / loopback / non-http — fails startup loudly: a stale
+  acknowledgment is an error, never silently inert. Example (an in-cluster
+  NetworkPolicy-scoped Service):
+
+  ```sh
+  --mcp-server tequitl=http://tequitl.tenant-a.svc:9100/mcp \
+  --mcp-server-insecure-http tequitl
+  ```
 - **`--out-summary=-`, passed EXPLICITLY**, selects the stdout-compact summary mode:
   the run summary is emitted as a **single compact JSON line as the FINAL stdout
   line** (nothing follows it on stdout). The unset default (also stdout) keeps the

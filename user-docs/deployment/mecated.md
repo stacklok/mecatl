@@ -241,7 +241,8 @@ a checked-in file weakening a security checker would be a downgrade.
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--mcp-server name=URL` | (none) | Remote MCP server, repeatable. Per-server bearer token from `MCP_<NAME>_TOKEN` |
+| `--mcp-server name=URL` | (none) | Remote MCP server, repeatable. Per-server bearer token from `MCP_<NAME>_TOKEN`; a token-bearing URL must be `https` (or `http` to loopback) |
+| `--mcp-server-insecure-http name` | (none) | Per-server opt-in, repeatable: let the named server's bearer ride plain `http` off-host (cleartext on the network path — rely on network-layer controls + short-lived tokens). Unregistered or already-`https`/loopback names fail startup |
 | `--mcp-resource-tools` | `true` | Register `ListMcpResources`/`ReadMcpResource` meta-tools when a server exposes resources |
 | `--toolhive` | `true` | Discover MCP servers from running ToolHive workloads (fails soft when no container runtime is reachable) |
 | `--toolhive-group` | `""` (default group) | ToolHive group to discover from |

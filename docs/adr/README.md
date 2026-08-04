@@ -116,6 +116,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0026 — Clipboard image paste](./0026-clipboard-image-paste.md)
 - [0028 — mecatequi (single-shot GitHub Action)](./0028-mecatequi.md)
 - [0082 — Factory MCP wiring for the one-shot mains](./0082-factory-mcp-wiring.md)
+- [0090 — Per-server opt-in for plain-http token-bearing MCP endpoints](./0090-mcp-insecure-http-optin.md)
 - [0032 — First-class worktree binding for a session](./0032-worktree-binding.md)
 - [0087 — Staged mecatui transport migration](./0087-mecatui-staged-transport-migration.md) *(superseded by 0089)*
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)

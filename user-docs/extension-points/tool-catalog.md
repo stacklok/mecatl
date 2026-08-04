@@ -180,6 +180,8 @@ mecated serve --mcp-server github=https://mcp.github.example.com/v1 \
 
 Each `name=URL` pair connects to a streaming-HTTP MCP server at startup. An auth token is read from the environment variable `MCP_<NAME>_TOKEN` (e.g. `MCP_GITHUB_TOKEN`). Multiple `--mcp-server` flags are additive. Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique (the name derives the env var), and when a token is present the URL must be `https` — or `http` to a loopback host — so the bearer is never sent in cleartext off-host.
 
+For a deliberately plain-http endpoint on a trusted network segment (e.g. an in-cluster Service behind a NetworkPolicy), `--mcp-server-insecure-http <name>` (repeatable) opts that one server out of the https rule. It is an explicit acknowledgment that the token travels **cleartext on the network path** — you are relying on network-layer controls plus a short-lived token. The relaxation covers only the named server and only the `http` scheme; naming a server that is not registered, or whose URL is already `https`/loopback, is a startup error.
+
 mecatl also integrates with ToolHive: `--toolhive` (default on) discovers already-running ToolHive workloads by their HTTP proxy URLs. mecatl never starts or spawns ToolHive workloads — it only reads URLs from an already-running instance.
 
 ### The `--mcp-resource-tools` flag
