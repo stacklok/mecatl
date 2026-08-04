@@ -1,5 +1,6 @@
     ifacemethod func (AgentDefSource).ListAgentDefs(ctx context.Context) ([]AgentDef, error)
     ifacemethod func (CommandRunner).Run(ctx context.Context, command string, workdir string) (CommandResult, error)
+    ifacemethod func (CommandStreamer).RunStreaming(ctx context.Context, command string, workdir string, out io.Writer) (exitCode int, err error)
     ifacemethod func (Disclosable).Advertised() ToolSpec
     ifacemethod func (FileSystem).Glob(ctx context.Context, pattern string) ([]string, error)
     ifacemethod func (FileSystem).Read(ctx context.Context, path string) ([]byte, error)
@@ -45,6 +46,7 @@ const AgentOriginDriver AgentOrigin = "driver"
 const AgentOriginExplicit AgentOrigin = "explicit"
 const AgentOriginProject AgentOrigin = "project"
 const AgentOriginUser AgentOrigin = "user"
+const BashToolName untyped string = "Bash"
 const MaxAgentBodyBytes untyped int = 32768
 const MaxAgentDescriptionBytes untyped int = 2000
 const SkillOriginDriver SkillOrigin = "driver"
@@ -62,6 +64,7 @@ type AgentOrigin string
 type Catalog struct{}
 type CommandResult struct{Stdout string; Stderr string; ExitCode int}
 type CommandRunner interface{Run(ctx context.Context, command string, workdir string) (CommandResult, error)}
+type CommandStreamer interface{RunStreaming(ctx context.Context, command string, workdir string, out io.Writer) (exitCode int, err error)}
 type Disclosable interface{Advertised() ToolSpec; Tool}
 type FileInfo struct{Name string; Size int64; Mode fs.FileMode; ModTime time.Time; IsDir bool}
 type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, error); Read(ctx context.Context, path string) ([]byte, error); Stat(ctx context.Context, path string) (FileInfo, error); Write(ctx context.Context, path string, data []byte) error}

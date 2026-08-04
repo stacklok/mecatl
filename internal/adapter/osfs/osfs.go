@@ -49,6 +49,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -62,6 +63,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
 // ErrPathEscape is returned when a session-relative path resolves outside the
@@ -1095,8 +1097,13 @@ func NewCommandRunnerShell(dir, shell string, opts ...CommandRunnerOption) (tool
 	return r, nil
 }
 
-// Compile-time assertion that CommandRunner satisfies the runner port.
-var _ tool.CommandRunner = (*CommandRunner)(nil)
+// Compile-time assertion that CommandRunner satisfies the runner port and the
+// OPTIONAL streaming capability (a background command's tail-ring capture runs
+// through it).
+var (
+	_ tool.CommandRunner   = (*CommandRunner)(nil)
+	_ tool.CommandStreamer = (*CommandRunner)(nil)
+)
 
 // Run runs command via /bin/sh -c, capturing (and truncating) stdout/stderr and
 // the exit code. The working directory is workdir (the session/fork Workspace
@@ -1106,18 +1113,52 @@ var _ tool.CommandRunner = (*CommandRunner)(nil)
 // forked child lives under an isolated temp base OUTSIDE that root, and running
 // its Bash there (not in the shared parent base) is exactly what fork isolation
 // requires. Cancellation and timeout are governed by ctx; when ctx has no
-// deadline a default timeout is applied. A non-zero exit is reported via the
-// returned CommandResult.ExitCode, not as an error.
+// deadline a default timeout is applied. On cancel/timeout the WHOLE process
+// group is SIGKILLed (POSIX; see procgroup.Configure), so a backgrounded
+// grandchild (e.g. `make`'s compiler children) dies with the shell instead of
+// being orphaned; WaitDelay stays the portable backstop. A non-zero exit is
+// reported via the returned CommandResult.ExitCode, not as an error.
 func (r *CommandRunner) Run(ctx context.Context, command, workdir string) (tool.CommandResult, error) {
+	var stdout, stderr cappedBuffer
+	stdout.cap = maxCommandOutput
+	stderr.cap = maxCommandOutput
+
+	exitCode, err := r.run(ctx, command, workdir, &stdout, &stderr)
+	res := tool.CommandResult{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode,
+	}
+	return res, err
+}
+
+// RunStreaming is the tool.CommandStreamer half of the runner: it runs command
+// exactly as Run does (same shell resolution, workdir rules, default timeout,
+// process-group kill, WaitDelay backstop, env) but streams stdout and stderr
+// INTERLEAVED into out in the order the OS delivers them, instead of capturing
+// them into the capped buffers. The CALLER owns bounding (e.g. a bounded tail
+// ring for a background command's recent output); this path does NOT cap or
+// retain the stream itself. The returned exitCode replaces CommandResult for
+// this path: a non-zero exit is reported there, not as an error.
+func (r *CommandRunner) RunStreaming(ctx context.Context, command, workdir string, out io.Writer) (int, error) {
+	return r.run(ctx, command, workdir, out, out)
+}
+
+// run is the ONE spawn/wait tail Run and RunStreaming share, so the two cannot
+// drift: it applies the default timeout when ctx has no deadline, resolves the
+// workdir (empty → the runner's configured root), wires the given stdout/stderr
+// writers plus the process-group kill, WaitDelay backstop and env, and runs the
+// command to completion. The exit code is returned separately from the error: a
+// non-zero exit yields (code, nil); a ctx cancel/timeout yields (0, ctx.Err())
+// with whatever output the writers captured so far standing; and a WaitDelay
+// expiry on a successfully-exited shell is a SUCCESS carrying the partial
+// output (see the exec.ErrWaitDelay branch below), not a harness failure.
+func (r *CommandRunner) run(ctx context.Context, command, workdir string, stdout, stderr io.Writer) (exitCode int, err error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
 		defer cancel()
 	}
-
-	var stdout, stderr cappedBuffer
-	stdout.cap = maxCommandOutput
-	stderr.cap = maxCommandOutput
 
 	dir := workdir
 	if dir == "" {
@@ -1125,14 +1166,18 @@ func (r *CommandRunner) Run(ctx context.Context, command, workdir string) (tool.
 	}
 	cmd := exec.CommandContext(ctx, r.shell, "-c", command)
 	cmd.Dir = dir
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	// Bound the post-exit/post-cancel pipe wait (A7): without it, a grandchild that
 	// inherited stdout/stderr (e.g. `slow-thing &`) keeps cmd.Wait parked on the
 	// pipe-copy goroutines until the grandchild exits, long after the shell itself
 	// is gone. WaitDelay closes the pipes after this bound; the output captured so
 	// far stands.
 	cmd.WaitDelay = r.waitDelay
+	// On cancel/timeout, kill the whole process group, not just the shell: a
+	// backgrounded grandchild would otherwise be orphaned (and keep holding the
+	// pipes past the WaitDelay until it exits on its own).
+	procgroup.Configure(cmd)
 	// A hardened (team-member) runner carries a COMPLETE, pre-scrubbed environment
 	// (computed in composition via gitenv.Scrub: inherited GIT_* danger removed,
 	// neutralising config appended); use it verbatim so removal of an inherited
@@ -1142,35 +1187,29 @@ func (r *CommandRunner) Run(ctx context.Context, command, workdir string) (tool.
 		cmd.Env = r.env
 	}
 
-	err := cmd.Run()
-	res := tool.CommandResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: 0,
-	}
+	runErr := cmd.Run()
 
 	if cerr := ctx.Err(); cerr != nil {
 		// Context cancellation/timeout is a harness-level failure.
-		return res, cerr
+		return 0, cerr
 	}
 
-	if err != nil {
+	if runErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			res.ExitCode = exitErr.ExitCode()
-			return res, nil
+		if errors.As(runErr, &exitErr) {
+			return exitErr.ExitCode(), nil
 		}
 		// WaitDelay expired with the pipes still open but the shell itself EXITED
 		// SUCCESSFULLY (a backgrounded grandchild holds the inherited fds — e.g.
 		// `daemon &`). That is a success with the output captured so far, not a
 		// harness failure: before WaitDelay existed this command simply blocked
 		// until the grandchild exited and then succeeded.
-		if errors.Is(err, exec.ErrWaitDelay) {
-			return res, nil
+		if errors.Is(runErr, exec.ErrWaitDelay) {
+			return 0, nil
 		}
-		return res, err
+		return 0, runErr
 	}
-	return res, nil
+	return 0, nil
 }
 
 // ledgerKey normalizes a ledger path to its canonical root-relative form so a

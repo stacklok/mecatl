@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"time"
 
@@ -103,6 +104,17 @@ type FileInfo struct {
 	IsDir bool
 }
 
+// BashToolName is the catalog name of the Bash tool. It is the single authority
+// for the name the Bash tool registers under (used in its Spec().Name) so a
+// consumer can probe the catalog for bash enablement by referencing the constant
+// rather than a local literal that could drift on a rename (see
+// internal/adapter/server.Service.capabilities). It lives in the PORT package
+// (not an adapter) because the permission evaluator special-cases the literal
+// name — a tool named anything else would silently bypass the bash gate — so
+// every Bash implementation must register under exactly this name, and
+// engine/agent's own BashTool cannot import the fstools adapter to get it.
+const BashToolName = "Bash"
+
 // CommandRunner executes a shell command. Implementations may run it locally
 // (/bin/sh), in a remote environment, or refuse it (no shell available). The
 // agent loop never references this type — only the Bash tool depends on it,
@@ -122,6 +134,33 @@ type CommandRunner interface {
 	// falls back to the runner's own configured root, so a runner can still be
 	// used standalone.
 	Run(ctx context.Context, command, workdir string) (CommandResult, error)
+}
+
+// CommandStreamer is an OPTIONAL CommandRunner capability for callers that need
+// the command's output streamed to a caller-owned sink instead of captured into
+// the runner's internal (head-capped, first-bytes-win) buffers — e.g. a
+// background command whose RECENT output the caller wants in a bounded tail
+// ring, which a first-bytes capture cannot provide. Discover it with a type
+// assertion on a CommandRunner; a runner that does not implement it simply
+// declines, and the caller must fail soft (an honest "not supported by this
+// runner"), never fall back to Run and silently lose the tail.
+type CommandStreamer interface {
+	// RunStreaming runs command under the same shell and workdir rules as
+	// CommandRunner.Run — an EMPTY workdir falls back to the runner's
+	// configured root, and a workdir OUTSIDE that root MUST be honored, never
+	// confined/rejected — with stdout and stderr written INTERLEAVED into out
+	// in the order the OS delivers them. The CALLER owns bounding (e.g. a tail
+	// ring): the runner writes everything it receives and does NOT also buffer
+	// or cap the stream.
+	//
+	// Cancellation and timeout semantics match Run: governed by ctx, with the
+	// runner's default timeout applied when ctx has no deadline, and a
+	// cancel/timeout reported as a harness-level err (the partial output
+	// written so far stands). A non-zero exit is NOT an error — it is reported
+	// via exitCode, which replaces CommandResult for this path; err is
+	// reserved for execution faults (cancellation, timeout, or a missing
+	// shell — see ErrNoShell).
+	RunStreaming(ctx context.Context, command, workdir string, out io.Writer) (exitCode int, err error)
 }
 
 // CommandResult is the outcome of a CommandRunner.Run invocation.

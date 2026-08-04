@@ -13,6 +13,80 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`agent.BashTool` / `agent.NewBashTool`** (background-Bash feature, tasks 1–2) —
+  the agent-loop `Bash` tool: the foreground half is byte-identical to the fstools
+  Bash body's orchestration (same arg validation, timeout ctx, `runner.Run`,
+  combined-output shaping, the 25 000-byte cap, the exit-code error), and
+  `background: true` detaches the command as a run-scoped background job on the
+  parent run's child registry through the `childCapableTool` seam
+  (`ExecuteWithParent`) — the job returns immediately with a `bashcmd-<callID>` id
+  and runs detached in the REAL workspace (no isolation), cancelled+joined by the
+  run-end drain if still live. It lives in `engine/agent` (not the fstools adapter)
+  because the background half needs the run's child registry, an agent-package type;
+  and it registers under the literal name `"Bash"` (`tool.BashToolName`) because the
+  permission evaluator special-cases that name — a second tool name would silently
+  bypass the bash gate. Background calls additionally require the runner to
+  implement `tool.CommandStreamer` (they decline honestly when it does not); a
+  caps-less plain-`Execute` background call is likewise an honest error, never a
+  silent foreground fallback. The composition root registers it everywhere Bash
+  appears (main catalogs + child surfaces), so a child backgrounds a command against
+  its OWN run's registry. Classified Added per COMPATIBILITY.md (a new exported
+  type + constructor is a minor bump; no existing identifier changed).
+
+- **`agent.BashCmdJobPrefix`** (background-Bash feature) — the `"bashcmd-"` id
+  prefix for background-Bash job ids (`bashcmd-<callID>`). Unlike the three
+  delegation prefixes it names NO session (the job is a bare process, not a child
+  loop), so the InspectSubagent prefix gate and the child-session retention GC must
+  not learn it — it exists so the job-id spelling has one source. Classified Added
+  per COMPATIBILITY.md (a new exported constant is a minor bump).
+
+- **`tool.BashToolName`** (background-Bash feature) — the catalog name of the Bash
+  tool (`"Bash"`), moved to the port package as the single authority every Bash
+  implementation registers under (the permission evaluator special-cases the
+  literal, so the constant lives where both the fstools adapter AND `engine/agent`'s
+  background-capable `BashTool` can import it). `fstools.BashToolName` now aliases
+  it, so existing consumers are unaffected. Classified Added per COMPATIBILITY.md
+  (a new exported constant is a minor bump; the alias keeps the old reference
+  compiling unchanged).
+
+- **`agent.BashStatusTool` / `agent.NewBashStatusTool`** (background-Bash feature,
+  tasks 5–6) — the live background-Bash job tool ("BashStatus"), the registry-backed
+  companion of the agent `BashTool`'s `background: true` flag. It reads the parent
+  run's child registry through the same `childCapableTool`/parentCaps seam as
+  `SubagentStatusTool`, projected over the `bash-cmd` family ONLY (the registry is
+  shared; `SubagentStatus` now projects the three delegation families only — the
+  two projections are disjoint, so a bash job id is never mislabeled "a subagent"
+  and a delegation id is never collected through `BashStatus`). With no args it
+  renders the bash-job roster (ids + state + stop labels ONLY — the command text is
+  model-authored untrusted and never rides a bulk roster); `job_id` is the per-job
+  detail view (a LIVE job: state + command + the current retained-output tail
+  snapshot, a peek that is NOT a delivery; a DONE job: the stored result through the
+  registry's exactly-once collect machinery, the error bit riding along); `wait_ms`
+  (same 120s cap as `SubagentStatus`, the shared `waitForChild` discipline) parks on
+  the job's doneCh or the registry's terminal generation; `cancel: "<job_id>"`
+  signals the job's per-call context (the tool stays read-only — it only signals).
+  The caps-less plain-`Execute` path is the same honest "no live registry" error
+  shape `SubagentStatus` uses. Registered in the composition root iff Bash is, never
+  in child catalogs. Classified Added per COMPATIBILITY.md (a new exported type +
+  constructor is a minor bump; no existing identifier changed).
+
+- **`tool.CommandStreamer`** (background-Bash feature, task 3) — a new OPTIONAL
+  `CommandRunner` capability interface in `engine/tool`. `RunStreaming(ctx,
+  command, workdir, out io.Writer) (exitCode int, err error)` runs the command
+  under the same shell/workdir/timeout/cancel rules as `CommandRunner.Run` but
+  streams stdout+stderr INTERLEAVED into a caller-owned `io.Writer` (the caller
+  owns bounding — e.g. a bounded tail ring for a background command's recent
+  output — so the runner must not also buffer or head-cap the stream). The
+  `exitCode` return replaces `CommandResult` for this path: a non-zero exit is
+  reported there, not as an error. It is discovered by type assertion; a runner
+  that does not implement it simply declines, and the caller fails soft with an
+  honest "not supported by this runner" rather than falling back to `Run` and
+  silently losing the tail. The in-tree `osfs` runner implements it (sharing one
+  private spawn/wait tail with `Run` so the two cannot drift); `memfs` and the
+  engine's test fakes do not (and need not — it is optional). Classified Added
+  per COMPATIBILITY.md (a new exported interface is a minor bump; no existing
+  identifier changed).
+
 - **`prompt.Rule`, `prompt.RulesSource`, `prompt.RuleOrigin`, `prompt.RulesAssembler`, and `prompt.MaxRuleBytes`** (issue #329, task 1) — the port, value-object, and turn-0 assembler for `.claude/rules` / project-rules discovery. `Rule` is a pure value object (name, body, path globs, origin tier label — no path/dir/root concept, matching the `SoulSource`/`CommandSource` discipline). `RulesSource` is a consumer-defined `ListRules` port satisfied structurally by the adapter at the composition root. `RuleOrigin` (`project`/`user`/`driver`) is a tier label never a location, the third parallel closed label set after `SkillOrigin`/`AgentOrigin`. `MaxRuleBytes` (20 KiB) is the one canonical per-rule body cap all sources share, mirroring the soul body cap. `RulesAssembler` renders the discovered rules as a single user-role message, fenced, with combined byte (40 KiB) and count (32) caps, and a dropped-footer when truncated — fail-soft throughout. `RulesHeader()` exposes the shared header string so tests can assert the exact emitted text. The assembler sits naturally after `RootAssembler` and before `SoulAssembler` in the turn-0 ordering (project context → persona → saved facts → operator model). `IsInjectedTurn0Fragment` recognises the rules header. See ADR 0081 (to be written in task 3). Classified Added per COMPATIBILITY.md (new types, const, func, and assembler are a minor bump).- **`agent.WithTeamSharedBaseWorkspace` + `agent.WithTeamToolSharedBaseWorkspace`**
   (path-escape-posture task 06, Scenario 5 AC5.1d) — the team-supervisor
   analogue of `WithSharedChildWorkspace`: a `SupervisorOption` (plus its

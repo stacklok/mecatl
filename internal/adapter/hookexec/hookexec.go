@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
 // DefaultTimeout bounds a single hook invocation when no timeout is supplied.
@@ -40,7 +41,7 @@ const DefaultTimeout = 30 * time.Second
 // killGrace bounds how long Run waits for a killed hook's stdout/stderr pipes to
 // drain after the timeout fires, before exec force-closes them and returns. It
 // is a portable backstop: on POSIX systems the hook runs in its own process
-// group that is killed as a unit (see configureProcessGroup), so the pipes
+// group that is killed as a unit (see procgroup.Configure), so the pipes
 // normally close at once and this delay is never reached.
 const killGrace = time.Second
 
@@ -122,10 +123,10 @@ func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.H
 	// command can spawn grandchildren (e.g. `sh -c "sleep 5"`) that inherit the
 	// stdout/stderr pipes; with those pipes still open, (*Cmd).Wait blocks until
 	// they exit — so the run would ignore the timeout and hang for the child's
-	// full lifetime. configureProcessGroup kills the whole group on POSIX so the
+	// full lifetime. procgroup.Configure kills the whole group on POSIX so the
 	// pipes close promptly; WaitDelay bounds the wait everywhere as a backstop.
 	c.WaitDelay = killGrace
-	configureProcessGroup(c)
+	procgroup.Configure(c)
 
 	runErr := c.Run()
 
