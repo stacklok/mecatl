@@ -390,7 +390,7 @@ func equalFoldASCII(a, b string) bool {
 // two characters \ and n), so a line-oriented forgery is STRUCTURALLY impossible in it — no
 // marker list has to be complete for the quoted form to be safe — and 100% of the diagnostic
 // survives for the reader. The repo already uses %q for the same reason on an MCP-supplied
-// tool name (internal/adapter/anthropic/request.go).
+// tool name (provider/anthropic/request.go).
 func neutraliseChildText(s string) string {
 	out := neutraliseFramingOn(s, surfaceResult)
 	if strings.TrimSpace(s) == "" || !fullyRedacted(out) {

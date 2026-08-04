@@ -117,12 +117,13 @@ It reads live modalities first (the same source the model picker uses), with the
 
 | Package | Type | Description |
 |---------|------|-------------|
-| `internal/adapter/openai` | `*openai.Provider` | OpenAI Responses API (GPT-4o, O3, GPT-5.x); streaming SSE → chunk translation; handles reasoning items, phase markers, and function-call streaming |
-| `internal/adapter/anthropic` | `*anthropic.Provider` | Anthropic Messages API (Claude 3.x, Claude 4.x); native extended thinking; `(thinking, signature)` reasoning replay |
-| `internal/adapter/openrouter` | thin wrapper | Routes to `internal/adapter/openai` with an OpenRouter base URL; used for multi-model deployments |
+| `provider/openai` | `*openai.Provider` | OpenAI Responses API (GPT-4o, O3, GPT-5.x); streaming SSE → chunk translation; handles reasoning items, phase markers, and function-call streaming |
+| `provider/anthropic` | `*anthropic.Provider` | Anthropic Messages API (Claude 3.x, Claude 4.x); native extended thinking; `(thinking, signature)` reasoning replay |
+| `provider/openaichat` | `*openaichat.Provider` | OpenAI Chat Completions API (OpenCode Go, Groq, Together, DeepSeek, vLLM, …); generic Chat Completions wire protocol |
+| `internal/adapter/openrouter` | thin wrapper | Routes to `provider/openai` with an OpenRouter base URL; used for multi-model deployments |
 | `engine/adapter/mockllm` | `*mockllm.Provider` | Deterministic scripted test double; no network access |
 
-Both production adapters are in `internal/adapter/` — they import the OpenAI and Anthropic SDKs, which the engine module is not allowed to depend on. The composition layer in `internal/app` wires the appropriate adapter based on the session's provider selection.
+The production wire adapters are their own **opt-in Go submodules** under `provider/` ([ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md)) — they import the OpenAI and Anthropic SDKs, which the engine module is not allowed to depend on. A consumer `go get`s exactly the provider(s) it wants and pulls only that SDK, never the root module. The composition layer in `internal/app` wires the appropriate adapter based on the session's provider selection.
 
 The mock lives in `engine/adapter/mockllm` because the engine module's own tests use it — nothing under `engine/` is allowed to import `internal/...`.
 

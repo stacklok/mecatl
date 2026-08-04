@@ -47,7 +47,7 @@ Every seam the loop can be extended through is defined in `engine/port`. The tab
 
 | Interface | File | Abstracts | Reference adapters |
 |---|---|---|---|
-| `LLMProvider` | `port/llm.go` | Model calls — streams `Chunk` values; reports multimodal `ProviderCapabilities` | `engine/adapter/mockllm` (offline); `internal/adapter/openai`, `anthropic`, `openrouter`; `internal/adapter/llmresilience` (decorator) |
+| `LLMProvider` | `port/llm.go` | Model calls — streams `Chunk` values; reports multimodal `ProviderCapabilities` | `engine/adapter/mockllm` (offline); `provider/openai`, `provider/anthropic`, `provider/openaichat` (opt-in submodules); `internal/adapter/openrouter`; `internal/adapter/llmresilience` (decorator) |
 | `SessionStore` | `port/store.go` | Persist and reload session state | `engine/adapter/memstore` (in-memory, tests); `internal/adapter/store/jsonlstore` (append-only JSONL); `internal/adapter/redisstore` (Redis-backed) |
 | `PrunableStore` | `port/store.go` | Optional retention sweep (list + delete sessions) | Same implementations that also carry `SessionStore`; discovered by type assertion |
 | `PermissionPolicy` | `port/permission.go` | Evaluate a tool call → allow / ask / deny; learn per-session allow rules | `engine/adapter/permpolicy` (wraps the session-free `governance.Evaluator`) |

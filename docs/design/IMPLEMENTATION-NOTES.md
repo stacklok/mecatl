@@ -274,7 +274,7 @@ adding it would double-count). The subset invariant holds CROSS-PROVIDER because
 adapters normalize to it: OpenAI's `input_tokens` already includes cached tokens; Anthropic's
 raw `input_tokens` EXCLUDES cache reads/writes, so its adapter folds `cache_read_input_tokens`
 + `cache_creation_input_tokens` into `InputTokens` at the single `session.Usage` mapping site
-(`internal/adapter/anthropic/stream.go` `translateMessageStop`) — before that fix `--max-run-tokens`
+(`provider/anthropic/stream.go` `translateMessageStop`) — before that fix `--max-run-tokens`
 UNDERCOUNTED Anthropic runs (cache-served prompt tokens never hit the budget). The reasoning
 breakdown is surfaced the same way: OpenAI's `output_tokens_details.reasoning_tokens` and
 Anthropic's `output_tokens_details.thinking_tokens` map to `ReasoningTokens` at the same two
@@ -2526,8 +2526,8 @@ short-circuits the provider adapters' request-assembly (`buildParams`/`buildMess
 therefore could never be RANKED against the inherent-cost / SDK-owned alternatives. The
 deliverable was to CLOSE that gap, not to force a change.
 
-The benches live in `internal/adapter/anthropic/request_bench_test.go` and
-`internal/adapter/openai/request_bench_test.go` (in-package — `buildParams`/`buildMessages` are
+The benches live in `provider/anthropic/request_bench_test.go` and
+`provider/openai/request_bench_test.go` (in-package — `buildParams`/`buildMessages` are
 unexported), fully OFFLINE (no client/network), following `engine/agent/bench_test.go`
 conventions (`b.Loop()`, fixtures outside the loop, results parked in a package-level sink). Each
 drives a synthetic `port.LLMRequest` whose conversation grows to 50/200/500 messages (a realistic
@@ -2559,7 +2559,7 @@ benchmarks STAND as the regression guard + the evidence that closed the measurem
 match the architect's earlier conclusion (the churn is inherent stateless-replay design + the
 provider SDK's marshal, code we don't own) — now MEASURED rather than hypothesised.
 
-**Taskfile / gating:** the benches are runnable (`cd internal/adapter/anthropic && go test -bench
+**Taskfile / gating:** the benches are runnable (`cd provider/anthropic && go test -bench
 . -benchmem -run '^$'`, openai sibling) but are deliberately NOT wired into `task bench` (which
 stays engine-only) or the FAIL-CLOSED `perf/cmd/allocsgate` baseline. Wiring them in would
 require establishing + committing an `allocs/op` baseline whose dominant term is the third-party
@@ -3102,7 +3102,7 @@ is stateless across turns) — no port/proto/engine-API change. Live listing rid
 `openCodeLister` (the `openaicompat` lister wrapped to stamp adapter-static text+image
 modalities, so a live refresh can't flip an uncatalogued model's Image capability to false).
 
-**SSE keepalive filter (shared `internal/adapter/ssefilter`).** `openai-go`'s `ssestream`
+**SSE keepalive filter (shared `provider/ssefilter`).** `openai-go`'s `ssestream`
 decoder dispatches an Event on every blank line and `json.Unmarshal`s the accumulated data
 with no empty-payload check, so any DATA-LESS frame — a bare SSE keepalive comment
 (`: ping - ...`, observed from OpenCode Go on long turns), a bare extra blank line, an
@@ -3332,7 +3332,7 @@ regardless of which model actually answers).
 **Redirect refusal now covers the inference path too (review finding 3).** The
 listing probe's lister (`openaicompat.NewLister`'s default client) already refused
 redirects; the policy is now exported as `openaicompat.RefuseRedirects` so the
-INFERENCE path can share it byte-for-byte. `internal/adapter/openai` gains
+INFERENCE path can share it byte-for-byte. `provider/openai` gains
 `WithHTTPClient(*http.Client)` (an adapter-construction `Option`, threading an
 arbitrary client into the SDK via `option.WithHTTPClient` — deliberately WITHOUT a
 `Timeout`, since a streaming turn runs for minutes and establishment/idle bounds
@@ -3760,8 +3760,8 @@ type**, with every untrusted-server defense in composition and the adapter:
   text-summarised block whose `session.ToolBlockText(b)` is empty — if all drop,
   the nil return degrades to the single-string fallback (the caller must then
   substitute a placeholder for an empty `Content` — the CALLER CONTRACT in the doc
-  comment); (2) `internal/adapter/openai/request.go` (`toolOutputItem`) and
-  `internal/adapter/anthropic/request.go` (`toolResultBlock`) substitute the
+  comment); (2) `provider/openai/request.go` (`toolOutputItem`) and
+  `provider/anthropic/request.go` (`toolResultBlock`) substitute the
   deterministic `emptyToolOutputPlaceholder` (`"(tool returned no output)"`) for an
   empty single-string `Content` via `cmp.Or` (non-empty stays byte-identical); (3)
   the anthropic adapter's degenerate empty system/user/assistant turns

@@ -89,7 +89,14 @@ contract ([`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md)) and enforced
 by the `api-compat` gate — a change to that surface fails CI until the committed
 `engine/api/*.txt` snapshots and `engine/CHANGELOG.md` are updated
 ([ADR 0037](adr/0037-engine-stability-contract.md)); the `engine/adapter/*`
-reference adapters carry no such promise. Three sibling efforts harden the same
+reference adapters carry no such promise. The **real LLM-provider wire adapters**
+are their own **opt-in Go submodules** under `provider/` ([ADR 0093](adr/0093-provider-modules.md)):
+`provider/anthropic` (native Messages API), `provider/openai` (Responses API),
+`provider/openaichat` (Chat Completions API), and `provider/ssefilter` (the shared
+SSE keepalive filter). Each is a separate module requiring the engine module plus
+its own SDK, so a consumer embedding the engine `go get`s exactly the provider(s)
+it wants and pulls only that SDK — never the root module. They release under
+`provider/<name>/vX.Y.Z` submodule tags. Three sibling efforts harden the same
 embeddable-core arc: the engine is now **fully clock-injectable** — every core
 wall-clock read flows through `port.Clock` (`Engine.now()`), enforced by an AST
 guard (`engine/arch/clock_test.go`) so an embedding host can drive it
@@ -103,8 +110,8 @@ supply chain gains per-module **`govulncheck`** (engine strict-clean; a
 fail-closed reachable-vuln gate on the root) plus **`dependabot`** over both
 modules and the SHA-pinned actions, on a **go 1.26.5** toolchain (#118). The LLM provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
-in `internal/adapter/openai`, the native Anthropic Messages API in
-`internal/adapter/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and
+in `provider/openai`, the native Anthropic Messages API in
+`provider/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and
 unit-testable against fakes (`mockllm`, `memfs`, `memstore`).
 
 Around that core, every capability beyond the minimal loop is a **seam with a

@@ -8,7 +8,7 @@
 
 **Follow-on:** [context & compaction](context-and-compaction.md) and [observability](observability.md) — per-model context-window handling, `llmresilience`, and per-model tokenizers.
 
-## The OpenAI Responses adapter (`internal/adapter/openai`)
+## The OpenAI Responses adapter (`provider/openai`)
 
 > This section walks one adapter end-to-end. It is **not** the whole LLM story:
 > mecatl is provider-agnostic, with the native Anthropic Messages API as a peer
@@ -82,7 +82,7 @@ and `OPENCODE_API_KEY`, supplied by composition since OpenCode Go is not in the 
 Only available providers are held (an unkeyed provider is omitted — its availability
 is itself sensitive, CWE-200). OpenRouter rides the SAME stateless openai adapter with
 the OpenRouter base URL substituted. **Anthropic (P1) is the first native non-OpenAI
-wire adapter** (`internal/adapter/anthropic`, on the official MIT `anthropic-sdk-go`):
+wire adapter** (`provider/anthropic`, on the official MIT `anthropic-sdk-go`):
 the native Messages API, also STATELESS full-replay, wired via `newAnthropicEntry`. It
 validated the provider abstraction — it shipped with NO domain/agent/server/acp/proto
 edit; `engineDepsForProvider`, per-session routing, the capability intersection, and
@@ -93,7 +93,7 @@ into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction
 the DTO. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
-**OpenCode Go (`internal/adapter/openaichat`)** is the Chat Completions wire adapter —
+**OpenCode Go (`provider/openaichat`)** is the Chat Completions wire adapter —
 the sibling of the openai Responses adapter, built on the same `openai-go` SDK via
 `client.Chat.Completions`. It serves provider id `opencode` (base URL
 `https://opencode.ai/zen/go/v1`, key `OPENCODE_API_KEY`) and is the generic OpenAI
@@ -111,7 +111,7 @@ outright once it landed mid-turn: the openai-go `ssestream` decoder dispatches o
 every blank line and `json.Unmarshal`s the empty payload into
 `unexpected end of JSON input`, a latched error. A rare event on an
 otherwise-healthy connection, but terminal every time it hit, since the no-replay
-rule can't retry past the first committed chunk. The shared `internal/adapter/ssefilter`
+rule can't retry past the first committed chunk. The shared `provider/ssefilter`
 package, installed as the OUTERMOST `option.WithMiddleware` on **both** the
 `openaichat.New` (Chat Completions) **and** `openai.New` (Responses) constructors,
 buffers each SSE frame and drops any data-less frame in its entirety before the

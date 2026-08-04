@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-17
-- Scope: `internal/adapter/openaichat` (new request adapter), `internal/app` provider registry, `internal/cliconfig`, the cmd mains
+- Scope: `provider/openaichat` (new request adapter), `internal/app` provider registry, `internal/cliconfig`, the cmd mains
 - Related: [ADR 0016](./0016-multi-provider.md) (multi-provider registry), [ADR 0064](./0064-toolhive-llm-gateway-provider.md) (config-detected gateway), [ADR 0055](./0055-reasoning-effort.md) (reasoning effort)
 
 ## Context
@@ -35,7 +35,7 @@ id `opencode`) is its first consumer.
 
 ## Decision
 
-Add `internal/adapter/openaichat`, a `port.LLMProvider` over Chat Completions built
+Add `provider/openaichat`, a `port.LLMProvider` over Chat Completions built
 on the already-vendored `github.com/openai/openai-go/v3` SDK via
 `client.Chat.Completions` (no new dependency). It mirrors the `openai` package's
 shape — `Provider`/`New`/`Stream` + pure `buildParams` + pure `translate` driven

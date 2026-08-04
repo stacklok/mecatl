@@ -10,7 +10,6 @@ require (
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.38.0
-	github.com/anthropics/anthropic-sdk-go v1.47.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.7
@@ -27,7 +26,10 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/procfs v0.20.1
 	github.com/redis/go-redis/v9 v9.21.0
-	github.com/stacklok/mecatl/engine v0.0.0-00010101000000-000000000000
+	github.com/stacklok/mecatl/engine v0.8.0
+	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
+	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
+	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000
 	github.com/stacklok/toolhive v0.31.0
 	github.com/tiktoken-go/tokenizer v0.8.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0
@@ -62,6 +64,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.47.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -223,6 +226,7 @@ require (
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
+	github.com/stacklok/mecatl/provider/ssefilter v0.0.0 // indirect
 	github.com/stacklok/toolhive-core v0.0.26 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
@@ -293,3 +297,11 @@ require (
 )
 
 replace github.com/stacklok/mecatl/engine => ./engine
+
+replace github.com/stacklok/mecatl/provider/anthropic => ./provider/anthropic
+
+replace github.com/stacklok/mecatl/provider/openai => ./provider/openai
+
+replace github.com/stacklok/mecatl/provider/openaichat => ./provider/openaichat
+
+replace github.com/stacklok/mecatl/provider/ssefilter => ./provider/ssefilter

@@ -1,6 +1,6 @@
 // Package ssefilter is the SSE keepalive guard shared by the openai-go-family
-// adapters (the Chat Completions adapter in internal/adapter/openaichat and the
-// Responses adapter in internal/adapter/openai).
+// adapters (the Chat Completions adapter in provider/openaichat and the
+// Responses adapter in provider/openai).
 //
 // WHY THIS EXISTS: the openai-go ssestream decoder dispatches an Event on EVERY
 // blank line (packages/ssestream/ssestream.go) and then json.Unmarshals the

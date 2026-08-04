@@ -10,15 +10,15 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/anthropic"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
+	"github.com/stacklok/mecatl/provider/anthropic"
 )
 
 // anthropicFixtureClient serves the trimmed anthropic /v1/models fixture (NO
 // network) so the live anthropic lister path is exercised fully offline.
 func anthropicFixtureClient(t *testing.T) *http.Client {
 	t.Helper()
-	fixture, err := os.ReadFile("../adapter/anthropic/testdata/models.json")
+	fixture, err := os.ReadFile("../../provider/anthropic/testdata/models.json")
 	if err != nil {
 		t.Fatalf("read anthropic fixture: %v", err)
 	}

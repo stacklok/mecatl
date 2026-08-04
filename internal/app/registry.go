@@ -13,14 +13,14 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/anthropic"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
-	"github.com/stacklok/mecatl/internal/adapter/openai"
-	"github.com/stacklok/mecatl/internal/adapter/openaichat"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
+	"github.com/stacklok/mecatl/provider/anthropic"
+	"github.com/stacklok/mecatl/provider/openai"
+	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
 // Provider id strings. These are WIRE-STABLE once they reach the wire (S3's

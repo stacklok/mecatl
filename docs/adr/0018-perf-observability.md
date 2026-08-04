@@ -41,7 +41,7 @@ to the code paths that cause them:
 
 | Concern | Where it lives | Why it bites |
 |---|---|---|
-| **TTFT vs inter-token latency** | `runTurn` consuming `LLM.Stream` chunks (`engine/agent/loop.go`); OpenAI SSE→Chunk (`internal/adapter/openai/stream.go`) | Users feel time-to-first-token and *jitter* between tokens, not mean latency. One number hides both. |
+| **TTFT vs inter-token latency** | `runTurn` consuming `LLM.Stream` chunks (`engine/agent/loop.go`); OpenAI SSE→Chunk (`provider/openai/stream.go`) | Users feel time-to-first-token and *jitter* between tokens, not mean latency. One number hides both. |
 | **Dispatch lock contention / mutate-serial queueing** | `Engine.dispatch` read-parallel/mutate-serial (`engine/agent/dispatch.go`); results merged under a mutex | A slow `Edit` serially blocks every queued mutation — an internal **coordinated-omission** source (survey §12). Mean tool latency won't show the queueing. |
 | **Goroutine leaks** | per-run background goroutine (`Engine.Run` → `drive`), the SSE consumer + its cancel path, subagent/parallel drain loops (`subagent.go`, the Parallel tool in `parallel.go`), the server Run registry (`internal/adapter/server/service.go`) | Each run spins goroutines; a cancellation path that doesn't unwind leaks them across a long-lived `mecated`. |
 | **GC pressure / allocation churn** | chunk decoding, event fan-out (`Run.emit`), prompt assembly, the compaction cascade (`engine/agent/cascade.go`) | High alloc/op on the hot streaming path drives GC pauses that show up as inter-token jitter. |

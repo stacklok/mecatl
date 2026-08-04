@@ -463,6 +463,71 @@ linters:
           deny:
             - pkg: os
               desc: 'agent (application loop) must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
+        # --- provider/* opt-in LLM-provider submodules (ADR 0093) ----------------
+        # The real provider wire-format adapters graduated OUT of internal/adapter
+        # into their own opt-in Go modules (consumers import the SDK transitively
+        # only by importing the provider). They meet the engine's port.LLMProvider
+        # port, so their closure is $gostd + the exact engine packages they
+        # implement against + their SDK (+ provider/ssefilter for the openai-go
+        # family) — never the root module, never os directly.
+        provider-ssefilter:
+          list-mode: strict
+          files:
+            - '**/provider/ssefilter/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/openai/openai-go/v3
+          deny:
+            - pkg: os
+              desc: 'ssefilter is the SSE keepalive guard over the openai-go middleware seam; it must not touch os or the root module'
+        provider-anthropic:
+          list-mode: strict
+          files:
+            - '**/provider/anthropic/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/anthropics/anthropic-sdk-go
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/prompt
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'anthropic implements port.LLMProvider over the Anthropic SDK; it must not touch os or the root module'
+        provider-openai:
+          list-mode: strict
+          files:
+            - '**/provider/openai/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/openai/openai-go/v3
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/prompt
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/provider/ssefilter
+          deny:
+            - pkg: os
+              desc: 'openai implements port.LLMProvider over the OpenAI Responses API; it must not touch os or the root module'
+        provider-openaichat:
+          list-mode: strict
+          files:
+            - '**/provider/openaichat/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/openai/openai-go/v3
+            - github.com/stacklok/mecatl/engine/port
+            - github.com/stacklok/mecatl/engine/prompt
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/tool
+            - github.com/stacklok/mecatl/provider/ssefilter
+          deny:
+            - pkg: os
+              desc: 'openaichat implements port.LLMProvider over the OpenAI Chat Completions API; it must not touch os or the root module'
     # forbidigo is the BAN GUARD for the logging architecture (iteration 3): no NEW
     # global-slog drift may re-enter internal/. Diagnostics flow through the injected
     # port.Diagnostics seam; slog.Default()/slog.SetDefault()/package-level

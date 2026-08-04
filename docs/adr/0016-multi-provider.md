@@ -37,7 +37,7 @@ This document is the design rationale. The runtime overview is `docs/architectur
   engine + a DTO-neutrality audit + capability single-source + disclosure hardening.
   Providers: **OpenAI** and **OpenRouter**, both on the SAME stateless Responses
   adapter (OpenRouter = the openai adapter with the OpenRouter base URL substituted).
-- **P1 (SHIPPED).** A native **Anthropic Messages** adapter (`internal/adapter/anthropic`,
+- **P1 (SHIPPED).** A native **Anthropic Messages** adapter (`provider/anthropic`,
   on the official MIT `anthropic-sdk-go`) — the first provider with a genuinely different
   wire shape, which **VALIDATES the abstraction**. Per-model modality divergence (e.g. some
   Anthropic models take image, some do not) is a pure **data** change: a new registry entry
@@ -829,7 +829,7 @@ per-session child engines (`engineDepsForProvider`/`resolveChildProvider`) pick 
 the store FOR FREE through the registry. With NO lister wired the store is
 catalog-seeded ⇒ behaviour is **byte-identical** to before (a test asserts it).
 
-**The Anthropic keyed lister** (`internal/adapter/anthropic/lister.go`) is the
+**The Anthropic keyed lister** (`provider/anthropic/lister.go`) is the
 reliability headline. It calls `client.Models.ListAutoPaging` and maps the SDK's rich
 `ModelInfo` → its OWN neutral `anthropic.Model`: `MaxTokens`→OutputLimit,
 `MaxInputTokens`→ContextLimit, `Capabilities.ImageInput`→image, and

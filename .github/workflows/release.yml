@@ -29,6 +29,16 @@
 # so an engine release never fires the container build, and vice versa. The engine
 # tagging cadence + the apidiff breaking-change gate are issue #114 (out of scope
 # here; see docs/adr/0036-engine-module.md).
+#
+# Provider-module note (ADR 0093): the opt-in LLM-provider adapters are their own
+# Go modules under provider/<name>/ (provider/anthropic, provider/openai,
+# provider/openaichat, provider/ssefilter). They are released under SUBMODULE tags
+# of the form `provider/<name>/vX.Y.Z` (Go's convention for a module in a nested
+# subdirectory), so a consumer `go get`s exactly the provider(s) it wants plus
+# that provider's SDK — never the root module. Like `engine/v*`, the `v*` trigger
+# below does NOT match `provider/<name>/v*` (the tag has a leading path segment),
+# so a provider release never fires this container build, and an image release
+# never re-tags a provider module.
 name: Release
 
 on:
