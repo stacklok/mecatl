@@ -331,6 +331,17 @@ re-prompt; changing the persona / agents / commands / skills does.
 A corrupt or unparseable `settings.yaml` or `trust.yaml` always resolves to
 **untrusted** — a broken config never grants trust.
 
+#### Suppressing project ingestion (`--no-project-trust`)
+
+A scheduler running `--posture auto` on cloned repos inherits `TrustProject=true`
+— the repo's AGENTS.md/CLAUDE.md, project rules, agents, skills, soul, and commands are
+admitted. The operator-tier `--no-project-trust` flag (default `false`) **suppresses project-tier
+ingestion** without lowering `TrustProject`, so the read-only subagent shell and the auto
+approval semantics stay active while the cloned repo's own steering is dropped. Supply
+your own instructions via `--instructions`. It is a separate dimension from workspace trust;
+the two combine via `ingestProjectTier(cfg) = cfg.TrustProject && !cfg.NoProjectIngest`.
+See the [workspace trust reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#suppressing-project-tier-ingestion---no-project-trust).
+
 ---
 
 ## Layer 2 — model-backed guardrails

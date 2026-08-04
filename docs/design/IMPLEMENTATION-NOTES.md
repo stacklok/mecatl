@@ -122,6 +122,16 @@ with `resolvePosture`/`applyPosture`/`foldOperatorPosture`/`narratePosture`). `-
 `guardrails:`). `applyPosture` derives `AllowAllTools` + the main/child substitution loosening +
 the `TrustProject` floor, BEFORE `resolveTrust` in `Build`.
 
+**Project-trust suppression pin (`--no-project-trust`, `Config.NoProjectIngest`).**
+The single-source helper `ingestProjectTier(cfg) = cfg.TrustProject && !cfg.NoProjectIngest`
+(`internal/app/no_project_trust.go`) gates every project-tier ingestion site — AGENTS.md/CLAUDE.md
+(the highest-value injection point), project rules, agent defs, skills, soul, slash commands, and
+the git snapshot. The pin is a SEPARATE dimension from `TrustProject` (which also gates the
+read-only subagent shell — lowering it kills the child shell, the pin does not). `applyPosture`
+never sets `NoProjectIngest` (it only sets `TrustProject`), so `auto`/`yolo` cannot re-raise
+ingestion; the pin always wins. Operator-tier only (CLI out-ranks the operator YAML). No engine
+API change — composition-only. See ADR 0092 and `docs/usage/workspace-trust.md`.
+
 `AllowAllTools` is still implemented as a **rule** (a single `ScopeCLI` allow-all from the shared
 `yoloAllowAllRule` in `internal/app/build.go`), NOT a `PermissionMode` and NOT an evaluator bypass —
 it loosens only the `ScopeBuiltinDefault` floor, so both invariants above are unchanged. The rule

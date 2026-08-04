@@ -983,10 +983,10 @@ const agentMemoryDirName = "agents-memory"
 //   - "user"    => <UserConfigDir>/mecatl/agents-memory/ (the SAME XDG base
 //     buildUserModelStore uses; "" XDG base ⇒ fail-soft);
 //   - "project" => <cfg.Workspace>/.mecatl/agents-memory/ ONLY when the workspace
-//     is set AND TRUSTED (cfg.TrustProject — the SAME gate resolveAgentRegistry
+//     is set AND INGESTED (ingestProjectTier — the SAME gate resolveAgentRegistry
 //     applies to project-tier defs; a project-tier memory points into the
-//     attacker-controllable workspace, so it is withheld on an untrusted repo
-//     regardless of the def's own Origin);
+//     attacker-controllable workspace, so it is withheld on an untrusted OR
+//     pin-suppressed repo regardless of the def's own Origin);
 //   - anything else / gated-out => ("", false).
 //
 // The head is bounded to maxAgentMemoryBytes head-first (with a truncation marker)
@@ -1005,7 +1005,7 @@ func resolveAgentMemoryHead(cfg Config, def agents.AgentDef) (string, bool) {
 		root = filepath.Join(base, "mecatl", agentMemoryDirName)
 		tierLabel = "user"
 	case "project":
-		if cfg.Workspace == "" || !cfg.TrustProject {
+		if cfg.Workspace == "" || !ingestProjectTier(cfg) {
 			return "", false
 		}
 		root = filepath.Join(cfg.Workspace, ".mecatl", agentMemoryDirName)
@@ -1193,18 +1193,18 @@ func skillSnapshot(discovered []skills.Skill) []*mecatlv1.SkillInfo {
 // these per session (e.g. against a CreateSession-supplied root), it MUST re-apply the
 // trust decision for that root or the project-tier injection gap silently reopens.
 func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
-	// Project-tier agent defs are withheld when the workspace is untrusted (Phase 2a).
-	// cfg.TrustProject already carries the folded TrustDecision (Build). The user-tier
+	// Project-tier agent defs are withheld when the project tier is not ingested
+	// (Phase 2a): untrusted OR pin-suppressed (ingestProjectTier). The user-tier
 	// + explicit defs stay active regardless ("ask the human" mode, not "do nothing").
-	if cfg.AgentsConventional && cfg.Workspace != "" && !cfg.TrustProject {
-		cfg.diag().Log(ctx, port.LevelWarn, "agent definitions: project-tier defs WITHHELD (untrusted workspace); user-tier and explicit defs stay active. Trust this repo (--trust-project or trustedWorkspaces) to admit its project agent defs",
+	if cfg.AgentsConventional && cfg.Workspace != "" && !ingestProjectTier(cfg) {
+		cfg.diag().Log(ctx, port.LevelWarn, "agent definitions: project-tier defs WITHHELD (untrusted workspace or --no-project-trust); user-tier and explicit defs stay active. Trust this repo (--trust-project or trustedWorkspaces) and do not pass --no-project-trust to admit its project agent defs",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/agents,.claude/agents")
 	}
 	sources := agents.ResolveSources(agents.ResolveOptions{
 		Explicit:           cfg.AgentsDirs,
 		Conventional:       cfg.AgentsConventional,
 		Workspace:          cfg.Workspace,
-		IncludeProjectTier: cfg.TrustProject,
+		IncludeProjectTier: ingestProjectTier(cfg),
 	})
 	if len(sources) == 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "agent definitions DISABLED (no agents dirs configured)")

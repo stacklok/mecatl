@@ -299,11 +299,11 @@ func selectSoulSource(cfg Config, io baselineIO, gate soulGate) (prompt.SoulSour
 		return nil, soulMeta{}
 	}
 
-	// A project soul EXISTS. It is UNTRUSTED unless --trust-project is set — gated by
-	// the EXACT issue-#13 mechanism. An untrusted project soul is dropped
-	// silently-but-LOGGED (Warn), never an error.
-	if !cfg.TrustProject {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "soul: a project-sourced soul was discovered but is UNTRUSTED; dropping it (no fragment). Pass --trust-project to honour a soul discovered in this repo (only for a repo you trust)",
+	// A project soul EXISTS. It is ingested only when the project tier is admitted —
+	// trusted AND not pin-suppressed (ingestProjectTier). A not-ingested project soul
+	// is dropped silently-but-LOGGED (Warn), never an error.
+	if !ingestProjectTier(cfg) {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "soul: a project-sourced soul was discovered but is NOT INGESTED (untrusted workspace or --no-project-trust); dropping it (no fragment). Pass --trust-project and do not pass --no-project-trust to honour a soul discovered in this repo (only for a repo you trust)",
 			"path", projectPath)
 		return nil, soulMeta{Provenance: soulProject, Trusted: false, SHA256: projRes.SHA256, Size: projRes.Size}
 	}

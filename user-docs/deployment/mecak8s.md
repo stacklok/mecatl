@@ -32,6 +32,7 @@ Kill any pod. The survivor acquires the lease and resumes interrupted sessions f
 |---|---|---|
 | `--headless` default | `false` (interactive) | `true` (headless daemon) |
 | `--posture` default | `strict` | `auto` |
+| `--no-project-trust` | optional | recommended for cloned-repo runner — suppress the repo's AGENTS.md/steering while keeping `auto`'s approvals and subagent shell |
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |

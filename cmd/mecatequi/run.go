@@ -22,6 +22,23 @@ import (
 // additive fields do NOT bump it. Pipeline 2 keys compatibility off this.
 const SummarySchemaVersion = 1
 
+// finalTextMaxRunes bounds Summary.FinalText (the summary log-line). The summary is
+// the scan-index, not the archive: the FULL terminal text lives in the durable event
+// log (--out-events) and the git diff (--out-diff), never truncated there. Rune-aware
+// so a multi-byte deliverable is never split mid-codepoint.
+const finalTextMaxRunes = 4000
+
+// clampRunes clamps s to maxRunes, appending an ellipsis if it was truncated. It is a
+// local copy of the rune-aware clamp shape (internal/app/scheduler_fire.go) — mecatequi
+// is a separate package and does not reach into internal/app's unexported helper.
+func clampRunes(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes]) + "…"
+}
+
 // Summary is the STABLE machine-readable result of a single mecatequi run. Pipeline 2
 // consumes it; the contract is ADDITIVE-ONLY thereafter (new fields may be appended,
 // existing fields never change meaning or JSON name). It is emitted as a single JSON
@@ -79,7 +96,11 @@ type Summary struct {
 	Usage SummaryUsage `json:"usage"`
 	// Error carries the failure detail; non-empty ONLY when StopReason == "error".
 	Error string `json:"error,omitempty"`
-	// FinalText is the terminal assistant text (the run's deliverable prose).
+	// FinalText is the terminal assistant text (the run's deliverable prose). It is
+	// CLAMPED to finalTextMaxRunes (rune-aware, ellipsis-suffixed) so the summary
+	// log-line stays bounded — the summary is the scan-index, not the archive. The
+	// FULL text lives in the durable event log (--out-events) and the git diff
+	// (--out-diff), never truncated there.
 	FinalText string `json:"final_text"`
 }
 
@@ -191,7 +212,7 @@ func run(ctx context.Context, svc *server.Service, workspace string, limits sess
 	sum := Summary{SchemaVersion: SummarySchemaVersion, SessionID: string(sess.ID)}
 	if result != nil {
 		sum.StopReason = string(result.Stop)
-		sum.FinalText = result.Text
+		sum.FinalText = clampRunes(result.Text, finalTextMaxRunes)
 		sum.Error = result.Error
 		sum.Usage = SummaryUsage{
 			InputTokens:      result.Usage.InputTokens,

@@ -511,6 +511,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		ImportClaudePermissions: true,
 		TrustProject:            cfg.trustProject,
 		AllowAllTools:           cfg.allowAllTools,
+		NoProjectIngest:         cfg.noProjectTrust,
+		NoProjectTrustFlagSet:   cfg.noProjectTrustFlagSet,
 		// Posture ladder: --posture sets the tier; --yolo/--trust-project are aliases
 		// composition folds MAX-tier. postureFlagSet lets CLI out-rank the operator-global
 		// settings.yaml posture: key. Privileged is the "root && !sandbox" predicate fed

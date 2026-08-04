@@ -191,6 +191,13 @@ type config struct {
 	permissionsConventional bool
 	trustProject            bool
 	importClaudePermissions bool
+	// noProjectTrust suppresses ONLY project-tier INGESTION (AGENTS.md/CLAUDE.md,
+	// .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git
+	// snapshot) while leaving the workspace-trust gate (the read-only subagent shell)
+	// on the effective posture. noProjectTrustFlagSet records an explicit
+	// --no-project-trust so CLI out-ranks the settings.yaml no-project-trust: key.
+	noProjectTrust        bool
+	noProjectTrustFlagSet bool
 
 	// enableParallel / enableTeams: the fan-out / agent-teams toggles.
 	enableParallel bool
@@ -332,6 +339,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "auto-discover the per-project .mecatl/settings.yaml + the user-global file (re-resolved per session). ON by default")
 	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "also import Claude-Code settings.json (with the lossy fail-safe table)")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "honour a discovered project's ALLOW rules (a project's deny/ask is always honoured). Default OFF (the safe stance); an alias for --posture=trusted")
+	fs.BoolVar(&cfg.noProjectTrust, "no-project-trust", false, "Suppress ingestion of the repo's project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git snapshot) while leaving the workspace-trust gate (the read-only subagent shell) on the effective --trust-project. OPERATOR-TIER only: a project file's no-project-trust: is ignored with a WARN. Default OFF. Intended for scheduler runs over a freshly-cloned untrusted repo where the scheduler supplies its own --instructions.")
 
 	// Fan-out / teams toggles.
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "enable the Parallel fan-out tool (parallel isolated child branches)")
@@ -359,6 +367,8 @@ func parseFlags(argv []string) (config, error) {
 			cfg.reasoningEffortFlagSet = true
 		case "subagent-model-router":
 			cfg.subagentModelRouterSet = true
+		case "no-project-trust":
+			cfg.noProjectTrustFlagSet = true
 		}
 		if fl.Name == "schedule-fire-retention" {
 			cfg.scheduleFireRetentionSet = true
@@ -464,6 +474,8 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		ImportClaudePermissions: cfg.importClaudePermissions,
 		TrustProject:            cfg.trustProject,
 		PermissionConfigs:       cfg.permissionConfigs,
+		NoProjectIngest:         cfg.noProjectTrust,
+		NoProjectTrustFlagSet:   cfg.noProjectTrustFlagSet,
 		Posture:                 app.ParsePosture(cfg.posture),
 		PostureFlagSet:          cfg.postureFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet

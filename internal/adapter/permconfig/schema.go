@@ -103,6 +103,14 @@ type Config struct {
 	// returns false and composition keeps the default OFF). The composition layer
 	// interprets the bool; permconfig only reads the scalar.
 	PlanModeAutoApprove bool `yaml:"plan-mode-auto-approve"`
+	// NoProjectTrust is the OPERATOR-TIER no-project-trust flag (issue #359). Like
+	// Posture/PlanModeAutoApprove it is honoured ONLY from the user-global + CLI
+	// tiers; a project-tier file's no-project-trust: key is IGNORED with a WARN
+	// (operator-tier only — a project repo suppressing its own project-tier ingestion
+	// is an operator deployment decision, never the repo's call). false = absent (the
+	// resolver returns false and composition keeps the default OFF). The composition
+	// layer interprets the bool; permconfig only reads the scalar.
+	NoProjectTrust bool `yaml:"no-project-trust"`
 }
 
 // ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding

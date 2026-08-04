@@ -172,6 +172,32 @@ func TestRunUsageAndFinalTextFaithfullyCopied(t *testing.T) {
 	}
 }
 
+// TestRunFinalTextClamped proves the summary's FinalText is bounded: a terminal text
+// longer than finalTextMaxRunes is clamped rune-aware to at most finalTextMaxRunes+1
+// runes (the trailing ellipsis), so the scan-index summary stays bounded while the
+// full text lives in the durable event log.
+func TestRunFinalTextClamped(t *testing.T) {
+	long := strings.Repeat("a", finalTextMaxRunes+500)
+	turn := mockllm.ChunksTurn(
+		mockllm.TextChunk(long),
+		port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	)
+	svc := scriptedService(t, nil, nil, turn)
+
+	var human bytes.Buffer
+	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "answer", &human)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := []rune(outcome.Summary.FinalText)
+	if len(got) > finalTextMaxRunes+1 {
+		t.Errorf("FinalText = %d runes, want <= %d (clamped + ellipsis)", len(got), finalTextMaxRunes+1)
+	}
+	if !strings.HasSuffix(outcome.Summary.FinalText, "…") {
+		t.Errorf("a clamped FinalText must end with the ellipsis marker; got tail %q", outcome.Summary.FinalText[len(outcome.Summary.FinalText)-8:])
+	}
+}
+
 // TestExitCodeCleanIsZero pins the exit-code contract: every CLEAN terminal maps to 0,
 // error/cancelled/none map to 1.
 func TestExitCodeCleanIsZero(t *testing.T) {

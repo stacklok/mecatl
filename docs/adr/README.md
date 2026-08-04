@@ -107,6 +107,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0070 — Model-visible affordance gate](./0070-model-visible-affordance-gate.md)
 - [0022 — Allow-all posture](./0022-allow-all-posture.md)
 - [0023 — Workspace trust](./0023-workspace-trust.md)
+- [0092 — Project-trust suppression pin](./0092-no-project-trust-pin.md)
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)

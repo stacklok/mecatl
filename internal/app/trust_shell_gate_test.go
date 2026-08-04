@@ -61,6 +61,19 @@ func TestTrustedWorkspaceKeepsSandboxedRunner(t *testing.T) {
 	}
 }
 
+// TestPinKeepsSandboxedRunner pins the issue-#359 option-(a) invariant at the
+// consumer that matters: the --no-project-trust pin suppresses INGESTION only — it
+// must NOT disable the read-only subagent shell, which reads the raw trust gate
+// (buildSandboxedCommandRunner reads cfg.TrustProject, NOT ingestProjectTier). If a
+// future "consistency" change made the runner read ingestProjectTier, this fails.
+func TestPinKeepsSandboxedRunner(t *testing.T) {
+	cfg := teamCfg(t) // TrustProject: true
+	cfg.NoProjectIngest = true
+	if buildSandboxedCommandRunner(cfg) == nil {
+		t.Fatal("the --no-project-trust pin must NOT disable the read-only subagent shell (it suppresses ingestion, not the trust gate); the runner read ingestProjectTier instead of cfg.TrustProject")
+	}
+}
+
 // TestUntrustedSubagentChildCatalogHasNoBash proves the default Subagent explorer
 // degrades to the Bash-less read-only catalog when the runner derivation runs
 // through the trust gate, and that a trusted workspace keeps the shell.

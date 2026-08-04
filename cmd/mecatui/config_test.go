@@ -57,6 +57,26 @@ func TestEmbeddedConfigMapsTrustProject(t *testing.T) {
 	}
 }
 
+// TestEmbeddedConfigMapsNoProjectTrust asserts the --no-project-trust flag flows
+// through to app.Config.NoProjectIngest/NoProjectTrustFlagSet: off by default, true
+// (with the CLI-set bit) when the flag is set (issue #359).
+func TestEmbeddedConfigMapsNoProjectTrust(t *testing.T) {
+	on := embeddedConfig(config{workspace: "/ws", model: "m", mock: true, noProjectTrust: true, noProjectTrustFlagSet: true}, port.NopDiagnostics{})
+	if !on.NoProjectIngest {
+		t.Error("embeddedConfig.NoProjectIngest = false with --no-project-trust, want true")
+	}
+	if !on.NoProjectTrustFlagSet {
+		t.Error("embeddedConfig.NoProjectTrustFlagSet = false with --no-project-trust, want true")
+	}
+	off := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
+	if off.NoProjectIngest {
+		t.Error("embeddedConfig.NoProjectIngest = true with flag off, want false")
+	}
+	if off.NoProjectTrustFlagSet {
+		t.Error("embeddedConfig.NoProjectTrustFlagSet = true with flag off, want false")
+	}
+}
+
 // TestEmbeddedConfigMapsSubagentModel asserts --subagent-model flows through to
 // app.Config.SubagentModel (the def-less child-default model, issue #35).
 func TestEmbeddedConfigMapsSubagentModel(t *testing.T) {

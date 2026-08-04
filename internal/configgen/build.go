@@ -25,6 +25,7 @@ func BuildModel(docs Docs) *Model {
 		postureSubtree(docs),
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
+		noProjectTrustSubtree(docs),
 		modelsSubtree(docs),
 	}}
 }
@@ -200,6 +201,30 @@ func planModeAutoApproveSubtree(docs Docs) *Subtree {
 			Type:         "bool",
 			Default:      "false",
 			Doc:          docFor(docs, "Config.PlanModeAutoApprove", "auto-approve a presented plan with NO HUMAN REVIEW (default off)"),
+			ExampleValue: "true",
+		}},
+	}
+}
+
+func noProjectTrustSubtree(docs Docs) *Subtree {
+	return &Subtree{
+		Key:  "no-project-trust",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER no-project-trust flag (issue #359): when true, ingestion of the " +
+			"repo's project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, " +
+			"skills, soul, slash commands, ALLOW rules, git snapshot) is suppressed while the " +
+			"workspace-trust gate (the read-only subagent shell) stays on the effective " +
+			"--trust-project. DEFAULT OFF. A project-tier no-project-trust: is IGNORED with a " +
+			"WARN (a project cannot suppress its own project-tier ingestion — that is an " +
+			"operator deployment decision). Intended for scheduler runs over a freshly-cloned " +
+			"untrusted repo where the scheduler supplies its own instructions.",
+		CommentedOut: true,
+		Scalar:       true,
+		Fields: []*Field{{
+			Key:          "no-project-trust",
+			Type:         "bool",
+			Default:      "false",
+			Doc:          docFor(docs, "Config.NoProjectTrust", "suppress project-tier steering ingestion (default off)"),
 			ExampleValue: "true",
 		}},
 	}

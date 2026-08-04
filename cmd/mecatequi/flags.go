@@ -132,6 +132,13 @@ type flags struct {
 	// --reasoning-effort so composition lets CLI out-rank the settings.yaml key.
 	reasoningEffort        string
 	reasoningEffortFlagSet bool
+	// noProjectTrust suppresses ONLY project-tier INGESTION (AGENTS.md/CLAUDE.md,
+	// .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git
+	// snapshot) while leaving the workspace-trust gate (the read-only subagent shell)
+	// on the effective posture. noProjectTrustFlagSet records an explicit
+	// --no-project-trust so CLI out-ranks the settings.yaml no-project-trust: key.
+	noProjectTrust        bool
+	noProjectTrustFlagSet bool
 }
 
 // parseFlags turns argv into a flags value, resolving env-derived defaults and
@@ -194,6 +201,7 @@ func parseFlags(argv []string) (flags, error) {
 
 	fs.StringVar(&f.posture, "posture", "", "OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate — and a headless single-shot run has NO approver, so a main-agent ask CANCELS the run (exit 1). For an autonomous CI run use --posture auto (allow-all, child injection-defense ON) or trusted/yolo. trusted honours a project's ALLOW rules; auto adds allow-all + main substitution loosening; yolo additionally auto-runs $()/backtick/heredoc in children. An unknown value fails closed to strict")
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN")
+	fs.BoolVar(&f.noProjectTrust, "no-project-trust", false, "Suppress ingestion of the repo's project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git snapshot) while leaving the workspace-trust gate (the read-only subagent shell) on the effective --trust-project. OPERATOR-TIER only: a project file's no-project-trust: is ignored with a WARN. Default OFF. Intended for scheduler runs over a freshly-cloned untrusted repo where the scheduler supplies its own --instructions.")
 
 	fs.Usage = usageEpilogue(fs)
 
@@ -227,6 +235,9 @@ func parseFlags(argv []string) (flags, error) {
 		}
 		if fl.Name == "reasoning-effort" {
 			f.reasoningEffortFlagSet = true
+		}
+		if fl.Name == "no-project-trust" {
+			f.noProjectTrustFlagSet = true
 		}
 		if fl.Name == "default-provider" {
 			f.defaultProviderFlagSet = true
@@ -379,6 +390,10 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 
 		Posture:        app.ParsePosture(f.posture),
 		PostureFlagSet: f.postureFlagSet,
+		// Project-tier ingestion suppression (issue #359): operator-tier only;
+		// noProjectTrustFlagSet lets CLI out-rank the settings.yaml no-project-trust: key.
+		NoProjectIngest:       f.noProjectTrust,
+		NoProjectTrustFlagSet: f.noProjectTrustFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        f.reasoningEffort,

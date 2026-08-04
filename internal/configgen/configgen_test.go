@@ -46,6 +46,9 @@ func authoritativeKeys() []string {
 	// TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts).
 	// reasoning-effort is likewise a bare scalar Config field (ADR 0055).
 	keys = append(keys, "reasoning-effort")
+	// plan-mode-auto-approve and no-project-trust are likewise bare scalar Config
+	// fields (operator-tier only).
+	keys = append(keys, "plan-mode-auto-approve", "no-project-trust")
 	return keys
 }
 
@@ -188,6 +191,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
+		"no-project-trust":       configgen.TierOperator, // operator-only: a project cannot suppress its own project-tier ingestion (issue #359)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 	}
 	got := map[string]configgen.Tier{}

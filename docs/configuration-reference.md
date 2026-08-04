@@ -92,6 +92,16 @@ OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode s
 | --- | --- | --- | --- |
 | `plan-mode-auto-approve` | `bool` | `false` | PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve: key is IGNORED with a WARN (operator-tier only — a project repo enabling autonomous plan approval is a security DOWNGRADE). false = absent (the resolver returns false and composition keeps the default OFF). The composition layer interprets the bool; permconfig only reads the scalar. |
 
+## `no-project-trust`
+
+Tier: **operator**
+
+OPERATOR-TIER no-project-trust flag (issue #359): when true, ingestion of the repo's project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git snapshot) is suppressed while the workspace-trust gate (the read-only subagent shell) stays on the effective --trust-project. DEFAULT OFF. A project-tier no-project-trust: is IGNORED with a WARN (a project cannot suppress its own project-tier ingestion — that is an operator deployment decision). Intended for scheduler runs over a freshly-cloned untrusted repo where the scheduler supplies its own instructions.
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `no-project-trust` | `bool` | `false` | NoProjectTrust is the OPERATOR-TIER no-project-trust flag (issue #359). Like Posture/PlanModeAutoApprove it is honoured ONLY from the user-global + CLI tiers; a project-tier file's no-project-trust: key is IGNORED with a WARN (operator-tier only — a project repo suppressing its own project-tier ingestion is an operator deployment decision, never the repo's call). false = absent (the resolver returns false and composition keeps the default OFF). The composition layer interprets the bool; permconfig only reads the scalar. |
+
 ## `models`
 
 Tier: **operator + project**

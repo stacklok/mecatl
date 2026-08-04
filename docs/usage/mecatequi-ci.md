@@ -25,6 +25,7 @@ run-contract ADR 0010). The profile such a launcher should use:
 MCP_TEQUITL_TOKEN=<per-run token> MCP_VMCP_TOKEN=<per-run token> \
 mecatequi \
   --posture auto \
+  --no-project-trust \
   --untrusted-prompt --prompt-file /work/task.md \
   --timeout 30m \
   --mcp-server tequitl=https://tequitl.internal/mcp \
@@ -36,6 +37,13 @@ mecatequi \
   every mutating tool call, and a headless run has no approver — the run is CANCELLED
   on the first ask and exits 1. `auto` is the recommended unattended tier (allow-all,
   child injection-defense ON).
+- **`--no-project-trust`** (operator-tier flag, default OFF) **suppresses the cloned
+  repo's project-tier steering** — AGENTS.md/CLAUDE.md, project rules/agents/skills/soul/
+  commands, and the git snapshot — while keeping `auto`'s approval semantics and the
+  subagent shell. A scheduler running on third-party repos should always set this;
+  supply your own framing via `--instructions`. The pin does not lower `TrustProject`,
+  so the read-only subagent/team-member shell is unaffected.
+  See [workspace trust](workspace-trust.md#suppressing-project-tier-ingestion---no-project-trust).
 - **`--untrusted-prompt`** whenever the task body is externally sourced (an issue body,
   a task-graph node): the prompt is wrapped in the harness untrusted-data fence so the
   model treats it as data to act on, not instructions to obey.
@@ -79,6 +87,12 @@ mecatequi \
   (`schema_version` present) — not blindly the last line of the pod log. Capturing
   stdout directly (subprocess pipe, or a container runtime that separates streams)
   makes the literal last line safe.
+- **`Summary.final_text` is clamped to 4000 runes** (rune-aware, ellipsis-suffixed).
+  The summary is the scan-index, not the archive — the full terminal text lives in the
+  durable event log (`--out-events`) and the git diff, never truncated there. A
+  log-tailing consumer reading the summary line for the final reply should check
+  `final_text` for the gist, and go to the event log or the patch for the complete
+  deliverable.
 - **`--run-id` / `--task-ref` are deliberately NOT accepted.** mecatequi stays
   scheduler-agnostic: correlate a run via your own launch identity (Job name, pod
   labels) plus the `session_id` the Summary already carries.

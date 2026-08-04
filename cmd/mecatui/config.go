@@ -140,6 +140,17 @@ type config struct {
 	// app.Config.TrustProject in embeddedConfig.
 	trustProject bool
 
+	// noProjectTrust suppresses ONLY project-tier INGESTION (AGENTS.md/CLAUDE.md,
+	// .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git
+	// snapshot) for the EMBEDDED server only (ignored under `mecatui connect` — the
+	// dialed server owns its ingestion posture), while leaving the workspace-trust
+	// gate (the read-only subagent shell) on the effective --trust-project.
+	// noProjectTrustFlagSet records an explicit --no-project-trust so CLI out-ranks
+	// the settings.yaml no-project-trust: key. Mapped onto
+	// app.Config.NoProjectIngest/NoProjectTrustFlagSet in embeddedConfig.
+	noProjectTrust        bool
+	noProjectTrustFlagSet bool
+
 	// allowAllTools is the operator allow-all posture for the EMBEDDED server only
 	// (ignored under `mecatui connect`). When set it injects a single
 	// ScopeCLI allow-all rule that suppresses the built-in mutate-ask floor; a Deny
@@ -334,6 +345,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "embedded server only: per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables; large-context reasoning models can take a long time to first token")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "embedded server only: max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "embedded server only: honour a discovered PROJECT's ALLOW rules AND its project-scoped soul (.mecatl/soul.md) (its deny/ask rules are always honoured regardless). Default OFF (the safe stance, unified with mecated): an untrusted repo's permission grants and project soul are ignored. TRUST BOUNDARY: enabling this lets a checked-in .mecatl/settings.yaml auto-approve tool calls and a checked-in project soul steer the model — only pass it for a repo you trust")
+	fs.BoolVar(&cfg.noProjectTrust, "no-project-trust", false, "embedded server only: Suppress ingestion of the repo's project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git snapshot) while leaving the workspace-trust gate (the read-only subagent shell) on the effective --trust-project. OPERATOR-TIER only: a project file's no-project-trust: is ignored with a WARN. Default OFF. Intended for scheduler runs over a freshly-cloned untrusted repo where the scheduler supplies its own --instructions.")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
 		"embedded server only; ALIAS for --posture yolo (dangerous): allow-all AND loosen the CHILD substitution floor (a subagent's $()/backtick/heredoc AUTO-RUNS — prompt-injection defense OFF). Deny in any scope and configured Ask still apply. Isolated/single-tenant ONLY. Refused as root unless MECATL_SANDBOX=1 (or IS_SANDBOX=1).")
 	fs.StringVar(&cfg.posture, "posture", "",
@@ -420,6 +432,9 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
+		}
+		if f.Name == "no-project-trust" {
+			cfg.noProjectTrustFlagSet = true
 		}
 		if f.Name == "default-provider" {
 			cfg.defaultProviderFlagSet = true

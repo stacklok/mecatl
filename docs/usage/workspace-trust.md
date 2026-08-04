@@ -300,6 +300,52 @@ MECATL_SANDBOX=1 bin/mecated serve --mock --posture auto
 MECATL_SANDBOX=1 bin/mecated serve --mock --posture yolo   # == --yolo
 ```
 
+### Suppressing project-tier ingestion (`--no-project-trust`)
+
+The posture ladder sets `TrustProject=true` at `trusted`/`auto`/`yolo` — the project
+authority set (AGENTS.md/CLAUDE.md, project rules, agent defs, skills, soul, slash commands,
+ALLOW rules, and the git snapshot) is admitted. For an **unattended scheduler** (mecatequi /
+mecak8s) running on cloned repos, that is a supply-chain channel: whoever pushes to the
+cloned ref can inject instructions through the repo's AGENTS.md or a project soul.
+
+`--no-project-trust` (CLI flag, default OFF) + the operator-tier `no-project-trust:` YAML
+key **suppress project-tier ingestion** without lowering `TrustProject` — so the
+read-only subagent shell stays active (lowering `TrustProject=false` disables it; the pin
+does not):
+
+```sh
+# Scheduler on cloned third-party repos: keep auto's approvals,
+# subagent shell, and child-injection defence — drop the repo's
+# own AGENTS.md / project rules / agents / skills / soul / commands.
+mecatequi --posture auto --no-project-trust --instructions "..." --prompt ...
+```
+
+What the pin suppresses:
+- AGENTS.md / CLAUDE.md (the highest-value injection point — the scheduler supplies its own
+  `--instructions`)
+- `.mecatl`/`.claude` rules (project ALLOW rules)
+- project-tier agent definitions
+- project-tier skills
+- project soul
+- slash commands
+- the git snapshot
+
+What it does **not** affect:
+- the subagent shell (it still runs — the child injection-defence posture still holds)
+- the posture ladder's approvals (allow-all at `auto`/`yolo` is unaffected)
+- operator-tier config (`--instructions`, user soul, user agents/skills/commands)
+- deny/ask rules from any scope (they only tighten)
+
+The pin is **operator-tier only**; a project file's `no-project-trust:` key is ignored with a
+WARN. CLI out-ranks the operator YAML value. The `--no-project-trust` flag is intentionally a
+negative boolean — its zero-value preserves the default behaviour unchanged. An explicit
+`--no-project-trust=false` is also supported and wins over the YAML key.
+
+The pin is a separate dimension from `--trust-project`: the two combine via the single-source
+helper `ingestProjectTier(cfg)` = `cfg.TrustProject && !cfg.NoProjectIngest`. Setting both
+`--trust-project` and `--no-project-trust` gives `TrustProject=true ∧ NoProjectIngest=true`
+→ ingestion suppressed. The resolution is unambiguous from the command line.
+
 ---
 
 See also: [permissions configuration](permissions-config.md), or the

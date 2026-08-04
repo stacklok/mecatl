@@ -434,8 +434,8 @@ func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 	if policy == nil || len(policy.Allowlist) == 0 {
 		return cfg // opt-in: no operator allowlist ⇒ project models WARN-ignored upstream.
 	}
-	if !cfg.TrustProject {
-		return cfg // untrusted: the project block was already WARN-ignored at capture.
+	if !ingestProjectTier(cfg) {
+		return cfg // untrusted OR pin-suppressed: the project block was already WARN-ignored at capture.
 	}
 	proj := res.ProjectModelBindings(projectModelWorkspace(cfg))
 	if proj == nil {

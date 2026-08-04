@@ -151,7 +151,7 @@ func TestSelectorSessionMemoryPromptHasMatchingTools(t *testing.T) {
 	reg := twoProviderReg(oa, providerOpenAI, "gpt-5", or, providerOpenRouter)
 
 	// The REAL instruction chain Build wires when a memory store is configured.
-	instructions := buildInstructionAssembler(nil, nil, memStore, nil)
+	instructions := buildInstructionAssembler(nil, nil, memStore, nil, false)
 	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, oa, memstore.New(),
 		permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, instructions,
 		catalogAssets{memStore: memStore}, nil)

@@ -669,6 +669,25 @@ type Config struct {
 	TrustProject            bool
 	PermissionConfigs       []string
 
+	// NoProjectIngest suppresses ONLY project-tier INGESTION (permconfig ALLOW rules,
+	// project soul, agent defs, skills, rules, slash commands, the git snapshot, and
+	// AGENTS.md/CLAUDE.md) — it does NOT touch cfg.TrustProject, so the read-only
+	// subagent-shell trust gate (build.go ~4460) stays on the real trust decision.
+	// This is the pin that lets a scheduler run over a freshly-cloned untrusted repo
+	// (which passes --trust-project to keep the child shell) WITHOUT admitting the
+	// repo's own steering, because the scheduler supplies its own --instructions.
+	// Operator-tier only: set via --no-project-trust or the operator-global
+	// settings.yaml no-project-trust: key (folded by foldOperatorNoProjectTrust); a
+	// project-tier key is WARN-ignored by permconfig. Default OFF = byte-identical to
+	// today. applyPosture/resolveTrust NEVER read or set it, so no posture tier can
+	// re-raise ingestion once the pin is set.
+	NoProjectIngest bool
+	// NoProjectTrustFlagSet records whether the operator passed an explicit
+	// --no-project-trust flag. When true, foldOperatorNoProjectTrust leaves the
+	// operator-YAML no-project-trust: value alone (CLI out-ranks YAML). Set by the cmd
+	// mains alongside NoProjectIngest. Mirrors PostureFlagSet.
+	NoProjectTrustFlagSet bool
+
 	// AllowAllTools, when set, injects a single ScopeCLI allow-all rule into BOTH
 	// the MAIN engine's static ruleset (mainRules, AudienceMain) AND the
 	// child/member ruleset (childRules, AudienceSubagent) via the shared
@@ -1072,6 +1091,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorPosture(cfg)
 	cfg = foldOperatorReasoningEffort(cfg)
 	cfg = foldOperatorPlanModeAutoApprove(cfg)
+	cfg = foldOperatorNoProjectTrust(cfg)
 	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
 	cfg = applyPosture(cfg)
 	// AUTHORITATIVE root/no-sandbox refusal: applied HERE, after the full posture fold,
@@ -1130,12 +1150,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorModelSlots(cfg)
 
 	// Start-of-session git snapshot, computed ONCE here (FIX 2): gitSnapshot runs git
-	// against cfg.Workspace through a HARDENED/scrubbed env and only for a TRUSTED
-	// workspace (FIX 1). The single value is carried on cfg.gitStatus so every
+	// against cfg.Workspace through a HARDENED/scrubbed env and only when the project
+	// tier is INGESTED (FIX 1): trust AND not pin-suppressed (ingestProjectTier). The
+	// single value is carried on cfg.gitStatus so every
 	// child/member promptConfig threads it in rather than re-running git per build or
 	// per team-member spawn. Computed AFTER the trust fold so the gate sees effective
 	// trust (declared/remembered/flag all collapse onto cfg.TrustProject above).
-	cfg.gitStatus = gitSnapshot(cfg.Workspace, cfg.Shell, cfg.TrustProject)
+	cfg.gitStatus = gitSnapshot(cfg.Workspace, cfg.Shell, ingestProjectTier(cfg))
 
 	// ToolHive LLM gateway (issue #262): an explicit --toolhive-llm-base-url
 	// must resolve to loopback BEFORE any registry entry is constructed
@@ -2530,7 +2551,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// ports HERE, in the composition layer — prompt never imports them. All ride
 	// as turn-0 user messages (after the cache breakpoint), so none enters
 	// prompt.Build's StablePrefix.
-	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore)
+	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, cfg.NoProjectIngest)
 
 	// Phase 2b (OPT-IN, OFF by default): when UserModelReview is set AND a user-model
 	// store is wired, wrap the MAIN engine's HookRunner with a composition-layer
@@ -2639,11 +2660,26 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 // *soul.Store, *memory.Store) meet their prompt-defined ports HERE, in the
 // composition layer — prompt never imports them. All ride as turn-0 user messages
 // (after the cache breakpoint), so none enters prompt.Build's StablePrefix.
-func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulSource, memStore, userModelStore tool.MemoryStore) prompt.InstructionAssembler {
+//
+// noRoot omits the RootAssembler (AGENTS.md/CLAUDE.md) — the --no-project-trust pin
+// (issue #359) suppresses that project-tier ingestion while leaving rules/soul/memory
+// (which carry their own trust provenance) intact. When noRoot AND nothing else is
+// wired, a zero-child MultiAssembler is returned (an honest no-op: Assemble → nil,nil).
+func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulSource, memStore, userModelStore tool.MemoryStore, noRoot bool) prompt.InstructionAssembler {
 	if rulesSrc == nil && soulSrc == nil && memStore == nil && userModelStore == nil {
+		if noRoot {
+			// The pin suppressed AGENTS.md/CLAUDE.md and no other assembler is wired:
+			// a zero-child MultiAssembler assembles to (nil, nil) — an honest no-op.
+			return prompt.NewMultiAssembler()
+		}
 		return prompt.RootAssembler{}
 	}
-	assemblers := []prompt.InstructionAssembler{prompt.RootAssembler{}}
+	var assemblers []prompt.InstructionAssembler
+	if !noRoot {
+		// RootAssembler (AGENTS.md/CLAUDE.md) is project-tier ingestion: omitted when
+		// the --no-project-trust pin suppressed it (issue #359).
+		assemblers = append(assemblers, prompt.RootAssembler{})
+	}
 	if rulesSrc != nil {
 		assemblers = append(assemblers, prompt.RulesAssembler{Src: rulesSrc})
 	}
@@ -2709,16 +2745,17 @@ func buildSoulSourceWith(cfg Config, io baselineIO) prompt.SoulSource {
 // check holds — the typed-nil gotcha) and a narration; it NEVER aborts the build.
 // Diagnostics ride cfg.diag() (the injected port.Diagnostics), build-once here.
 func resolveRulesSeam(ctx context.Context, cfg Config) prompt.RulesSource {
-	// Project-tier rules are withheld when the workspace is untrusted (the same
-	// gate as agents/skills). The user-tier lanes stay active regardless.
-	if cfg.Workspace != "" && !cfg.TrustProject {
-		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace); user-tier rules stay active. Trust this repo (--trust-project or trustedWorkspaces) to admit its project rules",
+	// Project-tier rules are withheld when the project tier is not ingested (the
+	// same gate as agents/skills): untrusted OR pin-suppressed. The user-tier lanes
+	// stay active regardless.
+	if cfg.Workspace != "" && !ingestProjectTier(cfg) {
+		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or --no-project-trust); user-tier rules stay active. Trust this repo (--trust-project or trustedWorkspaces) and do not pass --no-project-trust to admit its project rules",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/rules,.claude/rules")
 	}
 	sources := rules.ResolveSources(rules.ResolveOptions{
 		Conventional:       true,
 		Workspace:          cfg.Workspace,
-		IncludeProjectTier: cfg.TrustProject,
+		IncludeProjectTier: ingestProjectTier(cfg),
 	})
 	if len(sources) == 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "rules DISABLED (no rules dirs configured)")
@@ -3062,12 +3099,12 @@ func buildDirCommandExpander(cfg Config) prompt.CommandExpander {
 	// EnableCommands with no explicit dir: the package defaults are the PROJECT-tier
 	// dirs (workspace-relative .mecatl/commands, .claude/commands). They are repo-
 	// injected steering, so they are withheld when there IS a workspace to distrust
-	// AND it is untrusted (Phase 2a). cfg.TrustProject carries the folded
-	// TrustDecision (Build). With no workspace there is no project to gate (the
+	// AND the project tier is not ingested (Phase 2a): untrusted OR pin-suppressed
+	// (ingestProjectTier). With no workspace there is no project to gate (the
 	// expander resolves per-session against each session's root). An untrusted repo's
 	// slash commands cannot run before the operator trusts it; the agent still works
 	// in "ask the human" mode (raw text passes through the NoopExpander).
-	if cfg.Workspace != "" && !cfg.TrustProject {
+	if cfg.Workspace != "" && !ingestProjectTier(cfg) {
 		return nil
 	}
 	return prompt.NewDirCommandExpander()
@@ -3084,10 +3121,10 @@ func slashCommandDecision(cfg Config) diagFact {
 	if cfg.CommandsDir != "" {
 		return diagFact{level: port.LevelInfo, msg: "slash commands ENABLED", args: []any{"dir", cfg.CommandsDir}}
 	}
-	if cfg.Workspace != "" && !cfg.TrustProject {
+	if cfg.Workspace != "" && !ingestProjectTier(cfg) {
 		return diagFact{
 			level: port.LevelWarn,
-			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace); raw text passes through. Trust this repo (--trust-project or trustedWorkspaces) or pass --commands-dir to enable project slash commands",
+			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or --no-project-trust); raw text passes through. Trust this repo (--trust-project or trustedWorkspaces) and do not pass --no-project-trust, or pass --commands-dir to enable project slash commands",
 			args:  []any{"dirs", ".mecatl/commands,.claude/commands"},
 		}
 	}
@@ -3981,9 +4018,9 @@ func skillResolveOptions(cfg Config) skills.ResolveOptions {
 		Explicit:     cfg.SkillsDirs,
 		Conventional: cfg.SkillsConventional,
 		Workspace:    cfg.Workspace,
-		// Project-tier skills are withheld when the workspace is untrusted (Phase 2a /
-		// R2.5). cfg.TrustProject already carries the folded TrustDecision (Build).
-		IncludeProjectTier: cfg.TrustProject,
+		// Project-tier skills are withheld when the project tier is not ingested
+		// (Phase 2a / R2.5): untrusted OR pin-suppressed (ingestProjectTier).
+		IncludeProjectTier: ingestProjectTier(cfg),
 	}
 }
 
@@ -6613,7 +6650,7 @@ func buildPermResolver(cfg Config) permpolicy.RuleResolver {
 	resolver := permconfig.New(permconfig.Options{
 		Conventional:  cfg.PermissionsConventional,
 		ImportClaude:  cfg.ImportClaudePermissions,
-		TrustProject:  cfg.TrustProject,
+		TrustProject:  ingestProjectTier(cfg),
 		ExplicitFiles: cfg.PermissionConfigs,
 		Diagnostics:   cfg.diag(),
 	})
