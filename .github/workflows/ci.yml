@@ -319,15 +319,15 @@ jobs:
         env:
           GOWORK: off
         run: |
-          cd provider/ssefilter && go build ./...
-          cd provider/anthropic && go build ./...
+          (cd provider/ssefilter && go build ./...)
+          (cd provider/anthropic && go build ./...)
 
       - name: go test (provider standalone)
         env:
           GOWORK: off
         run: |
-          cd provider/ssefilter && go test ./...
-          cd provider/anthropic && go test ./...
+          (cd provider/ssefilter && go test ./...)
+          (cd provider/anthropic && go test ./...)
 
   api-compat:
     name: API compat (engine public surface)
