@@ -89,13 +89,21 @@ it wants and pulls only that provider's SDK.
   `internal/adapter/...` citations, so the frozen ADRs and living docs that cited
   the moved files were repointed to `provider/<name>/...` (path updated, symbol
   citations kept — the sanctioned anti-drift edit).
-- **Deferred standalone proof:** `openai` + `openaichat` require
-  `provider/ssefilter`, which has no published tag yet. Their `GOWORK=off`
-  standalone build/test (the engine-standalone-style hygiene gate) cannot pass
-  until the first `provider/ssefilter/vX.Y.Z` tag is cut; until then they build
-  + test through the workspace (`GOWORK=on`). `ssefilter` and `anthropic` are
-  self-contained and pass `GOWORK=off` today. This ordering gap is a one-time
-  bootstrap cost, resolved by cutting the first provider tags.
+- **Deferred standalone proof:** the `GOWORK=off` standalone build/test gate (the
+  engine-standalone-style hygiene proof) covers ONLY `ssefilter` today — it is
+  the sole self-contained provider (stdlib + `openai-go`, no mecatl-module
+  dependency). `anthropic`, `openai`, and `openaichat` each `require` another
+  mecatl module (`engine`, and `provider/ssefilter` for the openai-go family).
+  Because mecatl is a **private/INTERNAL repo**, a `GOWORK=off` build must fetch
+  that dependency from the origin: `proxy.golang.org` cannot serve a private
+  module, and CI checks out with `persist-credentials: false` (no git auth), so
+  the fetch fails. Their standalone proof is deferred until the repo is public
+  (proxy can then serve the modules) OR the job wires git credentials +
+  `GOPRIVATE`; until then they build + test through the workspace (`GOWORK=on`),
+  which resolves every module locally. (Locally they pass `GOWORK=off` only
+  because the developer's git credentials let the engine fetch succeed.)
+  `openai`/`openaichat` additionally wait on the first `provider/ssefilter/vX.Y.Z`
+  tag. This is a private-monorepo bootstrap cost, not a structural hole.
 
 ## See also
 

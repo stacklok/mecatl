@@ -296,12 +296,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the opt-in provider/ submodules build + test with NO workspace
-    # (GOWORK=off), the same hygiene gate as engine-standalone. ssefilter
-    # (stdlib + openai-go) and anthropic (engine is a published dependency)
-    # are self-contained today. openai + openaichat require provider/ssefilter,
-    # which has no published tag yet — their GOWORK=off pass is deferred until
-    # provider/ssefilter/vX.Y.Z is cut (ADR 0093); they are covered by the
-    # workspace (GOWORK=on) build/test jobs above.
+    # (GOWORK=off), the same hygiene gate as engine-standalone. ONLY ssefilter is
+    # covered: it is the sole self-contained provider (stdlib + openai-go, no
+    # mecatl-module dependency). anthropic/openai/openaichat each `require`
+    # another mecatl module (engine, and provider/ssefilter for the openai-go
+    # family) — and mecatl is a PRIVATE/INTERNAL repo, so a GOWORK=off build must
+    # fetch that dependency from the origin: proxy.golang.org cannot serve a
+    # private module, and this job checks out with persist-credentials: false (no
+    # git auth), so the fetch 401s. Their standalone proof is deferred until the
+    # repo is public OR the job wires git credentials + GOPRIVATE (ADR 0093); they
+    # are covered by the workspace (GOWORK=on) build/test jobs above.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,23 +315,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: |
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
+          cache-dependency-path: provider/ssefilter/go.sum
 
       - name: go build (provider standalone)
         env:
           GOWORK: off
-        run: |
-          (cd provider/ssefilter && go build ./...)
-          (cd provider/anthropic && go build ./...)
+        run: (cd provider/ssefilter && go build ./...)
 
       - name: go test (provider standalone)
         env:
           GOWORK: off
-        run: |
-          (cd provider/ssefilter && go test ./...)
-          (cd provider/anthropic && go test ./...)
+        run: (cd provider/ssefilter && go test ./...)
 
   api-compat:
     name: API compat (engine public surface)

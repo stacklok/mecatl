@@ -207,17 +207,19 @@ tasks:
   test:provider-standalone:
     desc: |
       Prove the opt-in provider/ submodules build + test with NO workspace
-      (GOWORK=off), the same hygiene gate as test:engine-standalone. ssefilter
-      (stdlib + openai-go only) and anthropic (engine is a published dependency)
-      are self-contained today. openai + openaichat require provider/ssefilter,
-      which has no published tag yet — their GOWORK=off pass is deferred until
-      provider/ssefilter/vX.Y.Z is cut (ADR 0093). They are covered by the
-      workspace (GOWORK=on) build/test invocations in `task test`.
+      (GOWORK=off), the same hygiene gate as test:engine-standalone. ONLY
+      ssefilter is covered: it is the sole self-contained provider (stdlib +
+      openai-go, no mecatl-module dependency). anthropic/openai/openaichat each
+      require another mecatl module (engine, and provider/ssefilter for the
+      openai-go family), and mecatl is a PRIVATE/INTERNAL repo — a GOWORK=off
+      build must fetch that dependency from the origin, which fails without git
+      credentials (proxy.golang.org cannot serve a private module). Their
+      standalone proof is deferred until the repo is public or git credentials +
+      GOPRIVATE are wired (ADR 0093). They are covered by the workspace
+      (GOWORK=on) build/test invocations in `task test`.
     cmds:
       - cd provider/ssefilter && GOWORK=off go build ./...
       - cd provider/ssefilter && GOWORK=off go test ./...
-      - cd provider/anthropic && GOWORK=off go build ./...
-      - cd provider/anthropic && GOWORK=off go test ./...
 
   test:actions:
     desc: |
