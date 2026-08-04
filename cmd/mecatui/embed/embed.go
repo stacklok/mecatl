@@ -175,8 +175,9 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 	mecatlv1.RegisterHarnessServiceServer(grpcSrv, server.NewHarnessServer(built.Service))
 	mecatlv1.RegisterScheduleServiceServer(grpcSrv, server.NewScheduleServer(built.Service))
 
-	// Mount the standard gRPC health service so client.IsReachable-style probes
-	// (and orchestration tooling) can confirm readiness over the same socket.
+	// Mount the standard gRPC health service so orchestration tooling can confirm
+	// readiness over the same socket (the TUI client itself dials + creates a
+	// session as its readiness check).
 	healthSrv := health.NewServer()
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)

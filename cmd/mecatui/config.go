@@ -15,22 +15,18 @@ import (
 
 // config is the resolved CLI/env configuration for mecatui.
 type config struct {
-	// transportMode is the resolved canonical transport mode (legacy/local/
-	// connect) threaded explicitly from resolveTransportMode through parse and
-	// validate. It drives the transport path (no-probe/no-embed) and the
-	// trust/provider/posture validation gating (ADR 0083 Phase 1).
+	// transportMode is the resolved canonical transport mode (local/connect)
+	// threaded explicitly from resolveTransportMode through parse and validate.
+	// It drives the transport path (no-probe/no-embed) and the
+	// trust/provider/posture validation gating (ADR 0083).
 	transportMode transportMode
-	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for
-	// legacy/local). Set by resolveTransportMode; consumed by resolveTransport.
+	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for the
+	// bare/local mode). Set by resolveTransportMode; consumed by resolveTransport.
 	connectAddress string
 	// helpAll is true when --help-all was passed; it requests the exhaustive
 	// flag listing and exits 0 before transport resolution.
-	helpAll bool
-	keymap  *cliconfig.KeyValueList
-	// server is the external mecated gRPC address (host:port). Empty means AUTO:
-	// probe the loopback default and, if nothing answers, host an embedded server
-	// in-process over a UNIX socket (see cmd/mecatui/embed).
-	server     string
+	helpAll    bool
+	keymap     *cliconfig.KeyValueList
 	workspace  string
 	mode       string
 	theme      string
@@ -126,7 +122,7 @@ type config struct {
 	noBash           bool
 
 	// Embedded-server LLM resilience timeouts (used only when hosting an
-	// in-process server; ignored when dialling an external --server). They mirror
+	// in-process server; ignored under `mecatui connect`). They mirror
 	// mecated's --llm-per-attempt-timeout / --llm-stream-idle-timeout and are
 	// mapped onto app.Config.LLMPerAttemptTimeout / app.Config.LLMStreamIdleTimeout
 	// in main.go. llmPerAttemptTimeout bounds ESTABLISHMENT (connect + first chunk)
@@ -137,7 +133,7 @@ type config struct {
 
 	// trustProject controls whether a discovered PROJECT's permission ALLOW rules
 	// and its project-scoped soul (.mecatl/soul.md) are honoured for the EMBEDDED
-	// server only (ignored when dialling an external --server). DEFAULT FALSE — the
+	// server only (ignored under `mecatui connect`). DEFAULT FALSE — the
 	// safe stance, unified with mecated's --trust-project. A project's deny/ask rules
 	// are ALWAYS honoured regardless; only its ALLOW grants and project soul are
 	// gated. Pass --trust-project for a repo you trust. Mapped onto
@@ -145,7 +141,7 @@ type config struct {
 	trustProject bool
 
 	// allowAllTools is the operator allow-all posture for the EMBEDDED server only
-	// (ignored when dialling an external --server). When set it injects a single
+	// (ignored under `mecatui connect`). When set it injects a single
 	// ScopeCLI allow-all rule that suppresses the built-in mutate-ask floor; a Deny
 	// in any scope and any deliberately configured Ask still apply. Refused as root
 	// outside a declared sandbox (see validate). See docs/adr/0022-allow-all-posture.md.
@@ -159,12 +155,6 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
-	// outputEconomy is a DEPRECATED legacy CLI flag (ADR 0041, superseded) for
-	// parser compatibility. It still PARSES so an existing invocation does not fail,
-	// but has NO EFFECT on the embedded server prompt. outputEconomyFlagSet gates the
-	// pre-TUI deprecation warning. Marked for follow-up removal.
-	outputEconomy        string
-	outputEconomyFlagSet bool
 	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055) for
 	// the EMBEDDED server. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so CLI out-ranks the operator-global settings.yaml
@@ -270,18 +260,13 @@ type config struct {
 	perfMCP bool
 }
 
-// defaultProbeAddr is mecated's historical default loopback gRPC address. In AUTO
-// mode (no --server) mecatui probes this; if a server is already serving there it
-// connects, otherwise it hosts an embedded server instead.
-const defaultProbeAddr = "127.0.0.1:8080"
-
-// parseFlags is the legacy-mode entry point: it parses argv (excluding the
-// program name) as a legacy bare/leading-flag invocation. Existing tests that
-// exercise the flag-parsing logic (not the mode-specific transport/help
-// behaviour) use this entry point. The canonical `mecatui local` / `mecatui
-// connect ADDRESS` paths go through parseTransportFlags via resolveTransportMode.
+// parseFlags is the bare-mode test seam: it parses argv (excluding the program
+// name) as a bare (embedded/local) invocation. Existing tests that exercise the
+// flag-parsing logic (not the mode-specific transport/help behaviour) use this
+// entry point. Production goes through parseTransportFlags via
+// resolveTransportMode.
 func parseFlags(args []string) (config, error) {
-	_, cfg, err := parseTransportFlags(modeLegacy, os.Stderr, args)
+	_, cfg, err := parseTransportFlags(modeLocal, os.Stderr, args)
 	return cfg, err
 }
 
@@ -302,7 +287,6 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	cfg.transportMode = mode
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&cfg.server, "server", "", "external mecated gRPC address (host:port); empty = auto: reuse a server already running on "+defaultProbeAddr+", else host an embedded one over a UNIX socket")
 	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for the session (default: cwd)")
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
@@ -354,8 +338,6 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 		"embedded server only; ALIAS for --posture yolo (dangerous): allow-all AND loosen the CHILD substitution floor (a subagent's $()/backtick/heredoc AUTO-RUNS — prompt-injection defense OFF). Deny in any scope and configured Ask still apply. Isolated/single-tenant ONLY. Refused as root unless MECATL_SANDBOX=1 (or IS_SANDBOX=1).")
 	fs.StringVar(&cfg.posture, "posture", "",
 		"embedded server only: OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted = --trust-project; auto adds allow-all + main substitution loosening (child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF). --yolo/--trust-project are aliases. auto/yolo refused as root outside MECATL_SANDBOX. Unknown value fails closed to strict.")
-	fs.StringVar(&cfg.outputEconomy, "output-economy", "",
-		"DEPRECATED, NO EFFECT (ADR 0041, superseded): the output-economy \"terse\" tone delta and this flag's behaviour were removed. Kept parseable for legacy invocations; remove this flag from your command line.")
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"embedded server only: OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). A per-session /effort out-ranks it. Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
 	fs.BoolVar(&cfg.quiet, "quiet", false,
@@ -397,19 +379,16 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	if cfg.helpAll {
 		out := fs.Output()
 		switch mode {
-		case modeLocal:
-			writeLocalHelpAll(out, fs)
 		case modeConnect:
 			writeConnectHelpAll(out, fs)
 		default:
-			writeLegacyHelpAll(out, fs)
+			writeBareHelpAll(out, fs)
 		}
 		return nil, config{}, flag.ErrHelp
 	}
 
-	// By-name applicability rejection (ADR 0083 Phase 1): connect rejects
-	// embedded-only flags; local rejects remote-only flags. The legacy mode
-	// retains today's acceptance behaviour (no by-name rejection).
+	// By-name applicability rejection (ADR 0083): connect rejects embedded-only
+	// flags; the bare/local mode rejects remote-only flags.
 	if err := rejectInapplicableFlags(fs, mode); err != nil {
 		return fs, config{}, err
 	}
@@ -438,9 +417,6 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 			// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
 			// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
 			cfg.subagentModelRouterSet = true
-		}
-		if f.Name == "output-economy" {
-			cfg.outputEconomyFlagSet = true
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
@@ -509,33 +485,18 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 }
 
 // transportUsage returns the fs.Usage closure for the resolved transport mode:
-// the legacy bare form prints the command-oriented top-level help; `local` and
-// `connect` print their mode-specific common help. Callers that want to assert
-// the banner is the real one (not a dead copy) wire this helper rather than
-// duplicating the closure.
+// the bare form prints the bare-mode common help; `connect` prints its
+// mode-specific common help. Callers that want to assert the banner is the real
+// one (not a dead copy) wire this helper rather than duplicating the closure.
 func transportUsage(fs *flag.FlagSet, mode transportMode) func() {
 	return func() {
 		out := fs.Output()
 		switch mode {
-		case modeLocal:
-			writeLocalCommonHelp(out, fs)
 		case modeConnect:
 			writeConnectCommonHelp(out, fs)
 		default:
-			writeTopLevelHelp(out)
+			writeBareCommonHelp(out, fs)
 		}
-	}
-}
-
-// mecatuiUsage returns a fs.Usage closure that prints the legacy mecatui usage
-// banner (the deprecated no-op --output-economy hidden). It is kept for tests
-// that assert the deprecated flag stays hidden from help; the production path
-// uses transportUsage (mode-aware).
-func mecatuiUsage(fs *flag.FlagSet) func() {
-	return func() {
-		out := fs.Output()
-		_, _ = fmt.Fprintf(out, "Usage of %s:\n", fs.Name())
-		cliconfig.PrintDefaultsHide(fs, "output-economy")
 	}
 }
 
@@ -586,13 +547,13 @@ func (c config) validate() error {
 		var probe app.Config
 		c.toolhiveLLMFlags.Apply(&probe)
 		if !app.ToolhiveAvailable(probe) {
-			return errors.New("no LLM provider configured and no external --server given — mecatui has nothing to talk to: " +
+			return errors.New("no LLM provider configured — mecatui has nothing to talk to: " +
 				"to host an embedded server set one of ANTHROPIC_API_KEY (Claude), OPENAI_API_KEY, " +
 				"OPENROUTER_API_KEY (one key, many models — a good first choice), or OPENCODE_API_KEY (OpenCode Go); " +
 				"for a compatible/proxy endpoint add " +
 				"--openai-base-url / --anthropic-base-url / --openrouter-base-url / --opencode-base-url with the matching key; " +
 				"for a ToolHive LLM gateway proxy make sure it is running (or pass --toolhive-llm-base-url); " +
-				"to try it offline with no key pass --mock; or point --server at an already-running mecated; " +
+				"to try it offline with no key pass --mock; or run 'mecatui connect ADDRESS' against an already-running mecated; " +
 				"see docs/usage.md for provider setup")
 		}
 	}
@@ -611,12 +572,11 @@ func (c config) validate() error {
 
 // mayEmbed reports whether this run may host an embedded server, and so is
 // subject to the provider/posture checks in validate() and the pre-TUI posture
-// WARN in run(). `local` always embeds; `legacy` may embed only when no --server
-// is set (the auto-probe-then-embed path); `connect` and legacy --server never
-// embed, so they skip those checks (ADR 0083 Phase 1). It is the single predicate
-// both guards key on, so the gating rationale lives in one place.
+// WARN in run(). The bare/local mode always embeds; `connect` never embeds, so
+// it skips those checks (ADR 0083). It is the single predicate both guards key
+// on, so the gating rationale lives in one place.
 func (c config) mayEmbed() bool {
-	return c.transportMode == modeLocal || (isLegacyMode(c.transportMode) && c.server == "")
+	return c.transportMode == modeLocal
 }
 
 // embeddedAuthoritativePosture resolves the SAME posture tier app.Build resolves for

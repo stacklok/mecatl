@@ -12,21 +12,22 @@ import (
 // baselineSlogWriter picks the writer for the UNIVERSAL global-slog floor the TUI
 // installs before the alt-screen starts (see installBaselineSlog). mecatui has no
 // in-process diagnostics of its own and owns the alt-screen, so the floor is always
-// io.Discard: a client-only TUI (--server or reuse-an-already-running mecated) has
-// nothing of its own to log, and any ambient/third-party slog.Default() use during
-// the alt-screen must NOT reach stderr. The host-embedded path later REFINES this
-// floor to the file sink ($XDG_STATE_HOME/mecatl/mecatui.log) so the embedded
-// server's ambient slog is captured and operator-recoverable. The quiet bool is
-// taken for symmetry with openDiagLogWriter and to make the contract explicit (both
-// quiet and not-quiet floor to discard for the client-only case).
+// io.Discard: a client-only TUI (the connect mode, dialling an already-running
+// mecated) has nothing of its own to log, and any ambient/third-party
+// slog.Default() use during the alt-screen must NOT reach stderr. The
+// host-embedded path later REFINES this floor to the file sink
+// ($XDG_STATE_HOME/mecatl/mecatui.log) so the embedded server's ambient slog is
+// captured and operator-recoverable. The quiet bool is taken for symmetry with
+// openDiagLogWriter and to make the contract explicit (both quiet and not-quiet
+// floor to discard for the client-only case).
 func baselineSlogWriter(quiet bool) io.Writer {
 	_ = quiet
 	return io.Discard
 }
 
 // installBaselineSlog redirects the GLOBAL slog default onto the baseline writer
-// (io.Discard) so NO transport mode — external --server, reuse, or host-embedded —
-// leaks an ambient/third-party slog line onto the Bubble Tea alt-screen. It runs
+// (io.Discard) so NO transport mode — connect or host-embedded — leaks an
+// ambient/third-party slog line onto the Bubble Tea alt-screen. It runs
 // once at the very top of run(), before resolveTransport and tea.NewProgram. The
 // host-embedded branch in resolveTransport installs a SECOND default over the file
 // writer, which wins for that path; this baseline stands for the client-only modes.

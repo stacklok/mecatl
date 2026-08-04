@@ -11,12 +11,12 @@ import (
 )
 
 // flagApplicability annotates a registered mecatui flag for mode-specific
-// applicability (ADR 0083 Phase 1) and progressive help. The applicability axis
+// applicability (ADR 0083) and progressive help. The applicability axis
 // is BY NAME: a flag explicitly passed in a mode where it is not applicable is
-// REJECTED (connect rejects embedded-only flags; local rejects remote-only
-// flags). A flag NOT listed here is treated as advanced (excluded from common
-// help, included in --help-all) and applicable to ALL modes — EXCEPT that an
-// unknown applicability defaults to fail-closed REJECT in explicit modes via the
+// REJECTED (connect rejects embedded-only flags; the bare/local mode rejects
+// remote-only flags). A flag NOT listed here is treated as advanced (excluded
+// from common help, included in --help-all) and applicable to ALL modes — EXCEPT
+// that an unknown applicability defaults to fail-closed REJECT via the
 // metadata-completeness invariant (validateFlagApplicability), so a newly-added
 // flag without a metadata entry cannot silently slip through applicability
 // checks.
@@ -25,7 +25,7 @@ type flagApplicability struct {
 	group string
 	// common is true when the flag appears in the mode-appropriate common help.
 	common bool
-	// local is true when the flag is applicable in `mecatui local`.
+	// local is true when the flag is applicable in the bare (embedded) mode.
 	local bool
 	// connect is true when the flag is applicable in `mecatui connect ADDRESS`.
 	connect bool
@@ -48,32 +48,18 @@ const (
 	groupInfo           = "Info"
 )
 
-// hiddenMecatuiFlags is the set of registered flags excluded from ALL rendered
-// help. They are legacy/compatibility surfaces whose public entry points are the
-// canonical commands; listing them in --help would be misleading. The metadata
-// completeness invariant (validateFlagApplicability) explicitly allows exactly
-// this set to have no flagApplicability entry.
-var hiddenMecatuiFlags = map[string]bool{
-	// --output-economy is the deprecated no-op flag (ADR 0041, superseded); it
-	// stays parseable for legacy invocations but is never advertised.
-	"output-economy": true,
-}
-
 // flagApplicabilityByFlag is the SINGLE source of grouping + common/advanced +
 // local/connect applicability for every public flag registered in
 // parseTransportFlags. A flag not listed here:
 //   - is ADVANCED (excluded from common help),
 //   - appears in --help-all,
-//   - is rejected in BOTH explicit modes by default (fail-closed), UNLESS it is
-//     in hiddenMecatuiFlags (the deprecated no-op, accepted everywhere as today).
+//   - is rejected in BOTH explicit modes by default (fail-closed).
 //
-// applicability is BY NAME: the explicit-mode applicability check (flagsVisit)
-// reads this map, so a flag marked local-only rejects an explicit --flag in
-// connect mode and vice versa. The legacy mode is NOT subject to by-name
-// rejection (it retains today's acceptance behaviour).
+// applicability is BY NAME: the mode applicability check (flagsVisit) reads
+// this map, so a flag marked local-only rejects an explicit --flag in connect
+// mode and vice versa.
 var flagApplicabilityByFlag = map[string]flagApplicability{
 	// ── Transport (remote-only) ───────────────────────────────────────────
-	"server":     {group: groupTransport, common: true, local: false, connect: false}, // legacy --server; not applicable in either explicit mode (local embeds; connect takes ADDRESS)
 	"auth-token": {group: groupTransport, common: true, local: false, connect: true},
 	"tls":        {group: groupTransport, common: true, local: false, connect: true},
 	"tls-ca":     {group: groupTransport, common: false, local: false, connect: true},
@@ -176,19 +162,10 @@ var groupOrder = []string{
 	groupObservability,
 }
 
-// applicableIn reports whether a flag named `name` is applicable in mode. The
-// legacy mode is NEVER subject to by-name rejection (it retains today's
-// acceptance behaviour). For explicit modes, a flag with no metadata entry is
-// REJECTED (fail-closed) unless it is in hiddenMecatuiFlags (the deprecated
-// no-op, accepted everywhere as today) — this is the metadata-completeness
-// invariant's runtime twin.
+// applicableIn reports whether a flag named `name` is applicable in mode. A
+// flag with no metadata entry is REJECTED (fail-closed) — this is the
+// metadata-completeness invariant's runtime twin.
 func applicableIn(name string, mode transportMode) bool {
-	if isLegacyMode(mode) {
-		return true
-	}
-	if hiddenMecatuiFlags[name] {
-		return true
-	}
 	meta, ok := flagApplicabilityByFlag[name]
 	if !ok {
 		// Unknown metadata: fail closed (reject), never silently include.
@@ -205,12 +182,8 @@ func applicableIn(name string, mode transportMode) bool {
 
 // rejectInapplicableFlags returns a non-nil error naming the first explicitly-set
 // flag that is not applicable in mode. It is PURE: given the parsed FlagSet's
-// visited flags and the mode, it returns the rejection or nil. The legacy mode is
-// a no-op (retains today's acceptance behaviour).
+// visited flags and the mode, it returns the rejection or nil.
 func rejectInapplicableFlags(fs *flag.FlagSet, mode transportMode) error {
-	if isLegacyMode(mode) {
-		return nil
-	}
 	var offenders []string
 	fs.Visit(func(f *flag.Flag) {
 		if !applicableIn(f.Name, mode) {
@@ -266,12 +239,9 @@ func validateFlagApplicability(fs *flag.FlagSet) error {
 			return fmt.Errorf("flagApplicabilityByFlag has orphan key %q: no such flag is registered in parseTransportFlags", name)
 		}
 	}
-	// Every registered public flag (not hidden) must have metadata.
+	// Every registered public flag must have metadata.
 	var missing []string
 	fs.VisitAll(func(f *flag.Flag) {
-		if hiddenMecatuiFlags[f.Name] {
-			return
-		}
 		if _, ok := flagApplicabilityByFlag[f.Name]; !ok {
 			missing = append(missing, f.Name)
 		}
@@ -285,12 +255,12 @@ func validateFlagApplicability(fs *flag.FlagSet) error {
 
 // ── Help renderers ────────────────────────────────────────────────────────
 
-// writeLocalCommonHelp renders the task-oriented common flag list for
-// `mecatui local --help`.
-func writeLocalCommonHelp(out io.Writer, fs *flag.FlagSet) {
-	_, _ = fmt.Fprintf(out, "Usage: mecatui local [flags]\n\n")
+// writeBareCommonHelp renders the task-oriented common flag list for the bare
+// `mecatui --help` (the embedded default).
+func writeBareCommonHelp(out io.Writer, fs *flag.FlagSet) {
+	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
 	_, _ = fmt.Fprintf(out, "Host an embedded mecated server in-process over a private UNIX socket. mecatui\n")
-	_, _ = fmt.Fprintf(out, "NEVER probes loopback in this mode — it always embeds. Run 'mecatui local\n")
+	_, _ = fmt.Fprintf(out, "NEVER probes loopback — the bare invocation always embeds. Run 'mecatui\n")
 	_, _ = fmt.Fprintf(out, "--help-all' for the full exhaustive reference including every embedded-server\n")
 	_, _ = fmt.Fprintf(out, "tuning knob.\n\n")
 	renderGroupedCommon(out, fs, commonFlagNames(modeLocal))
@@ -356,44 +326,24 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 	}
 }
 
-// writeLocalHelpAll renders the exhaustive flag list for `mecatui local --help-all`.
-// It uses the single cliconfig formatter (byte-identical to flag.PrintDefaults),
-// excluding only the hiddenMecatuiFlags legacy surfaces that must never appear in
-// help.
-func writeLocalHelpAll(out io.Writer, fs *flag.FlagSet) {
-	_, _ = fmt.Fprintf(out, "Usage: mecatui local [flags]\n\nFlags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, hiddenMecatuiFlags)
+// writeBareHelpAll renders the exhaustive flag list for the bare `mecatui
+// --help-all` (the embedded default). It uses the single cliconfig formatter
+// (byte-identical to flag.PrintDefaults).
+func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
+	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\nFlags:\n")
+	cliconfig.PrintDefaultsExcluding(out, fs, nil)
 }
 
 // writeConnectHelpAll renders the exhaustive connect-applicable flag list for
 // `mecatui connect --help-all`. It excludes embedded-server flags (local-only)
-// AND the hiddenMecatuiFlags, via the single cliconfig formatter.
+// via the single cliconfig formatter.
 func writeConnectHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui connect ADDRESS [flags]\n\nFlags:\n")
 	exclude := make(map[string]bool)
-	for k := range hiddenMecatuiFlags {
-		exclude[k] = true
-	}
 	for name, m := range flagApplicabilityByFlag {
 		if !m.connect {
 			exclude[name] = true
 		}
 	}
 	cliconfig.PrintDefaultsExcluding(out, fs, exclude)
-}
-
-// writeLegacyHelpAll renders the help text for bare `mecatui --help-all`. The
-// --help-all flag promises an EXHAUSTIVE reference, so the bare form provides the
-// exhaustive flag reference (every public flag a mecatui invocation accepts) plus
-// a brief compatibility note pointing at the canonical commands.
-func writeLegacyHelpAll(out io.Writer, fs *flag.FlagSet) {
-	_, _ = fmt.Fprintf(out, "Usage: mecatui <command> [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Commands:\n")
-	_, _ = fmt.Fprintf(out, "  local             host an embedded mecated server in-process\n")
-	_, _ = fmt.Fprintf(out, "  connect ADDRESS   dial a running mecated at ADDRESS\n")
-	_, _ = fmt.Fprintf(out, "\nExhaustive flag reference (every public flag a mecatui invocation accepts):\n\n")
-	_, _ = fmt.Fprintf(out, "Flags:\n")
-	cliconfig.PrintDefaultsExcluding(out, fs, hiddenMecatuiFlags)
-	_, _ = fmt.Fprintf(out, "\nCompatibility note: bare 'mecatui [flags]' and 'mecatui --server ADDRESS' still\n")
-	_, _ = fmt.Fprintf(out, "work but are deprecated; prefer 'mecatui local' / 'mecatui connect ADDRESS'.\n")
 }

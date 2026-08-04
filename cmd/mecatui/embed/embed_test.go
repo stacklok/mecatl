@@ -80,8 +80,8 @@ func driveTurn(ctx context.Context, t *testing.T, target, workspace string) {
 
 // TestStartServesOverSocket is the end-to-end proof of the embedded path: Start
 // builds the harness from a (mock-provider) app.Config, serves it over a private
-// UNIX socket, and the ordinary TUI client can both health-probe it and drive a
-// real unary RPC (CreateSession) across that socket — no TCP port, no daemon.
+// UNIX socket, and the ordinary TUI client drives a real unary RPC
+// (CreateSession) across that socket — no TCP port, no daemon.
 func TestStartServesOverSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -105,12 +105,8 @@ func TestStartServesOverSocket(t *testing.T) {
 		t.Fatal("Target() is empty")
 	}
 
-	// The standard gRPC health service must report SERVING over the socket.
-	if !client.IsReachable(ctx, target) {
-		t.Fatalf("embedded server not reachable at %q", target)
-	}
-
-	// A real HarnessService RPC must succeed over the socket, against the workspace.
+	// Readiness IS a real client dial + session create over the socket (the one
+	// assertion — no separate health probe): a served socket answers CreateSession.
 	cl, err := client.Dial(client.DialConfig{Server: target})
 	if err != nil {
 		t.Fatalf("dial embedded server: %v", err)
@@ -508,10 +504,20 @@ func TestStartPerfServesAdminSurface(t *testing.T) {
 		t.Errorf("explicit 127.0.0.1:0 resolved to the fixed default %q, want an ephemeral port", embed.DefaultPerfAddr)
 	}
 
-	// The gRPC socket must still serve alongside the admin surface.
-	if !client.IsReachable(ctx, srv.Target()) {
-		t.Fatalf("embedded gRPC server not reachable at %q with perf enabled", srv.Target())
+	// The gRPC socket must still serve alongside the admin surface: a real client
+	// dial + session create proves readiness (no separate health probe).
+	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+	if err != nil {
+		t.Fatalf("dial embedded gRPC server with perf enabled: %v", err)
 	}
+	perfSessID, _, _, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	if err != nil {
+		t.Fatalf("CreateSession with perf enabled: %v", err)
+	}
+	if perfSessID == "" {
+		t.Fatal("CreateSession with perf enabled returned an empty session id")
+	}
+	_ = cl.Close() // close now — the turn below dials its own raw connection.
 
 	// Drive one real turn through the embedded engine BEFORE scraping /metrics and
 	// /debug/flightrecorder: it (a) makes the domain-metrics Sink emit a mecatl_

@@ -2,10 +2,8 @@ package main
 
 import (
 	"bytes"
-	goflag "flag"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,24 +13,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
 )
-
-func TestLegacyOutputEconomyFlagIsNoOpAndWarns(t *testing.T) {
-	cfg, err := parseFlags([]string{"--workspace", "/ws", "--output-economy", "terse"})
-	if err != nil {
-		t.Fatalf("legacy --output-economy must remain parseable for one release: %v", err)
-	}
-	if !cfg.outputEconomyFlagSet || cfg.outputEconomy != "terse" {
-		t.Fatalf("legacy flag capture = (%q, %v), want (terse, true)", cfg.outputEconomy, cfg.outputEconomyFlagSet)
-	}
-	if _, ok := reflect.TypeOf(embeddedConfig(cfg, port.NopDiagnostics{})).FieldByName("OutputEconomy"); ok {
-		t.Fatal("app.Config unexpectedly exposes OutputEconomy; legacy CLI value could affect behavior")
-	}
-	var warning bytes.Buffer
-	warnDeprecatedOutputEconomy(&warning, true)
-	if got := warning.String(); !strings.Contains(got, "--output-economy is deprecated and has no effect") || !strings.Contains(got, "remove it") {
-		t.Fatalf("deprecation warning missing no-effect/removal guidance: %q", got)
-	}
-}
 
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
 // agent-definition discovery (consistent with EnableTeams/EnableParallel; inert until a
@@ -150,15 +130,12 @@ func TestParseFlagsTrustProject(t *testing.T) {
 	}
 }
 
-// TestParseFlagsDefaults asserts --server defaults to empty (AUTO: probe-then-embed)
-// and that an empty workspace resolves to an absolute path (cwd).
+// TestParseFlagsDefaults asserts an empty workspace resolves to an absolute path
+// (cwd).
 func TestParseFlagsDefaults(t *testing.T) {
 	cfg, err := parseFlags(nil)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
-	}
-	if cfg.server != "" {
-		t.Errorf("server = %q, want \"\" (auto)", cfg.server)
 	}
 	if !filepath.IsAbs(cfg.workspace) {
 		t.Errorf("workspace = %q, want absolute", cfg.workspace)
@@ -731,13 +708,28 @@ func TestResolveMemoryDirPrecedence(t *testing.T) {
 	}
 }
 
+// TestConnectExplicitAuthTokenParses is the by-name connect-side counterpart of
+// TestRejectRemoteOnlyFlagsInBare: an EXPLICIT --auth-token in connect mode
+// parses successfully and lands on the config — an accidental applicability
+// flip (connect rejecting --auth-token) would stay green without it.
+func TestConnectExplicitAuthTokenParses(t *testing.T) {
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{},
+		[]string{"--auth-token", "explicit-tok", "--workspace", "/abs"})
+	if err != nil {
+		t.Fatalf("parseTransportFlags(connect, --auth-token explicit-tok): %v", err)
+	}
+	if cfg.authToken != "explicit-tok" {
+		t.Errorf("authToken = %q, want explicit-tok", cfg.authToken)
+	}
+}
+
 // TestParseFlagsAuthEnv asserts MECATL_AUTH_TOKEN is picked up when the flag is
-// unset.
+// unset. --auth-token is a remote-only flag, so the test parses in connect mode.
 func TestParseFlagsAuthEnv(t *testing.T) {
 	t.Setenv("MECATL_AUTH_TOKEN", "tok-123")
-	cfg, err := parseFlags(nil)
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, nil)
 	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
+		t.Fatalf("parseTransportFlags(connect): %v", err)
 	}
 	if cfg.authToken != "tok-123" {
 		t.Errorf("authToken = %q, want tok-123", cfg.authToken)
@@ -771,21 +763,21 @@ func TestValidateWorkspaceRequired(t *testing.T) {
 	}
 }
 
-// TestValidateEmbeddedProviderRequired asserts that with no external --server the
-// embedded path needs a resolvable provider (OpenAI key or --mock), and that an
-// external server or a provider satisfies the check.
+// TestValidateEmbeddedProviderRequired asserts that the bare (embedded) path
+// needs a resolvable provider (OpenAI key or --mock), and that connect mode or a
+// provider satisfies the check.
 func TestValidateEmbeddedProviderRequired(t *testing.T) {
-	// No server, no key, no mock -> error (cannot host an embedded server). The copy
+	// Bare mode, no key, no mock -> error (cannot host an embedded server). The copy
 	// must be self-explanatory: every accepted key, the endpoint base-URL overrides,
-	// the --mock + --server escape hatches, and the docs pointer.
-	if err := (config{workspace: "/abs", mode: "default"}).validate(); err == nil {
+	// the --mock + 'mecatui connect' escape hatches, and the docs pointer.
+	if err := (config{workspace: "/abs", mode: "default", transportMode: modeLocal}).validate(); err == nil {
 		t.Error("expected an error when embedding with no provider")
 	} else {
 		msg := err.Error()
 		for _, want := range []string{
 			"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY",
 			"--openai-base-url", "--anthropic-base-url", "--openrouter-base-url", "--opencode-base-url",
-			"--mock", "--server", "docs/usage.md",
+			"--mock", "mecatui connect ADDRESS", "docs/usage.md",
 		} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("validate() error %q does not mention %q", msg, want)
@@ -793,16 +785,16 @@ func TestValidateEmbeddedProviderRequired(t *testing.T) {
 		}
 	}
 	// --mock resolves the provider.
-	if err := (config{workspace: "/abs", mode: "default", mock: true}).validate(); err != nil {
+	if err := (config{workspace: "/abs", mode: "default", transportMode: modeLocal, mock: true}).validate(); err != nil {
 		t.Errorf("--mock should satisfy the provider check: %v", err)
 	}
 	// An OpenAI key resolves the provider.
-	if err := (config{workspace: "/abs", mode: "default", openAIKey: "sk-x"}).validate(); err != nil {
+	if err := (config{workspace: "/abs", mode: "default", transportMode: modeLocal, openAIKey: "sk-x"}).validate(); err != nil {
 		t.Errorf("OPENAI_API_KEY should satisfy the provider check: %v", err)
 	}
-	// An external server means no embedded provider is needed.
-	if err := (config{workspace: "/abs", mode: "default", server: "127.0.0.1:8080"}).validate(); err != nil {
-		t.Errorf("an external --server should not require a provider: %v", err)
+	// connect mode means no embedded provider is needed.
+	if err := (config{workspace: "/abs", mode: "default", transportMode: modeConnect, connectAddress: "127.0.0.1:8080"}).validate(); err != nil {
+		t.Errorf("mecatui connect should not require a provider: %v", err)
 	}
 }
 
@@ -962,21 +954,21 @@ func TestPostureRefusalReason(t *testing.T) {
 	}
 }
 
-// TestValidateAllowAllServerGuard asserts validate()'s `server == ""` guard: an
-// external server skips the allow-all root refusal entirely (on any euid), while
-// the embedded path with a declared sandbox is permitted. The root-refused branch
+// TestValidateAllowAllConnectGuard asserts validate()'s mayEmbed guard: connect
+// mode skips the allow-all root refusal entirely (on any euid), while the
+// embedded path with a declared sandbox is permitted. The root-refused branch
 // reads the real os.Geteuid(), so it is only assertable when actually running as
 // root.
-func TestValidateAllowAllServerGuard(t *testing.T) {
-	// External server: allow-all never trips the refusal regardless of euid.
-	ext := config{server: "127.0.0.1:8080", workspace: "/abs", mode: "default", allowAllTools: true}
+func TestValidateAllowAllConnectGuard(t *testing.T) {
+	// connect: allow-all never trips the refusal regardless of euid.
+	ext := config{transportMode: modeConnect, connectAddress: "127.0.0.1:8080", workspace: "/abs", mode: "default", allowAllTools: true}
 	if err := ext.validate(); err != nil {
-		t.Errorf("external server + allow-all should skip the refusal, got %v", err)
+		t.Errorf("connect + allow-all should skip the refusal, got %v", err)
 	}
 
 	// Embedded + declared sandbox: permitted on any euid.
 	t.Setenv("MECATL_SANDBOX", "1")
-	emb := config{workspace: "/abs", mode: "default", mock: true, allowAllTools: true}
+	emb := config{transportMode: modeLocal, workspace: "/abs", mode: "default", mock: true, allowAllTools: true}
 	if err := emb.validate(); err != nil {
 		t.Errorf("embedded + allow-all + MECATL_SANDBOX=1 should validate, got %v", err)
 	}
@@ -985,35 +977,9 @@ func TestValidateAllowAllServerGuard(t *testing.T) {
 	t.Setenv("MECATL_SANDBOX", "")
 	t.Setenv("IS_SANDBOX", "")
 	if os.Geteuid() == 0 {
-		refused := config{workspace: "/abs", mode: "default", mock: true, allowAllTools: true}
+		refused := config{transportMode: modeLocal, workspace: "/abs", mode: "default", mock: true, allowAllTools: true}
 		if err := refused.validate(); err == nil {
 			t.Error("embedded + allow-all as root without a sandbox should be refused")
 		}
-	}
-}
-
-// TestHelpOutputExcludesDeprecatedOutputEconomyFlag exercises the REAL help
-// output: it calls the mecatuiUsage helper parseFlags wires and asserts the
-// deprecated --output-economy flag is absent while a real flag (--workspace) is
-// present. A call-site regression (e.g. switching PrintDefaultsExcluding to
-// PrintDefaults) would re-expose the flag in --help and fail this test.
-func TestHelpOutputExcludesDeprecatedOutputEconomyFlag(t *testing.T) {
-	fs := goflag.NewFlagSet("mecatui", goflag.ContinueOnError)
-	var buf bytes.Buffer
-	fs.SetOutput(&buf)
-
-	// Register the deprecated flag + a control flag so we can assert real flags
-	// ARE printed.
-	fs.String("output-economy", "", "DEPRECATED")
-	fs.String("workspace", "", "workspace root")
-
-	mecatuiUsage(fs)()
-
-	out := buf.String()
-	if strings.Contains(out, "--output-economy") || strings.Contains(out, "-output-economy") {
-		t.Fatalf("help output must not advertise the deprecated --output-economy flag:\n%s", out)
-	}
-	if !strings.Contains(out, "-workspace") {
-		t.Fatalf("help output missing the -workspace control flag (flags are not being printed at all):\n%s", out)
 	}
 }

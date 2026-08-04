@@ -4,12 +4,11 @@
 // markdown for assistant text, themed lipgloss for user/tool blocks), and resolves
 // permission asks inline by sending ResumeApproval back on the same stream.
 //
-// The server it talks to may be EXTERNAL (a separately-run mecated, via --server)
-// or, by default, one this process HOSTS in-process over a UNIX socket (see
-// cmd/mecatui/embed) — so a single `mecatui` binary "just works" with no daemon to
-// start and no TCP port. In AUTO mode (no --server) it first probes the loopback
-// default and reuses a server already running there; only if none answers does it
-// embed.
+// The server it talks to may be EXTERNAL (a separately-run mecated, via
+// `mecatui connect ADDRESS`) or, by default, one this process HOSTS in-process
+// over a UNIX socket (see cmd/mecatui/embed) — so a single `mecatui` binary
+// "just works" with no daemon to start and no TCP port. The bare invocation
+// ALWAYS embeds (it never probes loopback); `connect ADDRESS` always dials.
 //
 // Architectural boundary: the render packages (ui, theme) and the client package
 // import no engine/... or internal/... package and no proto directly — they render purely from
@@ -23,7 +22,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -46,6 +44,16 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
+// usageErrorTrailer wraps a resolveTransportMode usage error so main's error
+// printer appends the top-level command summary (writeTopLevelHelp) beneath the
+// error line — the operator who typo'd a command needs the grammar, not just the
+// error. It rides run()'s ordinary error return (the resolver is pure and prints
+// nothing itself).
+type usageErrorTrailer struct{ err error }
+
+func (e *usageErrorTrailer) Error() string { return e.err.Error() }
+func (e *usageErrorTrailer) Unwrap() error { return e.err }
+
 func main() {
 	if err := run(os.Args); err != nil {
 		// --help / --help-all is a successful action: the Usage hook (or the
@@ -56,19 +64,30 @@ func main() {
 			return
 		}
 		fmt.Fprintln(os.Stderr, "mecatui:", err)
+		var trailer *usageErrorTrailer
+		if errors.As(err, &trailer) {
+			fmt.Fprintln(os.Stderr)
+			writeTopLevelHelp(os.Stderr)
+		}
 		os.Exit(1)
 	}
 }
 
 func run(argv []string) error {
-	// Phase 1 of the staged transport migration (ADR 0083): resolve the leading
-	// CLI word into a transport mode (local/connect/legacy) via the PURE
-	// resolveTransportMode seam, then thread the mode + remaining flag tail into
-	// parseTransportFlags. main owns the os.Args read + the os.Exit side effects;
-	// the resolver is pure (no os.Args mutation, no I/O).
+	// Resolve the leading CLI word into a transport mode (bare-local/connect)
+	// via the PURE resolveTransportMode seam (ADR 0083), then thread the mode +
+	// remaining flag tail into parseTransportFlags. main owns the os.Args read +
+	// the os.Exit side effects; the resolver is pure (no os.Args mutation, no
+	// I/O).
 	res := resolveTransportMode(argv)
 	if res.err != nil {
-		return res.err
+		// A leading-word usage error (unknown command, connect missing/flag-first
+		// ADDRESS): print the error AND the top-level command summary beneath it
+		// (mirroring mecated's errBareInvocation arm) — the operator needs the
+		// grammar, not just the error line. run() owns no streams, so main's error
+		// printer writes both to stderr; the trailer marks the error so main can
+		// recognize it without a string match.
+		return &usageErrorTrailer{err: res.err}
 	}
 
 	fs, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining)
@@ -83,24 +102,19 @@ func run(argv []string) error {
 
 	// UNIVERSAL global-slog floor: redirect the stdlib default to io.Discard (or, under
 	// --quiet, still discard) BEFORE any transport resolution or the Bubble Tea program.
-	// This covers EVERY transport path — external --server and reuse-an-already-running
-	// mecated both return early from resolveTransport and would otherwise leave the
-	// default at stderr, which the alt-screen (started below for ALL paths) would let a
-	// stray ambient/third-party slog line corrupt. The host-embedded branch later refines
-	// this floor to the mecatui.log file writer. See docs/adr/0020-diagnostics.md.
+	// This covers EVERY transport path — the connect (client-only) mode returns early
+	// from resolveTransport and would otherwise leave the default at stderr, which the
+	// alt-screen (started below for ALL paths) would let a stray ambient/third-party
+	// slog line corrupt. The host-embedded branch later refines this floor to the
+	// mecatui.log file writer. See docs/adr/0020-diagnostics.md.
 	installBaselineSlog(cfg.quiet)
-	warnDeprecatedOutputEconomy(os.Stderr, cfg.outputEconomyFlagSet)
-	// Legacy bare/`--server` deprecation (ADR 0083 Phase 1): emit a pre-TUI
-	// warning with the exact canonical replacement. Canonical local/connect warn
-	// nothing.
-	emitLegacyTransportWarning(os.Stderr, cfg.transportMode, cfg.server != "")
 
 	// Operator-posture WARN: mecatui has no slog and runs on the alt screen, so emit a
 	// single pre-TUI stderr line (it lands in scrollback before the alt screen takes
 	// over). Only meaningful for paths that may embed (see config.mayEmbed); connect
-	// and legacy --server own their own posture and skip this. Refusal already
-	// handled in validate(). The line is tier-specific: strict/trusted are silent,
-	// auto/yolo each warn (yolo names the child-defense-OFF behaviour change).
+	// owns its own posture and skips this. Refusal already handled in validate().
+	// The line is tier-specific: strict/trusted are silent, auto/yolo each warn
+	// (yolo names the child-defense-OFF behaviour change).
 	if cfg.mayEmbed() {
 		switch embeddedAuthoritativePosture(cfg) {
 		case app.PostureAuto:
@@ -221,14 +235,6 @@ func run(argv []string) error {
 	return err
 }
 
-// resolveTransport decides how mecatui reaches a server and returns the dial
-// target (for display + connection), the client.DialConfig to dial it with, and a
-// cleanup func to defer (a no-op unless an embedded server was started).
-//
-//   - --server set:     dial that external address with the TLS/auth flags.
-//   - --server empty:   AUTO — if a server already answers on the loopback default,
-//     reuse it (plaintext); otherwise host an embedded server over a UNIX socket.
-
 // keyOverridesFromConfig merges CLI --keymap entries into a map[string][]string.
 // YAML wiring will be added in a later step; for now only CLI is consulted.
 func keyOverridesFromConfig(cfg config) map[string][]string {
@@ -252,26 +258,22 @@ func keyOverridesFromConfig(cfg config) map[string][]string {
 	return out
 }
 
-func warnDeprecatedOutputEconomy(w io.Writer, set bool) {
-	if !set {
-		return
-	}
-	_, _ = fmt.Fprintln(w, "mecatui: WARNING: --output-economy is deprecated and has no effect; remove it (the output-economy terse prompt delta was removed)")
-}
-
+// resolveTransport decides how mecatui reaches a server and returns the dial
+// target (for display + connection), the client.DialConfig to dial it with, and a
+// cleanup func to defer (a no-op unless an embedded server was started).
+//
+//   - `mecatui connect ADDRESS`: dial ADDRESS with the TLS/auth flags (never
+//     probes, never embeds).
+//   - bare `mecatui` (modeLocal): host an embedded server over a UNIX socket
+//     (never probes loopback).
 func resolveTransport(ctx context.Context, cfg config) (target string, dial client.DialConfig, cleanup func(), err error) {
 	noop := func() {}
 
-	// Phase 1 of the staged transport migration (ADR 0083): the explicit modes
-	// are PURE. `mecatui connect ADDRESS` ALWAYS dials ADDRESS and NEVER
-	// probes/embeds; `mecatui local` ALWAYS embeds and NEVER probes loopback.
-	// The legacy bare/leading-flag path is byte-for-byte today: --server set
-	// dials remote; else AUTO (probe the loopback default, reuse if running,
-	// else host an embedded server).
-	switch cfg.transportMode {
-	case modeConnect:
-		// connect takes its target from the command-word ADDRESS (never --server,
-		// which is rejected as inapplicable in connect mode). It carries the
+	// The two modes are PURE (ADR 0083): `mecatui connect ADDRESS` ALWAYS dials
+	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
+	// NEVER probes loopback.
+	if cfg.transportMode == modeConnect {
+		// connect takes its target from the command-word ADDRESS. It carries the
 		// TLS/auth flags. No probe, no embed fallback.
 		return cfg.connectAddress, client.DialConfig{
 			Server:    cfg.connectAddress,
@@ -280,37 +282,16 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 			TLSCAFile: cfg.tlsCA,
 			Insecure:  cfg.insecure,
 		}, noop, nil
-	case modeLocal:
-		// local always embeds; fall through to the host-embedded branch below
-		// WITHOUT probing loopback.
-	default:
-		// Legacy: --server set dials remote (the byte-for-byte today path).
-		if cfg.server != "" {
-			return cfg.server, client.DialConfig{
-				Server:    cfg.server,
-				AuthToken: cfg.authToken,
-				UseTLS:    cfg.useTLS,
-				TLSCAFile: cfg.tlsCA,
-				Insecure:  cfg.insecure,
-			}, noop, nil
-		}
-		// Legacy AUTO: probe the loopback default and reuse a server already
-		// running there; only if none answers do we host an embedded server.
-		if client.IsReachable(ctx, defaultProbeAddr) {
-			fmt.Fprintf(os.Stderr, "mecatui: using mecated already running at %s\n", defaultProbeAddr)
-			return defaultProbeAddr, client.DialConfig{Server: defaultProbeAddr}, noop, nil
-		}
 	}
 
-	// We are about to HOST an embedded server (modeLocal, or legacy AUTO with no
-	// server already running on the loopback default).
+	// We are about to HOST an embedded server (the bare/local mode).
 	// This is the pre-TUI window (before the Bubble Tea alt screen starts) where the
 	// first-encounter workspace-trust prompt belongs (Workspace-Trust Phase 2c): if
 	// the workspace is not already trusted but carries a project authority set (or a
 	// remembered entry that DRIFTED), prompt the operator. The outcome feeds
 	// cfg.trustProject so embeddedConfig → app.Build honours it WITHOUT re-resolving
-	// or re-prompting. Only the embedded server is gated; an external --server (above)
-	// owns its own declarative trust. See cmd/mecatui/trust.go.
+	// or re-prompting. Only the embedded server is gated; a connect-mode server
+	// (handled above) owns its own declarative trust. See cmd/mecatui/trust.go.
 	// Open the embedded server's diagnostics sink ONCE, here in the host-an-embedded
 	// branch. It is a file under $XDG_STATE_HOME/mecatl/mecatui.log (fallback
 	// ~/.local/state/...), or io.Discard under --quiet / on any open failure — NEVER
@@ -350,14 +331,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 		diag.Log(ctx, port.LevelInfo, "mecatui: embedded server diagnostics log opened",
 			"path", resolveDiagLogPath(xdgconfig.OSEnv))
 	}
-	// The startup message is mode-aware (ADR 0083): local NEVER probed, so it
-	// says "hosting an embedded mecated" without the legacy "no server found"
-	// prefix; legacy AUTO did probe and found nothing, so it keeps the prefix.
-	if cfg.transportMode == modeLocal {
-		fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
-	} else {
-		fmt.Fprintf(os.Stderr, "mecatui: no server found; hosting an embedded mecated at %s\n", srv.Target())
-	}
+	fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
 	if addr := srv.AdminAddr(); addr != "" {
 		// Mirror mecated's loopback/unauth note: the perf surface can leak prompt
 		// text/file paths/goroutine stacks, so it is loopback-bound only.
