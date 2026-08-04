@@ -201,6 +201,14 @@ func parseFlags(argv []string) (flags, error) {
 		return flags{}, err
 	}
 
+	// Post-parse MCP finalize (issue #358): resolve the --mcp-server-insecure-http
+	// relaxations against the collected --mcp-server entries and run the deferred
+	// token-bearing scheme gate. Deferring it here (instead of inside Set) is what
+	// makes the opt-in order-independent on argv.
+	if err := f.mcpServers.Finalize(); err != nil {
+		return flags{}, err
+	}
+
 	// Record whether --posture was set EXPLICITLY (vs the empty default) so
 	// composition lets CLI out-rank the operator-global settings.yaml posture: key.
 	fs.Visit(func(fl *flag.Flag) {

@@ -55,6 +55,71 @@ func TestParseFlagsMCPServer(t *testing.T) {
 	})
 }
 
+// TestParseFlagsMCPServerInsecureHTTP covers the issue-#358 per-server opt-in
+// end-to-end through mecatequi's parseFlags (which runs the post-parse
+// Finalize): --mcp-server-insecure-http relaxes the token-bearing http scheme
+// gate for the NAMED server only, ORDER-INDEPENDENTLY — the relaxation works
+// whether it precedes or follows its --mcp-server on argv (the titlani#40
+// contract addition: argv ordering is not part of the scheduler's contract).
+func TestParseFlagsMCPServerInsecureHTTP(t *testing.T) {
+	t.Run("relaxation before the server", func(t *testing.T) {
+		t.Setenv("MCP_TEQUITL_TOKEN", "run-token")
+		f, err := parseFlags([]string{
+			"--prompt", "x",
+			"--mcp-server-insecure-http", "tequitl",
+			"--mcp-server", "tequitl=http://tequitl.internal/mcp",
+		})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		cfg := appConfig(f, newDiagnostics())
+		if len(cfg.MCPServers) != 1 || cfg.MCPServers[0].Headers["Authorization"] != "Bearer run-token" {
+			t.Errorf("MCPServers = %+v, want the bearer attached under the relaxation", cfg.MCPServers)
+		}
+	})
+
+	t.Run("relaxation after the server", func(t *testing.T) {
+		t.Setenv("MCP_TEQUITL_TOKEN", "run-token")
+		f, err := parseFlags([]string{
+			"--prompt", "x",
+			"--mcp-server", "tequitl=http://tequitl.internal/mcp",
+			"--mcp-server-insecure-http", "tequitl",
+		})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		cfg := appConfig(f, newDiagnostics())
+		if len(cfg.MCPServers) != 1 || cfg.MCPServers[0].Headers["Authorization"] != "Bearer run-token" {
+			t.Errorf("MCPServers = %+v, want the bearer attached under the relaxation", cfg.MCPServers)
+		}
+	})
+
+	t.Run("default posture unchanged: no relaxation still fails", func(t *testing.T) {
+		t.Setenv("MCP_TEQUITL_TOKEN", "run-token")
+		_, err := parseFlags([]string{
+			"--prompt", "x",
+			"--mcp-server", "tequitl=http://tequitl.internal/mcp",
+		})
+		if err == nil {
+			t.Fatal("token-bearing http off-host without the opt-in: want error, got nil")
+		}
+		if !strings.Contains(err.Error(), "https") {
+			t.Errorf("error = %q, want it to demand https", err)
+		}
+	})
+
+	t.Run("stale relaxation (https server) is a loud error", func(t *testing.T) {
+		_, err := parseFlags([]string{
+			"--prompt", "x",
+			"--mcp-server", "tequitl=https://tequitl.internal/mcp",
+			"--mcp-server-insecure-http", "tequitl",
+		})
+		if err == nil {
+			t.Fatal("relaxation naming an https server: want error, got nil")
+		}
+	})
+}
+
 // TestParseFlagsSummaryCompact covers the explicit stdout-compact summary mode
 // (issue #341): an EXPLICIT --out-summary=- selects the compact single-line
 // emit; the unset default (which also resolves to "-") and an explicit file

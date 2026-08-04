@@ -40,3 +40,39 @@ func TestParseFlagsMCPServer(t *testing.T) {
 		}
 	})
 }
+
+// TestParseFlagsMCPServerInsecureHTTP covers the issue-#358 per-server opt-in
+// end-to-end through mecated's parseFlags (which runs the post-parse
+// Finalize): the relaxation is order-independent, and the default posture is
+// unchanged without it.
+func TestParseFlagsMCPServerInsecureHTTP(t *testing.T) {
+	t.Run("relaxation is order-independent", func(t *testing.T) {
+		t.Setenv("MCP_GITHUB_TOKEN", "ghp-token")
+		for name, argv := range map[string][]string{
+			"before": {"--mcp-server-insecure-http", "github", "--mcp-server", "github=http://mcp.github.internal/v1"},
+			"after":  {"--mcp-server", "github=http://mcp.github.internal/v1", "--mcp-server-insecure-http", "github"},
+		} {
+			cfg, err := parseFlags(argv)
+			if err != nil {
+				t.Fatalf("parseFlags (%s): %v", name, err)
+			}
+			servers := cfg.mcpServers.Servers()
+			if len(servers) != 1 || servers[0].Headers["Authorization"] != "Bearer ghp-token" {
+				t.Errorf("(%s) servers = %+v, want the bearer attached under the relaxation", name, servers)
+			}
+		}
+	})
+
+	t.Run("default posture unchanged: no relaxation still fails", func(t *testing.T) {
+		t.Setenv("MCP_GITHUB_TOKEN", "ghp-token")
+		if _, err := parseFlags([]string{"--mcp-server", "github=http://mcp.github.internal/v1"}); err == nil {
+			t.Fatal("token-bearing http off-host without the opt-in: want error, got nil")
+		}
+	})
+
+	t.Run("stale relaxation (unknown name) is a loud error", func(t *testing.T) {
+		if _, err := parseFlags([]string{"--mcp-server-insecure-http", "ghost"}); err == nil {
+			t.Fatal("relaxation for an unregistered name: want error, got nil")
+		}
+	})
+}

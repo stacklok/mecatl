@@ -205,11 +205,12 @@ var flagMetaByFlag = map[string]flagMeta{
 	"enable-teams":                     {group: groupAgentTeams, common: true, acp: acpInclude},
 
 	// ── MCP (both) ───────────────────────────────────────────────────────
-	"mcp-server":         {group: groupMCP, common: true, acp: acpInclude},
-	"mcp-resource-tools": {group: groupMCP, common: false, acp: acpInclude},
-	"mcp-prompts":        {group: groupMCP, common: false, acp: acpInclude},
-	"toolhive":           {group: groupMCP, common: false, acp: acpInclude},
-	"toolhive-group":     {group: groupMCP, common: false, acp: acpInclude},
+	"mcp-server":               {group: groupMCP, common: true, acp: acpInclude},
+	"mcp-server-insecure-http": {group: groupMCP, common: false, acp: acpInclude},
+	"mcp-resource-tools":       {group: groupMCP, common: false, acp: acpInclude},
+	"mcp-prompts":              {group: groupMCP, common: false, acp: acpInclude},
+	"toolhive":                 {group: groupMCP, common: false, acp: acpInclude},
+	"toolhive-group":           {group: groupMCP, common: false, acp: acpInclude},
 
 	// ── Slash commands (both) ─────────────────────────────────────────────
 	"commands-dir":    {group: groupCommands, common: false, acp: acpInclude},

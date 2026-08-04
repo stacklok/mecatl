@@ -1563,6 +1563,14 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		return nil, config{}, flag.ErrHelp
 	}
 
+	// Post-parse MCP finalize (issue #358): resolve the --mcp-server-insecure-http
+	// relaxations against the collected --mcp-server entries and run the deferred
+	// token-bearing scheme gate. Deferring it here (instead of inside Set) is what
+	// makes the opt-in order-independent on argv.
+	if err := cfg.mcpServers.Finalize(); err != nil {
+		return fs, config{}, err
+	}
+
 	// Record whether --posture was set EXPLICITLY (vs left at its empty default) so
 	// composition can let CLI out-rank the operator-global settings.yaml posture: key
 	// and WARN if an alias raised above an explicit lower --posture.

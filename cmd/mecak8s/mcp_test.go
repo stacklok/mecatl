@@ -52,3 +52,46 @@ func TestParseFlagsMCPServer(t *testing.T) {
 		}
 	})
 }
+
+// TestParseFlagsMCPServerInsecureHTTP covers the issue-#358 per-server opt-in
+// end-to-end through mecak8s's parseFlags (which runs the post-parse
+// Finalize): order-independent relaxation of the token-bearing http scheme
+// gate, PER NAME — a relaxation for one server must not relax another.
+func TestParseFlagsMCPServerInsecureHTTP(t *testing.T) {
+	t.Run("relaxation is order-independent", func(t *testing.T) {
+		t.Setenv("MCP_TEQUITL_TOKEN", "per-run-token")
+		for name, argv := range map[string][]string{
+			"before": {"--mcp-server-insecure-http", "tequitl", "--mcp-server", "tequitl=http://tequitl.internal/mcp"},
+			"after":  {"--mcp-server", "tequitl=http://tequitl.internal/mcp", "--mcp-server-insecure-http", "tequitl"},
+		} {
+			cfg, err := parseFlags(argv)
+			if err != nil {
+				t.Fatalf("parseFlags (%s): %v", name, err)
+			}
+			ac := appConfig(cfg, port.NopDiagnostics{})
+			if len(ac.MCPServers) != 1 || ac.MCPServers[0].Headers["Authorization"] != "Bearer per-run-token" {
+				t.Errorf("(%s) MCPServers = %+v, want the bearer attached under the relaxation", name, ac.MCPServers)
+			}
+		}
+	})
+
+	t.Run("per-name scope: relaxing tequitl does not relax vmcp", func(t *testing.T) {
+		t.Setenv("MCP_TEQUITL_TOKEN", "tok-a")
+		t.Setenv("MCP_VMCP_TOKEN", "tok-b")
+		_, err := parseFlags([]string{
+			"--mcp-server", "tequitl=http://tequitl.internal/mcp",
+			"--mcp-server", "vmcp=http://vmcp.internal/mcp",
+			"--mcp-server-insecure-http", "tequitl",
+		})
+		if err == nil {
+			t.Fatal("unrelaxed vmcp (token + http off-host): want error, got nil")
+		}
+	})
+
+	t.Run("default posture unchanged: no relaxation still fails", func(t *testing.T) {
+		t.Setenv("MCP_VMCP_TOKEN", "per-run-token")
+		if _, err := parseFlags([]string{"--mcp-server", "vmcp=http://vmcp.internal/mcp"}); err == nil {
+			t.Fatal("token-bearing http off-host without the opt-in: want error, got nil")
+		}
+	})
+}
