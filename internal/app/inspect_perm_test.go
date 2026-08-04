@@ -20,6 +20,10 @@ var inspectToolNames = []string{
 	"InspectSubagent",
 	"InspectMember",
 	"SubagentStatus",
+	// BashStatus joins them: the same read-only registry-pull class (the
+	// background-Bash jobs' status/collect/cancel channel), floor-scoped
+	// alongside SubagentStatus in defaultRules().
+	"BashStatus",
 }
 
 // TestInspectToolsDefaultExplicitAllow proves all three child-observability tools

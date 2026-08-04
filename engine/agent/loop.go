@@ -70,28 +70,66 @@ const noProgressExtractiveNudgeText = "Stop investigating now and do not run any
 // injected as a harness-framed user message at Step 2a of drive (A2 —
 // notice-only injection). It carries ONLY harness-authored metadata: child ids
 // + their session.StopReason labels, NOTHING child-authored (no goal labels, no
-// result text — the body's sole channel is SubagentStatus). The substring
-// "background subagent(s) finished" is a stable test key — do not change it.
+// result text — the delegation bodies' sole channel is SubagentStatus, the bash
+// jobs' BashStatus). The rendering is FAMILY-AWARE: the delegation clause keeps
+// its exact historical wording (the substring "background subagent(s) finished"
+// is a stable test key — do not change it) and a background-Bash clause is
+// APPENDED only when bash jobs are among the finished, so a subagent-only run
+// renders byte-identically to before.
 func backgroundNoticeText(finished []childStatus) string {
-	items := make([]string, 0, len(finished))
+	var delegationIDs, bashItems []string
 	for _, st := range finished {
-		items = append(items, fmt.Sprintf("%s (%s)", st.id, st.stop))
+		if st.family == childFamilyBashCmd {
+			bashItems = append(bashItems, fmt.Sprintf("%s (%s)", st.id, st.stop))
+		} else {
+			delegationIDs = append(delegationIDs, fmt.Sprintf("%s (%s)", st.id, st.stop))
+		}
 	}
-	return fmt.Sprintf("[harness note: %d background subagent(s) finished: %s. "+
-		"Collect each result with SubagentStatus before relying on it.]",
-		len(finished), strings.Join(items, ", "))
+	var b strings.Builder
+	if len(delegationIDs) > 0 {
+		fmt.Fprintf(&b, "[harness note: %d background subagent(s) finished: %s. "+
+			"Collect each result with SubagentStatus before relying on it.]",
+			len(delegationIDs), strings.Join(delegationIDs, ", "))
+	}
+	if len(bashItems) > 0 {
+		fmt.Fprintf(&b, "[harness note: %d background command(s) finished: %s. "+
+			"Collect each output with BashStatus before relying on it.]",
+			len(bashItems), strings.Join(bashItems, ", "))
+	}
+	return b.String()
 }
 
 // backgroundPendingNudgeText renders the ONCE-per-run background-pending nudge
 // (D10 as amended) injected as a harness-framed user message when the run would
 // otherwise end CLEANLY while background children are still live. It lists ids
-// ONLY (A9 — no goal labels, nothing model/child-authored). The substring
-// "background subagent(s) still running" is a stable test key — do not change it.
+// ONLY (A9 — no goal labels, nothing model/child-authored). Like the notice it
+// is FAMILY-AWARE: the delegation clause keeps its exact historical wording
+// (the substring "background subagent(s) still running" is a stable test key —
+// do not change it) and a background-Bash clause is APPENDED only for live bash
+// jobs, each clause naming its own collection channel.
 func backgroundPendingNudgeText(ids []string) string {
-	return fmt.Sprintf("[harness note: %d background subagent(s) still running: %s. "+
-		"Collect or wait for them with SubagentStatus, cancel them, or finish — "+
-		"anything still running when you finish will be cancelled.]",
-		len(ids), strings.Join(ids, ", "))
+	var delegationIDs, bashIDs []string
+	for _, id := range ids {
+		if strings.HasPrefix(id, BashCmdJobPrefix) {
+			bashIDs = append(bashIDs, id)
+		} else {
+			delegationIDs = append(delegationIDs, id)
+		}
+	}
+	var b strings.Builder
+	if len(delegationIDs) > 0 {
+		fmt.Fprintf(&b, "[harness note: %d background subagent(s) still running: %s. "+
+			"Collect or wait for them with SubagentStatus, cancel them, or finish — "+
+			"anything still running when you finish will be cancelled.]",
+			len(delegationIDs), strings.Join(delegationIDs, ", "))
+	}
+	if len(bashIDs) > 0 {
+		fmt.Fprintf(&b, "[harness note: %d background command(s) still running: %s. "+
+			"Collect or wait for them with BashStatus, cancel them, or finish — "+
+			"anything still running when you finish will be cancelled.]",
+			len(bashIDs), strings.Join(bashIDs, ", "))
+	}
+	return b.String()
 }
 
 // Deps are the injected ports and configuration a single Engine is built from.
@@ -1271,7 +1309,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 			stop = streamStop
 		}
 		if stop == session.StopEndTurn && !*bgPendingNudged && r.children != nil {
-			if ids := r.children.liveBackgroundIDs(); len(ids) > 0 {
+			if ids := r.children.liveBackgroundIDsMatching(nil); len(ids) > 0 {
 				*bgPendingNudged = true
 				if err := e.recordContinuation(r, sess, turnIdx, backgroundPendingNudgeText(ids)); err != nil {
 					e.terminate(ctx, r, sess, session.StopError, lastText, total, err)

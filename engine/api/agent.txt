@@ -5,6 +5,10 @@
     ifacemethod func (PreservedForkStore).Preserve(root string, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
+    method func (*BashStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*BashStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*BashStatusTool).ReadOnly() bool
+    method func (*BashStatusTool).Spec() tool.ToolSpec
     method func (*Engine).Capabilities() port.ProviderCapabilities
     method func (*Engine).ContextWindow() int
     method func (*Engine).HasTool(name string) bool
@@ -67,10 +71,15 @@
     method func (*TeamTool).ReadOnly() bool
     method func (*TeamTool).Spec() tool.ToolSpec
     method func (*UserModelReviewer).Review(ctx context.Context, sessionID string) error
+    method func (BashTool).Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
+    method func (BashTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (BashTool).ReadOnly() bool
+    method func (BashTool).Spec() tool.ToolSpec
     method func (CascadeCompactor).Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error)
     method func (HeuristicCompactor).Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, error)
     method func (HeuristicTokenCounter).Count(text string) int
     method func (HeuristicTokenCounter).CountMessages(msgs []session.Message) int
+const BashCmdJobPrefix untyped string = "bashcmd-"
 const DefaultAskReviewMaxDenies untyped int = 3
 const DefaultPreservedForkCap untyped int = 8
 const DispositionDone MemberDisposition = "done"
@@ -97,6 +106,8 @@ func MemberSessionID(teamID string, member string) session.SessionID
 func MemberToolNames() map[string]struct{}
 func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
 func NeutraliseFraming(s string) string
+func NewBashStatusTool() tool.Tool
+func NewBashTool(runner tool.CommandRunner) tool.Tool
 func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
@@ -173,6 +184,8 @@ func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 func WriteUntrustedBlock(b *strings.Builder, body string)
 type AgentMeta struct{Name string; Description string; Limits session.Limits}
+type BashStatusTool struct{}
+type BashTool struct{}
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
 type BranchSummary struct{Label string; Summary string; Failed bool}
 type CascadeCompactor struct{Counter TokenCounter; BudgetTokens int; KeepLastTurns int; StripToolBodyChars int; MaxCollapseChars int; LLM port.LLMProvider; Model string; SummaryMaxTokens int}

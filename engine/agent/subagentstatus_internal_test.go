@@ -77,6 +77,62 @@ func TestChildRegistryCollectOutcomes(t *testing.T) {
 	}
 }
 
+// TestStatusToolsDisjointProjections pins the shared-registry / disjoint-
+// projections contract: a background-Bash (bash-cmd) entry is ABSENT from the
+// SubagentStatus roster and an unknown-id miss to its collect path, while the
+// SAME registry hands it to BashStatus — and a delegation child is the mirror
+// miss there.
+func TestStatusToolsDisjointProjections(t *testing.T) {
+	reg := newChildRunRegistry()
+	noCancel := func() {}
+	// One delegation child (done, result stored) and one bash job (done).
+	body := session.NewToolResult("subagent-a", "agentId: subagent-a\n\nfindings")
+	reg.register("subagent-a", childFamilySubagent, "explore", noCancel, true)
+	reg.markDoneResult("subagent-a", session.StopEndTurn, &body)
+	job := session.NewToolResult("bashcmd-j", "tail\n[exit code: 0]")
+	reg.register("bashcmd-j", childFamilyBashCmd, "make serve", noCancel, true)
+	reg.markDoneResult("bashcmd-j", session.StopEndTurn, &job)
+
+	// SubagentStatus roster: the subagent, never the bash job.
+	res, err := NewSubagentStatusTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), session.ToolCall{ID: "s1", Name: subagentStatusToolName, Args: json.RawMessage(`{}`)},
+		bashWS, nil, parentCaps{children: reg})
+	if err != nil {
+		t.Fatalf("ExecuteWithParent err = %v", err)
+	}
+	if !strings.Contains(res.Content, "subagent-a") || strings.Contains(res.Content, "bashcmd-j") {
+		t.Fatalf("SubagentStatus roster = %q, want the subagent only (no bash job)", res.Content)
+	}
+
+	// SubagentStatus collect of the bash job is the same miss as an unknown id.
+	res, err = NewSubagentStatusTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), session.ToolCall{ID: "s2", Name: subagentStatusToolName,
+			Args: json.RawMessage(`{"agent_id":"bashcmd-j"}`)},
+		bashWS, nil, parentCaps{children: reg})
+	if err != nil {
+		t.Fatalf("ExecuteWithParent err = %v", err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, `no subagent "bashcmd-j" in this run`) {
+		t.Fatalf("SubagentStatus collect of a bash job = %+v, want the unknown-id miss", res)
+	}
+
+	// BashStatus sees the job; its collect delivers the stored body once.
+	res = execBashStatus(t, reg, "s3", map[string]any{"job_id": "bashcmd-j"})
+	if res.IsError || res.Content != "tail\n[exit code: 0]" {
+		t.Fatalf("BashStatus collect = %+v, want the stored body", res)
+	}
+	res = execBashStatus(t, reg, "s4", nil)
+	if !strings.Contains(res.Content, "bashcmd-j") || strings.Contains(res.Content, "subagent-a") {
+		t.Fatalf("BashStatus roster = %q, want the bash job only", res.Content)
+	}
+
+	// childKindLabel renders the bash family as a background command, never a
+	// "background subagent".
+	if got := childKindLabel(childStatus{id: "bashcmd-j", family: childFamilyBashCmd, background: true}); got != "background command" {
+		t.Fatalf("childKindLabel(bash-cmd) = %q, want %q", got, "background command")
+	}
+}
+
 // TestChildRegistryRemoveSemantics pins the A5 pre-start abort: remove deletes a
 // not-done entry, closes its doneCh (a parked waiter wakes), bumps the terminal
 // generation (an any-waiter wakes), and is a deliberate NO-OP for a done entry

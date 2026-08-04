@@ -11,12 +11,14 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// BashToolName is the catalog name of the Bash tool. It is the single authority
-// for the name the Bash tool registers under (used in its Spec().Name) so a
-// consumer can probe the catalog for bash enablement by referencing the constant
+// BashToolName aliases tool.BashToolName, the single authority for the name the
+// Bash tool registers under (the permission evaluator special-cases the literal,
+// so the constant lives in the port package where every implementation — this
+// adapter's AND engine/agent's background-capable BashTool — can import it).
+// Callers probe the catalog for bash enablement by referencing the constant
 // rather than a local literal that could drift on a rename (see
 // internal/adapter/server.Service.capabilities).
-const BashToolName = "Bash"
+const BashToolName = tool.BashToolName
 
 // bashDescription is the model-facing documentation for the Bash tool.
 const bashDescription = `Run a shell command in the workspace root and return its combined output and exit code.

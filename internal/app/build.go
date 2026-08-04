@@ -3667,7 +3667,14 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 	}
 	cat.MustRegister(tools.NewWebSearchTool(searchProvider))
 	if runner := buildCommandRunner(cfg); runner != nil {
-		cat.MustRegister(tools.NewBashTool(runner))
+		// The AGENT-loop Bash tool (not the fstools one): foreground byte-identical,
+		// plus the `background: true` detach over the run's child registry. Its
+		// companion BashStatus — the SOLE status/collect/cancel channel for those
+		// background jobs — is registered iff Bash is, both through the SAME
+		// registerCoreTools seam so the shared and per-session catalogs cannot
+		// drift on the pair.
+		cat.MustRegister(agent.NewBashTool(runner))
+		cat.MustRegister(agent.NewBashStatusTool())
 		if log {
 			cfg.diag().Log(context.Background(), port.LevelInfo, "Bash tool ENABLED", "shell", cfg.Shell, "cwd", cfg.Workspace)
 		}
@@ -4816,7 +4823,13 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 	cat.MustRegister(tools.GrepTool{})
 	cat.MustRegister(tools.GlobTool{})
 	if runner != nil {
-		cat.MustRegister(tools.NewBashTool(runner))
+		// agent.NewBashTool, NOT the fstools one: the child's Bash reaches its
+		// OWN run's child registry through the dispatch seam, so `background:
+		// true` works inside a child against that registry (run-scoped, drained
+		// at the child's run end). The child deliberately gets NO BashStatus —
+		// the collection channel stays main-catalog-only, mirroring the
+		// SubagentStatus rule (never in child catalogs).
+		cat.MustRegister(agent.NewBashTool(runner))
 	}
 	return cat
 }
@@ -5939,7 +5952,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// ungated runner: a def allow-listing Bash for a Mutating member keeps it
 			// under untrust, consistent with the default-member tier.
 			if spec.Mutating && mutatingRunner != nil {
-				bt := tools.NewBashTool(mutatingRunner)
+				bt := agent.NewBashTool(mutatingRunner)
 				base[bt.Spec().Name] = bt
 			}
 			// allowShell: a non-mutating member may keep Bash ONLY when a runner is
@@ -5963,7 +5976,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 				// the env scrub is load-bearing there too, not moot).
 				if name == tools.BashToolName {
 					if memberBash := memberBashRunner(spec.Mutating, runner, mutatingRunner); memberBash != nil {
-						cat.MustRegister(tools.NewBashTool(memberBash))
+						cat.MustRegister(agent.NewBashTool(memberBash))
 					}
 					continue
 				}
@@ -6073,7 +6086,7 @@ func registerDefaultMemberTools(cat *tool.Catalog, spec agent.MemberSpec, runner
 		cat.MustRegister(tools.WriteTool{})
 	}
 	if memberBash := memberBashRunner(spec.Mutating, runner, mutatingRunner); memberBash != nil && (spec.Mutating || roIsolationAvailable) {
-		cat.MustRegister(tools.NewBashTool(memberBash))
+		cat.MustRegister(agent.NewBashTool(memberBash))
 		isolateReadOnly = !spec.Mutating && roIsolationAvailable
 	}
 	return isolateReadOnly
@@ -6516,6 +6529,10 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: "InspectSubagent", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "InspectMember", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "SubagentStatus", Effect: governance.Allow},
+		// BashStatus is the same class of read-only PULL over the same run-local
+		// registry (the background-Bash jobs' sole status/collect/cancel channel)
+		// — floor-scoped alongside it; an operator config Ask/Deny still wins.
+		{Scope: governance.ScopeBuiltinDefault, Tool: "BashStatus", Effect: governance.Allow},
 		// Schedule (ADR 0073): the model-facing scheduled-task management tools.
 		// Floor-scoped Allow like the memory tools — registering/pausing/firing a
 		// schedule does not itself mutate the workspace (the FIRE's posture is

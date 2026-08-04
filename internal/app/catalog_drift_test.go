@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
+	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // sortedNames projects a catalog into its sorted tool-name list for diffing.
@@ -97,6 +98,10 @@ var requiredFamilyTools = []string{
 	"Subagent",
 	"InspectSubagent",
 	"SubagentStatus",
+	// BashStatus is NOT in this list deliberately: it is registered iff Bash is
+	// (registerCoreTools), so it belongs to the Bash-covered set the equality
+	// already proves — the fully-loaded cfg has a shell, so the equality DOES
+	// cover it; a dedicated row would only restate the registerCoreTools gate.
 	"Parallel",
 	"Team",
 	"InspectMember",
@@ -304,5 +309,105 @@ func TestPresentPlanInSharedAndPerSessionCatalogs(t *testing.T) {
 	defer func() { _ = selClose() }()
 	if _, ok := selCat.Lookup("PresentPlan"); !ok {
 		t.Fatal("a per-session selector catalog must register PresentPlan (issue #206 Wave 3) — name-set equality with the shared catalog")
+	}
+}
+
+// TestBackgroundBashCatalogWiring pins the background-Bash composition contract
+// (the agent BashTool + its BashStatus companion) on the REAL assembly paths:
+//
+//   - the fully-loaded SHARED catalog holds Bash as the AGENT BashTool (the
+//     childCapableTool seam, so `background: true` can reach the run's child
+//     registry) AND BashStatus — registerCoreTools registers the pair under one
+//     shell gate, so they cannot drift apart;
+//   - EVERY child surface (the read-only explorer catalog a default Subagent
+//     child gets, and an agent-def's scoped child catalog — Bash allowed and
+//     scoped in) has Bash as the SAME agent BashTool construction but NEVER
+//     BashStatus: the collection channel stays main-catalog-only, mirroring the
+//     SubagentStatus rule ("registered wherever Subagent is, never in child
+//     catalogs").
+func TestBackgroundBashCatalogWiring(t *testing.T) {
+	ctx := context.Background()
+	url := newMCPTestServerWithResource(t)
+
+	cfg := fullyLoadedCfg(t)
+	cfg.MCPServers = []mcp.ServerConfig{{Name: "globe", URL: url}}
+	// TRUSTED workspace: the child shell is trust-gated (buildSandboxedCommandRunner,
+	// issue #40) — without this the child-side half of the test would exercise the
+	// shell-less posture instead of the Bash-carrying one.
+	cfg.TrustProject = true
+
+	oa := mockllm.New(mockllm.TextTurn("OPENAI"))
+	reg := regForTest(oa, providerOpenAI, cfg.Model)
+	hooks := hookexec.New(nil)
+
+	store := fullyLoadedScheduleStore(t, cfg)
+	sharedCat, _, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), store, eagerScheduleFactoryForTest(t, store))
+	if err != nil {
+		t.Fatalf("buildCatalog: %v", err)
+	}
+	defer mcpClose()
+
+	bash, ok := sharedCat.Lookup(tools.BashToolName)
+	if !ok {
+		t.Fatal("shared catalog lost Bash under a fully-loaded config")
+	}
+	if _, isAgent := bash.(agent.BashTool); !isAgent {
+		t.Fatalf("shared catalog Bash is %T, want agent.BashTool (the background-capable construction)", bash)
+	}
+	bashStatus, ok := sharedCat.Lookup("BashStatus")
+	if !ok {
+		t.Fatal("shared catalog lost BashStatus (the agent BashTool's companion)")
+	}
+	if _, isBashStatus := bashStatus.(*agent.BashStatusTool); !isBashStatus {
+		t.Fatalf("shared catalog BashStatus is %T, want *agent.BashStatusTool", bashStatus)
+	}
+
+	// The read-only explorer surface (the default Subagent child's catalog):
+	// Bash present as the agent tool, BashStatus absent.
+	runner := buildSandboxedCommandRunner(cfg)
+	if runner == nil {
+		t.Fatal("precondition: fully-loaded config yields a sandboxed runner")
+	}
+	explorer := readOnlyExplorerCatalog(runner)
+	childBash, ok := explorer.Lookup(tools.BashToolName)
+	if !ok {
+		t.Fatal("read-only explorer catalog lost Bash")
+	}
+	if _, isAgent := childBash.(agent.BashTool); !isAgent {
+		t.Fatalf("child Bash is %T, want agent.BashTool (child background parity)", childBash)
+	}
+	if _, ok := explorer.Lookup("BashStatus"); ok {
+		t.Fatal("read-only explorer catalog must NOT contain BashStatus (main-catalog-only channel)")
+	}
+
+	// The agent-def scoped path (the REAL buildAgentDefEngine): a def allow-listing
+	// Bash keeps it as the agent tool and its catalog still gains NO BashStatus.
+	def := agents.AgentDef{Name: "scoped-explorer", Tools: []string{"Read", "Bash"}}
+	base := baseSubagentTools(cfg)
+	defEng, defClose, defNames, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
+		oa, cfg.Model, nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
+	if defClose != nil {
+		defer func() { _ = defClose() }()
+	}
+	foundBash := false
+	for _, n := range defNames {
+		if n == tools.BashToolName {
+			foundBash = true
+		}
+	}
+	if !foundBash {
+		t.Fatalf("def-scoped names %v lost Bash (allowShell keeps it)", defNames)
+	}
+	// The built engine HOLDS Bash (HasTool is the engine's catalog read) and the
+	// base tool registered for it is the agent construction; the engine's catalog
+	// never gains BashStatus.
+	if !defEng.HasTool(tools.BashToolName) {
+		t.Fatal("def-scoped engine lost Bash")
+	}
+	if _, isAgent := base[tools.BashToolName].(agent.BashTool); !isAgent {
+		t.Fatalf("base Bash is %T, want agent.BashTool (child background parity)", base[tools.BashToolName])
+	}
+	if defEng.HasTool("BashStatus") {
+		t.Fatal("def-scoped engine must NOT contain BashStatus (main-catalog-only channel)")
 	}
 }

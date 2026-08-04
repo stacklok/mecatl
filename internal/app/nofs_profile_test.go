@@ -33,6 +33,7 @@ import (
 var noFSExcludedTools = []string{
 	"Read", "Edit", "Write", "Grep", "Glob", "Bash",
 	"Parallel",
+	"BashStatus",         // the background-Bash companion: no Bash ⇒ no jobs to status/collect
 	skills.DraftToolName, // "SkillDraft"
 }
 

@@ -199,6 +199,22 @@ func (c parentCaps) finishChildRunResult(childID session.SessionID, stop session
 	}
 }
 
+// attachChildOutputTail is the nil-safe background-Bash tail attach (see
+// childRunRegistry.attachOutputTail): no-op without a threaded registry.
+func (c parentCaps) attachChildOutputTail(childID session.SessionID, buf *tailBuffer) {
+	if c.children != nil {
+		c.children.attachOutputTail(string(childID), buf)
+	}
+}
+
+// setChildExitCode is the nil-safe background-Bash exit-code record (see
+// childRunRegistry.setExitCode): no-op without a threaded registry.
+func (c parentCaps) setChildExitCode(childID session.SessionID, code int) {
+	if c.children != nil {
+		c.children.setExitCode(string(childID), code)
+	}
+}
+
 // abortChildRun is the nil-safe PRE-START abort (the A5 state vocabulary): the
 // child never started driving and its failure already surfaced inline, so its
 // registry entry is removed rather than left as a done+StopNone phantom.

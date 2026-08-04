@@ -35,6 +35,12 @@ const (
 	// background-team future) must NOT treat a team-member done entry as
 	// fully-terminal; only the TEAM's own end (cleanupAll) is.
 	childFamilyTeamMember childFamily = "team-member"
+	// childFamilyBashCmd is a background-Bash job ("bashcmd-<callID>") — a
+	// detached shell command, NOT a delegation family: no child session, no
+	// engine, no observability events. It rides the registry only for its
+	// run-scoped cancel-at-end drain, the background job-count gate, and the
+	// notice/collect machinery; its result body is the retained output tail.
+	childFamilyBashCmd childFamily = "bash-cmd"
 )
 
 // The delegation families' child-session id PREFIXES — the single exported
@@ -62,6 +68,12 @@ const (
 	// TeamSessionPrefix prefixes team members: "team-<teamID>-<member>" —
 	// MemberSessionID's scheme (memberSessionIDPrefix aliases this constant).
 	TeamSessionPrefix = "team-"
+	// BashCmdJobPrefix prefixes background-Bash job ids: "bashcmd-<callID>".
+	// Unlike the three delegation prefixes above it names NO session (the job
+	// is a bare process, not a child loop), so the InspectSubagent prefix gate
+	// and the child-session retention GC must NOT learn it — it exists only so
+	// the job-id spelling has one source.
+	BashCmdJobPrefix = "bashcmd-"
 )
 
 // childState is a registered child's lifecycle position: queued (registered,
@@ -235,6 +247,14 @@ type childEntry struct {
 	// doneCh is closed exactly once at the child's terminal (markDone); the
 	// run-end drain and SubagentStatus wait_ms park on it.
 	doneCh chan struct{}
+	// outputTail is a background-Bash job's bounded live output sink
+	// (bash-cmd entries only): the detached drive streams stdout+stderr into
+	// it from spawn to terminal, so BashStatus (or the collected result) can
+	// render the RECENT tail. nil for every other family.
+	outputTail *tailBuffer
+	// exitCode is a background-Bash job's process exit status, valid only
+	// once the entry is done (bash-cmd entries only; 0 placeholder before).
+	exitCode int
 }
 
 // childStatus is the read-only snapshot of one entry the SubagentStatus tool
@@ -289,6 +309,42 @@ func (g *childRunRegistry) register(childID string, family childFamily, goal str
 		e.displaced = old
 	}
 	g.entries[childID] = e
+}
+
+// attachOutputTail stores a background-Bash job's live output sink on its entry
+// (bash-cmd registrations only). It is a separate seam from register rather than
+// a register parameter because only the ONE family ever carries a tail — the
+// delegation families' five-field registration stays untouched.
+func (g *childRunRegistry) attachOutputTail(childID string, buf *tailBuffer) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if e, ok := g.entries[childID]; ok && e.state != childDone {
+		e.outputTail = buf
+	}
+}
+
+// outputTailSnapshot reads a background-Bash job's retained output tail plus its
+// truncation flag (BashStatus's live-job view). ok is false for an unknown id or
+// an entry with no tail attached (every non-bash-cmd family).
+func (g *childRunRegistry) outputTailSnapshot(childID string) (tail string, truncated, ok bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	e, found := g.entries[childID]
+	if !found || e.outputTail == nil {
+		return "", false, false
+	}
+	return e.outputTail.Snapshot(), e.outputTail.Truncated(), true
+}
+
+// setExitCode records a background-Bash job's process exit status on its (live)
+// entry. Unknown or already-done ids are ignored — the drive sets it strictly
+// before its markDoneResult terminal.
+func (g *childRunRegistry) setExitCode(childID string, code int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if e, ok := g.entries[childID]; ok && e.state != childDone {
+		e.exitCode = code
+	}
 }
 
 // markRunning advances a queued entry to running (the child's drive has actually
@@ -446,10 +502,22 @@ func (g *childRunRegistry) doneChFor(childID string) (<-chan struct{}, bool) {
 // statusSnapshot returns a stable (id-sorted) value snapshot of every entry for
 // the SubagentStatus roster.
 func (g *childRunRegistry) statusSnapshot() []childStatus {
+	return g.statusSnapshotMatching(nil)
+}
+
+// statusSnapshotMatching is statusSnapshot filtered to entries whose family is
+// NOT in exclude (nil exclude ⇒ every entry): ONE registry walk serves the two
+// disjoint roster projections — SubagentStatus (excludes bash-cmd, the three
+// delegation families) and BashStatus (bash-cmd only) — over the shared map,
+// so neither tool can drift its view of an entry.
+func (g *childRunRegistry) statusSnapshotMatching(exclude map[childFamily]bool) []childStatus {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	out := make([]childStatus, 0, len(g.entries))
 	for id, e := range g.entries {
+		if exclude[e.family] {
+			continue
+		}
 		out = append(out, childStatus{
 			id: id, family: e.family, goal: e.goal, background: e.background,
 			state: e.state, stop: e.stop, delivered: e.delivered,
@@ -482,10 +550,19 @@ const (
 // marking it delivered on success (exactly-once). The returned status is valid
 // for every outcome except collectUnknown.
 func (g *childRunRegistry) collect(childID string) (res *session.ToolResult, st childStatus, outcome collectOutcome) {
+	return g.collectMatching(childID, nil)
+}
+
+// collectMatching is collect restricted to entries whose family is NOT in
+// exclude (nil exclude ⇒ every entry): an entry of an excluded family reports
+// collectUnknown, so BashStatus (bash-cmd only) and SubagentStatus (the three
+// delegation families) can never deliver through the other's projection — one
+// stored body, exactly-once delivery, two disjoint doors.
+func (g *childRunRegistry) collectMatching(childID string, exclude map[childFamily]bool) (res *session.ToolResult, st childStatus, outcome collectOutcome) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	e, ok := g.entries[childID]
-	if !ok {
+	if !ok || exclude[e.family] {
 		return nil, childStatus{}, collectUnknown
 	}
 	st = childStatus{id: childID, family: e.family, goal: e.goal, background: e.background,
@@ -547,11 +624,18 @@ func (g *childRunRegistry) noticeFinishedBackground() []childStatus {
 // reached its terminal — the gate-full fail-fast error's "currently running" list
 // and the background-pending nudge's id list (ids ONLY — A9).
 func (g *childRunRegistry) liveBackgroundIDs() []string {
+	return g.liveBackgroundIDsMatching(nil)
+}
+
+// liveBackgroundIDsMatching is liveBackgroundIDs filtered to entries whose
+// family is NOT in exclude (nil exclude ⇒ every live background entry): the
+// run-end nudge partitions its id list by family over this one walk.
+func (g *childRunRegistry) liveBackgroundIDsMatching(exclude map[childFamily]bool) []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	var ids []string
 	for id, e := range g.entries {
-		if e.background && e.state != childDone {
+		if e.background && e.state != childDone && !exclude[e.family] {
 			ids = append(ids, id)
 		}
 	}

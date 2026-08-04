@@ -504,7 +504,10 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 	childCat.MustRegister(tools.ReadTool{})
 	childCat.MustRegister(tools.GrepTool{})
 	childCat.MustRegister(tools.GlobTool{})
-	childCat.MustRegister(tools.NewBashTool(runner))
+	// agent.NewBashTool, mirroring the production child construction
+	// (readOnlyExplorerCatalog), so the test child exercises the same Bash the
+	// composition root hands real children.
+	childCat.MustRegister(agent.NewBashTool(runner))
 	childEng := agent.NewEngine(agent.Deps{
 		LLM:              childProvider,
 		Catalog:          childCat,
