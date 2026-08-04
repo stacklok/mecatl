@@ -71,10 +71,10 @@ jobs:
       # its own module under the workspace — build them explicitly too.
       - name: go build (provider modules)
         run: |
-          cd provider/ssefilter && go build ./...
-          cd provider/anthropic && go build ./...
-          cd provider/openai && go build ./...
-          cd provider/openaichat && go build ./...
+          (cd provider/ssefilter && go build ./...)
+          (cd provider/anthropic && go build ./...)
+          (cd provider/openai && go build ./...)
+          (cd provider/openaichat && go build ./...)
 
   test:
     name: Test (race)
@@ -113,10 +113,10 @@ jobs:
       # provider/ submodules (ADR 0093) — each its own module under the workspace.
       - name: go test -race (provider modules)
         run: |
-          cd provider/ssefilter && go test -race ./...
-          cd provider/anthropic && go test -race ./...
-          cd provider/openai && go test -race ./...
-          cd provider/openaichat && go test -race ./...
+          (cd provider/ssefilter && go test -race ./...)
+          (cd provider/anthropic && go test -race ./...)
+          (cd provider/openai && go test -race ./...)
+          (cd provider/openaichat && go test -race ./...)
 
   lint:
     name: Lint
@@ -168,10 +168,10 @@ jobs:
       # golangci config so the depguard allowlists stay the single source of truth.
       - name: golangci-lint (provider modules)
         run: |
-          cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...
-          cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...
-          cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...
-          cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...
+          (cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
 
       - name: go vet
         run: go vet ./...
@@ -181,10 +181,10 @@ jobs:
 
       - name: go vet (provider modules)
         run: |
-          cd provider/ssefilter && go vet ./...
-          cd provider/anthropic && go vet ./...
-          cd provider/openai && go vet ./...
-          cd provider/openaichat && go vet ./...
+          (cd provider/ssefilter && go vet ./...)
+          (cd provider/anthropic && go vet ./...)
+          (cd provider/openai && go vet ./...)
+          (cd provider/openaichat && go vet ./...)
 
       # Lint the GitHub Actions workflows + assert the reusable workflow's first-party
       # sibling-action pins match the release tag (the version-skew guard). actionlint is
@@ -430,14 +430,14 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
-          cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
-          cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
-          cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+          (cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+          (cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+          (cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+          (cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
 
   docs:
     name: Docs (matlatl)

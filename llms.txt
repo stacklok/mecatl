@@ -1,6 +1,6 @@
 # mecatl
 
-> A markdown documentation corpus of 160 document(s) across 11 component(s), with 1769 heading(s) and 1433 resolved reference(s). Entries are ordered by importance (most-connected first). 17 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.78, docs ~2.3 clicks apart.
+> A markdown documentation corpus of 159 document(s) across 10 component(s), with 1763 heading(s) and 1433 resolved reference(s). Entries are ordered by importance (most-connected first). 17 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.79, docs ~2.3 clicks apart.
 
 ## Documentation
 
@@ -335,7 +335,7 @@ _Associative trails (Bush 1945): a topologically-valid path through each cluster
 
 This corpus is INCOMPLETE for navigation; an agent should not assume full coverage:
 
-- 1 orphan document(s) (nothing links to them)
+- 0 orphan document(s) (nothing links to them)
 - 0 unreachable document(s) (not reachable from a root)
 - 0 under-linked document(s) (few inbound links; hard to discover)
 - 0 dead-end document(s) (no onward links)
