@@ -84,26 +84,84 @@ func TestLocalizeInRoot_LexicalGate(t *testing.T) {
 
 func TestMatchReadRoot_Lexical(t *testing.T) {
 	t.Parallel()
-	roots := []string{"/srv/skills/demo"}
+	// The root must NOT traverse a top-level system symlink: MatchReadRoot
+	// normalizes the PATH's top-level alias (macOS /var -> /private/var, Fedora
+	// /srv -> /var/srv) but compares against the root VERBATIM — production
+	// roots are canonical by construction (WithReadRoots canonicalizes at
+	// construction; issue #356). A lexical root under an aliased top-level
+	// component would mismatch its own paths on such hosts.
+	root := filepath.Join(t.TempDir(), "skills", "demo")
 	for _, tc := range []struct {
 		path string
 		ok   bool
 	}{
-		{"/srv/skills/demo", true},
-		{"/srv/skills/demo/SKILL.md", true},
-		{"/srv/skills/demo/../demo/SKILL.md", true}, // cleaned lexical containment
-		{"/srv/skills/demo2/SKILL.md", false},       // prefix-but-not-contained
-		{"/srv/skills", false},                      // parent of the root
+		{root, true},
+		{filepath.Join(root, "SKILL.md"), true},
+		{filepath.Join(root, "..", "demo", "SKILL.md"), true}, // cleaned lexical containment
+		{root + "2/SKILL.md", false},                          // prefix-but-not-contained
+		{filepath.Dir(root), false},                           // parent of the root
 		{"/etc/passwd", false},
 		{"demo/SKILL.md", false}, // relative: never matches
-		{"/srv/../etc/passwd", false},
+		{filepath.Join(filepath.Dir(root), "..", "etc", "passwd"), false},
 	} {
-		if got := MatchReadRoot(tc.path, roots); got != tc.ok {
+		if got := MatchReadRoot(tc.path, []string{root}); got != tc.ok {
 			t.Fatalf("MatchReadRoot(%q) = %v, want %v", tc.path, got, tc.ok)
 		}
 	}
-	if MatchReadRoot("/srv/skills/demo/x", nil) {
+	if MatchReadRoot(filepath.Join(root, "x"), nil) {
 		t.Fatal("no roots configured: MatchReadRoot must be false")
+	}
+}
+
+// TestMatchReadRoot_TopLevelAlias pins the issue-#356 contract: when a
+// top-level component is a system symlink (Fedora /srv -> /var/srv, macOS
+// /var -> /private/var), a path written through the ALIAS matches a root
+// stored in CANONICAL form (the production shape — read roots are
+// canonicalized at construction), and a root written through the alias does
+// NOT match canonical paths (roots must be canonical; the matcher does not
+// normalize them). Runs only on hosts with a top-level alias in /'s
+// resolution; skips where the probed directories are already canonical.
+func TestMatchReadRoot_TopLevelAlias(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink fixtures require a POSIX filesystem")
+	}
+	// The host-dependency that broke #356 lives at the TOP of the tree (/srv,
+	// /var, /home), so probe known candidates for a top-level alias. The
+	// matcher needs no fixture on disk — the alias resolution itself is the
+	// behavior under test — so use a path that need not exist.
+	var lexicalBase, canonicalBase string
+	for _, candidate := range []string{"/srv", "/var", "/home", "/private/var"} {
+		info, err := os.Lstat(candidate)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil || resolved == filepath.Clean(candidate) {
+			continue
+		}
+		lexicalBase = filepath.Join(candidate, "mecatl-test-alias")
+		canonicalBase = filepath.Join(resolved, "mecatl-test-alias")
+		break
+	}
+	if lexicalBase == "" {
+		t.Skip("no top-level system alias found on this host")
+	}
+
+	canonicalRoot := filepath.Join(canonicalBase, "skills", "demo")
+	lexicalRoot := filepath.Join(lexicalBase, "skills", "demo")
+
+	// Production shape: canonical root, alias-written path -> match.
+	if !MatchReadRoot(lexicalRoot, []string{canonicalRoot}) {
+		t.Errorf("MatchReadRoot(alias path %q, canonical root %q) = false, want true", lexicalRoot, canonicalRoot)
+	}
+	if !MatchReadRoot(filepath.Join(lexicalRoot, "SKILL.md"), []string{canonicalRoot}) {
+		t.Errorf("MatchReadRoot(alias path file, canonical root) = false, want true")
+	}
+	// The #356 asymmetry: a LEXICAL (alias-written) root must not silently
+	// match canonical paths — roots are canonical by construction.
+	if MatchReadRoot(canonicalRoot, []string{lexicalRoot}) {
+		t.Errorf("MatchReadRoot(canonical path %q, lexical root %q) = true, want false (roots must be canonical)", canonicalRoot, lexicalRoot)
 	}
 }
 
