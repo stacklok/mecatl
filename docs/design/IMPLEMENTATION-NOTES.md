@@ -1544,6 +1544,123 @@ pre-existing I3a tests `TestBackgroundChildCancelledAtRunEnd` and `TestBackgroun
 now script a second clean end (their first one legitimately draws the nudge). No diagnostics
 change: the loop still emits exactly THREE operator lines.
 
+**Background Bash commands (issue #23 commands half — `background: true` on Bash +
+BashStatus; ADR 0090).** The open half of #23 after ADR 0015's background subagents:
+a long-running shell command (a dev server, a watch loop, a slow build) detaches
+instead of blocking the turn. **The tool is the AGENT loop's own Bash**
+(`engine/agent/bashtool.go`, `BashTool` / `NewBashTool`), NOT the fstools adapter's —
+the background half needs the parent run's `childRunRegistry`, an agent-package type
+fstools cannot import, so the foreground half is RE-IMPLEMENTED byte-identical to the
+fstools body (same arg validation, timeout ctx, `runner.Run`, combined-output shaping,
+the 25 000-byte cap, the exit-code error — `bashToolMaxOutputBytes` /
+`bashToolTruncationMarker` mirror `fstools.MaxOutputBytes` / `TruncationMarker`
+EXACTLY, kept identical by discipline) and the background half rides the
+`childCapableTool` seam (`ExecuteWithParent`), the same dispatcher seam Subagent /
+SubagentStatus reach `parentCaps` through. It registers under the literal name
+`"Bash"` — the ONE gated name the permission evaluator special-cases
+(`engine/governance/evaluator.go`: `resolve` / `planModeDecision` /
+`LearnableRule` match `tool == "Bash"`) — so a background start resolves through the
+IDENTICAL deny/ask/allow fold, compound-command split, plan-mode gate, and guardrail
+modelhook `Bash` rules as a foreground call; a second tool name would silently bypass
+the bash gate (D1: any new shell affordance must register under the gated name or
+extend it). The name's single authority moved to `engine/tool/tool.go`
+(`BashToolName`); `engine/adapter/fstools/bash.go` aliases it
+(`fstools.BashToolName = tool.BashToolName`) so the adapter and the agent tool share
+one constant. **Registry family (D4):** a background call registers a
+`childFamilyBashCmd` ("bash-cmd") entry on the parent run's registry under
+`bashcmd-<callID>` (`BashCmdJobPrefix` — names NO session, so the InspectSubagent
+prefix gate and the child-session retention GC must never learn it), a NON-delegation
+family: no child session, no engine, no `subagent.*` events (the ChildActivity
+trip-wire deliberately unfired). It rides the registry ONLY for the run-scoped
+cancel-at-end drain, the background gate, and the notice/collect/wait machinery. The
+registry gained three bash-only fields (`outputTail *tailBuffer`, `exitCode int` on
+`childEntry`) plus FAMILY-FILTERED seams — `statusSnapshotMatching` /
+`collectMatching` / `liveBackgroundIDsMatching` (nil exclude ⇒ every entry) — so the
+SHARED registry serves two DISJOINT projections: `SubagentStatus` filters bash-cmd
+OUT (`delegationFamiliesOnly`), `BashStatus` filters the three delegation families
+out (`bashCmdFamiliesOnly`); one stored body, exactly-once delivery, two doors, and
+neither tool can drift its view of an entry or deliver through the other. The
+background detach is FAIL-FAST on the job-count gate (`maxBackgroundBashJobs` = 8 —
+the Subagent gate's scale; a job holds its slot ACROSS turns so blocking could
+deadlock the model against itself; the ids read runs BEFORE the job's own
+registration so the error never lists the failing call's own id), mints
+`bashcmd-<callID>`, derives a ctx from the run's (+ the per-call `timeout_ms` via
+`applyCallTimeout` so a deadline-kill classifies apart from a parent cancel),
+registers with `background: true`, attaches the tail, marks running, and spawns
+`driveBackground` — the detached goroutine owning stream → classify-terminal →
+store-result, emitting NOTHING (no events cross its goroutine boundary). The
+immediate started-result carries the `job id:` line + the "cancelled if still running
+when this run ends" honesty. A caps-less plain-`Execute` background call, or a runner
+without the streaming capability, is an honest model-addressable error — never a
+silent foreground fallback. **CommandStreamer (D6):** `engine/tool/tool.go`
+(`CommandStreamer`) is an OPTIONAL `CommandRunner` capability
+(`RunStreaming(ctx, command, workdir, out io.Writer) (exitCode int, err error)`) —
+same shell/workdir/timeout/cancel rules as `Run`, but stdout+stderr stream
+INTERLEAVED into a caller-owned sink the runner never caps (the caller owns
+bounding); the `exitCode` return replaces `CommandResult` for this path. Discovered
+by type assertion; a runner lacking it declines and the background call fails soft
+(honest "not supported by this command runner"). The osfs runner implements it by
+sharing ONE private `run` spawn/wait tail between `Run` (capped head buffers) and
+`RunStreaming` (the caller's sink) so the two cannot drift. Each job streams into
+`engine/agent/tailbuffer.go` (`tailBuffer`) — a mutex-guarded sliding-window ring
+retaining the LAST `maxBashJobTailBytes` = 64 KiB (retention exceeds the 25 000-byte
+render cap so BashStatus shows more than one render; 8 jobs ≈ 512 KiB worst case,
+bounded) over a 2×capacity scratch (append + slide, one bounded memmove per write,
+zero reallocations), with a `Truncated` flag set the first time a byte drops.
+**BashStatus** (`engine/agent/bashstatus.go`, `BashStatusTool` /
+`NewBashStatusTool`, read-only — `ReadOnly() == true` so a `wait_ms` park overlaps
+other tools in the turn) is the SOLE status/collect/cancel channel: no args → the
+roster of THIS run's bash jobs (ids + state + stop ONLY — the command text is
+model-authored untrusted and never rides a bulk roster, the A9 posture);
+`job_id` → the per-job detail (a LIVE job: state + command + the CURRENT tail
+snapshot, a peek that is NOT a delivery; a DONE job: the stored terminal result
+through the registry's collect machinery, delivered exactly once, the error bit
+riding along); `wait_ms` (same `maxSubagentStatusWaitMs` 120s cap, the shared
+`waitForChild` discipline — one wait vocabulary across both registry-backed tools)
+parks ctx-aware on the job's doneCh or the registry's terminal generation;
+`cancel: "<job_id>"` only SIGNALS the job's per-call ctx (the tool stays read-only —
+the kill is the job drive's own ctx reaction, exactly as `Run.CancelChild`), never
+waits for the terminal. Its floor-scoped Allow rides `defaultRules` alongside
+`SubagentStatus` (config-overridable). **Family-aware notice/nudge (D8):**
+`backgroundNoticeText` and `backgroundPendingNudgeText` (both in
+`engine/agent/loop.go`) are FAMILY-AWARE — the delegation clause keeps its
+byte-exact historical wording (the substrings "background subagent(s) finished" /
+"background subagent(s) still running" are stable test keys) and a "background
+command(s) finished / still running" clause naming `BashStatus` is APPENDED only
+when bash jobs are among the finished/live, so a subagent-only run renders
+byte-identically to before. **procgroup pre-fix (D9):** `internal/adapter/procgroup`
+(extracted from `hookexec`, which already had the code) puts a child process in its
+own process group and kills the WHOLE group on ctx cancel (POSIX `Setpgid` + a
+`Cancel` signalling the negative PID; a no-op elsewhere); the osfs `CommandRunner`
+now configures it unconditionally, so a backgrounded grandchild (`sleep 30 &`,
+`make`'s compiler children) dies with the shell instead of being orphaned — fixing
+grandchild orphans for FOREGROUND Bash too, and load-bearing here because cancel is a
+background job's primary lifecycle (a run-end drain or `BashStatus` cancel that left
+grandchildren would leak processes at scale). **Catalog wiring:** the composition
+root registers `agent.NewBashTool(runner)` + `agent.NewBashStatusTool()` together in
+`internal/app/build.go` (`registerCoreTools`) under the ONE shell gate (the pair
+cannot drift apart; pinned by `TestBackgroundBashCatalogWiring`), and swaps EVERY
+other Bash construction to the agent tool — the read-only explorer catalog
+(`readOnlyExplorerCatalog`), per-def scoped catalogs (`buildAgentDefEngine`,
+`baseSubagentTools`), and team members (`buildMemberEngine` /
+`registerDefaultMemberTools`) — so a CHILD backgrounds a command against its OWN
+run's registry (run-scoped, drained at the child's run end) but gets NO BashStatus
+(the collection channel stays main-catalog-only, mirroring the SubagentStatus rule).
+The no-fs profile's excluded set gained `BashStatus` (no Bash ⇒ no jobs to status;
+`noFSExcludedTools` in `internal/app/nofs_profile_test.go`). **Permissions (D5) are
+identical to foreground Bash:** the start is the ONE main-run ask when policy says
+Ask (PauseForApproval before anything detaches); once started the job runs to
+completion/cancel/drain with no further gating, exactly as a foreground command is
+gated once at start. Guards: `engine/agent/bashtool_internal_test.go` +
+`bashstatus_internal_test.go` + `tailbuffer_internal_test.go` +
+`background_bash_e2e_test.go` (the offline end-to-end), `internal/adapter/osfs/
+osfs_stream_test.go` + `command_procgroup_unix_test.go` (the streaming seam + the
+group-kill), and the composition pins above. DEFERRED (v2): foreground→background
+mid-flight promotion (Ctrl+B — the blocking `CommandRunner.Run` seam has no detach
+handle), session-scoped detach (the #28 sibling; a detached OS process has no
+re-attach story across a restart), `bashcmd.*` wire events + the TUI fleet pane, and
+output paging beyond the retained tail.
+
 **TUI queue budget stop.** The type-while-running queue treats `StopBudget` like the other healthy
 size-bound stops (`max_turns` / `max_tool_calls`): the current run produced a usable partial and a
 queued follow-up should reopen the session with a fresh budget instead of pausing like error/cancel.

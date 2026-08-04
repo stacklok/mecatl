@@ -94,11 +94,41 @@ Bash tool depends on it. That makes Bash — and therefore *all* command
 execution — optional in the catalog: `NewBashTool(runner)` is registered only
 when a runner is configured (it panics on a nil runner), and `tools.Register`
 deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
-`CommandRunner` (output-capped, context-bounded); a runner may also execute
-remotely or refuse with `tool.ErrNoShell`. A shell-less deployment simply omits
-Bash, and an OS sandbox would wrap this seam. `tool.MemoryStore` and
-`tool.WorkspaceForker` live alongside it for the same layering reason (the tools
-that need them depend on the interface, not a `port`).
+`CommandRunner` (output-capped, context-bounded, process-group-killed on
+cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
+shell-less deployment simply omits Bash, and an OS sandbox would wrap this seam.
+`tool.MemoryStore` and `tool.WorkspaceForker` live alongside it for the same
+layering reason (the tools that need them depend on the interface, not a
+`port`).
+
+**The Bash tool itself is the agent loop's own** (`engine/agent/bashtool.go`,
+`agent.NewBashTool`), not the fstools adapter's: the foreground half is
+byte-identical to the fstools body, and `background: true` detaches the command
+as a run-scoped background job on the parent run's child registry — an
+agent-package type fstools cannot import. It registers under the literal name
+`"Bash"` (`tool.BashToolName`) because the permission evaluator special-cases
+that name (the compound-command split, the plan-mode read-only gate, rule
+learning) — a second tool name would silently bypass the bash gate, so any shell
+affordance must register under the gated name or extend the gate. A background
+call returns immediately with a `bashcmd-<callID>` job id and runs detached in
+the REAL workspace (no isolation — its effects may interleave with the model's
+own edits, and the description says so); the read-only **`BashStatus`** tool
+(`engine/agent/bashstatus.go`, registered iff Bash is, never in child catalogs)
+is the sole status/collect/cancel channel — no args → the run's job roster (ids
++ state + stop only), `job_id` → the command + retained output tail (live) or
+the exactly-once collected result (done), `wait_ms` (≤120s) parks, `cancel`
+signals the job's context. Permissions are identical to foreground Bash (the
+start is the ask; nothing re-asks mid-run), and a job still live at run end is
+cancelled and joined by the same drain the background subagents use — a job is
+RUN-scoped, never session-scoped. Streaming the job's output is the OPTIONAL
+`tool.CommandStreamer` capability (`RunStreaming(ctx, command, workdir, out
+io.Writer) (exitCode int, err error)` — the osfs runner implements it over the
+same spawn/wait tail as `Run`; a runner without it declines background calls
+honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail
+ring (`engine/agent/tailbuffer.go`), so `BashStatus` shows the RECENT output a
+head-capped capture would have lost. See
+[ADR 0090](../adr/0090-background-bash.md) and
+[subagents & teams](subagents-and-teams.md) for the registry family mechanics.
 
 ## Prerequisites
 

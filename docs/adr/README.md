@@ -50,6 +50,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0011 — Soul & user-model](./0011-soul-and-user-model.md)
 - [0012 — Compaction](./0012-compaction.md)
 
+### Core tools & shell
+- [0090 — Background Bash commands](./0090-background-bash.md)
+
 ### Agents, teams & delegation
 - [0013 — Agent definitions](./0013-agent-definitions.md)
 - [0014 — Agent teams](./0014-agent-teams.md)

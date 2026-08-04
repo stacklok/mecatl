@@ -25,7 +25,8 @@ These tools are always present in a default session (no extra configuration requ
 | `Read` | Read a file from the workspace by path. The primary way the model loads source code, config, and data files. | Yes |
 | `Write` | Write a file to the workspace (create or overwrite). | No |
 | `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). Safer than Write for targeted changes. | No |
-| `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. | No |
+| `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
+| `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
 | `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree. | Yes |
 | `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
 | `WebFetch` | Fetch the content of an HTTP URL. Present in both default and no-filesystem session profiles. | Yes |
@@ -38,9 +39,13 @@ These tools are always present in a default session (no extra configuration requ
 
 :::
 
+### Background commands
+
+A `Bash` call with `background: true` returns immediately with a `bashcmd-<id>` job id and keeps the command running while the model continues — the pattern for a dev server, a watch loop, or a slow build. The permission ask happens once, at start, exactly as for a foreground command. The read-only `BashStatus` tool is the only channel back: no arguments lists this run's jobs (id, running/done, stop reason), `job_id` shows the command and its retained output tail (or collects a finished job's result, delivered once), `wait_ms` waits for a finish, and `cancel` stops a job. A background command runs in the **real workspace with no isolation** — its effects can interleave with the model's own file changes — keeps only a bounded tail of recent output, and is **cancelled automatically if it is still running when the run ends** (a job lives for one run, never across sessions).
+
 ### The no-filesystem session profile
 
-A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`Write`/`Edit`/`Grep`/`Glob`/`Bash`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
+A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`Write`/`Edit`/`Grep`/`Glob`/`Bash`/`BashStatus`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
 
 ---
 

@@ -118,6 +118,23 @@ RunTeam path has its own member cancel: the `CancelTeammate(team_id, member)` un
 (HTTP `POST /v1/teams/{id}/members/cancel`, issue #29) reaches a running team's
 member directly through `Supervisor.CancelMember` — no parent registry on that path.
 
+**Background Bash jobs ride the same registry as a NON-delegation family**
+(`docs/adr/0090-background-bash.md`). A `background: true` call on the `Bash`
+tool registers a `bash-cmd` entry (`bashcmd-<callID>` — a bare process, NO child
+session/engine, no `subagent.*` events, no InspectSubagent/resume), returns the
+job id immediately, and detaches the drive; the run-scoped cancel-at-end drain,
+the turn-boundary notice, and the background-pending nudge all cover it (the
+notice/nudge are family-aware: the subagent clause keeps its exact wording and a
+"background command(s) …" clause naming `BashStatus` is appended only when bash
+jobs are among the finished/live). The registry is SHARED but the two status
+tools project it DISJOINTLY: `SubagentStatus` filters bash-cmd entries out, the
+read-only **`BashStatus`** tool (registered iff Bash is, never in child
+catalogs) serves ONLY bash-cmd jobs — roster (ids+state+stop only), per-job
+command + retained 64 KiB output tail (live) or exactly-once collected result
+(done), `wait_ms` park, `cancel` verb. A child (Subagent/explorer/team member)
+gets the same background-capable `Bash` against its OWN run's registry, but
+never `BashStatus`. See [ports](ports.md) for the tool/streaming seam.
+
 The child is a **read-only explorer with a shell** by default — capability flows down
 from the parent (which has Bash); isolation, not catalog read-only-ness, is the
 security boundary:

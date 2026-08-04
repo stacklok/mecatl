@@ -93,8 +93,8 @@ string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 - `"no-fs"` REQUIRES an **empty** `workspace` (the combination is contradictory
   and returns `400`/`InvalidArgument`); the default profile still requires one.
 - Any other profile value is rejected loudly — never a silent fallback.
-- The no-FS session has **no** Read/Edit/Write/Grep/Glob/Bash, no Parallel, and
-  no SkillDraft. It keeps MCP tools (server-global + resource meta-tools +
+- The no-FS session has **no** Read/Edit/Write/Grep/Glob/Bash/BashStatus, no
+  Parallel, and no SkillDraft. It keeps MCP tools (server-global + resource meta-tools +
   client MCP), the six memory tools, WebFetch, WebSearch, Skill (bodies are text
   injection; out-of-workspace skill assets are unreadable), and delegation —
   Subagent and Team children run the same file-less surface with **no**

@@ -42,7 +42,8 @@ goroutine; the `Run` exposes:
    (the `RootAssembler` default reads AGENTS.md/CLAUDE.md), recording them + the
    final user text through the aggregate root.
 3. **Pre-turn stop guard**: announce any newly-finished background children
-   (one harness-note user message, ids + stop labels only; [subagents & teams](subagents-and-teams.md)); then, if
+   (one harness-note user message, ids + stop labels only, family-aware across
+   the delegation families and background-Bash jobs; [subagents & teams](subagents-and-teams.md)); then, if
    `sess.StopReason()` trips, `ctx` is cancelled, or the run **token budget**
    is crossed (below), terminate.
 4. `BeginTurn`, emit `turn.start`.

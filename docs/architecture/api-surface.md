@@ -25,8 +25,8 @@ reach the right run.
   `InvalidArgument`), and any unknown profile is rejected, never silently
   defaulted. A no-fs session always routes through the per-session engine
   factory (the shared engine has the FS tools baked in): its catalog is the
-  default set MINUS exactly {Read, Edit, Write, Grep, Glob, Bash, Parallel,
-  SkillDraft} (pinned by `TestNoFSCatalogProfile`), its workspace is the honest
+  default set MINUS exactly {Read, Edit, Write, Grep, Glob, Bash, BashStatus,
+  Parallel, SkillDraft} (pinned by `TestNoFSCatalogProfile`), its workspace is the honest
   `engine/adapter/nofs` Workspace (reads fail `fs.ErrNotExist`, searches are
   empty, writes refuse loudly — deliberately NOT memfs, which would silently
   absorb writes nobody can read back), registered as the per-session workspace
