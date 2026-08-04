@@ -18,10 +18,10 @@ when no dedicated key is set.
 
 ```console
 # OpenAI
-$ OPENAI_API_KEY=sk-... go run ./cmd/mecated --openai --model gpt-5
+$ OPENAI_API_KEY=sk-... go run ./cmd/mecated serve --openai --model gpt-5
 
 # An OpenAI-compatible endpoint (vLLM / LiteLLM / local proxy)
-$ OPENAI_API_KEY=token go run ./cmd/mecated --openai \
+$ OPENAI_API_KEY=token go run ./cmd/mecated serve --openai \
     --openai-base-url http://127.0.0.1:8000/v1 --model my-model
 ```
 

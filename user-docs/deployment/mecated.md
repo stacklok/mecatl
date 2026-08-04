@@ -27,10 +27,9 @@ The canonical invocation is `mecated serve`:
 mecated serve
 ```
 
-For backward compatibility, bare `mecated` (without a command word) and
-`mecated --acp` still work, but are deprecated and emit a once-per-startup
-warning. Prefer `mecated serve` for the network daemon and `mecated acp` for
-the ACP stdio mode.
+A command word is required: `mecated serve` for the network daemon, `mecated
+acp` for the ACP stdio mode. Bare `mecated` prints the command help and exits
+with a usage error.
 
 The minimal invocation starts the server on loopback with an in-memory session
 store. No persistence, no auth — the single-user localhost trust model:
@@ -231,11 +230,10 @@ and out-ranked by the CLI flag when both are set.
 
 The former output-economy tier has been removed. There is now one default prompt tone,
 which keeps the investigation-depth, minimum-change, read-before-edit, trust-boundary,
-and safety guidance. For one compatibility release, stale `--output-economy` flags and
-top-level `output-economy:` settings are accepted as no-ops and emit a warning; remove
-them from scripts and configuration. The compatibility input is hidden from normal help
-and generated configuration. This applies to `mecated`, embedded `mecatui`, and
-`mecatequi`.
+and safety guidance. Stale `--output-economy` flags now fail at startup with the
+standard unknown-flag error, and a top-level `output-economy:` settings.yaml key is
+rejected with a named unknown-key error; remove them from scripts and configuration.
+This applies to `mecated`, embedded `mecatui`, and `mecatequi`.
 
 ### Guardrails
 
@@ -422,10 +420,6 @@ mecated skills promote \
 # Print a paste-ready .mcp.json snippet for the loopback perf MCP server
 mecated perf-mcp print-config
 ```
-
-Bare `mecated [flags]` and `mecated --acp [flags]` still work for backward
-compatibility but emit a deprecation warning; prefer `mecated serve` and
-`mecated acp`.
 
 `mecated skills promote` is the only path from a model-authored quarantine skill
 (`--skills-draft-dir`) into the trusted, live catalog (`--skills-dir`). It shows the

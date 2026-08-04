@@ -124,7 +124,7 @@ func NewAgent(svc *server.Service, opts ...AgentOption) *Agent {
 
 // Serve runs the ACP stdio session over conn and blocks until the input stream
 // ends or ctx is cancelled. It is the entry the composition root calls under
-// `mecated --acp` (passing a Conn over os.Stdin/os.Stdout).
+// `mecated acp` (passing a Conn over os.Stdin/os.Stdout).
 //
 // ORDERING (load-bearing): Serve records conn as a.conn BEFORE conn.Serve starts
 // dispatching inbound frames. a.conn is the outbound channel the handlers

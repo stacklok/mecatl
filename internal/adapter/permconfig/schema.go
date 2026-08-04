@@ -86,15 +86,6 @@ type Config struct {
 	// slot keys fail-soft). A nil Models means the key was absent. The composition
 	// layer reads the maps; permconfig only carries them.
 	Models *ModelsSection `yaml:"models"`
-	// OutputEconomy is a DEPRECATED top-level scalar (ADR 0041, superseded). It is
-	// still PARSED (lenient top-level settings decoding) so a legacy settings.yaml
-	// carrying `output-economy:` does not fail, but it has NO EFFECT on agent
-	// behaviour at any tier: the output-economy "terse" tone delta and its
-	// --output-economy flag were removed. A non-empty value emits a deprecation WARN
-	// through the resolver diagnostics at every tier it appears (operator or
-	// project); the captured value is NOT consumed by composition. Marked for
-	// follow-up removal.
-	OutputEconomy string `yaml:"output-economy"`
 	// ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (ADR 0055: the
 	// neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max").
 	// Like Posture it is honoured ONLY from the user-global + CLI tiers; a

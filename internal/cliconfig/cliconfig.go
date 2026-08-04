@@ -372,18 +372,3 @@ func (h ModelFlagHelp) withModelDefaults() ModelFlagHelp {
 	}
 	return h
 }
-
-// PrintDefaultsHide writes the FlagSet's default flag listing (exactly the stdlib
-// flag.FlagSet.PrintDefaults format) OMITTING any flag whose Name is in names,
-// delegating to the shared PrintDefaultsExcluding formatter in flaghelp.go.
-// It is the help-text seam for legacy/deprecated flags that must still PARSE
-// (so a legacy invocation does not fail with "flag provided but not defined")
-// but should NOT appear in normal --help output. The cmd mains call it from
-// their custom fs.Usage so a deprecated flag stays parseable yet hidden.
-func PrintDefaultsHide(fs *flag.FlagSet, names ...string) {
-	skip := make(map[string]bool, len(names))
-	for _, n := range names {
-		skip[n] = true
-	}
-	PrintDefaultsExcluding(fs.Output(), fs, skip)
-}

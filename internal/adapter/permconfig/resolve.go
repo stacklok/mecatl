@@ -142,15 +142,6 @@ type Resolver struct {
 	// files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorPosture string
 
-	// operatorOutputEconomy is the DEPRECATED top-level output-economy: scalar (ADR
-	// 0041, superseded). It is still captured at construction so a legacy settings.yaml
-	// carrying `output-economy:` does not fail, but the value has NO EFFECT on agent
-	// behaviour: the "terse" tone delta and the --output-economy flag were removed. A
-	// non-empty value emits a deprecation WARN through the resolver diagnostics. CLI
-	// (explicit files) is parsed before user-global; first-non-empty wins. Marked for
-	// follow-up removal.
-	operatorOutputEconomy string
-
 	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar (ADR
 	// 0055), read ONCE at construction from the user-global + CLI tiers ONLY. A
 	// project-tier file's reasoning-effort: key is deliberately IGNORED (operator-
@@ -456,17 +447,6 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set posture in your user-global settings.yaml or via --posture)",
 				"file", src.path, "root", ws.Root(), "ignored_value", strings.TrimSpace(cfg.Posture))
 		}
-		// OutputEconomy is DEPRECATED (ADR 0041, superseded): the output-economy
-		// "terse" tone delta and the --output-economy flag were removed, so a
-		// top-level output-economy: scalar has NO EFFECT at any tier. It is still
-		// parsed (lenient top-level decoding) so a legacy settings.yaml does not
-		// fail; a non-empty value emits a deprecation WARN here. Marked for
-		// follow-up removal.
-		if strings.TrimSpace(cfg.OutputEconomy) != "" {
-			r.diag.Log(context.Background(), port.LevelWarn,
-				"output-economy: DEPRECATED and has no effect; the --output-economy flag and the output-economy: setting were removed — remove this key from your settings.yaml",
-				"file", src.path, "root", ws.Root(), "ignored_value", strings.TrimSpace(cfg.OutputEconomy))
-		}
 		// ReasoningEffort is OPERATOR-TIER ONLY (ADR 0055), for consistency with
 		// posture: a project file's reasoning-effort: scalar is IGNORED
 		// with a loud WARN. It is a cost/quality preference, not a security control,
@@ -665,10 +645,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureGuardrails(cfg.Guardrails)
 		// Operator-tier posture: same first-non-empty-keeps-CLI discipline as guardrails.
 		r.capturePosture(cfg.Posture)
-		// Operator-tier output-economy (ADR 0041, DEPRECATED/superseded): the value
-		// has no effect; capture emits a deprecation WARN. Kept for legacy parse
-		// compatibility.
-		r.captureOutputEconomy(cfg.OutputEconomy, path)
 		// Operator-tier reasoning-effort (ADR 0055): same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
 		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
@@ -696,10 +672,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureGuardrails(cfg.Guardrails)
 				// User-global posture: captured only if no higher CLI file already did.
 				r.capturePosture(cfg.Posture)
-				// User-global output-economy (ADR 0041, DEPRECATED/superseded): the value
-				// has no effect; capture emits a deprecation WARN. Kept for legacy parse
-				// compatibility.
-				r.captureOutputEconomy(cfg.OutputEconomy, path)
 				// User-global reasoning-effort (ADR 0055): same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
 				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
@@ -753,27 +725,6 @@ func (r *Resolver) capturePosture(p string) {
 		return
 	}
 	r.operatorPosture = strings.TrimSpace(p)
-}
-
-// captureOutputEconomy records the FIRST operator-tier output-economy: scalar seen
-// during construction (CLI files are parsed before user-global, so CLI wins on
-// first-non-empty) and emits a DEPRECATION WARN. The output-economy "terse" tone
-// delta and the --output-economy flag were removed (ADR 0041, superseded), so the
-// captured value has NO EFFECT on agent behaviour; it is kept only so a legacy
-// settings.yaml carrying `output-economy:` does not fail and the operator gets a
-// WARN telling them to remove it. file is the source path for the WARN. A
-// whitespace-only value is treated as absent. Marked for follow-up removal.
-func (r *Resolver) captureOutputEconomy(p, file string) {
-	if r.operatorOutputEconomy != "" {
-		return
-	}
-	if strings.TrimSpace(p) == "" {
-		return
-	}
-	r.operatorOutputEconomy = strings.TrimSpace(p)
-	r.diag.Log(context.Background(), port.LevelWarn,
-		"output-economy: DEPRECATED and has no effect; the --output-economy flag and the output-economy: setting were removed — remove this key from your settings.yaml",
-		"file", file, "ignored_value", r.operatorOutputEconomy)
 }
 
 // captureReasoningEffort records the FIRST operator-tier reasoning-effort: scalar

@@ -222,21 +222,17 @@ is RPC-discoverable (`UNIMPLEMENTED` / empty-list degrade honestly).
 
 `mecatui` is an optional, flashy terminal UI that drives a `mecated` over this
 same gRPC `Converse` stream. After `task build` it lands at `bin/mecatui`. It
-needs no separate server by default — with no `--server` it reuses a `mecated`
-already running on `127.0.0.1:8080`, or else **hosts one in-process** over a UNIX
-socket (built via the shared composition layer, the same assembly `mecated` uses):
+needs no separate server by default — bare `mecatui` **hosts one in-process**
+over a UNIX socket (built via the shared composition layer, the same assembly
+`mecated` uses), and `mecatui connect ADDRESS` dials an external server:
 
 ```sh
-OPENAI_API_KEY=sk-... bin/mecatui local --workspace "$PWD"   # embedded (canonical)
-bin/mecatui local --mock --workspace "$PWD"                 # embedded, offline mock
+OPENAI_API_KEY=sk-... bin/mecatui --workspace "$PWD"        # embedded (default)
+bin/mecatui --mock --workspace "$PWD"                       # embedded, offline mock
 
-bin/mecated &                                               # …or an external server
+bin/mecated serve &                                         # …or an external server
 bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
 ```
-
-> The bare `bin/mecatui [flags]` and `bin/mecatui --server ADDRESS` forms still
-> work but are deprecated (ADR 0083); prefer `mecatui local` / `mecatui connect
-> ADDRESS`.
 
 The embedded server enables every **free + local** feature by default — memory
 (per-project, under `$XDG_DATA_HOME/mecatui/memory`), server-side slash-command
@@ -245,8 +241,8 @@ discovery), agent definitions, soul, user model, child-session retention GC,
 ToolHive MCP discovery, and the MCP resource/prompt meta-tools. Only the
 opt-ins that spend tokens or need explicit configuration stay off: static
 `--mcp-server` registrations, the `SkillDraft` quarantine, the background
-user-model reviewer, and memory consolidation — run a full `mecated` and use
-`--server` for those. It also accepts **`--perf`** (off by default) to bring up the same
+user-model reviewer, and memory consolidation — run a full `mecated serve` and
+`connect` to it for those. It also accepts **`--perf`** (off by default) to bring up the same
 loopback observability surface `mecated` exposes — `/metrics`, `/debug/pprof/*`,
 `/debug/vars`, `/debug/flightrecorder` — on a **fixed** `127.0.0.1:9099` port by
 default (predictable, so an MCP-client config can hardcode the `/mcp` URL once;
@@ -261,8 +257,8 @@ non-loopback `--perf-addr` with `--perf-mcp` is refused). This is the in-process
 way to profile a freeze in the embedded server itself.
 The embedded server also accepts `--yolo` (the
 allow-all operator posture — same semantics, root refusal, and `MECATL_SANDBOX`/
-`IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **ignored when
-dialling an external `--server`**. Note the TUI's **built-in slash commands**
+`IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **ignored in
+`connect` mode** — the dialled server owns its own posture. Note the TUI's **built-in slash commands**
 (`/clear`, `/help`, and the caps-gated `/mcp`, `/agents`, `/team`, `/skills`,
 `/soul`, `/usermodel`, `/models`, `/effort`, `/worktrees` — in that fixed palette order) still work
 regardless — they act on the TUI itself, not the server, so typing `/` always

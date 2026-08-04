@@ -106,14 +106,14 @@ subagent** demo (detach, harness notice at the turn boundary, collect via
 
 ```sh
 export OPENAI_API_KEY=sk-...
-go run ./cmd/mecated --openai           # gRPC on 127.0.0.1:8080, HTTP/SSE on 127.0.0.1:8081
+go run ./cmd/mecated serve --openai     # gRPC on 127.0.0.1:8080, HTTP/SSE on 127.0.0.1:8081
 ```
 
 The server binds loopback by default and is unauthenticated unless you turn auth on.
 Common flags (full list in the [`mecated` flag reference](./docs/usage.md)):
 
 ```sh
-go run ./cmd/mecated --openai \
+go run ./cmd/mecated serve --openai \
   --openai-base-url https://openrouter.ai/api/v1 --model anthropic/claude-sonnet-4.5 \
   --auth-token "$TOKEN" \                 # bearer auth; --tls-cert/--tls-key/--client-ca for (m)TLS
   --rate-limit 10 \                       # per-client + global token bucket
@@ -134,7 +134,7 @@ examples for the HTTP/SSE routes.
 
 ```sh
 ANTHROPIC_API_KEY=... go run ./cmd/mecatui    # hosts an embedded mecated in-process
-go run ./cmd/mecatui --server 127.0.0.1:8080  # or point it at a running server
+go run ./cmd/mecatui connect 127.0.0.1:8080  # or point it at a running server
 ```
 
 See the [mecatui terminal-UI guide](./docs/tui.md) for keybindings, slash commands, and themes.

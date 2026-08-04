@@ -72,7 +72,7 @@ A third option points the session store (and/or the memory store) at a
 **remote driver process** speaking the `mecatl.driver.v1` gRPC protocol:
 
 ```sh
-mecated --session-store-url 127.0.0.1:7443 --memory-store-url 127.0.0.1:7443
+mecated serve --session-store-url 127.0.0.1:7443 --memory-store-url 127.0.0.1:7443
 ```
 
 `--session-store-url` is mutually exclusive with `--store-dir` (and
@@ -110,13 +110,13 @@ lease** so the harness enforces single-writer itself:
 
 ```sh
 # Single host, several mecated processes sharing one --store-dir:
-mecated --store-dir /var/lib/mecatl/store --session-lease-dir /var/lib/mecatl/leases
+mecated serve --store-dir /var/lib/mecatl/store --session-lease-dir /var/lib/mecatl/leases
 
 # In-cluster multi-replica (coordination.k8s.io Lease per session):
-mecated --session-store-url store-driver:7443 --session-lease-k8s-namespace mecatl
+mecated serve --session-store-url store-driver:7443 --session-lease-k8s-namespace mecatl
 
 # Or a dedicated lease driver, independent of the store:
-mecated --session-store-url store-driver:7443 --session-lease-url lease-driver:7443
+mecated serve --session-store-url store-driver:7443 --session-lease-url lease-driver:7443
 ```
 
 When a lease is wired, the run-entry path acquires a per-session lease before
@@ -182,7 +182,7 @@ leasing. See `docs/adr/0027-cloud-native.md` for the full design.
 The same protocol carries two **content sources**:
 
 ```sh
-mecated --skill-source-url 127.0.0.1:7443 --soul-source-url 127.0.0.1:7443
+mecated serve --skill-source-url 127.0.0.1:7443 --soul-source-url 127.0.0.1:7443
 ```
 
 `--skill-source-url` replaces local skills discovery entirely (mutually
@@ -223,7 +223,7 @@ share one connection with the store drivers.
 Two more sources ride the same protocol:
 
 ```sh
-mecated --agent-source-url 127.0.0.1:7443 --command-source-url 127.0.0.1:7443
+mecated serve --agent-source-url 127.0.0.1:7443 --command-source-url 127.0.0.1:7443
 ```
 
 `--agent-source-url` serves the **agent definitions** (the Subagent

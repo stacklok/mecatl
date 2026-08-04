@@ -41,8 +41,9 @@ func authoritativeKeys() []string {
 	collect("models.router.categories", permconfig.RouterCategory{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
-	// output-economy is deliberately absent: it is a deprecated, top-level-lenient
-	// parser-compatibility field only and MUST NOT appear in generated artifacts.
+	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
+	// clean break) and MUST NOT appear in generated artifacts (pinned by
+	// TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts).
 	// reasoning-effort is likewise a bare scalar Config field (ADR 0055).
 	keys = append(keys, "reasoning-effort")
 	return keys
@@ -130,12 +131,10 @@ func TestEmbeddedSkeletonMatchesFreshRender(t *testing.T) {
 
 // nonSectionConfigFields is the EXPLICIT allowlist of permconfig.Config yaml-tagged
 // fields that are deliberately NOT rendered as settings.yaml subtrees. A field may
-// appear here only with a reason operators should not see it.
-var nonSectionConfigFields = map[string]bool{
-	// Deprecated parser compatibility for one release: accepted only to WARN and
-	// ignored, so advertising it in the skeleton/reference would be misleading.
-	"output-economy": true,
-}
+// appear here only with a reason operators should not see it. Currently EMPTY —
+// output-economy (the one former entry) was removed outright, so every remaining
+// Config field is modelled.
+var nonSectionConfigFields = map[string]bool{}
 
 func TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts(t *testing.T) {
 	model := configgen.BuildModel(nil)

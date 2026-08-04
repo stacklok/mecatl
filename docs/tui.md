@@ -7,10 +7,10 @@ for user prompts and tool I/O), shows a thinking spinner and a status/usage
 footer, and resolves permission prompts inline by sending `ResumeApproval` back
 on the same stream.
 
-The server it talks to is either an **external** `mecated` (pass `--server`) or,
-by default, one `mecatui` **hosts itself in-process** over a private UNIX socket
-— so a single binary "just works" with no daemon to start and no TCP port. See
-[Run](#run).
+The server it talks to is either one `mecatui` **hosts itself in-process** over
+a private UNIX socket (the default) or an **external** `mecated` it dials via
+`mecatui connect ADDRESS` — so a single binary "just works" with no daemon to
+start and no TCP port. See [Run](#run).
 
 It is built on the Charm v2 stack (Bubble Tea / Lip Gloss / Bubbles / Glamour).
 The render packages (`ui`, `theme`) and the `client` package stay a pure client —
@@ -40,10 +40,9 @@ OPENROUTER_API_KEY=sk-or-... bin/mecatui --workspace "$PWD" # OpenRouter
 bin/mecatui --mock --workspace "$PWD"
 ```
 
-With no `--server`, mecatui runs in **auto** mode: it first probes the loopback
-default `127.0.0.1:8080` and **reuses a `mecated` already running there**; only if
-none answers does it host an **embedded** server itself (a UNIX socket in
-`$XDG_RUNTIME_DIR` or the OS temporary directory, torn down on exit). On macOS,
+Bare `mecatui` always hosts an **embedded** server itself (a UNIX socket in
+`$XDG_RUNTIME_DIR` or the OS temporary directory, torn down on exit) — it
+**never probes** loopback for an already-running `mecated`. On macOS,
 an overlong runtime path falls back to a private directory directly under `/tmp`
 to stay within Darwin's UNIX-socket path limit. The embedded provider is **auto-detected**
 from the environment — `ANTHROPIC_API_KEY` enables the `anthropic` provider (the
@@ -54,49 +53,41 @@ the `openrouter` provider (set several, and you pick between their models in the
 When more than one is keyed, run `/models` to choose; the choice is persisted per
 workspace.
 
-To use a specific **external** server instead, pass `--server`:
+To use a specific **external** server instead, use the `connect` subcommand:
 
 ```sh
-bin/mecated &                                          # listens on 127.0.0.1:8080
-bin/mecatui --server 127.0.0.1:8080 --workspace "$PWD"
+bin/mecated serve &                                    # listens on 127.0.0.1:8080
+bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
 ```
 
 `--workspace` defaults to the current directory and is always resolved to an
 absolute path (the server requires absolute).
 
-### Canonical transport commands (ADR 0083)
+### Transport commands
 
-The bare `--server`/auto-probe forms above still work but are **deprecated**.
-Prefer the explicit commands, which are honest about which transport mecatui uses
-and never implicitly probe loopback:
+The transport is exactly what the invocation says — there is no implicit probe
+or fallback:
 
-- **`mecatui local [flags]`** — always host an embedded `mecated` in-process over
-  a private UNIX socket. mecatui **never probes** `127.0.0.1:8080` in this mode.
-  All embedded-server flags (`--mock`, `--trust-project`, provider knobs, …) apply.
-
-  ```sh
-  bin/mecatui local --workspace "$PWD"                # embedded, auto-detected provider
-  bin/mecatui local --mock --workspace "$PWD"         # embedded, offline mock
-  ```
+- **Bare `mecatui [flags]`** — always host an embedded `mecated` in-process over
+  a private UNIX socket; **never probe** loopback, **never dial**. All
+  embedded-server flags (`--mock`, `--trust-project`, provider knobs, …) apply,
+  and the remote-only flags (`--auth-token`, `--tls`, `--tls-ca`, `--insecure`)
+  are **rejected** here.
 
 - **`mecatui connect ADDRESS [flags]`** — always dial a running `mecated` at
-  `ADDRESS` (host:port). mecatui **never probes** loopback and **never embeds** in
-  this mode; the target must already be serving. Embedded-server flags
-  (`--mock`, `--trust-project`, provider keys, …) are **rejected** here — only
-  shared session/UI flags and remote flags (`--auth-token`, `--tls`, …) apply.
+  `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
+  target must already be serving. Embedded-server flags (`--mock`,
+  `--trust-project`, provider keys, …) are **rejected** here — only shared
+  session/UI flags and remote flags (`--auth-token`, `--tls`, …) apply.
 
   ```sh
-  bin/mecated &                                       # listens on 127.0.0.1:8080
+  bin/mecated serve &                                 # listens on 127.0.0.1:8080
   bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
   bin/mecatui connect mecated.internal:443 --tls --auth-token $MECATL_AUTH_TOKEN
   ```
 
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
 a usage error. An unknown leading command fails closed.
-
-The legacy bare `mecatui [flags]` (auto-probe then embed) and `mecatui --server
-ADDRESS` (dial remote) still work but emit a pre-TUI deprecation warning naming
-the canonical replacement; they may be removed in a future release.
 
 > **Removed flags:** the three `--subagent-ask-reviewer*` flags were inert under
 > `mecatui` (it runs interactive — a child ask surfaces to the approval modal, not
@@ -109,7 +100,6 @@ the canonical replacement; they may be removed in a future release.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--server` | – (auto) | external mecated `host:port`; empty = reuse `127.0.0.1:8080` if running, else embed |
 | `--workspace` | cwd | absolute session workspace root |
 | `--mode` | `default` | permission posture: `default` \| `plan` \| `accept-edits` |
 | `--theme` | `aztec` | theme name (also `MECATUI_THEME`) |
@@ -159,21 +149,20 @@ the canonical replacement; they may be removed in a future release.
 
 The embedded server has no auth/TLS — it is a private, user-owned UNIX socket
 (the same single-user loopback trust model `mecated` uses for `127.0.0.1`, with a
-tighter blast radius). The `--auth-token` / `--tls*` flags apply only when dialling
-an external `--server`; loopback is unauthenticated plaintext by default, matching
-mecated's trust model. The embedded server discovers **ToolHive-managed MCP
+tighter blast radius). The `--auth-token` / `--tls*` flags apply only in `connect` mode; loopback is
+unauthenticated plaintext by default, matching mecated's trust model. The embedded server discovers **ToolHive-managed MCP
 servers** by default (the `default` group, with their resource/prompt meta-tools) —
 fail-soft: with no Podman/Docker runtime reachable it degrades to zero servers, so
 it's inert on a machine without ToolHive workloads. The remaining heavier opt-ins —
 static MCP server endpoints and the writable SkillDraft quarantine — stay **off**;
-for those, run a full `mecated` and point `--server` at it.
+for those, run a full `mecated serve` and `connect` to it.
 
 **Embedded-server diagnostics go to a file, never stderr.** When mecatui hosts the
 embedded server, its operational diagnostics (and the `--perf` surface's log lines)
 are written to `$XDG_STATE_HOME/mecatl/mecatui.log` (fallback
 `~/.local/state/mecatl/mecatui.log`) — a stderr line would corrupt the Bubble Tea
-alt-screen. `--quiet` discards them instead. A client-only run (`--server`, or
-reusing an already-running `mecated`) logs nothing of its own.
+alt-screen. `--quiet` discards them instead. A client-only run (`mecatui connect`) logs
+nothing of its own.
 
 The file's floor is `info`. ALL FIVE paths that end a turn TERMINALLY — a permanent
 non-retryable provider error, a mid-stream stream failure (or cancellation), a

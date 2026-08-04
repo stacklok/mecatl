@@ -192,9 +192,9 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel
 The run terminates with a `result` whose `stop` is `cancelled`. No in-flight run
 → `404` `{"error":"no in-flight run for session"}`.
 
-### ACP over stdio (`--acp`)
+### ACP over stdio (`mecated acp`)
 
-`mecated --acp` serves the **Agent Client Protocol** — JSON-RPC 2.0 over
+`mecated acp` serves the **Agent Client Protocol** — JSON-RPC 2.0 over
 stdin/stdout — for an editor that spawned `mecated` as a subprocess. It is the
 stdio alternative to the gRPC/HTTP listeners (which are skipped); everything
 else is the **same wiring**: the engine, tools, permission policy, session

@@ -42,10 +42,39 @@ func parseYAML(data []byte) (Config, error) {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return Config{}, nil
 	}
+	// TARGETED unknown-key rejection (the top-level decode is deliberately
+	// lenient — plain yaml.Unmarshal — so removed keys must be named
+	// individually): `output-economy:` was REMOVED (ADR 0085, the clean break
+	// superseding ADR 0082's parse-compat shim; ADR 0041 INTRODUCED the
+	// setting). Error precisely so the invalid-file WARN names the key to
+	// delete.
+	if err := rejectRemovedTopLevelKeys(data); err != nil {
+		return Config{}, err
+	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse permission config: %w", err)
 	}
 	return cfg, nil
+}
+
+// rejectRemovedTopLevelKeys probes the document for a top-level mapping key
+// that was REMOVED from the schema, with an error naming the key precisely. The
+// probe is a one-field flat struct decode — lenient yaml.Unmarshal ignores
+// unknown keys, so only the top-level `output-economy:` binds (a NESTED
+// `output-economy:` under a section can never trip it: the flat struct has no
+// path to it).
+func rejectRemovedTopLevelKeys(data []byte) error {
+	var probe struct {
+		OutputEconomy *string `yaml:"output-economy"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		// Malformed YAML: fall through to the real decode, which reports it.
+		return nil
+	}
+	if probe.OutputEconomy != nil {
+		return fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	}
+	return nil
 }
 
 // rulesFromConfig converts a parsed Config into governance.Rule values tagged

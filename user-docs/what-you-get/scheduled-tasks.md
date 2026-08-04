@@ -116,9 +116,9 @@ curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire_id>
 The tick loop is **ON by default** whenever the configured store exposes a `ScheduleStore` — no enable flag exists anymore (the old `--scheduler` opt-in was removed outright and fails fast as an unknown flag):
 
 ```sh
-mecated --store-dir ./state --scheduler-tick-interval 30s   # ticks by default
+mecated serve --store-dir ./state --scheduler-tick-interval 30s   # ticks by default
 mecak8s --redis-url redis://...                             # multi-replica, ticks by default
-mecated --store-dir ./state --no-scheduler                  # opt out (manual management still works)
+mecated serve --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 
 | Flag | Default | Description |

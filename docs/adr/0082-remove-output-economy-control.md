@@ -4,6 +4,7 @@
 - Date: 2026-08-03
 - Scope: default prompt composition, CLI/config compatibility, and prompt-performance measurement
 - Supersedes: [ADR 0041](./0041-output-economy-default-prompt.md)
+- Superseded by: [ADR 0085](./0085-cli-clean-break-grammar.md) (decision item 4 — the one-release parse-compat window closed; the shim is deleted)
 
 ## Context
 
@@ -62,5 +63,5 @@ Remove output-economy as an active behavior and public control surface:
 - [ADR 0041](./0041-output-economy-default-prompt.md) — the superseded combined decision.
 - [ADR 0054](./0054-reasoning-rebalance-default-prompt.md) — the surviving reasoning-depth rebalance.
 - `engine/prompt/builder.go` (`defaultTone`) — the preserved default guidance.
-- `internal/adapter/permconfig/schema.go` (`OutputEconomy`) — temporary YAML parser compatibility.
+- `internal/adapter/permconfig/permconfig.go` (`parseYAML`) — the settings.yaml decode; the temporary `OutputEconomy` compatibility field cited here was deleted by ADR 0085.
 - `docs/architecture.md` — current prompt behavior.

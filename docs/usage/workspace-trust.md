@@ -104,8 +104,7 @@ matches** the workspace's live identity surface.
 ### The `mecatui` first-encounter trust prompt
 
 `mecated` is purely declarative — it never asks. But when you launch **`mecatui`**
-with its **embedded** server (the default: no `--server`, and no `mecated` already
-running on the loopback default) in a workspace that is **not yet trusted** and
+with its **embedded** server (the default — bare `mecatui` always embeds) in a workspace that is **not yet trusted** and
 that carries a **project authority set** worth gating, `mecatui` prompts you once,
 **before** the TUI takes over the screen:
 
@@ -209,7 +208,7 @@ and prompt less:
 
 Pick the tier with `--posture <strict|trusted|auto|yolo>` on `mecated` or the
 embedded `mecatui` server (it is **ignored when `mecatui` dials an external
-`--server`** — that server owns its own posture). `--yolo` is an **alias for
+server via `connect`** — that server owns its own posture). `--yolo` is an **alias for
 `--posture yolo`** and `--trust-project` is an **alias for `trusted`**; passing
 both a `--posture` value and an alias resolves to the **higher tier** with a
 `WARN`, an unknown `--posture` value fails closed to `strict` with a `WARN`, and a
@@ -295,10 +294,10 @@ generalised from the old `--yolo`-only refusal; it now gates `auto` too.)
 
 ```sh
 # CI / sandboxed container, offline mock, allow-all + child defence ON:
-MECATL_SANDBOX=1 bin/mecated --mock --posture auto
+MECATL_SANDBOX=1 bin/mecated serve --mock --posture auto
 
 # Disposable sandbox, child defence OFF too:
-MECATL_SANDBOX=1 bin/mecated --mock --posture yolo   # == --yolo
+MECATL_SANDBOX=1 bin/mecated serve --mock --posture yolo   # == --yolo
 ```
 
 ---

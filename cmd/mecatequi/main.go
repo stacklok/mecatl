@@ -45,13 +45,6 @@ func main() {
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func warnDeprecatedOutputEconomy(w io.Writer, set bool) {
-	if !set {
-		return
-	}
-	_, _ = fmt.Fprintln(w, "mecatequi: WARNING: --output-economy is deprecated and has no effect; remove it (the output-economy terse prompt delta was removed)")
-}
-
 // realMain is the testable entry point: it returns the process exit code rather than
 // calling os.Exit, so a test can drive the whole flag->build->run->emit path and
 // assert the code. stdout carries the "-" outputs (the summary by default); stderr
@@ -69,8 +62,6 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "mecatequi: %v\n", err)
 		return 2
 	}
-	warnDeprecatedOutputEconomy(stderr, f.outputEconomyFlagSet)
-
 	diag := newDiagnostics()
 
 	// Validate the workspace is a git repository AND its top level BEFORE building —

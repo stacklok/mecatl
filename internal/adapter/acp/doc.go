@@ -14,7 +14,7 @@
 // Layering: this is an ADAPTER. It consumes the surface-agnostic
 // *server.Service (CreateSession / StartRun / Approve / Cancel) and the domain
 // session types, exactly as the gRPC/HTTP adapters do. It is wired only in the
-// composition root (cmd/mecated, behind --acp). It never imports contracts/gen:
+// composition root (cmd/mecated, behind the `acp` subcommand). It never imports contracts/gen:
 // ACP carries its own JSON, decoupled from the proto.
 //
 // fs/* DELEGATION (issue #2) — when the CLIENT advertises BOTH fs.readTextFile and

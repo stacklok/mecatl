@@ -174,7 +174,7 @@ Every tool from an MCP server is registered as `mcp__<server-name>__<tool-name>`
 ### The `--mcp-server` flag
 
 ```
-mecated --mcp-server github=https://mcp.github.example.com/v1 \
+mecated serve --mcp-server github=https://mcp.github.example.com/v1 \
         --mcp-server slack=https://mcp.slack.example.com/v1
 ```
 

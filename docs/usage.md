@@ -60,9 +60,9 @@ an editor that spawned it.
 in-memory default) never ticks:
 
 ```sh
-mecated --store-dir ./state --scheduler-tick-interval 30s   # scheduler ticks by default
+mecated serve --store-dir ./state --scheduler-tick-interval 30s   # scheduler ticks by default
 mecak8s --redis-url redis://...                             # multi-replica, ticks by default
-mecated --store-dir ./state --no-scheduler                  # opt out (manual management still works)
+mecated serve --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 
 Flags:

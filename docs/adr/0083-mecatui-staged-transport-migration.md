@@ -1,9 +1,10 @@
 # ADR 0083 — Staged mecatui transport migration
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-08-03
 - Scope: `cmd/mecatui` CLI surface, transport resolution, and mode-specific flag applicability
 - Supersedes: —
+- Superseded by: [ADR 0085](./0085-cli-clean-break-grammar.md) (the staged migration collapsed into a pre-1.0 clean break: the `local` subcommand, the `--server` flag, the AUTO probe, and the legacy warnings are deleted — bare `mecatui` embeds, `connect ADDRESS` dials)
 
 ## Context
 

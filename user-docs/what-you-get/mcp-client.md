@@ -20,7 +20,7 @@ mecatl speaks the **streaming-HTTP (streamable-HTTP JSON-RPC) MCP transport only
 Wire a server with `--mcp-server name=URL` (repeatable, one flag per server):
 
 ```sh
-mecated \
+mecated serve \
   --mcp-server github=https://mcp.example.com/github \
   --mcp-server linear=https://mcp.example.com/linear \
   --workspace /path/to/workspace
@@ -32,7 +32,7 @@ The flag value is `<name>=<URL>` where `name` is the identifier that becomes the
 
 ```sh
 export MCP_GITHUB_TOKEN=ghp_…
-mecated --mcp-server github=https://mcp.example.com/github …
+mecated serve --mcp-server github=https://mcp.example.com/github …
 ```
 
 **ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
