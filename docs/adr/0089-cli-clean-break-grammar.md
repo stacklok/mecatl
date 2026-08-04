@@ -1,9 +1,9 @@
-# ADR 0085 — CLI clean break: one canonical spelling per action
+# ADR 0089 — CLI clean break: one canonical spelling per action
 
 - Status: Accepted
 - Date: 2026-08-04
 - Scope: `cmd/mecated` + `cmd/mecatui` CLI grammar, CLI flag surface, settings.yaml parsing, progressive help
-- Supersedes: [ADR 0083](./0083-mecatui-staged-transport-migration.md) (the staged framing — the "later phase" it deferred lands here, with the `local` subcommand it introduced dropped, not graduated); [ADR 0082](./0082-remove-output-economy-control.md) (decision item 4 only — the one-release parse-compat window)
+- Supersedes: [ADR 0087](./0087-mecatui-staged-transport-migration.md) (the staged framing — the "later phase" it deferred lands here, with the `local` subcommand it introduced dropped, not graduated); [ADR 0086](./0086-remove-output-economy-control.md) (decision item 4 only — the one-release parse-compat window)
 
 ## Context
 
@@ -12,7 +12,7 @@ each kept alive by a compatibility shim:
 
 - `mecatui` had FOUR transport spellings: bare (probe loopback, then embed),
   `--server ADDRESS` (dial), and the canonical `local` / `connect ADDRESS`
-  subcommands ADR 0083 introduced *alongside* them, promising to remove the legacy
+  subcommands ADR 0087 introduced *alongside* them, promising to remove the legacy
   pair "in a later phase". The AUTO probe is a guess: on a machine where an
   unrelated process binds `127.0.0.1:8080`, bare `mecatui` silently attaches to it
   (or, when the probe fails, silently embeds).
@@ -21,7 +21,7 @@ each kept alive by a compatibility shim:
   spelling. A bare `mecated` starting a server is a script footgun (a typo'd
   leading token silently serves) and makes the help surface lie about what the
   binary is.
-- ADR 0082 removed output-economy as an active behavior and, for one release,
+- ADR 0086 removed output-economy as an active behavior and, for one release,
   kept a hidden parse-compat shim: `--output-economy` parsed as a no-op with a
   deprecation WARN in all three binaries, and a top-level `output-economy:`
   settings.yaml key parsed leniently with the same WARN. The shim was deliberately
@@ -44,14 +44,14 @@ aliases — a stale invocation fails fast with an honest error.
    the embedded `mecated` in-process over a private UNIX socket and NEVER probes
    loopback (the AUTO probe is deleted). `mecatui connect ADDRESS [flags]` dials a
    running `mecated` at ADDRESS and never embeds; ADDRESS must immediately follow
-   `connect`. The `local` subcommand ADR 0083 added is DELETED (bare is the local
+   `connect`. The `local` subcommand ADR 0087 added is DELETED (bare is the local
    spelling), the `--server` flag is DELETED (`connect ADDRESS` is the dial
    spelling), and every legacy warning is deleted. An unknown leading command
    fails closed before transport resolution. Mode-specific flag applicability
    (embedded-only flags rejected in `connect` mode, remote-only flags rejected
-   bare) is unchanged from ADR 0083.
+   bare) is unchanged from ADR 0087.
 2. **mecated commands.** Bare `mecated` is a usage error (`errBareInvocation`):
-   it prints the command help and exits 2. The network daemon requires `mecated
+   it prints the command help to stderr and exits 2. The network daemon requires `mecated
    serve`; ACP stdio requires `mecated acp`. The `--acp` flag is DELETED (an
    unknown-flag error) and every legacy warning is deleted.
 3. **Output-economy shim.** `--output-economy` is unregistered in `mecated`,
@@ -95,8 +95,8 @@ aliases — a stale invocation fails fast with an honest error.
 
 ## See also
 
-- [ADR 0083](./0083-mecatui-staged-transport-migration.md) — the staged framing this supersedes (its `connect` subcommand and applicability checks survive; its `local` subcommand, `--server` flag, and legacy warnings do not).
-- [ADR 0082](./0082-remove-output-economy-control.md) — the output-economy removal this follows up.
+- [ADR 0087](./0087-mecatui-staged-transport-migration.md) — the staged framing this supersedes (its `connect` subcommand and applicability checks survive; its `local` subcommand, `--server` flag, and legacy warnings do not).
+- [ADR 0086](./0086-remove-output-economy-control.md) — the output-economy removal this follows up.
 - [ADR 0041](./0041-output-economy-default-prompt.md) — the original, twice-superseded output-economy decision.
 - `cmd/mecatui/command.go` (`resolveTransportMode`) — the pure transport resolver.
 - `cmd/mecated/command.go` (`errBareInvocation`) — the bare-invocation usage error.

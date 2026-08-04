@@ -1,4 +1,4 @@
-# ADR 0084 — Explicit daemon.yaml (listener topology config)
+# ADR 0088 — Explicit daemon.yaml (listener topology config)
 
 - Status: Accepted
 - Date: 2026-08-03
@@ -14,11 +14,11 @@ Two other config surfaces already exist and must NOT be conflated:
 - **`settings.yaml`** (via `mecated config init`, owned by `permconfig`/`configgen`) is the operator POLICY/TRUST file — permissions, posture, guardrails, model taxonomy. It is auto-discovered per the conventional XDG/project hierarchy.
 - **Auth secrets** (`MECATL_AUTH_TOKEN`, `--auth-token`, provider keys) are env/CLI-only. A token value in a world-readable YAML file is a downgrade.
 
-The core `--config PATH` daemon config support (strict versioned v1 schema, precedence `defaults < file < explicit CLI`, no auto-load, rejected in ACP) was committed in `c1e49af9` (`internal/adapter/daemonconfig`, the `serve --config` load/merge path). This ADR records the UX/docs half (task B): the `config daemon init`/`validate` subcommands, the documented conventional path, and the decision that fixes the surface's shape.
+The core `--config PATH` daemon config support (strict versioned v1 schema, precedence `defaults < file < explicit CLI`, no auto-load, rejected in ACP) landed in `internal/adapter/daemonconfig` (the `serve --config` load/merge path). This ADR records the UX/docs half (task B): the `config daemon init`/`validate` subcommands, the documented conventional path, and the decision that fixes the surface's shape.
 
 ## Decision
 
-1. **Separate, explicit-only file.** daemon.yaml is a DISTINCT file from settings.yaml. It carries ONLY the API-edge topology slice — the v1 fields: `version`, `grpc_addr`, `http_addr`, `metrics_addr`, `tls_cert`, `tls_key`, `client_ca`, `rate_limit`, `rate_burst` (the first API-edge field slice). It is loaded ONLY when an operator supplies `mecated serve --config PATH` (or the legacy bare `mecated --config PATH`); there is **NO conventional auto-load** — a daemon.yaml at the conventional path is inert unless `--config` names it.
+1. **Separate, explicit-only file.** daemon.yaml is a DISTINCT file from settings.yaml. It carries ONLY the API-edge topology slice — the v1 fields: `version`, `grpc_addr`, `http_addr`, `metrics_addr`, `tls_cert`, `tls_key`, `client_ca`, `rate_limit`, `rate_burst` (the first API-edge field slice). It is loaded ONLY when an operator supplies `mecated serve --config PATH`; there is **NO conventional auto-load** — a daemon.yaml at the conventional path is inert unless `--config` names it.
 
 2. **settings.yaml remains policy/trust; auth secrets remain env/auth sources.** daemon.yaml does NOT carry permissions, posture, guardrails, models, or any auth TOKEN VALUE. The API bearer token stays `MECATL_AUTH_TOKEN` / `--auth-token`. A non-loopback bind still requires auth/TLS (the same trust model; daemon.yaml changes topology, not trust).
 
@@ -76,4 +76,4 @@ that depends on CLI values stays in `cmd/mecated`.
 - `docs/usage/mecated.md` — the daemon config reference (the 8 v1 fields + precedence)
 - `docs/architecture.md` — the daemon config surface in the mecated composition-root section
 - `internal/adapter/daemonconfig` — the schema, skeleton, and `Validate`
-- Commit `c1e49af9` — the core `--config` load/merge path (the API half this UX/docs half builds on)
+- `internal/adapter/daemonconfig` — also the core `--config` load/merge path (the API half this UX/docs half builds on)
