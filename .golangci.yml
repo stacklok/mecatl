@@ -611,6 +611,18 @@ linters:
           - goconst
           - unparam
         path: (.+)_test\.go
+      # SA5011 (possible nil dereference) false-positives on the idiomatic test
+      # guard `if x == nil { t.Fatal(...) }; use(x)`: staticcheck's no-return
+      # facts for t.Fatal are computed over the whole program, and on
+      # resource-constrained / divergent environments (CI's 2-core runner vs
+      # local) they come back incomplete, flagging a rolling subset of the ~117
+      # test files that use the idiom while reporting 0 on others. The guard is
+      # not a real nil deref (t.Fatal aborts the test). Production code keeps the
+      # check at full strength.
+      - linters:
+          - staticcheck
+        text: SA5011
+        path: (.+)_test\.go
       # fsconformance/memconformance/storeconformance/sourceconformance/
       # eventlogconformance are shared
       # test-helper packages (importing "testing" in a non-_test.go file, the
