@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-05
 - Scope: how operators observe the resolved operator posture tier and the root-aware workspace-trust decision
-- Supersedes: [ADR 0095](./0095-root-aware-project-trust.md)
+- Related: [ADR 0095](./0095-root-aware-project-trust.md) (the trust decision this ADR only *reports*; this ADR is orthogonal and does NOT supersede 0095)
 
 ## Context
 
@@ -72,6 +72,6 @@ print-and-exit flag.
 
 - [ADR 0022 — Allow-all posture](./0022-allow-all-posture.md)
 - [ADR 0023 — Workspace Trust](./0023-workspace-trust.md)
-- [ADR 0095 — Root-aware project trust](./0095-root-aware-project-trust.md) (superseded, reporting decision only)
+- [ADR 0095 — Root-aware project trust](./0095-root-aware-project-trust.md) (the trust decision this ADR reports; not superseded)
 - `internal/app/posture.go` (`ResolveAuthoritativePosture`, `narratePosture`)
 - `internal/app/build.go` (`narratePosture` call site, after `resolveTrust`)

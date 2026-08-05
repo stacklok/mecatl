@@ -1,7 +1,7 @@
 # ADR 0092 — Project-trust suppression pin
 
 - Status: Superseded
-- Superseded by: [ADR 0094](./0094-opt-in-project-ingestion.md)
+- Superseded by: [ADR 0095](./0095-root-aware-project-trust.md) (via the intermediate ADR 0094)
 - Date: 2026-08-04
 - Scope: operator-tier trust/policy — suppressing project-tier steering ingestion while preserving the posture ladder's approvals and the child-shell gate
 

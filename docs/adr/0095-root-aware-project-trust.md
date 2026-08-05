@@ -1,10 +1,20 @@
 # ADR 0095 — Root-aware project trust
 
-- Status: Superseded
-- Superseded by: [ADR 0096](./0096-diagnostic-only-posture-reporting.md)
+- Status: Accepted
 - Date: 2026-08-05
 - Scope: operator-tier workspace trust, project steering ingestion, and read-only delegation shell admission
-- Supersedes: [ADR 0094](./0094-opt-in-project-ingestion.md)
+- Supersedes: [ADR 0092](./0092-no-project-trust-pin.md), [ADR 0094](./0094-opt-in-project-ingestion.md)
+- Related: [ADR 0096](./0096-diagnostic-only-posture-reporting.md) (reporting surface only — it does NOT supersede this decision)
+
+> **Revision history.** This rule was reached in iterations over a single day, none of
+> which shipped in a release: ADR 0092 proposed a negative `--no-project-trust`
+> suppressor; ADR 0094 replaced it with a two-axis positive-grant split
+> (`ProjectIngestionGranted` + `SubagentShellGranted`); review and the live e2e found the
+> two-axis shape both over-trusted headless auto (the worktree shell must not be
+> posture-granted) and under-trusted interactive strict runs. This ADR is the single
+> authoritative statement of the final rule — one root-aware `TrustProject` fold — and
+> supersedes 0092 and 0094. ADR 0096 is an orthogonal reporting-surface decision layered
+> on top.
 
 ## Context
 
@@ -94,16 +104,14 @@ Rejected by ADR 0094's fail-safe analysis. A forgotten negative flag silently ad
 
 - Headless auto without a trust source gets neither project steering nor a read-only child shell.
 - Explicit, declarative, remembered, and interactive-ladder trust are equivalent at consumers: all admit both.
-- `--print-posture` reports the root-aware, fully folded trust decision rather than deriving trust from posture alone.
-- Posture narration occurs after `resolveTrust`, preventing contradictory `trust_project=false` and `workspace trust trusted=true` lines.
+- The resolved tier and the root-aware trust decision are observable through the `operator posture` startup diagnostic (`narratePosture`), which runs after `resolveTrust` and so cannot contradict the workspace-trust narration (see ADR 0096 for the reporting-surface decision).
 - The change is composition-only; no trust type enters `engine/`.
 
 ## See also
 
 - [ADR 0022 — Unattended / allow-all posture](./0022-allow-all-posture.md)
 - [ADR 0023 — Workspace Trust](./0023-workspace-trust.md)
-- [ADR 0092 — Project-trust suppression pin](./0092-no-project-trust-pin.md)
-- [ADR 0094 — Opt-in project ingestion](./0094-opt-in-project-ingestion.md)
-- `internal/app/posture.go` (`applyPosture`, `ResolvePostureProjection`)
+- [ADR 0096 — Diagnostic-only posture reporting](./0096-diagnostic-only-posture-reporting.md)
+- `internal/app/posture.go` (`applyPosture`, `ResolveAuthoritativePosture`, `narratePosture`)
 - `internal/app/project_ingestion.go` (`projectIngestionAdmitted`)
 - `internal/app/trust.go` (`resolveTrust`)
