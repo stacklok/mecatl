@@ -93,7 +93,7 @@ func TestScopedToolNamesDropsMutatingForSubagent(t *testing.T) {
 	// Bash is available (shell configured, trusted workspace) but mutating: a Subagent def listing it (and
 	// Edit/Write) must have them dropped with the read-only diagnostic, so
 	// Subagent.ReadOnly() stays honestly true.
-	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true, SubagentShellGranted: true}
+	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true}
 	base := baseSubagentTools(cfg)
 	if _, ok := base["Bash"]; !ok {
 		t.Fatalf("expected Bash in base when a shell is configured")
@@ -124,7 +124,7 @@ func TestScopedToolNamesDropsMutatingForSubagent(t *testing.T) {
 //     mutating tools are dropped.
 //   - (true, _)      — a mutating member: all three survive.
 func TestScopedToolNamesModeAllowShell(t *testing.T) {
-	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true, SubagentShellGranted: true}
+	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true}
 	base := baseSubagentTools(cfg)
 	if _, ok := base["Bash"]; !ok {
 		t.Fatalf("expected Bash in base when a shell is configured")
@@ -154,7 +154,7 @@ func TestScopedToolNamesModeAllowShell(t *testing.T) {
 
 func TestScopedToolNamesDefaultSetIsReadOnly(t *testing.T) {
 	// No Tools allowlist => default to the available base, but still read-only-only.
-	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true, SubagentShellGranted: true}
+	cfg := Config{Shell: "/bin/sh", Workspace: t.TempDir(), TrustProject: true}
 	base := baseSubagentTools(cfg)
 	def := agents.AgentDef{Name: "x"}
 	names, _ := scopedToolNames(def, base, bashScopeMissReason(cfg))

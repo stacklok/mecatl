@@ -40,18 +40,18 @@ func TestProjectIngestionAdmittedTruthTable(t *testing.T) {
 }
 
 // TestHeadlessAutoDoesNotGrantIngestionWithoutTrustProject is the FAIL-SAFE
-// proof (issue #359 redesign): on a HEADLESS root, --posture auto raises the
-// shell grant (SubagentShellGranted) and the TrustProject floor, but does NOT
-// raise the ingestion grant (ProjectIngestionGranted) unless the operator
-// explicitly passed --trust-project. So a dark factory over a freshly-cloned
-// untrusted repo ingests NONE of the repo's steering.
+// proof (issue #359 redesign): on a HEADLESS root, --posture auto does NOT raise
+// the ingestion grant (ProjectIngestionGranted) NOR the TrustProject floor (=
+// the shell gate) unless the operator explicitly passed --trust-project. So a
+// dark factory over a freshly-cloned untrusted repo ingests NONE of the repo's
+// steering AND gets no subagent shell (its `.git` is not vouched).
 func TestHeadlessAutoDoesNotGrantIngestionWithoutTrustProject(t *testing.T) {
 	got := applyPosture(Config{Headless: true, Posture: PostureAuto, TrustProject: false})
 	if got.ProjectIngestionGranted {
 		t.Error("headless auto must NOT raise ProjectIngestionGranted without --trust-project (the fail-safe default)")
 	}
-	if !got.SubagentShellGranted {
-		t.Error("headless auto MUST raise SubagentShellGranted (the shell is enabled at >=auto on both roots)")
+	if got.TrustProject {
+		t.Error("headless auto must NOT raise the TrustProject floor (the ladder is interactive-only; the shell gate reads it)")
 	}
 	// Ingestion is not admitted: the explicit opt-in is the only path on headless.
 	if projectIngestionAdmitted(got) {
@@ -61,28 +61,27 @@ func TestHeadlessAutoDoesNotGrantIngestionWithoutTrustProject(t *testing.T) {
 
 // TestInteractiveAutoGrantsIngestion is the INTERACTIVE counterpart: on an
 // interactive root, --posture auto grants ingestion via the ladder (the dev
-// default ingests the operator's own CLAUDE.md), even without --trust-project.
+// default ingests the operator's own CLAUDE.md) AND raises the TrustProject
+// floor (so the subagent shell stays on, matching main), even without
+// --trust-project.
 func TestInteractiveAutoGrantsIngestion(t *testing.T) {
 	got := applyPosture(Config{Headless: false, Posture: PostureAuto, TrustProject: false})
 	if !got.ProjectIngestionGranted {
 		t.Error("interactive auto MUST raise ProjectIngestionGranted (the ladder grants ingestion at auto/yolo)")
 	}
-	if !got.SubagentShellGranted {
-		t.Error("interactive auto MUST raise SubagentShellGranted")
+	if !got.TrustProject {
+		t.Error("interactive auto MUST raise the TrustProject floor (the subagent shell reads it; this is main's behavior)")
 	}
 }
 
-// TestApplyPostureNeverLowersGrants pins that applyPosture only RAISES the two
-// grants: a pre-set ProjectIngestionGranted/SubagentShellGranted survives a
-// posture tier that would not itself raise it (it is never cleared).
+// TestApplyPostureNeverLowersGrants pins that applyPosture only RAISES the
+// ingestion grant: a pre-set ProjectIngestionGranted survives a posture tier
+// that would not itself raise it (it is never cleared).
 func TestApplyPostureNeverLowersGrants(t *testing.T) {
 	for _, posture := range []Posture{PostureStrict, PostureTrusted, PostureAuto, PostureYolo} {
-		got := applyPosture(Config{Posture: posture, ProjectIngestionGranted: true, SubagentShellGranted: true})
+		got := applyPosture(Config{Posture: posture, ProjectIngestionGranted: true})
 		if !got.ProjectIngestionGranted {
 			t.Errorf("%s: applyPosture must never LOWER ProjectIngestionGranted; got false", posture)
-		}
-		if !got.SubagentShellGranted {
-			t.Errorf("%s: applyPosture must never LOWER SubagentShellGranted; got false", posture)
 		}
 	}
 }

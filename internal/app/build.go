@@ -682,14 +682,6 @@ type Config struct {
 	// of the repo's steering unless the operator explicitly passes --trust-project).
 	// applyPosture only RAISES this (never lowers); it is not set directly.
 	ProjectIngestionGranted bool
-	// SubagentShellGranted is the SUBAGENT-SHELL-axis grant (issue #359 redesign):
-	// the read-only subagent/member shell is enabled when posture >= auto on BOTH
-	// roots (the tiers that already give the main agent an allow-all shell). The
-	// four shell consumers (buildSandboxedCommandRunner, subagentShellUntrustedReason,
-	// applyUntrustedMemberShellNote, buildWorktreeLister) read THIS, not raw
-	// cfg.TrustProject — trust no longer carries the shell. trusted does NOT grant
-	// the shell. Derived by applyPosture (posture >= auto); only raises.
-	SubagentShellGranted bool
 	// Headless is the explicit deployment identity (issue #359 redesign): a root
 	// declares NO human approver is attached. It is set by each cmd root — NOT
 	// inferred from Interactive (Interactive stays the main-engine ask-surface
@@ -1113,7 +1105,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err := PostureRefusalReason(cfg.Posture, cfg.Privileged); err != nil {
 		return nil, err
 	}
-	narratePosture(cfg.diag(), cfg.Posture, cfg.ProjectIngestionGranted, cfg.SubagentShellGranted)
+	narratePosture(cfg.diag(), cfg.Posture, cfg.ProjectIngestionGranted, cfg.TrustProject)
 	cfg.permResolver = nil // rebuilt below with the posture-raised TrustProject
 
 	trust := resolveTrust(cfg)
@@ -3209,18 +3201,18 @@ func logBuildConfigFacts(cfg Config) {
 		})
 	}
 	if subagentShellUntrustedReason(cfg) != "" {
-		// The issue-#40 subagent-shell gate (issue #359 redesign: posture >= auto on
-		// both roots), narrated ONCE here (the gated builder
+		// The issue-#40 subagent-shell gate (the workspace-trust gate), narrated ONCE
+		// here (the gated builder
 		// buildSandboxedCommandRunner runs per session AND per catalog assembly, so
-		// it must not log). Emitted only when the missing shell grant is the OPERATIVE
+		// it must not log). Emitted only when the missing trust is the OPERATIVE
 		// cause — --no-bash / an empty shell already get their own narration via
 		// registerCoreTools.
 		facts = append(facts, diagFact{
 			level: port.LevelInfo,
-			msg: "read-only subagent/team-member shell DISABLED (posture below auto): " +
+			msg: "read-only subagent/team-member shell DISABLED (untrusted workspace): " +
 				"a worktree child's shell shares the repo's .git, and a tracked .gitattributes " +
 				"in an untrusted repo can name filter/diff drivers that execute code; the " +
-				"subagent shell is enabled at --posture auto or higher",
+				"subagent shell is enabled by trusting the workspace (--trust-project or confirm trust in mecatui)",
 			args: []any{"workspace", cfg.Workspace},
 		})
 	}
@@ -4505,19 +4497,18 @@ func buildCommandRunner(cfg Config) tool.CommandRunner {
 // SUBAGENT-SHELL GATE (issue #40 + #359 redesign): a worktree-isolated child's shell
 // shares the base repo's `.git`, and an UNTRUSTED repo's tracked `.gitattributes` can
 // name filter/diff drivers that execute code the moment the child runs git — a vector
-// the fixed-key env scrub structurally cannot close. So a workspace without the
-// subagent-shell grant gets NO read-only subagent/member shell (the loop degrades to
-// Read/Grep/Glob — "ask the human" posture, not "do nothing"). The grant is
-// cfg.SubagentShellGranted (posture >= auto on BOTH roots — the tiers that give the
-// main agent an allow-all shell; the issue-#359 redesign decoupled it from workspace
-// trust, so `trusted` alone no longer grants the shell). The decision is NOT logged
+// the fixed-key env scrub structurally cannot close. So a workspace without workspace
+// trust gets NO read-only subagent/member shell (the loop degrades to
+// Read/Grep/Glob — "ask the human" posture, not "do nothing"). The gate is
+// cfg.TrustProject (the folded workspace-trust decision — the operator vouches for
+// the repo's `.git`). The decision is NOT logged
 // here — this builder runs per session/per assembly; the build-once INFO is emitted
 // in logBuildConfigFacts.
 func buildSandboxedCommandRunner(cfg Config) tool.CommandRunner {
 	if cfg.NoBash || cfg.Shell == "" {
 		return nil
 	}
-	if !cfg.SubagentShellGranted {
+	if !cfg.TrustProject {
 		return nil
 	}
 	return newHardenedCommandRunner(cfg)
@@ -4575,16 +4566,16 @@ func newHardenedCommandRunner(cfg Config) tool.CommandRunner {
 // subagentShellUntrustedReason returns the model/operator-facing reason the
 // subagent/member shell is withheld when the SUBAGENT-SHELL grant is the OPERATIVE
 // cause, and "" otherwise: --no-bash / an empty shell disable the shell regardless
-// of the grant (and must NOT read as a posture problem), and a workspace WITH the
-// shell grant has no note. It is the single wording source for the Subagent Spec
+// of trust (and must NOT read as an untrust problem), and a trusted workspace has no
+// note. It is the single wording source for the Subagent Spec
 // note (WithSubagentShellDisabledNote) so the model-facing text and the gate
 // cannot drift.
 func subagentShellUntrustedReason(cfg Config) string {
-	if cfg.NoBash || cfg.Shell == "" || cfg.SubagentShellGranted {
+	if cfg.NoBash || cfg.Shell == "" || cfg.TrustProject {
 		return ""
 	}
-	return "no shell on this workspace because posture is below auto (the read-only " +
-		"subagent shell is enabled at --posture auto or higher)"
+	return "no shell on this workspace because it is untrusted (run with --trust-project " +
+		"or confirm trust in mecatui to enable the subagent shell)"
 }
 
 // bashDisabledReason returns a short human-readable reason Bash is disabled.
@@ -6154,13 +6145,13 @@ func registerDefaultMemberTools(cat *tool.Catalog, spec agent.MemberSpec, runner
 }
 
 // applyUntrustedMemberShellNote appends the issue-#40 honesty line to a READ-ONLY
-// member's Role on a workspace WITHOUT the subagent-shell grant (the shell gate
-// withheld its worktree shell), so the member plans around Read/Grep/Glob instead
+// member's Role on an UNTRUSTED workspace (the shell gate withheld its worktree
+// shell), so the member plans around Read/Grep/Glob instead
 // of burning turns attempting Bash. A Mutating member keeps its force-copy-fork
-// shell, and a workspace WITH the shell grant keeps its shell, so both pass through
+// shell, and a trusted workspace keeps its shell, so both pass through
 // unchanged.
 func applyUntrustedMemberShellNote(cfg Config, spec agent.MemberSpec, pc prompt.Config) prompt.Config {
-	if cfg.SubagentShellGranted || spec.Mutating {
+	if cfg.TrustProject || spec.Mutating {
 		return pc
 	}
 	if pc.Role == "" {
@@ -6183,8 +6174,8 @@ func memberBashRunner(mutating bool, roRunner, mutatingRunner tool.CommandRunner
 }
 
 // untrustedMemberShellNote is the one-line system-prompt suffix a READ-ONLY team
-// member receives on a workspace WITHOUT the subagent-shell grant (issue #40 +
-// #359 redesign: SubagentShellGranted is false), so it knows up front it has no
+// member receives on an UNTRUSTED workspace (issue #40: cfg.TrustProject is false),
+// so it knows up front it has no
 // shell rather than discovering it via unknown-tool errors.
 const untrustedMemberShellNote = "This workspace has no subagent shell enabled: you have no shell; use Read/Grep/Glob."
 
@@ -6878,9 +6869,9 @@ func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string) server.Wo
 // `git worktree list --porcelain` with the SAME scrubbed+neutralised git env as
 // gitSnapshot (envscrub then gitenv) so a repo-local git config cannot run code
 // AND the harness credentials are never exposed to a repo-local git driver. It
-// is SHELL-GATED: when the launch workspace lacks the subagent-shell grant
-// (cfg.SubagentShellGranted, posture >= auto) the lister is nil, so no git ever
-// runs against a workspace the operator did not grant a shell for (the same
+// is SHELL-GATED: when the launch workspace is untrusted
+// (cfg.TrustProject false) the lister is nil, so no git ever
+// runs against a workspace the operator did not vouch for (the same
 // discipline as gitSnapshot at `internal/app/build.go` (`gitSnapshot`)). It is nil
 // when there is no workspace (a child/member service, or a no-root cloud
 // deployment), no shell, or git is unavailable — then ListWorktrees returns an
@@ -6890,7 +6881,7 @@ func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string) server.Wo
 // block the overlay), and bounds each call with a 5s timeout. See
 // docs/adr/0032-worktree-binding.md.
 func buildWorktreeLister(cfg Config) server.WorktreeLister {
-	if cfg.Workspace == "" || cfg.Shell == "" || !cfg.SubagentShellGranted {
+	if cfg.Workspace == "" || cfg.Shell == "" || !cfg.TrustProject {
 		return nil
 	}
 	return gitWorktreeLister{shell: cfg.Shell}

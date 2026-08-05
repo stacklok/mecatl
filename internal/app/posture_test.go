@@ -80,7 +80,7 @@ func TestPostureConflictWarnFires(t *testing.T) {
 
 // TestPostureResolutionTable is the STRUCTURAL anti-drift guard for the owner-approved
 // ladder: it pins each tier's derived (AllowAllTools, main-loose, LooseChildSubstitution,
-// TrustProject-floor, ProjectIngestionGranted, SubagentShellGranted) tuple EXACTLY
+// TrustProject-floor, ProjectIngestionGranted) tuple EXACTLY
 // against the truth tables, split by the deployment identity (Headless). applyPosture is
 // what composition runs before resolveTrust, so a knob silently rewired for a tier (e.g.
 // loosening children at auto) flips a cell and fails here. The "main loose-subst"
@@ -88,13 +88,17 @@ func TestPostureConflictWarnFires(t *testing.T) {
 // asserted indirectly via the AllowAllTools cell, which is the same condition; the
 // dedicated substitution-effect proof lives in TestChildSubstitutionLooseningIsTierDependent.
 //
-// T = TrustProject (explicit --trust-project flag input), G = ProjectIngestionGranted,
-// S = SubagentShellGranted. The TrustProject column is the ladder raise (trusted/auto/
-// yolo raise the floor the resolveTrust fold then collapses). The ingestion grant
-// depends on Headless + the explicit flag; the shell grant is posture >= auto on BOTH
-// roots. See internal/app/posture.go for the full tables.
+// T = TrustProject (explicit --trust-project flag input), G = ProjectIngestionGranted.
+// The TrustProject OUTPUT (trustFloor) is the ladder raise: INTERACTIVE roots raise it
+// at trusted/auto/yolo; a HEADLESS root does NOT raise it via the ladder (the fail-safe
+// default — only the explicit flag sets it there). The ingestion grant G = the explicit
+// flag (both roots) OR (interactive AND posture >= auto). The read-only subagent shell
+// is NOT an applyPosture output: it is gated on cfg.TrustProject downstream
+// (buildSandboxedCommandRunner), so the trustFloor column IS the shell gate.
+// See internal/app/posture.go for the full tables.
 func TestPostureResolutionTable(t *testing.T) {
-	// Headless: G = T (explicit flag) only; S = posture >= auto.
+	// Headless: TrustProject output = explicit flag only (ladder does NOT raise);
+	// G = T (explicit flag) only.
 	t.Run("headless", func(t *testing.T) {
 		cases := []struct {
 			name        string
@@ -102,18 +106,17 @@ func TestPostureResolutionTable(t *testing.T) {
 			trustFlag   bool // explicit --trust-project flag (the pre-raise TrustProject)
 			allowAll    bool
 			looseChild  bool
-			trustFloor  bool
+			trustFloor  bool // the TrustProject OUTPUT (== the shell gate)
 			ingestGrant bool
-			shellGrant  bool
 		}{
-			{"strict+no-trust", PostureStrict, false, false, false, false, false, false},
-			{"strict+trust", PostureStrict, true, false, false, true, true, false},
-			{"trusted+no-trust", PostureTrusted, false, false, false, true, false, false},
-			{"trusted+trust", PostureTrusted, true, false, false, true, true, false},
-			{"auto+no-trust", PostureAuto, false, true, false, true, false, true}, // fail-safe default
-			{"auto+trust", PostureAuto, true, true, false, true, true, true},
-			{"yolo+no-trust", PostureYolo, false, true, true, true, false, true},
-			{"yolo+trust", PostureYolo, true, true, true, true, true, true},
+			{"strict+no-trust", PostureStrict, false, false, false, false, false},
+			{"strict+trust", PostureStrict, true, false, false, true, true},
+			{"trusted+no-trust", PostureTrusted, false, false, false, false, false},
+			{"trusted+trust", PostureTrusted, true, false, false, true, true},
+			{"auto+no-trust", PostureAuto, false, true, false, false, false}, // fail-safe default: no trust, no ingestion, no shell
+			{"auto+trust", PostureAuto, true, true, false, true, true},
+			{"yolo+no-trust", PostureYolo, false, true, true, false, false},
+			{"yolo+trust", PostureYolo, true, true, true, true, true},
 		}
 		for _, tc := range cases {
 			got := applyPosture(Config{Headless: true, Posture: tc.posture, TrustProject: tc.trustFlag})
@@ -124,13 +127,10 @@ func TestPostureResolutionTable(t *testing.T) {
 				t.Errorf("%s: LooseChildSubstitution = %v, want %v", tc.name, got.LooseChildSubstitution, tc.looseChild)
 			}
 			if got.TrustProject != tc.trustFloor {
-				t.Errorf("%s: TrustProject floor = %v, want %v", tc.name, got.TrustProject, tc.trustFloor)
+				t.Errorf("%s: TrustProject floor (= shell gate) = %v, want %v", tc.name, got.TrustProject, tc.trustFloor)
 			}
 			if got.ProjectIngestionGranted != tc.ingestGrant {
 				t.Errorf("%s: ProjectIngestionGranted = %v, want %v", tc.name, got.ProjectIngestionGranted, tc.ingestGrant)
-			}
-			if got.SubagentShellGranted != tc.shellGrant {
-				t.Errorf("%s: SubagentShellGranted = %v, want %v", tc.name, got.SubagentShellGranted, tc.shellGrant)
 			}
 			// The MAIN substitution loosening is exactly the AllowAllTools condition
 			// (mainEvaluatorOptions gates WithLooseSubstitution on cfg.AllowAllTools).
@@ -141,7 +141,8 @@ func TestPostureResolutionTable(t *testing.T) {
 		}
 	})
 
-	// Interactive: G = T OR posture >= auto; S = posture >= auto.
+	// Interactive: TrustProject output = ladder raise (trusted/auto/yolo) OR flag;
+	// G = T OR posture >= auto.
 	t.Run("interactive", func(t *testing.T) {
 		cases := []struct {
 			name        string
@@ -149,18 +150,17 @@ func TestPostureResolutionTable(t *testing.T) {
 			trustFlag   bool
 			allowAll    bool
 			looseChild  bool
-			trustFloor  bool
+			trustFloor  bool // the TrustProject OUTPUT (== the shell gate)
 			ingestGrant bool
-			shellGrant  bool
 		}{
-			{"strict+no-trust", PostureStrict, false, false, false, false, false, false},
-			{"strict+trust", PostureStrict, true, false, false, true, true, false},
-			{"trusted+no-trust", PostureTrusted, false, false, false, true, false, false},
-			{"trusted+trust", PostureTrusted, true, false, false, true, true, false},
-			{"auto+no-trust", PostureAuto, false, true, false, true, true, true}, // dev default
-			{"auto+trust", PostureAuto, true, true, false, true, true, true},
-			{"yolo+no-trust", PostureYolo, false, true, true, true, true, true},
-			{"yolo+trust", PostureYolo, true, true, true, true, true, true},
+			{"strict+no-trust", PostureStrict, false, false, false, false, false},
+			{"strict+trust", PostureStrict, true, false, false, true, true},
+			{"trusted+no-trust", PostureTrusted, false, false, false, true, false},
+			{"trusted+trust", PostureTrusted, true, false, false, true, true},
+			{"auto+no-trust", PostureAuto, false, true, false, true, true}, // dev default: trust raised, ingestion + shell on
+			{"auto+trust", PostureAuto, true, true, false, true, true},
+			{"yolo+no-trust", PostureYolo, false, true, true, true, true},
+			{"yolo+trust", PostureYolo, true, true, true, true, true},
 		}
 		for _, tc := range cases {
 			got := applyPosture(Config{Headless: false, Posture: tc.posture, TrustProject: tc.trustFlag})
@@ -171,13 +171,10 @@ func TestPostureResolutionTable(t *testing.T) {
 				t.Errorf("%s: LooseChildSubstitution = %v, want %v", tc.name, got.LooseChildSubstitution, tc.looseChild)
 			}
 			if got.TrustProject != tc.trustFloor {
-				t.Errorf("%s: TrustProject floor = %v, want %v", tc.name, got.TrustProject, tc.trustFloor)
+				t.Errorf("%s: TrustProject floor (= shell gate) = %v, want %v", tc.name, got.TrustProject, tc.trustFloor)
 			}
 			if got.ProjectIngestionGranted != tc.ingestGrant {
 				t.Errorf("%s: ProjectIngestionGranted = %v, want %v", tc.name, got.ProjectIngestionGranted, tc.ingestGrant)
-			}
-			if got.SubagentShellGranted != tc.shellGrant {
-				t.Errorf("%s: SubagentShellGranted = %v, want %v", tc.name, got.SubagentShellGranted, tc.shellGrant)
 			}
 			mainLoose := len(mainEvaluatorOptions(got)) > 1
 			if mainLoose != tc.allowAll {

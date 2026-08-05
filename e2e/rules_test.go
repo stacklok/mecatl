@@ -50,7 +50,7 @@ func ruleSpecs() {
 			defer func() { _ = untrusted.Close() }()
 
 			tail := untrusted.LogTail(64 * 1024)
-			gomega.Expect(tail).To(gomega.ContainSubstring("project-tier rules WITHHELD (untrusted workspace)"),
+			gomega.Expect(tail).To(gomega.ContainSubstring("rules: project-tier rules WITHHELD"),
 				"an untrusted workspace must log the project-tier-withheld WARN; the trust gate on rules discovery is broken")
 			gomega.Expect(tail).NotTo(gomega.ContainSubstring("rules ENABLED"),
 				"rules were ENABLED on an untrusted workspace — a malicious repo's .claude/rules would reach the model")

@@ -20,28 +20,24 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 )
 
-// trust_shell_gate_test.go covers the issue-#40 SUBAGENT-SHELL gate (issue #359
-// redesign) on the read-only subagent/member shell: a workspace WITHOUT the shell
-// grant (cfg.SubagentShellGranted, posture >= auto on BOTH roots) yields a nil
-// sandboxed runner (buildSandboxedCommandRunner), which degrades every worktree-
-// shell surface — the default Subagent explorer, per-def subagents, the
-// model-override factory children, and read-only team members — to Bash-less
-// Read/Grep/Glob, with no forker wired and an honest Subagent Spec note. The
-// deliberate ASYMMETRY: a MUTATING member keeps its hardened shell
+// trust_shell_gate_test.go covers the issue-#40 SUBAGENT-SHELL gate on the
+// read-only subagent/member shell: an UNTRUSTED workspace (cfg.TrustProject
+// false) yields a nil sandboxed runner (buildSandboxedCommandRunner), which
+// degrades every worktree-shell surface — the default Subagent explorer, per-def
+// subagents, the model-override factory children, and read-only team members —
+// to Bash-less Read/Grep/Glob, with no forker wired and an honest Subagent Spec
+// note. The deliberate ASYMMETRY: a MUTATING member keeps its hardened shell
 // (buildForceCopyRunner, shared with Parallel branches) because a force-copy fork
 // involves NO fork-time git invocation (pure FS copy — the worktree-checkout RCE
 // the gate closes cannot fire), and its run-time git over the COPIED untrusted
-// .git is the accepted main-session-parity residual. The shell grant is decoupled
-// from workspace trust (cfg.TrustProject no longer carries it); the WITH-shell
-// counterparts of these wiring tests live in task_shell_test.go /
-// fork_member_bash_test.go (teamCfg sets PostureAuto so SubagentShellGranted is
-// true). The shell-less fixtures here use shelllessTeamCfg (PostureStrict +
-// untrusted).
+// .git is the accepted main-session-parity residual. The shell gate is
+// cfg.TrustProject (the folded workspace-trust decision — the operator vouches
+// for the repo's `.git`). The WITH-shell counterparts of these wiring tests live
+// in task_shell_test.go / fork_member_bash_test.go (teamCfg sets TrustProject
+// true). The shell-less fixtures here use shelllessTeamCfg (untrusted).
 
-// untrustedTeamCfg is the shell-less fixture (PostureStrict + untrusted): neither
-// trust nor posture grants the subagent shell (SubagentShellGranted=false). The
-// untrusted/shell-less tests assert over the shell-grant axis (posture), not trust
-// indirection.
+// untrustedTeamCfg is the shell-less fixture (untrusted): TrustProject=false, so
+// buildSandboxedCommandRunner returns nil.
 func untrustedTeamCfg(t *testing.T) Config {
 	t.Helper()
 	return shelllessTeamCfg(t)
@@ -65,26 +61,26 @@ func TestTrustedWorkspaceKeepsSandboxedRunner(t *testing.T) {
 	}
 }
 
-// TestIngestionOptInDoesNotAffectShell pins the issue-#359 redesign two-axis
-// invariant at the consumer that matters: the ingestion grant axis
-// (ProjectIngestionGranted) and the shell axis (SubagentShellGranted) are
-// INDEPENDENT. The shell reads SubagentShellGranted (posture >= auto), NOT the
-// ingestion grant — so the sandboxed runner stays non-nil regardless of whether
-// ingestion is granted. (Before the redesign the runner read cfg.TrustProject and
-// the former suppressor pin suppressed ingestion only; the redesign split the
-// axes so ingestion is a positive grant and the shell is a posture-tier grant.)
+// TestIngestionOptInDoesNotAffectShell pins the issue-#359 redesign invariant at
+// the consumer that matters: the ingestion grant axis (ProjectIngestionGranted)
+// and the shell axis are DISTINCT. The shell reads cfg.TrustProject (the operator
+// vouches for the repo's `.git`), NOT the ingestion grant — so a TRUSTED
+// workspace keeps its shell whether or not ingestion is separately admitted, and
+// the ingestion predicate stays gated on the grant.
 func TestIngestionOptInDoesNotAffectShell(t *testing.T) {
-	// Shell ON (PostureAuto), ingestion withheld (no --trust-project, headless):
-	// the runner is non-nil — the shell axis is independent of the ingestion axis.
-	cfg := teamCfg(t) // PostureAuto → SubagentShellGranted=true
-	cfg.Headless = true
-	cfg.TrustProject = false // ingestion not opted into
+	// Trusted workspace with ingestion NOT separately granted: the runner stays
+	// non-nil (the shell reads TrustProject), and ingestion is still admitted
+	// because trust implies the ingestion grant via applyPosture — but here we
+	// construct the raw Config to show the shell reads TrustProject directly.
+	cfg := teamCfg(t) // TrustProject=true
 	if buildSandboxedCommandRunner(cfg) == nil {
-		t.Fatal("the shell must stay on when SubagentShellGranted=true regardless of the ingestion grant; the runner read the ingestion axis instead of SubagentShellGranted")
+		t.Fatal("a trusted workspace must keep the sandboxed runner (the shell reads cfg.TrustProject)")
 	}
-	// And conversely the ingestion predicate does not admit when the grant is withheld.
-	if projectIngestionAdmitted(cfg) {
-		t.Error("with TrustProject=false the ingestion must not be admitted even with the shell on")
+	// An UNTRUSTED workspace gets no runner even at a shell-authorizing posture.
+	untrusted := shelllessTeamCfg(t) // TrustProject=false
+	untrusted.Posture = PostureAuto
+	if buildSandboxedCommandRunner(untrusted) != nil {
+		t.Fatal("an untrusted workspace must get NO sandboxed runner even at --posture auto (the fork-time-RCE gate reads cfg.TrustProject, not posture)")
 	}
 }
 
@@ -246,7 +242,7 @@ func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 	if strings.Contains(desc, "throwaway worktree") {
 		t.Errorf("shell-less Subagent spec still promises the worktree shell:\n%s", desc)
 	}
-	for _, want := range []string{"posture is below auto", "--posture auto"} {
+	for _, want := range []string{"untrusted", "--trust-project"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("shell-less Subagent spec must carry the no-shell note naming %q, got:\n%s", want, desc)
 		}
@@ -297,15 +293,15 @@ func TestNoBashFlagNoteDistinctFromUntrusted(t *testing.T) {
 }
 
 // TestBaseSubagentToolsUntrustedExcludesBash pins the diagnostic-only name-set
-// computation (issue #40, fix 2 + #359 redesign): baseSubagentTools runs Bash
-// availability through the SUBAGENT-SHELL-GATED path (SubagentShellGranted,
-// posture >= auto), so a shell-less workspace's base set excludes Bash and a def
-// allow-listing it draws the ACCURATE "shell unavailable … posture below auto"
-// diagnostic — not the misleading generic unknown-tool one. A workspace WITH the
-// shell grant keeps Bash in the base (the historical "mutating; dropped"
+// computation (issue #40, fix 2): baseSubagentTools runs Bash
+// availability through the TRUST-GATED path (cfg.TrustProject),
+// so an untrusted workspace's base set excludes Bash and a def
+// allow-listing it draws the ACCURATE "shell unavailable … untrusted"
+// diagnostic — not the misleading generic unknown-tool one. A trusted
+// workspace keeps Bash in the base (the historical "mutating; dropped"
 // diagnostic path).
 func TestBaseSubagentToolsUntrustedExcludesBash(t *testing.T) {
-	untrusted := untrustedTeamCfg(t) // PostureStrict → no shell grant
+	untrusted := untrustedTeamCfg(t) // untrusted → no shell
 	base := baseSubagentTools(untrusted)
 	if _, ok := base["Bash"]; ok {
 		t.Fatal("shell-less: Bash must be excluded from the subagent base toolset")
@@ -321,7 +317,7 @@ func TestBaseSubagentToolsUntrustedExcludesBash(t *testing.T) {
 			bashReason = d.reason
 		}
 	}
-	for _, want := range []string{"shell unavailable", "posture is below auto", "--posture auto"} {
+	for _, want := range []string{"shell unavailable", "untrusted", "--trust-project"} {
 		if !strings.Contains(bashReason, want) {
 			t.Errorf("shell-less Bash scope diagnostic must say %q (accurate cause), got %q", want, bashReason)
 		}
@@ -336,22 +332,22 @@ func TestBaseSubagentToolsUntrustedExcludesBash(t *testing.T) {
 }
 
 // TestBashScopeMissReasonPreciseCause pins the per-cause attribution of the per-def
-// Bash-miss diagnostic (issue #40 follow-up + #359 redesign): each disable cause
+// Bash-miss diagnostic (issue #40 follow-up): each disable cause
 // names ITSELF — in particular, --no-bash or an empty shell must NOT suggest
-// --posture auto (there is no posture problem to fix), and only the missing
-// shell-grant cause carries the --posture auto remedy.
+// --trust-project (there is no trust problem to fix), and only the untrusted
+// cause carries the --trust-project remedy.
 func TestBashScopeMissReasonPreciseCause(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate       func(*Config)
 		want, reject string
 	}{
-		"no-bash (posture auto)":               {func(c *Config) { c.NoBash = true }, "--no-bash", "--posture auto"},
-		"no-bash untrusted (posture auto)":     {func(c *Config) { c.NoBash = true; c.TrustProject = false }, "--no-bash", "--posture auto"},
-		"empty-shell (posture auto)":           {func(c *Config) { c.Shell = "" }, "no shell configured", "--posture auto"},
-		"empty-shell untrusted (posture auto)": {func(c *Config) { c.Shell = ""; c.TrustProject = false }, "no shell configured", "--posture auto"},
-		// The shell-grant axis (issue #359 redesign): PostureStrict withholds the
-		// shell on BOTH trusted and untrusted workspaces; the remedy is --posture auto.
-		"no shell grant (posture strict)": {func(c *Config) { c.Posture = PostureStrict; c.SubagentShellGranted = false }, "--posture auto", "--no-bash"},
+		"no-bash (trusted)":     {func(c *Config) { c.NoBash = true }, "--no-bash", "--trust-project"},
+		"no-bash untrusted":     {func(c *Config) { c.NoBash = true; c.TrustProject = false }, "--no-bash", "--trust-project"},
+		"empty-shell (trusted)": {func(c *Config) { c.Shell = "" }, "no shell configured", "--trust-project"},
+		"empty-shell untrusted": {func(c *Config) { c.Shell = ""; c.TrustProject = false }, "no shell configured", "--trust-project"},
+		// The trust axis: an untrusted workspace withholds the shell; the remedy
+		// is --trust-project.
+		"untrusted": {func(c *Config) { c.TrustProject = false }, "--trust-project", "--no-bash"},
 	} {
 		cfg := teamCfg(t)
 		tc.mutate(&cfg)
@@ -460,7 +456,7 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 	if strings.Contains(desc, "throwaway worktree") {
 		t.Errorf("the SAME Subagent tool whose child runs Bash-less still promises the worktree shell:\n%s", desc)
 	}
-	for _, want := range []string{"posture is below auto", "--posture auto"} {
+	for _, want := range []string{"untrusted", "--trust-project"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("the SAME Subagent tool whose child runs Bash-less must carry the no-shell note naming %q, got:\n%s", want, desc)
 		}

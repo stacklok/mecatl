@@ -102,7 +102,7 @@ func TestBuildConfigFactsLogOnceAcrossChildDerivations(t *testing.T) {
 		"token counter":               "token counter:",
 		"compaction strategy":         "compaction strategy:",
 		"slash commands":              "slash commands",
-		"untrusted-shell (issue #40)": "shell DISABLED (posture below auto)",
+		"untrusted-shell (issue #40)": "shell DISABLED (untrusted workspace)",
 	}
 	for name, substr := range families {
 		if got := diag.countContaining(substr); got != 1 {
@@ -140,7 +140,7 @@ func TestBuildEmitsConfigFactsExactlyOnce(t *testing.T) {
 		"token counter":               "token counter:",
 		"compaction strategy":         "compaction strategy:",
 		"slash commands":              "slash commands",
-		"untrusted-shell (issue #40)": "shell DISABLED (posture below auto)",
+		"untrusted-shell (issue #40)": "shell DISABLED (untrusted workspace)",
 	}
 	for name, substr := range families {
 		if got := diag.countContaining(substr); got != 1 {
@@ -196,7 +196,7 @@ func TestBuildNarratesFamilyFactsExactlyOnceAcrossSessions(t *testing.T) {
 		"Parallel tool ENABLED",
 		"Team tool ENABLED",
 		"SkillDraft tool DISABLED",
-		"shell DISABLED (posture below auto)",
+		"shell DISABLED (untrusted workspace)",
 	}
 	for _, substr := range families {
 		if got := diag.countContaining(substr); got != 1 {

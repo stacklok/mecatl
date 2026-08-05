@@ -331,12 +331,11 @@ func TestBackgroundBashCatalogWiring(t *testing.T) {
 
 	cfg := fullyLoadedCfg(t)
 	cfg.MCPServers = []mcp.ServerConfig{{Name: "globe", URL: url}}
-	// TRUSTED workspace + shell grant: the child shell is gated on
-	// SubagentShellGranted (buildSandboxedCommandRunner, issue #40 + #359 redesign)
+	// TRUSTED workspace: the child shell is gated on
+	// cfg.TrustProject (buildSandboxedCommandRunner, issue #40)
 	// — without this the child-side half of the test would exercise the shell-less
 	// posture instead of the Bash-carrying one.
 	cfg.TrustProject = true
-	cfg.SubagentShellGranted = true
 
 	oa := mockllm.New(mockllm.TextTurn("OPENAI"))
 	reg := regForTest(oa, providerOpenAI, cfg.Model)

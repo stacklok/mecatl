@@ -388,7 +388,7 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 		PostureFlagSet: f.postureFlagSet,
 		// Project-tier ingestion opt-in (issue #359 redesign): --trust-project opts
 		// into ingestion on this HEADLESS root where the posture ladder does NOT
-		// grant it. The two-axis grant (ProjectIngestionGranted/SubagentShellGranted)
+		// grant it. The ProjectIngestionGranted grant
 		// is raised by applyPosture in app.Build from this + Headless.
 		TrustProject: f.trustProject,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet

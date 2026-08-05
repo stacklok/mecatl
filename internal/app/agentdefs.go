@@ -388,10 +388,10 @@ func bashScopeMissReason(cfg Config) string {
 		return "shell unavailable (Bash disabled via --no-bash); dropped"
 	case cfg.Shell == "":
 		return "shell unavailable (no shell configured); dropped"
-	case !cfg.SubagentShellGranted:
+	case !cfg.TrustProject:
 		return "shell unavailable: " + subagentShellUntrustedReason(cfg) + "; dropped"
 	default:
-		// A shell is configured and the subagent-shell grant is on, yet Bash missed
+		// A shell is configured and the workspace is trusted, yet Bash missed
 		// the base: the runner failed to build (its own WARN already names the
 		// workspace/error).
 		return "shell unavailable (command runner could not be built); dropped"

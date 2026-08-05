@@ -106,8 +106,8 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if !strings.Contains(fact, "ingestion_granted=false") {
 			t.Fatalf("headless auto without --trust-project must derive ingestion_granted=false (the fail-safe default); fact: %q", fact)
 		}
-		if !strings.Contains(fact, "shell_granted=true") {
-			t.Fatalf("auto must derive shell_granted=true on both roots; fact: %q", fact)
+		if !strings.Contains(fact, "trust_project=false") {
+			t.Fatalf("headless auto without --trust-project must leave trust_project=false (the ladder is interactive-only; the shell gate reads it); fact: %q", fact)
 		}
 	})
 
@@ -137,8 +137,8 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if !strings.Contains(fact, "ingestion_granted=true") {
 			t.Fatalf("interactive auto must derive ingestion_granted=true (the dev default); fact: %q", fact)
 		}
-		if !strings.Contains(fact, "shell_granted=true") {
-			t.Fatalf("auto must derive shell_granted=true on both roots; fact: %q", fact)
+		if !strings.Contains(fact, "trust_project=true") {
+			t.Fatalf("interactive auto must derive trust_project=true (the ladder raises it on interactive roots; the shell gate reads it); fact: %q", fact)
 		}
 	})
 

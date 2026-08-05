@@ -18,26 +18,32 @@ import (
 // ingestion/shell grants) and every decision still goes THROUGH
 // governance.Evaluate, never a bypass.
 //
-// The ladder (owner-approved), and the knobs each tier derives in applyPosture:
+// The ladder (owner-approved), and the knobs each tier derives in applyPosture.
+// The TrustProject floor and the ingestion grant are ROOT-AWARE (Headless):
 //
-//	posture | AllowAllTools | main loose-subst | child loose-subst    | TrustProject floor | ingestion grant | shell grant
-//	--------|---------------|------------------|----------------------|--------------------|-----------------|------------
-//	strict  | false         | false            | false                | (operator's own)   | (flag only)     | false
-//	trusted | false         | false            | false                | true               | (flag only)     | false
-//	auto    | true          | true             | false (child def ON) | true               | interactive-only| true
-//	yolo    | true          | true             | TRUE  (child def OFF) | true               | interactive-only| true
+//	posture | AllowAllTools | main loose-subst | child loose-subst     | TrustProject floor        | ingestion grant
+//	--------|---------------|------------------|----------------------|---------------------------|-----------------
+//	strict  | false         | false            | false                | (operator's own)          | (flag only)
+//	trusted | false         | false            | false                | interactive-only          | (flag only)
+//	auto    | true          | true             | false (child def ON) | interactive-only          | interactive-only
+//	yolo    | true          | true             | TRUE  (child def OFF)| interactive-only          | interactive-only
 //
-// The ingestion grant (ProjectIngestionGranted) and the shell grant
-// (SubagentShellGranted) are the two NEW axes (issue #359 redesign). The shell
-// grant is posture >= auto on BOTH roots. The ingestion grant is RAISED by an
-// explicit --trust-project on BOTH roots, AND by the interactive ladder at
-// auto/yolo (a HEADLESS root does NOT grant ingestion via the ladder — the
-// fail-safe default: a dark factory over a freshly-cloned untrusted repo ingests
-// NONE of the repo's steering unless the operator explicitly passes
-// --trust-project). applyPosture reads the PRE-raise cfg.TrustProject for the
+// Issue #359 (the redesign). Two things are gated on workspace trust
+// (cfg.TrustProject): project-tier INGESTION (via projectIngestionAdmitted =
+// cfg.TrustProject && cfg.ProjectIngestionGranted) and the read-only SUBAGENT
+// SHELL (the buildSandboxedCommandRunner gate — a git worktree add on the repo's
+// .git, the issue-#40 fork-time-RCE surface). The ingestion grant
+// (ProjectIngestionGranted) is the NEW axis: RAISED by an explicit
+// --trust-project on BOTH roots, AND by the interactive ladder at auto/yolo.
+// The fail-safe headless default: a HEADLESS root does NOT raise TrustProject
+// via the ladder NOR grant ingestion via the ladder — so a dark factory over a
+// freshly-cloned untrusted repo ingests NONE of the repo's steering AND gets no
+// subagent shell (its .git is not vouched) unless the operator explicitly passes
+// --trust-project. On an INTERACTIVE root the ladder keeps raising TrustProject
+// at trusted/auto/yolo (a dev's own repo keeps ingestion + shell, no
+// regression). applyPosture reads the PRE-raise cfg.TrustProject for the
 // ingestion grant line (so an explicit --trust-project opts in on both roots)
-// and only RAISES the grants (never lowers). The shell grant decouples the shell
-// from workspace trust: `trusted` no longer grants the shell.
+// and only RAISES (never lowers).
 //
 // "child loose-subst" is the NEW Config.LooseChildSubstitution: under yolo a
 // child/subagent/branch engine ALSO loosens the built-in substitution Ask floor
@@ -211,41 +217,47 @@ func resolvePosture(cfg Config, ceiling Posture) Posture {
 // applyPosture maps the resolved tier to the derived composition knobs per the
 // ladder table: AllowAllTools (the yolo allow-all rule, main + children), the NEW
 // LooseChildSubstitution (child substitution loosening, yolo only), the
-// project-trust floor (raised for trusted/auto/yolo), and the two issue-#359
-// grants — ProjectIngestionGranted (an explicit --trust-project opts in on BOTH
-// roots, and the interactive ladder grants it at auto/yolo; a HEADLESS root does
-// NOT grant it via the ladder) and SubagentShellGranted (posture >= auto on BOTH
-// roots). The grant lines read the PRE-raise cfg.TrustProject (the explicit
+// project-trust floor (raised for trusted/auto/yolo on INTERACTIVE roots only —
+// a HEADLESS root's ladder does NOT raise TrustProject, the fail-safe default),
+// and the issue-#359 ingestion grant ProjectIngestionGranted (an explicit
+// --trust-project opts in on BOTH roots, and the interactive ladder grants it at
+// auto/yolo; a HEADLESS root does NOT grant it via the ladder). The grant lines
+// read the PRE-raise cfg.TrustProject (the explicit
 // --trust-project flag) so the opt-in is root-agnostic; the TrustProject raise
 // then feeds resolveTrust + the permResolver. It MUST run BEFORE resolveTrust in
 // Build so the trust fold + permResolver pick up the raised TrustProject. It
 // NEVER lowers an already-set knob (an operator who passed --trust-project under
 // PostureStrict keeps TrustProject; a pre-set grant survives); it only raises.
 func applyPosture(cfg Config) Config {
-	// Issue-#359 grants. Read the PRE-raise cfg.TrustProject (the explicit
+	// Issue-#359 ingestion grant. Read the PRE-raise cfg.TrustProject (the explicit
 	// --trust-project flag) so an explicit opt-in grants ingestion on BOTH roots,
-	// then apply the interactive-ladder grant (auto/yolo), then the shell grant
-	// (posture >= auto, both roots). Each line only RAISES.
+	// then apply the interactive-ladder grant (auto/yolo). Each line only RAISES.
 	if cfg.TrustProject {
 		cfg.ProjectIngestionGranted = true
 	}
 	if !cfg.Headless && cfg.Posture >= PostureAuto {
 		cfg.ProjectIngestionGranted = true
 	}
-	if cfg.Posture >= PostureAuto {
-		cfg.SubagentShellGranted = true
-	}
 	switch cfg.Posture {
 	case PostureYolo:
 		cfg.AllowAllTools = true
 		cfg.LooseChildSubstitution = true
-		cfg.TrustProject = true
+		// TrustProject floor: INTERACTIVE-only. On a HEADLESS root the ladder does
+		// NOT raise TrustProject — the fail-safe default (an untrusted clone gets no
+		// ingestion and no subagent shell without an explicit --trust-project).
+		if !cfg.Headless {
+			cfg.TrustProject = true
+		}
 	case PostureAuto:
 		cfg.AllowAllTools = true
 		cfg.LooseChildSubstitution = false
-		cfg.TrustProject = true
+		if !cfg.Headless {
+			cfg.TrustProject = true
+		}
 	case PostureTrusted:
-		cfg.TrustProject = true
+		if !cfg.Headless {
+			cfg.TrustProject = true
+		}
 	default: // PostureStrict: derive nothing; leave the operator's own flags.
 	}
 	return cfg
@@ -299,12 +311,12 @@ func ResolveAuthoritativePosture(cfg Config) Posture {
 // ingestionGranted depends on Headless + the explicit --trust-project flag, so it
 // is threaded in (replacing the old trust_project_floor column, which collapsed the
 // two axes into one).
-func narratePosture(diag port.Diagnostics, p Posture, ingestionGranted, shellGranted bool) {
+func narratePosture(diag port.Diagnostics, p Posture, ingestionGranted, trustProject bool) {
 	diag.Log(context.Background(), port.LevelInfo, "operator posture",
 		"posture", p.String(),
 		"allow_all", p >= PostureAuto,
 		"main_loose_substitution", p >= PostureAuto,
 		"child_loose_substitution", p == PostureYolo,
 		"ingestion_granted", ingestionGranted,
-		"shell_granted", shellGranted)
+		"trust_project", trustProject)
 }

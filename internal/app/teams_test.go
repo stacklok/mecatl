@@ -31,34 +31,28 @@ import (
 // teamCfg is the minimal app Config a member engine factory needs: a model and a
 // shell so the Mutating branch can attempt to register Bash. The workspace is a
 // throwaway temp dir (the command runner roots there, but no command is run in
-// these tests). PostureAuto + TrustProject: the issue-#359 redesign moved the
-// read-only subagent/member shell onto the SubagentShellGranted axis (posture >=
-// auto on BOTH roots), so the TRUSTED-workspace shell-wiring tests set
-// PostureAuto to keep their shell (trust alone no longer grants it); the
-// untrusted side lives in trust_shell_gate_test.go (shelllessTeamCfg).
+// these tests). TrustProject: the read-only subagent/member shell is gated on
+// cfg.TrustProject (buildSandboxedCommandRunner) — the operator vouches for the
+// repo's `.git` (issue #40). The untrusted side lives in trust_shell_gate_test.go
+// (shelllessTeamCfg).
 func teamCfg(t *testing.T) Config {
 	t.Helper()
 	return Config{
-		Workspace:            t.TempDir(),
-		Model:                "mock",
-		Shell:                "/bin/sh",
-		TrustProject:         true,
-		Posture:              PostureAuto,
-		SubagentShellGranted: true, // the shell grant field buildSandboxedCommandRunner reads (posture >= auto)
+		Workspace:    t.TempDir(),
+		Model:        "mock",
+		Shell:        "/bin/sh",
+		TrustProject: true, // the shell gate buildSandboxedCommandRunner reads
+		Posture:      PostureAuto,
 	}
 }
 
-// shelllessTeamCfg is teamCfg with the shell grant OFF: PostureStrict, so neither
-// trust nor posture grants the subagent shell (SubagentShellGranted=false). The
-// issue-#359 redesign decoupled the shell from workspace trust; the untrusted /
-// shell-less tests assert over the shell-grant axis (posture), not trust
-// indirection.
+// shelllessTeamCfg is teamCfg with workspace trust OFF (TrustProject=false), so
+// the read-only subagent shell is gated out (buildSandboxedCommandRunner reads
+// cfg.TrustProject).
 func shelllessTeamCfg(t *testing.T) Config {
 	t.Helper()
 	cfg := teamCfg(t)
-	cfg.Posture = PostureStrict
 	cfg.TrustProject = false
-	cfg.SubagentShellGranted = false // the field buildSandboxedCommandRunner reads
 	return cfg
 }
 
