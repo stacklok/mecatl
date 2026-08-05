@@ -267,6 +267,39 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   exported tool + constructor + name are a minor bump). (schedule-tool plan,
   task 06 repair)
 
+- **In-flight scheduled-fire state model (#386, Phase 1)** — Added, a minor bump.
+  Two new `session.StopReason` / `port.ScheduleStore` surface additions and three
+  new struct fields modelling an in-flight fire between a Claim and a terminal
+  RecordFire:
+  - `session.StopTimeout StopReason = "timeout"` — a per-fire wall-clock deadline
+    expired; a CLEAN, recoverable terminal (like `StopBudget`: a budget
+    exhaustion, not a fault/cancel), routed through the completed path so the
+    session ends `completed` and stays Reopen-recoverable. A string passthrough on
+    the wire (no proto enum). Added to `agent.isEmptyTerminalStop`'s allow-set
+    (a clean bounded terminal) following `StopBudget`'s classification; NOT in
+    the salvage ResetUsage arm (it is a wall-clock deadline, not a token
+    ceiling, so it follows `StopNoProgress` there).
+  - `port.ScheduleStore.RecordFireStart(ctx, name, fire)` — persists the IN-FLIGHT
+    fire (id/SessionID/StartedAt/Deadline, Stop empty) and stamps
+    `ScheduleState.LastFireSessionID` to the real session id +
+    `LastFireStartedAt` (+ seeds `LastFireProgressAt`) + `FireDeadline`.
+    Idempotent per fire id.
+  - `port.ScheduleStore.RecordFireProgress(ctx, name, at)` — advances
+    `ScheduleState.LastFireProgressAt` and the in-flight fire record's
+    `ProgressAt` (monotonic: an earlier `at` is ignored). Best-effort/idempotent.
+  - `port.ScheduleState` gains `LastFireStartedAt`, `LastFireProgressAt`,
+    `FireDeadline` (set at fire-start, cleared at RecordFire).
+  - `port.ScheduleFire` gains `StartedAt`, `ProgressAt`, `Deadline` (an in-flight
+    fire has Stop empty + StartedAt set; a terminal fire has Stop set).
+  - `port.ScheduleSpec` gains `FireTimeout time.Duration` (per-fire wall-clock
+    deadline; zero = deployment default).
+  The reference `engine/adapter/memschedulestore` implements the two methods
+  (Claim/ClaimNow zero the in-flight fields; RecordFireStart sets them; RecordFire
+  clears them + writes the terminal record), pinned by new
+  `engine/adapter/scheduleconformance` subtests. The root-module stores
+  (`internal/adapter/store/jsonlstore`, `redisstore`) and composition wiring are
+  Phase 2/3 (not in this phase).
+
 ### Changed
 
 - **A text-bearing `StopError` turn now carries a terminal CAUSE** (issue #319

@@ -3260,14 +3260,18 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 
 // isEmptyTerminalStop reports whether stop is one of the terminals on which a
 // FREE-TEXT child can plausibly have ended WITHOUT a usable summary, so the salvage +
-// digest recovery (issue #48 / #152) should run. It is a positive ALLOW-SET — the four
-// bounded terminals (turn/tool-call limit, token budget, no-progress) plus an EMPTY
-// clean end (StopEndTurn). The caller pairs it with a blank-finalText guard so a NORMAL
-// StopEndTurn that produced text is never disturbed.
+// digest recovery (issue #48 / #152) should run. It is a positive ALLOW-SET — the
+// bounded terminals (turn/tool-call limit, token budget, no-progress, per-fire
+// wall-clock timeout) plus an EMPTY clean end (StopEndTurn). The caller pairs it
+// with a blank-finalText guard so a NORMAL StopEndTurn that produced text is never
+// disturbed. StopTimeout follows StopBudget's classification (a clean bounded
+// terminal, recoverable); it is NOT in the ResetUsage arm below (it is a wall-clock
+// deadline, not a token ceiling — it does not stop on the budget, so the carried
+// budget keeps braking the salvage turn, like StopNoProgress/StopEndTurn).
 func isEmptyTerminalStop(stop session.StopReason) bool {
 	switch stop {
 	case session.StopMaxTurns, session.StopMaxToolCalls, session.StopBudget,
-		session.StopNoProgress, session.StopEndTurn:
+		session.StopNoProgress, session.StopTimeout, session.StopEndTurn:
 		return true
 	default:
 		return false

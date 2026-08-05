@@ -479,6 +479,314 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		}
 	})
 
+	// Issue #386 — the in-flight scheduled-fire state model (RecordFireStart /
+	// RecordFireProgress) and its interaction with Claim/RecordFire. The store
+	// tracks an in-flight fire between RecordFireStart (the run began) and
+	// RecordFire (the run produced a terminal outcome); a fresh Claim zeros the
+	// in-flight fields, RecordFireStart sets them, RecordFire clears them.
+	t.Run("record fire start persists in-flight state", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-firestart"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		// A Claim alone leaves the in-flight fields zero (the crash-after-Claim
+		// state — LastFireSessionID is the pending sentinel, no run started).
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after Claim: %v", err)
+		}
+		if !got.State.LastFireStartedAt.IsZero() {
+			t.Errorf("LastFireStartedAt after Claim = %v, want zero (Claim alone has no run start)", got.State.LastFireStartedAt)
+		}
+		if got.State.LastFireSessionID != port.PendingFireSessionID {
+			t.Errorf("LastFireSessionID after Claim = %q, want %q (pending sentinel)", got.State.LastFireSessionID, port.PendingFireSessionID)
+		}
+
+		// RecordFireStart: the run actually began. LastFireSessionID becomes the
+		// REAL session id, LastFireStartedAt is set, and an in-flight fire record
+		// is visible via ListFires (Stop empty).
+		start := now.Add(time.Second)
+		deadline := start.Add(5 * time.Minute)
+		fire := port.ScheduleFire{
+			ID:           "fire-inflight",
+			ScheduleName: name,
+			SessionID:    "real-session-1",
+			FiredAt:      now,
+			StartedAt:    start,
+			Deadline:     deadline,
+		}
+		if err := s.RecordFireStart(ctx, name, fire); err != nil {
+			t.Fatalf("RecordFireStart: %v", err)
+		}
+		got, err = s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after RecordFireStart: %v", err)
+		}
+		if got.State.LastFireSessionID != "real-session-1" {
+			t.Errorf("LastFireSessionID = %q, want %q (real session id)", got.State.LastFireSessionID, "real-session-1")
+		}
+		if !got.State.LastFireStartedAt.Equal(start) {
+			t.Errorf("LastFireStartedAt = %v, want %v", got.State.LastFireStartedAt, start)
+		}
+		// Progress seeded to the start instant (caller passed a zero ProgressAt).
+		if !got.State.LastFireProgressAt.Equal(start) {
+			t.Errorf("LastFireProgressAt = %v, want seeded %v", got.State.LastFireProgressAt, start)
+		}
+		if !got.State.FireDeadline.Equal(deadline) {
+			t.Errorf("FireDeadline = %v, want %v", got.State.FireDeadline, deadline)
+		}
+		// The in-flight fire record is visible via ListFires with Stop empty.
+		fires, err := s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires after RecordFireStart: %v", err)
+		}
+		if len(fires) != 1 || fires[0].ID != "fire-inflight" || fires[0].Stop != "" {
+			t.Errorf("ListFires = %+v, want one in-flight fire (Stop empty)", fires)
+		}
+		if !fires[0].StartedAt.Equal(start) {
+			t.Errorf("in-flight fire StartedAt = %v, want %v", fires[0].StartedAt, start)
+		}
+	})
+
+	t.Run("record fire start is idempotent per fire id", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-firestart-idem"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		start := now.Add(time.Second)
+		fire := port.ScheduleFire{
+			ID:           "fire-idem",
+			ScheduleName: name,
+			SessionID:    "real-session-idem",
+			FiredAt:      now,
+			StartedAt:    start,
+		}
+		if err := s.RecordFireStart(ctx, name, fire); err != nil {
+			t.Fatalf("RecordFireStart #1: %v", err)
+		}
+		// A second RecordFireStart with the SAME StartedAt is a no-op: the state
+		// must not change and there must still be exactly one fire record.
+		if err := s.RecordFireStart(ctx, name, fire); err != nil {
+			t.Fatalf("RecordFireStart #2 (idempotent): %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !got.State.LastFireStartedAt.Equal(start) {
+			t.Errorf("LastFireStartedAt = %v, want unchanged %v", got.State.LastFireStartedAt, start)
+		}
+		fires, err := s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires: %v", err)
+		}
+		if len(fires) != 1 {
+			t.Errorf("ListFires = %d records, want 1 (idempotent)", len(fires))
+		}
+	})
+
+	t.Run("record fire progress advances last progress", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-fireprogress"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		start := now.Add(time.Second)
+		if err := s.RecordFireStart(ctx, name, port.ScheduleFire{
+			ID:           "fire-progress",
+			ScheduleName: name,
+			SessionID:    "real-session-progress",
+			FiredAt:      now,
+			StartedAt:    start,
+		}); err != nil {
+			t.Fatalf("RecordFireStart: %v", err)
+		}
+		// Progress advances from the seeded start instant.
+		p1 := start.Add(10 * time.Second)
+		if err := s.RecordFireProgress(ctx, name, p1); err != nil {
+			t.Fatalf("RecordFireProgress #1: %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !got.State.LastFireProgressAt.Equal(p1) {
+			t.Errorf("LastFireProgressAt = %v, want %v", got.State.LastFireProgressAt, p1)
+		}
+		// An EARLIER progress instant does NOT rewind (reordered/delayed update).
+		if err := s.RecordFireProgress(ctx, name, start.Add(5*time.Second)); err != nil {
+			t.Fatalf("RecordFireProgress (stale): %v", err)
+		}
+		got, err = s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after stale progress: %v", err)
+		}
+		if !got.State.LastFireProgressAt.Equal(p1) {
+			t.Errorf("LastFireProgressAt after stale update = %v, want unchanged %v", got.State.LastFireProgressAt, p1)
+		}
+		// A LATER instant advances further.
+		p2 := p1.Add(time.Minute)
+		if err := s.RecordFireProgress(ctx, name, p2); err != nil {
+			t.Fatalf("RecordFireProgress #2: %v", err)
+		}
+		got, err = s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after progress #2: %v", err)
+		}
+		if !got.State.LastFireProgressAt.Equal(p2) {
+			t.Errorf("LastFireProgressAt = %v, want %v", got.State.LastFireProgressAt, p2)
+		}
+		// The in-flight fire record's ProgressAt advances too.
+		fires, err := s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires: %v", err)
+		}
+		if len(fires) != 1 || !fires[0].ProgressAt.Equal(p2) {
+			t.Errorf("in-flight fire ProgressAt = %v, want %v", fires[0].ProgressAt, p2)
+		}
+	})
+
+	t.Run("record fire clears in-flight fields and flips terminal", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-fireclear"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		start := now.Add(time.Second)
+		deadline := start.Add(5 * time.Minute)
+		if err := s.RecordFireStart(ctx, name, port.ScheduleFire{
+			ID:           "fire-clear",
+			ScheduleName: name,
+			SessionID:    "real-session-clear",
+			FiredAt:      now,
+			StartedAt:    start,
+			Deadline:     deadline,
+		}); err != nil {
+			t.Fatalf("RecordFireStart: %v", err)
+		}
+		// RecordFire flips the fire terminal and clears the in-flight state fields.
+		terminal := port.ScheduleFire{
+			ID:           "fire-clear",
+			ScheduleName: name,
+			SessionID:    "real-session-clear",
+			FiredAt:      now,
+			Stop:         session.StopEndTurn,
+		}
+		if err := s.RecordFire(ctx, terminal); err != nil {
+			t.Fatalf("RecordFire: %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load after RecordFire: %v", err)
+		}
+		if !got.State.LastFireStartedAt.IsZero() {
+			t.Errorf("LastFireStartedAt = %v, want zero (cleared on terminal record)", got.State.LastFireStartedAt)
+		}
+		if !got.State.LastFireProgressAt.IsZero() {
+			t.Errorf("LastFireProgressAt = %v, want zero (cleared on terminal record)", got.State.LastFireProgressAt)
+		}
+		if !got.State.FireDeadline.IsZero() {
+			t.Errorf("FireDeadline = %v, want zero (cleared on terminal record)", got.State.FireDeadline)
+		}
+		if got.State.LastFireSessionID != "real-session-clear" {
+			t.Errorf("LastFireSessionID = %q, want the real session id", got.State.LastFireSessionID)
+		}
+		// The fire record is now terminal (Stop set).
+		loaded, err := s.LoadFire(ctx, "fire-clear")
+		if err != nil {
+			t.Fatalf("LoadFire: %v", err)
+		}
+		if loaded.Stop != session.StopEndTurn {
+			t.Errorf("LoadFire Stop = %q, want %q (terminal)", loaded.Stop, session.StopEndTurn)
+		}
+	})
+
+	t.Run("claim alone leaves last fire started at zero (crash after claim)", func(t *testing.T) {
+		// The crash-after-Claim state: Claim advanced the slot and stamped the
+		// pending sentinel, but RecordFireStart never ran (the process died
+		// between Claim and the run start). The in-flight fields MUST be zero so
+		// a watchdog/recovery layer can distinguish "no run started" from "run
+		// started but no progress".
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-crash-after-claim"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !got.State.LastFireStartedAt.IsZero() {
+			t.Errorf("LastFireStartedAt = %v, want zero (no run started)", got.State.LastFireStartedAt)
+		}
+		if !got.State.LastFireProgressAt.IsZero() {
+			t.Errorf("LastFireProgressAt = %v, want zero (no run started)", got.State.LastFireProgressAt)
+		}
+		if !got.State.FireDeadline.IsZero() {
+			t.Errorf("FireDeadline = %v, want zero (no run started)", got.State.FireDeadline)
+		}
+		if got.State.LastFireSessionID != port.PendingFireSessionID {
+			t.Errorf("LastFireSessionID = %q, want %q (pending sentinel — RecordFireStart never ran)", got.State.LastFireSessionID, port.PendingFireSessionID)
+		}
+	})
+
 	t.Run("record fire not-found wraps ErrScheduleNotFound", func(t *testing.T) {
 		s := newStore(t)
 		fire := port.ScheduleFire{
