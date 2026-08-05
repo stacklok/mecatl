@@ -721,5 +721,26 @@ Verification: coder observed the required OAuth tests fail before implementation
   all six named acceptance proofs, the full authfile race suite, focused `go vet`,
   gofmt, the acceptance-plan checker, fresh-cache `task lint`,
   `TMPDIR=/private/tmp task test`, and `git diff --check` pass.
-Commit: pending this scoped Step 2 commit; its hash will be recorded by Step 3.
+Commit: fc845f226f0e34220ab37cb76257b48f63eb7ab4
+
+Step 3 — Immutable Codex credential and request policy adjunct
+Base: fc845f226f0e34220ab37cb76257b48f63eb7ab4
+Coder: /root/step3_policy_coder
+Reviewers: /root/step3_spec_review (specification/architecture) and
+  /root/step3_security_review (correctness/security/reuse).
+Findings: initial review found that four SDK headers were copied rather than
+  rebuilt from owned constants, request-target validation admitted host/path/query
+  variants, only the JWT payload segment was base64url-validated, and a transport
+  could return a response body after cancellation without the adjunct closing it.
+  The coder rebuilt exact per-endpoint header sets, tightened the endpoint/method/
+  query allowlist, strictly bounded and canonically decoded all three JWT segments
+  while still interpreting only the unverified payload, and made cancellation and
+  redirect body ownership explicit. Offline regressions poison every former header
+  passthrough and cover each rejected target and credential shape. Both final
+  reviewers reported zero blockers after re-review.
+Verification: coder observed all seven named Step 3 proofs fail to compile before
+  the adjunct existed. The package race suite, focused `go vet`, the
+  acceptance-plan checker, fresh-cache `task lint`, `TMPDIR=/private/tmp task test`,
+  gofmt, and `git diff --check` pass on the candidate.
+Commit: pending this scoped Step 3 commit; its hash will be recorded by Step 4.
 ```
