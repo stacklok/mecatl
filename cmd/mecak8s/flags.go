@@ -6,11 +6,12 @@
 // SIGTERM so a rolling update completes within terminationGracePeriodSeconds.
 //
 // What it does NOT have (stripped from mecated): no `skills promote` / `config`
-// / `perf-mcp` subcommands, no ACP (mecated-only), no Prometheus /metrics
-// listener or runtime-introspection admin mux, and NO --store-dir (storage-free:
+// / `perf-mcp` subcommands, no ACP (mecated-only), and NO --store-dir (storage-free:
 // state lives in Redis and the k8s API server). It shares the SAME provider +
 // model-alias/model-slot flag wiring (internal/cliconfig) so the three-mains
-// wiring cannot drift.
+// wiring cannot drift. Telemetry (issue #343, ADR 0097) is OPT-IN: a loopback
+// --metrics-addr mounts the admin mux's /metrics for scrape, and --otlp-* pushes
+// traces/metrics to a collector. Both default off — the pre-telemetry posture.
 //
 // Honest shutdown contract (ADR 0048 §4d): new runs are rejected (503 via the
 // drain gate) the moment SIGTERM (or the preStop httpGet /drain) fires.
@@ -204,6 +205,20 @@ type config struct {
 	schedulerTickInterval       time.Duration
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
+
+	// Headless telemetry (issue #343, ADR 0097): OPT-IN. --metrics-addr mounts a
+	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape,
+	// ADR 0018 decision 6: loopback only, fail-closed on a non-loopback bind).
+	// --otlp-* push traces/metrics to a collector (opt-in twin for non-scrape
+	// deployments). All empty (the default) leaves the pipeline off — byte-identical
+	// to the pre-telemetry posture (no /metrics listener, no OTLP).
+	metricsAddr         string
+	otlpEndpoint        string
+	otlpProtocol        string
+	otlpInsecure        bool
+	otlpMetricsEndpoint string
+	otlpMetricsProtocol string
+	otlpShutdownTimeout time.Duration
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -337,6 +352,18 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "enable the Parallel fan-out tool (parallel isolated child branches)")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "enable the experimental agent-teams capability (CreateTeam / SpawnTeammate / RunTeam)")
 
+	// Headless telemetry (issue #343, ADR 0097): OPT-IN. --metrics-addr mounts a
+	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).
+	// --otlp-* push traces/metrics to a collector (the opt-in twin for non-scrape
+	// deployments). All empty (default) leaves the pipeline off.
+	fs.StringVar(&cfg.metricsAddr, "metrics-addr", "", "Prometheus /metrics listen address for a SEPARATE loopback admin listener (empty disables it). MUST be loopback — a non-loopback bind is REJECTED at parse time (ADR 0018 decision 6: pprof/expvar/metrics output is secret-shaped). e.g. \"127.0.0.1:9090\"")
+	fs.StringVar(&cfg.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint (empty disables tracing). OPT-IN push to a collector")
+	fs.StringVar(&cfg.otlpProtocol, "otlp-protocol", "grpc", "OTLP transport for traces: \"grpc\" (default) or \"http\"")
+	fs.BoolVar(&cfg.otlpInsecure, "otlp-insecure", false, "skip TLS when dialing the OTLP collector (development only)")
+	fs.StringVar(&cfg.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP METRICS collector endpoint (empty disables metrics push). An opt-in twin to --metrics-addr for non-scrape deployments; the prometheus reader stays on either way")
+	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
+	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). 0 disables the bound")
+
 	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}
@@ -396,6 +423,15 @@ func parseFlags(argv []string) (config, error) {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
 	}
 
+	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves
+	// pprof/expvar/metrics output that can embed prompt text, file paths, and
+	// goroutine stacks — secret-shaped. A non-loopback bind is REJECTED at parse
+	// time (fail-closed) via the shared cliconfig.IsLoopbackAddr gate, mirroring
+	// mecated's --perf-mcp loopback refusal.
+	if cfg.metricsAddr != "" && !cliconfig.IsLoopbackAddr(cfg.metricsAddr) {
+		return config{}, fmt.Errorf("--metrics-addr %q is not loopback: the admin mux (/metrics, /debug/pprof, /debug/vars) exposes unauthenticated runtime data; bind loopback (e.g. 127.0.0.1:9090) or leave it empty", cfg.metricsAddr)
+	}
+
 	return cfg, nil
 }
 
@@ -403,9 +439,10 @@ func parseFlags(argv []string) (config, error) {
 // threading a Diagnostics sink into the engine/composition. It is a thin subset
 // of mecated's appConfig: the engine-build knobs mecak8s carries, with the
 // k8s-native defaults (RedisURL, SessionLeaseK8sNamespace, Headless, auto
-// posture) threaded through. Sink / ToolCallRecorder / MetricsRoleScoper stay
-// nil — mecak8s ships no Prometheus/OTel pipeline (stripped from mecated).
-func appConfig(cfg config, diag port.Diagnostics) app.Config {
+// posture) threaded through. Sink / ToolCallRecorder / MetricsRoleScoper come
+// from the observability handles (issue #343): nil when telemetry is off (the
+// byte-identical no-metrics posture), non-nil when --otlp-* is set.
+func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config {
 	out := app.Config{
 		Workspace:                     cfg.workspace,
 		Model:                         cfg.model,
@@ -476,8 +513,11 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		// unresolved ask is auto-denied / routed to the opt-in ask-reviewer.
 		Interactive: !cfg.headless,
 		Diagnostics: diag,
-		// Sink / ToolCallRecorder / MetricsRoleScoper deliberately nil: mecak8s
-		// ships no Prometheus/OTel pipeline (stripped from mecated).
+		// Observability (issue #343, ADR 0097): OPT-IN. With no --otlp-* flags the
+		// handles are zero-valued (nil) — the byte-identical no-metrics posture.
+		Sink:              obs.Sink,
+		ToolCallRecorder:  obs.ToolCallRecorder,
+		MetricsRoleScoper: obs.MetricsRoleScoper,
 	}
 	// Apply the shared provider credentials + base URLs (env reads happen here,
 	// once). An OPENAI_API_KEY in the environment implies the real provider.

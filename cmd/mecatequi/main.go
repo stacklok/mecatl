@@ -64,20 +64,38 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 	}
 	diag := newDiagnostics()
 
+	// Observability (issue #343, ADR 0097): OPT-IN OTLP push. Built right after
+	// flag parse so the flush-on-exit defer covers EVERY exit path (setup-failure
+	// included). With no --otlp-* flags this is a no-op (byte-identical default).
+	obs, oerr := buildObservability(context.Background(), f)
+	if oerr != nil {
+		_, _ = fmt.Fprintf(stderr, "mecatequi: telemetry: %v\n", oerr)
+		return 2
+	}
+
 	// Validate the workspace is a git repository AND its top level BEFORE building —
 	// a non-repo or a subdir would silently diff an enclosing repo (the wrong forge
 	// artifact). This is a setup failure (exit 2).
 	if werr := validateWorkspaceRepo(context.Background(), f.workspace); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "mecatequi: %v\n", werr)
+		// Flush telemetry even on the setup-failure exit path (a push run may
+		// have started its periodic reader during Setup before this guard fired).
+		flushTelemetry(stderr, obs, f.otlpShutdownTimeout)
 		return 2
 	}
 
-	built, err := app.Build(context.Background(), appConfig(f, diag))
+	built, err := app.Build(context.Background(), appConfig(f, diag, obs))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "mecatequi: build: %v\n", err)
+		flushTelemetry(stderr, obs, f.otlpShutdownTimeout)
 		return 2
 	}
 	defer built.Close()
+	// Telemetry flush BEFORE built.Close(): defers are LIFO, so registering this
+	// AFTER defer built.Close() makes the flush run first. A bounded ctx
+	// (--otlp-shutdown-timeout) ensures a dead collector cannot hang the run;
+	// mecatequi then exits via os.Exit, killing any lingering export goroutine.
+	defer flushTelemetry(stderr, obs, f.otlpShutdownTimeout)
 
 	prompt := buildPrompt(f.prompt, f.promptFileBody, f.instructions, f.untrustedPrompt)
 

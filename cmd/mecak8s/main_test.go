@@ -75,7 +75,7 @@ func TestAppConfigMapsK8sFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	ac := appConfig(cfg, port.NopDiagnostics{})
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	if ac.RedisURL != "redis:6379" {
 		t.Errorf("app.Config RedisURL = %q, want redis:6379", ac.RedisURL)
 	}
@@ -109,7 +109,7 @@ func TestAppConfigHeadlessDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	ac := appConfig(cfg, port.NopDiagnostics{})
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	if ac.Interactive {
 		t.Error("default mecak8s must be Interactive=false (headless=true default) so the auto-deny/reviewer path engages")
 	}

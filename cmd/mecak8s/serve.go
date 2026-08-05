@@ -21,6 +21,8 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/adapter/telemetry"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 // serve wires the built Service over gRPC + HTTP/SSE with k8s-native
@@ -42,7 +44,7 @@ import (
 // Service serves traffic through (Service.StorageReady type-asserts the store
 // for a Pinger). A non-Redis store (the in-memory fallback) has no ping, so
 // readiness is drain-gated only.
-func serve(ctx context.Context, cfg config, svc *server.Service) error {
+func serve(ctx context.Context, cfg config, svc *server.Service, obs observability) error {
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -120,7 +122,37 @@ func serve(ctx context.Context, cfg config, svc *server.Service) error {
 		return fmt.Errorf("listen grpc %q: %w", cfg.grpcAddr, err)
 	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
+
+	// Metrics loopback listener (issue #343, ADR 0097): when --metrics-addr is
+	// set, mount the admin mux (/metrics + the runtime-introspection surface) on a
+	// SEPARATE loopback listener. The Registry comes from the observability
+	// handles (non-nil when metricsAddr is set — buildObservability runs Setup for
+	// the scrape-only path too via Scrape=true). Fail-closed: parse-time loopback
+	// refusal already guaranteed by cliconfig.IsLoopbackAddr.
+	var metricsSrv *http.Server
+	if cfg.metricsAddr != "" {
+		reg := obs.Registry
+		if reg == nil {
+			return fmt.Errorf("metrics-addr %q set but telemetry registry is nil", cfg.metricsAddr)
+		}
+		metricsMux := telemetry.NewAdminMux(reg, nil)
+		metricsLis, lerr := net.Listen("tcp", cfg.metricsAddr)
+		if lerr != nil {
+			return fmt.Errorf("listen metrics %q: %w", cfg.metricsAddr, lerr)
+		}
+		metricsSrv = &http.Server{
+			Addr:              cfg.metricsAddr,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			slog.Info("metrics admin listener serving (loopback)", "addr", metricsLis.Addr().String())
+			if serveErr := metricsSrv.Serve(metricsLis); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("metrics serve: %w", serveErr)
+			}
+		}()
+	}
 
 	go func() {
 		slog.Info("gRPC server listening", "addr", grpcLis.Addr().String())
@@ -147,11 +179,11 @@ func serve(ctx context.Context, cfg config, svc *server.Service) error {
 		slog.Info("shutdown signal received; draining")
 	case err := <-errCh:
 		slog.Error("server failed; shutting down", "err", err)
-		boundedShutdown(grpcSrv, httpSrv, svc)
+		boundedShutdown(grpcSrv, httpSrv, metricsSrv, svc)
 		return err
 	}
 
-	boundedShutdown(grpcSrv, httpSrv, svc)
+	boundedShutdown(grpcSrv, httpSrv, metricsSrv, svc)
 	return nil
 }
 
@@ -169,7 +201,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service) error {
 // takes over immediately without the 30s TTL. The ctx that reached serve is
 // already cancelled by the signal handler, so boundedShutdown uses a fresh
 // background ctx for the HTTP shutdown.
-func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, svc *server.Service) {
+func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, metricsSrv *http.Server, svc *server.Service) {
 	svc.Drain()
 	slog.Info("draining: active runs", "count", svc.ActiveRuns())
 
@@ -191,6 +223,13 @@ func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, svc *server.Ser
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("http graceful shutdown", "err", err)
+	}
+	// The loopback metrics listener stops alongside the API listener; a metrics
+	// scrape failure during shutdown is non-fatal, so its error is logged only.
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("metrics graceful shutdown", "err", err)
+		}
 	}
 }
 
@@ -236,13 +275,7 @@ func buildTLSConfig(cfg config) (*tls.Config, error) {
 // rely on the NetworkPolicy/mesh, not a bare public port). It never hard-fails.
 // Mirrors cmd/mecated's warnIfNonLoopback.
 func warnIfNonLoopback(flagName, addr string, authed bool) {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	ip := net.ParseIP(host)
-	loopback := host == "localhost" || (ip != nil && ip.IsLoopback())
-	if loopback {
+	if cliconfig.IsLoopbackAddr(addr) {
 		slog.Info("API bound to loopback", "flag", flagName, "addr", addr, "authenticated", authed)
 		return
 	}

@@ -132,6 +132,18 @@ type flags struct {
 	// --reasoning-effort so composition lets CLI out-rank the settings.yaml key.
 	reasoningEffort        string
 	reasoningEffortFlagSet bool
+
+	// Headless telemetry (issue #343): OPT-IN OTLP trace + metrics push. A
+	// single-shot CI run is too short-lived for a Prometheus scrape, so mecatequi
+	// PUSHES metrics (and traces) to an OTLP collector and flushes before exit
+	// via --otlp-shutdown-timeout. Both endpoints empty (the default) leaves the
+	// pipeline off — the byte-identical no-telemetry posture.
+	otlpEndpoint        string
+	otlpProtocol        string
+	otlpInsecure        bool
+	otlpMetricsEndpoint string
+	otlpMetricsProtocol string
+	otlpShutdownTimeout time.Duration
 }
 
 // parseFlags turns argv into a flags value, resolving env-derived defaults and
@@ -194,6 +206,17 @@ func parseFlags(argv []string) (flags, error) {
 
 	fs.StringVar(&f.posture, "posture", "", "OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate — and a headless single-shot run has NO approver, so a main-agent ask CANCELS the run (exit 1). For an autonomous CI run use --posture auto (allow-all, child injection-defense ON) or trusted/yolo. trusted honours a project's ALLOW rules; auto adds allow-all + main substitution loosening; yolo additionally auto-runs $()/backtick/heredoc in children. An unknown value fails closed to strict")
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN")
+
+	// Headless telemetry (issue #343, ADR 0097): OPT-IN OTLP trace + metrics push.
+	// Both endpoints empty (the default) leaves the pipeline off — no metrics, no
+	// tracing, byte-identical to the pre-telemetry posture. A metrics endpoint
+	// installs a PeriodicReader (push) alongside the always-on prometheus reader.
+	fs.StringVar(&f.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint (empty disables tracing). e.g. \"localhost:4317\" for gRPC or a host for HTTP. OPT-IN: mecatequi PUSHES a single run's spans here")
+	fs.StringVar(&f.otlpProtocol, "otlp-protocol", "grpc", "OTLP transport for traces: \"grpc\" (default) or \"http\"")
+	fs.BoolVar(&f.otlpInsecure, "otlp-insecure", false, "skip TLS when dialing the OTLP collector (development only)")
+	fs.StringVar(&f.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP METRICS collector endpoint (empty disables metrics push). A single-shot run is too short for a Prometheus scrape, so mecatequi PUSHES the run's counters/histograms here and flushes before exit. OPT-IN")
+	fs.StringVar(&f.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
+	fs.DurationVar(&f.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at exit (so a dead collector cannot hang the run). 0 disables the bound (flush until it completes); the flush runs BEFORE the diff/summary emit defer unwinds")
 
 	fs.Usage = usageEpilogue(fs)
 
@@ -340,11 +363,13 @@ Exit codes (read stop_reason in the summary — the code alone is coarse):
 }
 
 // appConfig maps the parsed flags onto the shared app.Config build contract. It
-// threads a Diagnostics sink (stderr, the mecated pattern) and leaves Sink /
-// ToolCallRecorder / MetricsRoleScoper nil — a single-shot CLI has no metrics
-// pipeline. The Interactive inversion is the deliberate headless default: a CI run
-// has no approver, so Interactive = !headless.
-func appConfig(f flags, diag port.Diagnostics) app.Config {
+// threads a Diagnostics sink (stderr, the mecated pattern) and — when telemetry
+// is enabled — the observability handles from buildObservability. With no
+// --otlp-* flags the handles are zero-valued (Sink/ToolCallRecorder/
+// MetricsRoleScoper nil), so the default posture is byte-identical to the
+// pre-telemetry shape. The Interactive inversion is the deliberate headless
+// default: a CI run has no approver, so Interactive = !headless.
+func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 	out := app.Config{
 		Workspace:       f.workspace,
 		Model:           f.model,
@@ -391,8 +416,12 @@ func appConfig(f flags, diag port.Diagnostics) app.Config {
 		Interactive: !f.headless,
 
 		Diagnostics: diag,
-		// Sink / ToolCallRecorder / MetricsRoleScoper deliberately nil: a single-shot
-		// run carries no metrics pipeline.
+		// Observability (issue #343, ADR 0097): OPT-IN OTLP push. With no --otlp-*
+		// flags the handles are zero-valued (nil Sink/ToolCallRecorder/
+		// MetricsRoleScoper) — the byte-identical no-telemetry posture.
+		Sink:              obs.Sink,
+		ToolCallRecorder:  obs.ToolCallRecorder,
+		MetricsRoleScoper: obs.MetricsRoleScoper,
 	}
 	// Apply the shared provider credentials + base URLs (env reads happen here, once).
 	// An OPENAI_API_KEY in the environment implies the real provider — the same flip

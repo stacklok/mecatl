@@ -48,6 +48,13 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --session-lease-k8s-namespace meca
 | `--mcp-server` | — | remote MCP server as `name=URL` (repeatable); a per-server bearer token is read from `MCP_<NAME>_TOKEN` (name upper-cased, token optional). Names must match `[A-Za-z0-9_]+` and be case-insensitively unique; a token-bearing URL must be `https` (or `http` to loopback). The same flag + env convention as `mecated`/`mecatequi` ([ADR 0082](../adr/0082-factory-mcp-wiring.md)). NOTE: the token is read **once at startup** and shared across all sessions for the pod's lifetime — per-run identity is a `mecatequi` property; a per-session credential source is future work (mecatl#342). |
 | `--mcp-server-insecure-http` | — | EXPLICIT per-server opt-in (repeatable): name of a `--mcp-server` entry whose bearer may ride plain `http` to a non-loopback host — e.g. an in-cluster NetworkPolicy-scoped Service. Acknowledges the token travels **cleartext on the network path**; the mitigations are network-layer controls plus the short-lived token. Relaxes ONLY the http scheme gate, ONLY for that name, order-independently of the `--mcp-server` position; an unregistered name or an https/loopback/non-http URL is a startup error ([ADR 0090](../adr/0090-mcp-insecure-http-optin.md)). |
 | `--llm-per-attempt-timeout` / `--llm-stream-idle-timeout` | `300s` / `180s` | LLM resilience knobs (mirror `mecated`). |
+| `--metrics-addr` | `""` (off) | OPT-IN Prometheus `/metrics` listen address for a SEPARATE loopback admin listener (the admin mux — `/metrics` + pprof/expvar, ADR 0018 decision 6). MUST be loopback — a non-loopback bind is REJECTED at parse time (fail-closed; the admin mux output is secret-shaped). e.g. `127.0.0.1:9090`. |
+| `--otlp-endpoint` | `""` (off) | OPT-IN OTLP trace collector endpoint (push). Empty disables tracing. |
+| `--otlp-protocol` | `grpc` | OTLP transport for traces (`grpc` or `http`). |
+| `--otlp-insecure` | `false` | skip TLS when dialing the OTLP collector (dev only). |
+| `--otlp-metrics-endpoint` | `""` (off) | OPT-IN OTLP METRICS collector endpoint (push) — the opt-in twin to `--metrics-addr` for non-scrape deployments. Empty disables metrics push. |
+| `--otlp-metrics-protocol` | `grpc` | OTLP transport for metrics (`grpc` or `http`). |
+| `--otlp-shutdown-timeout` | `5s` | bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). |
 
 Plus the shared provider flags (`--openai`, `--openai-base-url`, `--openrouter-base-url`,
 `--anthropic-base-url`, `--model`, `--default-provider`, `--default-model`,

@@ -179,6 +179,21 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 
 `--default-provider` selects a provider; the matching key must be present in the environment or the run fails with "no LLM provider available". A present `OPENAI_API_KEY` auto-enables the OpenAI provider without `--default-provider`. For OpenRouter, Anthropic, or OpenCode Go, set the respective key and pass `--default-provider openrouter`, `--default-provider anthropic`, or `--default-provider opencode`.
 
+### Telemetry (OPT-IN OTLP push)
+
+mecatequi is single-shot and short-lived, so a Prometheus scrape does not fit it. Instead it PUSHES metrics + traces to an OTLP collector when the flags are set, and flushes before exit. Both endpoints empty (the default) leaves the pipeline off — the byte-identical no-telemetry posture. See [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md) and the [`mecatequi` flag reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecatequi-ci.md).
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--otlp-endpoint` | `""` (off) | OTLP trace collector endpoint; empty disables tracing. |
+| `--otlp-protocol` | `grpc` | OTLP transport for traces (`grpc` or `http`). |
+| `--otlp-insecure` | `false` | Skip TLS when dialing the collector (dev only). |
+| `--otlp-metrics-endpoint` | `""` (off) | OTLP METRICS collector endpoint; empty disables metrics push. |
+| `--otlp-metrics-protocol` | `grpc` | OTLP transport for metrics (`grpc` or `http`). |
+| `--otlp-shutdown-timeout` | `5s` | Bound on the flush at exit (so a dead collector cannot hang the run). |
+
+The flush runs before the diff/summary emit defer unwinds (LIFO) so a single run's metrics reach the collector before `os.Exit`. The metric surface reuses the existing instruments (`mecatl.tokens`, `mecatl.runs`, the latency histograms, …) labelled with the bounded issue-#47 closed `role` set — no session/model ids. A `mecatl.cost` counter is deferred to #192.
+
 ---
 
 ## Headless posture and permission asks

@@ -445,3 +445,25 @@ agent cannot `echo $OPENROUTER_API_KEY` / `cat /proc/self/environ` to exfiltrate
 the workflow still bounds the blast radius by holding only the rotatable LLM key (no write
 token) in the agent's job. See `docs/adr/0028-mecatequi.md` §6.
 
+
+### Telemetry (OPT-IN OTLP push, issue #343 / ADR 0097)
+
+mecatequi is single-shot and short-lived, so a Prometheus scrape does not fit it.
+Instead it PUSHES metrics + traces to an OTLP collector when the flags are set, and
+flushes before exit. Both endpoints empty (the default) leaves the pipeline off
+- the byte-identical no-telemetry posture.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--otlp-endpoint` | `""` (off) | OTLP trace collector endpoint; empty disables tracing |
+| `--otlp-protocol` | `grpc` | OTLP transport for traces (`grpc` or `http`) |
+| `--otlp-insecure` | `false` | skip TLS when dialing the collector (dev only) |
+| `--otlp-metrics-endpoint` | `""` (off) | OTLP METRICS collector endpoint; empty disables metrics push |
+| `--otlp-metrics-protocol` | `grpc` | OTLP transport for metrics (`grpc` or `http`) |
+| `--otlp-shutdown-timeout` | `5s` | bound on the flush at exit (so a dead collector cannot hang the run) |
+
+The flush runs BEFORE the diff/summary emit defer unwinds (LIFO) so a single run's
+metrics reach the collector before `os.Exit`. The metric surface reuses the existing
+instruments (`mecatl.tokens`, `mecatl.runs`, the latency histograms, ...) labelled
+with the bounded issue-#47 closed `role` set - no session/model ids. A `mecatl.cost`
+counter is deferred to #192.

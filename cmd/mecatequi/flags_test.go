@@ -109,7 +109,7 @@ func TestParseFlagsInstructions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		blob := fmt.Sprintf("%+v", cfg)
 		if strings.Contains(blob, "DISTINCT_FRAMING_SENTINEL") {
 			t.Errorf("--instructions leaked into app.Config: %s", blob)
@@ -150,7 +150,7 @@ func TestParseFlagsMaxTurns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if strings.Contains(fmt.Sprintf("%+v", cfg), "987654") {
 			t.Errorf("--max-turns leaked into app.Config: %+v", cfg)
 		}
@@ -169,7 +169,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if !f.headless {
 			t.Fatal("headless must default to true (the inversion from mecated)")
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if cfg.Interactive {
 			t.Error("default headless must map to Interactive=false")
 		}
@@ -180,7 +180,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if !cfg.Interactive {
 			t.Error("--headless=false must map to Interactive=true")
 		}
@@ -194,7 +194,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if !f.guardrailsOff {
 			t.Fatal("--guardrails=off must set guardrailsOff")
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if !cfg.GuardrailsDisabled {
 			t.Error("guardrailsOff must map to GuardrailsDisabled=true")
 		}
@@ -208,7 +208,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if cfg.GuardrailsDisabled {
 			t.Error("guardrails must NOT be disabled when --guardrails is unset")
 		}
@@ -228,7 +228,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if cfg.SubagentAskReviewerModel != "reviewer-model" {
 			t.Errorf("SubagentAskReviewerModel = %q", cfg.SubagentAskReviewerModel)
 		}
@@ -246,7 +246,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		if appConfig(f, newDiagnostics()).RouterDisabled {
+		if appConfig(f, newDiagnostics(), observability{}).RouterDisabled {
 			t.Error("an unset --subagent-model-router must leave RouterDisabled false (router governed by taxonomy)")
 		}
 		// A bare invocation must still PARSE; it is a harmless no-op and must NOT disable
@@ -255,7 +255,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("bare --subagent-model-router must parse: %v", err)
 		}
-		if appConfig(f, newDiagnostics()).RouterDisabled {
+		if appConfig(f, newDiagnostics(), observability{}).RouterDisabled {
 			t.Error("a bare --subagent-model-router must NOT set RouterDisabled")
 		}
 		// =false is the kill-switch → RouterDisabled.
@@ -263,7 +263,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags --subagent-model-router=false: %v", err)
 		}
-		if !appConfig(f, newDiagnostics()).RouterDisabled {
+		if !appConfig(f, newDiagnostics(), observability{}).RouterDisabled {
 			t.Error("--subagent-model-router=false must set RouterDisabled (the kill-switch)")
 		}
 	})
@@ -285,7 +285,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if !f.postureFlagSet {
 			t.Error("explicit --posture must set postureFlagSet")
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if cfg.Workspace != "/repo" || cfg.Model != "gpt-x" || !cfg.UseMock {
 			t.Errorf("core knobs not mapped: %+v", cfg)
 		}
@@ -320,7 +320,7 @@ func TestAppConfigMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		cfg := appConfig(f, newDiagnostics())
+		cfg := appConfig(f, newDiagnostics(), observability{})
 		if cfg.OpenAIKey != "sk-oai" || cfg.OpenRouterKey != "sk-or" || cfg.AnthropicKey != "sk-ant" {
 			t.Errorf("all three keys must be read: %q / %q / %q", cfg.OpenAIKey, cfg.OpenRouterKey, cfg.AnthropicKey)
 		}

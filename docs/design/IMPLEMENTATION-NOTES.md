@@ -4175,6 +4175,47 @@ periodic/interval refresh, OpenAI lister (catalog-only by design), the per-sessi
 live-capability closer, surfacing the output ceiling/thinking in the picker proto (Slice D), the
 OpenRouter `reasoning_details` replay fix (a separate request-path bug, not bundled).
 
+### Headless telemetry (mecatequi, mecak8s — issue #343, ADR 0098)
+
+The headless mains opted OUT of the observability pipeline mecated wires; ADR 0098
+REUSES it behind OPT-IN flags, default-off so the no-telemetry posture stays
+byte-identical. The wiring path is the SAME `telemetry.Setup` → `NewMetrics` →
+`metrics.WithRole(RoleMain)` + `telemetry.NewTracing` → `telemetry.NewSink` →
+role-scoper closure mecated wires inline, factored into
+`internal/cliconfig.HeadlessTelemetry` (`HeadlessTelemetryHandles`:
+`Shutdown`/`Registry`/`Metrics`/`Sink`/`ToolCallRecorder`/`MetricsRoleScoper`).
+Nil-safe: zero endpoints ⇒ zero handles (byte-identical default).
+
+- **`telemetry.Setup` gained an optional OTLP METRICS push reader** (`OTLPConfig`:
+  `MetricsEndpoint`/`MetricsProtocol`/`MetricsInsecure`/`MetricsHeaders`/
+  `MetricsTimeout`/`MetricsPushInterval`). When `MetricsEndpoint != ""`,
+  `newMeterProvider` attaches a `sdkmetric.NewPeriodicReader` over an
+  `otlpmetricgrpc`/`otlpmetrichttp` exporter alongside the always-on prometheus
+  reader; `Providers.Shutdown` flushes + stops it. Scrape-only callers are
+  byte-identical (no periodic reader when empty).
+- **mecatequi (single-shot):** OTLP push (metrics + traces) with flush-before-exit.
+  Flags: `--otlp-endpoint`/`--otlp-protocol`/`--otlp-insecure`/
+  `--otlp-metrics-endpoint`/`--otlp-metrics-protocol`/`--otlp-shutdown-timeout`
+  (default 5s). The `defer flushTelemetry` runs AFTER `defer built.Close()` (LIFO
+  → flush first), bounded by `--otlp-shutdown-timeout` so a dead collector cannot
+  hang CI; `os.Exit` then kills any lingering export goroutine.
+- **mecak8s (long-lived):** `--metrics-addr` (loopback-only, fail-closed at parse
+  time via `isLoopbackAddr`, ADR 0018 decision 6) mounts a SEPARATE loopback
+  `http.Server` serving `telemetry.NewAdminMux` (`/metrics` + pprof/expvar); it
+  joins the `errCh` set + the `boundedShutdown` sequence. `--otlp-*` is the opt-in
+  push twin. SIGTERM flushes OTLP via the `defer flushTelemetry` (LIFO before
+  `built.Close()`).
+
+Label discipline inherits the issue-#47 closed `Role*` set (`attrRole`/`roleFamily`):
+no session id, model id, run id, or free text. The metric surface reuses the
+existing instruments (`mecatl.tokens`, `mecatl.runs`, `mecatl.tool.calls`/
+`duration`/`queue`, the latency histograms, `mecatl.active_runs`,
+`mecatl.permission.asks`, `mecatl.cache_hit_ratio`) — NONE added. A `mecatl.cost`
+counter is deferred to #192 (no `Cost` field anywhere;
+`internal/adapter/providercatalog/catalog.go` does not parse cost). ADR-0027 List-1 gains rows 37
+(mecatequi OTLP periodic-reader + flush-on-exit) and 38 (mecak8s `/metrics`
+loopback listener); no List-2 row (both stateless across restart by design).
+
 ### Per-agent persistent memory (`memory:` field, issue #33 — READ-ONLY v1)
 
 A specialist agent def may carry `memory: user | project` — a persistent per-agent dir whose
@@ -5191,7 +5232,7 @@ raced). A shutdown-cancelled fire is persisted terminal via `settleFireTerminalS
 `close_internal_test.go`, `internal/adapter/server/close_test.go`, and
 `internal/app/scheduler_fire_cancel_test.go`.
 
-**In-flight fire state (issue #386, ADR 0097).** A scheduled fire is observable
+**In-flight fire state (issue #386, ADR 0098).** A scheduled fire is observable
 while it runs — previously a claimed fire was invisible until `RecordFire`,
 rendering `fires: none` (ambiguous: running / stuck / crashed / RecordFire-failed).
 The in-flight fire is now a first-class PERSISTED lifecycle stage in the durable

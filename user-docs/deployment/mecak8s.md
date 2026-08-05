@@ -35,8 +35,8 @@ Kill any pod. The survivor acquires the lease and resumes interrupted sessions f
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |
-| Prometheus `/metrics` listener | Yes | No |
-| OTel / admin mux | Yes | No |
+| Prometheus `/metrics` listener | Yes | Opt-in (`--metrics-addr`, loopback only) |
+| OTel / admin mux | Yes | Opt-in (`--otlp-*` push; `/metrics` loopback scrape) |
 | `perf-mcp` subcommand | Yes | No |
 | `skills promote` / `config` subcommands | Yes | No |
 | ACP surface | Yes | No |
@@ -287,14 +287,14 @@ For production load, note that Redis is a single point of failure in the default
 | Capability | mecated | mecak8s |
 |---|---|---|
 | Interactive TUI clients | Yes (`mecatui` connects; `--headless=false` default) | No (`--headless=true` default; headless-only) |
-| Prometheus `/metrics` listener | Yes (`--metrics-addr`) | No |
-| OTel traces and runtime admin mux | Yes | No |
+| Prometheus `/metrics` listener | Yes (`--metrics-addr`) | Opt-in (`--metrics-addr`, loopback only — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)) |
+| OTel traces and runtime admin mux | Yes | Opt-in (`--otlp-*` push + the `/metrics` loopback admin mux — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)) |
 | `perf-mcp` diagnostics subcommand | Yes | No |
 | `skills promote` / `config` subcommands | Yes | No |
 | JSONL on-disk session store | Yes (`--store-dir`) | No — Redis only |
 | Single-replica without external state | Yes (in-memory or JSONL) | No — Redis is required |
 
-If you need the Prometheus metrics endpoint, OTel traces, or an interactive TUI client, run `mecated` instead. For multi-replica deployments with `mecated` and Redis-backed state you would need to wire `--redis-url` — but that flag does not exist on `mecated`. `mecak8s` is the only binary that exposes it.
+If you need the `perf-mcp` diagnostics subcommand, the `skills promote` / `config` subcommands, or an interactive TUI client, run `mecated` instead. `mecak8s` now offers OPT-IN telemetry (`--metrics-addr` loopback scrape + `--otlp-*` push, see [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md) and the [`mecak8s` flag reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md)); for multi-replica deployments with `mecated` and Redis-backed state you would need to wire `--redis-url` — but that flag does not exist on `mecated`. `mecak8s` is the only binary that exposes it.
 
 ---
 

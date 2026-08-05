@@ -1871,13 +1871,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 // since it exposes command/file execution to the network. It never hard-fails:
 // an operator may legitimately front the server with a service mesh.
 func warnIfNonLoopback(flagName, addr string, authed bool) {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	ip := net.ParseIP(host)
-	loopback := host == "localhost" || (ip != nil && ip.IsLoopback())
-	if loopback {
+	if cliconfig.IsLoopbackAddr(addr) {
 		slog.Info("API bound to loopback (single-user localhost trust model)",
 			"flag", flagName, "addr", addr, "authenticated", authed)
 		return
@@ -1891,27 +1885,11 @@ func warnIfNonLoopback(flagName, addr string, authed bool) {
 		"flag", flagName, "addr", addr)
 }
 
-// isLoopbackHostPort reports whether a "host:port" listen address binds the
-// loopback interface (127.0.0.0/8, ::1, or the literal "localhost"). It is the
-// fail-closed gate for mounting the UNAUTHENTICATED perf MCP server: the admin
-// surface can leak goroutine-derived names/timing, so it must never ride a
-// non-loopback listener (decision 6 / CWE-306). A malformed address (no port) is
-// treated as the bare host. An empty/unparseable host is NOT loopback (fail safe).
-func isLoopbackHostPort(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	if host == "localhost" {
-		// ACCEPTED assumption (security review Low): we trust the literal string
-		// "localhost" as loopback without resolving it. A self-inflicted /etc/hosts
-		// override is contrived and single-user; the SDK's DNS-rebinding/Host
-		// validation remains the runtime backstop.
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
+// isLoopbackHostPort is the local alias for the shared cliconfig loopback gate so
+// the perf-MCP refusal reads naturally; the canonical implementation lives in
+// internal/cliconfig (shared with mecak8s so the two cannot drift). See
+// cliconfig.IsLoopbackAddr for the fail-closed semantics.
+var isLoopbackHostPort = cliconfig.IsLoopbackAddr
 
 // slowTurnSource bridges the telemetry slow-turn ring buffer to the
 // mcpperf.SlowTurnSource read seam. The dependency points inward (cmd →
