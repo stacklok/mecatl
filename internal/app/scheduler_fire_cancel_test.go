@@ -154,7 +154,7 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 		Store:       schedStore,
 		Clock:       wallclock.Clock{},
 		Diagnostics: port.NopDiagnostics{},
-		Fire:        makeFireFunc(svc),
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout),
 	})
 	// FireNow is leadership-gated; a nil-lease scheduler is always the leader, so
 	// Start is not required to drive a manual fire. Do NOT call svc.Close in
@@ -174,17 +174,20 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 	// Wait for the fire's run to be live (blocking in the LLM call) before
 	// cancelling it. Without this, Close could race ahead of StartRunContent and
 	// cancel a run that never started (a different failure mode than the one this
-	// test targets). Claim stamps LastFireSessionID="pending" before the fire
-	// mints+creates the session; once Claim has run the fire is in flight. Poll for
-	// that, then a short headroom for the run to enter Stream (StateRunning).
+	// test targets). RecordFireStart (issue #386) flips LastFireSessionID off the
+	// "pending" sentinel to the REAL session id before the run starts, so poll for
+	// that (a non-pending, non-empty id means the fire path has reached
+	// RecordFireStart and is about to enter StartRunContent), then a short
+	// headroom for the run to enter Stream (StateRunning).
 	if !eventually(5*time.Second, func() bool {
 		loaded, lerr := schedStore.Load(ctx, schedName)
 		if lerr != nil {
 			return false
 		}
-		return string(loaded.State.LastFireSessionID) == "pending"
+		sid := string(loaded.State.LastFireSessionID)
+		return sid != "" && sid != "pending"
 	}) {
-		t.Fatal("Claim did not stamp LastFireSessionID=pending within 5s (fire did not start)")
+		t.Fatal("RecordFireStart did not stamp the real LastFireSessionID within 5s (fire did not start)")
 	}
 	time.Sleep(200 * time.Millisecond)
 
