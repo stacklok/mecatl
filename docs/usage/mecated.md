@@ -34,6 +34,31 @@ $ go run ./cmd/mecated serve --openai --workspace "$PWD"
 - `mecated --help-all` — the exhaustive serve-compatible flag reference (every
   public flag a `mecated serve` invocation accepts), plus a note pointing to
   `mecated acp --help-all` for the ACP-scoped subset.
+- `mecated import --help` — offline Codex/Claude Code session, skill, and
+  workspace-file import flags. The import does not start a listener or provider.
+
+### Importing local agent work
+
+`mecated import` converts a Codex or Claude Code JSONL transcript into an idle,
+provider-neutral Mecatl session in the local JSONL store:
+
+```console
+$ go run ./cmd/mecated import \
+    --from claude-code \
+    --session ~/.claude/projects/<project>/<session-id>.jsonl \
+    --store-dir ~/.local/share/mecatl/sessions \
+    --workspace ~/work/imported-project \
+    --copy-files \
+    --skills
+```
+
+Only user and assistant text is seeded into the conversation. Provider-private
+reasoning and tool-call records are omitted so the history remains valid when a
+different Mecatl provider resumes it. `--copy-files` never overwrites existing
+paths and skips `.git`, symlinks, and special files. `--skills` copies
+conventional Agent Skills bundles to `<workspace>/.mecatl/skills`; repeat
+`--skills-dir` to add explicit sources. Start `mecated serve` with the same
+`--store-dir`, and explicitly enable the imported skills directory.
 
 ### Flags
 
@@ -797,4 +822,3 @@ in-root operation. `Glob`/`Grep` patterns are not paths: a leading `/` in a
 pattern is stripped (patterns are root-relative), and patterns are never routed
 through absolute resolution. Rationale + threat model:
 [ADR 0047](../adr/0047-absolute-path-resolution.md).
-
