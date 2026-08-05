@@ -2211,13 +2211,27 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 		// newOpenAICompatEntry), so it needs the same synthesis — this is a
 		// provider-id check, not an adapter-type check, because the server
 		// layer only has the resolved id, not the adapter.
-		if newProv == "openai" || newProv == "openrouter" {
+		if usesResponsesReplayIDs(newProv) {
 			return synthesizeOpenAIItemIDs(stripped), srcOwner, nil
 		}
 		return stripped, srcOwner, nil
 	}
 	// Same provider: replay the blobs verbatim (warm cache).
 	return snap, srcOwner, nil
+}
+
+// usesResponsesReplayIDs reports whether a resolved provider replays through
+// the stateless OpenAI Responses adapter and therefore requires stable item IDs
+// on cross-provider carryover. Keep this classification in one server-layer
+// seam: provider IDs are composition-owned strings here, while the server has
+// no adapter type to inspect.
+func usesResponsesReplayIDs(providerID string) bool {
+	switch providerID {
+	case "openai", "openrouter", "openai-codex", "toolhive":
+		return true
+	default:
+		return false
+	}
 }
 
 // synthesizeOpenAIItemIDs synthesises a stable, unique ItemID for every ToolCall

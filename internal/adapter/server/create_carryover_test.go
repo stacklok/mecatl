@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -49,6 +50,16 @@ func carryoverFactory(reply string, seen *atomic.Value) server.SessionEngineFact
 // StateCompleted, so validateCarryover's loadAndReopen reopens it to idle.
 func persistBlobsSource(t *testing.T, store *memstore.Store, id session.SessionID, providerID string) {
 	t.Helper()
+	persistBlobsSourceCalls(t, store, id, providerID, []session.ToolCall{{
+		ID:     session.ToolCallID("c1"),
+		Name:   "Read",
+		Args:   json.RawMessage(`{"path":"f.go"}`),
+		ItemID: "fc_item_1",
+	}})
+}
+
+func persistBlobsSourceCalls(t *testing.T, store *memstore.Store, id session.SessionID, providerID string, calls []session.ToolCall) {
+	t.Helper()
 	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{MaxTurns: 10}, time.Unix(0, 0))
 	sess.ProviderID = providerID
 	if err := sess.RecordUserPrompt("do the thing", nil); err != nil {
@@ -57,23 +68,21 @@ func persistBlobsSource(t *testing.T, store *memstore.Store, id session.SessionI
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	call := session.ToolCall{
-		ID:     session.ToolCallID("c1"),
-		Name:   "Read",
-		Args:   json.RawMessage(`{"path":"f.go"}`),
-		ItemID: "fc_item_1",
-	}
 	if err := sess.RecordAssistant(session.Message{
 		Role:            session.RoleAssistant,
 		Text:            "reading f.go",
 		Reasoning:       "ENCRYPTED-REASONING-BLOB",
 		ReasoningItemID: "rs_src_item_1",
 		ProviderPhase:   "commentary",
-		ToolCalls:       []session.ToolCall{call},
+		ToolCalls:       calls,
 	}); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
-	if err := sess.RecordToolResults([]session.ToolResult{session.NewToolResult(call.ID, "file contents")}); err != nil {
+	results := make([]session.ToolResult, 0, len(calls))
+	for _, call := range calls {
+		results = append(results, session.NewToolResult(call.ID, "file contents"))
+	}
+	if err := sess.RecordToolResults(results); err != nil {
 		t.Fatalf("RecordToolResults: %v", err)
 	}
 	if err := sess.Complete(); err != nil {
@@ -81,6 +90,98 @@ func persistBlobsSource(t *testing.T, store *memstore.Store, id session.SessionI
 	}
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatalf("Save source: %v", err)
+	}
+}
+
+// TestOpenAICodexCarryoverReplayIDs pins the complete current Responses replay-ID
+// classification. Same-provider Codex preserves its opaque state; every
+// cross-provider Responses destination synthesizes stable collision-safe IDs;
+// non-Responses destinations retain the ordinary stripped empty-ID form.
+func TestOpenAICodexCarryoverReplayIDs(t *testing.T) {
+	ctx := context.Background()
+	svc, store := newMCPServiceStore(t, "reply", carryoverFactory("reply", nil))
+
+	assert := func(t *testing.T, srcProvider, dstProvider string, sameProvider, synthesize bool) {
+		t.Helper()
+		srcID := session.SessionID("src-" + strings.ReplaceAll(srcProvider+"-"+dstProvider, "/", "-"))
+		persistBlobsSourceCalls(t, store, srcID, srcProvider, []session.ToolCall{
+			{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"f.go"}`), ItemID: "fc_item_1"},
+			{ID: "c2", Name: "Grep", Args: json.RawMessage(`{"pattern":"needle"}`), ItemID: "fc_item_2"},
+		})
+		created, err := svc.CreateSessionWithProfile(ctx, "/ws/codex-carryover", session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: dstProvider, ModelID: "gpt-5"}, server.ProfileDefault, server.WithSourceSession(srcID))
+		if err != nil {
+			t.Fatalf("carryover %s -> %s: %v", srcProvider, dstProvider, err)
+		}
+		got, err := store.Load(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("Load carryover: %v", err)
+		}
+		assistantCount, toolCallCount := 0, 0
+		seenIDs := map[string]bool{}
+		for _, message := range got.Conversation.Messages {
+			if message.Role != session.RoleAssistant {
+				continue
+			}
+			assistantCount++
+			toolCallCount += len(message.ToolCalls)
+			if sameProvider {
+				if message.Reasoning != "ENCRYPTED-REASONING-BLOB" || message.ProviderPhase != "commentary" {
+					t.Fatalf("same-provider Codex lost replay blobs: %+v", message)
+				}
+			} else if message.Reasoning != "" || message.ProviderPhase != "" {
+				t.Fatalf("cross-provider carryover kept private replay blobs: %+v", message)
+			}
+			for i, call := range message.ToolCalls {
+				switch {
+				case sameProvider:
+					want := fmt.Sprintf("fc_item_%d", i+1)
+					if call.ItemID != want {
+						t.Fatalf("same-provider item %d = %q, want %q", i, call.ItemID, want)
+					}
+				case synthesize:
+					want := fmt.Sprintf("carryover_item_%d", i)
+					if call.ItemID != want || strings.HasPrefix(call.ItemID, "fc_") {
+						t.Fatalf("cross-provider synthetic item id = %q, want stable %q", call.ItemID, want)
+					}
+					if seenIDs[call.ItemID] {
+						t.Fatalf("duplicate synthetic item id %q", call.ItemID)
+					}
+					seenIDs[call.ItemID] = true
+				default:
+					if call.ItemID != "" {
+						t.Fatalf("non-Responses destination %q retained/synthesized item id %q", dstProvider, call.ItemID)
+					}
+				}
+			}
+		}
+		if assistantCount != 1 || toolCallCount != 2 {
+			t.Fatalf("assistant/tool-call count = %d/%d, want 1/2", assistantCount, toolCallCount)
+		}
+		if synthesize && len(seenIDs) != 2 {
+			t.Fatalf("synthetic item id count = %d, want 2", len(seenIDs))
+		}
+	}
+
+	t.Run("same Codex provider", func(t *testing.T) {
+		assert(t, "openai-codex", "openai-codex", true, false)
+	})
+	for _, tc := range []struct {
+		name, source, destination string
+	}{
+		{name: "OpenAI Responses", source: "anthropic", destination: "openai"},
+		{name: "OpenRouter Responses", source: "anthropic", destination: "openrouter"},
+		{name: "API OpenAI to Codex", source: "openai", destination: "openai-codex"},
+		{name: "Codex to API OpenAI", source: "openai-codex", destination: "openai"},
+		{name: "ToolHive Responses", source: "anthropic", destination: "toolhive"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert(t, tc.source, tc.destination, false, true)
+		})
+	}
+	for _, destination := range []string{"opencode", "anthropic", "mock"} {
+		t.Run("non-Responses "+destination, func(t *testing.T) {
+			assert(t, "openai", destination, false, false)
+		})
 	}
 }
 

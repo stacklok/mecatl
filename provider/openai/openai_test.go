@@ -76,6 +76,26 @@ func TestTranslateFunctionCallTurn(t *testing.T) {
 	assertChunks(t, got, want)
 }
 
+// TestTranslateUnknownMetadataEventIgnored pins the successful Responses
+// translator's forward-compatible policy: an unknown metadata event emits no
+// neutral chunk and does not prevent the terminal response from completing.
+func TestTranslateUnknownMetadataEventIgnored(t *testing.T) {
+	fixture := strings.NewReader(
+		"event: response.synthetic_metadata.updated\n" +
+			`data: {"type":"response.synthetic_metadata.updated","sequence_number":0,"metadata":{"opaque":true}}` + "\n\n" +
+			"event: response.completed\n" +
+			`data: {"type":"response.completed","sequence_number":1,"response":{"status":"completed","usage":{"input_tokens":1,"input_tokens_details":{},"output_tokens":1,"output_tokens_details":{},"total_tokens":2}}}` + "\n\n")
+	got, err := decodeSSE(fixture)
+	if err != nil {
+		t.Fatalf("decodeSSE: %v", err)
+	}
+	want := []port.Chunk{
+		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 1, OutputTokens: 1}},
+		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	}
+	assertChunks(t, got, want)
+}
+
 // TestUsageCacheReadSubsetOfInput is the openai half of the cross-provider
 // parity guard: every Usage chunk produced from the recorded fixtures must
 // satisfy CacheReadTokens <= InputTokens (the engine/session contract that

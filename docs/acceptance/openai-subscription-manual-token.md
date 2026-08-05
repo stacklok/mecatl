@@ -835,5 +835,38 @@ Verification: all four named app acceptance tests first failed before compositio
   or lint-cache override was used. The final normal/default-cache `task lint`
   passes both the root and engine modules with zero issues after adding the two
   exported-symbol comments identified by the lint gate.
-Commit: pending the two required reviews and scoped Step 6 local commit.
+Commit: d0fc6ba3
+
+Step 7 — Close Responses replay, error, and carryover compatibility gaps
+Base: d0fc6ba3a9
+Coder: /root/step7_coder (interrupted partial candidate) and
+  /root/main_sync_coder (replacement owner, repair, and verification).
+Reviewers: /root/step7_spec_review (specification/architecture) and
+  /root/step5_coder_recovery (correctness/security/reuse). The specification
+  reviewer returned zero blockers; security final confirmation is pending this
+  log correction.
+Findings: the existing provider/openai translator and request builder already
+  consume every neutral fact in the sanitized Codex fixtures, so no second SSE
+  decoder or Codex-specific Responses builder was added. The Step 7 product
+  change adds openai-codex and completes the centralized Responses replay-ID
+  classification for the existing ToolHive Responses destination.
+  The inherited carryover proof had widened a shared one-tool-call fixture and
+  broke an unrelated gRPC oracle; the repair restores the shared fixture and uses
+  a private two-call source to prove collision-safe synthesis. Consolidated
+  review then found ToolHive missing from that classifier, a fixture gate that
+  trusted SSE labels without decoding data.type, shape-only stream assertions,
+  and a potentially vacuous same-Codex preservation check. The repair now pins
+  all four Responses destinations (and three negative destinations), validates
+  every fixture data object plus label/type agreement with three mutation guards,
+  asserts exact neutral text/phase/reasoning/usage/stop/cancellation/tool-output
+  values, and requires exactly one preserved assistant turn with two tool calls.
+  Runtime harmless unknown metadata remains separately pinned in provider/openai.
+Verification: all named Step 7 acceptance proofs pass offline. Normal/default-
+  cache full race suites pass for provider/openai, internal/app,
+  internal/adapter/server, internal/adapter/openaicodex, and
+  internal/adapter/llmresilience. Focused root and provider-module vet, gofmt,
+  and git diff checks pass. The final normal/default-cache `task lint` passes
+  the root, engine, and every provider module with zero issues. No private cache
+  or temp override was used.
+Commit: pending security final confirmation and scoped Step 7 local commit.
 ```
