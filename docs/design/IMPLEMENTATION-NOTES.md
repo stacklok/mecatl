@@ -5191,6 +5191,42 @@ raced). A shutdown-cancelled fire is persisted terminal via `settleFireTerminalS
 `close_internal_test.go`, `internal/adapter/server/close_test.go`, and
 `internal/app/scheduler_fire_cancel_test.go`.
 
+**In-flight fire state (issue #386, ADR 0097).** A scheduled fire is observable
+while it runs — previously a claimed fire was invisible until `RecordFire`,
+rendering `fires: none` (ambiguous: running / stuck / crashed / RecordFire-failed).
+The in-flight fire is now a first-class PERSISTED lifecycle stage in the durable
+store (`engine/port/schedule.go`): `ScheduleState` gains
+`LastFireStartedAt`/`LastFireProgressAt`/`FireDeadline`, `ScheduleFire` gains
+`StartedAt`/`ProgressAt`/`Deadline`, `ScheduleSpec` gains `FireTimeout`, and
+`ScheduleStore` gains `RecordFireStart` (persist the in-flight fire — empty `Stop` —
+and stamp the real `sched--` session id early) + `RecordFireProgress` (advance
+last-progress; one write per turn boundary, never per chunk). `RecordFire` flips
+terminal + clears the in-flight fields; `Claim`/`ClaimNow` zero them. All three
+backends (memschedulestore/jsonlstore/redisstore) implement the methods; the
+scheduleconformance suite pins the contract. The fire lifecycle
+(`internal/app/scheduler_fire.go` `makeFireFunc`) calls `RecordFireStart` right
+after session create, arms a `time.AfterFunc` watchdog that cancels the run via the
+`Service.Cancel`/`run.Cancel` seam after `effectiveFireDeadline`
+(`spec.FireTimeout`, else `defaultFireTimeout` = 30m, test-overridable), and
+overrides a deadline-fired `StopCancelled` to the new `session.StopTimeout` (a
+clean, recoverable budget terminal — a `StopBudget` sibling) with an honest error.
+`deliverFireStarted` (`internal/app/scheduler_delivery_run.go`) enqueues a
+fenced-untrusted, harness-authored "started" notice to the SAME `DeliveryQueue`
+exactly-once ledger (a distinct entry from the terminal note, no model content).
+The stale reconciler keeps the scheduler storage-agnostic: it DETECTS stale
+in-flight state store-only (the `pending` sentinel past the window, or a real
+in-flight fire whose prior-fire lease is no longer live) and RECONCILES via a
+composition-injected `ReconcileStaleFire` callback (crash-after-Claim → terminal
+`StopError`; crash-after-session → session settled `cancelled` + `StopError`); a
+live fire (lease held) is never reconciled. All three surfaces
+(`engine/agent/scheduletool.go` `renderScheduleInspect`, the gRPC/HTTP wire mappers
+in `internal/adapter/server/grpc_schedule.go`, the `cmd/mecatui` overlay) render a
+claimed fire as `in-flight: claimed (session pending)` — never `fires: none` — and
+an in-flight fire with started/last-progress/deadline. Covered by
+`internal/app/scheduler_fire_state_test.go`, `scheduler_reconcile_test.go`,
+`internal/adapter/server/schedule_inflight_wire_test.go`, and the agent/TUI render
+tests.
+
 **Live-feed reconnect (issue #387, ADR 0096).** The mecatui per-session
 `StreamSessionLive` subscription self-heals: a clean close or a transient error on
 the live reader now drives a client-owned reconnect instead of the old silent-drop.

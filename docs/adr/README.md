@@ -40,6 +40,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0073 — Schedule tool](./0073-schedule-tool.md)
 - [0074 — Many loops per server; scheduler shape](./0074-many-loops-scheduler-shape.md)
 - [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md)
+- [0097 — Scheduled fires are observable in-flight: a first-class persisted lifecycle stage](./0097-scheduled-fire-inflight-state.md)
 - [0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](./0096-live-feed-reconnect.md)
 - [0076 — The schedule manager is store-shaped and pre-Service; the shared catalog carries the Schedule tool](./0076-schedule-shared-catalog.md)
 - [0081 — `RulesSource` port for `.claude/rules` discovery](./0081-rules-source-port.md)

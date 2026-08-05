@@ -576,6 +576,18 @@ jsonlstore) — no new artifact. The `cmd/mecatui` signal-handler goroutine
 (`setupSignalHandler`) is process-scoped, retired on the normal quit path via
 `forceExit`, and never outlives the process; decision = derive.
 
+**Issue #386 re-audit (in-flight scheduled-fire state).** #386 added NO new List-1
+row. The in-flight fire state is a PERSISTED lifecycle stage in the durable
+`ScheduleStore` (row 8's jsonlstore / the redisstore sibling) — `RecordFireStart` /
+`RecordFireProgress` / the `LastFireStartedAt`/`LastFireProgressAt`/`FireDeadline`
+fields live in the store, not a lost-on-restart in-memory resource, which is exactly
+why the crash-distinction criterion is satisfiable. The stale-fire reconciler is a
+new STEP in the already-inventoried scheduler tick goroutine (row 30), not a new
+goroutine/LRU; it detects store-only and reconciles via a composition callback. The
+`defaultFireTimeout` `time.AfterFunc` watchdog is per-fire run-scoped (dies with the
+fire's run, row 9). The started-notice rides the existing `DeliveryQueue` (row 34).
+`decision = derive` throughout.
+
 ### Does resource-lifetime management earn a seam now?
 
 The kit inventory's question, answered: **no, not yet; the hand-managed lifecycles
