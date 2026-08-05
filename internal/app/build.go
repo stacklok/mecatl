@@ -2249,7 +2249,7 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	if ss, ok := store.(interface{ ScheduleStore() port.ScheduleStore }); ok {
 		fireStore = ss.ScheduleStore()
 	}
-	sched.SetFire(makeFireFunc(svc, fireStore, defaultFireTimeout))
+	sched.SetFire(makeFireFunc(svc, fireStore, defaultFireTimeout, deliverFireStarted(svc, deliveryQueue)))
 	// Fire-result delivery (ADR 0075): wire the composition-injected
 	// DeliverFireResult callback the scheduler invokes from fireClaimed AFTER
 	// RecordFire. It closes over the Service + the SAME durable DeliveryQueue

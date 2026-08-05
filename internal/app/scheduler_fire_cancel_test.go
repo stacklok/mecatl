@@ -154,7 +154,7 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 		Store:       schedStore,
 		Clock:       wallclock.Clock{},
 		Diagnostics: port.NopDiagnostics{},
-		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout),
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout, nil),
 	})
 	// FireNow is leadership-gated; a nil-lease scheduler is always the leader, so
 	// Start is not required to drive a manual fire. Do NOT call svc.Close in

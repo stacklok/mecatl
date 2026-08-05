@@ -13,6 +13,22 @@ import (
 // window.
 const fireDeliveryMaxRunes = 10000
 
+// renderFireStarted renders a fire's "started" notice as a FENCED-UNTRUSTED
+// harness note (issue #386, Phase 4a). It mirrors renderFireDelivery but carries
+// ONLY the schedule name + fire/session id — NO model-authored content (none
+// exists at start: the run has not produced any output yet). The note is framed
+// as data ("a scheduled task started"), never as a live instruction.
+//
+// It is a DISTINCT ledger entry from the terminal note (Enqueue mints a fresh
+// seq per call), so an origin conversation receives exactly one start note and
+// one terminal note per fire. The provenance header is passed through
+// NeutraliseFraming inside FenceUntrusted so a forged marker in the
+// model-authored schedule name cannot break out of the block.
+func renderFireStarted(scheduleName, fireID string) string {
+	header := fmt.Sprintf("[scheduled task %s started (fire %s)]", scheduleName, fireID)
+	return agent.FenceUntrusted(header)
+}
+
 // renderFireDelivery renders a fire's terminal outcome as a FENCED-UNTRUSTED
 // harness note suitable for delivery to the parent conversation. It is the pure
 // renderer sibling of renderCarriedContext: given a schedule name, fire id,

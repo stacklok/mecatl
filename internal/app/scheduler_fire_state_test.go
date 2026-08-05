@@ -120,7 +120,7 @@ func TestFireStartPersistsInFlightRecord(t *testing.T) {
 		Store:       schedStore,
 		Clock:       wallclock.Clock{},
 		Diagnostics: port.NopDiagnostics{},
-		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout),
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout, nil),
 	})
 
 	// Drive the fire synchronously via FireNow (blocks until RecordFire).
@@ -250,7 +250,7 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 		Store:       schedStore,
 		Clock:       wallclock.Clock{},
 		Diagnostics: port.NopDiagnostics{},
-		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout),
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout, nil),
 	})
 
 	fire, fireErr := sched.FireNow(ctx, schedName, time.Now())
@@ -362,7 +362,7 @@ func TestFireProgressAdvancesOnTurnBoundaries(t *testing.T) {
 		Store:       schedStore,
 		Clock:       wallclock.Clock{},
 		Diagnostics: port.NopDiagnostics{},
-		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout),
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout, nil),
 	})
 
 	// Drive the fire asynchronously (the second turn blocks).
@@ -494,7 +494,7 @@ func TestFireCreateFailureRecordsTerminalFire(t *testing.T) {
 		Store:       schedStore,
 		Clock:       wallclock.Clock{},
 		Diagnostics: port.NopDiagnostics{},
-		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout),
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout, nil),
 	})
 
 	fire, fireErr := sched.FireNow(ctx, schedName, time.Now())

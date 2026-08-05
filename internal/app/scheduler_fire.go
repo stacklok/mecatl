@@ -43,7 +43,7 @@ const (
 // advanced NextFireAt, so a failed fire is NOT retried). Model pinning is
 // fail-closed at the provider call — there is NO pre-flight ListModels check (a
 // live network call, deferred); an unknown model surfaces as StopError.
-func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration) scheduler.FireFunc {
+func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		sel := server.ProviderSelector{
 			ProviderID: sched.Spec.Selector.ProviderID,
@@ -132,6 +132,20 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			StartedAt:    startedAt,
 			Deadline:     deadline,
 		})
+		// "Started" notice (issue #386, Phase 4a): route a fenced-untrusted
+		// harness note carrying ONLY the schedule name + fire/session id back
+		// into the fire's origin conversation, right AFTER RecordFireStart.
+		// A nil deliverStarted is the byte-identical no-start-notice path.
+		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
+			deliverStarted(ctx, sched, port.ScheduleFire{
+				ID:           fireID,
+				ScheduleName: sched.Spec.Name,
+				SessionID:    sess.ID,
+				FiredAt:      now,
+				StartedAt:    startedAt,
+				Deadline:     deadline,
+			})
+		}
 
 		// Arm the wall-clock watchdog (issue #386): a non-zero deadline bounds the
 		// fire's RUN. On lapse it cancels the in-flight run via the Service's
