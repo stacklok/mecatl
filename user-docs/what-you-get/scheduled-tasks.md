@@ -149,6 +149,16 @@ Two metrics instruments are emitted:
 
 Neither carries a role label — a fire's own run already reports `role="main"` on its usual per-run metrics.
 
+## Shutdown and in-flight fires
+
+Quitting an embedded `mecatui` (or stopping a `mecated`) runs a **bounded** shutdown
+(issue #388): an in-flight fire is **cancelled**, its session snapshot is persisted as
+`cancelled` (recoverable on the next run via the normal resume path, never left
+permanently `running`/`pending`), and the whole cleanup is capped — it cannot hang on
+a stuck fire, MCP server, or gRPC stream. A second `SIGINT`/`SIGTERM` during cleanup
+forces an immediate exit. See the [mecatui shutdown contract](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#shutdown)
+for the per-layer timeout budget.
+
 ## What's next
 
 - [Operator deployment — mecated](/deployment/mecated.md) for the full flag reference and how the scheduler fits into a running server.

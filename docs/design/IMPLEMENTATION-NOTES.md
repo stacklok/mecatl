@@ -5168,6 +5168,29 @@ self-correct test (`internal/app/session_engine_test.go`
 (`TestSharedAndSelectorEngineResolveSameSource`), and the selector echo heal
 (`internal/adapter/server/resolved_model_test.go` `TestServiceResolvedModelSelectorLiveFirst`).
 
+**Bounded shutdown (issue #388).** Embedded-mecatui shutdown is bounded end to end so
+quitting on an in-flight scheduled fire cannot hang the process. Each layer has a
+package-level test-overridable `var` timeout and abandons (WARN via the injected
+`port.Diagnostics`) rather than block unboundedly: `embed.Server.Close` bounds gRPC
+`GracefulStop` (`gracefulStopTimeout` 30s) with a hard `grpc.Server.Stop()` fallback
+and bounds composition teardown (`compositionCloseTimeout` 10s); `Scheduler.Stop`
+bounds the leadership-loop and epoch joins (`stopLeadershipJoinTimeout` 5s each);
+`Service.Close` cancels in-flight runs via `run.Cancel()` — EXCLUDING runs parked on
+a permission ask whose durable awaiting snapshot is the cloud-native Phase-2 resume
+point (the race-free `runState.awaiting` atomic, set by `Persist` only AFTER the
+durable `Save` lands) — and bounds per-session engine close (`engineCloseTimeout`
+10s); `mcp.Manager.Close` is bounded by `managerCloseTimeout` (5s). In `cmd/mecatui`,
+`setupSignalHandler` owns the signal channel as its SOLE consumer (no `signal.Stop`
+on the force-exit path) so a second `SIGINT`/`SIGTERM` during cleanup deterministically
+hard-exits `os.Exit(130)`, and `runCleanup` bounds the whole post-quit cleanup at 45s
+(retiring the handler only after cleanup completes, so the force-exit window is never
+raced). A shutdown-cancelled fire is persisted terminal via `settleFireTerminalSnapshot`
+(`internal/app/scheduler_fire.go`) calling `Service.Persist` — the session lands
+`cancelled` (Interrupt-recoverable) and `RecordFire` stores the real fire id, never
+`pending`. Covered by `cmd/mecatui/embed/shutdown_e2e_test.go` (the blocked-fire e2e),
+`close_internal_test.go`, `internal/adapter/server/close_test.go`, and
+`internal/app/scheduler_fire_cancel_test.go`.
+
 ## Store drivers — `contracts/proto/mecatl/driver/v1/` + `internal/adapter/grpcdriver/` + `engine/adapter/storeconformance/` (Phase B)
 
 The remote-store seam: `SessionStoreService` (behind `port.SessionStore`) and

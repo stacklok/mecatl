@@ -204,6 +204,14 @@ const (
 	leaderStandbyBackoff = 2 * time.Second
 )
 
+// stopLeadershipJoinTimeout bounds how long Stop waits for the leadership loop
+// and the current epoch's tick+renewer goroutines to join after being
+// cancelled. It is a `var` (not a const) so a test can shrink it to assert Stop
+// is bounded; production keeps the conservative default. A wedged goroutine
+// that ignores its cancel ctx is abandoned (best-effort), never allowed to
+// stall shutdown unboundedly.
+var stopLeadershipJoinTimeout = 5 * time.Second
+
 // Scheduler is the composition-layer owner of the scheduled-tasks tick loop.
 // Construct one via New, then Start (which acquires the leader lease if a
 // backend is wired and launches the tick + renewer goroutines), and Stop it at
@@ -1274,8 +1282,10 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 // Stop cancels the leadership loop and the current epoch (tick + renewer),
 // waits for in-flight fires to drain (with a grace period), releases the leader
 // lease (if held), and closes done. It is idempotent: a second call is a no-op
-// that returns nil. It does NOT return until every scheduler goroutine has
-// joined (or the fire grace elapses).
+// that returns nil. The leadership-loop and epoch joins are BOUNDED (a goroutine
+// that ignores its cancel ctx is abandoned after stopLeadershipJoinTimeout,
+// never allowed to stall shutdown unboundedly); the fire-grace wait and lease
+// release are likewise bounded.
 func (s *Scheduler) Stop() error {
 	if !s.stopped.CompareAndSwap(false, true) {
 		return nil
@@ -1299,12 +1309,24 @@ func (s *Scheduler) Stop() error {
 	// (Start not called, or no lease backend) skip the wait. The leadership
 	// loop's own runEpoch also waits activeDone, so join it first to avoid a
 	// doubly-consumed close (a closed channel receive is safe to repeat, but
-	// ordering Stop after the loop keeps the lifecycle linear).
+	// ordering Stop after the loop keeps the lifecycle linear). Each join is
+	// BOUNDED by stopLeadershipJoinTimeout so a goroutine that ignores its
+	// cancel ctx (e.g. a store whose Due blocks past ctx cancellation) cannot
+	// stall shutdown unboundedly; on timeout the goroutine is abandoned
+	// (best-effort) and a WARN is logged through the injected diagnostics.
 	if leadershipDone != nil {
-		<-leadershipDone
+		select {
+		case <-leadershipDone:
+		case <-time.After(stopLeadershipJoinTimeout):
+			s.diag.Log(context.Background(), port.LevelWarn, "scheduler: leadership loop join timeout; abandoning")
+		}
 	}
 	if activeDone != nil {
-		<-activeDone
+		select {
+		case <-activeDone:
+		case <-time.After(stopLeadershipJoinTimeout):
+			s.diag.Log(context.Background(), port.LevelWarn, "scheduler: active epoch join timeout; abandoning")
+		}
 	}
 	// Join in-flight fires with a grace. After the grace, the epoch-ctx cancel
 	// has already propagated to any fire whose ctx derives from it; the

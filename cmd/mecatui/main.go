@@ -74,6 +74,15 @@ func main() {
 }
 
 func run(argv []string) error {
+	// Test seam: MECATUI_TEST_SIGNAL_HANDLER makes run() enter a minimal
+	// signal-handler path with no TUI or server — used by the subprocess-signal
+	// test harness in main_test.go. Valid values: "first" (block until one signal,
+	// return nil) and "second" (block forever; the goroutine fires os.Exit(130) on
+	// the second signal).
+	if v := os.Getenv("MECATUI_TEST_SIGNAL_HANDLER"); v != "" {
+		return testSignalHandler(v)
+	}
+
 	// Resolve the leading CLI word into a transport mode (bare-local/connect)
 	// via the PURE resolveTransportMode seam (ADR 0087), then thread the mode +
 	// remaining flag tail into parseTransportFlags. main owns the os.Args read +
@@ -136,16 +145,16 @@ func run(argv []string) error {
 		fmt.Fprintf(os.Stderr, "mecatui: unknown theme %q, using %q\n", cfg.theme, th.Name)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
+	// Bubble Tea quits); second signal during cleanup = immediate hard os.Exit(130).
+	ctx, forceExit := setupSignalHandler()
 
 	// Resolve where to connect: an explicit external server, a server already
 	// running on the loopback default, or an embedded server we host in-process.
-	target, dial, cleanup, err := resolveTransport(ctx, cfg)
+	target, dial, transCleanup, err := resolveTransport(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 
 	if cfg.insecure {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: --insecure skips TLS certificate verification (testing only)")
@@ -153,9 +162,9 @@ func run(argv []string) error {
 
 	cl, err := client.Dial(dial)
 	if err != nil {
+		transCleanup()
 		return err
 	}
-	defer func() { _ = cl.Close() }()
 
 	// Client-side model-selection persistence (the /models picker): the store reads
 	// the last-used selection at launch and persists a pick. Lives in main (the
@@ -227,12 +236,129 @@ func run(argv []string) error {
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
+		_ = cl.Close()
+		transCleanup()
 		return err
 	}
 
 	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
-	_, err = prog.Run()
-	return err
+	_, runErr := prog.Run()
+
+	runCleanup(forceExit, func() {
+		_ = cl.Close()
+		transCleanup()
+	})
+	return runErr
+}
+
+// setupSignalHandler installs the manual two-signal handler: first signal =
+// graceful shutdown (cancels the returned ctx → Bubble Tea quits); a second
+// signal before cleanup completes = immediate hard os.Exit(130). It returns the
+// ctx plus a forceExit channel the caller closes ONLY after the post-Run cleanup
+// has finished (see runCleanup) to retire the handler on the normal path.
+//
+// The signal goroutine is the SOLE owner of sigCh (signal.Notify's channel): no
+// other code reads it, and NOTHING calls signal.Stop on the force-exit path, so
+// a second SIGINT/SIGTERM delivered while the post-Run cleanup is still running
+// is ALWAYS received and drives the immediate os.Exit(130). That is the
+// criterion-6 contract — a second signal during graceful shutdown forces a hard
+// exit. It must never be swallowed: a signal.Stop, or a second consumer draining
+// the channel, would silently revert that second Ctrl+C to the OS default
+// disposition and wedge the shutdown it exists to interrupt. To keep that
+// deterministic, forceExit is closed only AFTER cleanup finishes — never while
+// the goroutine is still parked listening for the second signal — so there is no
+// select race between "second signal" and "cleanup done" mid-cleanup.
+func setupSignalHandler() (context.Context, chan struct{}) {
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	forceExit := make(chan struct{})
+	go func() {
+		defer signal.Stop(sigCh)
+		defer cancel()
+		// First: graceful signal, or clean quit before any signal.
+		select {
+		case sig := <-sigCh:
+			fmt.Fprintf(os.Stderr, "mecatui: received %s, shutting down gracefully (press again to force exit)...\n", sig)
+			cancel()
+		case <-forceExit:
+			return
+		}
+		// Past the first signal: keep listening for the SECOND signal through the
+		// whole cleanup. forceExit closes only after cleanup completes, so while
+		// cleanup is still running a second signal deterministically wins (it is
+		// the only ready case) and hard-exits; once cleanup is done, forceExit
+		// retires the handler. A signal buffered before forceExit closes is still
+		// honoured — the select prefers neither, but forceExit is not closed until
+		// cleanup returns, so a signal sitting in sigCh during cleanup is read
+		// first.
+		select {
+		case <-sigCh:
+			fmt.Fprintln(os.Stderr, "mecatui: forcing immediate exit")
+			os.Exit(130)
+		case <-forceExit:
+		}
+	}()
+	return ctx, forceExit
+}
+
+// runCleanup runs the post-Run cleanup under a 45s hard deadline, retiring the
+// signal handler (close(forceExit)) only AFTER cleanup completes — never during
+// it — so a second signal delivered mid-cleanup still reaches the parked signal
+// goroutine and hard-exits (criterion 6). The embed Close → GracefulStop path is
+// already bounded to ~40s by tasks #1+#2, so 45s normally lets it complete; on
+// timeout the process exits 1 rather than hang (the signal goroutine stays armed
+// the whole time, so an operator Ctrl+C also force-exits a wedged cleanup).
+func runCleanup(forceExit chan struct{}, cleanup func()) {
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		cleanup()
+	}()
+
+	select {
+	case <-cleanupDone:
+	case <-time.After(45 * time.Second):
+		fmt.Fprintln(os.Stderr, "mecatui: cleanup timeout; exiting")
+		os.Exit(1)
+	}
+	close(forceExit) // retire the signal handler AFTER cleanup, not during it
+}
+
+// testSignalHandler is the MECATUI_TEST_SIGNAL_HANDLER test seam: a minimal
+// signal-handler path with no TUI or server. Valid modes:
+//
+//	"first"  — block until one signal, print the graceful-shutdown line, return nil.
+//	"second" — spawn a goroutine that fires os.Exit(130) on the second signal;
+//	           the caller blocks forever so the goroutine's os.Exit terminates the process.
+func testSignalHandler(mode string) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	// Readiness handshake: print AFTER signal.Notify so the parent test knows the
+	// handler is installed before it signals (a blind sleep races -race startup).
+	fmt.Fprintln(os.Stderr, "mecatui: signal-handler ready")
+
+	switch mode {
+	case "first":
+		sig := <-sigCh
+		fmt.Fprintf(os.Stderr, "mecatui: received %s, shutting down gracefully (press again to force exit)...\n", sig)
+		return nil
+	case "second":
+		go func() {
+			sig := <-sigCh
+			fmt.Fprintf(os.Stderr, "mecatui: received %s, shutting down gracefully (press again to force exit)...\n", sig)
+			<-sigCh
+			fmt.Fprintln(os.Stderr, "mecatui: forcing immediate exit")
+			os.Exit(130)
+		}()
+		select {} // block forever; the goroutine's os.Exit terminates the process
+	default:
+		return fmt.Errorf("mecatui: unknown MECATUI_TEST_SIGNAL_HANDLER value: %q", mode)
+	}
 }
 
 // keyOverridesFromConfig merges CLI --keymap entries into a map[string][]string.

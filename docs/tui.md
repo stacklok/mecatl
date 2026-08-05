@@ -177,6 +177,33 @@ layer's retry-counting detail sits at `debug` and is therefore not written — a
 currently no flag, env, or config key that lowers the floor to reach it; it answers
 a different question anyway (a slow or retrying provider, not a dead turn).
 
+### Shutdown
+
+Exiting mecatui (double Ctrl+C on an empty prompt, or an OS `SIGINT`/`SIGTERM`)
+runs a **bounded** graceful shutdown — it cannot hang indefinitely on an in-flight
+scheduled fire, a stuck MCP server, or a wedged gRPC stream (issue #388). The first
+signal quits Bubble Tea and starts cleanup; a **second** signal during cleanup forces
+an immediate hard exit (`os.Exit(130)`).
+
+Cleanup is bounded at each layer (mirroring the `mecak8s` bounded-shutdown
+precedent), worst case ≈ 45s:
+
+| Step | Bound |
+|---|---|
+| embedded gRPC `GracefulStop` → hard `Stop()` fallback | 30s |
+| composition teardown (scheduler stop, service close, MCP) | 10s |
+| scheduler leadership/epoch joins | 5s each |
+| per-session engine close | 10s |
+| MCP manager close | 5s |
+| whole post-quit cleanup (the hard outer cap) | 45s |
+
+A scheduled fire in progress is **cancelled**, and its session snapshot is persisted
+as `cancelled` — recoverable on the next run via the normal session-resume path
+(`Interrupt`), never left permanently `running`/`pending`. A fire parked on a
+permission ask keeps its durable awaiting snapshot, so it stays resumable
+cross-process. No goroutine, session/scheduler lease, socket, or MCP connection is
+left owned after the bounded shutdown completes.
+
 **Environment variables.** A handful of envs tune the client beyond the flags above
 (most have a flag equivalent in the table; the rendering-capability pairs are env-only):
 

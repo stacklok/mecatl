@@ -45,6 +45,23 @@ import (
 // The directory is randomised (os.MkdirTemp), so the filename can be stable.
 const socketName = "mecated.sock"
 
+// gracefulStopTimeout bounds s.grpc.GracefulStop() in Close: after it elapses the
+// server is hard-stopped via s.grpc.Stop(). Package-level var so white-box tests
+// can override to a short value.
+var gracefulStopTimeout = 30 * time.Second
+
+// compositionCloseTimeout bounds s.appstop() in Close: after it elapses Close
+// proceeds to os.RemoveAll(s.dir) without waiting further. Package-level var so
+// white-box tests can override to a short value.
+var compositionCloseTimeout = 10 * time.Second
+
+// grpcServer exposes the two gRPC shutdown methods Close needs: GracefulStop and
+// Stop. *grpc.Server satisfies it, and white-box tests can inject a mock.
+type grpcServer interface {
+	GracefulStop()
+	Stop()
+}
+
 // DefaultPerfAddr is the loopback default for the opt-in perf admin listener when
 // PerfConfig.Enabled is set but Addr is empty. It is a FIXED, PREDICTABLE loopback
 // port, chosen so an MCP-client config can hardcode the /mcp URL once and reconnect
@@ -105,7 +122,7 @@ type PerfConfig struct {
 type Server struct {
 	target  string // gRPC dial target, e.g. "unix:///run/user/1000/mecatui-123/mecated.sock"
 	dir     string // private temp dir holding the socket
-	grpc    *grpc.Server
+	grpc    grpcServer
 	appstop func() // app.Built.Close — tears down MCP etc.
 
 	// Perf teardown (all nil/no-op when PerfConfig.Enabled is false). adminSrv is
@@ -217,15 +234,27 @@ func (s *Server) Target() string { return s.target }
 // port, so a caller can log or display where to point a browser/pprof.
 func (s *Server) AdminAddr() string { return s.adminAddr }
 
-// Close stops the gRPC server gracefully, tears down composition-owned resources
-// and (when perf was enabled) the admin listener, the watchdog, the flight
-// recorder, and the telemetry providers, then removes the socket and its temp
-// directory. It is safe to call once.
+// Close stops the gRPC server with a bounded graceful-stop window, tears down
+// composition-owned resources with a separate bounded window, and (when perf was
+// enabled) the admin listener, the watchdog, the flight recorder, and the
+// telemetry providers, then removes the socket and its temp directory. It is safe
+// to call once.
 func (s *Server) Close() error {
-	s.grpc.GracefulStop()
+	// 1. Bounded gRPC shutdown: GracefulStop with a timeout, hard-stop fallback.
+	stopped := make(chan struct{})
+	go func() {
+		s.grpc.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(gracefulStopTimeout):
+		s.grpc.Stop()
+		<-stopped
+	}
 
-	// Tear down the perf surface in reverse order of construction: stop the admin
-	// listener, then the watchdog + flight recorder, then flush the providers.
+	// 2. Tear down the perf surface in reverse order of construction: stop the admin
+	//    listener, then the watchdog + flight recorder, then flush the providers.
 	if s.adminSrv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = s.adminSrv.Shutdown(shutdownCtx)
@@ -240,9 +269,20 @@ func (s *Server) Close() error {
 		cancel()
 	}
 
+	// 3. Bounded composition teardown: run appstop in a goroutine with a timeout.
 	if s.appstop != nil {
-		s.appstop()
+		done := make(chan struct{})
+		go func() {
+			s.appstop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(compositionCloseTimeout):
+			// Embedded path: log nothing — proceed to dir cleanup.
+		}
 	}
+
 	return os.RemoveAll(s.dir)
 }
 

@@ -136,9 +136,11 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
 
-		// Drive the run to its terminal EvResult. The session is persisted by the
-		// relay (the same path a wire client takes); the fire record carries only
-		// the stop reason + error pointer to the session id.
+		// Drive the run to its terminal EvResult. The agent loop persists the
+		// terminal session snapshot itself (engine/agent terminate→save, the SAME
+		// path a wire relay's run takes — the relay's Persist is only for the
+		// awaiting-ask snapshot); the fire record carries the stop reason + error
+		// pointer to the session id.
 		var stop session.StopReason
 		var runErr string
 		for ev := range run.Events() {
@@ -148,6 +150,18 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 				break
 			}
 		}
+		// A fire whose run was cancelled mid-flight (Service.Close → run.Cancel on
+		// shutdown, issue #388 Task #3) unwinds to StopCancelled and the loop's
+		// save() persists the cancelled snapshot — but that save races process exit
+		// (Close returns, the cmd binary tears down, and a slow store's save may be
+		// killed before it lands). settle the terminal snapshot HERE, best-effort,
+		// so it is durable BEFORE the fire returns (the scheduler's Stop joins
+		// firesWG on this return; a FireNow caller joins the call). This closes the
+		// race that would otherwise leave the session StateRunning (not recoverable)
+		// and the fire record inconsistent with the snapshot. An empty stop (the
+		// Events channel closed with no terminal EvResult — an abandoned run) is
+		// treated as StopCancelled. See settleFireTerminalSnapshot.
+		stop = settleFireTerminalSnapshot(ctx, svc, sess.ID, stop)
 		// Decision #7 Phase-2: the fire ID IS the session id (the session id is the
 		// discoverability key — LastFireSessionID, which RecordFire sets to
 		// f.SessionID, is what a caller hands LoadFire). The fire id was pre-minted
@@ -227,6 +241,36 @@ func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) po
 		Stop:         session.StopError,
 		Err:          err.Error(),
 	}
+}
+
+// settleFireTerminalSnapshot best-effort ensures the durable session snapshot
+// for a cancelled/abandoned fire run is TERMINAL (cancelled) before the fire
+// returns, closing the exit-race where the agent loop's own save()
+// (engine/agent terminate→save) races process teardown after Service.Close
+// (issue #388 Task #6). It returns the stop reason to record on the fire record
+// (StopCancelled when the run was abandoned with no terminal EvResult, so the
+// record is honest).
+//
+// It reuses the EXISTING Service.Persist seam, which saves the in-memory
+// registered session (the SAME pointer the loop mutated to StateCancelled via
+// sess.Cancel() before emitResult — so Persist writes the terminal state without
+// waiting for the loop's post-emitResult save). Persist is a no-op when no run is
+// registered (the run was already deregistered), in which case the loop's own
+// save() is the durable writer and this is a harmless no-op.
+//
+// It does NOT introduce a new persistence path: it calls the same Persist the
+// wire relays call, just from the fire body so the snapshot is settled before the
+// fire record is recorded. Best-effort throughout — a persist failure is swallowed
+// (Persist itself swallows Save errors) so a store hiccup never fails the fire.
+func settleFireTerminalSnapshot(ctx context.Context, svc *server.Service, id session.SessionID, stop session.StopReason) session.StopReason {
+	if stop != "" && stop != session.StopCancelled {
+		return stop // a successful/errored fire: the loop's save() settles the terminal snapshot
+	}
+	svc.Persist(ctx, id)
+	if stop == "" {
+		return session.StopCancelled // abandoned run (no terminal EvResult) — record the honest outcome
+	}
+	return stop
 }
 
 // carriedContextMaxTurns bounds the number of recent turns rendered into the

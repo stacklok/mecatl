@@ -555,6 +555,27 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 35 | Per-session live event subscription registry (ADR 0075 fire-result-delivery Scenario 5; `Service.Subscribe`/`PublishSessionEvent` + the `subscriptions` map) | `internal/adapter/server.Service` (the relay — the loop stays storage-agnostic and never calls it) | process (an in-memory `map[session.SessionID]map[int64]chan session.Event`, guarded by a dedicated `subMu` separate from `s.mu` so a delivery-run Publish does not contend with the run/registry hot path) | each `Subscribe` returns a buffered (64) channel + an IDEMPOTENT unsubscribe func (a `sync.Once` — safe to call explicitly AND deferred); the subscriber goroutine owns draining. `PublishSessionEvent` is NON-BLOCKING: a full subscriber channel DROPS the event (drain-to-discard — a dead client never wedges the delivery run). All remaining channels are closed at `Service.Close` (tolerating a concurrent unsub via recover) | **in-memory only** (a live-subscription registry has no restart fidelity to preserve — a subscriber that disconnects re-Subscribes on reconnect and catches missed deliveries via the `StreamSessionEvents` replay feed / the durable queue, List 1 row 34 / List 2 row 23). Nothing persisted; a restart drops the registry and every subscriber reconnects | `internal/adapter/server/service.go` (`Subscribe`, `PublishSessionEvent`, `subscriptions`); `internal/app/scheduler_delivery_run.go` (the delivery driver's Publish fan-out) |
 | 36 | `escapePolicy` per-root classifier cache (`escapePolicy.clfs`: session workspace root → `*escapeClassifier`, built once per root; path-escape-posture plan, docs/acceptance/path-escape-posture.md AC-W2-F3) | `app.Build` (ONE instance wraps the shared main-engine permission policy; per-session root-awareness comes from `ws.Root()` on every `Evaluate`, never a per-session policy) | process (entries live as long as the shared policy; dies with the process at Build teardown) | lazily created under a mutex on first `Evaluate` for a root, never pruned. **Cardinality is deployment-bounded by construction**: one entry per DISTINCT session workspace root the process ever classifies — the same order as the (already capped) live-session count plus the bounded historical-session set the run-entry funnel rehydrates, NOT per-session-per-tool-call growth; the value is a pair of canonicalized string slices (no `*os.Root`, no open handles), so a stale entry costs bytes, not fds. An LRU was rejected: eviction only ever drops a REBUILDABLE classifier (the next `Evaluate` re-canonicalizes the root and rebuilds), so bounding buys nothing the rebuild does not already make cheap | **reconstructible** (a restarted process rebuilds the shared policy at the next Build and re-derives each root's classifier lazily on the next `Evaluate`; the cache is a pure derivation of the session root + the build-time skill read-roots — nothing persisted, decision = derive) | `internal/app/escapepolicy.go` (`escapePolicy.clfs`, `classifierFor`); `internal/app/escapeclassifier.go` (`escapeClassifier`) |
 
+**Issue #388 re-audit (bounded embedded-mecatui shutdown).** #388 added NO new
+outlives-a-call resource row. The work BOUNDS existing rows' cleanup, it does not add
+a resource: the package-level timeout `var`s (`gracefulStopTimeout`,
+`compositionCloseTimeout`, `stopLeadershipJoinTimeout`, `engineCloseTimeout`,
+`managerCloseTimeout`, the 45s `runCleanup` cap) are compile-time configuration of
+already-inventoried goroutines/servers (rows 1, 2, 11, 27, 28, 30), and the
+goroutines spawned on the bounded-timeout paths are abandoned-by-design at process
+exit (a shutdown-only posture, documented in `docs/design/IMPLEMENTATION-NOTES.md`
+"Bounded shutdown"). The one behavioural change to an existing row: `Service.Close`
+now CANCELS in-flight runs (row 9) via `run.Cancel()` on shutdown, EXCLUDING runs
+parked on a permission ask whose durable awaiting snapshot is the Phase-2 resume
+point (row 14) — the race-free `runState.awaiting` atomic, set by `Persist` only
+AFTER the durable `Save` lands (the H1 ordering). That exclusion PRESERVES row 14's
+re-attach contract rather than weakening it (a cancelled-over write would have
+destroyed the resumable awaiting snapshot). A shutdown-cancelled scheduled fire is
+persisted terminal (`cancelled`, Interrupt-recoverable) via
+`settleFireTerminalSnapshot` calling the existing `Service.Persist` (row 8's
+jsonlstore) — no new artifact. The `cmd/mecatui` signal-handler goroutine
+(`setupSignalHandler`) is process-scoped, retired on the normal quit path via
+`forceExit`, and never outlives the process; decision = derive.
+
 ### Does resource-lifetime management earn a seam now?
 
 The kit inventory's question, answered: **no, not yet; the hand-managed lifecycles

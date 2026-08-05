@@ -1,6 +1,20 @@
 package server
 
-import "github.com/stacklok/mecatl/engine/session"
+import (
+	"time"
+
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+// SetEngineCloseTimeoutForTest overrides the package-level engineCloseTimeout var
+// for the duration of one test; it returns a restore func (defer it). The override
+// lets a test shrink the timeout so a bounded-engine-close assertion runs in
+// milliseconds, not seconds.
+func SetEngineCloseTimeoutForTest(d time.Duration) (restore func()) {
+	prev := engineCloseTimeout
+	engineCloseTimeout = d
+	return func() { engineCloseTimeout = prev }
+}
 
 // SessionEngineContextWindowForTest exposes the per-session engine's compaction
 // context window (Engine.ContextWindow(), engine/agent/loop.go) for the session
