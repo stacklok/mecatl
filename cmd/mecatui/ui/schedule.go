@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/schedparse"
@@ -643,12 +644,19 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		if !s.State.Enabled {
 			state = "paused"
 		}
+		inFlight := ""
+		if !s.State.LastFireStartedAt.IsZero() {
+			inFlight = "  in-flight"
+		} else if s.State.LastFireSessionID == "pending" {
+			inFlight = "  claimed"
+		}
 		line := marker + sanitizeTerminal(s.Spec.Name) +
 			"  " + sanitizeTerminal(triggerSummary(s.Spec)) +
 			"  " + state +
 			"  next:" + formatScheduleTime(s.State.NextFireAt) +
 			"  last:" + formatScheduleTime(s.State.LastFireAt) +
-			"  fires:" + strconv.Itoa(int(s.State.FireCount))
+			"  fires:" + strconv.Itoa(int(s.State.FireCount)) +
+			inFlight
 		if i == st.cursor {
 			line = th.Style("accent").Render(line)
 		}
@@ -671,12 +679,70 @@ func renderScheduleConfirm(th theme.Theme, st scheduleState, _, _ int) string {
 // list is cursor-navigable (#235): the cursor row is highlighted with the
 // accent style + a ▶ marker, and the footer hint advertises the jump-to-fire
 // action only when a replayer is wired.
+//
+// An IN-FLIGHT fire (#386) is rendered with an explicit "in-flight" marker plus
+// its started/last-progress/deadline instants — it is NEVER silently rendered
+// with an empty stop. A CLAIMED fire (the post-Claim, pre-RecordFireStart state
+// where the state's LastFireSessionID is the "pending" sentinel and the run has
+// not started) is rendered as an explicit "claimed (session pending)" line, so
+// a claimed-but-not-yet-run fire never renders as "no fires recorded" (the
+// genuinely-never-fired case).
 func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool, _, _ int) string {
 	s := st.inspect
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("schedule — "+sanitizeTerminal(s.Spec.Name)) + "\n\n")
 	muted := th.Style("muted")
-	spec := s.Spec
+	renderScheduleSpecBlock(&b, muted, s.Spec)
+	b.WriteString("\n" + muted.Render("state") + "\n")
+	b.WriteString(muted.Render("enabled: ") + boolStr(s.State.Enabled) +
+		"  fire_count: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
+	b.WriteString(muted.Render("next_fire: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
+	b.WriteString(muted.Render("last_fire: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
+	if s.State.LastFireSessionID != "" {
+		b.WriteString(muted.Render("last_fire_session: ") + sanitizeTerminal(s.State.LastFireSessionID) + "\n")
+	}
+	if !s.State.LastFireStartedAt.IsZero() || !s.State.LastFireProgressAt.IsZero() || !s.State.FireDeadline.IsZero() {
+		b.WriteString(muted.Render("in-flight:") +
+			" started " + formatScheduleTime(s.State.LastFireStartedAt) +
+			"  last-progress " + formatScheduleTime(s.State.LastFireProgressAt) +
+			"  deadline " + formatScheduleTime(s.State.FireDeadline) + "\n")
+	}
+	b.WriteString("\n" + muted.Render("fires") + "\n")
+	if st.firesLoading {
+		b.WriteString(muted.Render("loading…"))
+	} else if st.firesErr != nil {
+		b.WriteString(th.Style("errorText").Render("could not list fires: " + sanitizeTerminal(st.firesErr.Error())))
+	} else if len(st.fires) == 0 {
+		// A CLAIMED fire (LastFireSessionID == "pending", no run started) is
+		// NOT the same as "no fires recorded" — render it explicitly so a
+		// claimed-but-not-yet-run fire is never mistaken for never-fired.
+		if s.State.LastFireSessionID == "pending" && s.State.LastFireStartedAt.IsZero() {
+			b.WriteString(muted.Render("in-flight: claimed (session pending)"))
+		} else {
+			b.WriteString(muted.Render("no fires recorded"))
+		}
+	} else {
+		for i, f := range st.fires {
+			line := renderScheduleFireLine(f, i == st.fireCursor)
+			if i == st.fireCursor {
+				line = th.Style("accent").Render(line)
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	hint := "esc: back"
+	if replayerWired {
+		hint = "↑↓: select fire  enter/t: open transcript  esc: back"
+	}
+	b.WriteString("\n" + muted.Render(hint))
+	return b.String()
+}
+
+// renderScheduleSpecBlock renders the spec-card fields (trigger/prompt/selector/
+// profile/workspace/mode/mutating row/timezone/fire_timeout) for the inspect
+// view. Extracted from renderScheduleInspect to keep its cyclomatic complexity
+// in check (#386 added the fire_timeout branch).
+func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec client.ScheduleSpec) {
 	b.WriteString(muted.Render("trigger: ") + sanitizeTerminal(triggerSummary(spec)) + "\n")
 	if spec.Prompt != "" {
 		b.WriteString(muted.Render("prompt: ") + sanitizeTerminal(truncate(spec.Prompt, 120)) + "\n")
@@ -700,45 +766,35 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 	if spec.Timezone != "" {
 		b.WriteString(muted.Render("timezone: ") + sanitizeTerminal(spec.Timezone) + "\n")
 	}
-	b.WriteString("\n" + muted.Render("state") + "\n")
-	b.WriteString(muted.Render("enabled: ") + boolStr(s.State.Enabled) +
-		"  fire_count: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
-	b.WriteString(muted.Render("next_fire: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
-	b.WriteString(muted.Render("last_fire: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
-	if s.State.LastFireSessionID != "" {
-		b.WriteString(muted.Render("last_fire_session: ") + sanitizeTerminal(s.State.LastFireSessionID) + "\n")
+	if spec.FireTimeout > 0 {
+		b.WriteString(muted.Render("fire_timeout: ") + spec.FireTimeout.String() + "\n")
 	}
-	b.WriteString("\n" + muted.Render("fires") + "\n")
-	if st.firesLoading {
-		b.WriteString(muted.Render("loading…"))
-	} else if st.firesErr != nil {
-		b.WriteString(th.Style("errorText").Render("could not list fires: " + sanitizeTerminal(st.firesErr.Error())))
-	} else if len(st.fires) == 0 {
-		b.WriteString(muted.Render("no fires recorded"))
-	} else {
-		for i, f := range st.fires {
-			marker := "  "
-			if i == st.fireCursor {
-				marker = "▶ "
-			}
-			line := marker + sanitizeTerminal(f.ID) +
-				"  " + formatScheduleTime(f.FiredAt) +
-				"  " + sanitizeTerminal(f.Stop)
-			if f.Err != "" {
-				line += "  err: " + sanitizeTerminal(f.Err)
-			}
-			if i == st.fireCursor {
-				line = th.Style("accent").Render(line)
-			}
-			b.WriteString(line + "\n")
-		}
+}
+
+// renderScheduleFireLine renders one fire row for the inspect view's fire list.
+// An in-flight fire (Stop empty, #386) renders the "in-flight" marker + its
+// started/last-progress/deadline instants; a terminal fire renders its stop
+// reason + error. The cursor marker (▶) is prepended when selected.
+func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
+	marker := "  "
+	if selected {
+		marker = "▶ "
 	}
-	hint := "esc: back"
-	if replayerWired {
-		hint = "↑↓: select fire  enter/t: open transcript  esc: back"
+	stop := sanitizeTerminal(f.Stop)
+	if stop == "" {
+		stop = "in-flight"
 	}
-	b.WriteString("\n" + muted.Render(hint))
-	return b.String()
+	line := marker + sanitizeTerminal(f.ID) +
+		"  " + formatScheduleTime(f.FiredAt) +
+		"  " + stop
+	if f.Stop == "" {
+		line += "  started " + formatScheduleTime(f.StartedAt) +
+			"  last-progress " + formatScheduleTime(f.ProgressAt) +
+			"  deadline " + formatScheduleTime(f.Deadline)
+	} else if f.Err != "" {
+		line += "  err: " + sanitizeTerminal(f.Err)
+	}
+	return line
 }
 
 // renderScheduleCreate renders the in-overlay Create form (Phase 3b, issue #236).

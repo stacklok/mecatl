@@ -439,3 +439,164 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 		t.Fatalf("default-mode fire of a mutating schedule = (%v, %q), want allowed (no plan-mode gate outside plan mode)", err, res.Content)
 	}
 }
+
+// TestScheduleTool_InspectRendersInFlightFire pins issue #386: an IN-FLIGHT
+// fire (Stop empty) is rendered with an explicit "in-flight" marker plus its
+// started/last-progress/deadline instants — NEVER silently rendered with an
+// empty stop or as "fires: none". The schedule-level in-flight summary fires when
+// the state shows a live fire.
+func TestScheduleTool_InspectRendersInFlightFire(t *testing.T) {
+	t.Parallel()
+	mgr := newStubScheduleManager()
+	tl := agent.NewScheduleQueryTool(mgr)
+	ws := memfs.NewWorkspace("/ws")
+	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "nightly", Prompt: "x", Trigger: port.TriggerSpec{Cron: "0 3 * * *"}, FireTimeout: 30 * time.Minute,
+	}); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	start := time.Unix(1_700_000_000, 0)
+	prog := start.Add(10 * time.Second)
+	deadline := start.Add(30 * time.Minute)
+	inFlightFire := port.ScheduleFire{
+		ID:           "fire-inflight",
+		ScheduleName: "nightly",
+		SessionID:    "sess-inflight",
+		FiredAt:      start,
+		StartedAt:    start,
+		ProgressAt:   prog,
+		Deadline:     deadline,
+		Stop:         "", // in-flight
+	}
+	mgr.fires["nightly"] = append(mgr.fires["nightly"], inFlightFire)
+	s := mgr.scheds["nightly"]
+	s.State.LastFireSessionID = "sess-inflight"
+	s.State.LastFireStartedAt = start
+	s.State.LastFireProgressAt = prog
+	s.State.FireDeadline = deadline
+	mgr.scheds["nightly"] = s
+
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("inspect = error %q", res.Content)
+	}
+	for _, want := range []string{"in-flight", "fire-inflight", "started", "last-progress", "deadline"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("in-flight inspect result = %q, want %q (an in-flight fire must render the in-flight marker + its instants, never an empty stop or \"fires: none\")", res.Content, want)
+		}
+	}
+	if strings.Contains(res.Content, "fires: none") {
+		t.Fatalf("in-flight inspect rendered \"fires: none\" = %q (an in-flight fire must NOT render as none)", res.Content)
+	}
+	// FireTimeout surfaces in the spec summary.
+	if !strings.Contains(res.Content, "fire_timeout=") {
+		t.Fatalf("inspect result = %q, want fire_timeout= in the spec summary", res.Content)
+	}
+}
+
+// TestScheduleTool_InspectRendersClaimedPending pins issue #386: a CLAIMED fire
+// (Claim happened — LastFireSessionID == "pending" — but the run has not started
+// — LastFireStartedAt zero — and no fire record yet) renders an explicit
+// "in-flight: claimed (session pending)" line, NOT "fires: none" (the
+// genuinely-never-fired case the claim must be distinguishable from).
+func TestScheduleTool_InspectRendersClaimedPending(t *testing.T) {
+	t.Parallel()
+	mgr := newStubScheduleManager()
+	tl := agent.NewScheduleQueryTool(mgr)
+	ws := memfs.NewWorkspace("/ws")
+	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "nightly", Prompt: "x", Trigger: port.TriggerSpec{Cron: "0 3 * * *"},
+	}); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	// Claim happened, run has not started, no fire record yet.
+	s := mgr.scheds["nightly"]
+	s.State.LastFireSessionID = "pending"
+	mgr.scheds["nightly"] = s
+
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("inspect = error %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "in-flight: claimed (session pending)") {
+		t.Fatalf("claimed-pending inspect result = %q, want \"in-flight: claimed (session pending)\" (a claimed fire must NOT render as \"fires: none\")", res.Content)
+	}
+	if strings.Contains(res.Content, "fires: none") {
+		t.Fatalf("claimed-pending inspect rendered \"fires: none\" = %q (a claimed fire must NOT render as none)", res.Content)
+	}
+}
+
+// TestScheduleTool_InspectRendersNoFiresForNeverFired pins the genuine
+// never-fired case still renders "fires: none" (the distinction from a claimed
+// fire): a schedule that has never been Claimed (LastFireSessionID empty) and
+// has no fire records renders "fires: none".
+func TestScheduleTool_InspectRendersNoFiresForNeverFired(t *testing.T) {
+	t.Parallel()
+	mgr := newStubScheduleManager()
+	tl := agent.NewScheduleQueryTool(mgr)
+	ws := memfs.NewWorkspace("/ws")
+	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "nightly", Prompt: "x", Trigger: port.TriggerSpec{Cron: "0 3 * * *"},
+	}); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("inspect = error %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "fires: none") {
+		t.Fatalf("never-fired inspect result = %q, want \"fires: none\" (a never-claimed schedule genuinely has no fires)", res.Content)
+	}
+	if strings.Contains(res.Content, "in-flight") {
+		t.Fatalf("never-fired inspect rendered \"in-flight\" = %q (a never-claimed schedule must NOT render in-flight)", res.Content)
+	}
+}
+
+// TestScheduleTool_InspectRendersTerminalFire pins a TERMINAL fire (Stop set)
+// renders the stop reason + error, unchanged — the in-flight path is the only
+// new branch; terminal renders exactly as before.
+func TestScheduleTool_InspectRendersTerminalFire(t *testing.T) {
+	t.Parallel()
+	mgr := newStubScheduleManager()
+	tl := agent.NewScheduleQueryTool(mgr)
+	ws := memfs.NewWorkspace("/ws")
+	if _, err := mgr.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "nightly", Prompt: "x", Trigger: port.TriggerSpec{Cron: "0 3 * * *"},
+	}); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	terminalFire := port.ScheduleFire{
+		ID:           "fire-terminal",
+		ScheduleName: "nightly",
+		SessionID:    "sess-terminal",
+		FiredAt:      time.Unix(1_700_000_000, 0),
+		Stop:         session.StopError,
+		Err:          "boom",
+	}
+	mgr.fires["nightly"] = append(mgr.fires["nightly"], terminalFire)
+
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("inspect = error %q", res.Content)
+	}
+	for _, want := range []string{"fire-terminal", string(session.StopError), "boom"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("terminal inspect result = %q, want %q", res.Content, want)
+		}
+	}
+	if strings.Contains(res.Content, "in-flight") {
+		t.Fatalf("terminal inspect rendered \"in-flight\" = %q (a terminal fire must NOT render the in-flight marker)", res.Content)
+	}
+}

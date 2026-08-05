@@ -547,7 +547,9 @@ func renderScheduleList(scheds []port.Schedule) string {
 }
 
 // renderScheduleSummary renders the one-line name/trigger/next-fire/enabled/
-// last-fire-stop summary shared by create + list.
+// last-fire-stop summary shared by create + list. When the spec carries a
+// per-fire wall-clock FireTimeout (issue #386), it is appended so a create/list
+// surfaces the bound the in-flight fire runs under.
 func renderScheduleSummary(s port.Schedule) string {
 	enabled := "disabled"
 	if s.State.Enabled {
@@ -557,7 +559,11 @@ func renderScheduleSummary(s port.Schedule) string {
 	if !s.State.NextFireAt.IsZero() {
 		next = s.State.NextFireAt.UTC().Format(time.RFC3339)
 	}
-	return fmt.Sprintf("%s [%s] next=%s %s", s.Spec.Name, renderTrigger(s.Spec.Trigger), next, enabled)
+	out := fmt.Sprintf("%s [%s] next=%s %s", s.Spec.Name, renderTrigger(s.Spec.Trigger), next, enabled)
+	if s.Spec.FireTimeout > 0 {
+		out += " fire_timeout=" + s.Spec.FireTimeout.String()
+	}
+	return out
 }
 
 // renderTrigger renders the trigger as a compact model-readable label.
@@ -573,22 +579,81 @@ func renderTrigger(tr port.TriggerSpec) string {
 }
 
 // renderScheduleInspect renders one schedule's full summary plus its fires
-// (id, fired-at, terminal stop reason, error), most-recent-first.
+// (id, fired-at, terminal stop reason, error), most-recent-first. An IN-FLIGHT
+// fire (issue #386) is rendered with an explicit "in-flight" marker plus its
+// started/last-progress/deadline instants — it is NEVER silently rendered as
+// "none". A CLAIMED fire (the post-Claim, pre-RecordFireStart state where
+// State.LastFireSessionID is the "pending" sentinel) is rendered as an explicit
+// "in-flight: claimed (session pending)" line, so a claimed-but-not-yet-run
+// fire never renders as "fires: none" (the genuinely-never-fired case).
 func renderScheduleInspect(sched port.Schedule, fires []port.ScheduleFire) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Schedule %q\n  %s\n  fire count: %d", sched.Spec.Name, renderScheduleSummary(sched), sched.State.FireCount)
+
+	// A CLAIMED fire: Claim happened (LastFireSessionID == "pending") but the
+	// run has not yet started (LastFireStartedAt zero AND no in-flight fire
+	// record). Render it explicitly instead of "fires: none" so a claimed fire
+	// is never mistaken for a schedule that has never fired.
+	claimedPending := string(sched.State.LastFireSessionID) == string(port.PendingFireSessionID) &&
+		sched.State.LastFireStartedAt.IsZero()
+	if claimedPending && len(fires) == 0 {
+		b.WriteString("\n  in-flight: claimed (session pending)")
+	}
+
 	if len(fires) == 0 {
-		b.WriteString("\n  fires: none")
+		if !claimedPending {
+			b.WriteString("\n  fires: none")
+		}
 		return b.String()
 	}
 	sorted := append([]port.ScheduleFire(nil), fires...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].FiredAt.After(sorted[j].FiredAt) })
+
+	// A schedule-level in-flight summary when the state shows a live fire (the
+	// state's LastFireStartedAt is set, or any fire record is in-flight — Stop
+	// empty). Rendered once before the per-fire lines so the model sees the
+	// active fire's liveness window at a glance.
+	inFlight := !sched.State.LastFireStartedAt.IsZero()
+	if !inFlight {
+		for _, f := range sorted {
+			if f.Stop == "" {
+				inFlight = true
+				break
+			}
+		}
+	}
+	if inFlight {
+		b.WriteString("\n  in-flight:")
+		if !sched.State.LastFireStartedAt.IsZero() {
+			fmt.Fprintf(&b, " started %s", sched.State.LastFireStartedAt.UTC().Format(time.RFC3339))
+		}
+		if !sched.State.LastFireProgressAt.IsZero() {
+			fmt.Fprintf(&b, " last-progress %s", sched.State.LastFireProgressAt.UTC().Format(time.RFC3339))
+		}
+		if !sched.State.FireDeadline.IsZero() {
+			fmt.Fprintf(&b, " deadline %s", sched.State.FireDeadline.UTC().Format(time.RFC3339))
+		}
+	}
+
 	b.WriteString("\n  fires (most recent first):")
 	for _, f := range sorted {
-		stop := string(f.Stop)
-		if stop == "" {
-			stop = "running"
+		if f.Stop == "" {
+			// In-flight fire: render with the in-flight marker + the per-fire
+			// started/last-progress/deadline instants (issue #386). It is
+			// never rendered as a terminal stop reason.
+			fmt.Fprintf(&b, "\n  - fire %s (session %s) at %s: in-flight", f.ID, f.SessionID, f.FiredAt.UTC().Format(time.RFC3339))
+			if !f.StartedAt.IsZero() {
+				fmt.Fprintf(&b, " started %s", f.StartedAt.UTC().Format(time.RFC3339))
+			}
+			if !f.ProgressAt.IsZero() {
+				fmt.Fprintf(&b, " last-progress %s", f.ProgressAt.UTC().Format(time.RFC3339))
+			}
+			if !f.Deadline.IsZero() {
+				fmt.Fprintf(&b, " deadline %s", f.Deadline.UTC().Format(time.RFC3339))
+			}
+			continue
 		}
+		stop := string(f.Stop)
 		fmt.Fprintf(&b, "\n  - fire %s (session %s) at %s: %s", f.ID, f.SessionID, f.FiredAt.UTC().Format(time.RFC3339), stop)
 		if f.Err != "" {
 			fmt.Fprintf(&b, " — %s", f.Err)

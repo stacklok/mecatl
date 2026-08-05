@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -55,6 +56,10 @@ type ScheduleSpec struct {
 	Singleton bool
 	Timezone  string
 	CreatedAt time.Time
+	// FireTimeout is the per-fire wall-clock deadline (issue #386). Zero means
+	// "use the deployment default" (which may itself be zero for "no explicit
+	// deadline"). Mirrors mecatlv1.ScheduleSpec.fire_timeout.
+	FireTimeout time.Duration
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half that
@@ -65,6 +70,15 @@ type ScheduleState struct {
 	FireCount         int32
 	Enabled           bool
 	LastFireSessionID string
+	// LastFireStartedAt is when the current fire's run began (RecordFireStart),
+	// the in-flight liveness marker. Zero means the run has not started. #386.
+	LastFireStartedAt time.Time
+	// LastFireProgressAt is the last observed progress instant for the current
+	// fire. Zero means no progress observed. #386.
+	LastFireProgressAt time.Time
+	// FireDeadline is the current fire's wall-clock deadline (RecordFireStart).
+	// Zero means no explicit deadline. #386.
+	FireDeadline time.Time
 }
 
 // Schedule is the aggregate value object: the immutable Spec plus the durable
@@ -83,6 +97,13 @@ type ScheduleFire struct {
 	FiredAt      time.Time
 	Stop         string
 	Err          string
+	// StartedAt is when the fire's run began (RecordFireStart). Zero on a
+	// terminal-only fire. An in-flight fire has Stop empty + StartedAt set. #386.
+	StartedAt time.Time
+	// ProgressAt is the last observed progress instant for the fire. #386.
+	ProgressAt time.Time
+	// Deadline is the fire's wall-clock deadline (RecordFireStart). #386.
+	Deadline time.Time
 }
 
 // SchedulesMsg carries a ListSchedules result for the /schedule overlay. Err is
@@ -342,6 +363,9 @@ func mapScheduleSpec(in *mecatlv1.ScheduleSpec) ScheduleSpec {
 	if ca := in.GetCreatedAt(); ca != nil {
 		out.CreatedAt = ca.AsTime()
 	}
+	if d := in.GetFireTimeout(); d != nil {
+		out.FireTimeout = d.AsDuration()
+	}
 	return out
 }
 
@@ -361,6 +385,15 @@ func mapScheduleState(in *mecatlv1.ScheduleState) ScheduleState {
 	if ts := in.GetLastFireAt(); ts != nil {
 		out.LastFireAt = ts.AsTime()
 	}
+	if ts := in.GetLastFireStartedAt(); ts != nil {
+		out.LastFireStartedAt = ts.AsTime()
+	}
+	if ts := in.GetLastFireProgressAt(); ts != nil {
+		out.LastFireProgressAt = ts.AsTime()
+	}
+	if ts := in.GetFireDeadline(); ts != nil {
+		out.FireDeadline = ts.AsTime()
+	}
 	return out
 }
 
@@ -378,6 +411,15 @@ func mapFire(in *mecatlv1.ScheduleFire) ScheduleFire {
 	}
 	if ts := in.GetFiredAt(); ts != nil {
 		out.FiredAt = ts.AsTime()
+	}
+	if ts := in.GetStartedAt(); ts != nil {
+		out.StartedAt = ts.AsTime()
+	}
+	if ts := in.GetProgressAt(); ts != nil {
+		out.ProgressAt = ts.AsTime()
+	}
+	if ts := in.GetDeadline(); ts != nil {
+		out.Deadline = ts.AsTime()
 	}
 	return out
 }
@@ -423,6 +465,9 @@ func scheduleSpecToProto(in ScheduleSpec) *mecatlv1.ScheduleSpec {
 	}
 	if !in.CreatedAt.IsZero() {
 		out.CreatedAt = timestamppb.New(in.CreatedAt)
+	}
+	if in.FireTimeout > 0 {
+		out.FireTimeout = durationpb.New(in.FireTimeout)
 	}
 	return out
 }

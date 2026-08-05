@@ -33,6 +33,7 @@ syntax = "proto3";
 package mecatl.v1;
 
 import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "mecatl/v1/harness.proto";
 
@@ -190,6 +191,14 @@ message ScheduleSpec {
   // carry_context renders the prior fire's conversation as a fenced untrusted
   // preamble (NOT seeded history — carried context is untrusted). Default false.
   bool carry_context = 18;
+  // fire_timeout is the per-fire wall-clock deadline (issue #386, the in-flight
+  // scheduled-fire state). A google.protobuf.Duration; zero/absent means "use
+  // the deployment default" (which may itself be zero for "no explicit
+  // deadline"). When set, RecordFireStart stamps ScheduleState.fire_deadline =
+  // start + fire_timeout, and a watchdog reads it to terminate the in-flight run
+  // with StopTimeout when it lapses. Per-fire: each fire gets a fresh deadline
+  // from its own start instant. The store stores it inertly.
+  google.protobuf.Duration fire_timeout = 19;
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half
@@ -218,6 +227,22 @@ message ScheduleState {
   // (one_shot_retry). Incremented atomically on each re-arm; when it exceeds
   // one_shot_max_retries the schedule stays disabled.
   int32 one_shot_retry_count = 6;
+  // last_fire_started_at is when the current fire's RUN actually began
+  // (RecordFireStart), distinct from last_fire_at (the Claim instant). The
+  // in-flight liveness marker: absent means the current fire has not started
+  // its run yet (the crash-after-Claim state). Set by RecordFireStart, cleared
+  // by RecordFire. Issue #386.
+  google.protobuf.Timestamp last_fire_started_at = 7;
+  // last_fire_progress_at is the last observed progress instant for the current
+  // fire (RecordFireProgress). Absent means "no progress observed yet". Best-
+  // effort liveness: a stale value is a stuck-fire signal. Issue #386.
+  google.protobuf.Timestamp last_fire_progress_at = 8;
+  // fire_deadline is the current fire's wall-clock deadline (RecordFireStart):
+  // start + ScheduleSpec.fire_timeout (or absent when fire_timeout is zero /
+  // the deployment default applies). A watchdog reads it to decide whether to
+  // terminate the in-flight run with StopTimeout. Absent means "no explicit
+  // deadline". Issue #386.
+  google.protobuf.Timestamp fire_deadline = 9;
 }
 
 // Schedule is the aggregate value object: the immutable Spec plus the durable
@@ -249,6 +274,19 @@ message ScheduleFire {
   // err is the error string if the fire's run failed (stop == "error"), empty
   // otherwise.
   string err = 6;
+  // started_at is when the fire's run actually began (RecordFireStart),
+  // distinct from fired_at (the Claim instant). A fire written by
+  // RecordFireStart is IN-FLIGHT (stop empty, started_at set); a fire written by
+  // RecordFire is terminal. Absent on a terminal-only fire. Issue #386.
+  google.protobuf.Timestamp started_at = 7;
+  // progress_at is the last observed progress instant for the fire
+  // (RecordFireProgress). Absent means "no progress observed". Issue #386.
+  google.protobuf.Timestamp progress_at = 8;
+  // deadline is the fire's wall-clock deadline (RecordFireStart): start +
+  // ScheduleSpec.fire_timeout (or absent when fire_timeout is zero / the
+  // deployment default applies). Absent means "no explicit deadline". Issue
+  // #386.
+  google.protobuf.Timestamp deadline = 9;
 }
 
 // --- Request / Response messages --------------------------------------------

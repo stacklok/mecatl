@@ -1010,3 +1010,80 @@ func TestScheduleCreateFormValidation(t *testing.T) {
 		t.Errorf("create calls = %d, want 0 on validation error", fs.createCalls)
 	}
 }
+
+// TestScheduleInspectRendersInFlightFire pins issue #386 (#386 fire-state): an
+// IN-FLIGHT fire (Stop empty) renders the "in-flight" marker + its started/
+// last-progress/deadline instants, never an empty stop; and the schedule-level
+// in-flight summary line renders when the state shows a live fire.
+func TestScheduleInspectRendersInFlightFire(t *testing.T) {
+	start := time.Date(2026, 7, 6, 14, 0, 0, 0, time.UTC)
+	prog := start.Add(20 * time.Second)
+	deadline := start.Add(30 * time.Minute)
+	sched := sampleSchedule("nightly")
+	sched.Spec.FireTimeout = 30 * time.Minute
+	sched.State.LastFireSessionID = "sess-inflight"
+	sched.State.LastFireStartedAt = start
+	sched.State.LastFireProgressAt = prog
+	sched.State.FireDeadline = deadline
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sched},
+		sched:     sched,
+		fires: []client.ScheduleFire{
+			{ID: "fire-inflight", ScheduleName: "nightly", SessionID: "sess-inflight", FiredAt: start, StartedAt: start, ProgressAt: prog, Deadline: deadline, Stop: ""},
+		},
+	}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	m = openInspectWithFires(t, m, fs)
+	out := stripANSIstr(m.View().Content)
+	for _, want := range []string{"in-flight", "fire-inflight", "started", "last-progress", "deadline", "fire_timeout"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("in-flight inspect missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestScheduleInspectRendersClaimedPending pins issue #386: a CLAIMED fire
+// (LastFireSessionID == "pending", no run started, no fire records) renders an
+// explicit "in-flight: claimed (session pending)" line, NOT "no fires recorded"
+// (the genuinely-never-fired case).
+func TestScheduleInspectRendersClaimedPending(t *testing.T) {
+	sched := sampleSchedule("nightly")
+	sched.State.LastFireSessionID = "pending"
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sched},
+		sched:     sched,
+		fires:     nil,
+	}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	m = openInspectWithFires(t, m, fs)
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "in-flight: claimed (session pending)") {
+		t.Errorf("claimed-pending inspect missing the claimed line:\n%s", out)
+	}
+	if strings.Contains(out, "no fires recorded") {
+		t.Errorf("claimed-pending inspect rendered \"no fires recorded\" (a claimed fire must NOT render as never-fired):\n%s", out)
+	}
+}
+
+// TestScheduleInspectRendersNeverFired pins the genuine never-fired case still
+// renders "no fires recorded" (the distinction from a claimed fire).
+func TestScheduleInspectRendersNeverFired(t *testing.T) {
+	sched := sampleSchedule("nightly")
+	fs := &fakeScheduleLister{
+		schedules: []client.Schedule{sched},
+		sched:     sched,
+		fires:     nil,
+	}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	m = openInspectWithFires(t, m, fs)
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "no fires recorded") {
+		t.Errorf("never-fired inspect missing \"no fires recorded\":\n%s", out)
+	}
+	if strings.Contains(out, "in-flight") {
+		t.Errorf("never-fired inspect rendered \"in-flight\" (a never-claimed schedule must NOT render in-flight):\n%s", out)
+	}
+}

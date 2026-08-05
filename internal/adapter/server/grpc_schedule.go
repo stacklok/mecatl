@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -208,6 +209,9 @@ func protoToScheduleSpec(in *mecatlv1.ScheduleSpec) (port.ScheduleSpec, error) {
 		OneShotMaxRetries: int(in.GetOneShotMaxRetries()),
 		CarryContext:      in.GetCarryContext(),
 	}
+	if d := in.GetFireTimeout(); d != nil {
+		out.FireTimeout = d.AsDuration()
+	}
 	if sel := in.GetSelector(); sel != nil {
 		out.Selector = port.ScheduleProviderSelector{
 			ProviderID: sel.GetProviderId(),
@@ -285,10 +289,11 @@ func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 	if !in.CreatedAt.IsZero() {
 		out.CreatedAt = timestamppb.New(in.CreatedAt)
 	}
+	if in.FireTimeout > 0 {
+		out.FireTimeout = durationpb.New(in.FireTimeout)
+	}
 	return out
 }
-
-// scheduleStateToProto maps port.ScheduleState → proto ScheduleState.
 func scheduleStateToProto(in port.ScheduleState) *mecatlv1.ScheduleState {
 	out := &mecatlv1.ScheduleState{
 		FireCount:         ClampInt32(in.FireCount),
@@ -301,6 +306,15 @@ func scheduleStateToProto(in port.ScheduleState) *mecatlv1.ScheduleState {
 	}
 	if !in.LastFireAt.IsZero() {
 		out.LastFireAt = timestamppb.New(in.LastFireAt)
+	}
+	if !in.LastFireStartedAt.IsZero() {
+		out.LastFireStartedAt = timestamppb.New(in.LastFireStartedAt)
+	}
+	if !in.LastFireProgressAt.IsZero() {
+		out.LastFireProgressAt = timestamppb.New(in.LastFireProgressAt)
+	}
+	if !in.FireDeadline.IsZero() {
+		out.FireDeadline = timestamppb.New(in.FireDeadline)
 	}
 	return out
 }
@@ -318,6 +332,15 @@ func scheduleFireToProto(in port.ScheduleFire) *mecatlv1.ScheduleFire {
 	}
 	if !in.FiredAt.IsZero() {
 		out.FiredAt = timestamppb.New(in.FiredAt)
+	}
+	if !in.StartedAt.IsZero() {
+		out.StartedAt = timestamppb.New(in.StartedAt)
+	}
+	if !in.ProgressAt.IsZero() {
+		out.ProgressAt = timestamppb.New(in.ProgressAt)
+	}
+	if !in.Deadline.IsZero() {
+		out.Deadline = timestamppb.New(in.Deadline)
 	}
 	return out
 }
