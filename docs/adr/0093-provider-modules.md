@@ -89,21 +89,22 @@ it wants and pulls only that provider's SDK.
   `internal/adapter/...` citations, so the frozen ADRs and living docs that cited
   the moved files were repointed to `provider/<name>/...` (path updated, symbol
   citations kept — the sanctioned anti-drift edit).
-- **The standalone proof runs offline (no credential needed).** The
+- **The standalone proof runs offline; warming it needs read-only git auth.** The
   `GOWORK=off` standalone gate (`test:provider-standalone` + the
   `provider-standalone` CI job) covers `ssefilter` + `anthropic`. Because mecatl
-  is a **private/INTERNAL repo**, a *networked* `GOWORK=off` build of any provider
-  that `require`s another mecatl module must fetch it from the origin, and
-  `proxy.golang.org` cannot serve a private module (the fetch 401s). Rather than
-  wire a credential into CI, the gate runs fully **offline** — `GOPROXY=off` over
-  a module cache warmed from the committed `go.sum` — so every dependency must
-  already be local and no private module is ever fetched. `anthropic` qualifies
-  because its `require engine v0.8.0` (a published tag) is cache-resolvable once
-  warmed; `ssefilter` is self-contained. `openai`/`openaichat` are excluded only
-  because they `require provider/ssefilter v0.0.0`, which no cache/proxy can
-  resolve until the first `provider/ssefilter/vX.Y.Z` tag is cut — that is a
-  one-time bootstrap gap, closed by cutting the tag. Once mecatl is open-sourced
-  the gate can drop `GOPROXY=off` and cover all four over the network. Until then
+  is a **private/INTERNAL repo**, a module that `require`s another mecatl module
+  can only be fetched from the origin WITH auth — `proxy.golang.org` cannot serve
+  a private module. So the CI job WARMS the module cache with the workflow's
+  read-only `GITHUB_TOKEN` (an `insteadOf` rewrite, scoped to the warm step and
+  dropped immediately after), then runs the gate itself fully **offline**
+  (`GOPROXY=off`): the proof that the closure is self-contained never touches the
+  network, and no credential is present on the proof step. `anthropic` qualifies
+  (its `require engine v0.8.0` is a published tag, fetchable with auth);
+  `ssefilter` is self-contained. `openai`/`openaichat` are excluded only because
+  they `require provider/ssefilter v0.0.0`, which no tag exists to resolve until
+  the first `provider/ssefilter/vX.Y.Z` is cut — a one-time bootstrap gap closed
+  by cutting the tag. Once mecatl is open-sourced the warm needs no token (the
+  proxy serves the modules) and the gate can cover all four. Until then
   `openai`/`openaichat` build + test through the workspace (`GOWORK=on`).
 
 ## See also

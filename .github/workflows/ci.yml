@@ -295,19 +295,22 @@ jobs:
     name: Provider modules (standalone, GOWORK=off)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Proves the opt-in provider/ submodules build + test with NO workspace and NO
-    # network (GOPROXY=off), the strictest form of the engine-standalone hygiene
-    # gate: every dependency must already be in the module cache (warmed by
-    # setup-go from the committed go.sum), so NO credential is needed and no
-    # private module is ever fetched — mecatl is a private/INTERNAL repo, so a
-    # networked fetch of a mecatl module would 401 anyway. Covers ssefilter +
-    # anthropic: the only two providers whose closure is fully cache-resolvable.
-    # openai + openaichat `require provider/ssefilter v0.0.0`, which GOPROXY=off
-    # cannot resolve (no version exists off-workspace) — their standalone proof is
-    # deferred until the first provider/ssefilter/vX.Y.Z tag is cut; they are
-    # covered by the workspace (GOWORK=on) build/test jobs above. See ADR 0093 and
-    # issue #379. Once mecatl is open-sourced this whole gate can move to a plain
-    # networked GOWORK=off over all four modules.
+    # Proves the opt-in provider/ submodules build + test with NO workspace
+    # (GOWORK=off), the engine-standalone hygiene gate. Because mecatl is a
+    # private/INTERNAL repo, a module that `require`s another mecatl module
+    # (anthropic → engine; openai/openaichat → engine + provider/ssefilter) can
+    # only be fetched from the origin WITH auth — proxy.golang.org cannot serve a
+    # private module. So the cache is WARMED with read-only git auth (the
+    # workflow's GITHUB_TOKEN via an insteadOf rewrite), then the gate itself runs
+    # fully OFFLINE (GOPROXY=off): the proof that the module's closure is
+    # self-contained never touches the network, and the token lives only on the
+    # warm step. Covers ssefilter + anthropic. openai + openaichat additionally
+    # `require provider/ssefilter v0.0.0`, which is unresolvable until the first
+    # provider/ssefilter/vX.Y.Z tag — deferred (issue #379); covered by the
+    # workspace (GOWORK=on) build/test jobs. Once mecatl is open-sourced the warm
+    # needs no token (proxy serves the modules). See ADR 0093.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -321,14 +324,30 @@ jobs:
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
 
-      # setup-go primes the module cache from the committed go.sum files. GOFLAGS
-      # here overrides the workflow-global -mod=readonly so the cache warm can
-      # resolve the full (incl. test-only) graph.
+      # Warm the module cache. The build/test resolve the FULL (incl. test-only)
+      # dependency graph into the cache. engine v0.8.0 (and provider/ssefilter for
+      # the openai family) are fetched from the private origin over HTTPS using
+      # the GITHUB_TOKEN via an insteadOf rewrite; GOFLAGS=-mod=mod overrides the
+      # global -mod=readonly so the graph can resolve. GOPRIVATE keeps the
+      # checksum DB + proxy from rejecting the private module path.
       - name: warm module cache (ssefilter + anthropic)
+        env:
+          GOWORK: off
+          GOFLAGS: -mod=mod
+          GOPRIVATE: github.com/stacklok/*
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          (cd provider/ssefilter && GOFLAGS= go mod download)
-          (cd provider/anthropic && GOFLAGS= go mod download)
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          (cd provider/ssefilter && go build ./... && go test ./... >/dev/null)
+          (cd provider/anthropic && go build ./... && go test ./... >/dev/null)
 
+      - name: drop git credential rewrite
+        if: always()
+        run: git config --global --unset-all url."https://x-access-token@github.com/".insteadOf || true
+
+      # The proof itself: fully offline (GOPROXY=off) + no workspace (GOWORK=off).
+      # If any dependency were missing from the cache this fails — no credential
+      # is present on this step.
       - name: go build (provider standalone, offline)
         env:
           GOWORK: off
