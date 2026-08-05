@@ -488,3 +488,140 @@ func TestBuiltinNameWithArgsFallsThrough(t *testing.T) {
 		t.Errorf("phase = %v, want running after a normal send", m.phase)
 	}
 }
+
+// TestIsKnownBuiltinName asserts the static built-in name set covers every name
+// from the builtinCommands table AND that an unknown name is false.
+func TestIsKnownBuiltinName(t *testing.T) {
+	known := []string{
+		"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"models", "effort", "worktrees", "schedule", "sessions", "posture",
+	}
+	for _, name := range known {
+		if !isKnownBuiltinName(name) {
+			t.Errorf("isKnownBuiltinName(%q) = false, want true (known builtin)", name)
+		}
+	}
+	if isKnownBuiltinName("foo") {
+		t.Error("isKnownBuiltinName(\"foo\") = true, want false (unknown)")
+	}
+	if isKnownBuiltinName("") {
+		t.Error("isKnownBuiltinName(\"\") = true, want false (empty)")
+	}
+	// Drift-proof: the hardcoded list must equal the derived set exactly.
+	// Adding a builtin to allBuiltins without updating this test must fail.
+	knownSet := make(map[string]bool, len(known))
+	for _, n := range known {
+		knownSet[n] = true
+	}
+	if len(known) != len(knownBuiltinNames) {
+		t.Errorf("hardcoded known list has %d names, knownBuiltinNames has %d", len(known), len(knownBuiltinNames))
+	}
+	for n := range knownBuiltinNames {
+		if !knownSet[n] {
+			t.Errorf("name %q is in knownBuiltinNames but MISSING from the hardcoded known list", n)
+		}
+	}
+}
+
+// TestSlashNoMatchBlocksKnownBuiltins asserts that typing a bare known-but-gated
+// builtin ("/mcp" when MCP is not available) does NOT send it to the model: the
+// textarea is NOT cleared, a warning status is set, and nothing enters the
+// conversation. Unknown names ("/foo") still fall through to the normal send path.
+func TestSlashNoMatchBlocksKnownBuiltins(t *testing.T) {
+	// Model with MINIMAL caps (mcp off, teams off, etc.)
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+
+	// Type "/mcp" (a known builtin, but gated off) and press Enter.
+	m = typeText(t, m, "/mcp")
+	m, cmd := pressEnter(t, m)
+
+	// Must NOT send to the model.
+	if cmd != nil {
+		t.Error("gated-off /mcp submit should return nil command (blocked, not sent)")
+	}
+	if len(send.frames()) != 0 {
+		t.Errorf("gated-off /mcp must send no frames, got %d", len(send.frames()))
+	}
+	// The textarea must NOT be cleared (user keeps their input for editing).
+	if m.ta.Value() == "" {
+		t.Error("/mcp blocked: textarea should KEEP the input (not clear it)")
+	}
+	// A warning status must be set.
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "not available") || !strings.Contains(got, "/mcp") {
+		t.Errorf("statusMsg = %q, want 'not available' warning naming '/mcp'", got)
+	}
+}
+
+// TestSlashNoMatchCaseInsensitive asserts that a known builtin with mixed case
+// ("/MODELS") is still blocked when gated off, not sent to the model.
+// interceptSlashCommand normalises to lower-case so the guard works.
+func TestSlashNoMatchCaseInsensitive(t *testing.T) {
+	// Zero caps → /models is gated off.
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+
+	m = typeText(t, m, "/MODELS")
+	m, cmd := pressEnter(t, m)
+
+	// Must NOT send to the model — blocked by the case-insensitive guard.
+	if cmd != nil {
+		t.Error("/MODELS (gated off) should return nil command (blocked), not be sent")
+	}
+	if len(send.frames()) != 0 {
+		t.Errorf("/MODELS must send no frames, got %d", len(send.frames()))
+	}
+	if m.ta.Value() == "" {
+		t.Error("/MODELS blocked: textarea should KEEP the input")
+	}
+	got := stripANSIstr(m.statusMsg)
+	if !strings.Contains(got, "not available") {
+		t.Errorf("statusMsg = %q, want 'not available' warning", got)
+	}
+}
+
+// TestSlashNoMatchUnknownSends asserts that an unknown slash name ("/foo") still
+// falls through to the normal send path (workspace/custom command).
+func TestSlashNoMatchUnknownSends(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+
+	m = typeText(t, m, "/foo")
+	m, cmd := pressEnter(t, m)
+
+	// Must send to the model (normal fall-through).
+	if cmd == nil {
+		t.Fatal("/foo should fall through to the normal send (non-nil cmd), not be blocked")
+	}
+	// The textarea should be cleared by the normal send path.
+	if m.ta.Value() != "" {
+		t.Errorf("/foo: textarea should be cleared by the normal send, got %q", m.ta.Value())
+	}
+	// Flush the batch so the send frame fires.
+	runBatchLeaves(cmd)
+	frames := send.frames()
+	if len(frames) == 0 {
+		t.Fatal("/foo should send a frame to the model")
+	}
+}
+
+// TestSlashGatedByCapsStillExecutes asserts that a builtin name that IS currently
+// registered (gated ON) still EXECUTES the builtin — the "known but gated" block
+// fires only when builtinByName misses.
+func TestSlashGatedByCapsStillExecutes(t *testing.T) {
+	// Model with MCP on + MCP collaborator wired, so /mcp IS registered.
+	caps := client.Capabilities{MCP: true}
+	m, send := builtinDispatchModel(t, caps, true)
+
+	m = typeText(t, m, "/mcp")
+	m, cmd := pressEnter(t, m)
+
+	// The builtin executed (opened the MCP panel). It may return a command to
+	// load data, but it must NOT send any frames to the model.
+	if len(send.frames()) != 0 {
+		t.Errorf("/mcp (registered) must send no frames, got %d", len(send.frames()))
+	}
+	// The textarea should be cleared (the builtin resets it).
+	if strings.HasPrefix(m.ta.Value(), "/mcp") {
+		t.Errorf("/mcp (registered): textarea should be cleared after the builtin runs, got %q", m.ta.Value())
+	}
+	_ = cmd // may be non-nil (to load MCP inventory); that's fine
+}

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -330,4 +332,71 @@ func postureSummary(p string) string {
 		"; child $()/heredoc auto-run (injection-defense off) " + onoff(childDefenseOff) +
 		"; project-trust " + onoff(trust) +
 		" (Deny & configured Ask always apply)"
+}
+
+// allBuiltins returns the static set of ALL possible built-in names (clear, help,
+// mcp, agents, team, skills, soul, usermodel, models, effort, worktrees, schedule,
+// sessions, posture) — regardless of caps or wired-collaborators. It is derived
+// from builtinCommands with all gates set true so it stays in sync with the table
+// (no second list to drift). Used by submitPrompt to block a /<known-builtin>
+// that is currently gated-off rather than sending it to the model as text.
+func allBuiltins() map[string]bool {
+	allCaps := client.Capabilities{
+		MCP: true, Agents: true, Teams: true, Skills: true, Soul: true,
+		UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true,
+		Posture: "yes",
+	}
+	allWired := wiredCollaborators{
+		MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true,
+		Models: true, Worktrees: true, Scheduling: true, Sessions: true,
+	}
+	set := make(map[string]bool, 14)
+	for _, b := range builtinCommands(allCaps, allWired) {
+		set[b.name] = true
+	}
+	return set
+}
+
+// knownBuiltinNames is the one-shot evaluation of allBuiltins.
+var knownBuiltinNames = allBuiltins()
+
+// isKnownBuiltinName reports whether name is one of the static built-in slash
+// commands — regardless of whether it is currently gated off by caps or wired
+// collaborators. The caller uses this alongside builtinByName to distinguish
+// "gated-off builtin" from "unknown / workspace command".
+func isKnownBuiltinName(name string) bool {
+	return knownBuiltinNames[name]
+}
+
+// interceptSlashCommand checks whether text is a bare slash command (no args, no
+// newlines). If it matches a currently-registered builtin, it executes it. If it
+// matches a KNOWN builtin name that is gated off, it blocks the send with a
+// warning. Otherwise it returns handled=false and the caller falls through to the
+// normal send path (workspace/custom command, issue #348).
+func (m Model) interceptSlashCommand(text string) (tea.Model, tea.Cmd, bool) {
+	name, ok := commandPrefix(text)
+	if !ok {
+		return m, nil, false
+	}
+	// Normalize to lower-case: builtinByName does a case-sensitive lookup
+	// against all-lowercase names, so "/MODELS" would miss both the dispatch
+	// path and the isKnownBuiltinName guard. Lowercasing here aligns the two
+	// without changing the downstream palette/completion paths.
+	name = strings.ToLower(name)
+	if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
+		m.ta.Reset()
+		mm, cmd := b.run(m)
+		return mm, cmd, true
+	}
+	// The slash name did NOT match any CURRENTLY-REGISTERED built-in.
+	// Block it if it IS a known builtin name (gated off by caps or wired
+	// collaborators) — sending "/mcp" to the model when MCP is off is
+	// never useful. Unknown names fall through to the normal send path.
+	if isKnownBuiltinName(name) {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(
+			"/" + name + " is not available for this session — capabilities may still be loading; try again in a moment",
+		)
+		return m, nil, true
+	}
+	return m, nil, false
 }

@@ -1103,3 +1103,167 @@ func TestReplayCoalescesNoGlamourPerEvent(t *testing.T) {
 		t.Fatalf("expected exactly 1 glamour render on the flush, got %d", got)
 	}
 }
+
+// TestContinueLoadedSessionFiresCapsHeal asserts that continueLoadedSession
+// fires a RefreshResolvedModelCmd (batched with the textarea-focus cmd) so
+// caps + resolved model + mode + title heal in one round-trip (issue #348).
+func TestContinueLoadedSessionFiresCapsHeal(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	m := newSessionsModel(t, conv, fl, fr)
+
+	// Drive through the switch + StreamClosed → continueLoadedSession.
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	// Stream closes → continueLoadedSession.
+	mm, cmd := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+	if m.phase != phaseIdle {
+		t.Fatalf("after continue: phase = %v, want phaseIdle", m.phase)
+	}
+	// The returned cmd must be a tea.Batch containing at least the textarea focus
+	// AND a RefreshResolvedModelCmd.
+	if cmd == nil {
+		t.Fatal("continueLoadedSession must return a non-nil cmd")
+	}
+	// Feed the batch — GetSession must have been called.
+	m = feedCmd(t, m, cmd)
+	if conv.getSessionCount != 1 {
+		t.Fatalf("GetSession calls = %d, want 1 (caps-heal refetch fired)", conv.getSessionCount)
+	}
+}
+
+// TestContinueCapsRestoreViaMsg asserts that after switchToSession +
+// continueLoadedSession, feeding a ResolvedModelMsg with non-zero caps restores
+// m.caps and builtinCommands then returns the gated builtins (issue #348).
+func TestContinueCapsRestoreViaMsg(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	// Start with ALL-FALSE caps (standard connect). wiredCollaborators has
+	// Sessions=true (fl+fr are wired), so builtinNames includes sessions.
+	m := newSessionsModel(t, conv, fl, fr)
+	// Sanity: all-false caps → only clear, help, sessions (no caps-gated builtins).
+	names := builtinNames(m.caps, m.wiredCollaborators())
+	if len(names) != 3 {
+		t.Fatalf("precondition: caps all-false → %d builtins, want 3 (clear, help, sessions)", len(names))
+	}
+	// Verify no caps-gated builtins.
+	for _, n := range names {
+		if n == "mcp" || n == "team" {
+			t.Fatalf("precondition: %q should NOT be in all-false builtins: %v", n, names)
+		}
+	}
+
+	// Set GetSession to return non-zero caps.
+	wantCaps := client.Capabilities{MCP: true, Teams: true}
+	conv.getSessionCaps = wantCaps
+
+	// Drive through switch + StreamClosed → continueLoadedSession.
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	mm, cmd := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+
+	// Feed the batched cmd (RefreshResolvedModelCmd + textarea focus).
+	m = feedCmd(t, m, cmd)
+
+	// After the ResolvedModelMsg lands, caps must be the adopted value.
+	if m.caps != wantCaps {
+		t.Fatalf("caps = %+v, want %+v (adopted from the ResolvedModelMsg)", m.caps, wantCaps)
+	}
+	// builtinCommands must now include the caps-gated builtins.
+	names = builtinNames(m.caps, m.wiredCollaborators())
+	if len(names) <= 3 {
+		t.Fatalf("after caps restore, builtinNames = %v, want >3 (caps-gated builtins restored)", names)
+	}
+	// NOTE: /mcp and /agents require both caps AND the collaborator wired;
+	// newSessionsModel wires no MCP/agents collaborators, so they won't appear
+	// even with caps set. /team (caps.Teams) and /sessions (wired collaborators)
+	// are the reliable signals.
+	hasTeam := false
+	for _, n := range names {
+		if n == "team" {
+			hasTeam = true
+		}
+	}
+	if !hasTeam {
+		t.Errorf("builtins missing caps-gated name: team (names=%v)", names)
+	}
+}
+
+// TestContinueZeroCapsKeepsPriorCaps asserts that a zero-caps ResolvedModelMsg
+// (older server omitting the field) leaves prior caps intact — fail-conservative
+// (issue #348).
+func TestContinueZeroCapsKeepsPriorCaps(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	// Start with non-zero caps (simulating a connected session whose caps are
+	// known from CreateSessionResponse).
+	priorCaps := client.Capabilities{Teams: true}
+	m := newSessionsModel(t, conv, fl, fr)
+	m.caps = priorCaps
+
+	// Set GetSession to return ZERO caps (older server).
+	conv.getSessionCaps = client.Capabilities{}
+
+	// Drive through switch + StreamClosed → continueLoadedSession.
+	mm, _ := m.openSessions()
+	m = mm.(Model)
+	m = applyAll(m, client.SessionsListedMsg{Sessions: fl.sessions})
+	m.sessions.cursor = 0
+	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	mm, cmd := m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+
+	// Feed the batched cmd.
+	m = feedCmd(t, m, cmd)
+
+	// caps must be UNCHANGED (prior value preserved).
+	if m.caps != priorCaps {
+		t.Fatalf("caps = %+v, want %+v (prior caps preserved — zero-caps msg is fail-conservative)", m.caps, priorCaps)
+	}
+	// builtinCommands must still include the caps-gated builtins from prior caps.
+	// /team only needs caps.Teams (no collaborator), so it must still appear.
+	names := builtinNames(m.caps, m.wiredCollaborators())
+	hasTeam := false
+	for _, n := range names {
+		if n == "team" {
+			hasTeam = true
+		}
+	}
+	if !hasTeam {
+		t.Errorf("builtins missing team after zero-caps msg (prior caps should be preserved): %v", names)
+	}
+}
+
+// TestSwitchToSessionPreservesCaps asserts that switchToSession does NOT zero
+// m.caps — a direct regression pin so re-adding `m.caps = client.Capabilities{}`
+// fails (issue #348: the adopted session rides the same server, so prior caps are
+// at worst briefly stale and strictly better than a dead-builtins window).
+func TestSwitchToSessionPreservesCaps(t *testing.T) {
+	fl := &fakeSessionLister{sessions: sampleSessions()}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	conv := newSessionsConv()
+	priorCaps := client.Capabilities{Teams: true, MCP: true}
+	m := newSessionsModel(t, conv, fl, fr)
+	m.caps = priorCaps
+
+	mm, _, _ := m.switchToSession(fl.sessions[0])
+	m = mm.(Model)
+
+	if m.caps != priorCaps {
+		t.Fatalf("switchToSession zeroed caps: got %+v, want %+v", m.caps, priorCaps)
+	}
+}

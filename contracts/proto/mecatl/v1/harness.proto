@@ -690,6 +690,13 @@ message Session {
   // may derive a fallback). Populated from the snapshot Title (or the lazy
   // fallback in GetSession) — the loop seeds it once via session.SetTitle.
   string title = 10;
+  // capabilities is the server's feature-advertisement snapshot (the SAME value
+  // CreateSessionResponse carries). It rides the Session snapshot so a client
+  // that re-hydrates a persisted session on restart or adopt (continue, /effort fork)
+  // can re-derive its affordances in ONE round-trip (GetSession) instead of needing a
+  // second CreateSession. An older server omits the field → client sees a zero value
+  // and keeps its current caps untouched (fail-conservative).
+  ServerCapabilities capabilities = 11;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The

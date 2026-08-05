@@ -314,7 +314,12 @@ func (m Model) switchToSession(s client.SessionListItem) (tea.Model, tea.Cmd, bo
 	// before the first new prompt.
 	m.sessionTitle = s.Title
 	m.effectiveModel = client.ResolvedModel{}
-	m.caps = client.Capabilities{}
+	// DO NOT zero m.caps here: the adopted session rides the same server as the
+	// sessions-tab listing, so the current caps are at worst briefly stale and
+	// strictly better than zero (which would produce a dead-builtins "only /clear
+	// and /help" window). continueLoadedSession fires a RefreshResolvedModelCmd
+	// that adopts the server's authoritative caps on the next event cycle
+	// (issue #348).
 	m.restartedThisRun = true // suppress the welcome splash for the rest of the run
 	m.stuck = true            // arm auto-follow so the live tail sticks once a new turn starts
 

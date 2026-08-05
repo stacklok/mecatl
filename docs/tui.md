@@ -309,7 +309,9 @@ collaborator is wired). The fixed palette order is
 palette-only `ListAgents` snapshot, gated on `caps.agents`), while `/team` opens
 the **live overlay** of a team that has actually run (gated on `caps.teams`).
 These never reach the model — a bare built-in line is intercepted and run
-locally. (`/compact` is a planned follow-up: it needs a server RPC that does not
+locally. Gated-off builtins are hidden from the palette and help overlay;
+typing one anyway blocks the send with a warning (it never reaches the model).
+(`/compact` is a planned follow-up: it needs a server RPC that does not
 exist yet.)
 
 **`/soul` (read-only persona inspection).** Gated on `caps.soul` AND a wired soul

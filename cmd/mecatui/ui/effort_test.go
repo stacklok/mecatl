@@ -599,3 +599,38 @@ func TestEffortRendersInHeader(t *testing.T) {
 		t.Fatalf("a set effort should render a ` · high` suffix beside the model:\n%s", header)
 	}
 }
+
+// TestEffortForkReturnsCapsFromSnapshot asserts that the /effort fork's
+// switchEffortCmd populates SessionReadyMsg.Capabilities from the GetSession
+// snapshot's Capabilities field rather than leaving it zero (issue #348).
+func TestEffortForkReturnsCapsFromSnapshot(t *testing.T) {
+	store := &fakeStore{}
+	m := newModelsModel(t, sampleModels(), store, modelsCaps(), client.ModelSelection{})
+	conv := m.deps.Session.(*fakeConv)
+
+	// Simulate a server that returns non-zero caps on GetSession (the fork's
+	// refetch after ForkSession succeeds).
+	wantCaps := client.Capabilities{MCP: true, Teams: true, Agents: true}
+	conv.getSessionCaps = wantCaps
+
+	// Drive the /effort pick: open, pick "high", press enter.
+	mm, _ := m.runEffort()
+	m = mm.(Model)
+	// Move to "high" (index 3).
+	for i := 0; i < 3; i++ {
+		m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	mm, cmd, handled := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if !handled {
+		t.Fatal("enter should be handled by the open picker")
+	}
+
+	// Run the fork cmd batch: it should return a SessionReadyMsg with non-zero caps.
+	m = feedCmd(t, m, cmd)
+	// The fork succeeded — m.caps should now be the adopted value (applied
+	// by applySessionReady when it processes SessionReadyMsg).
+	if m.caps != wantCaps {
+		t.Fatalf("after fork: caps = %+v, want %+v (adopted from the GetSession snapshot)", m.caps, wantCaps)
+	}
+}

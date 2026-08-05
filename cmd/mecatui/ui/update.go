@@ -500,6 +500,19 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.Err != nil || msg.SessionID != m.sessionID {
 		return m, nil, true
 	}
+	// Caps adoption (issue #348): a non-zero Capabilities means the server
+	// returned the feature-advertisement snapshot on the Session proto — adopt
+	// it. A zero value means an older server (field absent) — keep the current
+	// caps untouched (fail-conservative: a dead-builtins window is worse than
+	// stale caps, and the adopted session rides the same server as the prior
+	// sessions tab).
+	// INVARIANT: a real current server always reports non-zero Capabilities
+	// (the Posture field is unconditionally populated by the server). An
+	// all-zero struct can only mean the field was absent (pre-#348 server),
+	// so we keep the prior caps rather than regressing to empty.
+	if msg.Capabilities != (client.Capabilities{}) {
+		m.caps = msg.Capabilities
+	}
 	// Window-title self-heal: adopt the session's stored title from the refetch
 	// ONLY when the local title is still empty (set-once — a title the user
 	// seeded by typing a prompt sticks; this only backfills carryover/fork/adopt
@@ -2019,11 +2032,8 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// the normal send (preserving bare workspace-command invocation), and a
 	// "/name arg" line has a space → commandPrefix is false → also falls through
 	// (workspace commands expand server-side from the full line).
-	if name, ok := commandPrefix(text); ok {
-		if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
-			m.ta.Reset()
-			return b.run(m)
-		}
+	if mm, cmd, handled := m.interceptSlashCommand(text); handled {
+		return mm, cmd
 	}
 	// Expand staged large-paste placeholders IN PLACE first, so the mention
 	// expansion and the media reconcile below run on the FINAL text (a pasted
@@ -2540,6 +2550,16 @@ func (m Model) continueLoadedSession() (tea.Model, tea.Cmd) {
 	}
 	cmd := m.ta.Focus()
 	m.refreshView()
+	// Fire a GetSession refetch to heal caps + resolved model + mode + title in one
+	// round-trip (issue #348). The adopted session may have been created on a
+	// different server, so the current caps (inherited from the prior session on
+	// switchToSession) may be wrong. The onResolvedModelMsg reducer adopts the new
+	// caps when non-zero (newer server), else keeps the current ones (fail-conservative).
+	// Batched with the textarea-focus cmd so both run.
+	if m.deps.Session != nil {
+		heal := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, id)
+		cmd = tea.Batch(cmd, heal)
+	}
 	return m, cmd
 }
 

@@ -482,8 +482,8 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 // the SAME SessionReadyMsg the connect path uses so the reducer rebinds session id,
 // caps, and effectiveModel uniformly. The resolved-model refetch is what drives the
 // /effort cursor ● and the header effort suffix (the fork's effort echo).
-// Capabilities come from the fork's SessionReadyMsg zero value + the existing
-// caps/footer-heal paths (they don't change across a same-provider/model fork).
+// Capabilities come from the GetSession snapshot (snap.Capabilities), the
+// same authoritative source as the footer-heal RefetchSessionCmd path.
 // On FAILURE it returns the recoverable restartFailedMsg (NOT client.ConnectErrMsg)
 // and the source session is deliberately NOT closed — the old session is still the
 // user's live one, so a failed fork leaves it untouched (the recoverable reducer's
@@ -502,7 +502,7 @@ func (m Model) switchEffortCmd(oldID string, sel client.ModelSelection) tea.Cmd 
 		if err != nil {
 			return restartFailedMsg{err: err, model: "effort " + effortLabel(sel.ReasoningEffort), viaFork: true, sourceID: oldID}
 		}
-		return client.SessionReadyMsg{SessionID: newID, ResolvedModel: snap.ResolvedModel, Capabilities: client.Capabilities{}, Mode: m.desiredMode()}
+		return client.SessionReadyMsg{SessionID: newID, ResolvedModel: snap.ResolvedModel, Capabilities: snap.Capabilities, Mode: m.desiredMode()}
 	}
 }
 

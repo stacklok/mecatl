@@ -664,7 +664,7 @@ func toProtoUsage(u session.Usage) *mecatlv1.Usage {
 }
 
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
-func toProtoSession(s *session.Session, rm ResolvedModel) *mecatlv1.Session {
+func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities) *mecatlv1.Session {
 	return &mecatlv1.Session{
 		SessionId:     string(s.ID),
 		State:         string(s.State),
@@ -676,6 +676,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel) *mecatlv1.Session {
 		CreatedAtUnix: s.CreatedAt.Unix(),
 		ResolvedModel: resolvedModelToProto(rm),
 		Title:         s.Title,
+		Capabilities:  caps,
 	}
 }
 

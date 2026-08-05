@@ -85,7 +85,7 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID))
+	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilities())
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
@@ -104,7 +104,7 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID))}, nil
+	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilities())}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
