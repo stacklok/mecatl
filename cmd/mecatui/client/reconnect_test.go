@@ -317,6 +317,54 @@ func TestReconnectLiveCmd_CatchUpOpenErrorStillReconnects(t *testing.T) {
 	}
 }
 
+// TestReconnectLiveCmd_CatchUpDropsNonDeliveryEvents is the C1 regression test
+// (issue #387): the catch-up reads the FULL durable log, but must forward ONLY
+// delivery notes — a prior turn's assistant text / user prompt / tool call is
+// already on screen, so re-rendering it would duplicate the visible transcript
+// on every reconnect. The durable log is consulted only to recover a delivery
+// note emitted during the gap.
+func TestReconnectLiveCmd_CatchUpDropsNonDeliveryEvents(t *testing.T) {
+	defer restoreBackoff(t)()
+	liveReconnectBaseBackoff = 1 * time.Millisecond
+	liveReconnectJitterFrac = 0
+
+	// A realistic mixed log: prior turn events (turn.start, message.delta, a
+	// plain user prompt) PLUS one delivery note emitted during the gap.
+	mixed := []*mecatlv1.Event{
+		{Type: "turn.start", Turn: 1},
+		{Type: "message.delta", Turn: 1, Text: "earlier assistant text"},
+		{Type: "user_prompt", UserPrompt: &mecatlv1.UserPrompt{Text: "a genuine earlier user prompt"}},
+		deliveryEvent("nightly-sync", "sched--fire-gap"),
+	}
+	live := &fakeLiveStreamerReconnect{failN: 0}
+	replayer := &fakeLiveReplayer{script: mixed}
+
+	ch, stop := ReconnectLiveCmd(context.Background(), live, replayer, "sess-mixed")
+	defer stop()
+	msgs := drainRecon(t, ch)
+
+	var deliveries, assistantDeltas, userPrompts, turnStarts int
+	for _, m := range msgs {
+		switch m.(type) {
+		case DeliveryNoteMsg:
+			deliveries++
+		case AssistantDeltaMsg:
+			assistantDeltas++
+		case UserPromptMsg:
+			userPrompts++
+		case TurnStartMsg:
+			turnStarts++
+		}
+	}
+	if deliveries != 1 {
+		t.Errorf("expected exactly 1 forwarded DeliveryNoteMsg, got %d", deliveries)
+	}
+	if assistantDeltas != 0 || userPrompts != 0 || turnStarts != 0 {
+		t.Errorf("non-delivery transcript events leaked through catch-up: assistant=%d user=%d turn=%d (want all 0)",
+			assistantDeltas, userPrompts, turnStarts)
+	}
+}
+
 // TestLiveReconnectDelay_BoundedAndIncreasing asserts the backoff grows
 // monotonically up to the cap when jitter is disabled (deterministic), and that
 // it never exceeds the cap. With jitter enabled it stays within [base, max].
@@ -360,8 +408,8 @@ func TestLiveReconnectDelay_BoundedAndIncreasing(t *testing.T) {
 }
 
 // TestLiveReconnectDelay_DisabledWhenBaseZero asserts a non-positive base
-// disables the backoff (returns 0) — the loop then runs no sleep and relies on
-// the ctx check to stop.
+// disables the backoff (returns 0); reconnectLiveLoop then returns immediately
+// (no hot spin — the d<=0 arm stops the loop).
 func TestLiveReconnectDelay_DisabledWhenBaseZero(t *testing.T) {
 	defer restoreBackoff(t)()
 	liveReconnectBaseBackoff = 0
@@ -370,10 +418,44 @@ func TestLiveReconnectDelay_DisabledWhenBaseZero(t *testing.T) {
 	}
 }
 
+// TestReconnectLiveCmd_DisabledBackoffStops asserts a non-positive base backoff
+// stops the reconnect loop instead of busy-spinning (review L1): with the base
+// at 0 and a live streamer that always errors, the loop returns after the first
+// failed attempt (the d<=0 arm), emitting LiveReconnectingMsg then closing the
+// channel — never a tight retry loop.
+func TestReconnectLiveCmd_DisabledBackoffStops(t *testing.T) {
+	defer restoreBackoff(t)()
+	liveReconnectBaseBackoff = 0 // disable → loop must stop, not spin
+
+	// failN larger than any plausible attempt count: every open errors.
+	live := &fakeLiveStreamerReconnect{failN: 1 << 20}
+	ch, stop := ReconnectLiveCmd(context.Background(), live, &fakeLiveReplayer{}, "sess")
+	defer stop()
+
+	// Expect exactly one LiveReconnectingMsg (attempt 1), then the channel closes
+	// (the loop returned on d<=0 — no second attempt, no spin).
+	var reconnecting int
+	for m := range ch {
+		if _, ok := m.(LiveReconnectingMsg); ok {
+			reconnecting++
+		}
+	}
+	if reconnecting != 1 {
+		t.Errorf("LiveReconnectingMsg count = %d, want exactly 1 (loop stopped on disabled backoff, no spin)", reconnecting)
+	}
+	if live.opens != 1 {
+		t.Errorf("StreamSessionLive opens = %d, want exactly 1 (no retry spin)", live.opens)
+	}
+}
+
 // TestReconnectLiveCmd_RegressionUnfencedPromptNotMisclassified is the regression
 // guard: an ordinary un-fenced "[scheduled task …" user prompt in the catch-up
 // replay is NOT misclassified as a delivery note (the fenced discriminator
-// holds). It arrives as a UserPromptMsg on the reconnect channel.
+// holds). Under the C1 fix the catch-up forwards ONLY delivery notes, so an
+// un-fenced prompt — which the discriminator already rejects as a delivery — is
+// a non-delivery event and is DROPPED from the catch-up (it is part of the
+// already-visible transcript, not a gap delivery). It must surface NEITHER as a
+// DeliveryNoteMsg NOR as a re-rendered UserPromptMsg.
 func TestReconnectLiveCmd_RegressionUnfencedPromptNotMisclassified(t *testing.T) {
 	defer restoreBackoff(t)()
 	liveReconnectBaseBackoff = 1 * time.Millisecond
@@ -404,7 +486,7 @@ func TestReconnectLiveCmd_RegressionUnfencedPromptNotMisclassified(t *testing.T)
 	if delivery != 0 {
 		t.Errorf("un-fenced prompt misclassified as a delivery note: delivery=%d", delivery)
 	}
-	if userPrompt != 1 {
-		t.Errorf("expected 1 UserPromptMsg, got %d", userPrompt)
+	if userPrompt != 0 {
+		t.Errorf("un-fenced prompt re-rendered from catch-up (want it dropped): userPrompt=%d", userPrompt)
 	}
 }

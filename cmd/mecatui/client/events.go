@@ -206,14 +206,18 @@ func ReplayStreamCmd(ctx context.Context, r SessionReplayer, id string) (ch chan
 // backoff.go (package-level vars so tests can shrink it).
 
 // catchUpReplay drains the durable-event-log replay ONCE for session id via
-// replayer, forwarding the projected event msgs (DeliveryNoteMsg/…) onto out but
-// SWALLOWING the replay's own terminal StreamClosedMsg/StreamErrMsg — the
-// reconnect loop owns its lifecycle markers (LiveReconnectingMsg/
-// LiveReconnectedMsg), so a catch-up EOF must not be mistaken for the live feed
-// closing. Returns the replay's terminal error (nil = clean EOF) so the loop can
-// surface a catch-up failure distinctly from a live-reopen failure. Honours ctx:
-// a cancelled ctx aborts the in-flight ReadLoop (its emit honours ctx) and this
-// drain.
+// replayer. The durable log is consulted ONLY to recover DELIVERY NOTES emitted
+// during the gap — the visible conversation (user prompts, assistant text, tool
+// calls) is already on screen, so replaying those msg types into the live
+// conversation would re-append the whole prior transcript on every reconnect
+// (C1). Only DeliveryNoteMsg events are forwarded onto out (deduped by the ui's
+// seenFireIDs); every other projected event is dropped here. The replay's own
+// terminal StreamClosedMsg/StreamErrMsg is SWALLOWED — the reconnect loop owns
+// its lifecycle markers (LiveReconnectingMsg/LiveReconnectedMsg), so a catch-up
+// EOF must not be mistaken for the live feed closing. Returns the replay's
+// terminal error (nil = clean EOF) so the loop can surface a catch-up failure
+// distinctly from a live-reopen failure. Honours ctx: a cancelled ctx aborts
+// the in-flight ReadLoop (its emit honours ctx) and this drain.
 func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out chan<- tea.Msg) error {
 	es, err := replayer.StreamSessionEvents(ctx, id)
 	if err != nil {
@@ -226,9 +230,17 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 		case StreamClosedMsg, StreamErrMsg:
 			// Swallow the replay's terminal marker; the reconnect owns its own.
 			continue
-		}
-		if !emit(ctx, out, m) {
-			return ctx.Err()
+		case DeliveryNoteMsg:
+			// The only catch-up payload: a fire-result delivery note emitted during
+			// the gap. Forward it; the ui dedupes by fire id.
+			if !emit(ctx, out, m) {
+				return ctx.Err()
+			}
+		default:
+			// Not a delivery note (a user prompt / assistant text / tool call /
+			// turn marker from the already-visible transcript): drop it so the
+			// full-log replay never re-appends the prior conversation.
+			continue
 		}
 	}
 	return nil
@@ -247,6 +259,25 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 	var lastErr error
 	for {
 		attempt++
+		// Backoff BEFORE each attempt after the first (H1): the first retry is
+		// immediate (a single fast retry on a transient close is correct), but
+		// subsequent attempts are gated so a feed that re-opens then instantly
+		// closes cannot cycle re-arm→close→reopen with zero delay. A non-positive
+		// base (reconnect disabled) stops the loop after the first attempt rather
+		// than hot-spinning.
+		if attempt > 1 {
+			d := liveReconnectDelay(attempt)
+			if d <= 0 {
+				return
+			}
+			timer := time.NewTimer(d)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
 		if !emit(ctx, out, LiveReconnectingMsg{Attempt: attempt, Err: lastErr}) {
 			return
 		}
@@ -264,18 +295,6 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 			return
 		}
 		lastErr = err
-		// Backoff before the next attempt, honouring ctx.
-		if d := liveReconnectDelay(attempt); d > 0 {
-			timer := time.NewTimer(d)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
-		} else if ctx.Err() != nil {
-			return
-		}
 	}
 }
 
