@@ -126,7 +126,7 @@ type Config struct {
 	OpenAIBaseURL string
 	OpenAIKey     string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
-	// snapshot. Registry consumption is added separately from this composition wiring.
+	// snapshot consumed only by the distinct openai-codex registry entry.
 	OpenAICodexCredential openaicodex.Credential
 	UseMock               bool
 	// MockProvider, when non-nil, REPLACES the canned UseMock turn with this
@@ -937,6 +937,13 @@ type Config struct {
 	// OFFLINE and never contacts the real provider endpoint. Unexported: an internal
 	// composition detail, not an operator knob.
 	liveModelHTTPClient *http.Client
+
+	// openAICodexNow/openAICodexTransport are composition-only test seams for the
+	// manual-token request policy. Production uses time.Now and the default
+	// transport. Tests inject a fixed clock and capturing transport so every
+	// construction/remint path is exercised fully offline.
+	openAICodexNow       func() time.Time
+	openAICodexTransport http.RoundTripper
 
 	// toolhiveConfigPath is the composition-only test seam for the ToolHive
 	// config-file path (mirroring envDetector/liveModelHTTPClient): ""

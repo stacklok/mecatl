@@ -767,5 +767,31 @@ Verification: all named Step 4 acceptance proofs, redaction/remote-boundary/root
   `git diff --check` pass. Final root verification also passed
   `TMPDIR=/private/tmp task test` (root race, engine race, and engine standalone),
   affected-package `go vet`, `task api:check`, and the final diff check.
-Commit: pending this scoped Step 4 commit; its hash will be recorded by Step 5.
+Commit: ef69cf315070498e500b7bad72e9da5b57bca3cd
+
+Step 5 — Register openai-codex through the one Responses construction path
+Base: ef69cf315070498e500b7bad72e9da5b57bca3cd
+Coder: /root/step5_coder (original candidate), /root/step5_coder_recovery
+  (recovered and repaired that interrupted candidate), and
+  /root/step5_coder_final (finalized and verified the intact recovery diff)
+Reviewers: /root/step5_spec_review (specification/architecture) and
+  /root/step5_security_review (correctness/security/reuse); re-review pending.
+Findings: coder recovery found that a credential expiring between one-time
+  resolution and registry construction was silently omitted, and that AC5.5's
+  named proof did not exercise ToolHive. The candidate now fails closed with the
+  adjunct's bounded expiry error and pins unchanged OpenAI, OpenRouter, and
+  ToolHive construction when Codex is absent. Security review found the sole
+  blocker: inline Codex registration raised `buildProviderRegistry` to gocyclo 21
+  over the repository limit of 20. The coder extracted a narrow adjunct-entry
+  helper without changing credential validation, policy capture, precedence, or
+  remint behavior; both reviewers are pending re-review.
+Verification: the root normal/default-cache focused named race proofs, focused
+  `go vet`, `task lint` (zero issues), `task api:check`, the acceptance-plan
+  checker, gofmt, and `git diff --check` pass. Plain unsandboxed `task test` fails
+  only branch-preexisting issues already fixed on origin/main: the macOS `/var` ↔
+  `/private/var` alias failures fixed by `71e68ef1`, and Darwin's long UNIX-socket
+  path failure in `TestFireDelivery_EmbeddedEndToEnd` fixed by `be79d21a`. No
+  `TMPDIR` or `GOCACHE` workaround was used. Focused root gates pass; the aggregate
+  gate is blocked by the outdated branch base. Commit is pending.
+Commit: pending this scoped Step 5 commit; its hash will be recorded by Step 6.
 ```
