@@ -295,17 +295,19 @@ jobs:
     name: Provider modules (standalone, GOWORK=off)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Proves the opt-in provider/ submodules build + test with NO workspace
-    # (GOWORK=off), the same hygiene gate as engine-standalone. ONLY ssefilter is
-    # covered: it is the sole self-contained provider (stdlib + openai-go, no
-    # mecatl-module dependency). anthropic/openai/openaichat each `require`
-    # another mecatl module (engine, and provider/ssefilter for the openai-go
-    # family) — and mecatl is a PRIVATE/INTERNAL repo, so a GOWORK=off build must
-    # fetch that dependency from the origin: proxy.golang.org cannot serve a
-    # private module, and this job checks out with persist-credentials: false (no
-    # git auth), so the fetch 401s. Their standalone proof is deferred until the
-    # repo is public OR the job wires git credentials + GOPRIVATE (ADR 0093); they
-    # are covered by the workspace (GOWORK=on) build/test jobs above.
+    # Proves the opt-in provider/ submodules build + test with NO workspace and NO
+    # network (GOPROXY=off), the strictest form of the engine-standalone hygiene
+    # gate: every dependency must already be in the module cache (warmed by
+    # setup-go from the committed go.sum), so NO credential is needed and no
+    # private module is ever fetched — mecatl is a private/INTERNAL repo, so a
+    # networked fetch of a mecatl module would 401 anyway. Covers ssefilter +
+    # anthropic: the only two providers whose closure is fully cache-resolvable.
+    # openai + openaichat `require provider/ssefilter v0.0.0`, which GOPROXY=off
+    # cannot resolve (no version exists off-workspace) — their standalone proof is
+    # deferred until the first provider/ssefilter/vX.Y.Z tag is cut; they are
+    # covered by the workspace (GOWORK=on) build/test jobs above. See ADR 0093 and
+    # issue #379. Once mecatl is open-sourced this whole gate can move to a plain
+    # networked GOWORK=off over all four modules.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -315,17 +317,33 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: provider/ssefilter/go.sum
+          cache-dependency-path: |
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
 
-      - name: go build (provider standalone)
+      # setup-go primes the module cache from the committed go.sum files. GOFLAGS
+      # here overrides the workflow-global -mod=readonly so the cache warm can
+      # resolve the full (incl. test-only) graph.
+      - name: warm module cache (ssefilter + anthropic)
+        run: |
+          (cd provider/ssefilter && GOFLAGS= go mod download)
+          (cd provider/anthropic && GOFLAGS= go mod download)
+
+      - name: go build (provider standalone, offline)
         env:
           GOWORK: off
-        run: (cd provider/ssefilter && go build ./...)
+          GOPROXY: off
+        run: |
+          (cd provider/ssefilter && go build ./...)
+          (cd provider/anthropic && go build ./...)
 
-      - name: go test (provider standalone)
+      - name: go test (provider standalone, offline)
         env:
           GOWORK: off
-        run: (cd provider/ssefilter && go test ./...)
+          GOPROXY: off
+        run: |
+          (cd provider/ssefilter && go test ./...)
+          (cd provider/anthropic && go test ./...)
 
   api-compat:
     name: API compat (engine public surface)

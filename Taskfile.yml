@@ -207,19 +207,24 @@ tasks:
   test:provider-standalone:
     desc: |
       Prove the opt-in provider/ submodules build + test with NO workspace
-      (GOWORK=off), the same hygiene gate as test:engine-standalone. ONLY
-      ssefilter is covered: it is the sole self-contained provider (stdlib +
-      openai-go, no mecatl-module dependency). anthropic/openai/openaichat each
-      require another mecatl module (engine, and provider/ssefilter for the
-      openai-go family), and mecatl is a PRIVATE/INTERNAL repo — a GOWORK=off
-      build must fetch that dependency from the origin, which fails without git
-      credentials (proxy.golang.org cannot serve a private module). Their
-      standalone proof is deferred until the repo is public or git credentials +
-      GOPRIVATE are wired (ADR 0093). They are covered by the workspace
-      (GOWORK=on) build/test invocations in `task test`.
+      (GOWORK=off), the same hygiene gate as test:engine-standalone. Covers
+      ssefilter + anthropic: the only two providers whose dependency closure is
+      fully resolvable off-workspace. openai + openaichat `require
+      provider/ssefilter v0.0.0`, which is only resolvable via the workspace until
+      the first provider/ssefilter/vX.Y.Z tag is cut — their standalone proof is
+      deferred until then (ADR 0093, issue #379); they are covered by the
+      workspace (GOWORK=on) build/test invocations in `task test`.
+      Locally the engine dependency resolves through your git credentials
+      (GOPROXY unset). In CI the job runs it fully offline (GOPROXY=off) over a
+      warmed module cache, needing no credential — replicate that locally with
+      `task test:provider-standalone GOPROXY=off`.
+    vars:
+      GOPROXY: '{{.GOPROXY | default ""}}'
     cmds:
-      - cd provider/ssefilter && GOWORK=off go build ./...
-      - cd provider/ssefilter && GOWORK=off go test ./...
+      - cd provider/ssefilter && GOWORK=off GOPROXY='{{.GOPROXY}}' go build ./...
+      - cd provider/ssefilter && GOWORK=off GOPROXY='{{.GOPROXY}}' go test ./...
+      - cd provider/anthropic && GOWORK=off GOPROXY='{{.GOPROXY}}' go build ./...
+      - cd provider/anthropic && GOWORK=off GOPROXY='{{.GOPROXY}}' go test ./...
 
   test:actions:
     desc: |

@@ -89,21 +89,22 @@ it wants and pulls only that provider's SDK.
   `internal/adapter/...` citations, so the frozen ADRs and living docs that cited
   the moved files were repointed to `provider/<name>/...` (path updated, symbol
   citations kept — the sanctioned anti-drift edit).
-- **Deferred standalone proof:** the `GOWORK=off` standalone build/test gate (the
-  engine-standalone-style hygiene proof) covers ONLY `ssefilter` today — it is
-  the sole self-contained provider (stdlib + `openai-go`, no mecatl-module
-  dependency). `anthropic`, `openai`, and `openaichat` each `require` another
-  mecatl module (`engine`, and `provider/ssefilter` for the openai-go family).
-  Because mecatl is a **private/INTERNAL repo**, a `GOWORK=off` build must fetch
-  that dependency from the origin: `proxy.golang.org` cannot serve a private
-  module, and CI checks out with `persist-credentials: false` (no git auth), so
-  the fetch fails. Their standalone proof is deferred until the repo is public
-  (proxy can then serve the modules) OR the job wires git credentials +
-  `GOPRIVATE`; until then they build + test through the workspace (`GOWORK=on`),
-  which resolves every module locally. (Locally they pass `GOWORK=off` only
-  because the developer's git credentials let the engine fetch succeed.)
-  `openai`/`openaichat` additionally wait on the first `provider/ssefilter/vX.Y.Z`
-  tag. This is a private-monorepo bootstrap cost, not a structural hole.
+- **The standalone proof runs offline (no credential needed).** The
+  `GOWORK=off` standalone gate (`test:provider-standalone` + the
+  `provider-standalone` CI job) covers `ssefilter` + `anthropic`. Because mecatl
+  is a **private/INTERNAL repo**, a *networked* `GOWORK=off` build of any provider
+  that `require`s another mecatl module must fetch it from the origin, and
+  `proxy.golang.org` cannot serve a private module (the fetch 401s). Rather than
+  wire a credential into CI, the gate runs fully **offline** — `GOPROXY=off` over
+  a module cache warmed from the committed `go.sum` — so every dependency must
+  already be local and no private module is ever fetched. `anthropic` qualifies
+  because its `require engine v0.8.0` (a published tag) is cache-resolvable once
+  warmed; `ssefilter` is self-contained. `openai`/`openaichat` are excluded only
+  because they `require provider/ssefilter v0.0.0`, which no cache/proxy can
+  resolve until the first `provider/ssefilter/vX.Y.Z` tag is cut — that is a
+  one-time bootstrap gap, closed by cutting the tag. Once mecatl is open-sourced
+  the gate can drop `GOPROXY=off` and cover all four over the network. Until then
+  `openai`/`openaichat` build + test through the workspace (`GOWORK=on`).
 
 ## See also
 
