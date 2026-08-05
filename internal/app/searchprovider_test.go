@@ -10,7 +10,6 @@ import (
 	refsearch "github.com/stacklok/mecatl/engine/adapter/search"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/tool"
-	httpsearch "github.com/stacklok/mecatl/internal/adapter/search"
 )
 
 // searchDiag is a port.Diagnostics double recording the message text AND the
@@ -64,7 +63,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 	t.Run("nothing set => Exa anonymous default", func(t *testing.T) {
 		d := &searchDiag{}
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d})
-		exa, ok := p.(*httpsearch.ExaProvider)
+		exa, ok := p.(*refsearch.ExaProvider)
 		if !ok {
 			t.Fatalf("default should be *ExaProvider, got %T", p)
 		}
@@ -79,7 +78,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 	t.Run("EXA_API_KEY => Exa paid tier, key never logged", func(t *testing.T) {
 		d := &searchDiag{}
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, ExaAPIKey: exaKey})
-		exa, ok := p.(*httpsearch.ExaProvider)
+		exa, ok := p.(*refsearch.ExaProvider)
 		if !ok {
 			t.Fatalf("expected *ExaProvider, got %T", p)
 		}
@@ -94,7 +93,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 	t.Run("BRAVE_API_KEY => HTTP provider (Brave), key never logged", func(t *testing.T) {
 		d := &searchDiag{}
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, BraveAPIKey: braveKey})
-		if _, ok := p.(*httpsearch.HTTPProvider); !ok {
+		if _, ok := p.(*refsearch.HTTPProvider); !ok {
 			t.Fatalf("BRAVE_API_KEY should resolve to *HTTPProvider, got %T", p)
 		}
 		if !strings.Contains(d.all(), "Brave backend") || !strings.Contains(d.all(), braveSearchEndpoint) {
@@ -108,7 +107,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 	t.Run("SEARXNG_URL => HTTP provider (SearXNG)", func(t *testing.T) {
 		d := &searchDiag{}
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, SearXNGURL: "https://searx.example/search"})
-		if _, ok := p.(*httpsearch.HTTPProvider); !ok {
+		if _, ok := p.(*refsearch.HTTPProvider); !ok {
 			t.Fatalf("SEARXNG_URL should resolve to *HTTPProvider, got %T", p)
 		}
 		if !strings.Contains(d.all(), "SearXNG backend") {
@@ -121,7 +120,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		p := buildSearchProvider(context.Background(), Config{
 			Diagnostics: d, SearXNGURL: "https://searx.example/search", BraveAPIKey: braveKey,
 		})
-		if _, ok := p.(*httpsearch.HTTPProvider); !ok {
+		if _, ok := p.(*refsearch.HTTPProvider); !ok {
 			t.Fatalf("expected *HTTPProvider, got %T", p)
 		}
 		if !strings.Contains(d.all(), "SearXNG backend") || strings.Contains(d.all(), "Brave backend") {
@@ -137,7 +136,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 			SearXNGURL:   "https://searx.example/search",
 			BraveAPIKey:  braveKey,
 		})
-		if _, ok := p.(*httpsearch.HTTPProvider); !ok {
+		if _, ok := p.(*refsearch.HTTPProvider); !ok {
 			t.Fatalf("expected *HTTPProvider, got %T", p)
 		}
 		if !strings.Contains(d.all(), "explicit HTTP backend") {
@@ -150,7 +149,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		// A non-empty but malformed URL: it passes the switch's trim check (so the
 		// branch is entered) but fails NewHTTPProvider construction.
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, WebSearchURL: "://broken"})
-		if _, ok := p.(httpsearch.BackendDown); !ok {
+		if _, ok := p.(refsearch.BackendDown); !ok {
 			t.Fatalf("a construction failure must resolve to BackendDown, got %T", p)
 		}
 		// The tool would see backend-down, NOT disabled.
@@ -166,7 +165,7 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 	t.Run("misconfigured SEARXNG_URL => BackendDown (NOT disabled)", func(t *testing.T) {
 		d := &searchDiag{}
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, SearXNGURL: "not-a-url"})
-		if _, ok := p.(httpsearch.BackendDown); !ok {
+		if _, ok := p.(refsearch.BackendDown); !ok {
 			t.Fatalf("a SearXNG construction failure must resolve to BackendDown, got %T", p)
 		}
 		_, err := p.Search(context.Background(), tool.SearchQuery{Query: "anything"})

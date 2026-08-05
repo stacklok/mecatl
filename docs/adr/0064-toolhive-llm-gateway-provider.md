@@ -24,7 +24,7 @@ this ADR touches says so explicitly — the #1 confusion risk the internal revie
 **The naming pass.** `newOpenAIEntry` (the shared construction path for openai/openrouter) is
 renamed `newOpenAICompatEntry` — a "gateway" registry entry is the SAME Responses-API wire adapter
 with a different base URL and a placeholder credential, so it must be built by the exact same
-construction path or the two would silently drift on resilience wrapping. The `internal/adapter/openai`
+construction path or the two would silently drift on resilience wrapping. The `provider/openai`
 package doc-comment is upgraded to say so: it implements a *protocol*, not a single vendor.
 
 **The two-layer split.** `internal/adapter/openaicompat` is a stdlib-only, protocol-generic

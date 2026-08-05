@@ -284,7 +284,7 @@ adding it would double-count). The subset invariant holds CROSS-PROVIDER because
 adapters normalize to it: OpenAI's `input_tokens` already includes cached tokens; Anthropic's
 raw `input_tokens` EXCLUDES cache reads/writes, so its adapter folds `cache_read_input_tokens`
 + `cache_creation_input_tokens` into `InputTokens` at the single `session.Usage` mapping site
-(`internal/adapter/anthropic/stream.go` `translateMessageStop`) — before that fix `--max-run-tokens`
+(`provider/anthropic/stream.go` `translateMessageStop`) — before that fix `--max-run-tokens`
 UNDERCOUNTED Anthropic runs (cache-served prompt tokens never hit the budget). The reasoning
 breakdown is surfaced the same way: OpenAI's `output_tokens_details.reasoning_tokens` and
 Anthropic's `output_tokens_details.thinking_tokens` map to `ReasoningTokens` at the same two
@@ -2536,8 +2536,8 @@ short-circuits the provider adapters' request-assembly (`buildParams`/`buildMess
 therefore could never be RANKED against the inherent-cost / SDK-owned alternatives. The
 deliverable was to CLOSE that gap, not to force a change.
 
-The benches live in `internal/adapter/anthropic/request_bench_test.go` and
-`internal/adapter/openai/request_bench_test.go` (in-package — `buildParams`/`buildMessages` are
+The benches live in `provider/anthropic/request_bench_test.go` and
+`provider/openai/request_bench_test.go` (in-package — `buildParams`/`buildMessages` are
 unexported), fully OFFLINE (no client/network), following `engine/agent/bench_test.go`
 conventions (`b.Loop()`, fixtures outside the loop, results parked in a package-level sink). Each
 drives a synthetic `port.LLMRequest` whose conversation grows to 50/200/500 messages (a realistic
@@ -2569,7 +2569,7 @@ benchmarks STAND as the regression guard + the evidence that closed the measurem
 match the architect's earlier conclusion (the churn is inherent stateless-replay design + the
 provider SDK's marshal, code we don't own) — now MEASURED rather than hypothesised.
 
-**Taskfile / gating:** the benches are runnable (`cd internal/adapter/anthropic && go test -bench
+**Taskfile / gating:** the benches are runnable (`cd provider/anthropic && go test -bench
 . -benchmem -run '^$'`, openai sibling) but are deliberately NOT wired into `task bench` (which
 stays engine-only) or the FAIL-CLOSED `perf/cmd/allocsgate` baseline. Wiring them in would
 require establishing + committing an `allocs/op` baseline whose dominant term is the third-party
@@ -3112,7 +3112,7 @@ is stateless across turns) — no port/proto/engine-API change. Live listing rid
 `openCodeLister` (the `openaicompat` lister wrapped to stamp adapter-static text+image
 modalities, so a live refresh can't flip an uncatalogued model's Image capability to false).
 
-**SSE keepalive filter (shared `internal/adapter/ssefilter`).** `openai-go`'s `ssestream`
+**SSE keepalive filter (shared `provider/ssefilter`).** `openai-go`'s `ssestream`
 decoder dispatches an Event on every blank line and `json.Unmarshal`s the accumulated data
 with no empty-payload check, so any DATA-LESS frame — a bare SSE keepalive comment
 (`: ping - ...`, observed from OpenCode Go on long turns), a bare extra blank line, an
@@ -3342,7 +3342,7 @@ regardless of which model actually answers).
 **Redirect refusal now covers the inference path too (review finding 3).** The
 listing probe's lister (`openaicompat.NewLister`'s default client) already refused
 redirects; the policy is now exported as `openaicompat.RefuseRedirects` so the
-INFERENCE path can share it byte-for-byte. `internal/adapter/openai` gains
+INFERENCE path can share it byte-for-byte. `provider/openai` gains
 `WithHTTPClient(*http.Client)` (an adapter-construction `Option`, threading an
 arbitrary client into the SDK via `option.WithHTTPClient` — deliberately WITHOUT a
 `Timeout`, since a streaming turn runs for minutes and establishment/idle bounds
@@ -3628,9 +3628,10 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   and `Unavailable{}` (every Search returns `ErrSearchUnavailable` — the
   composition's not-configured sentinel, the SearchProvider analogue of the no-shell
   CommandRunner). Under `engine/adapter/*` so core test files may import it; a new
-  strict depguard rule (`engine-adapter-search`) pins it to `$gostd` + `engine/tool`,
-  no `os`, no network.
-- **Tool (ADAPTER):** `internal/adapter/tools/websearch.go` — `WebSearchTool` over a
+  strict depguard rule (`engine-adapter-search`) pins it to `$gostd` + `engine/tool` +
+  `engine/session` + `engine/agent` + `golang.org/x/sync/semaphore`, `os` denied
+  (providers touch the network but not the host OS/filesystem).
+- **Tool (ADAPTER):** `engine/adapter/search/websearch.go` — `WebSearchTool` over a
   `tool.SearchProvider`; `ReadOnly()==true` (read-parallel batch, same as WebFetch).
   `Execute` validates (missing query → model-facing error result, NOT a Go error),
   CLAMPS limit (default 5 absent/≤0; hard max 10), calls the provider, and handles
@@ -3638,17 +3639,19 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   error result — the tool exists, the backend just isn't set up) and empty → "no
   results" (like Grep). **Bounding lives in the tool** (the choke point — the provider
   may over-return): count → min(limit, hardMax), each snippet rune-truncated, then the
-  whole FENCED block through `toolkit.MaxOutputBytes`.
+  whole FENCED block through a local carried `MaxOutputBytes` const (byte-identical to
+  `toolkit.MaxOutputBytes`; carried because engine must not import the root module
+  per the fstools precedent, #269).
 - **Fencing (LLM01):** results are UNTRUSTED external content, wrapped via
-  `toolkit.FenceUntrusted` — a BYTE-IDENTICAL reproduction of `agent.WriteUntrustedBlock`
-  for the adapter layer (which cannot import `engine/agent`). The single-source-of-
-  truth drift risk is mitigated by `TestFenceUntrustedMatchesAgentFence`
-  (mutation-verified), which diffs the adapter copy against the real
-  `agent.WriteUntrustedBlock` over a corpus including the forged marker + every
-  framing header. The adversarial `TestWebSearchNeutralisesInjection` (also
-  mutation-verified) proves a forged inner fence + `Tool:`/`Team goal:` headers are
-  neutralised so a result can't break out and smuggle instructions.
-- **HTTP adapter (heavy):** `internal/adapter/search/httpsearch.go` — vendor-neutral
+  `agent.FenceUntrusted` — the canonical single-source-of-truth fence in `engine/agent`
+  (the same one modelhook and the team/ask-review prompts use). The tool body now lives
+  in `engine/adapter/search` and imports `engine/agent` directly (the #363 Option B
+  decision, accepting the dep-cone cost of the first engine/adapter→agent import).
+  Follow-up: relocate fence primitives to `engine/governance` to shrink the cone. The
+  adversarial `TestWebSearchNeutralisesInjection` (mutation-verified) proves a forged
+  inner fence + `Tool:`/`Team goal:` headers are neutralised so a result can't break
+  out and smuggle instructions.
+- **HTTP adapter (heavy):** `engine/adapter/search/httpsearch.go` — vendor-neutral
   GET/POST JSON search (a SearXNG-style or generic `{"results":[…]}` endpoint, with
   permissive field aliases: content/snippet/description, publishedDate/date,
   engine/source). It carries its OWN per-call timeout (10s, honoring ctx) AND a
@@ -3661,7 +3664,7 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   `httpResponse.merged()` folds Brave's NESTED `{"web":{"results":[…]}}` shape into the
   flat results (the prior round registered the Brave endpoint but never parsed its body
   — it returned zero hits). Tests use `httptest.Server` only — never a live endpoint.
-- **Exa client (TIER-1 default, heavy):** `internal/adapter/search/exasearch.go` —
+- **Exa client (TIER-1 default, heavy):** `engine/adapter/search/exasearch.go` —
   `ExaProvider`, a MINIMAL DEDICATED streamable-HTTP JSON-RPC MCP client for Exa's
   anonymous endpoint (`https://mcp.exa.ai/mcp` → `tools/call web_search_exa`). It is
   deliberately NOT the general MCP manager: **the no-OAuth-discovery caveat** — Exa
@@ -3767,8 +3770,8 @@ type**, with every untrusted-server defense in composition and the adapter:
   text-summarised block whose `session.ToolBlockText(b)` is empty — if all drop,
   the nil return degrades to the single-string fallback (the caller must then
   substitute a placeholder for an empty `Content` — the CALLER CONTRACT in the doc
-  comment); (2) `internal/adapter/openai/request.go` (`toolOutputItem`) and
-  `internal/adapter/anthropic/request.go` (`toolResultBlock`) substitute the
+  comment); (2) `provider/openai/request.go` (`toolOutputItem`) and
+  `provider/anthropic/request.go` (`toolResultBlock`) substitute the
   deterministic `emptyToolOutputPlaceholder` (`"(tool returned no output)"`) for an
   empty single-string `Content` via `cmp.Or` (non-empty stays byte-identical); (3)
   the anthropic adapter's degenerate empty system/user/assistant turns

@@ -45,6 +45,13 @@ tasks:
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
+      # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each its
+      # own module under the workspace. Building them here keeps the importable
+      # adapters compiling alongside the binaries.
+      - cd provider/ssefilter && go build ./...
+      - cd provider/anthropic && go build ./...
+      - cd provider/openai && go build ./...
+      - cd provider/openaichat && go build ./...
 
   install:
     desc: Install mecated and mecatui into GOBIN/GOPATH/bin
@@ -171,13 +178,20 @@ tasks:
           ./cmd/mecatui
 
   test:
-    desc: Run unit tests with the race detector (root module + engine module + the standalone hygiene proof)
+    desc: Run unit tests with the race detector (root module + engine module + provider modules + the standalone hygiene proofs)
     cmds:
       - go test -race ./...
       # engine/ is a separate module under the workspace — `./...` from the root
       # does NOT cross the module boundary, so its tests are a second invocation.
       - cd engine && go test -race ./...
+      # provider/ submodules (ADR 0093) — each its own module under the workspace;
+      # the per-module `./...` invocation runs their tests through the workspace.
+      - cd provider/ssefilter && go test -race ./...
+      - cd provider/anthropic && go test -race ./...
+      - cd provider/openai && go test -race ./...
+      - cd provider/openaichat && go test -race ./...
       - task: test:engine-standalone
+      - task: test:provider-standalone
 
   test:engine-standalone:
     desc: |
@@ -189,6 +203,23 @@ tasks:
     cmds:
       - cd engine && GOWORK=off go build ./...
       - cd engine && GOWORK=off go test ./...
+
+  test:provider-standalone:
+    desc: |
+      Prove the opt-in provider/ submodules build + test with NO workspace
+      (GOWORK=off), the same hygiene gate as test:engine-standalone. ONLY
+      ssefilter is covered: it is the sole self-contained provider (stdlib +
+      openai-go, no mecatl-module dependency). anthropic/openai/openaichat each
+      require another mecatl module (engine, and provider/ssefilter for the
+      openai-go family), and mecatl is a PRIVATE/INTERNAL repo — a GOWORK=off
+      build must fetch that dependency from the origin, which fails without git
+      credentials (proxy.golang.org cannot serve a private module). Their
+      standalone proof is deferred until the repo is public or git credentials +
+      GOPRIVATE are wired (ADR 0093). They are covered by the workspace
+      (GOWORK=on) build/test invocations in `task test`.
+    cmds:
+      - cd provider/ssefilter && GOWORK=off go build ./...
+      - cd provider/ssefilter && GOWORK=off go test ./...
 
   test:actions:
     desc: |
@@ -271,7 +302,7 @@ tasks:
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
-      - go test ./internal/adapter/openai/ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
+      - cd provider/openai && go test ./ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
 
   bench:
     desc: |
@@ -414,9 +445,14 @@ tasks:
       - go tool cover -func=coverage/engine.out
       - go tool cover -html=coverage/engine.out -o coverage/engine.html
       - 'echo "HTML engine coverage report: coverage/engine.html"'
+      # provider/ submodules (ADR 0093) — sibling profiles per module.
+      - cd provider/ssefilter && go test -race -coverprofile=../../coverage/provider-ssefilter.out -covermode=atomic ./...
+      - cd provider/anthropic && go test -race -coverprofile=../../coverage/provider-anthropic.out -covermode=atomic ./...
+      - cd provider/openai && go test -race -coverprofile=../../coverage/provider-openai.out -covermode=atomic ./...
+      - cd provider/openaichat && go test -race -coverprofile=../../coverage/provider-openaichat.out -covermode=atomic ./...
 
   lint:
-    desc: Run golangci-lint (parallel-safe) and go vet over the root module + the engine module
+    desc: Run golangci-lint (parallel-safe) and go vet over the root module + the engine module + the provider modules
     cmds:
       - golangci-lint run --allow-parallel-runners ./...
       - go vet ./...
@@ -425,6 +461,16 @@ tasks:
       # single source of truth across the module boundary.
       - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners ./...
       - cd engine && go vet ./...
+      # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
+      # golangci config so the depguard allowlists stay the single source of truth.
+      - cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - cd provider/ssefilter && go vet ./...
+      - cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - cd provider/anthropic && go vet ./...
+      - cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - cd provider/openai && go vet ./...
+      - cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - cd provider/openaichat && go vet ./...
 
   vuln:
     desc: |
@@ -453,12 +499,22 @@ tasks:
       # module boundary, so its scan is a second invocation against engine/go.mod.
       # No allowlist: the engine library's closure is clean and must stay clean.
       - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+      # provider/ submodules (ADR 0093) — each its own module; scan against its
+      # own go.mod so the provider library's closure is checked independently.
+      - cmd: set -o pipefail; cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+      - cmd: set -o pipefail; cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+      - cmd: set -o pipefail; cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+      - cmd: set -o pipefail; cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
 
   lint:fix:
-    desc: Run golangci-lint with autofix (parallel-safe) over the root module + the engine module
+    desc: Run golangci-lint with autofix (parallel-safe) over the root module + the engine module + the provider modules
     cmds:
       - golangci-lint run --allow-parallel-runners --fix ./...
       - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --fix ./...
+      - cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
+      - cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
+      - cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
+      - cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
 
   lint:actions:
     desc: |
@@ -521,6 +577,15 @@ tasks:
       - go mod tidy
       - go work sync
       - cd engine && GOWORK=off go mod tidy
+      # provider/ submodules (ADR 0093) — same GOWORK=off discipline as engine:
+      # each module's go.sum must reflect its OWN closure, not the host repo's.
+      # ssefilter (stdlib + openai-go) and anthropic (engine is a published dep)
+      # are self-contained today. openai + openaichat require provider/ssefilter,
+      # which has no published tag yet — their GOWORK=off tidy is deferred until
+      # provider/ssefilter/vX.Y.Z is cut (their go.sum is committed correct); they
+      # build + test through the workspace (GOWORK=on) in `task build`/`task test`.
+      - cd provider/ssefilter && GOWORK=off go mod tidy
+      - cd provider/anthropic && GOWORK=off go mod tidy
 
   generate:
     desc: Regenerate contracts/gen from contracts/proto via buf

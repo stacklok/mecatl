@@ -107,7 +107,7 @@ func RefuseRedirects(*http.Request, []*http.Request) error {
 // NewLister constructs a Lister against baseURL (already ending in "/v1")
 // with an optional bearerToken (sent as `Authorization: Bearer <token>` when
 // non-empty). NOTE the argument order — (baseURL, bearerToken, client) —
-// deliberately differs from the sibling internal/adapter/anthropic.NewLister's
+// deliberately differs from the sibling provider/anthropic.NewLister's
 // (key, baseURL, client): don't copy-paste call sites between the two without
 // checking. A nil client yields a default client with defaultTimeout AND
 // RefuseRedirects (CWE-918): baseURL is a loopback address the CALLER already

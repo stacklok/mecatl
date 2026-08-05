@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-25
-- Scope: The provider adapters (`internal/adapter/openai`, `internal/adapter/anthropic`), the composition layer (`internal/app`), the permission-config resolver (`internal/adapter/permconfig`), the gRPC/HTTP contract + server (`contracts/proto/mecatl/v1`, `internal/adapter/server`), the `Session` aggregate (`engine/session`), and the `mecatui` client + TUI.
+- Scope: The provider adapters (`provider/openai`, `provider/anthropic`), the composition layer (`internal/app`), the permission-config resolver (`internal/adapter/permconfig`), the gRPC/HTTP contract + server (`contracts/proto/mecatl/v1`, `internal/adapter/server`), the `Session` aggregate (`engine/session`), and the `mecatui` client + TUI.
 
 ## Context
 

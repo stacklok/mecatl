@@ -45,6 +45,67 @@ updates:
           - minor
           - patch
 
+  # Opt-in LLM-provider submodules (ADR 0093) — each its own go.mod closure.
+  - package-ecosystem: gomod
+    directory: "/provider/anthropic"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: gomod
+    directory: "/provider/openai"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: gomod
+    directory: "/provider/openaichat"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: gomod
+    directory: "/provider/ssefilter"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
   # SHA-pinned GitHub Actions (bumps the pin SHA + its `# vX.Y.Z` comment).
   - package-ecosystem: github-actions
     directory: "/"

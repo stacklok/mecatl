@@ -14,7 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/ssefilter"
+	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
 // filtered wraps r in the shared production keepalive filter.

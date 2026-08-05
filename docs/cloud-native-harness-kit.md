@@ -193,3 +193,8 @@ consumer's policy, not a structural property the kit bakes in.
   never become one.
 - [`scoped-resource-grants.md`](scoped-resource-grants.md): a strawman for the tool/filesystem
   substrate — scoped, leased, identity-bound service grants with a direct data path.
+- [`agent-identity-model.md`](agent-identity-model.md): a strawman for agent identity —
+  mecatl as its own SPIFFE trust domain issuer, definition/instance/run identity tiers,
+  attenuating delegation, and the parkable credential lifecycle.
+- [`agent-identity-outbound.md`](agent-identity-outbound.md): part 2 of the above — works out
+  the outbound boundary, where mecatl's SVID meets its registered-OAuth-client identity.

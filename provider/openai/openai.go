@@ -29,7 +29,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/ssefilter"
+	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
 // Provider is a port.LLMProvider backed by the OpenAI Responses API. Construct
@@ -140,7 +140,7 @@ func New(opts ...Option) *Provider {
 	}
 	reqOpts := make([]option.RequestOption, 0, len(c.extra)+3)
 	// FIRST, so it is the OUTERMOST middleware and therefore filters the body that
-	// the SDK's ssestream decoder ultimately reads. See internal/adapter/ssefilter
+	// the SDK's ssestream decoder ultimately reads. See provider/ssefilter
 	// for why an SSE keepalive would otherwise kill a streaming turn outright. The
 	// same guard the openaichat (Chat Completions) adapter installs applies here:
 	// responses.NewStreaming drives the plain ssestream decoder, so it hits the

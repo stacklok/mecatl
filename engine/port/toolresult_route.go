@@ -10,7 +10,7 @@ import "github.com/stacklok/mecatl/engine/session"
 // recorded model-facing Content string).
 //
 // SEAM. This lives in engine/port (not internal/app) for two reasons:
-//  1. The provider adapters (internal/adapter/openai, internal/adapter/anthropic)
+//  1. The provider adapters (provider/openai, provider/anthropic)
 //     consume the projection at their RoleTool case; they may import engine/port
 //     and engine/session but MUST NOT import internal/app (composition). Composition
 //     may import them. Placing the helper here lets BOTH call it without inverting

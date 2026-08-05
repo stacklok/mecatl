@@ -78,6 +78,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0067 — OpenAI Chat Completions adapter (OpenCode Go provider)](./0067-openai-chat-completions-adapter.md)
 - [0068 — Change reasoning effort via conversation fork (keep the transcript)](./0068-effort-change-via-fork.md)
 - [0071 — Seamless model switch: always keep the conversation](./0071-seamless-model-switch.md)
+- [0093 — Ship the real LLM provider adapters as opt-in Go modules under provider/](./0093-provider-modules.md)
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)

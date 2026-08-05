@@ -134,7 +134,7 @@ Critical path: **WP1 → WP2 → WP7 → WP8 → WP10 → WP11**.
   turns (text, tool calls, usage) with no network, the backbone of loop testing. (b)
   `openai` — the real adapter translating the Responses API (SSE, function_call /
   function_call_output items, reasoning items, prompt caching, ctx-cancel) into `Chunk`s.
-- **Owns:** `engine/adapter/mockllm/`, `internal/adapter/openai/`.
+- **Owns:** `engine/adapter/mockllm/`, `provider/openai/`.
 - **Honors:** `port.LLMProvider`, `port.Chunk`, `port.LLMRequest` from WP1. **Coordinate
   with the concurrent OpenAI-Responses research agent** — the adapter targets their API
   details but exposes only the frozen port.

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"github.com/stacklok/mecatl/engine/adapter/fstools"
+	search "github.com/stacklok/mecatl/engine/adapter/search"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -43,3 +44,16 @@ const BashToolName = fstools.BashToolName
 // when a runner is configured; runner must be non-nil. It is a function, not a
 // re-exported var, so no other package can reassign the constructor.
 func NewBashTool(runner tool.CommandRunner) tool.Tool { return fstools.NewBashTool(runner) }
+
+// WebSearchTool graduated into the importable engine module
+// (engine/adapter/search, issue #363). The body and its correctness/security
+// invariants live once, in engine/adapter/search; this is a thin type/func alias,
+// not a re-implementation, so there is no second copy to drift.
+type WebSearchTool = search.WebSearchTool
+
+// NewWebSearchTool constructs the WebSearch tool bound to provider (a thin wrapper
+// over search.NewWebSearchTool). It is a function, not a re-exported var, so no
+// other package can reassign the constructor.
+func NewWebSearchTool(provider tool.SearchProvider) search.WebSearchTool {
+	return search.NewWebSearchTool(provider)
+}

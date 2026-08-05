@@ -3,3 +3,11 @@ go 1.26.5
 use ./
 
 use ./engine
+
+use ./provider/anthropic
+
+use ./provider/openai
+
+use ./provider/openaichat
+
+use ./provider/ssefilter

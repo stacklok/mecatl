@@ -54,6 +54,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       - name: go build
         run: go build ./...
@@ -62,6 +66,15 @@ jobs:
       # does NOT cross the module boundary, so build it explicitly too.
       - name: go build (engine module)
         run: cd engine && go build ./...
+
+      # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each
+      # its own module under the workspace — build them explicitly too.
+      - name: go build (provider modules)
+        run: |
+          (cd provider/ssefilter && go build ./...)
+          (cd provider/anthropic && go build ./...)
+          (cd provider/openai && go build ./...)
+          (cd provider/openaichat && go build ./...)
 
   test:
     name: Test (race)
@@ -79,6 +92,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       # `task test` == `go test -race ./...` (root) + the engine module + the
       # standalone hygiene proof. We run the underlying commands directly rather
@@ -92,6 +109,14 @@ jobs:
       # module boundary, so its tests are a second invocation.
       - name: go test -race (engine module)
         run: cd engine && go test -race ./...
+
+      # provider/ submodules (ADR 0093) — each its own module under the workspace.
+      - name: go test -race (provider modules)
+        run: |
+          (cd provider/ssefilter && go test -race ./...)
+          (cd provider/anthropic && go test -race ./...)
+          (cd provider/openai && go test -race ./...)
+          (cd provider/openaichat && go test -race ./...)
 
   lint:
     name: Lint
@@ -109,6 +134,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       # golangci-lint-action manages its own cache and the linter binary. The
       # Taskfile documents golangci-lint v2.x; pin to a concrete v2 release. It
@@ -135,11 +164,27 @@ jobs:
       - name: golangci-lint (engine module)
         run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=8m ./...
 
+      # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
+      # golangci config so the depguard allowlists stay the single source of truth.
+      - name: golangci-lint (provider modules)
+        run: |
+          (cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+
       - name: go vet
         run: go vet ./...
 
       - name: go vet (engine module)
         run: cd engine && go vet ./...
+
+      - name: go vet (provider modules)
+        run: |
+          (cd provider/ssefilter && go vet ./...)
+          (cd provider/anthropic && go vet ./...)
+          (cd provider/openai && go vet ./...)
+          (cd provider/openaichat && go vet ./...)
 
       # Lint the GitHub Actions workflows + assert the reusable workflow's first-party
       # sibling-action pins match the release tag (the version-skew guard). actionlint is
@@ -188,6 +233,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       - uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
         with:
@@ -242,6 +291,42 @@ jobs:
           GOWORK: off
         run: cd engine && go test ./...
 
+  provider-standalone:
+    name: Provider modules (standalone, GOWORK=off)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Proves the opt-in provider/ submodules build + test with NO workspace
+    # (GOWORK=off), the same hygiene gate as engine-standalone. ONLY ssefilter is
+    # covered: it is the sole self-contained provider (stdlib + openai-go, no
+    # mecatl-module dependency). anthropic/openai/openaichat each `require`
+    # another mecatl module (engine, and provider/ssefilter for the openai-go
+    # family) — and mecatl is a PRIVATE/INTERNAL repo, so a GOWORK=off build must
+    # fetch that dependency from the origin: proxy.golang.org cannot serve a
+    # private module, and this job checks out with persist-credentials: false (no
+    # git auth), so the fetch 401s. Their standalone proof is deferred until the
+    # repo is public OR the job wires git credentials + GOPRIVATE (ADR 0093); they
+    # are covered by the workspace (GOWORK=on) build/test jobs above.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: provider/ssefilter/go.sum
+
+      - name: go build (provider standalone)
+        env:
+          GOWORK: off
+        run: (cd provider/ssefilter && go build ./...)
+
+      - name: go test (provider standalone)
+        env:
+          GOWORK: off
+        run: (cd provider/ssefilter && go test ./...)
+
   api-compat:
     name: API compat (engine public surface)
     runs-on: ubuntu-24.04
@@ -266,6 +351,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       - name: go test ./internal/apicheck
         run: go test ./internal/apicheck
@@ -305,6 +394,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       # Self-test the gate filter on synthetic JSON first (offline) so a broken
       # gate is caught here rather than silently mis-judging the real scan below.
@@ -329,6 +422,21 @@ jobs:
           cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
             | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
 
+      # provider/ submodules (ADR 0093) — each its own module; scan against its
+      # own go.mod so the provider library's closure is checked independently.
+      - name: govulncheck (provider modules — strict, no allowlist)
+        shell: bash
+        run: |
+          set -o pipefail
+          (cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+          (cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+          (cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+          (cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+
   docs:
     name: Docs (matlatl)
     runs-on: ubuntu-24.04
@@ -349,6 +457,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
 
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ

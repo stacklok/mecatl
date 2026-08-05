@@ -11,7 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/openai"
+	"github.com/stacklok/mecatl/provider/openai"
 )
 
 // terminalSSEHandler answers ANY request with a minimal terminal SSE

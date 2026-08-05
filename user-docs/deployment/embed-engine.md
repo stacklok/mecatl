@@ -177,7 +177,7 @@ In-process embedding is the engine and nothing else. You are responsible for eve
 | Prometheus metrics | Not included. Wire `port.ToolCallRecorder` and `port.Diagnostics` to your own observability stack. |
 | Kubernetes manifests | Not included. The engine has no concept of k8s. |
 | CLI flag surface (`--posture`, `--store-dir`, …) | Not included. You set `Deps` fields in code. |
-| OpenAI / Anthropic provider adapters | Not included in the engine module. They live in `internal/adapter/openai` and `internal/adapter/anthropic` in the root module. You must either import the root module (adding its full dep cone) or implement `port.LLMProvider` against your own HTTP client. |
+| OpenAI / Anthropic provider adapters | Not included in the engine module — but they ARE importable as opt-in submodules. Import `github.com/stacklok/mecatl/provider/openai` (Responses API), `github.com/stacklok/mecatl/provider/openaichat` (Chat Completions API), or `github.com/stacklok/mecatl/provider/anthropic` (native Messages API) and you pull only that provider's SDK plus the engine module, never the root module (see [ADR 0093](https://github.com/stacklok/mecatl/blob/main/docs/adr/0093-provider-modules.md)). |
 | Session store backends (JSONL, Redis) | Not included in the engine module. `memstore` is. For durable or Redis-backed storage, import the root module's adapters. |
 
 If you need several of those capabilities, `mecated` (or the `internal/app` composition layer) assembles them for you. See [Run mecated standalone](mecated.md).

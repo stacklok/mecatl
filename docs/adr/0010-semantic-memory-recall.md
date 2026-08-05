@@ -446,7 +446,7 @@ import "context"
 
 // Embedder turns text into dense vectors for semantic memory recall. It is the
 // provider-agnostic seam the semantic-recall tool consumes; the concrete OpenAI
-// embedder adapter (internal/adapter/openai) meets it ONLY in internal/app.
+// embedder adapter (provider/openai) meets it ONLY in internal/app.
 //
 // Embed is BATCH by contract: it returns one vector per input text, in input
 // order, len(out) == len(texts). Batching is not an optimisation here, it is the
@@ -532,7 +532,7 @@ keeps only `client.Responses` (`openai/openai.go:62-78`). The **same**
 URL. So the embedder is a thin sibling of `Provider`, not a new SDK:
 
 ```go
-// internal/adapter/openai/embedder.go  (same package, same SDK already imported)
+// provider/openai/embedder.go  (same package, same SDK already imported)
 type Embedder struct {
     client responses // actually embeddings.EmbeddingService
     model  string    // default text-embedding-3-small (D-T3.3)
@@ -784,7 +784,7 @@ configured.**
 |---|---|---|---|
 | `port.Embedder` | `engine/port` | domain port | `context` + `[]float32` only — no new import (`port/llm.go:1-14`) |
 | `tool.MemoryStore.SearchSemantic`/`BackfillEmbeddings`, `EmbeddedVector` | `engine/tool` | domain | stdlib + `MemoryEntry` (already there, `tool.go:171`) |
-| OpenAI `Embedder` | `internal/adapter/openai` | adapter | the SDK already in `go.mod`; meets `port.Embedder` |
+| OpenAI `Embedder` | `provider/openai` | adapter | the SDK already in `go.mod`; meets `port.Embedder` |
 | vector persistence + cosine | `internal/adapter/memory` | adapter | `tool.MemoryStore` (implements it) |
 | `SemanticRecall` tool | `internal/adapter/memory` | adapter | `tool.MemoryStore` + `port.Embedder` (both domain interfaces) |
 | wiring | `internal/app` | composition | imports `openai`, `memory`, `tool`, `port` — all already imported |
@@ -841,7 +841,7 @@ plumbing), and the doc says so.
 
 **Offline test plan (all offline: mock embedder + in-memory/`t.TempDir()` store):**
 
-- `internal/adapter/openai` (`embedder_test.go`): translation test — a recorded
+- `provider/openai` (`embedder_test.go`): translation test — a recorded
   embeddings JSON fixture → `[][]float32` of the right shape/order; `float64→32`
   narrowing; `Model()` returns the configured id. (Mirrors the existing fixture
   approach for the SSE translate path, `openai.go:11-13`.) No network.
@@ -882,7 +882,7 @@ off by default and the demo configures no embedder).
 inert (nothing registers the tool):
 
 - `engine/port/embedder.go`: `port.Embedder` (§1).
-- `internal/adapter/openai/embedder.go`: the OpenAI `Embedder` + `Model()` +
+- `provider/openai/embedder.go`: the OpenAI `Embedder` + `Model()` +
   `WithEmbeddingModel` option (§3); `embedder_test.go` fixture translation test.
 - `internal/adapter/memory/mockembed_test.go` (or a small `mockembed` test
   package): the deterministic hashed-bag-of-words mock (§8).
@@ -920,7 +920,7 @@ write amplification is measured to bite (§4); embedder resilience decorator;
 `MemoryStore.SearchSemantic` + `BackfillEmbeddings` (near `MemoryEntry`/
 `MemoryStore`, `tool.go:171-226`). `MemoryEntry` UNCHANGED (no vector field).
 
-**Adapter — `internal/adapter/openai/embedder.go`** (NEW): `Embedder`,
+**Adapter — `provider/openai/embedder.go`** (NEW): `Embedder`,
 `NewEmbedder`, `Model()`, `WithEmbeddingModel`; reuses `Option`/`config`
 (`openai.go:34-58`) and the SDK client (`openai.go:62-78` pattern). Compile-time
 `var _ port.Embedder`.
