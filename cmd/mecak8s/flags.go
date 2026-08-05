@@ -22,6 +22,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -76,10 +77,10 @@ type config struct {
 	defaultModel           string
 	defaultProviderFlagSet bool
 	useOpenAI              bool
-	// providerFlags holds the shared provider base-URL flags + credential reads
-	// (cliconfig), applied onto app.Config in appConfig so the mains cannot drift
-	// on which keys/base-urls they wire.
-	providerFlags *cliconfig.ProviderFlags
+	// providerFlags holds shared provider flag bindings; providerCredentials is
+	// the once-resolved snapshot projected by appConfig without further I/O.
+	providerFlags       *cliconfig.ProviderFlags
+	providerCredentials cliconfig.ResolvedCredentials
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262). A k8s pod naturally has no ToolHive config file, so this is
 	// inert by default; --toolhive-llm=false is recommended on a shared node.
@@ -263,7 +264,9 @@ func parseFlags(argv []string) (config, error) {
 	// --openai-base-url / --openrouter-base-url / --anthropic-base-url and reads
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
 	// use, so mecak8s shares the three-mains wiring.
-	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{})
+	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{
+		AuthFile: "path to a YAML credentials file for API-key providers; providers.openai-codex.oauth is unsupported by mecak8s — use mecated/mecatui/mecatequi, pending an external-secret design",
+	})
 	// ToolHive LLM gateway (issue #262): a k8s pod naturally has no ToolHive
 	// config file, so this is inert unless an operator mounts one or passes
 	// --toolhive-llm-base-url explicitly.
@@ -433,6 +436,10 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
 	}
+	cfg.providerCredentials = cfg.providerFlags.Resolve()
+	if cfg.providerCredentials.HasOpenAICodex() {
+		return config{}, errors.New("mecak8s: providers.openai-codex.oauth credentials are unsupported; use mecated, embedded mecatui, or mecatequi (k8s external-secret delivery is deferred)")
+	}
 
 	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves
 	// pprof/expvar/metrics output that can embed prompt text, file paths, and
@@ -542,9 +549,10 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		ToolCallRecorder:  obs.ToolCallRecorder,
 		MetricsRoleScoper: obs.MetricsRoleScoper,
 	}
-	// Apply the shared provider credentials + base URLs (env reads happen here,
-	// once). An OPENAI_API_KEY in the environment implies the real provider.
-	keys := cfg.providerFlags.Apply(&out)
+	// Project only the supported API-key credentials and parsed base URLs from
+	// the once-resolved snapshot. An OPENAI_API_KEY implies the real provider.
+	keys := cfg.providerCredentials
+	cfg.providerFlags.ApplyResolvedAPIKeys(&out, keys)
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}

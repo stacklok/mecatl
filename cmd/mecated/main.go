@@ -92,10 +92,10 @@ type config struct {
 	// operator-global settings.yaml models.default_provider: key.
 	defaultProviderFlagSet bool
 	useOpenAI              bool
-	// providerFlags holds the shared provider base-URL flags + credential reads
-	// (cliconfig), applied onto app.Config in appConfig so the three mains cannot
-	// drift on which keys/base-urls they wire.
-	providerFlags *cliconfig.ProviderFlags
+	// providerFlags holds shared provider flag bindings; providerCredentials is
+	// the once-resolved snapshot projected by appConfig without further I/O.
+	providerFlags       *cliconfig.ProviderFlags
+	providerCredentials cliconfig.ResolvedCredentials
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262: auto-detecting the ToolHive LLM gateway proxy), applied onto
 	// app.Config in appConfig alongside providerFlags.
@@ -1150,10 +1150,11 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
 		PlanModeAutoApprove: cfg.planModeAutoApprove,
 	}
-	// Apply the shared provider credentials + base URLs (env reads happen here, once).
+	// Project the once-resolved credentials and parsed base URLs without I/O.
 	// An OPENAI_API_KEY in the environment implies the user wants the real provider —
 	// the same flip the previous inline read did, now keyed off the resolved keys.
-	keys := cfg.providerFlags.Apply(&out)
+	keys := cfg.providerCredentials
+	cfg.providerFlags.ApplyResolved(&out, keys)
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}
@@ -1619,6 +1620,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		return nil, config{}, err
 	}
 	cfg.subagentAskReviewerPolicy = policy
+	cfg.providerCredentials = cfg.providerFlags.Resolve()
 	// Guardrails master switch: only `--guardrails=off` is meaningful (the kill-switch
 	// — it forces guardrails off regardless of --guardrails-model / the YAML config).
 	// An empty value leaves guardrails governed by the model + rule config. Any OTHER

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -266,6 +267,16 @@ func run(argv []string) error {
 		transCleanup()
 	})
 	return runErr
+}
+
+// emitAuthFileWarning is the command-root's single warning emission seam.
+// Credential resolution may aggregate multiple safe findings into one string;
+// the TUI still emits at most one pre-alt-screen line and embeddedConfig remains
+// a pure projection with no logging side effect.
+func emitAuthFileWarning(writer io.Writer, warning string) {
+	if warning != "" {
+		_, _ = fmt.Fprintln(writer, "mecatui: WARNING:", warning)
+	}
 }
 
 // setupSignalHandler installs the manual two-signal handler: first signal =

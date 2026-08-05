@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,6 +33,12 @@ func TestContextWindowOverrideFlagWiring(t *testing.T) {
 	if _, _, err := parseTransportFlags(modeConnect, io.Discard, []string{"--context-window-override", "1"}); err == nil {
 		t.Fatal("connect mode accepted embedded-only context-window override")
 	}
+}
+
+func configTestCodexToken(expires time.Time, accountID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q}}`, expires.Unix(), accountID)
+	return header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString([]byte("signature"))
 }
 
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
@@ -807,6 +815,7 @@ func TestValidateEmbeddedProviderRequired(t *testing.T) {
 		msg := err.Error()
 		for _, want := range []string{
 			"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY",
+			"--auth-file", "openai-codex",
 			"--openai-base-url", "--anthropic-base-url", "--openrouter-base-url", "--opencode-base-url",
 			"--mock", "mecatui connect ADDRESS", "docs/usage.md",
 		} {
@@ -826,6 +835,97 @@ func TestValidateEmbeddedProviderRequired(t *testing.T) {
 	// connect mode means no embedded provider is needed.
 	if err := (config{workspace: "/abs", mode: "default", transportMode: modeConnect, connectAddress: "127.0.0.1:8080"}).validate(); err != nil {
 		t.Errorf("mecatui connect should not require a provider: %v", err)
+	}
+}
+
+func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
+	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(envName, "")
+	}
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	tests := []struct {
+		name  string
+		body  string
+		check func(*testing.T, app.Config)
+	}{
+		{
+			name: "file-only API key",
+			body: "providers:\n  openai:\n    api_key: sk-file-only\n",
+			check: func(t *testing.T, got app.Config) {
+				t.Helper()
+				if got.OpenAIKey != "sk-file-only" || !got.UseOpenAI {
+					t.Fatal("embedded config did not reuse the file-only API key snapshot")
+				}
+			},
+		},
+		{
+			name: "file-only Codex token",
+			body: fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-tui\n      expires_at: %s\n", configTestCodexToken(expires, "acct-tui"), expires.Format(time.RFC3339)),
+			check: func(t *testing.T, got app.Config) {
+				t.Helper()
+				if !got.OpenAICodexCredential.Configured() || got.OpenAICodexCredential.AccountID() != "acct-tui" {
+					t.Fatal("embedded config did not reuse the Codex credential snapshot")
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "auth.yaml")
+			if err := os.WriteFile(path, []byte(test.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", path, "--toolhive-llm=false"})
+			if err != nil {
+				t.Fatalf("parseFlags: %v", err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.validate(); err != nil {
+				t.Fatalf("cached file-only credential rejected after file removal: %v", err)
+			}
+			test.check(t, embeddedConfig(cfg, port.NopDiagnostics{}))
+			test.check(t, embeddedConfig(cfg, port.NopDiagnostics{}))
+		})
+	}
+
+	t.Run("warning emitted once outside pure projection", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
+		cfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", missing, "--mock"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		var output bytes.Buffer
+		emitAuthFileWarning(&output, cfg.providerKeys.AuthFileWarning)
+		_ = embeddedConfig(cfg, port.NopDiagnostics{})
+		_ = embeddedConfig(cfg, port.NopDiagnostics{})
+		if got := strings.Count(output.String(), "mecatui: WARNING:"); got != 1 {
+			t.Fatalf("warning count = %d, want 1: %q", got, output.String())
+		}
+	})
+}
+
+func TestConnectSkipsLocalAuthFile(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	authDir := filepath.Join(configHome, "mecatl")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(authDir, "auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  openai:\n    api_key: must-not-be-retained\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, []string{"--workspace", "/abs"})
+	if err != nil {
+		t.Fatalf("parseTransportFlags(connect): %v", err)
+	}
+	if cfg.providerKeys.Any() || cfg.providerKeys.AuthFileWarning != "" {
+		t.Fatal("connect mode read or retained local auth-file state")
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("connect mode rejected: %v", err)
 	}
 }
 

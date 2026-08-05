@@ -742,5 +742,30 @@ Verification: coder observed all seven named Step 3 proofs fail to compile befor
   the adjunct existed. The package race suite, focused `go vet`, the
   acceptance-plan checker, fresh-cache `task lint`, `TMPDIR=/private/tmp task test`,
   gofmt, and `git diff --check` pass on the candidate.
-Commit: pending this scoped Step 3 commit; its hash will be recorded by Step 4.
+Commit: f6e02263deafe52e59bef7eeb9f98383a2e22148
+
+Step 4 — Resolve credentials once and wire command scope explicitly
+Base: f6e02263deafe52e59bef7eeb9f98383a2e22148
+Coder: /root/step4_coder
+Reviewers: /root/step4_spec_review (specification/architecture) and
+  /root/step4_security_review (correctness/security/reuse).
+Findings: initial review found default formatting could expose the nested bearer
+  token, pure remote mecatui unnecessarily read local auth.yaml, the command-root
+  projection proof exercised only the shared helper, and the TUI acceptance proof
+  covered only Codex rather than API-key files and warning cardinality. The repair
+  gives Credential owned fmt/slog redaction, skips resolution for explicit remote
+  mode while preserving auto-mode fallback, proves each real parse-to-appConfig
+  path retains its snapshot after file removal, and covers both file credential
+  families plus the single warning seam. Both reviewers re-reviewed the repaired
+  candidate and returned ZERO BLOCKERS. Root fresh-cache lint then found an
+  unchecked best-effort warning write and `parseFlags` just over the cyclomatic-
+  complexity ceiling; the coder made the discard explicit and extracted the
+  unchanged local-credential caching decision. The final approved fresh-cache
+  lint rerun passed the root and engine modules with zero issues.
+Verification: all named Step 4 acceptance proofs, redaction/remote-boundary/root-
+  reuse regressions, focused race suites, focused `go vet`, gofmt, and
+  `git diff --check` pass. Final root verification also passed
+  `TMPDIR=/private/tmp task test` (root race, engine race, and engine standalone),
+  affected-package `go vet`, `task api:check`, and the final diff check.
+Commit: pending this scoped Step 4 commit; its hash will be recorded by Step 5.
 ```

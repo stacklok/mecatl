@@ -62,6 +62,7 @@ import (
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
+	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
@@ -124,7 +125,10 @@ type Config struct {
 	UseOpenAI     bool
 	OpenAIBaseURL string
 	OpenAIKey     string
-	UseMock       bool
+	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
+	// snapshot. Registry consumption is added separately from this composition wiring.
+	OpenAICodexCredential openaicodex.Credential
+	UseMock               bool
 	// MockProvider, when non-nil, REPLACES the canned UseMock turn with this
 	// scripted provider — the test-only seam for driving a full Build offline
 	// with scripted tool calls (UseMock scripts a single fixed text turn, which

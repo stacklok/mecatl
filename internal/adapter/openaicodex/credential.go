@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -41,6 +43,11 @@ type Credential struct {
 	expiresAt   time.Time
 	fedRAMP     bool
 }
+
+var (
+	_ fmt.Formatter  = Credential{}
+	_ slog.LogValuer = Credential{}
+)
 
 // NewCredential builds and validates a credential snapshot. accountID and
 // expiresAt are optional explicit auth.yaml fields. When both JWT and explicit
@@ -120,6 +127,29 @@ func (c Credential) ExpiresAt() time.Time { return c.expiresAt }
 
 // FedRAMP reports the unverified JWT routing claim.
 func (c Credential) FedRAMP() bool { return c.fedRAMP }
+
+// Configured reports whether this value is a populated credential snapshot.
+// It does not replace Validate: callers must still check expiry at use time.
+func (c Credential) Configured() bool { return c.accessToken != "" }
+
+// Format makes every fmt rendering secret-safe, including when Credential is
+// nested inside another formatted struct. Account IDs are routing metadata but
+// still identity-shaped, so the representation intentionally exposes neither
+// them nor the bearer token.
+func (c Credential) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "openaicodex.Credential{credential:[REDACTED],configured:")
+	_, _ = io.WriteString(state, strconv.FormatBool(c.Configured())+"}")
+}
+
+// LogValue gives structured slog handlers the same redacted representation as
+// fmt. It returns only non-secret presence metadata; expiry, account ID, and
+// token never cross the logging boundary.
+func (c Credential) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("credential", "[REDACTED]"),
+		slog.Bool("configured", c.Configured()),
+	)
+}
 
 func earlierNonZero(a, b time.Time) time.Time {
 	if a.IsZero() || (!b.IsZero() && b.Before(a)) {

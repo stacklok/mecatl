@@ -66,11 +66,10 @@ type flags struct {
 	defaultModel           string
 	defaultProviderFlagSet bool
 	useOpenAI              bool
-	// providerFlags holds the shared provider base-URL flags + credential reads
-	// (cliconfig) — the SAME helper mecated/mecatui use, so mecatequi reads ALL three
-	// keys (OPENAI/OPENROUTER/ANTHROPIC_API_KEY) and registers all three base-URL flags
-	// rather than the OpenAI-only subset it had. Applied onto app.Config in appConfig.
-	providerFlags *cliconfig.ProviderFlags
+	// providerFlags holds shared provider flag bindings; providerCredentials is
+	// the once-resolved snapshot projected by appConfig without further I/O.
+	providerFlags       *cliconfig.ProviderFlags
+	providerCredentials cliconfig.ResolvedCredentials
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262). A CI runner pod naturally has no ToolHive config file, so this is
 	// inert by default (register-on-intent finds nothing to register) —
@@ -263,9 +262,8 @@ func parseFlags(argv []string) (flags, error) {
 		}
 	})
 
-	// Provider credentials are read from the environment by providerFlags.Apply
-	// (called in appConfig), the shared cliconfig seam — never flag values, mirroring
-	// mecated/mecatui.
+	// Provider credentials are resolved once after the remaining input checks and
+	// cached on flags for I/O-free projection by appConfig, mirroring mecated/mecatui.
 
 	// Validate the prompt inputs: at least one source is required.
 	if f.prompt == "" && f.promptFile == "" {
@@ -301,6 +299,7 @@ func parseFlags(argv []string) (flags, error) {
 		return flags{}, err
 	}
 
+	f.providerCredentials = f.providerFlags.Resolve()
 	return f, nil
 }
 
@@ -438,10 +437,11 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		ToolCallRecorder:  obs.ToolCallRecorder,
 		MetricsRoleScoper: obs.MetricsRoleScoper,
 	}
-	// Apply the shared provider credentials + base URLs (env reads happen here, once).
+	// Project the once-resolved credentials and parsed base URLs without I/O.
 	// An OPENAI_API_KEY in the environment implies the real provider — the same flip
 	// mecated does — keyed off the resolved key.
-	keys := f.providerFlags.Apply(&out)
+	keys := f.providerCredentials
+	f.providerFlags.ApplyResolved(&out, keys)
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}

@@ -22,8 +22,10 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
+	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -31,7 +33,7 @@ import (
 // knownAuthProviders is the closed set of provider names an auth.yaml entry
 // may use — passed into authfile.Load so that package stays agnostic of which
 // providers mecatl specifically knows about.
-var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode"}
+var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
 
 // Provider credential / base-URL environment variables. These are the SECRET-shaped
 // inputs the cmd layer reads on the operator's behalf (the registry also auto-detects
@@ -55,6 +57,7 @@ type ProviderFlagHelp struct {
 	OpenRouterBaseURL string
 	AnthropicBaseURL  string
 	OpenCodeBaseURL   string
+	AuthFile          string
 }
 
 // DefaultProviderFlagHelp is the mecated-style wording, used when a field of the passed
@@ -64,6 +67,8 @@ var DefaultProviderFlagHelp = ProviderFlagHelp{
 	OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 	AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	OpenCodeBaseURL:   "override the OpenCode Go API base URL (default https://opencode.ai/zen/go/v1; key from OPENCODE_API_KEY)",
+	AuthFile: "path to a YAML credentials file (providers.<name>.api_key for anthropic/openai/openrouter/opencode, or providers.openai-codex.oauth for a manual ChatGPT Codex token); " +
+		"overrides the conventional default $XDG_CONFIG_HOME/mecatl/auth.yaml (usually ~/.config/mecatl/auth.yaml, a settings.yaml sibling). A credential already present in the environment always wins over this file for that provider",
 }
 
 // ProviderFlags holds the values bound by RegisterProviderFlags. The base-URL fields
@@ -99,61 +104,55 @@ func RegisterProviderFlags(fs *flag.FlagSet, help ProviderFlagHelp) *ProviderFla
 	fs.StringVar(pf.openRouterBaseURL, "openrouter-base-url", "", help.OpenRouterBaseURL)
 	fs.StringVar(pf.anthropicBaseURL, "anthropic-base-url", "", help.AnthropicBaseURL)
 	fs.StringVar(pf.openCodeBaseURL, "opencode-base-url", "", help.OpenCodeBaseURL)
-	fs.StringVar(pf.authFile, "auth-file", "",
-		"path to a YAML credentials file (providers.<name>.api_key for anthropic/openai/openrouter/opencode); "+
-			"overrides the conventional default $XDG_CONFIG_HOME/mecatl/auth.yaml (usually ~/.config/mecatl/auth.yaml, "+
-			"a settings.yaml sibling). A credential already present in the environment always wins over this file "+
-			"for that provider")
+	fs.StringVar(pf.authFile, "auth-file", "", help.AuthFile)
 	return pf
 }
 
-// Apply resolves credentials (including file I/O) and writes all provider fields.
-// Callers that already resolved credentials at an earlier parse boundary should
-// use ApplyResolved to avoid a second file read.
+// Apply is the compatibility wrapper that resolves the four API-key credentials
+// plus the file-only Codex credential, then projects the resulting snapshot.
+// Production roots instead call Resolve once and ApplyResolved wherever the
+// resulting app.Config is assembled. A non-empty AuthFileWarning is safe for a
+// root to surface once; credential values must never be logged.
 func (pf *ProviderFlags) Apply(cfg *app.Config) ResolvedKeys {
-	keys := pf.Resolve()
-	pf.ApplyResolved(cfg, keys)
-	return keys
+	resolved := pf.Resolve()
+	pf.ApplyResolved(cfg, resolved)
+	return resolved
 }
 
-// ApplyResolved writes an already-resolved credential set and the provider base
-// URLs onto cfg. The keys are secret-shaped and are never logged here.
-func (pf *ProviderFlags) ApplyResolved(cfg *app.Config, keys ResolvedKeys) {
-	cfg.OpenAIKey = keys.OpenAI
-	cfg.OpenRouterKey = keys.OpenRouter
-	cfg.AnthropicKey = keys.Anthropic
-	cfg.OpenCodeKey = keys.OpenCode
-	if pf != nil {
-		cfg.OpenAIBaseURL = *pf.openAIBaseURL
-		cfg.OpenRouterBaseURL = *pf.openRouterBaseURL
-		cfg.AnthropicBaseURL = *pf.anthropicBaseURL
-		cfg.OpenCodeBaseURL = *pf.openCodeBaseURL
-	}
+// Resolve reads every ambient API-key input and auth.yaml exactly once and
+// returns the immutable credential snapshot command roots cache for their
+// lifetime. The manual Codex token intentionally has no environment seam.
+func (pf *ProviderFlags) Resolve() ResolvedCredentials {
+	return pf.resolve(xdgconfig.OSEnv, time.Now())
 }
 
-// Resolve reads provider credentials from the environment and then auth.yaml.
-// It performs file I/O at this resolution boundary; callers should retain the
-// returned value when applying the same configuration rather than calling Resolve
-// again. Four providers are supported: anthropic, openai, openrouter, and opencode.
-// Environment values always win over file values. The values are SECRET-shaped;
-// callers must not log or print them.
-func (pf *ProviderFlags) Resolve() ResolvedKeys {
-	keys := ReadProviderKeys()
+func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
+	keys := readProviderKeys(env.Getenv)
 
 	explicitPath := ""
 	if pf != nil {
-		explicitPath = *pf.authFile
+		explicitPath = value(pf.authFile)
 	}
 	path := explicitPath
 	if path == "" {
-		path = authfile.DefaultPath(xdgconfig.OSEnv)
+		path = authfile.DefaultPath(env)
 	}
-	af, warning := authfile.Load(path, explicitPath != "", xdgconfig.OSEnv, knownAuthProviders)
+	af, warning := authfile.Load(path, explicitPath != "", env, knownAuthProviders)
 	keys.AuthFileWarning = warning
 	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
+	oauth := af.OAuth("openai-codex")
+	if oauth.AccessToken != "" {
+		credential, err := openaicodex.NewCredential(oauth.AccessToken, oauth.AccountID, oauth.ExpiresAt, now)
+		if err != nil {
+			keys.AuthFileWarning = joinCredentialWarnings(keys.AuthFileWarning,
+				fmt.Sprintf("auth file %s: openai-codex credential ignored: %v", path, err))
+		} else {
+			keys.OpenAICodex = credential
+		}
+	}
 	return keys
 }
 
@@ -162,37 +161,72 @@ func (pf *ProviderFlags) Resolve() ResolvedKeys {
 // command-specific startup policy can decide how to present a conventional
 // missing-file result.
 func (pf *ProviderFlags) AuthFilePath() (path string, explicit bool) {
-	if pf != nil && *pf.authFile != "" {
-		return *pf.authFile, true
+	if pf != nil && value(pf.authFile) != "" {
+		return value(pf.authFile), true
 	}
 	return authfile.DefaultPath(xdgconfig.OSEnv), false
 }
 
-// ReadProviderKeys reads provider credentials from the environment alone
-// (no auth.yaml). It is the SINGLE definition of which env vars hold which credential —
-// Resolve reads through it before layering the credentials file on top, so the var
-// names can never diverge between the two. A caller that must account for auth.yaml
-// (e.g. a presence/"is any provider configured" decision) should call
-// ProviderFlags.Resolve instead. The values are SECRET-shaped; callers must not log or
-// print them.
-func ReadProviderKeys() ResolvedKeys {
-	return ResolvedKeys{
-		OpenAI:     os.Getenv(envOpenAIKey),
-		OpenRouter: os.Getenv(envOpenRouterKey),
-		Anthropic:  os.Getenv(envAnthropicKey),
-		OpenCode:   os.Getenv(envOpenCodeKey),
+// ApplyResolved projects a previously resolved snapshot without touching the
+// environment or filesystem. This is the production command-root seam.
+func (pf *ProviderFlags) ApplyResolved(cfg *app.Config, keys ResolvedCredentials) {
+	pf.applyResolvedAPIKeys(cfg, keys)
+	cfg.OpenAICodexCredential = keys.OpenAICodex
+}
+
+// ApplyResolvedAPIKeys is the explicit projection for a command root which
+// does not support the manual Codex credential (currently mecak8s).
+func (pf *ProviderFlags) ApplyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredentials) {
+	pf.applyResolvedAPIKeys(cfg, keys)
+}
+
+func (pf *ProviderFlags) applyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredentials) {
+	cfg.OpenAIKey = keys.OpenAI
+	cfg.OpenRouterKey = keys.OpenRouter
+	cfg.AnthropicKey = keys.Anthropic
+	cfg.OpenCodeKey = keys.OpenCode
+	// A nil receiver (a config built WITHOUT RegisterProviderFlags — e.g. a test that
+	// constructs the cmd config struct directly) applies the env/auth-file keys but
+	// leaves the base URLs at their zero value, exactly as the pre-extraction inline
+	// code did when the base-url flags were never set. This keeps embeddedConfig/
+	// appConfig safe to call on a hand-built config.
+	if pf != nil {
+		cfg.OpenAIBaseURL = value(pf.openAIBaseURL)
+		cfg.OpenRouterBaseURL = value(pf.openRouterBaseURL)
+		cfg.AnthropicBaseURL = value(pf.anthropicBaseURL)
+		cfg.OpenCodeBaseURL = value(pf.openCodeBaseURL)
 	}
 }
 
-// ResolvedKeys is the set of provider credentials resolved by Apply (environment, then
-// auth.yaml). It lets a caller branch on credential presence (e.g. "an OpenAI key
-// implies the user wants the real provider") without a second os.Getenv. The four key
-// fields are SECRET-shaped: callers must not log or print them.
-type ResolvedKeys struct {
+// ReadProviderKeys reads provider credentials from the environment alone
+// (no auth.yaml). It is the SINGLE definition of which env vars hold which credential.
+// A caller that must account for auth.yaml should call ProviderFlags.Resolve instead.
+// The values are SECRET-shaped; callers must not log or print them.
+func ReadProviderKeys() ResolvedKeys {
+	return readProviderKeys(os.Getenv)
+}
+
+func readProviderKeys(getenv func(string) string) ResolvedCredentials {
+	return ResolvedCredentials{
+		OpenAI:     getenv(envOpenAIKey),
+		OpenRouter: getenv(envOpenRouterKey),
+		Anthropic:  getenv(envAnthropicKey),
+		OpenCode:   getenv(envOpenCodeKey),
+	}
+}
+
+// ResolvedCredentials is the immutable-by-value snapshot resolved from the
+// environment and auth.yaml. The four API-key fields are SECRET-shaped: callers
+// must not log or print them.
+type ResolvedCredentials struct {
 	OpenAI     string
 	OpenRouter string
 	Anthropic  string
 	OpenCode   string
+	// OpenAICodex is a distinct billing identity from OpenAIKey. Its fields are
+	// immutable outside the provider adjunct and it is populated only after
+	// startup validation of a file-backed manual token.
+	OpenAICodex openaicodex.Credential
 	// AuthFileWarning is non-empty when the auth.yaml credentials file (the explicit
 	// --auth-file path, or the conventional default) could not be read or parsed
 	// cleanly. It is set by Resolve/Apply (ReadProviderKeys alone never touches the file).
@@ -203,10 +237,34 @@ type ResolvedKeys struct {
 	AuthFileWarning string
 }
 
+// ResolvedKeys remains as the source-compatible name for callers that only
+// used the original API-key snapshot.
+type ResolvedKeys = ResolvedCredentials
+
+// HasOpenAICodex reports whether validation produced a usable manual token.
+func (k ResolvedCredentials) HasOpenAICodex() bool { return k.OpenAICodex.Configured() }
+
 // Any reports whether at least one provider credential is present. It is the shared
 // "is any real provider configured?" predicate (mecatui uses it for its startup guard).
-func (k ResolvedKeys) Any() bool {
-	return k.OpenAI != "" || k.OpenRouter != "" || k.Anthropic != "" || k.OpenCode != ""
+func (k ResolvedCredentials) Any() bool {
+	return k.OpenAI != "" || k.OpenRouter != "" || k.Anthropic != "" || k.OpenCode != "" || k.HasOpenAICodex()
+}
+
+func value(pointer *string) string {
+	if pointer == nil {
+		return ""
+	}
+	return *pointer
+}
+
+func joinCredentialWarnings(first, second string) string {
+	if first == "" {
+		return second
+	}
+	if second == "" {
+		return first
+	}
+	return first + "; " + second
 }
 
 func (h ProviderFlagHelp) withDefaults() ProviderFlagHelp {
@@ -221,6 +279,9 @@ func (h ProviderFlagHelp) withDefaults() ProviderFlagHelp {
 	}
 	if h.OpenCodeBaseURL == "" {
 		h.OpenCodeBaseURL = DefaultProviderFlagHelp.OpenCodeBaseURL
+	}
+	if h.AuthFile == "" {
+		h.AuthFile = DefaultProviderFlagHelp.AuthFile
 	}
 	return h
 }

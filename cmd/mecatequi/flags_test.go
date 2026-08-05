@@ -1,14 +1,48 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/app"
 )
+
+func mecatequiTestCodexToken(expires time.Time, accountID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q}}`, expires.Unix(), accountID)
+	return header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString([]byte("signature"))
+}
+
+func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
+	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(envName, "")
+	}
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	token := mecatequiTestCodexToken(expires, "acct-mecatequi")
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	body := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-mecatequi\n      expires_at: %s\n", token, expires.Format(time.RFC3339))
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	flags, err := parseFlags([]string{"--prompt", "test", "--auth-file", path})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		got := appConfig(flags, nil, observability{})
+		if got.OpenAICodexCredential.AccessToken() != token {
+			t.Fatal("mecatequi appConfig omitted or re-resolved the parsed credential")
+		}
+	}
+}
 
 func TestOutputEconomyFlagIsUnknownFlag(t *testing.T) {
 	// The --output-economy compatibility flag is DELETED (ADR 0041, superseded;

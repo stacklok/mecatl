@@ -1,6 +1,7 @@
 package openaicodex
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,6 +34,43 @@ func jwt(payload string) string {
 func validJWT(account string, expiry time.Time, fedRAMP bool) string {
 	return jwt(fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q,"chatgpt_account_is_fedramp":%t}}`,
 		expiry.Unix(), account, fedRAMP))
+}
+
+func TestCredentialFormattingAndSlogAreRedacted(t *testing.T) {
+	secretToken := validJWT("secret-account", testNow.Add(time.Hour), true)
+	credential, err := NewCredential(secretToken, "", "", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"%v", "%+v", "%#v"} {
+		got := fmt.Sprintf(format, credential)
+		if strings.Contains(got, secretToken) || strings.Contains(got, "secret-account") {
+			t.Fatalf("format %s leaked credential material", format)
+		}
+		if !strings.Contains(got, "[REDACTED]") {
+			t.Errorf("format %s lacks redaction marker: %s", format, got)
+		}
+	}
+	for _, test := range []struct {
+		name string
+		json bool
+	}{{name: "text"}, {name: "json", json: true}} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			var handler slog.Handler = slog.NewTextHandler(&output, nil)
+			if test.json {
+				handler = slog.NewJSONHandler(&output, nil)
+			}
+			slog.New(handler).Info("credential", "value", credential)
+			got := output.String()
+			if strings.Contains(got, secretToken) || strings.Contains(got, "secret-account") {
+				t.Fatal("structured log leaked credential material")
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Errorf("structured log lacks redaction marker: %s", got)
+			}
+		})
+	}
 }
 
 func TestCredentialValidation(t *testing.T) {
