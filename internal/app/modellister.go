@@ -9,6 +9,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
@@ -243,6 +244,63 @@ type openRouterLister struct {
 	inner *openrouter.Lister
 }
 
+// openAICodexLister adapts the account-entitlement response into the one
+// composition-local modelEntry stream. The live list is inventory-authoritative:
+// this wrapper can enrich ONLY ids already returned by Codex. A matching OpenAI
+// catalog row supplies fields the entitlement endpoint omitted; an unknown id
+// remains selectable with the adapter-static modality ceiling and conservative
+// context-window floor.
+type openAICodexLister struct {
+	inner *openaicodex.Lister
+}
+
+func (l openAICodexLister) ListModels(ctx context.Context) ([]modelEntry, error) {
+	raw, err := l.inner.ListModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	metadata := make(map[string]modelEntry)
+	for _, m := range embeddedModels(providerOpenAI) {
+		metadata[m.ID] = m
+	}
+	out := make([]modelEntry, 0, len(raw))
+	for _, m := range raw {
+		entry := modelEntry{
+			ID:              m.ID,
+			DisplayName:     m.DisplayName,
+			ContextLimit:    m.ContextLimit,
+			InputModalities: append([]string(nil), m.InputModalities...),
+			Reasoning:       m.Reasoning,
+			ToolCall:        m.ToolCall,
+		}
+		catalog, catalogued := metadata[m.ID]
+		if entry.DisplayName == "" && catalogued {
+			entry.DisplayName = catalog.DisplayName
+		}
+		if entry.ContextLimit <= 0 && catalogued {
+			entry.ContextLimit = catalog.ContextLimit
+		}
+		if !m.InputModalitiesKnown {
+			if catalogued && len(catalog.InputModalities) > 0 {
+				entry.InputModalities = append([]string(nil), catalog.InputModalities...)
+			} else {
+				entry.InputModalities = []string{"text"}
+				if openaiStaticCaps.Image {
+					entry.InputModalities = append(entry.InputModalities, "image")
+				}
+				if openaiStaticCaps.Audio {
+					entry.InputModalities = append(entry.InputModalities, "audio")
+				}
+			}
+		}
+		if !m.ReasoningKnown && catalogued {
+			entry.Reasoning = catalog.Reasoning
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
 func (l openRouterLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	raw, err := l.inner.ListModels(ctx)
 	if err != nil {
@@ -411,6 +469,17 @@ func embeddedModels(providerID string) []modelEntry {
 		})
 	}
 	return out
+}
+
+// metadataCatalogProviderID selects a metadata-only catalog namespace. Codex
+// uses OpenAI metadata for an already-entitled or explicitly selected matching
+// id, but embeddedModels intentionally does not call this helper: OpenAI's API
+// inventory must never become Codex subscription inventory.
+func metadataCatalogProviderID(providerID string) string {
+	if providerID == providerOpenAICodex {
+		return providerOpenAI
+	}
+	return providerID
 }
 
 // projectModelEntry is the SINGLE projection of a (provider, modelEntry) into the

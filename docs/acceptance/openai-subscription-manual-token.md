@@ -775,7 +775,8 @@ Coder: /root/step5_coder (original candidate), /root/step5_coder_recovery
   (recovered and repaired that interrupted candidate), and
   /root/step5_coder_final (finalized and verified the intact recovery diff)
 Reviewers: /root/step5_spec_review (specification/architecture) and
-  /root/step5_security_review (correctness/security/reuse); re-review pending.
+  /root/step5_security_review (correctness/security/reuse); both reviewers
+  returned zero blockers after re-review.
 Findings: coder recovery found that a credential expiring between one-time
   resolution and registry construction was silently omitted, and that AC5.5's
   named proof did not exercise ToolHive. The candidate now fails closed with the
@@ -784,7 +785,7 @@ Findings: coder recovery found that a credential expiring between one-time
   blocker: inline Codex registration raised `buildProviderRegistry` to gocyclo 21
   over the repository limit of 20. The coder extracted a narrow adjunct-entry
   helper without changing credential validation, policy capture, precedence, or
-  remint behavior; both reviewers are pending re-review.
+  remint behavior; both reviewers approved the repaired candidate.
 Verification: the root normal/default-cache focused named race proofs, focused
   `go vet`, `task lint` (zero issues), `task api:check`, the acceptance-plan
   checker, gofmt, and `git diff --check` pass. Plain unsandboxed `task test` fails
@@ -792,6 +793,47 @@ Verification: the root normal/default-cache focused named race proofs, focused
   `/private/var` alias failures fixed by `71e68ef1`, and Darwin's long UNIX-socket
   path failure in `TestFireDelivery_EmbeddedEndToEnd` fixed by `be79d21a`. No
   `TMPDIR` or `GOCACHE` workaround was used. Focused root gates pass; the aggregate
-  gate is blocked by the outdated branch base. Commit is pending.
-Commit: pending this scoped Step 5 commit; its hash will be recorded by Step 6.
+  gate was unblocked by synchronizing the fixes from origin/main before Step 6.
+Commit: 029ee48c18518e467695cf761a6c4dd11998a7be
+
+Integration checkpoint before Step 6: 91fd5e3ea8db1da8d36450d8fe99eb6689ce7444
+(`origin/main` synchronized after the scoped Step 5 commit).
+
+Step 6 — Add entitlement-authoritative live models and a bounded default bootstrap
+Base: 91fd5e3ea8db1da8d36450d8fe99eb6689ce7444
+Coder: /root/step6_coder (interrupted partial candidate) and
+  /root/step5_coder_final (replacement owner, repair, and verification).
+Reviewers: /root/step6_spec_review (specification/architecture) and
+  /root/step5_coder_recovery (correctness/security/reuse); both returned zero
+  blockers after re-review of the repaired candidate.
+Findings: the candidate adds the native Codex entitlement lister through the
+  existing live-model pipeline, keeps the subscription inventory empty until a
+  successful account response, and borrows embedded OpenAI rows only as metadata
+  for already-entitled or explicitly selected matching ids. The bounded
+  synchronous bootstrap runs only when Codex is the resolved default and no
+  model was configured; it preserves server order, skips entirely for explicit
+  models, and fails closed for unauthorized, unreachable, or empty discovery.
+  A narrow stdlib-only modelhttp helper now shares only bounded GET mechanics;
+  each adapter retains its protocol JSON, headers, redirect policy, and control/
+  bidi sanitization. One internal/buildinfo value supplies an honest `dev`
+  default and is stamped into every Taskfile command-root build. Initial review
+  found two non-bootstrap registry tests accidentally entered discovery, the
+  model projection used a fabricated image field instead of the recorded wire
+  vocabulary, and slugs were silently normalized. The repair makes those tests
+  explicit-model cases, decodes `input_modalities` and `context_window` with
+  `max_context_window` fallback, and either preserves a valid opaque slug exactly
+  or skips it when trimming, sanitization, or truncation would be required. The
+  no-API-inventory proof now covers 401, 403, and successful-empty outcomes; the
+  metadata and convergence proofs cover unknown-id 128k flooring plus text-only,
+  image, primary-window, and fallback-window server facts.
+Verification: all four named app acceptance tests first failed before composition
+  wiring (no native lister, empty entitlement projection, absent/fallible default
+  bootstrap, and no live convergence), then passed after wiring. The adapter
+  suites under `-race`, the complete `internal/app` race suite, every real
+  command-root package under `-race`, focused `go vet`, gofmt, `task --dry build`,
+  and `git diff --check` pass using the normal/default caches; no TMPDIR, GOCACHE,
+  or lint-cache override was used. The final normal/default-cache `task lint`
+  passes both the root and engine modules with zero issues after adding the two
+  exported-symbol comments identified by the lint gate.
+Commit: pending the two required reviews and scoped Step 6 local commit.
 ```

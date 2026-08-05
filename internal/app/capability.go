@@ -110,7 +110,7 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	}
 	// (2) Catalog floor.
 	if providerID != "" && modelID != "" {
-		if p, ok := providercatalog.Default().Provider(providerID); ok {
+		if p, ok := providercatalog.Default().Provider(metadataCatalogProviderID(providerID)); ok {
 			for _, m := range p.Models() {
 				if m.ID() == modelID {
 					return m.SupportsReasoning(), true
@@ -179,7 +179,7 @@ func catalogModalities(providerID, modelID string) (image, audio, found bool) {
 	if providerID == "" || modelID == "" {
 		return false, false, false
 	}
-	p, ok := providercatalog.Default().Provider(providerID)
+	p, ok := providercatalog.Default().Provider(metadataCatalogProviderID(providerID))
 	if !ok {
 		return false, false, false
 	}

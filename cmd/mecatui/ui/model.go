@@ -182,8 +182,9 @@ type Deps struct {
 	InitialPrompt string
 
 	// Version is the mecatui build version, shown on the first-run welcome splash
-	// (e.g. "v0.3.1" or "dev"). Threaded from cmd/mecatui's main.version (ldflags-set);
-	// "" omits the version line. Display-only.
+	// (e.g. "v0.3.1" or "dev"). Threaded from the shared
+	// internal/buildinfo.Version (ldflags-set); "" omits the version line.
+	// Display-only.
 	Version string
 
 	// NoBanner suppresses the rich first-run welcome splash (mascot + gradient

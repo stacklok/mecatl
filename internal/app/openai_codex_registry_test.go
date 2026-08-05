@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -13,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -46,6 +49,9 @@ func codexRegistryCredential(t *testing.T) openaicodex.Credential {
 func codexRegistryConfig(t *testing.T) Config {
 	t.Helper()
 	return Config{
+		// Most registry tests exercise provider construction rather than discovery;
+		// an explicit model keeps those tests on the explicit-model bypass.
+		Model:                 "gpt-5",
 		OpenAICodexCredential: codexRegistryCredential(t),
 		openAICodexNow:        func() time.Time { return codexRegistryNow },
 	}
@@ -137,7 +143,7 @@ func TestADR_0083_OpenAICodexDefaultPrecedence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{providerConstructor: constructor, DefaultProvider: tc.explicit}
+			cfg := Config{Model: "gpt-5", providerConstructor: constructor, DefaultProvider: tc.explicit}
 			if tc.withCodex {
 				cfg.OpenAICodexCredential = codexRegistryCredential(t)
 				cfg.openAICodexNow = func() time.Time { return codexRegistryNow }
@@ -235,6 +241,7 @@ func TestOpenAICodexOptionsSurviveEveryRemint(t *testing.T) {
 	streamCodexTestRequest(t, initial.provider) // initial construct
 
 	cfg := Config{
+		Model:                 "gpt-5",
 		OpenAICodexCredential: credential,
 		openAICodexNow:        func() time.Time { return codexRegistryNow },
 		openAICodexTransport:  capture,
@@ -338,5 +345,246 @@ func TestOpenAICodexAbsentPreservesExistingProviders(t *testing.T) {
 	}
 	if _, ok := reg.Lookup(providerOpenAICodex); ok {
 		t.Fatal("absent Codex credential registered openai-codex")
+	}
+}
+
+type codexModelsTransport struct {
+	mu     sync.Mutex
+	body   string
+	status int
+	calls  int
+}
+
+func (c *codexModelsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.calls++
+	body, status := c.body, c.status
+	c.mu.Unlock()
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}, nil
+}
+
+func (c *codexModelsTransport) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func codexModelsConfig(t *testing.T, transport http.RoundTripper) Config {
+	t.Helper()
+	cfg := codexRegistryConfig(t)
+	cfg.Model = "explicit-model"
+	cfg.openAICodexTransport = transport
+	return cfg
+}
+
+func TestADR_0083_OpenAICodexNeverFallsBackToAPIInventory(t *testing.T) {
+	if embedded := embeddedModels(providerOpenAICodex); len(embedded) != 0 {
+		t.Fatalf("openai-codex embedded inventory = %#v, want empty", embedded)
+	}
+	for _, tc := range []struct {
+		name      string
+		status    int
+		wantState string
+	}{
+		{name: "401", status: http.StatusUnauthorized, wantState: statusUnauthorized},
+		{name: "403", status: http.StatusForbidden, wantState: statusUnauthorized},
+		{name: "successful empty", status: http.StatusOK, wantState: statusEmpty},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &codexModelsTransport{status: tc.status, body: `{"models":[]}`}
+			reg, err := buildProviderRegistry(codexModelsConfig(t, transport), fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-api"}))
+			if err != nil {
+				t.Fatalf("buildProviderRegistry: %v", err)
+			}
+			entry, ok := reg.Lookup(providerOpenAICodex)
+			if !ok || entry.lister == nil {
+				t.Fatal("openai-codex did not install its native entitlement lister")
+			}
+			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenAICodex)
+			if len(models) != 0 {
+				t.Fatalf("Codex inventory fell back to %d API models: %#v", len(models), models)
+			}
+			outcome, ok := reg.outcomes.getStatus(providerOpenAICodex)
+			if !ok || outcome.State != tc.wantState {
+				t.Fatalf("outcome = (%#v, %t), want state %q", outcome, ok, tc.wantState)
+			}
+		})
+	}
+}
+
+func TestOpenAICodexMetadataEnrichmentIsNotInventory(t *testing.T) {
+	apiModels := embeddedModels(providerOpenAI)
+	if len(apiModels) == 0 {
+		t.Fatal("test requires one embedded OpenAI metadata row")
+	}
+	match := apiModels[0]
+	unknownID := "codex-entitled-unknown"
+	body := fmt.Sprintf(`{"models":[
+		{"slug":%q,"display_name":"","visibility":"list"},
+		{"slug":%q,"display_name":"Unknown","visibility":"list"}
+	]}`, match.ID, unknownID)
+	transport := &codexModelsTransport{body: body}
+	reg, err := buildProviderRegistry(codexModelsConfig(t, transport), fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenAICodex)
+	if len(models) != 2 {
+		t.Fatalf("Codex inventory length = %d, want exactly entitlement length 2: %#v", len(models), models)
+	}
+	if models[0].ID != match.ID || models[0].ContextLimit != match.ContextLimit ||
+		!reflect.DeepEqual(models[0].InputModalities, match.InputModalities) {
+		t.Fatalf("matching entitlement metadata = %#v, want enrichment from %#v", models[0], match)
+	}
+	if models[1].ID != unknownID || !reflect.DeepEqual(models[1].InputModalities, []string{"text", "image"}) {
+		t.Fatalf("unknown entitlement = %#v, want selectable with adapter-static modalities", models[1])
+	}
+	if got := reg.windowResolver(Config{}, providerOpenAICodex, unknownID)(); got != defaultContextWindowTokens {
+		t.Fatalf("unknown entitlement context window = %d, want conservative %d floor", got, defaultContextWindowTokens)
+	}
+}
+
+func TestOpenAICodexDefaultBootstrap(t *testing.T) {
+	modelsBody := `{"models":[
+		{"slug":"server-first","display_name":"First","visibility":"list"},
+		{"slug":"server-second","display_name":"Second","visibility":"list"}
+	]}`
+	t.Run("sole Codex chooses first entitlement", func(t *testing.T) {
+		transport := &codexModelsTransport{body: modelsBody}
+		cfg := codexRegistryConfig(t)
+		cfg.Model = ""
+		cfg.openAICodexTransport = transport
+		reg, err := buildProviderRegistry(cfg, fakeEnv(nil))
+		if err != nil {
+			t.Fatalf("buildProviderRegistry: %v", err)
+		}
+		if got := reg.ResolvedDefaultModel(); got != "server-first" {
+			t.Fatalf("ResolvedDefaultModel() = %q, want server-first", got)
+		}
+		if transport.callCount() != 1 {
+			t.Fatalf("bootstrap calls = %d, want 1", transport.callCount())
+		}
+	})
+
+	t.Run("explicit model bypasses discovery", func(t *testing.T) {
+		transport := &codexModelsTransport{body: modelsBody}
+		reg, err := buildProviderRegistry(codexModelsConfig(t, transport), fakeEnv(nil))
+		if err != nil {
+			t.Fatalf("buildProviderRegistry: %v", err)
+		}
+		if got := reg.ResolvedDefaultModel(); got != "explicit-model" {
+			t.Fatalf("ResolvedDefaultModel() = %q, want explicit-model", got)
+		}
+		if transport.callCount() != 0 {
+			t.Fatalf("explicit model made %d discovery calls, want 0", transport.callCount())
+		}
+	})
+
+	t.Run("existing provider default bypasses Codex discovery", func(t *testing.T) {
+		transport := &codexModelsTransport{body: modelsBody}
+		cfg := codexRegistryConfig(t)
+		cfg.Model = ""
+		cfg.openAICodexTransport = transport
+		reg, err := buildProviderRegistry(cfg, fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-api"}))
+		if err != nil {
+			t.Fatalf("buildProviderRegistry: %v", err)
+		}
+		if reg.Default() != providerOpenAI {
+			t.Fatalf("Default() = %q, want %q", reg.Default(), providerOpenAI)
+		}
+		if transport.callCount() != 0 {
+			t.Fatalf("non-Codex default made %d discovery calls, want 0", transport.callCount())
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		transport *codexModelsTransport
+		contains  string
+	}{
+		{name: "unauthorized is fatal", transport: &codexModelsTransport{status: http.StatusUnauthorized}, contains: "unauthorized"},
+		{name: "empty is fatal", transport: &codexModelsTransport{body: `{"models":[]}`}, contains: "no picker-visible models"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := codexRegistryConfig(t)
+			cfg.Model = ""
+			cfg.openAICodexTransport = tc.transport
+			_, err := buildProviderRegistry(cfg, fakeEnv(nil))
+			if err == nil || !strings.Contains(err.Error(), tc.contains) {
+				t.Fatalf("bootstrap error = %v, want substring %q", err, tc.contains)
+			}
+		})
+	}
+
+	t.Run("unreachable is fatal without explicit model", func(t *testing.T) {
+		cfg := codexRegistryConfig(t)
+		cfg.Model = ""
+		cfg.openAICodexTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("offline")
+		})
+		_, err := buildProviderRegistry(cfg, fakeEnv(nil))
+		if err == nil || !strings.Contains(err.Error(), "unreachable") {
+			t.Fatalf("bootstrap error = %v, want unreachable", err)
+		}
+	})
+}
+
+func TestOpenAICodexLiveMetadataConverges(t *testing.T) {
+	const (
+		imageModelID = "codex-live-image"
+		textModelID  = "codex-live-text"
+	)
+	transport := &codexModelsTransport{body: `{"models":[
+		{"slug":"codex-live-image","display_name":"Live Image","visibility":"list",
+		 "context_window":0,"max_context_window":196000,"input_modalities":["text","image"],
+		 "supported_reasoning_levels":[{"effort":"medium"}]},
+		{"slug":"codex-live-text","display_name":"Live Text","visibility":"list",
+		 "context_window":144000,"max_context_window":999999,"input_modalities":["text"],
+		 "supported_reasoning_levels":[]}
+	]}`}
+	reg, err := buildProviderRegistry(codexModelsConfig(t, transport), fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+	reg.meta.Swap(byProvider)
+	picker := projectAll(reg, byProvider)
+	if len(picker) != 2 {
+		t.Fatalf("picker metadata did not converge: %#v", picker)
+	}
+	byID := map[string]*mecatlv1.ModelInfo{}
+	for _, model := range picker {
+		byID[model.GetId()] = model
+	}
+	imageModel, imageOK := byID[imageModelID]
+	textModel, textOK := byID[textModelID]
+	if !imageOK || !imageModel.GetImage() || !imageModel.GetReasoning() || imageModel.GetContextLimit() != 196000 {
+		t.Fatalf("image picker metadata did not converge: %#v", imageModel)
+	}
+	if !textOK || textModel.GetImage() || textModel.GetReasoning() || textModel.GetContextLimit() != 144000 {
+		t.Fatalf("text picker metadata did not converge: %#v", textModel)
+	}
+	if caps := modelCapability(reg, providerOpenAICodex, imageModelID); !caps.Image {
+		t.Fatalf("session capability did not converge: %+v", caps)
+	}
+	if caps := modelCapability(reg, providerOpenAICodex, textModelID); caps.Image {
+		t.Fatalf("text-only session capability gained image support: %+v", caps)
+	}
+	if supported, known := modelReasoningSupport(reg, providerOpenAICodex, imageModelID); !known || !supported {
+		t.Fatalf("reasoning support = (%t, %t), want (true, true)", supported, known)
+	}
+	if got := reg.windowResolver(Config{}, providerOpenAICodex, imageModelID)(); got != 196000 {
+		t.Fatalf("context window = %d, want 196000", got)
+	}
+	if got := reg.windowResolver(Config{}, providerOpenAICodex, textModelID)(); got != 144000 {
+		t.Fatalf("text context window = %d, want primary context_window 144000", got)
 	}
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -464,6 +465,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 	out := app.Config{
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
+		BuildVersion:           buildinfo.Current(),
 		DefaultProvider:        cfg.defaultProvider,
 		DefaultModel:           cfg.defaultModel,
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,

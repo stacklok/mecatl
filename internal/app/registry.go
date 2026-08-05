@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -616,6 +617,9 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	// Seed the live-metadata store from the embedded catalog for every available
 	// provider — the t=0 floor every resolver reads before the background live swap.
 	meta.seedFromCatalog(reg.Available())
+	if err := bootstrapOpenAICodexDefault(reg, cfg); err != nil {
+		return nil, err
+	}
 	// T7 post-assembly fixup: stamp each real adapter entry's shared .provider
 	// with the DEFAULT model's capability intersection (catalog ∩ adapter) and
 	// record it as defaultCaps so the per-session factory can re-mint ONLY when a
@@ -676,13 +680,53 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 	if err != nil {
 		return providerEntry{}, err
 	}
-	return newOpenAICompatEntry(
+	entry := newOpenAICompatEntry(
 		cfg,
 		providerOpenAICodex,
 		cfg.OpenAICodexCredential.AccessToken(),
 		openaicodex.BaseURL,
 		openai.WithRequestOption(policy.Options()...),
-	), nil
+	)
+	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy, cfg.BuildVersion)}
+	return entry, nil
+}
+
+const openAICodexBootstrapTimeout = 5 * time.Second
+
+// bootstrapOpenAICodexDefault performs the one synchronous entitlement lookup
+// required when Codex is the resolved default and the operator supplied no model.
+// Explicit models and a different preferred provider bypass it entirely. The
+// selected row is written through the same outcome/meta facts later background
+// refreshes use, before the registry remints the default provider.
+func bootstrapOpenAICodexDefault(reg *providerRegistry, cfg Config) error {
+	if reg == nil || reg.defaultID != providerOpenAICodex || reg.defaultModel != "" {
+		return nil
+	}
+	entry, ok := reg.Lookup(providerOpenAICodex)
+	if !ok || entry.lister == nil {
+		return errors.New("openai-codex: default model discovery is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), openAICodexBootstrapTimeout)
+	defer cancel()
+	models, err := entry.lister.ListModels(ctx)
+	if err != nil {
+		state := classifyLiveListError(err)
+		reg.outcomes.recordFailure(providerOpenAICodex, state, "")
+		if state == statusUnauthorized {
+			return fmt.Errorf("openai-codex: default model discovery unauthorized: %w", err)
+		}
+		return fmt.Errorf("openai-codex: default model discovery unreachable: %w", err)
+	}
+	reg.outcomes.recordSuccess(providerOpenAICodex, models)
+	if len(models) == 0 {
+		return errors.New("openai-codex: account returned no picker-visible models; replace the manual token or choose an explicit model")
+	}
+	reg.defaultModel = models[0].ID
+	reg.defaultModelAutoSelected = true
+	reg.meta.mergeSwap(map[string][]modelEntry{providerOpenAICodex: models})
+	cfg.diag().Log(ctx, port.LevelInfo, "openai-codex default model auto-selected from account entitlements",
+		"provider", providerOpenAICodex, "model", reg.defaultModel)
+	return nil
 }
 
 // providerKey resolves the credential for a provider: an explicit cfg-supplied key
@@ -1434,8 +1478,8 @@ var errToolhiveNoModels = errors.New(
 // is not up / not listening yet) — the common case for a ToolHive user who
 // simply hasn't started the proxy.
 func classifyLiveListError(err error) string {
-	var statusErr *openaicompat.StatusError
-	if errors.As(err, &statusErr) && (statusErr.Code == http.StatusUnauthorized || statusErr.Code == http.StatusForbidden) {
+	var statusErr interface{ StatusCode() int }
+	if errors.As(err, &statusErr) && (statusErr.StatusCode() == http.StatusUnauthorized || statusErr.StatusCode() == http.StatusForbidden) {
 		return statusUnauthorized
 	}
 	return statusUnreachable

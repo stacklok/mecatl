@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -379,6 +380,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 	out := app.Config{
 		Workspace:       f.workspace,
 		Model:           f.model,
+		BuildVersion:    buildinfo.Current(),
 		DefaultProvider: f.defaultProvider,
 		DefaultModel:    f.defaultModel,
 		// defaultProviderFlagSet lets CLI out-rank the operator-global settings.yaml

@@ -21,6 +21,9 @@ includes:
 
 vars:
   PKG: github.com/stacklok/mecatl
+  BUILD_VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  BUILD_LDFLAGS: '-X {{.PKG}}/internal/buildinfo.Version={{.BUILD_VERSION}}'
 
 tasks:
   default:
@@ -32,16 +35,16 @@ tasks:
   build:
     desc: Compile binaries into bin/
     cmds:
-      - go build -o bin/mecated ./cmd/mecated
-      - go build -o bin/mecademo ./cmd/mecademo
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecated ./cmd/mecated
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecademo ./cmd/mecademo
       # mecatequi: the single-shot, headless CI/batch runner (one prompt -> diff +
       # summary JSON + optional durable event log -> exit code).
-      - go build -o bin/mecatequi ./cmd/mecatequi
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatequi ./cmd/mecatequi
       # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
-      - go build -o bin/mecak8s ./cmd/mecak8s
-      # mecatui stamps its build version into the welcome splash via -X main.version.
-      - go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/mecatui ./cmd/mecatui
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
+      # Every command root shares internal/buildinfo; mecatui also renders it.
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
@@ -59,9 +62,8 @@ tasks:
   install:
     desc: Install mecated and mecatui into GOBIN/GOPATH/bin
     cmds:
-      - go install ./cmd/mecated
-      # mecatui stamps its build version into the welcome splash via -X main.version.
-      - go install -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" ./cmd/mecatui
+      - go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecated
+      - go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecatui
 
   test:golden:
     desc: Refresh mecatui View/teatest golden files (-update) then re-run them
@@ -114,6 +116,8 @@ tasks:
     desc: Build the mecated image locally with ko (no push; tagged under ko.local)
     env:
       KO_DOCKER_REPO: ko.local
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
     cmds:
       # --local loads the image into the local Docker/podman daemon; --bare
       # keeps the repo path clean (no extra import-path suffix) and prints the
@@ -122,6 +126,9 @@ tasks:
 
   ko:publish:
     desc: Build and push the mecated image with ko (honours KO_DOCKER_REPO)
+    env:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
     cmds:
       - cmd: |
           if [ -z "${KO_DOCKER_REPO:-}" ]; then
@@ -132,6 +139,9 @@ tasks:
 
   ko:resolve:
     desc: Render deploy/ manifests with the ko-built image ref (honours KO_DOCKER_REPO)
+    env:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
     cmds:
       - cmd: |
           if [ -z "${KO_DOCKER_REPO:-}" ]; then
@@ -147,6 +157,8 @@ tasks:
     desc: Build the mecak8s image locally with ko (ADR 0048; no push; tagged under ko.local)
     env:
       KO_DOCKER_REPO: ko.local
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
     cmds:
       - ko build --local --bare ./cmd/mecak8s
 

@@ -40,11 +40,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-	"time"
 	"unicode"
+
+	"github.com/stacklok/mecatl/internal/adapter/modelhttp"
 )
 
 const (
@@ -52,11 +52,6 @@ const (
 	// body cannot OOM the process (CWE-770). 1 MiB comfortably holds a
 	// per-credential gateway catalog (a handful to a few dozen models).
 	maxResponseBytes = 1 << 20
-
-	// defaultTimeout bounds the whole fetch when no client timeout is otherwise
-	// configured (the injected client may carry its own; the ctx deadline also
-	// applies). A live catalog fetch that hangs must not stall the caller.
-	defaultTimeout = 5 * time.Second
 
 	// maxIDRunes / maxNameRunes bound a SINGLE model's id and display name. The
 	// 1 MiB whole-response cap above does not stop ONE hostile entry with a
@@ -80,13 +75,7 @@ type Model struct {
 // StatusError is returned when the endpoint answers with a non-2xx status. The
 // composition layer classifies it via errors.As (401/403 ⇒ "unauthorized";
 // every other status, or a non-StatusError failure, ⇒ "unreachable").
-type StatusError struct {
-	Code int
-}
-
-func (e *StatusError) Error() string {
-	return fmt.Sprintf("openaicompat: unexpected status %d", e.Code)
-}
+type StatusError = modelhttp.StatusError
 
 // Lister fetches a live OpenAI-shaped model catalog over an INJECTED
 // *http.Client (tests pass a mock transport; production gets a default client
@@ -121,12 +110,7 @@ func RefuseRedirects(*http.Request, []*http.Request) error {
 // bypasses CheckRedirect entirely, so tests exercising the redirect gate use
 // a real httptest server).
 func NewLister(baseURL, bearerToken string, client *http.Client) *Lister {
-	if client == nil {
-		client = &http.Client{
-			Timeout:       defaultTimeout,
-			CheckRedirect: RefuseRedirects,
-		}
-	}
+	client = modelhttp.DefaultClient(client, RefuseRedirects)
 	return &Lister{baseURL: baseURL, bearerToken: bearerToken, httpClient: client}
 }
 
@@ -148,33 +132,14 @@ type wireModel struct {
 // a non-nil error (the composition layer then classifies it and falls back to
 // the embedded catalog / last-known-good). It NEVER panics.
 func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.baseURL+"/models", nil)
+	body, err := modelhttp.Get(ctx, l.httpClient, l.baseURL+"/models", "openaicompat", maxResponseBytes, func(req *http.Request) {
+		req.Header.Set("Accept", "application/json")
+		if l.bearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+l.bearerToken)
+		}
+	})
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	if l.bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+l.bearerToken)
-	}
-
-	resp, err := l.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("openaicompat: fetch models: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &StatusError{Code: resp.StatusCode}
-	}
-
-	// Read at most maxResponseBytes+1: if the read reaches the +1th byte the body
-	// exceeded the cap, so fail rather than risk an unbounded allocation (CWE-770).
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("openaicompat: read body: %w", err)
-	}
-	if len(body) > maxResponseBytes {
-		return nil, fmt.Errorf("openaicompat: response exceeds %d-byte cap", maxResponseBytes)
+		return nil, err
 	}
 
 	var wire wireResponse

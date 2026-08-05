@@ -43,6 +43,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -229,7 +230,7 @@ func run(argv []string) error {
 		Mode:      cfg.mode,
 		Ctx:       ctx,
 		// Build version for the welcome splash (ldflags-set; "dev" by default).
-		Version: version,
+		Version: buildinfo.Current(),
 		// Suppress the rich welcome splash under --no-banner, --quiet, or a
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
 		// only the flag). The plain prompt hint is still shown in all three cases.
@@ -554,6 +555,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:       cfg.workspace,
 		Model:           cfg.model,
+		BuildVersion:    buildinfo.Current(),
 		DefaultProvider: cfg.defaultProvider,
 		DefaultModel:    cfg.defaultModel,
 		// defaultProviderFlagSet lets CLI out-rank the operator-global settings.yaml
