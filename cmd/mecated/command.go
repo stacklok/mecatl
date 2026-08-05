@@ -74,6 +74,16 @@ func resolveCommand(argv []string) commandResolution {
 	if first == "acp" {
 		return commandResolution{mode: modeACP, remaining: stripCommandWord(args)}
 	}
+	// `mecated import` is an offline migration command. It never starts a
+	// listener or constructs an LLM provider.
+	if first == "import" {
+		return commandResolution{
+			handled: true,
+			run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+				return runImport(args[2:], stdout)
+			}),
+		}
+	}
 
 	// A leading HELP flag is a help intent, not a usage error: `mecated --help`
 	// renders the top-level command page and exits 0 (the universal --help
@@ -207,6 +217,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Commands:\n")
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
+	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
@@ -217,7 +228,7 @@ func writeTopLevelHelp(out io.Writer) {
 
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  import   import Codex or Claude Code data\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
 }
 
 // configUsageError builds the error message for a bare/unknown `config` invocation.

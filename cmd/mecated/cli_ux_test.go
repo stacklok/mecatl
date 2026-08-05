@@ -312,6 +312,7 @@ func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
 		"Usage: mecated <command> [flags]",
 		"serve                   start the network daemon",
 		"acp                     serve the Agent Client Protocol over stdio",
+		"import                  import a Codex or Claude Code session",
 		"config init             write/print the operator settings.yaml skeleton",
 		"skills promote          promote a model-authored candidate skill",
 		"perf-mcp print-config   print a paste-ready client",
@@ -384,6 +385,19 @@ func TestResolveSkillsPromoteDispatchesRunner(t *testing.T) {
 	err := res.run(strings.NewReader(""), io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("skills promote with no flags should return a usage error from the real runner")
+	}
+}
+
+func TestResolveImportDispatchesRunner(t *testing.T) {
+	res := resolveCommand([]string{"mecated", "import"})
+	if res.err != nil {
+		t.Fatalf("import resolved error: %v", res.err)
+	}
+	if !res.handled || res.run == nil {
+		t.Fatal("import should be handled with a runner closure")
+	}
+	if err := res.run(strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("import with no flags should return a usage error from the real runner")
 	}
 }
 

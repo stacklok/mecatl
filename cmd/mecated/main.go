@@ -8,8 +8,8 @@
 // The agent loop, tool catalog, permission policy, provider, store, MCP and skills
 // wiring all live in internal/app so the TUI can host the same server in-process;
 // mecated owns only the things specific to a network daemon: flag parsing,
-// TLS/auth/rate-limit, the HTTP + metrics listeners, and the `skills promote`
-// operator subcommand.
+// TLS/auth/rate-limit, the HTTP + metrics listeners, and offline operator
+// subcommands such as `import` and `skills promote`.
 package main
 
 import (

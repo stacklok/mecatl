@@ -412,6 +412,7 @@ func writeTopLevelHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Commands:\n")
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
+	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton\n")
 	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton\n")
 	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml\n")

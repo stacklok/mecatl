@@ -27,7 +27,7 @@ func TestScheduleTool_SchedulesCLIRemoved(t *testing.T) {
 	}
 	// Sanity: the real renderer DID render the known commands, so the absence
 	// check above is not vacuously true on an empty output.
-	for _, want := range []string{"serve", "acp", "config init", "skills promote", "perf-mcp print-config"} {
+	for _, want := range []string{"serve", "acp", "import", "config init", "skills promote", "perf-mcp print-config"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("top-level help (real renderer) missing %q — the absence check is vacuous:\n%s", want, out)
 		}
