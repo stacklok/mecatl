@@ -159,6 +159,16 @@ a stuck fire, MCP server, or gRPC stream. A second `SIGINT`/`SIGTERM` during cle
 forces an immediate exit. See the [mecatui shutdown contract](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#shutdown)
 for the per-layer timeout budget.
 
+## Live-fire notifications reconnect automatically
+
+When a fire's result reports back into the conversation that created it, `mecatui`
+receives it over a live session feed. If that feed drops (a server restart, a network
+blip, a proxy idle timeout), the TUI now **reconnects automatically** with bounded
+backoff and catches up on any delivery note emitted during the gap — rendering it
+exactly once — instead of silently going quiet (issue #387). A brief "live feed
+reconnecting…" cue shows in the footer while it recovers; no reload or re-prompt is
+needed.
+
 ## What's next
 
 - [Operator deployment — mecated](/deployment/mecated.md) for the full flag reference and how the scheduler fits into a running server.

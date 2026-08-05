@@ -259,11 +259,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case renderTickMsg:
 		return m.onRenderTick()
 
-	case quitDisarmMsg:
-		return m.onQuitDisarm(msg)
-
-	case clickDisarmMsg:
-		return m.onClickDisarm(msg)
+	case quitDisarmMsg, clickDisarmMsg:
+		return m.onDisarmMsg(msg)
 
 	default:
 		// Lifecycle / transport msgs (session-ready, connect/stream error, stream
@@ -367,6 +364,13 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 // fall-through chain (MCP/skills/agents overlays → stream events).
 func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
+	case reconnectMsg:
+		// Live-feed reconnect loop msgs (issue #387): degraded-state markers and
+		// the catch-up event msgs ride the reconnect channel. Handled here (a
+		// lifecycle/transport msg), keeping the main dispatcher's branch count
+		// under the cyclomatic cap.
+		mm, cmd := m.updateReconnectMsg(msg)
+		return mm, cmd, true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
 	case connectFallbackMsg:
@@ -655,8 +659,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
 		return m.afterEvent()
 	case client.DeliveryNoteMsg:
-		m.conv.addDelivery(msg.ScheduleName, msg.FireID, msg.Text)
-		return m.afterEvent()
+		return m.applyDeliveryNote(msg)
 	case client.ResultMsg:
 		return m.applyResult(msg)
 	default:
@@ -668,6 +671,30 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// be added there, not here. Unknown msgs are a no-op.
 		return m.updateStreamSecondary(msg)
 	}
+}
+
+// applyDeliveryNote reduces a DeliveryNoteMsg, extracted from updateStreamEvent
+// to keep that dispatcher under the cyclomatic-complexity bound. It renders a
+// fire-result delivery note as a distinct delivery card, deduped by FireID so a
+// note that arrives BOTH via the durable catch-up (reconnect) AND the reopened
+// live feed renders exactly once (issue #387). A note with an empty FireID
+// (malformed) is NOT deduped (renders once per arrival — the rare malformed
+// case; the fenced discriminator keeps an ordinary user prompt out of this
+// arm). This is the SINGLE dedup site: BOTH the live path (updateLiveMsg →
+// updateStreamEvent) AND the catch-up path (updateReconnectMsg →
+// updateStreamEvent) funnel through here.
+func (m Model) applyDeliveryNote(msg client.DeliveryNoteMsg) (tea.Model, tea.Cmd) {
+	if msg.FireID != "" {
+		if m.seenFireIDs == nil {
+			m.seenFireIDs = make(map[string]struct{}, 1)
+		}
+		if _, dup := m.seenFireIDs[msg.FireID]; dup {
+			return m.afterEvent()
+		}
+		m.seenFireIDs[msg.FireID] = struct{}{}
+	}
+	m.conv.addDelivery(msg.ScheduleName, msg.FireID, msg.Text)
+	return m.afterEvent()
 }
 
 // applyPermissionAsk reduces a PermissionAskMsg, extracted from updateStreamEvent
@@ -1340,6 +1367,21 @@ func (m Model) onClickDisarm(msg clickDisarmMsg) (tea.Model, tea.Cmd) {
 		m.clickCount = 0
 	}
 	return m, nil
+}
+
+// onDisarmMsg fans the two timed-disarm messages (the double-Ctrl+C quit guard and
+// the multi-click count reset) out to their reducers: one switch case in update()
+// that re-discriminates the concrete type here — the onPasteMsg/onMouseMsg pattern,
+// keeping update()'s cyclomatic complexity bounded.
+func (m Model) onDisarmMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case quitDisarmMsg:
+		return m.onQuitDisarm(msg)
+	case clickDisarmMsg:
+		return m.onClickDisarm(msg)
+	default:
+		return m, nil
+	}
 }
 
 // onPasteMsg fans the three paste-delivery messages out to their reducers: a
@@ -2361,20 +2403,23 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		return m, nil // stale reader — drop, do not re-arm
 	}
 	switch msg := sm.msg.(type) {
-	case client.StreamClosedMsg:
-		// The live feed closed (clean EOF): clear the live channel refs but do NOT
-		// tear down the active session — a server restart or a transient close on
-		// a push-less session is benign. No re-arm (the channel closed).
+	case client.StreamClosedMsg, client.StreamErrMsg:
+		// The live feed dropped (clean EOF or an error): the channel is closed,
+		// so clear its refs (no re-arm on this channel). If a live streamer is
+		// still wired AND the session is still the one this reader was armed
+		// for, drive the reconnect+catch-up loop (issue #387) instead of the
+		// old silent-drop: it recovers delivery notes emitted during the gap
+		// via the durable replay and re-opens the live feed with bounded
+		// backoff. A stale reader (gen mismatch, handled above) or a session
+		// that has since switched (m.liveArmed != m.sessionID, or no streamer)
+		// does NOT trigger a reconnect for the old session.
+		var cerr error
+		if se, ok := msg.(client.StreamErrMsg); ok {
+			cerr = se.Err
+		}
 		m.liveCh = nil
 		m.liveStop = nil
-		return m, nil
-	case client.StreamErrMsg:
-		// A live feed error: same as a clean close — clear the refs, no re-arm.
-		// The ui ignores the error text (the delivery was missed live; the
-		// operator can reload the session to catch up via the replay).
-		m.liveCh = nil
-		m.liveStop = nil
-		return m, nil
+		return m, (&m).startReconnect(cerr)
 	default:
 		// A delivery event (or any other EventToMsg projection): reduce into the
 		// live conversation via the SAME updateStreamEvent path a Converse stream
@@ -2388,6 +2433,146 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		}
 		return mm, cmd
 	}
+}
+
+// startReconnect kicks off the live-feed reconnect+catch-up loop (issue #387)
+// for the current session, returning the waitReconnectCmd fan-in. It is a no-op
+// (returns nil) when no live streamer is wired, the session is empty, or a
+// reconnect is already in flight for this session (the no-duplicate-concurrent-
+// subscriptions invariant — parallel to armLiveFeed's liveArmed guard). The
+// caller (updateLiveMsg) has already cleared the live channel refs; this opens
+// the reconnect loop's OWN channel + teardown, tagged with a fresh liveReconGen
+// so a stale reconnect reader after a session switch is dropped. The catch-up
+// uses m.deps.Replayer (the SAME *Client implements both LiveStreamer and
+// SessionReplayer); when no replayer is wired the loop still retries the live
+// reopen but skips the catch-up (the gap's deliveries recover on the next
+// reconnect that DOES have a replayer, or via a manual /sessions reload).
+// Pointer-receiver so the caller's model carries the armed reconnect channel.
+func (m *Model) startReconnect(prevErr error) tea.Cmd {
+	if m.deps.LiveStream == nil || m.sessionID == "" {
+		return nil
+	}
+	// No duplicate concurrent reconnect: if one is already in flight for this
+	// session, keep it. (The live reader is gone, so this is the sole recovery
+	// path; a second start would open a second loop.)
+	if m.liveReconCh != nil {
+		return nil
+	}
+	m.liveReconGen++
+	var replayer client.SessionReplayer
+	if m.deps.Replayer != nil {
+		replayer = m.deps.Replayer
+	}
+	ch, stop := client.ReconnectLiveCmd(m.deps.Ctx, m.deps.LiveStream, replayer, m.sessionID)
+	m.liveReconCh = ch
+	m.liveReconStop = stop
+	// Seed the degraded footer state immediately so the operator sees the feed
+	// is down before the first LiveReconnectingMsg lands.
+	m.liveReconnecting = true
+	m.liveReconnectAttempt = 1
+	if prevErr != nil {
+		m.liveReconnectErr = prevErr.Error()
+	} else {
+		m.liveReconnectErr = ""
+	}
+	return m.waitReconnectCmd()
+}
+
+// reconnectMsg wraps one message pulled from the live-feed reconnect loop's
+// channel with the live-reconnect generation that channel belonged to when the
+// reader was armed. The reducer drops any reconnectMsg whose gen no longer
+// matches m.liveReconGen, so a stale reader left bound to an abandoned reconnect
+// loop (torn down on a session switch / reset / a re-arm after a successful
+// reconnect) cannot route its messages into the current session. It is the
+// reconnect analogue of liveMsg/replayMsg.
+type reconnectMsg struct {
+	gen uint64
+	msg tea.Msg
+}
+
+// waitReconnectCmd re-arms the fan-in command on the current reconnect channel,
+// tagging whatever it delivers with the current live-reconnect generation so a
+// stale reader's output is dropped rather than misrouted (see reconnectMsg +
+// updateReconnectMsg's gen check). Returns nil when no reconnect is active
+// (defensive). Parallel to waitLiveCmd / waitReplayCmd.
+func (m Model) waitReconnectCmd() tea.Cmd {
+	if m.liveReconCh == nil {
+		return nil
+	}
+	gen := m.liveReconGen
+	read := client.WaitForMsg(m.liveReconCh)
+	return func() tea.Msg { return reconnectMsg{gen: gen, msg: read()} }
+}
+
+// updateReconnectMsg applies the generation guard for the reconnect fan-in,
+// then reduces the inner msg. A LiveReconnectingMsg updates the degraded footer
+// state (attempt/error); a LiveReconnectedMsg clears it, tears down the
+// reconnect loop (its job is done), and re-arms the live reader (armLiveFeed)
+// off a FRESH live channel. A catch-up event msg (DeliveryNoteMsg/…) reduces
+// through the SAME updateStreamEvent path a live event takes (so a delivery
+// caught up here renders via addDelivery, deduped by FireID against the live
+// set). The loop swallows its own terminal StreamClosed/StreamErr, so those
+// reaching here mean the reconnect channel closed without a LiveReconnectedMsg
+// (ctx cancelled / session switch): clear the degraded state and stop.
+func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
+	if rm.gen != m.liveReconGen {
+		return m, nil // stale reader — drop, do not re-arm
+	}
+	switch msg := rm.msg.(type) {
+	case client.LiveReconnectingMsg:
+		m.liveReconnecting = true
+		m.liveReconnectAttempt = msg.Attempt
+		if msg.Err != nil {
+			m.liveReconnectErr = msg.Err.Error()
+		} else {
+			m.liveReconnectErr = ""
+		}
+		return m, m.waitReconnectCmd()
+	case client.LiveReconnectedMsg:
+		m.liveReconnecting = false
+		m.liveReconnectAttempt = 0
+		m.liveReconnectErr = ""
+		// Tear down the reconnect loop (its ctx also cancels the probe stream
+		// it opened) and clear its channel so the gen bump invalidates any
+		// stale reader.
+		(&m).disarmReconnect()
+		// Re-arm the live reader off a FRESH live channel.
+		return m, (&m).armLiveFeed()
+	case client.StreamClosedMsg, client.StreamErrMsg:
+		// The reconnect channel closed without a LiveReconnectedMsg (ctx
+		// cancelled — session switch / TUI exit). Clear the degraded state; a
+		// subsequent arm (if any) re-opens the live feed fresh.
+		m.liveReconnecting = false
+		m.liveReconnectAttempt = 0
+		m.liveReconnectErr = ""
+		(&m).disarmReconnect()
+		return m, nil
+	default:
+		// A catch-up event msg (DeliveryNoteMsg/…): reduce through the SAME
+		// updateStreamEvent path a live event takes (addDelivery + refreshView
+		// via afterEvent, FireID-deduped against the live set so a note seen in
+		// BOTH replay and live renders exactly once). Re-arm the reconnect
+		// reader so the loop keeps draining until LiveReconnectedMsg.
+		mm, cmd := m.updateStreamEvent(msg)
+		if m2, ok := mm.(Model); ok {
+			cmd = tea.Batch(cmd, m2.waitReconnectCmd())
+		}
+		return mm, cmd
+	}
+}
+
+// disarmReconnect tears down the live-feed reconnect loop and clears its state
+// fields. Idempotent (safe to call when not armed). The gen bump invalidates
+// any stale reader still draining into the now-defunct channel, so a late
+// reconnect msg after a session switch is dropped WITHOUT triggering a
+// reconnect for the old session.
+func (m *Model) disarmReconnect() {
+	if m.liveReconStop != nil {
+		m.liveReconStop()
+	}
+	m.liveReconCh = nil
+	m.liveReconStop = nil
+	m.liveReconGen++
 }
 
 // armLiveFeed opens the LIVE session event stream for the current active session
@@ -2417,7 +2602,11 @@ func (m *Model) armLiveFeed() tea.Cmd {
 
 // disarmLiveFeed tears down the live feed reader goroutine and clears the live
 // state fields. Idempotent (safe to call when not armed). The gen bump
-// invalidates any stale reader still draining into the now-defunct channel.
+// invalidates any stale reader still draining into the now-defunct channel. It
+// ALSO disarms the reconnect loop (issue #387): a session switch abandons the
+// old session's live recovery, and the liveReconGen bump invalidates any stale
+// reconnect reader so it cannot route a late LiveReconnectingMsg (or a catch-up
+// event) into the fresh session.
 func (m *Model) disarmLiveFeed() {
 	if m.liveStop != nil {
 		m.liveStop()
@@ -2426,6 +2615,7 @@ func (m *Model) disarmLiveFeed() {
 	m.liveStop = nil
 	m.liveGen++ // invalidate any stale reader
 	m.liveArmed = ""
+	m.disarmReconnect()
 }
 
 // updateReplayMsg applies the generation guard for the replay fan-in, then reduces

@@ -5191,6 +5191,34 @@ raced). A shutdown-cancelled fire is persisted terminal via `settleFireTerminalS
 `close_internal_test.go`, `internal/adapter/server/close_test.go`, and
 `internal/app/scheduler_fire_cancel_test.go`.
 
+**Live-feed reconnect (issue #387, ADR 0096).** The mecatui per-session
+`StreamSessionLive` subscription self-heals: a clean close or a transient error on
+the live reader now drives a client-owned reconnect instead of the old silent-drop.
+The reconnect is entirely a `cmd/mecatui` concern (the server is unchanged — no
+engine-port or proto widening): `client.ReconnectLiveCmd`/`reconnectLiveLoop`
+(`cmd/mecatui/client/events.go`) runs a bounded exponential-backoff loop (base
+500ms, ×2 per attempt, cap 30s, ±20% jitter — package-level test-overridable `var`s
+in `cmd/mecatui/client/backoff.go`) that, per attempt, (a) drains the durable
+catch-up via the EXISTING `StreamSessionEvents` full replay (recovering any
+fire-result delivery note emitted during the gap — NO `from_seq`/`log_seq` cursor)
+and (b) re-opens `StreamSessionLive`. Exactly-once is a CLIENT-side FireID dedup,
+not a server ordinal: the ui's `seenFireIDs` set (keyed on `DeliveryNoteMsg.FireID`,
+stable across replay + live) suppresses a note that arrives via BOTH the catch-up
+and the re-opened live feed — the single dedup site is `applyDeliveryNote`
+(`cmd/mecatui/ui/update.go`), which BOTH the live path and the catch-up path funnel
+through. The reconnect loop gets its OWN generation guard (`liveReconGen`, parallel
+to `liveGen`) so a stale reconnect reader after a session switch is dropped WITHOUT
+reconnecting the old session, and a second reconnect for the same session is refused
+(no duplicate concurrent subscriptions); `disarmLiveFeed`/`resetSession` tear it
+down. The degraded state is a concise footer cue ("live feed reconnecting (attempt
+N)…", `idleFooterLeft` in `cmd/mecatui/ui/view.go`), cleared on reconnect — not a
+new UI phase. The fenced delivery discriminator (`deliverNoteFrom`) is unchanged and
+regression-pinned (an un-fenced `[scheduled task …` prompt is never misclassified).
+The full-replay-per-reconnect is O(log) not O(gap) — accepted (the real gap is a
+handful of buffered events); the server-side cursor is the documented upgrade path
+if a deployment proves it hot. Covered by `cmd/mecatui/client/reconnect_test.go` +
+`cmd/mecatui/ui/reconnect_live_test.go`.
+
 ## Store drivers — `contracts/proto/mecatl/driver/v1/` + `internal/adapter/grpcdriver/` + `engine/adapter/storeconformance/` (Phase B)
 
 The remote-store seam: `SessionStoreService` (behind `port.SessionStore`) and

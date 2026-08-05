@@ -593,6 +593,34 @@ type Model struct {
 	liveGen   uint64 // generation guard (parallel to streamGen): drops stale-reader msgs
 	liveArmed string // the session id liveCh is armed for ("" = not armed); avoids re-arm on same id
 
+	// Live-feed reconnect + catch-up state (issue #387). When the live feed drops
+	// (StreamClosedMsg/StreamErrMsg on the live reader), the ui drives the client's
+	// ReconnectLiveCmd: a bounded-backoff loop that drains the durable catch-up
+	// (recovering delivery notes from the gap) then re-opens StreamSessionLive.
+	// liveReconCh/liveReconStop are the reconnect loop's channel + teardown;
+	// liveReconGen is its generation guard (parallel to liveGen), bumped in
+	// disarmLiveFeed so a stale reconnect reader after a session switch is dropped
+	// WITHOUT triggering a reconnect for the old session. liveReconnecting/
+	// liveReconnectAttempt/liveReconnectErr drive the degraded footer state. The
+	// catch-up event msgs flow through the SAME updateStreamEvent path a live event
+	// takes, so a DeliveryNoteMsg caught up here renders via addDelivery exactly as
+	// a live one does.
+	liveReconCh          chan tea.Msg
+	liveReconStop        func()
+	liveReconGen         uint64
+	liveReconnecting     bool
+	liveReconnectAttempt int
+	liveReconnectErr     string
+
+	// seenFireIDs is the per-session delivery-note dedup set (issue #387): a
+	// fire-result delivery note that arrives BOTH via the durable catch-up AND the
+	// reopened live feed must render EXACTLY ONCE. Keyed by DeliveryNoteMsg.FireID
+	// (the scheduler's fire id, stable across replay and live). Seeded empty on
+	// session create/switch (resetSession) and cleared alongside the live feed; a
+	// delivery with an empty FireID (a malformed note deliverNoteFrom could not
+	// parse) is NOT deduped (it renders once per arrival — the rare malformed case).
+	seenFireIDs map[string]struct{}
+
 	// stagedMedia holds clipboard/pasted-path image attachments not yet sent,
 	// keyed by their literal "[Image #N]" marker (which also sits in the textarea
 	// text). nextMediaN is the monotonic marker counter. The design is
@@ -820,6 +848,22 @@ func (m Model) resetSession() Model {
 	// while the stale session was active) must not route delivery events into the
 	// fresh conversation.
 	m.disarmLiveFeed()
+	// Disarm the reconnect loop too (issue #387): a /clear or session switch
+	// abandons the old session's live recovery, and the gen bump invalidates any
+	// stale reconnect reader so it cannot route a late LiveReconnectingMsg (or a
+	// catch-up event) into the fresh session.
+	m.disarmReconnect()
+	// Drop the per-session delivery-note dedup set: the fire ids belong to the
+	// old session, so a fresh session must not suppress a coincidentally-reused
+	// fire id. (Empty FireID deliveries are never deduped, so an empty map is the
+	// honest "no dedup yet" state.)
+	m.seenFireIDs = nil
+	// Clear any live-feed degraded state: a /clear or session switch abandons
+	// the old session's live recovery, so the footer must not keep showing
+	// "reconnecting" for a session that no longer exists.
+	m.liveReconnecting = false
+	m.liveReconnectAttempt = 0
+	m.liveReconnectErr = ""
 	return m
 }
 

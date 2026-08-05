@@ -523,25 +523,10 @@ func (m Model) renderFooter() string {
 	case phaseConnecting:
 		left = m.sp.View() + " connecting…"
 	default:
-		// While a non-empty selection is active at idle/default phase, the footer
-		// shows a live "N chars · M lines" count (→ "copied · …" after a copy). This
-		// arm is the ONLY phase the count can appear in — the running/approval/
-		// connecting arms above own the footer-left in those phases — so the count is
-		// never shown mid-run by construction (Req 5). With no selection the gateway
-		// notice (Proposal 1, once-per-process) takes precedence over the bare
-		// statusMsg / "ready" — but ONLY here, at idle/default phase (the arms above
-		// own the slot in their phases).
-		switch {
-		case m.sel.active && !m.sel.empty():
-			left = m.selectionStatus()
-		case m.gatewayNotice != "":
-			left = m.deps.Theme.Style("muted").Render(m.gatewayNotice)
-		default:
-			left = m.statusMsg
-			if left == "" {
-				left = "ready"
-			}
-		}
+		// The idle/default-phase footer-left (selection count / reconnecting cue /
+		// gateway notice / statusMsg) is extracted to keep renderFooter under the
+		// cyclomatic bound; see idleFooterLeft.
+		left = m.idleFooterLeft()
 	}
 
 	// The mouse-debug overlay (MECATUI_DEBUG_MOUSE=1) takes the footer-left at the
@@ -584,6 +569,36 @@ func (m Model) renderFooter() string {
 	line := m.fitFooter(left, width)
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+}
+
+// idleFooterLeft renders the footer-left for the idle/default phase, extracted
+// from renderFooter to keep that dispatcher under the cyclomatic-complexity
+// bound. Precedence: the live-feed reconnecting cue (issue #387) → the
+// selection count → the gateway notice → the bare statusMsg / "ready". The
+// selection count appears ONLY in this phase (the running/approval/connecting
+// arms own the footer-left there), so it is never shown mid-run by construction
+// (Req 5); the reconnecting cue and gateway notice likewise only surface here.
+func (m Model) idleFooterLeft() string {
+	switch {
+	case m.liveReconnecting:
+		// The live session event feed dropped and the client is reconnecting with
+		// bounded backoff (issue #387). A concise degraded cue so the operator
+		// knows deliveries may be momentarily delayed (they recover via the
+		// durable catch-up on reconnect). Styled as a warning so it reads as
+		// chrome, not an alert.
+		return m.deps.Theme.Style("ctxWarn").Render(
+			fmt.Sprintf("live feed reconnecting (attempt %d)…", m.liveReconnectAttempt),
+		)
+	case m.sel.active && !m.sel.empty():
+		return m.selectionStatus()
+	case m.gatewayNotice != "":
+		return m.deps.Theme.Style("muted").Render(m.gatewayNotice)
+	default:
+		if m.statusMsg == "" {
+			return "ready"
+		}
+		return m.statusMsg
+	}
 }
 
 // selectionStatus is the footer-left segment shown while a non-empty selection
