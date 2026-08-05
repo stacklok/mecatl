@@ -1,0 +1,73 @@
+{
+  "schema": "mecatl-openai-subscription-compatibility/v1",
+  "observed_at": "2026-08-05",
+  "originator": "mecatl",
+  "user_agent": "mecatl-manual-compatibility-probe/1.0",
+  "gate": "passed",
+  "models": {
+    "provenance": "live_observation",
+    "status_class": "2xx",
+    "non_empty": true,
+    "envelope_valid": true,
+    "has_slug": true,
+    "has_display_name": true,
+    "has_visibility": true
+  },
+  "text_response": {
+    "provenance": "live_observation",
+    "status_class": "2xx",
+    "completed": true,
+    "has_phase": true,
+    "has_replay_item_identifier": true,
+    "has_usage": true,
+    "output_text_observed": true,
+    "event_topology_valid": true,
+    "observed_event_count": 9
+  },
+  "function_tool_roundtrip": {
+    "initial": {
+      "provenance": "live_observation",
+      "status_class": "2xx",
+      "completed": true,
+      "has_phase": false,
+      "has_replay_item_identifier": true,
+      "has_usage": true,
+      "output_text_observed": false,
+      "event_topology_valid": true,
+      "observed_event_count": 11
+    },
+    "continuation": {
+      "provenance": "live_observation",
+      "status_class": "2xx",
+      "completed": true,
+      "has_phase": true,
+      "has_replay_item_identifier": true,
+      "has_usage": true,
+      "output_text_observed": true,
+      "event_topology_valid": true,
+      "observed_event_count": 16
+    },
+    "function_call_observed": true,
+    "exactly_one_function_call": true,
+    "function_name_valid": true,
+    "function_arguments_valid": true,
+    "call_identifier_present": true,
+    "item_identifier_present": true,
+    "function_output_replayed": true,
+    "continuation_matched": true,
+    "completed": true,
+    "no_unknown_actionable_events": true
+  },
+  "error_evidence": {
+    "provenance": "offline_status_mapping",
+    "models_401_403_classified": true,
+    "models_429_classified": true,
+    "responses_401_403_classified": true,
+    "responses_429_classified": true
+  },
+  "fixtures": [
+    "provider/openai/testdata/subscription_compatibility_text.sse",
+    "provider/openai/testdata/subscription_compatibility_tool_call.sse",
+    "provider/openai/testdata/subscription_compatibility_tool_continuation.sse"
+  ]
+}

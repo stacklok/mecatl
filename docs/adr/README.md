@@ -92,6 +92,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0068 — Change reasoning effort via conversation fork (keep the transcript)](./0068-effort-change-via-fork.md)
 - [0071 — Seamless model switch: always keep the conversation](./0071-seamless-model-switch.md)
 - [0083 — Routing reason on delegation-start events](./0083-routing-reason-on-delegation-start.md)
+- [0101 — OpenAI subscription with a manual access token](./0101-openai-subscription-manual-token.md)
 - [0093 — Ship the real LLM provider adapters as opt-in Go modules under provider/](./0093-provider-modules.md)
 
 ### MCP

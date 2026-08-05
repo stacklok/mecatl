@@ -1,0 +1,13 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"response_synthetic","status":"in_progress","output":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"message_synthetic","output_index":0,"content_index":0,"delta":"TEXT_SYNTHETIC"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"id":"message_synthetic","type":"message","status":"completed","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"TEXT_SYNTHETIC","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":3,"response":{"id":"response_synthetic","status":"completed","usage":{"input_tokens":1,"input_tokens_details":{},"output_tokens":1,"output_tokens_details":{},"total_tokens":2}}}
+
+: sanitized fixture terminator

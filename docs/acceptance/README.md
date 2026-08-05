@@ -75,6 +75,9 @@ when the code that satisfies the plan has landed.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
+- [OpenAI subscription manual token](openai-subscription-manual-token.md) —
+  experimental ChatGPT-subscription inference through a distinct native Codex
+  provider, initially using a manually supplied access token. Status: in-progress.
 
 ## See also
 
