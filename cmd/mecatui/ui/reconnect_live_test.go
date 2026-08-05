@@ -356,6 +356,51 @@ func TestReconnectUI_DifferentFireIDsBothRender(t *testing.T) {
 	}
 }
 
+// TestReconnectUI_CatchUpDoesNotDuplicateTranscript is the regression for the
+// spec-review finding: the catch-up replay is a FULL historical scan (no
+// cursor), so it replays turn starts, deltas, tool calls, results, user prompts
+// — everything — not just delivery notes. updateReconnectMsg must reduce ONLY
+// DeliveryNoteMsg from the replay and DROP every other event, or a reconnect
+// would re-render the entire transcript into the LIVE conversation (m.conv),
+// duplicating turns the operator already saw. This test seeds the catch-up with
+// a turn_start + assistant delta + a plain user prompt + a result alongside one
+// delivery note, and asserts only the delivery note lands in m.conv.
+func TestReconnectUI_CatchUpDoesNotDuplicateTranscript(t *testing.T) {
+	defer restoreBackoffClient(t)()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fl := &reconnectLiveStreamer{failN: 0, succCtx: ctx}
+	// A full-history replay: turn/delta/tool/prompt/result events PLUS one delivery
+	// note. The Event struct is flat (Type + scalar Turn/Text + payload pointers);
+	// EventToMsg keys off the dot-separated Type strings.
+	catchUp := []*mecatlv1.Event{
+		{Type: "turn.start", Turn: 1},
+		{Type: "message.delta", Turn: 1, Text: "earlier answer that must not re-render"},
+		{Type: "tool.call", ToolCall: &mecatlv1.ToolCall{Name: "Read"}},
+		{Type: "user_prompt", UserPrompt: &mecatlv1.UserPrompt{Text: "a genuine earlier user prompt"}},
+		{Type: "result", Result: &mecatlv1.Result{Stop: "end_turn"}},
+		deliveryEv("nightly-sync", "fire-only-me"),
+	}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream(catchUp...)}
+
+	m := newReconnectModel(t, ctx, fl, fr)
+	defer joinReconnectForCleanup(&m)()
+	m, reconnected := feedReconnect(t, m)
+	if !reconnected {
+		t.Fatal("expected LiveReconnectedMsg")
+	}
+
+	// Only the delivery note landed; the replayed turn/delta/prompt/result events
+	// were dropped, NOT re-rendered into the live conversation.
+	if len(m.conv.blocks) != 1 {
+		t.Fatalf("expected exactly 1 block (the delivery note) — the replay re-rendered history; got %d blocks: %+v", len(m.conv.blocks), m.conv.blocks)
+	}
+	if m.conv.blocks[0].kind != blockDelivery || m.conv.blocks[0].deliveryFireID != "fire-only-me" {
+		t.Errorf("block = kind %v fire %q, want the delivery note fire-only-me", m.conv.blocks[0].kind, m.conv.blocks[0].deliveryFireID)
+	}
+}
+
 // triggerReconnect drains the live feed's initial close/error (the arm's
 // waitLiveCmd, which yields StreamErrMsg/StreamClosedMsg and triggers
 // startReconnect), then feeds ONE reconnect msg (the first LiveReconnectingMsg)

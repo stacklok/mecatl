@@ -2548,11 +2548,19 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		(&m).disarmReconnect()
 		return m, nil
 	default:
-		// A catch-up event msg (DeliveryNoteMsg/…): reduce through the SAME
-		// updateStreamEvent path a live event takes (addDelivery + refreshView
+		// Catch-up event msg from the durable replay. The replay is a FULL
+		// historical scan (no cursor), so ONLY a DeliveryNoteMsg is forwarded —
+		// the live feed's sole consequential payload (turn deltas/user prompts do
+		// not flow on StreamSessionLive, and re-reducing the whole history would
+		// re-render already-visible turns). A DeliveryNoteMsg reduces through the
+		// SAME updateStreamEvent path a live event takes (addDelivery + refreshView
 		// via afterEvent, FireID-deduped against the live set so a note seen in
-		// BOTH replay and live renders exactly once). Re-arm the reconnect
-		// reader so the loop keeps draining until LiveReconnectedMsg.
+		// BOTH replay and live renders exactly once). Any other replayed event is
+		// dropped. Re-arm the reconnect reader so the loop keeps draining until
+		// LiveReconnectedMsg.
+		if _, isDelivery := msg.(client.DeliveryNoteMsg); !isDelivery {
+			return m, m.waitReconnectCmd()
+		}
 		mm, cmd := m.updateStreamEvent(msg)
 		if m2, ok := mm.(Model); ok {
 			cmd = tea.Batch(cmd, m2.waitReconnectCmd())

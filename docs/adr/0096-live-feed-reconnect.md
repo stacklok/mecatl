@@ -69,19 +69,26 @@ the change is confined to `cmd/mecatui` (no engine-port stability review, no
 `task api:update`, no proto regen, no `task generate`).
 
 **Harder / accepted costs:**
-- The catch-up replays the **full** event log per reconnect, so a long-lived
-  conversation that flaps repeatedly re-streams its history each time. Bounded in
-  practice by the small real gap + the FireID dedup suppressing re-renders, but it
-  is O(log) per reconnect, not O(gap). If a future deployment shows this is hot, the
-  server-side `from_seq` cursor is the documented upgrade path — deferred, not
+- The catch-up **reads** the full event log per reconnect (O(log), not O(gap)) — but
+  it **forwards only delivery notes** (`catchUpReplay` drops every non-`DeliveryNoteMsg`
+  event), so the visible transcript is never re-appended. Replaying the whole log into
+  the live conversation would re-render the entire prior history on every blip (user
+  prompts, assistant text, tool calls); scoping the forwarder to delivery notes is what
+  keeps the catch-up honest. If a future deployment shows the full-log *read* is hot,
+  the server-side `from_seq` cursor is the documented upgrade path — deferred, not
   rejected.
-- FireID dedup only covers **delivery notes**; a non-delivery event caught up during
-  the gap (e.g. a stray turn delta on a session the operator left mid-run) would
-  re-render. Accepted: the live feed's payload of interest is the delivery note, and
-  the active conversation is normally idle (no in-flight turn) when the feed drops.
+- The catch-up→live handover has a narrow window: an event published between the
+  replay iterator exhausting and the live `Subscribe` registering is missed *this*
+  reconnect cycle and recovered on the next (at-least-once, eventually), because the
+  live `Subscribe` retains no pre-subscribe events. Accepted for the lean design; the
+  `from_seq`/`log_seq` cursor closes it exactly.
 - The reconnect loop is a long-lived goroutine + channel per active session while
   degraded; it is bounded (stops on ctx cancel / reconnect success) and rides the
   existing live-feed lifecycle (torn down in `disarmLiveFeed` / `resetSession`).
+- `seenFireIDs` accumulates one entry per delivered fire for the session's lifetime
+  (cleared on `resetSession`, not on reconnect — correct, since fire ids are unique
+  per session and must suppress across reconnects). Fire ids are small, so growth is
+  bounded by schedule cadence × session lifetime.
 
 ## See also
 
