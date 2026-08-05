@@ -179,6 +179,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	// A fixed free loopback port so the scrape target is deterministic.
 	free := freeLoopbackPort(t)
 	cfg, err := parseFlags([]string{
+		"--mock", // offline: no provider key in CI
 		"--redis-url", mr.Addr(),
 		"--metrics-addr", free,
 		"--grpc-addr", "127.0.0.1:0",
