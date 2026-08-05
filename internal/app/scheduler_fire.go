@@ -186,7 +186,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			// RecordFireProgress on turn-boundary / activity events (issue #386):
 			// NOT every chunk — once per EvToolCall / EvTurnEnd / EvResult, so a
 			// long streaming turn does not stamp a per-delta. Best-effort WARN.
-			recordFireProgressOnEvent(ctx, svc.Diagnostics(), store, sched.Spec.Name, ev.Type)
+			recordFireProgressOnEvent(ctx, svc.Diagnostics(), store, sched.Spec.Name, fireID, ev.Type)
 			if ev.Type == session.EvResult && ev.Result != nil {
 				stop = ev.Result.Stop
 				runErr = ev.Result.Error
@@ -527,16 +527,18 @@ var fireProgressEvents = map[session.EventType]bool{
 // instant via the ScheduleStore's RecordFireProgress seam (issue #386). It is
 // called from the fire event loop on turn-boundary / activity events (NOT every
 // chunk). Best-effort: a failure WARNs and NEVER fails the run. A nil store is a
-// no-op (the byte-identical no-schedule path).
-func recordFireProgressOnEvent(ctx context.Context, diag port.Diagnostics, store port.ScheduleStore, scheduleName string, evType session.EventType) {
+// no-op (the byte-identical no-schedule path). fireID is the id of the in-flight
+// fire record RecordFireStart wrote (review finding M1 — the store targets the
+// single record by its key, no scan).
+func recordFireProgressOnEvent(ctx context.Context, diag port.Diagnostics, store port.ScheduleStore, scheduleName string, fireID string, evType session.EventType) {
 	if store == nil || !fireProgressEvents[evType] {
 		return
 	}
-	if err := store.RecordFireProgress(ctx, scheduleName, time.Now()); err != nil {
+	if err := store.RecordFireProgress(ctx, scheduleName, fireID, time.Now()); err != nil {
 		if diag == nil {
 			diag = port.NopDiagnostics{}
 		}
 		diag.Log(ctx, port.LevelWarn, "scheduler: RecordFireProgress failed (best-effort; the run continues)",
-			"schedule", scheduleName, "err", err.Error())
+			"schedule", scheduleName, "fire", fireID, "err", err.Error())
 	}
 }

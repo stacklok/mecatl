@@ -226,6 +226,46 @@ redis.call('HSET', KEYS[1],
 return 'OK'
 `)
 
+// fireProgressScript is the ATOMIC compare-and-set for advancing an in-flight
+// fire record's ProgressAt (review finding M2, issue #386). A non-atomic
+// GET-then-SET would race a concurrent terminal RecordFire: the terminal SET
+// landing between the GET and the progress SET would revert the record from
+// terminal back to in-flight (a phantom in-flight fire). The script closes that
+// window by executing the read-check-write in ONE atomic EVAL.
+//
+// The decode/encode of the JSON fire record is done in GO (the codebase-wide
+// discipline — no cjson anywhere; claimScript/claimNowScript pass scalars as ARGV
+// and never decode JSON in Lua). The script is a byte-compare CAS: it GETs the
+// current record and SETs the new one ONLY when the current bytes are still the
+// in-flight bytes Go read (ARGV[1]); if a concurrent terminal RecordFire (or a
+// sibling RecordFireProgress) changed the record in between, current != ARGV[1]
+// and the CAS aborts (returns 0) — a terminal record is NEVER reverted. The
+// "Stop empty" guard is implicit: Go builds ARGV[2] (the candidate new record)
+// only from a record it observed in-flight (Stop empty), so the CAS never writes
+// a terminal → in-flight revert; the byte-compare additionally guarantees no
+// terminal SET landed in the window.
+//
+// KEYS[1] = mecatl:schedulefire:<fireID>
+// ARGV[1] = oldJSON (the in-flight record bytes Go read — the optimistic-lock
+//
+//	expected value)
+//
+// ARGV[2] = newJSON (the candidate record with ProgressAt advanced)
+// Returns 1 when the record was advanced, 0 when the CAS aborted (a concurrent
+// terminal RecordFire / sibling progress won — best-effort; the state alone
+// carries the progress, and a terminal record is left untouched).
+var fireProgressScript = redis.NewScript(`
+local cur = redis.call('GET', KEYS[1])
+if cur == false then
+  return 0
+end
+if cur ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1
+`)
+
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent *Store's
 // *redis.Client. It is the MULTI-REPLICA production schedule backend
 // (scheduled-tasks issue #189, Phase 1d): the SAME logic as
@@ -630,7 +670,17 @@ func (s *scheduleStore) RecordFireStart(ctx context.Context, name string, fire p
 // alone; a not-found schedule wraps port.ErrScheduleNotFound; a terminal fire is
 // untouched. The semantics mirror memschedulestore.RecordFireProgress
 // byte-for-byte, adapted to Redis's single-threaded execution.
-func (s *scheduleStore) RecordFireProgress(ctx context.Context, name string, at time.Time) error {
+//
+// fireID targets the SINGLE in-flight fire record by its known key
+// (scheduleFireKey(fireID)) directly — NO SCAN of the fire keyspace (review
+// finding M1: scanning every fire key on every turn boundary is O(N) in the fire
+// population and contends the keyspace). The fire-record write is ATOMIC via the
+// fireProgressScript Lua CAS (review finding M2): a concurrent terminal
+// RecordFire's SET landing between the progress read and write CANNOT revert the
+// record from terminal back to in-flight — the CAS aborts when the record
+// changed (a terminal RecordFire landed), so a terminal record is never
+// reverted.
+func (s *scheduleStore) RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error {
 	key := scheduleKey(name)
 	// The schedule must exist (the not-found case).
 	if specRaw, err := s.client.HGet(ctx, key, fieldSpec).Result(); err != nil {
@@ -657,52 +707,60 @@ func (s *scheduleStore) RecordFireProgress(ctx context.Context, name string, at 
 			return fmt.Errorf("redisstore: record fire progress %q (read state): %w", name, err)
 		}
 	}
-	// Advance the in-flight fire record's ProgressAt. Best-effort: locate the
-	// schedule's in-flight fire by scanning fire keys (there is at most one
-	// in-flight fire per schedule — a fresh Claim zeroes the state fields and
-	// RecordFire flips the prior fire terminal before a new RecordFireStart writes
-	// a new in-flight record under a new id). A missing record is fine (the state
-	// alone carries it); a terminal fire is untouched.
-	return s.advanceInFlightFireProgress(ctx, name, at)
+	// Advance the in-flight fire record's ProgressAt by its known key (no SCAN).
+	// Atomic via fireProgressScript (review finding M2): the CAS aborts when the
+	// record changed between the read and the write (a concurrent terminal
+	// RecordFire landed), so a terminal record is never reverted to in-flight.
+	return s.advanceInFlightFireProgress(ctx, fireID, at)
 }
 
-// advanceInFlightFireProgress scans the fire keyspace for the schedule's single
-// in-flight fire (Stop empty) and, when `at` advances its ProgressAt, rewrites
-// the record. Best-effort: a missing record is fine (the state alone carries
-// the progress); a terminal fire is untouched. At most one in-flight fire per
-// schedule, so the scan stops after the first match.
-func (s *scheduleStore) advanceInFlightFireProgress(ctx context.Context, name string, at time.Time) error {
-	scan := s.client.Scan(ctx, 0, scheduleFireKeyPrefix+"*", 0).Iterator()
-	for scan.Next(ctx) {
-		raw, err := s.client.Get(ctx, scan.Val()).Bytes()
-		if err != nil {
-			// A raced-away key (redis.Nil) or an unreadable record is skipped,
-			// not fatal — the state alone carries the progress.
-			continue
+// advanceInFlightFireProgress advances the single in-flight fire record's
+// ProgressAt (keyed by fireID) when `at` is after the stored value. Best-effort:
+// a missing record (redis.Nil — no prior RecordFireStart) is a no-op success (the
+// state alone carries the progress); a TERMINAL record is untouched. The write is
+// ATOMIC via fireProgressScript (review finding M2): a concurrent terminal
+// RecordFire's SET landing between this read and write CANNOT revert the record
+// from terminal back to in-flight — the CAS (byte-compare on the record Go read)
+// aborts when the record changed, so a terminal record is never reverted.
+func (s *scheduleStore) advanceInFlightFireProgress(ctx context.Context, fireID string, at time.Time) error {
+	fireKey := scheduleFireKey(fireID)
+	raw, err := s.client.Get(ctx, fireKey).Bytes()
+	if err != nil {
+		// A missing record (no prior RecordFireStart) is best-effort: the state
+		// alone carries the progress.
+		if errors.Is(err, redis.Nil) {
+			return nil
 		}
-		var rec scheduleFireRecord
-		if json.Unmarshal(raw, &rec) != nil || rec.V != scheduleFormat {
-			continue
-		}
-		if rec.Fire.ScheduleName != name || rec.Fire.Stop != "" {
-			continue
-		}
-		if !at.IsZero() && at.After(rec.Fire.ProgressAt) {
-			rec.Fire.ProgressAt = at
-			fireJSON, err := json.Marshal(rec)
-			if err != nil {
-				return fmt.Errorf("redisstore: marshal schedule fire progress: %w", err)
-			}
-			if err := s.client.Set(ctx, scan.Val(), fireJSON, 0).Err(); err != nil {
-				return fmt.Errorf("redisstore: record fire progress %q (update fire): %w", name, err)
-			}
-		}
-		// At most one in-flight fire per schedule; stop after the first match.
-		break
+		return fmt.Errorf("redisstore: record fire progress %q (load fire): %w", fireID, err)
 	}
-	if err := scan.Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire progress %q (scan): %w", name, err)
+	var rec scheduleFireRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.V != scheduleFormat {
+		return nil // best-effort: a corrupt record is skipped (the state alone carries it)
 	}
+	// A terminal fire is untouched: the progress write must NEVER revert a
+	// terminal record back to in-flight (review finding M2).
+	if rec.Fire.Stop != "" {
+		return nil
+	}
+	if at.IsZero() || !at.After(rec.Fire.ProgressAt) {
+		return nil // not advancing (zero or stale `at`)
+	}
+	rec.Fire.ProgressAt = at
+	newJSON, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("redisstore: marshal schedule fire progress: %w", err)
+	}
+	// Atomic CAS: SET only when the record is still the in-flight bytes Go read
+	// (a concurrent terminal RecordFire that landed in between changes the bytes,
+	// so the CAS aborts — the terminal record is NOT reverted). A concurrent
+	// RecordFireProgress that won first changes the bytes too, so a loser aborts
+	// (its `at` is lost; the next progress event re-reads and advances —
+	// best-effort, monotonic).
+	res, err := fireProgressScript.Run(ctx, s.client, []string{fireKey}, string(raw), string(newJSON)).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: record fire progress %q (cas): %w", fireID, err)
+	}
+	_ = res // 1 = advanced, 0 = raced (terminal RecordFire / sibling progress won) — best-effort
 	return nil
 }
 

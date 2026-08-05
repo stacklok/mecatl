@@ -3,6 +3,7 @@ package jsonlstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -374,7 +375,14 @@ func (s *scheduleStore) RecordFireStart(_ context.Context, name string, fire por
 // alone; a not-found schedule wraps port.ErrScheduleNotFound; a terminal fire is
 // untouched. The semantics mirror memschedulestore.RecordFireProgress
 // byte-for-byte.
-func (s *scheduleStore) RecordFireProgress(_ context.Context, name string, at time.Time) error {
+//
+// fireID targets the SINGLE in-flight fire record by its known file directly
+// (review finding M1): there is NO os.ReadDir scan of every fire file under the
+// store mutex — the caller (the fire loop) has the fireID its RecordFireStart
+// wrote, so the record is addressed by its key. A terminal fire record (Stop
+// non-empty) is left untouched: the progress write MUST NOT revert a terminal
+// record back to in-flight (review finding M2).
+func (s *scheduleStore) RecordFireProgress(_ context.Context, name string, fireID string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, err := s.loadLocked(name)
@@ -387,36 +395,26 @@ func (s *scheduleStore) RecordFireProgress(_ context.Context, name string, at ti
 			return err
 		}
 	}
-	// Advance the in-flight fire record's ProgressAt if one exists and is not
-	// terminal. Best-effort: a missing record is fine (the state alone carries it).
-	// The fire record is located by scanning fire files for this schedule's
-	// in-flight fire (Stop empty) — there is at most one in-flight fire per
-	// schedule (a fresh Claim zeroes the state fields and RecordFire flips the
-	// prior fire terminal before a new RecordFireStart writes a new in-flight
-	// record under a new id).
-	entries, err := os.ReadDir(s.dir)
+	// Advance the in-flight fire record's ProgressAt directly by its known id
+	// (no directory scan). Best-effort: a missing record is fine (the state alone
+	// carries it); a TERMINAL fire record (Stop non-empty) is untouched — the
+	// progress write must never revert a terminal record to in-flight (review
+	// finding M2).
+	fire, err := s.readFireFileLocked(fireID)
 	if err != nil {
-		return fmt.Errorf("jsonlstore: record fire progress (list dir): %w", err)
+		if errors.Is(err, ErrScheduleNotFound) {
+			return nil // best-effort: no in-flight record; the state alone carries it
+		}
+		return err
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), scheduleFirePrefix) || !strings.HasSuffix(e.Name(), scheduleSuffix) {
-			continue
+	if fire.Stop != "" {
+		return nil // terminal fire: untouched (never revert terminal → in-flight)
+	}
+	if !at.IsZero() && at.After(fire.ProgressAt) {
+		fire.ProgressAt = at
+		if err := s.writeFireLocked(fire); err != nil {
+			return err
 		}
-		fireRec, err := readScheduleFireFile(filepath.Join(s.dir, e.Name()))
-		if err != nil {
-			continue // best-effort: a corrupt fire file is skipped
-		}
-		if fireRec.Fire.ScheduleName != name || fireRec.Fire.Stop != "" {
-			continue
-		}
-		if !at.IsZero() && at.After(fireRec.Fire.ProgressAt) {
-			fireRec.Fire.ProgressAt = at
-			if err := s.writeFireLocked(fireRec.Fire); err != nil {
-				return err
-			}
-		}
-		// At most one in-flight fire per schedule; stop after the first match.
-		break
 	}
 	return nil
 }

@@ -284,9 +284,13 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
     `ScheduleState.LastFireSessionID` to the real session id +
     `LastFireStartedAt` (+ seeds `LastFireProgressAt`) + `FireDeadline`.
     Idempotent per fire id.
-  - `port.ScheduleStore.RecordFireProgress(ctx, name, at)` — advances
+  - `port.ScheduleStore.RecordFireProgress(ctx, name, fireID, at)` — advances
     `ScheduleState.LastFireProgressAt` and the in-flight fire record's
-    `ProgressAt` (monotonic: an earlier `at` is ignored). Best-effort/idempotent.
+    `ProgressAt` (monotonic: an earlier `at` is ignored). The `fireID` parameter
+    targets the single in-flight fire record by its known key (no scan of the fire
+    keyspace), and the write is a no-op on an already-terminal record (a terminal
+    fire is never reverted to in-flight). Best-effort/idempotent. (The `fireID`
+    parameter was widened into this unreleased signature by the M1/M2 review fix.)
   - `port.ScheduleState` gains `LastFireStartedAt`, `LastFireProgressAt`,
     `FireDeadline` (set at fire-start, cleared at RecordFire).
   - `port.ScheduleFire` gains `StartedAt`, `ProgressAt`, `Deadline` (an in-flight

@@ -66,7 +66,7 @@ func TestScheduleInFlightWire_GrpcGetScheduleProjectsInFlightFields(t *testing.T
 	// Advance progress so LastFireProgressAt is non-zero + the fire record's
 	// ProgressAt is set.
 	progress := start.Add(20 * time.Second)
-	if err := schedStore.RecordFireProgress(ctx, "inflight", progress); err != nil {
+	if err := schedStore.RecordFireProgress(ctx, "inflight", "fire-inflight", progress); err != nil {
 		t.Fatalf("RecordFireProgress: %v", err)
 	}
 
@@ -130,7 +130,7 @@ func TestScheduleInFlightWire_GrpcListFiresProjectsInFlightFire(t *testing.T) {
 	// wire (RecordFireStart seeds the STATE's LastFireProgressAt but NOT the
 	// fire record's ProgressAt — RecordFireProgress is what writes the latter).
 	progress := start.Add(20 * time.Second)
-	if err := schedStore.RecordFireProgress(ctx, "inflight", progress); err != nil {
+	if err := schedStore.RecordFireProgress(ctx, "inflight", "fire-inflight", progress); err != nil {
 		t.Fatalf("RecordFireProgress: %v", err)
 	}
 

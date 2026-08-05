@@ -635,11 +635,26 @@ type ScheduleStore interface {
 	// instant (issue #386). It updates ScheduleState.LastFireProgressAt to `at`
 	// (when `at` is after the stored value; an earlier `at` is ignored so a
 	// reordered/delayed update cannot rewind progress) and the in-flight fire
-	// record's ProgressAt to `at`. It is BEST-EFFORT and IDEMPOTENT: a missing
-	// in-flight fire record (no prior RecordFireStart) is a no-op success (the
+	// record's ProgressAt to `at`.
+	//
+	// fireID is the id of the in-flight fire record the caller's RecordFireStart
+	// wrote (the same `fire.ID` RecordFireStart took). It targets the SINGLE fire
+	// record by its known key directly — there is NO directory/keyspace scan to
+	// locate the schedule's in-flight fire (review finding M1: scanning every fire
+	// record under the store mutex on every turn boundary is O(N) in the fire
+	// population, up to ~10k with 7d retention, and blocks Claim/RecordFire/List/
+	// Due). The caller (the fire loop) has fireID in scope.
+	//
+	// It is BEST-EFFORT and IDEMPOTENT: a missing in-flight fire record (no prior
+	// RecordFireStart, or it was already flipped terminal) is a no-op success (the
 	// progress is recorded on the state alone), and a not-found SCHEDULE wraps
-	// ErrScheduleNotFound. It never re-opens a terminal fire. Issue #386.
-	RecordFireProgress(ctx context.Context, name string, at time.Time) error
+	// ErrScheduleNotFound. It never re-opens a terminal fire: a progress write to
+	// an already-TERMINAL fire record is a no-op for the record (it MUST NOT
+	// revert the record from terminal back to in-flight — review finding M2, the
+	// cross-replica race a non-atomic GET-then-SET had where a concurrent terminal
+	// RecordFire's SET landing between the GET and SET reverted the record). Issue
+	// #386.
+	RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error
 
 	// LoadFire returns the fire record stored under fireID. The not-found case
 	// wraps ErrScheduleNotFound; any other error is an infrastructure failure. It

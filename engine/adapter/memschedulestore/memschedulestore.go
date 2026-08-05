@@ -356,8 +356,10 @@ func (s *Store) RecordFireStart(_ context.Context, name string, fire port.Schedu
 // `at` is ignored so a reordered update cannot rewind progress). It is
 // best-effort/idempotent: a missing in-flight fire record records on the state
 // alone; a not-found schedule wraps ErrScheduleNotFound; a terminal fire is
-// untouched.
-func (s *Store) RecordFireProgress(_ context.Context, name string, at time.Time) error {
+// untouched. fireID targets the single in-flight fire record by its known id
+// directly (review finding M1 — no scan); a terminal fire record is untouched
+// (review finding M2 — never revert terminal → in-flight).
+func (s *Store) RecordFireProgress(_ context.Context, name string, fireID string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.scheds[name]
@@ -368,18 +370,20 @@ func (s *Store) RecordFireProgress(_ context.Context, name string, at time.Time)
 		rec.state.LastFireProgressAt = at
 		s.scheds[name] = rec
 	}
-	// Advance the in-flight fire record's ProgressAt if one exists and is not
-	// terminal. Best-effort: a missing record is fine (the state alone carries it).
-	for id, f := range s.fires {
-		if f.ScheduleName != name || f.Stop != "" {
-			continue
-		}
-		if !at.IsZero() && at.After(f.ProgressAt) {
-			f.ProgressAt = at
-			s.fires[id] = f
-		}
-		// At most one in-flight fire per schedule; stop after the first match.
-		break
+	// Advance the in-flight fire record's ProgressAt directly by its known id
+	// (no scan). Best-effort: a missing record is fine (the state alone carries
+	// it); a TERMINAL fire record (Stop non-empty) is untouched — never revert
+	// terminal → in-flight (review finding M2).
+	f, ok := s.fires[fireID]
+	if !ok {
+		return nil // best-effort: no in-flight record; the state alone carries it
+	}
+	if f.Stop != "" {
+		return nil // terminal fire: untouched
+	}
+	if !at.IsZero() && at.After(f.ProgressAt) {
+		f.ProgressAt = at
+		s.fires[fireID] = f
 	}
 	return nil
 }

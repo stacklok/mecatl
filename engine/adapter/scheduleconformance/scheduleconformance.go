@@ -638,7 +638,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		}
 		// Progress advances from the seeded start instant.
 		p1 := start.Add(10 * time.Second)
-		if err := s.RecordFireProgress(ctx, name, p1); err != nil {
+		if err := s.RecordFireProgress(ctx, name, "fire-progress", p1); err != nil {
 			t.Fatalf("RecordFireProgress #1: %v", err)
 		}
 		got, err := s.Load(ctx, name)
@@ -649,7 +649,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Errorf("LastFireProgressAt = %v, want %v", got.State.LastFireProgressAt, p1)
 		}
 		// An EARLIER progress instant does NOT rewind (reordered/delayed update).
-		if err := s.RecordFireProgress(ctx, name, start.Add(5*time.Second)); err != nil {
+		if err := s.RecordFireProgress(ctx, name, "fire-progress", start.Add(5*time.Second)); err != nil {
 			t.Fatalf("RecordFireProgress (stale): %v", err)
 		}
 		got, err = s.Load(ctx, name)
@@ -661,7 +661,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		}
 		// A LATER instant advances further.
 		p2 := p1.Add(time.Minute)
-		if err := s.RecordFireProgress(ctx, name, p2); err != nil {
+		if err := s.RecordFireProgress(ctx, name, "fire-progress", p2); err != nil {
 			t.Fatalf("RecordFireProgress #2: %v", err)
 		}
 		got, err = s.Load(ctx, name)
@@ -679,6 +679,146 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		if len(fires) != 1 || !fires[0].ProgressAt.Equal(p2) {
 			t.Errorf("in-flight fire ProgressAt = %v, want %v", fires[0].ProgressAt, p2)
 		}
+	})
+
+	// Review finding M1: RecordFireProgress targets the SINGLE in-flight fire by
+	// its known id (fireID), NOT by scanning every fire record for the schedule's
+	// in-flight one. A progress write for fireID A must NOT touch a different
+	// in-flight fire record B under the same schedule (the old scan found "the
+	// first in-flight fire for the schedule", so a stale/wrong fireID would
+	// advance whichever record the scan hit first — now the store addresses the
+	// record by key, so a non-matching fireID is a best-effort no-op for the
+	// record, and a matching fireID advances ONLY it).
+	t.Run("record fire progress targets the named fire only", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-fireprogress-targeted"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		start := now.Add(time.Second)
+		// Two in-flight fire records under the same schedule (a record the caller
+		// RecordFireStart'd, and a second it did NOT — a phantom the scan would
+		// have hit). RecordFireProgress must address ONLY the named fire id.
+		if err := s.RecordFireStart(ctx, name, port.ScheduleFire{
+			ID: "fire-target-A", ScheduleName: name, SessionID: "sess-A",
+			FiredAt: now, StartedAt: start,
+		}); err != nil {
+			t.Fatalf("RecordFireStart A: %v", err)
+		}
+		if err := s.RecordFireStart(ctx, name, port.ScheduleFire{
+			ID: "fire-target-B", ScheduleName: name, SessionID: "sess-B",
+			FiredAt: now, StartedAt: start.Add(time.Millisecond),
+		}); err != nil {
+			t.Fatalf("RecordFireStart B: %v", err)
+		}
+		pA := start.Add(10 * time.Second)
+		if err := s.RecordFireProgress(ctx, name, "fire-target-A", pA); err != nil {
+			t.Fatalf("RecordFireProgress A: %v", err)
+		}
+		byID := map[string]port.ScheduleFire{}
+		fires, err := s.ListFires(ctx, name)
+		if err != nil {
+			t.Fatalf("ListFires: %v", err)
+		}
+		for _, f := range fires {
+			byID[f.ID] = f
+		}
+		a, ok := byID["fire-target-A"]
+		if !ok {
+			t.Fatalf("missing fire-target-A in ListFires")
+		}
+		if !a.ProgressAt.Equal(pA) {
+			t.Errorf("fire-target-A ProgressAt = %v, want %v (the targeted fire advances)", a.ProgressAt, pA)
+		}
+		b, ok := byID["fire-target-B"]
+		if !ok {
+			t.Fatalf("missing fire-target-B in ListFires")
+		}
+		if !b.ProgressAt.IsZero() {
+			t.Errorf("fire-target-B ProgressAt = %v, want zero (a non-targeted fire must NOT advance — RecordFireProgress addresses only fireID)", b.ProgressAt)
+		}
+		// A progress write with a fireID that has NO record is a best-effort
+		// success (the state alone carries it); it must NOT error.
+		if err := s.RecordFireProgress(ctx, name, "fire-nonexistent", start.Add(20*time.Second)); err != nil {
+			t.Errorf("RecordFireProgress(unknown fireID) = %v, want nil (best-effort: a missing record is a no-op success)", err)
+		}
+	})
+
+	// Review finding M2: a progress write to an ALREADY-TERMINAL fire is a NO-OP
+	// for the record — it MUST NOT revert the record from terminal back to
+	// in-flight. The pre-fix non-atomic GET-then-SET could race a concurrent
+	// terminal RecordFire (a cross-replica race in redisstore), reverting a
+	// terminal record to a phantom in-flight one. The store now addresses the
+	// record by key and guards the write on the record being in-flight (Stop
+	// empty), so a terminal record is untouched.
+	t.Run("record fire progress does not revert a terminal fire", func(t *testing.T) {
+		s := newStore(t)
+		now := time.Unix(1_700_000_000, 0)
+		const name = "conf-sched-fireprogress-terminal"
+		next, err := cronparse.NextFire(sampleCron, now, time.UTC)
+		if err != nil {
+			t.Fatalf("cronparse.NextFire: %v", err)
+		}
+		if err := s.Save(ctx, port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "p", Trigger: port.TriggerSpec{Cron: sampleCron}},
+			State: port.ScheduleState{NextFireAt: now, Enabled: true},
+		}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if _, err := s.Claim(ctx, name, now, next); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		start := now.Add(time.Second)
+		if err := s.RecordFireStart(ctx, name, port.ScheduleFire{
+			ID: "fire-terminal-prog", ScheduleName: name, SessionID: "sess-terminal-prog",
+			FiredAt: now, StartedAt: start,
+		}); err != nil {
+			t.Fatalf("RecordFireStart: %v", err)
+		}
+		// Flip the fire terminal.
+		terminal := port.ScheduleFire{
+			ID: "fire-terminal-prog", ScheduleName: name, SessionID: "sess-terminal-prog",
+			FiredAt: now, StartedAt: start, Stop: session.StopEndTurn,
+		}
+		if err := s.RecordFire(ctx, terminal); err != nil {
+			t.Fatalf("RecordFire (terminal): %v", err)
+		}
+		// A progress write to the now-terminal fire is a no-op for the record: it
+		// must NOT revert Stop to empty (in-flight) or advance ProgressAt.
+		later := start.Add(time.Hour)
+		if err := s.RecordFireProgress(ctx, name, "fire-terminal-prog", later); err != nil {
+			t.Fatalf("RecordFireProgress on terminal fire: %v", err)
+		}
+		loaded, err := s.LoadFire(ctx, "fire-terminal-prog")
+		if err != nil {
+			t.Fatalf("LoadFire: %v", err)
+		}
+		if loaded.Stop != session.StopEndTurn {
+			t.Errorf("terminal fire reverted to in-flight: Stop = %q, want %q (a progress write must NOT revert a terminal record)", loaded.Stop, session.StopEndTurn)
+		}
+		if !loaded.ProgressAt.IsZero() {
+			t.Errorf("terminal fire ProgressAt = %v, want zero (a progress write must not advance a terminal record)", loaded.ProgressAt)
+		}
+		// The state's LastFireProgressAt was CLEARED by RecordFire (a terminal fire
+		// has no in-flight run); a progress write to a terminal fire must NOT
+		// re-stamp it (it would resurrect in-flight state). The state advance is
+		// monotonic on the STATE field, but the terminal RecordFire cleared it to
+		// zero — a later progress must not re-set it for a fire that is already
+		// terminal. The store's contract: progress on a terminal fire record is a
+		// no-op; the STATE field is advanced best-effort (the caller serialises
+		// same-name calls, so a progress after RecordFire does not happen in
+		// practice — this asserts the record half, the load-bearing M2 invariant).
 	})
 
 	t.Run("record fire clears in-flight fields and flips terminal", func(t *testing.T) {
