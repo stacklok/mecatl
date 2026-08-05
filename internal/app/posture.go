@@ -263,30 +263,13 @@ func foldOperatorPosture(cfg Config) Config {
 	return cfg
 }
 
-// PostureProjection is the authoritative posture/trust state used by command
-// surfaces that must report the same root-aware decision as Build without
-// constructing an engine.
-type PostureProjection struct {
-	Posture      Posture
-	TrustProject bool
-}
-
-// ResolvePostureProjection resolves the operator posture (including operator YAML
-// and aliases), applies the root-aware ladder, then folds explicit, declarative,
-// and remembered workspace trust. It is the shared --print-posture projection;
-// Build performs the same ordered steps before constructing adapters.
-func ResolvePostureProjection(cfg Config) PostureProjection {
-	cfg.permResolver = buildPermResolver(cfg)
-	cfg = foldOperatorPosture(cfg)
-	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
-	cfg = applyPosture(cfg)
-	cfg.permResolver = nil
-	cfg.TrustProject = resolveTrust(cfg).Trusted
-	return PostureProjection{Posture: cfg.Posture, TrustProject: cfg.TrustProject}
-}
-
-// ResolveAuthoritativePosture computes the posture tier without resolving
-// workspace trust. Callers that report trust must use ResolvePostureProjection.
+// ResolveAuthoritativePosture computes the posture tier Build resolves: it folds the
+// OPERATOR-TIER `posture:` YAML scalar (CLI --posture out-ranks), then resolves the
+// tier (aliases + ceiling clamp). It does NOT fold workspace trust — that is Build's
+// job, surfaced by the `operator posture` startup diagnostic (narratePosture) after
+// resolveTrust. Callers that need only the tier (mecatui embedded posture, the
+// mecated fast-path refusal) use this; callers that need the full root-aware trust
+// decision drive the real Build and read its structured diagnostic.
 func ResolveAuthoritativePosture(cfg Config) Posture {
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg = foldOperatorPosture(cfg)
@@ -296,6 +279,8 @@ func ResolveAuthoritativePosture(cfg Config) Posture {
 // narratePosture logs the resolved posture and authoritative, fully-folded
 // workspace trust as one build-once composition fact. Build calls it only after
 // resolveTrust, so it cannot contradict the following workspace-trust narration.
+// It is the sole observation/debug surface for the resolved posture + per-defence
+// state; there is no separate print-and-exit CLI.
 func narratePosture(diag port.Diagnostics, p Posture, trustProject bool) {
 	diag.Log(context.Background(), port.LevelInfo, "operator posture",
 		"posture", p.String(),

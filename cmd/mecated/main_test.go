@@ -425,47 +425,6 @@ func TestHeadlessFlagDrivesInteractive(t *testing.T) {
 	}
 }
 
-func TestPostureReportRootAwareTrust(t *testing.T) {
-	// Isolate the trust fold from the developer's real trustedWorkspaces/trust.yaml;
-	// these rows intentionally exercise only the listed CLI trust source.
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	for _, tc := range []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"headless auto untrusted", []string{"--headless", "--posture", "auto", "--print-posture"}, "off"},
-		{"interactive auto", []string{"--posture", "auto", "--print-posture"}, "ON"},
-		{"headless auto explicit trust", []string{"--headless", "--posture", "auto", "--trust-project", "--print-posture"}, "ON"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := parseFlags(tc.args)
-			if err != nil {
-				t.Fatalf("parseFlags: %v", err)
-			}
-			cfg.workspace = t.TempDir()
-			mapped := appConfig(cfg, nil, nil, nil, nil, nil)
-			if mapped.Headless != cfg.headless || mapped.Interactive == cfg.headless {
-				t.Fatalf("cmd mapping drift: Headless=%v Interactive=%v", mapped.Headless, mapped.Interactive)
-			}
-			if mapped.TrustProject != cfg.trustProject {
-				t.Fatalf("--trust-project mapping drift: app=%v flag=%v", mapped.TrustProject, cfg.trustProject)
-			}
-			state := app.ResolvePostureProjection(posturePreCheckConfig(cfg, nil))
-			report := renderPostureReport(state)
-			for _, line := range []string{
-				"project trust (steering + read-only child shell):             " + tc.want,
-				"project ingestion:                                             " + tc.want,
-			} {
-				if !strings.Contains(report, line) {
-					t.Errorf("report missing %q:\n%s", line, report)
-				}
-			}
-		})
-	}
-}
-
 func TestParseFlagsAllowAll(t *testing.T) {
 	def, err := parseFlags(nil)
 	if err != nil {
@@ -680,16 +639,16 @@ func TestPostureRefusalReason(t *testing.T) {
 	}
 }
 
-// TestParseFlagsPosture covers the --posture / --print-posture flag surface: the value
-// lands on cfg.posture, postureFlagSet flips ONLY when --posture is explicitly passed
-// (so CLI can out-rank the operator-YAML key), and --print-posture sets its bool.
+// TestParseFlagsPosture covers the --posture flag surface: the value lands on
+// cfg.posture and postureFlagSet flips ONLY when --posture is explicitly passed (so
+// CLI can out-rank the operator-YAML key).
 func TestParseFlagsPosture(t *testing.T) {
 	def, err := parseFlags(nil)
 	if err != nil {
 		t.Fatalf("parseFlags(nil): %v", err)
 	}
-	if def.posture != "" || def.postureFlagSet || def.printPosture {
-		t.Errorf("defaults: posture=%q postureFlagSet=%v printPosture=%v, want empty/false/false", def.posture, def.postureFlagSet, def.printPosture)
+	if def.posture != "" || def.postureFlagSet {
+		t.Errorf("defaults: posture=%q postureFlagSet=%v, want empty/false", def.posture, def.postureFlagSet)
 	}
 
 	set, err := parseFlags([]string{"-posture", "auto"})
@@ -698,17 +657,6 @@ func TestParseFlagsPosture(t *testing.T) {
 	}
 	if set.posture != "auto" || !set.postureFlagSet {
 		t.Errorf("-posture auto: posture=%q postureFlagSet=%v, want \"auto\"/true", set.posture, set.postureFlagSet)
-	}
-
-	pr, err := parseFlags([]string{"-print-posture"})
-	if err != nil {
-		t.Fatalf("parseFlags(-print-posture): %v", err)
-	}
-	if !pr.printPosture {
-		t.Errorf("-print-posture: printPosture=false, want true")
-	}
-	if pr.postureFlagSet {
-		t.Errorf("-print-posture alone must NOT set postureFlagSet")
 	}
 }
 

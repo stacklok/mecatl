@@ -1,6 +1,7 @@
 # ADR 0095 — Root-aware project trust
 
-- Status: Accepted
+- Status: Superseded
+- Superseded by: [ADR 0096](./0096-diagnostic-only-posture-reporting.md)
 - Date: 2026-08-05
 - Scope: operator-tier workspace trust, project steering ingestion, and read-only delegation shell admission
 - Supersedes: [ADR 0094](./0094-opt-in-project-ingestion.md)

@@ -212,9 +212,10 @@ server via `connect`** — the dialed server owns its own posture). `--yolo` is 
 `--posture yolo`** and `--trust-project` is an **alias for `trusted`**; passing
 both a `--posture` value and an alias resolves to the **higher tier** with a
 `WARN`, an unknown `--posture` value fails closed to `strict` with a `WARN`, and a
-CLI flag out-ranks the user-global `posture:` setting (below). Confirm what a given
-combination resolves to with `mecated serve --print-posture` (prints the tier + the
-per-defence breakdown and exits).
+CLI flag out-ranks the user-global `posture:` setting (below). The resolved tier and
+the root-aware `trust_project`/`project_ingestion` decision are emitted as the
+structured `operator posture` startup diagnostic by `mecated serve` (once, before
+serving).
 
 **`auto` is the recommended unattended default.** It is allow-all for the main
 agent *and* its children, so a CI / container / VM run never parks on a mutate-ask

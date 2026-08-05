@@ -853,9 +853,9 @@ func TestEmbeddedConfigMapsAllowAll(t *testing.T) {
 	}
 }
 
-// TestParseFlagsPosture covers the embedded-server --posture / --print-posture surface:
-// the value lands on cfg.posture and postureFlagSet flips ONLY when --posture is
-// explicitly passed (so CLI out-ranks the operator-YAML key).
+// TestParseFlagsPosture covers the embedded-server --posture surface: the value
+// lands on cfg.posture and postureFlagSet flips ONLY when --posture is explicitly
+// passed (so CLI out-ranks the operator-YAML key).
 func TestParseFlagsPosture(t *testing.T) {
 	def, err := parseFlags(nil)
 	if err != nil {

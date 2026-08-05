@@ -438,10 +438,9 @@ type config struct {
 	// yolo). --posture sets it; --yolo and --trust-project are ALIASES that raise the
 	// tier (resolvePosture in composition folds them MAX-tier). Empty = unset (the
 	// composition default PostureStrict, unless an alias or the operator-global
-	// settings.yaml posture: key raises it). printPosture prints the resolved tier and
-	// per-defense lines, then exits.
-	posture      string
-	printPosture bool
+	// settings.yaml posture: key raises it). The resolved tier is reported by the
+	// structured `operator posture` startup diagnostic emitted by app.Build.
+	posture string
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
@@ -810,14 +809,15 @@ func run(mode commandMode, remaining []string) error {
 		slog.Info("daemon config loaded", "path", cfg.configPath)
 	}
 
-	// Operator posture: print/refuse/WARN for the AUTHORITATIVE composed tier (the
+	// Operator posture: refuse/WARN for the AUTHORITATIVE composed tier (the
 	// --posture flag + --yolo/--trust-project aliases + the operator-global
 	// settings.yaml posture: key — the SAME tier app.Build resolves). Checked AFTER the
 	// slog handler is installed and BEFORE app.Build, so it covers both the ACP and
 	// network serving modes. The root/no-sandbox refusal here is a fast path; app.Build
-	// re-checks it as the fail-closed backstop. Returns handled=true when
-	// --print-posture asked to print-and-exit.
-	if handled, perr := applyPostureCLI(cfg, diag); handled || perr != nil {
+	// re-checks it as the fail-closed backstop. The structured `operator posture`
+	// diagnostic emitted by app.Build after resolveTrust is the sole observation/debug
+	// surface for the resolved tier + per-defence state.
+	if perr := applyPostureCLI(cfg, diag); perr != nil {
 		return perr
 	}
 
@@ -1153,22 +1153,16 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 
 // applyPostureCLI resolves the AUTHORITATIVE posture tier (the --posture flag +
 // --yolo/--trust-project aliases + the operator-global settings.yaml posture: key) and
-// runs its print / refuse / WARN surface, extracted from run() to keep that function's
-// cyclomatic complexity bounded. Returns handled=true when --print-posture asked to
-// print-and-exit (run() returns nil); a non-nil err is the root/no-sandbox refusal (a
+// runs its refuse / WARN surface, extracted from run() to keep that function's
+// cyclomatic complexity bounded. A non-nil err is the root/no-sandbox refusal (a
 // fast path — app.Build re-checks it authoritatively as the fail-closed backstop).
-func applyPostureCLI(cfg config, diag port.Diagnostics) (handled bool, err error) {
-	projection := app.ResolvePostureProjection(posturePreCheckConfig(cfg, diag))
-	if cfg.printPosture {
-		fmt.Print(renderPostureReport(projection))
-		return true, nil
-	}
-	effPosture := projection.Posture
+func applyPostureCLI(cfg config, diag port.Diagnostics) error {
+	effPosture := app.ResolveAuthoritativePosture(posturePreCheckConfig(cfg, diag))
 	if !app.IsKnownPostureToken(cfg.posture) {
 		slog.Warn("unknown --posture value; failing closed to strict", "value", cfg.posture)
 	}
 	if rerr := app.PostureRefusalReason(effPosture, privilegedProcess()); rerr != nil {
-		return false, rerr
+		return rerr
 	}
 	switch effPosture {
 	case app.PostureStrict:
@@ -1180,13 +1174,13 @@ func applyPostureCLI(cfg config, diag port.Diagnostics) (handled bool, err error
 	case app.PostureYolo:
 		slog.Warn("OPERATOR POSTURE: yolo — allow-all server-wide AND the CHILD prompt-injection defense is OFF: $()/backtick/heredoc commands AUTO-RUN in subagents/branches. A Deny in any scope and any deliberately configured Ask still apply. ISOLATED, EPHEMERAL, SINGLE-TENANT deployments ONLY. NOTE behaviour change: --yolo now ALSO loosens the child substitution floor.")
 	}
-	return false, nil
+	return nil
 }
 
 // posturePreCheckConfig maps just the posture-relevant fields of the cmd config onto a
-// minimal app.Config for the --print-posture / fast-path-refusal read. It carries the
-// SAME permission-config discovery knobs Build uses (so the transient resolver finds
-// the same operator-global settings.yaml posture: key) plus the --posture/--yolo/
+// minimal app.Config for the fast-path-refusal read. It carries the SAME
+// permission-config discovery knobs Build uses (so the transient resolver finds the
+// same operator-global settings.yaml posture: key) plus the --posture/--yolo/
 // --trust-project inputs. It does NOT need the provider/engine fields — app.Build owns
 // the authoritative resolution + the engine; this is only the early read.
 func posturePreCheckConfig(cfg config, diag port.Diagnostics) app.Config {
@@ -1215,28 +1209,6 @@ func privilegedProcess() bool {
 
 func sandboxDeclared() bool {
 	return os.Getenv("MECATL_SANDBOX") == "1" || os.Getenv("IS_SANDBOX") == "1"
-}
-
-// renderPostureReport renders the authoritative root-aware posture and final
-// workspace-trust semantics used by Build.
-func renderPostureReport(state app.PostureProjection) string {
-	p := state.Posture
-	onoff := func(b bool) string {
-		if b {
-			return "ON"
-		}
-		return "off"
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "operator posture: %s\n", p.String())
-	fmt.Fprintf(&b, "  allow-all (built-in mutate-ask floor waived, main + children): %s\n", onoff(p >= app.PostureAuto))
-	fmt.Fprintf(&b, "  main-agent substitution auto-run ($()/backtick/heredoc):       %s\n", onoff(p >= app.PostureAuto))
-	fmt.Fprintf(&b, "  child substitution auto-run (prompt-injection defense %s):     %s\n",
-		map[bool]string{true: "OFF", false: "ON"}[p == app.PostureYolo], onoff(p == app.PostureYolo))
-	fmt.Fprintf(&b, "  project trust (steering + read-only child shell):             %s\n", onoff(state.TrustProject))
-	fmt.Fprintf(&b, "  project ingestion:                                             %s\n", onoff(state.TrustProject))
-	fmt.Fprintf(&b, "  (a Deny in any scope and any configured Ask ALWAYS apply, at every tier)\n")
-	return b.String()
 }
 
 // mergeDaemonConfig folds the daemon config file (loaded only when --config is
@@ -1519,7 +1491,6 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		"ALIAS for --posture yolo (dangerous): allow-all server-wide AND loosen the substitution floor for CHILDREN too — a subagent's $()/backtick/heredoc command AUTO-RUNS (child prompt-injection defense OFF). A Deny in ANY scope and any DELIBERATELY configured Ask still apply (see docs/adr/0022-allow-all-posture.md). Isolated/ephemeral/single-tenant ONLY. Refused when running as root (euid 0) unless MECATL_SANDBOX=1 (or IS_SANDBOX=1) declares an isolated environment.")
 	fs.StringVar(&cfg.posture, "posture", "",
 		"OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted honours a project's ALLOW rules (= --trust-project); auto adds allow-all + main substitution loosening (recommended UNATTENDED default, child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF, isolated single-tenant only). --yolo/--trust-project are aliases. auto/yolo are refused as root outside MECATL_SANDBOX. An unknown value fails closed to strict with a WARN.")
-	fs.BoolVar(&cfg.printPosture, "print-posture", false, "print the resolved operator posture tier and a plain-English line per defense, then exit (does not start the server)")
 
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider's own default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only, so xhigh/max are clamped down to high (with a WARN); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key if present). A per-session CreateSession reasoning_effort out-ranks this default. A model with no reasoning support drops it. Operator-tier only; a project-tier reasoning-effort: key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")

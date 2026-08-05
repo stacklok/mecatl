@@ -110,7 +110,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0023 — Workspace trust](./0023-workspace-trust.md)
 - [0092 — Project-trust suppression pin](./0092-no-project-trust-pin.md) *(superseded by 0094)*
 - [0094 — Opt-in project ingestion: two-axis positive grants](./0094-opt-in-project-ingestion.md) *(superseded by 0095)*
-- [0095 — Root-aware project trust](./0095-root-aware-project-trust.md)
+- [0095 — Root-aware project trust](./0095-root-aware-project-trust.md) *(superseded by 0096)*
+- [0096 — Diagnostic-only posture reporting](./0096-diagnostic-only-posture-reporting.md)
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)

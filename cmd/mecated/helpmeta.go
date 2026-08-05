@@ -223,8 +223,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"websearch-query-param": {group: groupWebSearch, common: false, acp: acpInclude},
 
 	// ── Info (meta-flags, both modes) ────────────────────────────────────
-	"help-all":      {group: groupInfo, common: false, acp: acpInclude},
-	"print-posture": {group: groupInfo, common: false, acp: acpInclude},
+	"help-all": {group: groupInfo, common: false, acp: acpInclude},
 }
 
 // groupOrder is the stable presentation order for groups in common help.
