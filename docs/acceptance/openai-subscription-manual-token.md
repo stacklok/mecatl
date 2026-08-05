@@ -701,5 +701,25 @@ Verification: the honest live compatibility probe passed; `TMPDIR=/private/tmp t
   formatting, and `git diff --check` passed. `task docs` could not authenticate to
   the private matlatl module; the locally installed pinned matlatl commands completed
   the equivalent generation and strict check successfully.
-Commit: pending this scoped Step 1 commit; its hash will be recorded by Step 2.
+Commit: bb43e6634c99253abd99941db62f548096f1d5ab
+
+Step 2 — Read-only OAuth auth-file schema
+Base: bb43e6634c99253abd99941db62f548096f1d5ab
+Coder: /root/step2_auth_coder
+Reviewers: /root/step2_spec_review (specification/architecture) and
+  /root/step2_security_review (correctness/security/reuse)
+Findings: initial review found OAuth pointer state exposed through `File.Providers`,
+  missing single-document enforcement, and YAML scalar coercion/alias/merge gaps.
+  The coder moved stored OAuth state to unexported values, added an EOF check, and
+  replaced coercive decoding with exact node-schema validation plus regressions.
+  Security re-review then found custom-tagged mappings and `providers: null` crossed
+  the typed top-level decode; the coder switched the whole root/providers/provider/
+  OAuth chain to canonical node validation. Root lint then found one shadowed
+  built-in test variable, which the coder renamed. Both final reviewers reported
+  zero blockers after re-review.
+Verification: coder observed the required OAuth tests fail before implementation;
+  all six named acceptance proofs, the full authfile race suite, focused `go vet`,
+  gofmt, the acceptance-plan checker, fresh-cache `task lint`,
+  `TMPDIR=/private/tmp task test`, and `git diff --check` pass.
+Commit: pending this scoped Step 2 commit; its hash will be recorded by Step 3.
 ```
