@@ -31,17 +31,35 @@ import (
 // teamCfg is the minimal app Config a member engine factory needs: a model and a
 // shell so the Mutating branch can attempt to register Bash. The workspace is a
 // throwaway temp dir (the command runner roots there, but no command is run in
-// these tests). TrustProject is true: these are the TRUSTED-workspace shell-wiring
-// tests (the issue-#40 trust gate would otherwise nil the sandboxed runner); the
-// untrusted side lives in trust_shell_gate_test.go.
+// these tests). PostureAuto + TrustProject: the issue-#359 redesign moved the
+// read-only subagent/member shell onto the SubagentShellGranted axis (posture >=
+// auto on BOTH roots), so the TRUSTED-workspace shell-wiring tests set
+// PostureAuto to keep their shell (trust alone no longer grants it); the
+// untrusted side lives in trust_shell_gate_test.go (shelllessTeamCfg).
 func teamCfg(t *testing.T) Config {
 	t.Helper()
 	return Config{
-		Workspace:    t.TempDir(),
-		Model:        "mock",
-		Shell:        "/bin/sh",
-		TrustProject: true,
+		Workspace:            t.TempDir(),
+		Model:                "mock",
+		Shell:                "/bin/sh",
+		TrustProject:         true,
+		Posture:              PostureAuto,
+		SubagentShellGranted: true, // the shell grant field buildSandboxedCommandRunner reads (posture >= auto)
 	}
+}
+
+// shelllessTeamCfg is teamCfg with the shell grant OFF: PostureStrict, so neither
+// trust nor posture grants the subagent shell (SubagentShellGranted=false). The
+// issue-#359 redesign decoupled the shell from workspace trust; the untrusted /
+// shell-less tests assert over the shell-grant axis (posture), not trust
+// indirection.
+func shelllessTeamCfg(t *testing.T) Config {
+	t.Helper()
+	cfg := teamCfg(t)
+	cfg.Posture = PostureStrict
+	cfg.TrustProject = false
+	cfg.SubagentShellGranted = false // the field buildSandboxedCommandRunner reads
+	return cfg
 }
 
 // TestBuildMemberEngineReadOnlySpawnSucceeds exercises fix A's ACCEPTANCE path: a

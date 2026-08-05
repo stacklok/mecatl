@@ -433,13 +433,6 @@ type config struct {
 	importClaudePermissions bool
 	trustProject            bool
 	allowAllTools           bool
-	// noProjectTrust suppresses ONLY project-tier INGESTION (AGENTS.md/CLAUDE.md,
-	// .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git
-	// snapshot) while leaving the workspace-trust gate (the read-only subagent shell)
-	// on the effective --trust-project. noProjectTrustFlagSet records an explicit
-	// --no-project-trust so CLI out-ranks the settings.yaml no-project-trust: key.
-	noProjectTrust        bool
-	noProjectTrustFlagSet bool
 
 	// posture is the graduated operator posture ladder (strict < trusted < auto <
 	// yolo). --posture sets it; --yolo and --trust-project are ALIASES that raise the
@@ -1112,8 +1105,6 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		TrustProject:            cfg.trustProject,
 		PermissionConfigs:       cfg.permissionConfigs,
 		AllowAllTools:           cfg.allowAllTools,
-		NoProjectIngest:         cfg.noProjectTrust,
-		NoProjectTrustFlagSet:   cfg.noProjectTrustFlagSet,
 		// Posture ladder: --posture sets the tier directly; --yolo/--trust-project are
 		// aliases composition folds MAX-tier (resolvePosture). postureFlagSet lets CLI
 		// out-rank the operator-global settings.yaml posture: key. Privileged is the
@@ -1134,7 +1125,11 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// park the child until run-end, so we run NON-interactive (Interactive=false),
 		// engaging the auto-deny path and the opt-in --subagent-ask-reviewer. (The
 		// offline demo likewise leaves app.Config.Interactive false.)
-		Interactive:            !cfg.headless,
+		Interactive: !cfg.headless,
+		// Headless: the explicit deployment identity for the ingestion-grant axis
+		// (issue #359 redesign). The interactive ladder grants ingestion at auto/yolo
+		// only when Headless is false.
+		Headless:               cfg.headless,
 		Sink:                   sink,
 		ToolCallRecorder:       recorder,
 		MetricsRoleScoper:      roleScoper,
@@ -1517,7 +1512,6 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "auto-discover the per-project permission config: <workspace>/.mecatl/settings.local.yaml (gitignored, personal — higher precedence) and <workspace>/.mecatl/settings.yaml (checked-in, shared), plus — with --import-claude-permissions — the matching .claude/settings.local.json and .claude/settings.json, plus the user-global file ($XDG_CONFIG_HOME/mecatl/settings.yaml). RE-RESOLVED PER SESSION against each session's workspace root (and revalidated on file mtime change), so two sessions in different repos get different decisions. ON by default and INERT when no such file exists. TRUST BOUNDARY: a project's ALLOW rules are honoured ONLY with --trust-project; its deny/ask rules are ALWAYS honoured")
 	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "also import Claude-Code settings.json permissions (project <workspace>/.claude/settings{,.local}.json and user ~/.claude/settings.json) when --permissions-conventional is set. LOSSY (fail-safe): a WebFetch(domain:...) ALLOW is DEMOTED to ask, a Read(~/...) rule is left INERT (\"~\" unexpanded), an unparseable spec is DROPPED — every case is logged")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "honour a discovered PROJECT's ALLOW rules (its deny/ask rules are always honoured regardless). Default OFF (the safe stance): an untrusted repo's permission grants are ignored. TRUST BOUNDARY: enabling this lets a checked-in .mecatl/settings.yaml auto-approve tool calls — only pass it for a repo you trust")
-	fs.BoolVar(&cfg.noProjectTrust, "no-project-trust", false, "Suppress ingestion of the repo's project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, skills, soul, slash commands, ALLOW rules, git snapshot) while leaving the workspace-trust gate (the read-only subagent shell) on the effective --trust-project. OPERATOR-TIER only: a project file's no-project-trust: is ignored with a WARN. Default OFF. Intended for scheduler runs over a freshly-cloned untrusted repo where the scheduler supplies its own --instructions.")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
 		"ALIAS for --posture yolo (dangerous): allow-all server-wide AND loosen the substitution floor for CHILDREN too — a subagent's $()/backtick/heredoc command AUTO-RUNS (child prompt-injection defense OFF). A Deny in ANY scope and any DELIBERATELY configured Ask still apply (see docs/adr/0022-allow-all-posture.md). Isolated/ephemeral/single-tenant ONLY. Refused when running as root (euid 0) unless MECATL_SANDBOX=1 (or IS_SANDBOX=1) declares an isolated environment.")
 	fs.StringVar(&cfg.posture, "posture", "",
@@ -1682,9 +1676,6 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
-		}
-		if f.Name == "no-project-trust" {
-			cfg.noProjectTrustFlagSet = true
 		}
 		if f.Name == "schedule-fire-retention" {
 			cfg.scheduleFireRetentionSet = true

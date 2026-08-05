@@ -56,10 +56,11 @@ func TestSkillReadRootsTrustGated(t *testing.T) {
 	writeSkill(t, draftDir, "sneaky-draft", "model-authored", "DRAFT BODY")
 
 	trusted := assetDirsForTest(t, Config{
-		Workspace:          ws,
-		SkillsConventional: true,
-		TrustProject:       true,
-		SkillsDraftDir:     draftDir,
+		Workspace:               ws,
+		SkillsConventional:      true,
+		TrustProject:            true,
+		ProjectIngestionGranted: true,
+		SkillsDraftDir:          draftDir,
 	})
 	if !dirsListContains(trusted, projDir) || !dirsListContains(trusted, userDir) {
 		t.Errorf("trusted: both skill dirs (%q, %q) must be present; got %v", projDir, userDir, trusted)

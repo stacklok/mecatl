@@ -80,6 +80,68 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		}
 	})
 
+	// Headless variant (issue #359 redesign): a HEADLESS root at --posture auto
+	// WITHOUT --trust-project derives ingestion_granted=false (the fail-safe
+	// default) while still deriving shell_granted=true.
+	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
+		diag := slogdiagBuffer(t)
+		built, err := Build(context.Background(), Config{
+			Workspace:         t.TempDir(),
+			Model:             "mock",
+			UseMock:           true,
+			NoSoul:            true,
+			Headless:          true,
+			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
+			Diagnostics:       diag.diag,
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+
+		fact := diag.lineContaining("operator posture")
+		if fact == "" {
+			t.Fatalf("expected the narratePosture composition fact; log:\n%s", diag.String())
+		}
+		if !strings.Contains(fact, "ingestion_granted=false") {
+			t.Fatalf("headless auto without --trust-project must derive ingestion_granted=false (the fail-safe default); fact: %q", fact)
+		}
+		if !strings.Contains(fact, "shell_granted=true") {
+			t.Fatalf("auto must derive shell_granted=true on both roots; fact: %q", fact)
+		}
+	})
+
+	// Interactive variant (issue #359 redesign): an INTERACTIVE root at --posture
+	// auto derives ingestion_granted=true via the ladder (the dev default ingests
+	// the operator's own CLAUDE.md), even without --trust-project.
+	t.Run("operator auto interactive grants ingestion (dev default)", func(t *testing.T) {
+		diag := slogdiagBuffer(t)
+		built, err := Build(context.Background(), Config{
+			Workspace:         t.TempDir(),
+			Model:             "mock",
+			UseMock:           true,
+			NoSoul:            true,
+			Headless:          false,
+			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
+			Diagnostics:       diag.diag,
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+
+		fact := diag.lineContaining("operator posture")
+		if fact == "" {
+			t.Fatalf("expected the narratePosture composition fact; log:\n%s", diag.String())
+		}
+		if !strings.Contains(fact, "ingestion_granted=true") {
+			t.Fatalf("interactive auto must derive ingestion_granted=true (the dev default); fact: %q", fact)
+		}
+		if !strings.Contains(fact, "shell_granted=true") {
+			t.Fatalf("auto must derive shell_granted=true on both roots; fact: %q", fact)
+		}
+	})
+
 	t.Run("project tier posture is ignored (stays strict)", func(t *testing.T) {
 		// A project-tier .mecatl/settings.yaml carrying posture: yolo in the workspace.
 		ws := t.TempDir()

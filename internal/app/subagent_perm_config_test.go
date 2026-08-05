@@ -36,6 +36,8 @@ func permCfgWorkspace(t *testing.T, settingsYAML string) Config {
 		Shell:                   "/bin/sh",
 		PermissionsConventional: true,
 		TrustProject:            true,
+		ProjectIngestionGranted: true, // load the project .mecatl/settings.yaml ALLOW rules (issue #359 redesign)
+		SubagentShellGranted:    true, // the read-only subagent shell (posture >= auto)
 	}
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)

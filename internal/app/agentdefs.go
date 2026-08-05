@@ -388,11 +388,12 @@ func bashScopeMissReason(cfg Config) string {
 		return "shell unavailable (Bash disabled via --no-bash); dropped"
 	case cfg.Shell == "":
 		return "shell unavailable (no shell configured); dropped"
-	case !cfg.TrustProject:
+	case !cfg.SubagentShellGranted:
 		return "shell unavailable: " + subagentShellUntrustedReason(cfg) + "; dropped"
 	default:
-		// A shell is configured and trusted, yet Bash missed the base: the runner
-		// failed to build (its own WARN already names the workspace/error).
+		// A shell is configured and the subagent-shell grant is on, yet Bash missed
+		// the base: the runner failed to build (its own WARN already names the
+		// workspace/error).
 		return "shell unavailable (command runner could not be built); dropped"
 	}
 }
@@ -983,10 +984,11 @@ const agentMemoryDirName = "agents-memory"
 //   - "user"    => <UserConfigDir>/mecatl/agents-memory/ (the SAME XDG base
 //     buildUserModelStore uses; "" XDG base ⇒ fail-soft);
 //   - "project" => <cfg.Workspace>/.mecatl/agents-memory/ ONLY when the workspace
-//     is set AND INGESTED (ingestProjectTier — the SAME gate resolveAgentRegistry
-//     applies to project-tier defs; a project-tier memory points into the
-//     attacker-controllable workspace, so it is withheld on an untrusted OR
-//     pin-suppressed repo regardless of the def's own Origin);
+//     is set AND ADMITTED (projectIngestionAdmitted — the SAME gate
+//     resolveAgentRegistry applies to project-tier defs; a project-tier memory
+//     points into the attacker-controllable workspace, so it is withheld on an
+//     untrusted workspace or when the ingestion grant is withheld, regardless of
+//     the def's own Origin);
 //   - anything else / gated-out => ("", false).
 //
 // The head is bounded to maxAgentMemoryBytes head-first (with a truncation marker)
@@ -1005,7 +1007,7 @@ func resolveAgentMemoryHead(cfg Config, def agents.AgentDef) (string, bool) {
 		root = filepath.Join(base, "mecatl", agentMemoryDirName)
 		tierLabel = "user"
 	case "project":
-		if cfg.Workspace == "" || !ingestProjectTier(cfg) {
+		if cfg.Workspace == "" || !projectIngestionAdmitted(cfg) {
 			return "", false
 		}
 		root = filepath.Join(cfg.Workspace, ".mecatl", agentMemoryDirName)
@@ -1193,18 +1195,19 @@ func skillSnapshot(discovered []skills.Skill) []*mecatlv1.SkillInfo {
 // these per session (e.g. against a CreateSession-supplied root), it MUST re-apply the
 // trust decision for that root or the project-tier injection gap silently reopens.
 func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
-	// Project-tier agent defs are withheld when the project tier is not ingested
-	// (Phase 2a): untrusted OR pin-suppressed (ingestProjectTier). The user-tier
-	// + explicit defs stay active regardless ("ask the human" mode, not "do nothing").
-	if cfg.AgentsConventional && cfg.Workspace != "" && !ingestProjectTier(cfg) {
-		cfg.diag().Log(ctx, port.LevelWarn, "agent definitions: project-tier defs WITHHELD (untrusted workspace or --no-project-trust); user-tier and explicit defs stay active. Trust this repo (--trust-project or trustedWorkspaces) and do not pass --no-project-trust to admit its project agent defs",
+	// Project-tier agent defs are withheld when the project tier is not admitted
+	// (Phase 2a): untrusted, or the ingestion grant withheld
+	// (projectIngestionAdmitted). The user-tier + explicit defs stay active
+	// regardless ("ask the human" mode, not "do nothing").
+	if cfg.AgentsConventional && cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
+		cfg.diag().Log(ctx, port.LevelWarn, "agent definitions: project-tier defs WITHHELD (untrusted workspace or project ingestion not granted); user-tier and explicit defs stay active. Pass --trust-project (on a headless root) or run --posture auto on an interactive root to admit its project agent defs",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/agents,.claude/agents")
 	}
 	sources := agents.ResolveSources(agents.ResolveOptions{
 		Explicit:           cfg.AgentsDirs,
 		Conventional:       cfg.AgentsConventional,
 		Workspace:          cfg.Workspace,
-		IncludeProjectTier: ingestProjectTier(cfg),
+		IncludeProjectTier: projectIngestionAdmitted(cfg),
 	})
 	if len(sources) == 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "agent definitions DISABLED (no agents dirs configured)")

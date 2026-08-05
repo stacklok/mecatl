@@ -511,8 +511,6 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		ImportClaudePermissions: true,
 		TrustProject:            cfg.trustProject,
 		AllowAllTools:           cfg.allowAllTools,
-		NoProjectIngest:         cfg.noProjectTrust,
-		NoProjectTrustFlagSet:   cfg.noProjectTrustFlagSet,
 		// Posture ladder: --posture sets the tier; --yolo/--trust-project are aliases
 		// composition folds MAX-tier. postureFlagSet lets CLI out-rank the operator-global
 		// settings.yaml posture: key. Privileged is the "root && !sandbox" predicate fed
@@ -538,6 +536,11 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// a headless `mecated --headless --subagent-ask-reviewer …` and point
 		// `mecatui connect` at it to use the reviewer).
 		Interactive: true,
+		// Headless: the explicit deployment identity for the ingestion-grant axis
+		// (issue #359 redesign). mecatui is INTERACTIVE (Headless false), so the
+		// posture ladder grants ingestion at auto/yolo (the dev default ingests the
+		// operator's own CLAUDE.md).
+		Headless: false,
 		// Diagnostics is the injected file-backed (or, under --quiet, discarding) sink.
 		// It is NEVER stderr: an operational line on stderr corrupts the Bubble Tea
 		// alt-screen. The caller (resolveTransport) opens the sink once over

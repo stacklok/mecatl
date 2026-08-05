@@ -57,23 +57,15 @@ func TestEmbeddedConfigMapsTrustProject(t *testing.T) {
 	}
 }
 
-// TestEmbeddedConfigMapsNoProjectTrust asserts the --no-project-trust flag flows
-// through to app.Config.NoProjectIngest/NoProjectTrustFlagSet: off by default, true
-// (with the CLI-set bit) when the flag is set (issue #359).
-func TestEmbeddedConfigMapsNoProjectTrust(t *testing.T) {
-	on := embeddedConfig(config{workspace: "/ws", model: "m", mock: true, noProjectTrust: true, noProjectTrustFlagSet: true}, port.NopDiagnostics{})
-	if !on.NoProjectIngest {
-		t.Error("embeddedConfig.NoProjectIngest = false with --no-project-trust, want true")
-	}
-	if !on.NoProjectTrustFlagSet {
-		t.Error("embeddedConfig.NoProjectTrustFlagSet = false with --no-project-trust, want true")
-	}
+// TestEmbeddedConfigHeadlessIsFalse asserts the mecatui embedded server is
+// INTERACTIVE (Headless false): the posture ladder grants ingestion at auto/yolo
+// (the dev default ingests the operator's own CLAUDE.md). The former suppressor
+// was REMOVED (issue #359 redesign); the ingestion axis is now a
+// positive grant raised by applyPosture in app.Build, not a cmd field.
+func TestEmbeddedConfigHeadlessIsFalse(t *testing.T) {
 	off := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
-	if off.NoProjectIngest {
-		t.Error("embeddedConfig.NoProjectIngest = true with flag off, want false")
-	}
-	if off.NoProjectTrustFlagSet {
-		t.Error("embeddedConfig.NoProjectTrustFlagSet = true with flag off, want false")
+	if off.Headless {
+		t.Error("embeddedConfig.Headless = true, want false (mecatui is interactive; the ladder grants ingestion at auto/yolo)")
 	}
 }
 

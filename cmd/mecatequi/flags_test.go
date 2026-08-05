@@ -184,6 +184,42 @@ func TestAppConfigMapping(t *testing.T) {
 		if !cfg.Interactive {
 			t.Error("--headless=false must map to Interactive=true")
 		}
+		if cfg.Headless {
+			t.Error("--headless=false must map to Headless=false (the explicit deployment identity)")
+		}
+	})
+
+	t.Run("headless default maps Headless=true", func(t *testing.T) {
+		f, err := parseFlags([]string{"--prompt", "x"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		cfg := appConfig(f, newDiagnostics())
+		if !cfg.Headless {
+			t.Error("default headless must map to Headless=true (the explicit deployment identity)")
+		}
+	})
+
+	t.Run("--trust-project maps to TrustProject", func(t *testing.T) {
+		f, err := parseFlags([]string{"--prompt", "x", "--trust-project"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		if !f.trustProject {
+			t.Error("--trust-project must set f.trustProject")
+		}
+		cfg := appConfig(f, newDiagnostics())
+		if !cfg.TrustProject {
+			t.Error("--trust-project must map to app.Config.TrustProject=true (the ingestion opt-in on a headless root)")
+		}
+		// Default OFF (the fail-safe): a CI run over an untrusted repo ingests nothing.
+		fDef, err := parseFlags([]string{"--prompt", "x"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		if appConfig(fDef, newDiagnostics()).TrustProject {
+			t.Error("--trust-project must default OFF (the fail-safe default)")
+		}
 	})
 
 	t.Run("--guardrails=off sets GuardrailsDisabled", func(t *testing.T) {

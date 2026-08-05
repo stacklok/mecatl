@@ -300,10 +300,10 @@ func selectSoulSource(cfg Config, io baselineIO, gate soulGate) (prompt.SoulSour
 	}
 
 	// A project soul EXISTS. It is ingested only when the project tier is admitted —
-	// trusted AND not pin-suppressed (ingestProjectTier). A not-ingested project soul
-	// is dropped silently-but-LOGGED (Warn), never an error.
-	if !ingestProjectTier(cfg) {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "soul: a project-sourced soul was discovered but is NOT INGESTED (untrusted workspace or --no-project-trust); dropping it (no fragment). Pass --trust-project and do not pass --no-project-trust to honour a soul discovered in this repo (only for a repo you trust)",
+	// trusted AND the ingestion grant (projectIngestionAdmitted). A not-admitted
+	// project soul is dropped silently-but-LOGGED (Warn), never an error.
+	if !projectIngestionAdmitted(cfg) {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "soul: a project-sourced soul was discovered but is NOT INGESTED (untrusted workspace or project ingestion not granted); dropping it (no fragment). Pass --trust-project (on a headless root) or run --posture auto on an interactive root to honour a soul discovered in this repo (only for a repo you trust)",
 			"path", projectPath)
 		return nil, soulMeta{Provenance: soulProject, Trusted: false, SHA256: projRes.SHA256, Size: projRes.Size}
 	}

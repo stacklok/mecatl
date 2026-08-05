@@ -101,10 +101,9 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"llm-stream-idle-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
 
 	// ── Permissions (embedded-only) ───────────────────────────────────────
-	"posture":          {group: groupPermissions, common: true, local: true, connect: false},
-	"yolo":             {group: groupPermissions, common: true, local: true, connect: false},
-	"trust-project":    {group: groupPermissions, common: true, local: true, connect: false},
-	"no-project-trust": {group: groupPermissions, common: false, local: true, connect: false},
+	"posture":       {group: groupPermissions, common: true, local: true, connect: false},
+	"yolo":          {group: groupPermissions, common: true, local: true, connect: false},
+	"trust-project": {group: groupPermissions, common: true, local: true, connect: false},
 
 	// ── Storage (embedded-only) ───────────────────────────────────────────
 	"store-dir":  {group: groupStorage, common: true, local: true, connect: false},

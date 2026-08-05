@@ -159,15 +159,6 @@ type Resolver struct {
 	// (first-non-empty keeps CLI).
 	operatorPlanModeAutoApprove bool
 
-	// operatorNoProjectTrust is the OPERATOR-TIER no-project-trust: bool (issue
-	// #359), read ONCE at construction from the user-global + CLI tiers ONLY. A
-	// project-tier file's no-project-trust: key is deliberately IGNORED (a project
-	// repo suppressing its own project-tier ingestion is an operator deployment
-	// decision, never the repo's call — loadProjectRules WARNs when it sees one).
-	// false when no operator-tier file carried the key. CLI (explicit files) out-ranks
-	// user-global (first-non-empty keeps CLI).
-	operatorNoProjectTrust bool
-
 	// operatorModels is the OPERATOR-TIER models: subtree (ADR 0030), read ONCE at
 	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
 	// captureModels from loadUserRules; there is no second capture path). It carries
@@ -228,19 +219,6 @@ func (r *Resolver) OperatorPlanModeAutoApprove() bool {
 		return false
 	}
 	return r.operatorPlanModeAutoApprove
-}
-
-// OperatorNoProjectTrust returns the operator-tier no-project-trust: bool
-// (user-global + CLI only), or false when none was configured (issue #359). It is
-// the SOLE accessor the composition layer uses to read the flag from config — by
-// construction it never returns a project-tier value (a project no-project-trust:
-// is ignored with a WARN in loadProjectRules). nil-safe. Mirrors
-// OperatorPlanModeAutoApprove().
-func (r *Resolver) OperatorNoProjectTrust() bool {
-	if r == nil {
-		return false
-	}
-	return r.operatorNoProjectTrust
 }
 
 // OperatorModelSlots returns the operator-tier models: subtree (user-global + CLI
@@ -489,16 +467,6 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"plan-mode-auto-approve: IGNORING a project-tier plan-mode-auto-approve: key (operator-tier only — a project repo cannot enable autonomous plan approval; set plan-mode-auto-approve in your user-global settings.yaml or via --plan-mode-auto-approve)",
 				"file", src.path, "root", ws.Root())
 		}
-		// NoProjectTrust is OPERATOR-TIER ONLY (issue #359), for consistency with
-		// posture/guardrails: a project file's no-project-trust: key is IGNORED with a
-		// loud WARN. Suppressing the repo's own project-tier ingestion is an operator
-		// deployment decision, never the repo's call (the same operator-tier-only
-		// discipline as guardrails/posture).
-		if cfg.NoProjectTrust {
-			r.diag.Log(context.Background(), port.LevelWarn,
-				"no-project-trust: IGNORING a project-tier no-project-trust: key (operator-tier only — a project repo cannot suppress its own project-tier ingestion; set no-project-trust in your user-global settings.yaml or via --no-project-trust)",
-				"file", src.path, "root", ws.Root())
-		}
 		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST (ADR 0030 Phase 4),
 		// otherwise IGNORED. captureProjectModels applies the full gate (allowlist key
 		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
@@ -681,8 +649,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureReasoningEffort(cfg.ReasoningEffort)
 		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
-		// Operator-tier no-project-trust (issue #359): same discipline as posture.
-		r.captureNoProjectTrust(cfg.NoProjectTrust)
 		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
 		r.captureModels(cfg.Models)
 	}
@@ -710,8 +676,6 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureReasoningEffort(cfg.ReasoningEffort)
 				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
-				// User-global no-project-trust (issue #359): same discipline as posture.
-				r.captureNoProjectTrust(cfg.NoProjectTrust)
 				// User-global models: captured only if no higher CLI file already did.
 				r.captureModels(cfg.Models)
 			}
@@ -790,18 +754,6 @@ func (r *Resolver) capturePlanModeAutoApprove(p bool) {
 		return
 	}
 	r.operatorPlanModeAutoApprove = p
-}
-
-// captureNoProjectTrust records the FIRST operator-tier no-project-trust: bool seen
-// during construction (CLI files are parsed before user-global, so CLI wins on
-// first-non-zero). It is called only from loadUserRules — the operator (user-global
-// + CLI) tiers — never from loadProjectRules, so a project file can never supply it
-// (operator-tier only, for consistency with posture/guardrails — issue #359).
-func (r *Resolver) captureNoProjectTrust(p bool) {
-	if r.operatorNoProjectTrust {
-		return
-	}
-	r.operatorNoProjectTrust = p
 }
 
 // captureModels records the FIRST operator-tier models: block seen during

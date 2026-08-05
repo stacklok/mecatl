@@ -14,17 +14,30 @@ import (
 // switches into ONE ordered tier (strict < trusted < auto < yolo). Like trust.go
 // it is a pure composition concern — engine/governance stays session-free and
 // posture-unaware; posture only COMPOSES the derived knobs (the allow-all rule,
-// the evaluator's loose-substitution option, the project-trust bool) and every
-// decision still goes THROUGH governance.Evaluate, never a bypass.
+// the evaluator's loose-substitution option, the project-trust bool, the two
+// ingestion/shell grants) and every decision still goes THROUGH
+// governance.Evaluate, never a bypass.
 //
 // The ladder (owner-approved), and the knobs each tier derives in applyPosture:
 //
-//	posture | AllowAllTools | main loose-subst | child loose-subst    | TrustProject floor
-//	--------|---------------|------------------|----------------------|-------------------
-//	strict  | false         | false            | false                | (operator's own)
-//	trusted | false         | false            | false                | true
-//	auto    | true          | true             | false (child def ON) | true
-//	yolo    | true          | true             | TRUE  (child def OFF)| true
+//	posture | AllowAllTools | main loose-subst | child loose-subst    | TrustProject floor | ingestion grant | shell grant
+//	--------|---------------|------------------|----------------------|--------------------|-----------------|------------
+//	strict  | false         | false            | false                | (operator's own)   | (flag only)     | false
+//	trusted | false         | false            | false                | true               | (flag only)     | false
+//	auto    | true          | true             | false (child def ON) | true               | interactive-only| true
+//	yolo    | true          | true             | TRUE  (child def OFF) | true               | interactive-only| true
+//
+// The ingestion grant (ProjectIngestionGranted) and the shell grant
+// (SubagentShellGranted) are the two NEW axes (issue #359 redesign). The shell
+// grant is posture >= auto on BOTH roots. The ingestion grant is RAISED by an
+// explicit --trust-project on BOTH roots, AND by the interactive ladder at
+// auto/yolo (a HEADLESS root does NOT grant ingestion via the ladder — the
+// fail-safe default: a dark factory over a freshly-cloned untrusted repo ingests
+// NONE of the repo's steering unless the operator explicitly passes
+// --trust-project). applyPosture reads the PRE-raise cfg.TrustProject for the
+// ingestion grant line (so an explicit --trust-project opts in on both roots)
+// and only RAISES the grants (never lowers). The shell grant decouples the shell
+// from workspace trust: `trusted` no longer grants the shell.
 //
 // "child loose-subst" is the NEW Config.LooseChildSubstitution: under yolo a
 // child/subagent/branch engine ALSO loosens the built-in substitution Ask floor
@@ -197,12 +210,31 @@ func resolvePosture(cfg Config, ceiling Posture) Posture {
 
 // applyPosture maps the resolved tier to the derived composition knobs per the
 // ladder table: AllowAllTools (the yolo allow-all rule, main + children), the NEW
-// LooseChildSubstitution (child substitution loosening, yolo only), and the
-// project-trust floor (raised for trusted/auto/yolo). It MUST run BEFORE
-// resolveTrust in Build so the trust fold + permResolver pick up the raised
-// TrustProject. It NEVER lowers an already-set knob (an operator who passed
-// --trust-project under PostureStrict keeps TrustProject); it only raises.
+// LooseChildSubstitution (child substitution loosening, yolo only), the
+// project-trust floor (raised for trusted/auto/yolo), and the two issue-#359
+// grants — ProjectIngestionGranted (an explicit --trust-project opts in on BOTH
+// roots, and the interactive ladder grants it at auto/yolo; a HEADLESS root does
+// NOT grant it via the ladder) and SubagentShellGranted (posture >= auto on BOTH
+// roots). The grant lines read the PRE-raise cfg.TrustProject (the explicit
+// --trust-project flag) so the opt-in is root-agnostic; the TrustProject raise
+// then feeds resolveTrust + the permResolver. It MUST run BEFORE resolveTrust in
+// Build so the trust fold + permResolver pick up the raised TrustProject. It
+// NEVER lowers an already-set knob (an operator who passed --trust-project under
+// PostureStrict keeps TrustProject; a pre-set grant survives); it only raises.
 func applyPosture(cfg Config) Config {
+	// Issue-#359 grants. Read the PRE-raise cfg.TrustProject (the explicit
+	// --trust-project flag) so an explicit opt-in grants ingestion on BOTH roots,
+	// then apply the interactive-ladder grant (auto/yolo), then the shell grant
+	// (posture >= auto, both roots). Each line only RAISES.
+	if cfg.TrustProject {
+		cfg.ProjectIngestionGranted = true
+	}
+	if !cfg.Headless && cfg.Posture >= PostureAuto {
+		cfg.ProjectIngestionGranted = true
+	}
+	if cfg.Posture >= PostureAuto {
+		cfg.SubagentShellGranted = true
+	}
 	switch cfg.Posture {
 	case PostureYolo:
 		cfg.AllowAllTools = true
@@ -262,11 +294,17 @@ func ResolveAuthoritativePosture(cfg Config) Posture {
 // narratePosture logs the resolved posture as a build-once INFO composition fact
 // (mirroring narrateTrust / the guardrails narration). It is called ONLY from Build
 // — never the per-engine deps builders — per the no-per-derivation-duplication rule.
-func narratePosture(diag port.Diagnostics, p Posture) {
+// ingestionGranted/shellGranted are the two issue-#359 grants (raised by
+// applyPosture); shellGranted is derivable from posture alone, but
+// ingestionGranted depends on Headless + the explicit --trust-project flag, so it
+// is threaded in (replacing the old trust_project_floor column, which collapsed the
+// two axes into one).
+func narratePosture(diag port.Diagnostics, p Posture, ingestionGranted, shellGranted bool) {
 	diag.Log(context.Background(), port.LevelInfo, "operator posture",
 		"posture", p.String(),
 		"allow_all", p >= PostureAuto,
 		"main_loose_substitution", p >= PostureAuto,
 		"child_loose_substitution", p == PostureYolo,
-		"trust_project_floor", p >= PostureTrusted)
+		"ingestion_granted", ingestionGranted,
+		"shell_granted", shellGranted)
 }

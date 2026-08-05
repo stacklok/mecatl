@@ -122,14 +122,16 @@ with `resolvePosture`/`applyPosture`/`foldOperatorPosture`/`narratePosture`). `-
 `guardrails:`). `applyPosture` derives `AllowAllTools` + the main/child substitution loosening +
 the `TrustProject` floor, BEFORE `resolveTrust` in `Build`.
 
-**Project-trust suppression pin (`--no-project-trust`, `Config.NoProjectIngest`).**
-The single-source helper `ingestProjectTier(cfg) = cfg.TrustProject && !cfg.NoProjectIngest`
-(`internal/app/no_project_trust.go`) gates every project-tier ingestion site — AGENTS.md/CLAUDE.md
+**Project-trust ingestion gate (`Config.ProjectIngestionGranted`, issue #359 redesign).**
+The single-source helper `projectIngestionAdmitted(cfg) = cfg.TrustProject && cfg.ProjectIngestionGranted`
+(`internal/app/project_ingestion.go`) gates every project-tier ingestion site — AGENTS.md/CLAUDE.md
 (the highest-value injection point), project rules, agent defs, skills, soul, slash commands, and
-the git snapshot. The pin is a SEPARATE dimension from `TrustProject` (which also gates the
-read-only subagent shell — lowering it kills the child shell, the pin does not). `applyPosture`
-never sets `NoProjectIngest` (it only sets `TrustProject`), so `auto`/`yolo` cannot re-raise
-ingestion; the pin always wins. Operator-tier only (CLI out-ranks the operator YAML). No engine
+the git snapshot. Ingestion is a SEPARATE axis from the read-only subagent shell
+(`Config.SubagentShellGranted`, posture >= auto on both roots — decoupled from `TrustProject` in
+the redesign). `applyPosture` raises the ingestion grant from an explicit `--trust-project` (both
+roots) and the interactive ladder at auto/yolo; a HEADLESS root does NOT grant it via the ladder
+(the fail-safe default), so a dark factory over a freshly-cloned untrusted repo ingests NONE of the
+repo's steering unless the operator explicitly passes `--trust-project`. No engine
 API change — composition-only. See ADR 0092 and `docs/usage/workspace-trust.md`.
 
 `AllowAllTools` is still implemented as a **rule** (a single `ScopeCLI` allow-all from the shared

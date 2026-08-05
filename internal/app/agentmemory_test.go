@@ -230,8 +230,8 @@ func TestProjectTierMemoryTrustGated(t *testing.T) {
 		t.Fatalf("untrusted project-tier memory must be WITHHELD, got ok=%v head=%q", ok, head)
 	}
 
-	// Trusted: resolved.
-	head, ok := resolveAgentMemoryHead(Config{Workspace: ws, TrustProject: true}, def)
+	// Trusted + ingestion granted: resolved.
+	head, ok := resolveAgentMemoryHead(Config{Workspace: ws, TrustProject: true, ProjectIngestionGranted: true}, def)
 	if !ok || !strings.Contains(head, sentinel) {
 		t.Fatalf("trusted project-tier memory should resolve with the sentinel, got ok=%v head=%q", ok, head)
 	}
@@ -348,7 +348,7 @@ func TestDefMemoryInjectedIntoStablePrefix(t *testing.T) {
 		ws, def := mkWorkspaceDef(t)
 		obs := &observedReq{}
 		prov := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(obs.observer())}, mockllm.TextTurn("done"))
-		cfg := Config{Model: "m", Workspace: ws, TrustProject: true}
+		cfg := Config{Model: "m", Workspace: ws, TrustProject: true, ProjectIngestionGranted: true}
 		eng := buildSubagentEngineForMemoryTest(t, cfg, prov, def)
 		drainEngine(t, eng)
 

@@ -83,11 +83,12 @@ func TestUntrustedWorkspaceWithholdsProjectAgentsKeepsUser(t *testing.T) {
 		t.Error("untrusted workspace dropped the USER-tier agent def (over-gating; must stay active)")
 	}
 
-	// Trusted: both admitted.
+	// Trusted + ingestion granted: both admitted.
 	regTrusted := resolveAgentRegistry(context.Background(), Config{
-		Workspace:          ws,
-		AgentsConventional: true,
-		TrustProject:       true,
+		Workspace:               ws,
+		AgentsConventional:      true,
+		TrustProject:            true,
+		ProjectIngestionGranted: true,
 	})
 	if _, ok := regTrusted.Get("evil"); !ok {
 		t.Error("trusted workspace must admit the project-tier agent def")
@@ -121,9 +122,10 @@ func TestUntrustedWorkspaceWithholdsProjectSkillsKeepsUser(t *testing.T) {
 	}
 
 	discTrusted := resolveSkillsForTest(t, Config{
-		Workspace:          ws,
-		SkillsConventional: true,
-		TrustProject:       true,
+		Workspace:               ws,
+		SkillsConventional:      true,
+		TrustProject:            true,
+		ProjectIngestionGranted: true,
 	})
 	if !skillsContain(discTrusted, "repo-skill") {
 		t.Error("trusted workspace must admit the project-tier skill")
@@ -161,8 +163,8 @@ func TestUntrustedWorkspaceWithholdsProjectCommands(t *testing.T) {
 		t.Error("untrusted workspace expanded a PROJECT-tier slash command (security gap)")
 	}
 
-	// Trusted + EnableCommands: command expands.
-	if out, ok := expand(Config{Workspace: ws, EnableCommands: true, TrustProject: true}); !ok || out != "Hello from the repo command" {
+	// Trusted + ingestion granted + EnableCommands: command expands.
+	if out, ok := expand(Config{Workspace: ws, EnableCommands: true, TrustProject: true, ProjectIngestionGranted: true}); !ok || out != "Hello from the repo command" {
 		t.Errorf("trusted workspace must expand the project command; got %q ok=%v", out, ok)
 	}
 
@@ -288,11 +290,12 @@ func TestResolveSkillIndexUntrustedDropsProjectSkill(t *testing.T) {
 		t.Error("untrusted: the USER-tier skill must stay in the preload index (over-gating)")
 	}
 
-	// Trusted: both present.
+	// Trusted + ingestion granted: both present.
 	idxTrusted := resolveSkillIndexForTest(t, Config{
-		Workspace:          ws,
-		SkillsConventional: true,
-		TrustProject:       true,
+		Workspace:               ws,
+		SkillsConventional:      true,
+		TrustProject:            true,
+		ProjectIngestionGranted: true,
 	})
 	if _, ok := idxTrusted["proj"]; !ok {
 		t.Error("trusted: the project-tier skill must be available for preload")
@@ -325,7 +328,7 @@ func TestActiveSkillDirsUntrustedExcludesProjectTier(t *testing.T) {
 		t.Errorf("untrusted: project-tier skill dirs must be excluded; got %v", untrusted)
 	}
 
-	trusted := activeSkillDirs(Config{Workspace: ws, SkillsConventional: true, TrustProject: true})
+	trusted := activeSkillDirs(Config{Workspace: ws, SkillsConventional: true, TrustProject: true, ProjectIngestionGranted: true})
 	if !dirsListContains(trusted, projMecatl) || !dirsListContains(trusted, projClaude) {
 		t.Errorf("trusted: project-tier skill dirs (%q, %q) must be present; got %v", projMecatl, projClaude, trusted)
 	}

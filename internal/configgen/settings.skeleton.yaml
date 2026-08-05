@@ -115,17 +115,6 @@
 #| approval capability).
 # plan-mode-auto-approve: true
 
-#| === no-project-trust === (tier: operator)
-#| OPERATOR-TIER no-project-trust flag (issue #359): when true, ingestion of the repo's
-#| project-tier steering (AGENTS.md/CLAUDE.md, .mecatl/.claude rules, agents, skills,
-#| soul, slash commands, ALLOW rules, git snapshot) is suppressed while the
-#| workspace-trust gate (the read-only subagent shell) stays on the effective
-#| --trust-project. DEFAULT OFF. A project-tier no-project-trust: is IGNORED with a WARN
-#| (a project cannot suppress its own project-tier ingestion — that is an operator
-#| deployment decision). Intended for scheduler runs over a freshly-cloned untrusted
-#| repo where the scheduler supplies its own instructions.
-# no-project-trust: true
-
 #| === models === (tier: operator + project)
 #| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the
 #| semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all

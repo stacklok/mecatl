@@ -80,43 +80,111 @@ func TestPostureConflictWarnFires(t *testing.T) {
 
 // TestPostureResolutionTable is the STRUCTURAL anti-drift guard for the owner-approved
 // ladder: it pins each tier's derived (AllowAllTools, main-loose, LooseChildSubstitution,
-// TrustProject-floor) tuple EXACTLY against the table. applyPosture is what composition
-// runs before resolveTrust, so a knob silently rewired for a tier (e.g. loosening
-// children at auto) flips a cell and fails here. The "main loose-subst" column is read
-// from mainEvaluatorOptions' gate (cfg.AllowAllTools drives it) and asserted indirectly
-// via the AllowAllTools cell, which is the same condition; the dedicated
-// substitution-effect proof lives in TestChildSubstitutionLooseningIsTierDependent.
+// TrustProject-floor, ProjectIngestionGranted, SubagentShellGranted) tuple EXACTLY
+// against the truth tables, split by the deployment identity (Headless). applyPosture is
+// what composition runs before resolveTrust, so a knob silently rewired for a tier (e.g.
+// loosening children at auto) flips a cell and fails here. The "main loose-subst"
+// column is read from mainEvaluatorOptions' gate (cfg.AllowAllTools drives it) and
+// asserted indirectly via the AllowAllTools cell, which is the same condition; the
+// dedicated substitution-effect proof lives in TestChildSubstitutionLooseningIsTierDependent.
+//
+// T = TrustProject (explicit --trust-project flag input), G = ProjectIngestionGranted,
+// S = SubagentShellGranted. The TrustProject column is the ladder raise (trusted/auto/
+// yolo raise the floor the resolveTrust fold then collapses). The ingestion grant
+// depends on Headless + the explicit flag; the shell grant is posture >= auto on BOTH
+// roots. See internal/app/posture.go for the full tables.
 func TestPostureResolutionTable(t *testing.T) {
-	cases := []struct {
-		posture    Posture
-		allowAll   bool
-		looseChild bool
-		trustFloor bool
-	}{
-		{PostureStrict, false, false, false},
-		{PostureTrusted, false, false, true},
-		{PostureAuto, true, false, true},
-		{PostureYolo, true, true, true},
-	}
-	for _, tc := range cases {
-		// TrustProject starts FALSE so the "floor" column is observed as a raise.
-		got := applyPosture(Config{Posture: tc.posture, TrustProject: false})
-		if got.AllowAllTools != tc.allowAll {
-			t.Errorf("%s AllowAllTools = %v, want %v", tc.posture, got.AllowAllTools, tc.allowAll)
+	// Headless: G = T (explicit flag) only; S = posture >= auto.
+	t.Run("headless", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			posture     Posture
+			trustFlag   bool // explicit --trust-project flag (the pre-raise TrustProject)
+			allowAll    bool
+			looseChild  bool
+			trustFloor  bool
+			ingestGrant bool
+			shellGrant  bool
+		}{
+			{"strict+no-trust", PostureStrict, false, false, false, false, false, false},
+			{"strict+trust", PostureStrict, true, false, false, true, true, false},
+			{"trusted+no-trust", PostureTrusted, false, false, false, true, false, false},
+			{"trusted+trust", PostureTrusted, true, false, false, true, true, false},
+			{"auto+no-trust", PostureAuto, false, true, false, true, false, true}, // fail-safe default
+			{"auto+trust", PostureAuto, true, true, false, true, true, true},
+			{"yolo+no-trust", PostureYolo, false, true, true, true, false, true},
+			{"yolo+trust", PostureYolo, true, true, true, true, true, true},
 		}
-		if got.LooseChildSubstitution != tc.looseChild {
-			t.Errorf("%s LooseChildSubstitution = %v, want %v", tc.posture, got.LooseChildSubstitution, tc.looseChild)
+		for _, tc := range cases {
+			got := applyPosture(Config{Headless: true, Posture: tc.posture, TrustProject: tc.trustFlag})
+			if got.AllowAllTools != tc.allowAll {
+				t.Errorf("%s: AllowAllTools = %v, want %v", tc.name, got.AllowAllTools, tc.allowAll)
+			}
+			if got.LooseChildSubstitution != tc.looseChild {
+				t.Errorf("%s: LooseChildSubstitution = %v, want %v", tc.name, got.LooseChildSubstitution, tc.looseChild)
+			}
+			if got.TrustProject != tc.trustFloor {
+				t.Errorf("%s: TrustProject floor = %v, want %v", tc.name, got.TrustProject, tc.trustFloor)
+			}
+			if got.ProjectIngestionGranted != tc.ingestGrant {
+				t.Errorf("%s: ProjectIngestionGranted = %v, want %v", tc.name, got.ProjectIngestionGranted, tc.ingestGrant)
+			}
+			if got.SubagentShellGranted != tc.shellGrant {
+				t.Errorf("%s: SubagentShellGranted = %v, want %v", tc.name, got.SubagentShellGranted, tc.shellGrant)
+			}
+			// The MAIN substitution loosening is exactly the AllowAllTools condition
+			// (mainEvaluatorOptions gates WithLooseSubstitution on cfg.AllowAllTools).
+			mainLoose := len(mainEvaluatorOptions(got)) > 1 // audience pin + maybe loose-subst
+			if mainLoose != tc.allowAll {
+				t.Errorf("%s: main loose-substitution = %v, want %v", tc.name, mainLoose, tc.allowAll)
+			}
 		}
-		if got.TrustProject != tc.trustFloor {
-			t.Errorf("%s TrustProject floor = %v, want %v", tc.posture, got.TrustProject, tc.trustFloor)
+	})
+
+	// Interactive: G = T OR posture >= auto; S = posture >= auto.
+	t.Run("interactive", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			posture     Posture
+			trustFlag   bool
+			allowAll    bool
+			looseChild  bool
+			trustFloor  bool
+			ingestGrant bool
+			shellGrant  bool
+		}{
+			{"strict+no-trust", PostureStrict, false, false, false, false, false, false},
+			{"strict+trust", PostureStrict, true, false, false, true, true, false},
+			{"trusted+no-trust", PostureTrusted, false, false, false, true, false, false},
+			{"trusted+trust", PostureTrusted, true, false, false, true, true, false},
+			{"auto+no-trust", PostureAuto, false, true, false, true, true, true}, // dev default
+			{"auto+trust", PostureAuto, true, true, false, true, true, true},
+			{"yolo+no-trust", PostureYolo, false, true, true, true, true, true},
+			{"yolo+trust", PostureYolo, true, true, true, true, true, true},
 		}
-		// The MAIN substitution loosening is exactly the AllowAllTools condition
-		// (mainEvaluatorOptions gates WithLooseSubstitution on cfg.AllowAllTools).
-		mainLoose := len(mainEvaluatorOptions(got)) > 1 // audience pin + maybe loose-subst
-		if mainLoose != tc.allowAll {
-			t.Errorf("%s main loose-substitution = %v, want %v", tc.posture, mainLoose, tc.allowAll)
+		for _, tc := range cases {
+			got := applyPosture(Config{Headless: false, Posture: tc.posture, TrustProject: tc.trustFlag})
+			if got.AllowAllTools != tc.allowAll {
+				t.Errorf("%s: AllowAllTools = %v, want %v", tc.name, got.AllowAllTools, tc.allowAll)
+			}
+			if got.LooseChildSubstitution != tc.looseChild {
+				t.Errorf("%s: LooseChildSubstitution = %v, want %v", tc.name, got.LooseChildSubstitution, tc.looseChild)
+			}
+			if got.TrustProject != tc.trustFloor {
+				t.Errorf("%s: TrustProject floor = %v, want %v", tc.name, got.TrustProject, tc.trustFloor)
+			}
+			if got.ProjectIngestionGranted != tc.ingestGrant {
+				t.Errorf("%s: ProjectIngestionGranted = %v, want %v", tc.name, got.ProjectIngestionGranted, tc.ingestGrant)
+			}
+			if got.SubagentShellGranted != tc.shellGrant {
+				t.Errorf("%s: SubagentShellGranted = %v, want %v", tc.name, got.SubagentShellGranted, tc.shellGrant)
+			}
+			mainLoose := len(mainEvaluatorOptions(got)) > 1
+			if mainLoose != tc.allowAll {
+				t.Errorf("%s: main loose-substitution = %v, want %v", tc.name, mainLoose, tc.allowAll)
+			}
 		}
-	}
+	})
 }
 
 // TestPostureApplyNeverLowersTrust pins that applyPosture only RAISES TrustProject: an

@@ -71,7 +71,7 @@ func TestBuildWorktreeListerParsesPorcelain(t *testing.T) {
 	wtB := filepath.Join(base, "..", "wtB")
 	wtRunGit(t, base, "worktree", "add", "-b", "feature", wtB)
 
-	cfg := Config{Workspace: base, Shell: "/bin/sh", TrustProject: true, Diagnostics: port.NopDiagnostics{}}
+	cfg := Config{Workspace: base, Shell: "/bin/sh", TrustProject: true, SubagentShellGranted: true, Diagnostics: port.NopDiagnostics{}}
 	lister := buildWorktreeLister(cfg)
 	if lister == nil {
 		t.Fatal("buildWorktreeLister returned nil for a trusted workspace with a shell")
@@ -123,12 +123,13 @@ func TestBuildWorktreeListerNilForEmptyWorkspace(t *testing.T) {
 	}
 }
 
-// TestBuildWorktreeListerNilWhenUntrusted: an untrusted workspace gets a nil
-// lister — no git ever runs against an untrusted repo (the gitSnapshot discipline).
+// TestBuildWorktreeListerNilWhenUntrusted: a workspace without the subagent-shell
+// grant gets a nil lister — no git ever runs (the gitSnapshot discipline, issue
+// #359 redesign: the shell gate is SubagentShellGranted).
 func TestBuildWorktreeListerNilWhenUntrusted(t *testing.T) {
-	cfg := Config{Workspace: t.TempDir(), Shell: "/bin/sh", TrustProject: false, Diagnostics: port.NopDiagnostics{}}
+	cfg := Config{Workspace: t.TempDir(), Shell: "/bin/sh", SubagentShellGranted: false, Diagnostics: port.NopDiagnostics{}}
 	if l := buildWorktreeLister(cfg); l != nil {
-		t.Errorf("buildWorktreeLister(untrusted) = %v, want nil", l)
+		t.Errorf("buildWorktreeLister(no shell grant) = %v, want nil", l)
 	}
 }
 
@@ -136,7 +137,7 @@ func TestBuildWorktreeListerNilWhenUntrusted(t *testing.T) {
 // NOT an error — discovery must never block the overlay.
 func TestBuildWorktreeListerFailSoftOnNonRepo(t *testing.T) {
 	nonRepo := t.TempDir()
-	cfg := Config{Workspace: nonRepo, Shell: "/bin/sh", TrustProject: true, Diagnostics: port.NopDiagnostics{}}
+	cfg := Config{Workspace: nonRepo, Shell: "/bin/sh", TrustProject: true, SubagentShellGranted: true, Diagnostics: port.NopDiagnostics{}}
 	lister := buildWorktreeLister(cfg)
 	if lister == nil {
 		t.Fatal("buildWorktreeLister returned nil for a trusted non-repo workspace")

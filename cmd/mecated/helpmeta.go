@@ -154,7 +154,6 @@ var flagMetaByFlag = map[string]flagMeta{
 	"posture":                   {group: groupPermissions, common: true, acp: acpInclude},
 	"yolo":                      {group: groupPermissions, common: true, acp: acpInclude},
 	"trust-project":             {group: groupPermissions, common: true, acp: acpInclude},
-	"no-project-trust":          {group: groupPermissions, common: false, acp: acpInclude},
 	"permissions-conventional":  {group: groupPermissions, common: true, acp: acpInclude},
 	"import-claude-permissions": {group: groupPermissions, common: false, acp: acpInclude},
 	"permission-config":         {group: groupPermissions, common: false, acp: acpInclude},

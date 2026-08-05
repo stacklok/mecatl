@@ -668,24 +668,36 @@ type Config struct {
 	TrustProject            bool
 	PermissionConfigs       []string
 
-	// NoProjectIngest suppresses ONLY project-tier INGESTION (permconfig ALLOW rules,
-	// project soul, agent defs, skills, rules, slash commands, the git snapshot, and
-	// AGENTS.md/CLAUDE.md) — it does NOT touch cfg.TrustProject, so the read-only
-	// subagent-shell trust gate (build.go ~4460) stays on the real trust decision.
-	// This is the pin that lets a scheduler run over a freshly-cloned untrusted repo
-	// (which passes --trust-project to keep the child shell) WITHOUT admitting the
-	// repo's own steering, because the scheduler supplies its own --instructions.
-	// Operator-tier only: set via --no-project-trust or the operator-global
-	// settings.yaml no-project-trust: key (folded by foldOperatorNoProjectTrust); a
-	// project-tier key is WARN-ignored by permconfig. Default OFF = byte-identical to
-	// today. applyPosture/resolveTrust NEVER read or set it, so no posture tier can
-	// re-raise ingestion once the pin is set.
-	NoProjectIngest bool
-	// NoProjectTrustFlagSet records whether the operator passed an explicit
-	// --no-project-trust flag. When true, foldOperatorNoProjectTrust leaves the
-	// operator-YAML no-project-trust: value alone (CLI out-ranks YAML). Set by the cmd
-	// mains alongside NoProjectIngest. Mirrors PostureFlagSet.
-	NoProjectTrustFlagSet bool
+	// ProjectIngestionGranted is the INGESTION-axis positive grant (issue #359
+	// redesign): one of TWO independent grants that gate project-tier ingestion
+	// (permconfig ALLOW rules, project soul, agent defs, skills, rules, slash
+	// commands, the git snapshot, and AGENTS.md/CLAUDE.md). The single admission
+	// predicate is projectIngestionAdmitted(cfg) = cfg.TrustProject &&
+	// cfg.ProjectIngestionGranted (see project_ingestion.go). TrustProject is the
+	// workspace-trust fold (flag/declared/remembered); ProjectIngestionGranted is
+	// the root-aware opt-in raised by applyPosture: an explicit --trust-project
+	// opts into ingestion on BOTH roots, and the interactive ladder grants it at
+	// auto/yolo; on a HEADLESS root the ladder does NOT grant it (the fail-safe
+	// default — a dark factory over a freshly-cloned untrusted repo ingests NONE
+	// of the repo's steering unless the operator explicitly passes --trust-project).
+	// applyPosture only RAISES this (never lowers); it is not set directly.
+	ProjectIngestionGranted bool
+	// SubagentShellGranted is the SUBAGENT-SHELL-axis grant (issue #359 redesign):
+	// the read-only subagent/member shell is enabled when posture >= auto on BOTH
+	// roots (the tiers that already give the main agent an allow-all shell). The
+	// four shell consumers (buildSandboxedCommandRunner, subagentShellUntrustedReason,
+	// applyUntrustedMemberShellNote, buildWorktreeLister) read THIS, not raw
+	// cfg.TrustProject — trust no longer carries the shell. trusted does NOT grant
+	// the shell. Derived by applyPosture (posture >= auto); only raises.
+	SubagentShellGranted bool
+	// Headless is the explicit deployment identity (issue #359 redesign): a root
+	// declares NO human approver is attached. It is set by each cmd root — NOT
+	// inferred from Interactive (Interactive stays the main-engine ask-surface
+	// bool; Headless is the ingestion-grant axis input). applyPosture reads it to
+	// decide whether the ladder grants ingestion (interactive auto/yolo grant it;
+	// headless does not). mecated defaults false, mecatequi/mecak8s default true,
+	// mecatui defaults false.
+	Headless bool
 
 	// AllowAllTools, when set, injects a single ScopeCLI allow-all rule into BOTH
 	// the MAIN engine's static ruleset (mainRules, AudienceMain) AND the
@@ -1090,7 +1102,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorPosture(cfg)
 	cfg = foldOperatorReasoningEffort(cfg)
 	cfg = foldOperatorPlanModeAutoApprove(cfg)
-	cfg = foldOperatorNoProjectTrust(cfg)
 	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
 	cfg = applyPosture(cfg)
 	// AUTHORITATIVE root/no-sandbox refusal: applied HERE, after the full posture fold,
@@ -1102,7 +1113,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err := PostureRefusalReason(cfg.Posture, cfg.Privileged); err != nil {
 		return nil, err
 	}
-	narratePosture(cfg.diag(), cfg.Posture)
+	narratePosture(cfg.diag(), cfg.Posture, cfg.ProjectIngestionGranted, cfg.SubagentShellGranted)
 	cfg.permResolver = nil // rebuilt below with the posture-raised TrustProject
 
 	trust := resolveTrust(cfg)
@@ -1150,12 +1161,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	// Start-of-session git snapshot, computed ONCE here (FIX 2): gitSnapshot runs git
 	// against cfg.Workspace through a HARDENED/scrubbed env and only when the project
-	// tier is INGESTED (FIX 1): trust AND not pin-suppressed (ingestProjectTier). The
+	// tier is ADMITTED (projectIngestionAdmitted — trust AND the ingestion grant). The
 	// single value is carried on cfg.gitStatus so every
 	// child/member promptConfig threads it in rather than re-running git per build or
 	// per team-member spawn. Computed AFTER the trust fold so the gate sees effective
 	// trust (declared/remembered/flag all collapse onto cfg.TrustProject above).
-	cfg.gitStatus = gitSnapshot(cfg.Workspace, cfg.Shell, ingestProjectTier(cfg))
+	cfg.gitStatus = gitSnapshot(cfg.Workspace, cfg.Shell, projectIngestionAdmitted(cfg))
 
 	// ToolHive LLM gateway (issue #262): an explicit --toolhive-llm-base-url
 	// must resolve to loopback BEFORE any registry entry is constructed
@@ -2550,7 +2561,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// ports HERE, in the composition layer — prompt never imports them. All ride
 	// as turn-0 user messages (after the cache breakpoint), so none enters
 	// prompt.Build's StablePrefix.
-	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, cfg.NoProjectIngest)
+	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
 
 	// Phase 2b (OPT-IN, OFF by default): when UserModelReview is set AND a user-model
 	// store is wired, wrap the MAIN engine's HookRunner with a composition-layer
@@ -2660,15 +2671,18 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 // composition layer — prompt never imports them. All ride as turn-0 user messages
 // (after the cache breakpoint), so none enters prompt.Build's StablePrefix.
 //
-// noRoot omits the RootAssembler (AGENTS.md/CLAUDE.md) — the --no-project-trust pin
-// (issue #359) suppresses that project-tier ingestion while leaving rules/soul/memory
-// (which carry their own trust provenance) intact. When noRoot AND nothing else is
-// wired, a zero-child MultiAssembler is returned (an honest no-op: Assemble → nil,nil).
+// noRoot omits the RootAssembler (AGENTS.md/CLAUDE.md) — when project ingestion is
+// not admitted (untrusted workspace, or the ingestion grant withheld; issue #359
+// redesign) that project-tier ingestion is suppressed while leaving rules/soul/
+// memory (which carry their own trust provenance) intact. When noRoot AND nothing
+// else is wired, a zero-child MultiAssembler is returned (an honest no-op:
+// Assemble → nil,nil).
 func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulSource, memStore, userModelStore tool.MemoryStore, noRoot bool) prompt.InstructionAssembler {
 	if rulesSrc == nil && soulSrc == nil && memStore == nil && userModelStore == nil {
 		if noRoot {
-			// The pin suppressed AGENTS.md/CLAUDE.md and no other assembler is wired:
-			// a zero-child MultiAssembler assembles to (nil, nil) — an honest no-op.
+			// Project ingestion is not admitted (untrusted workspace, or the
+			// ingestion grant withheld) and no other assembler is wired: a
+			// zero-child MultiAssembler assembles to (nil, nil) — an honest no-op.
 			return prompt.NewMultiAssembler()
 		}
 		return prompt.RootAssembler{}
@@ -2676,7 +2690,8 @@ func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulS
 	var assemblers []prompt.InstructionAssembler
 	if !noRoot {
 		// RootAssembler (AGENTS.md/CLAUDE.md) is project-tier ingestion: omitted when
-		// the --no-project-trust pin suppressed it (issue #359).
+		// project ingestion is not admitted (issue #359 redesign — the ingestion gate
+		// is projectIngestionAdmitted, trust AND the ingestion grant).
 		assemblers = append(assemblers, prompt.RootAssembler{})
 	}
 	if rulesSrc != nil {
@@ -2733,28 +2748,29 @@ func buildSoulSourceWith(cfg Config, io baselineIO) prompt.SoulSource {
 // AGENTS.md/CLAUDE.md themselves — no flag, the operator's call on trust is the
 // sole gate): the explicit dir list is empty in production (no --rules-dir), so
 // the resolved sources are the conventional project + user lanes. The PROJECT
-// tier is trust-gated (IncludeProjectTier = cfg.TrustProject) — a cloned repo's
-// project rules cannot steer the model before the operator trusts it; the
-// user-tier lanes stay active regardless. Resolved ONCE at Build; the returned
-// source is threaded into the shared engine AND the per-session factory (via the
-// captured `instructions`) — never re-resolved (the issue-#42 drift class).
+// tier is ingestion-gated (IncludeProjectTier = projectIngestionAdmitted) — a
+// cloned repo's project rules cannot steer the model before the operator trusts
+// it AND opts into ingestion; the user-tier lanes stay active regardless.
+// Resolved ONCE at Build; the returned source is threaded into the shared engine
+// AND the per-session factory (via the captured `instructions`) — never
+// re-resolved (the issue-#42 drift class).
 //
 // FAIL-SOFT: no dirs, an unreadable dir, a discovery fault, or no valid
 // <name>.md yields a nil prompt.RulesSource (untyped nil so the assembler's nil
 // check holds — the typed-nil gotcha) and a narration; it NEVER aborts the build.
 // Diagnostics ride cfg.diag() (the injected port.Diagnostics), build-once here.
 func resolveRulesSeam(ctx context.Context, cfg Config) prompt.RulesSource {
-	// Project-tier rules are withheld when the project tier is not ingested (the
-	// same gate as agents/skills): untrusted OR pin-suppressed. The user-tier lanes
-	// stay active regardless.
-	if cfg.Workspace != "" && !ingestProjectTier(cfg) {
-		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or --no-project-trust); user-tier rules stay active. Trust this repo (--trust-project or trustedWorkspaces) and do not pass --no-project-trust to admit its project rules",
+	// Project-tier rules are withheld when the project tier is not admitted (the
+	// same gate as agents/skills): untrusted, or the ingestion grant withheld. The
+	// user-tier lanes stay active regardless.
+	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
+		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or project ingestion not granted); user-tier rules stay active. Pass --trust-project (on a headless root) or run --posture auto on an interactive root to admit its project rules",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/rules,.claude/rules")
 	}
 	sources := rules.ResolveSources(rules.ResolveOptions{
 		Conventional:       true,
 		Workspace:          cfg.Workspace,
-		IncludeProjectTier: ingestProjectTier(cfg),
+		IncludeProjectTier: projectIngestionAdmitted(cfg),
 	})
 	if len(sources) == 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "rules DISABLED (no rules dirs configured)")
@@ -3098,12 +3114,13 @@ func buildDirCommandExpander(cfg Config) prompt.CommandExpander {
 	// EnableCommands with no explicit dir: the package defaults are the PROJECT-tier
 	// dirs (workspace-relative .mecatl/commands, .claude/commands). They are repo-
 	// injected steering, so they are withheld when there IS a workspace to distrust
-	// AND the project tier is not ingested (Phase 2a): untrusted OR pin-suppressed
-	// (ingestProjectTier). With no workspace there is no project to gate (the
-	// expander resolves per-session against each session's root). An untrusted repo's
-	// slash commands cannot run before the operator trusts it; the agent still works
-	// in "ask the human" mode (raw text passes through the NoopExpander).
-	if cfg.Workspace != "" && !ingestProjectTier(cfg) {
+	// AND the project tier is not admitted (Phase 2a): untrusted, or the ingestion
+	// grant withheld (projectIngestionAdmitted). With no workspace there is no
+	// project to gate (the expander resolves per-session against each session's
+	// root). An untrusted repo's slash commands cannot run before the operator
+	// trusts it; the agent still works in "ask the human" mode (raw text passes
+	// through the NoopExpander).
+	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
 		return nil
 	}
 	return prompt.NewDirCommandExpander()
@@ -3120,10 +3137,10 @@ func slashCommandDecision(cfg Config) diagFact {
 	if cfg.CommandsDir != "" {
 		return diagFact{level: port.LevelInfo, msg: "slash commands ENABLED", args: []any{"dir", cfg.CommandsDir}}
 	}
-	if cfg.Workspace != "" && !ingestProjectTier(cfg) {
+	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
 		return diagFact{
 			level: port.LevelWarn,
-			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or --no-project-trust); raw text passes through. Trust this repo (--trust-project or trustedWorkspaces) and do not pass --no-project-trust, or pass --commands-dir to enable project slash commands",
+			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or project ingestion not granted); raw text passes through. Pass --trust-project (on a headless root) or run --posture auto on an interactive root, or pass --commands-dir to enable project slash commands",
 			args:  []any{"dirs", ".mecatl/commands,.claude/commands"},
 		}
 	}
@@ -3192,17 +3209,18 @@ func logBuildConfigFacts(cfg Config) {
 		})
 	}
 	if subagentShellUntrustedReason(cfg) != "" {
-		// The issue-#40 workspace-trust shell gate, narrated ONCE here (the gated
-		// builder buildSandboxedCommandRunner runs per session AND per catalog
-		// assembly, so it must not log). Emitted only when untrust is the OPERATIVE
+		// The issue-#40 subagent-shell gate (issue #359 redesign: posture >= auto on
+		// both roots), narrated ONCE here (the gated builder
+		// buildSandboxedCommandRunner runs per session AND per catalog assembly, so
+		// it must not log). Emitted only when the missing shell grant is the OPERATIVE
 		// cause — --no-bash / an empty shell already get their own narration via
 		// registerCoreTools.
 		facts = append(facts, diagFact{
 			level: port.LevelInfo,
-			msg: "read-only subagent/team-member shell DISABLED (untrusted workspace): " +
+			msg: "read-only subagent/team-member shell DISABLED (posture below auto): " +
 				"a worktree child's shell shares the repo's .git, and a tracked .gitattributes " +
-				"in an untrusted repo can name filter/diff drivers that execute code; run with " +
-				"--trust-project (or confirm trust in mecatui) to enable the subagent shell",
+				"in an untrusted repo can name filter/diff drivers that execute code; the " +
+				"subagent shell is enabled at --posture auto or higher",
 			args: []any{"workspace", cfg.Workspace},
 		})
 	}
@@ -4006,20 +4024,22 @@ func logMCPInventory(ctx context.Context, d port.Diagnostics, inventory []mcpsou
 // skillResolveOptions is the SINGLE source of truth for how this package resolves
 // skills sources from cfg. Every skills consumer (registerSkills, resolveSkillIndex,
 // activeSkillDirs) MUST build its skills.ResolveOptions through here so the
-// Workspace-Trust Phase-2a project-tier gate (IncludeProjectTier: cfg.TrustProject —
-// cfg.TrustProject carries the folded TrustDecision from Build) is applied by
-// CONSTRUCTION. A future consumer that calls this helper inherits the gate
-// automatically; a future consumer that hand-rolls a skills.ResolveOptions would
-// silently reopen the project-tier injection gap — so don't. Behaviour for the three
-// existing callers is identical to the prior hand-synced options.
+// Workspace-Trust Phase-2a project-tier gate (IncludeProjectTier:
+// projectIngestionAdmitted — cfg.TrustProject carries the folded TrustDecision from
+// Build AND the ingestion grant) is applied by CONSTRUCTION. A future consumer that
+// calls this helper inherits the gate automatically; a future consumer that
+// hand-rolls a skills.ResolveOptions would silently reopen the project-tier
+// injection gap — so don't. Behaviour for the three existing callers is identical
+// to the prior hand-synced options.
 func skillResolveOptions(cfg Config) skills.ResolveOptions {
 	return skills.ResolveOptions{
 		Explicit:     cfg.SkillsDirs,
 		Conventional: cfg.SkillsConventional,
 		Workspace:    cfg.Workspace,
-		// Project-tier skills are withheld when the project tier is not ingested
-		// (Phase 2a / R2.5): untrusted OR pin-suppressed (ingestProjectTier).
-		IncludeProjectTier: ingestProjectTier(cfg),
+		// Project-tier skills are withheld when the project tier is not admitted
+		// (Phase 2a / R2.5): untrusted, or the ingestion grant withheld
+		// (projectIngestionAdmitted).
+		IncludeProjectTier: projectIngestionAdmitted(cfg),
 	}
 }
 
@@ -4481,19 +4501,23 @@ func buildCommandRunner(cfg Config) tool.CommandRunner {
 // timeout (~30s, applied by the runner) and the supervisor's concurrency cap
 // (defaultTeamConcurrency=8) already bound how much shell a team can run, so no extra
 // per-subagent deadline/semaphore is added here.
+//
+// SUBAGENT-SHELL GATE (issue #40 + #359 redesign): a worktree-isolated child's shell
+// shares the base repo's `.git`, and an UNTRUSTED repo's tracked `.gitattributes` can
+// name filter/diff drivers that execute code the moment the child runs git — a vector
+// the fixed-key env scrub structurally cannot close. So a workspace without the
+// subagent-shell grant gets NO read-only subagent/member shell (the loop degrades to
+// Read/Grep/Glob — "ask the human" posture, not "do nothing"). The grant is
+// cfg.SubagentShellGranted (posture >= auto on BOTH roots — the tiers that give the
+// main agent an allow-all shell; the issue-#359 redesign decoupled it from workspace
+// trust, so `trusted` alone no longer grants the shell). The decision is NOT logged
+// here — this builder runs per session/per assembly; the build-once INFO is emitted
+// in logBuildConfigFacts.
 func buildSandboxedCommandRunner(cfg Config) tool.CommandRunner {
 	if cfg.NoBash || cfg.Shell == "" {
 		return nil
 	}
-	// WORKSPACE-TRUST GATE (issue #40): a worktree-isolated child's shell shares the
-	// base repo's `.git`, and an UNTRUSTED repo's tracked `.gitattributes` can name
-	// filter/diff drivers that execute code the moment the child runs git — a vector
-	// the fixed-key env scrub structurally cannot close. So an untrusted workspace
-	// gets NO read-only subagent/member shell (the loop degrades to Read/Grep/Glob —
-	// "ask the human" posture, not "do nothing"). The decision is NOT logged here —
-	// this builder runs per session/per assembly; the build-once INFO is emitted in
-	// logBuildConfigFacts.
-	if !cfg.TrustProject {
+	if !cfg.SubagentShellGranted {
 		return nil
 	}
 	return newHardenedCommandRunner(cfg)
@@ -4549,17 +4573,18 @@ func newHardenedCommandRunner(cfg Config) tool.CommandRunner {
 }
 
 // subagentShellUntrustedReason returns the model/operator-facing reason the
-// subagent/member shell is withheld when the WORKSPACE-TRUST gate is the OPERATIVE
-// cause, and "" otherwise: --no-bash / an empty shell disable the shell regardless of
-// trust (and must NOT read as an untrust problem), and a trusted workspace has no
-// note. It is the single wording source for the Subagent Spec note
-// (WithSubagentShellDisabledNote) so the model-facing text and the gate cannot drift.
+// subagent/member shell is withheld when the SUBAGENT-SHELL grant is the OPERATIVE
+// cause, and "" otherwise: --no-bash / an empty shell disable the shell regardless
+// of the grant (and must NOT read as a posture problem), and a workspace WITH the
+// shell grant has no note. It is the single wording source for the Subagent Spec
+// note (WithSubagentShellDisabledNote) so the model-facing text and the gate
+// cannot drift.
 func subagentShellUntrustedReason(cfg Config) string {
-	if cfg.NoBash || cfg.Shell == "" || cfg.TrustProject {
+	if cfg.NoBash || cfg.Shell == "" || cfg.SubagentShellGranted {
 		return ""
 	}
-	return "no shell on this workspace because it is untrusted (run with --trust-project " +
-		"or confirm trust in mecatui to enable the subagent shell)"
+	return "no shell on this workspace because posture is below auto (the read-only " +
+		"subagent shell is enabled at --posture auto or higher)"
 }
 
 // bashDisabledReason returns a short human-readable reason Bash is disabled.
@@ -6129,12 +6154,13 @@ func registerDefaultMemberTools(cat *tool.Catalog, spec agent.MemberSpec, runner
 }
 
 // applyUntrustedMemberShellNote appends the issue-#40 honesty line to a READ-ONLY
-// member's Role on an UNTRUSTED workspace (the trust gate withheld its worktree
-// shell), so the member plans around Read/Grep/Glob instead of burning turns
-// attempting Bash. A Mutating member keeps its force-copy-fork shell, and a trusted
-// workspace keeps its shell, so both pass through unchanged.
+// member's Role on a workspace WITHOUT the subagent-shell grant (the shell gate
+// withheld its worktree shell), so the member plans around Read/Grep/Glob instead
+// of burning turns attempting Bash. A Mutating member keeps its force-copy-fork
+// shell, and a workspace WITH the shell grant keeps its shell, so both pass through
+// unchanged.
 func applyUntrustedMemberShellNote(cfg Config, spec agent.MemberSpec, pc prompt.Config) prompt.Config {
-	if cfg.TrustProject || spec.Mutating {
+	if cfg.SubagentShellGranted || spec.Mutating {
 		return pc
 	}
 	if pc.Role == "" {
@@ -6157,9 +6183,10 @@ func memberBashRunner(mutating bool, roRunner, mutatingRunner tool.CommandRunner
 }
 
 // untrustedMemberShellNote is the one-line system-prompt suffix a READ-ONLY team
-// member receives on an untrusted workspace (issue #40), so it knows up front it has
-// no shell rather than discovering it via unknown-tool errors.
-const untrustedMemberShellNote = "This workspace is untrusted: you have no shell; use Read/Grep/Glob."
+// member receives on a workspace WITHOUT the subagent-shell grant (issue #40 +
+// #359 redesign: SubagentShellGranted is false), so it knows up front it has no
+// shell rather than discovering it via unknown-tool errors.
+const untrustedMemberShellNote = "This workspace has no subagent shell enabled: you have no shell; use Read/Grep/Glob."
 
 // noFSPostureNote is the MAIN-engine system-prompt suffix of a "no-fs" profile
 // session (issue #55, the #40 composition-append pattern): the model must learn
@@ -6649,7 +6676,7 @@ func buildPermResolver(cfg Config) permpolicy.RuleResolver {
 	resolver := permconfig.New(permconfig.Options{
 		Conventional:  cfg.PermissionsConventional,
 		ImportClaude:  cfg.ImportClaudePermissions,
-		TrustProject:  ingestProjectTier(cfg),
+		TrustProject:  projectIngestionAdmitted(cfg),
 		ExplicitFiles: cfg.PermissionConfigs,
 		Diagnostics:   cfg.diag(),
 	})
@@ -6851,18 +6878,19 @@ func osfsWorkspaceFactory(d port.Diagnostics, skillReadRoots []string) server.Wo
 // `git worktree list --porcelain` with the SAME scrubbed+neutralised git env as
 // gitSnapshot (envscrub then gitenv) so a repo-local git config cannot run code
 // AND the harness credentials are never exposed to a repo-local git driver. It
-// is TRUST-GATED: when the launch workspace is untrusted the lister is nil, so
-// no git ever runs against an untrusted repo (the same discipline as gitSnapshot
-// at `internal/app/build.go` (`gitSnapshot`)). It is nil when there is no
-// workspace (a child/member service, or a no-root cloud deployment), no shell,
-// or git is unavailable — then ListWorktrees returns an empty list and the
-// ServerCapabilities.worktrees bit is false, so the feature is honestly absent
-// in no-FS/cloud environments. The lister is read-only, fail-soft (any git
-// fault returns an empty list, never an error — discovery must never block the
-// overlay), and bounds each call with a 5s timeout. See
+// is SHELL-GATED: when the launch workspace lacks the subagent-shell grant
+// (cfg.SubagentShellGranted, posture >= auto) the lister is nil, so no git ever
+// runs against a workspace the operator did not grant a shell for (the same
+// discipline as gitSnapshot at `internal/app/build.go` (`gitSnapshot`)). It is nil
+// when there is no workspace (a child/member service, or a no-root cloud
+// deployment), no shell, or git is unavailable — then ListWorktrees returns an
+// empty list and the ServerCapabilities.worktrees bit is false, so the feature is
+// honestly absent in no-FS/cloud environments. The lister is read-only, fail-soft
+// (any git fault returns an empty list, never an error — discovery must never
+// block the overlay), and bounds each call with a 5s timeout. See
 // docs/adr/0032-worktree-binding.md.
 func buildWorktreeLister(cfg Config) server.WorktreeLister {
-	if cfg.Workspace == "" || cfg.Shell == "" || !cfg.TrustProject {
+	if cfg.Workspace == "" || cfg.Shell == "" || !cfg.SubagentShellGranted {
 		return nil
 	}
 	return gitWorktreeLister{shell: cfg.Shell}

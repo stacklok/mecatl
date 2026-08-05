@@ -423,8 +423,9 @@ func foldOperatorDefaultProvider(cfg Config) Config {
 // build-once WARN per dropped binding. Slots are ALSO validated against knownSlotNames.
 //
 // No-op fast paths (each keeps cfg byte-identical): nil/absent permResolver; empty
-// operator allowlist (the opt-in); !cfg.TrustProject; no project models block. Under any
-// of these foldProjectModelBindings returns cfg unchanged and logs nothing.
+// operator allowlist (the opt-in); project ingestion not admitted; no project
+// models block. Under any of these foldProjectModelBindings returns cfg unchanged
+// and logs nothing.
 func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 	res, ok := cfg.permResolver.(*permconfig.Resolver)
 	if !ok || res == nil {
@@ -434,8 +435,8 @@ func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 	if policy == nil || len(policy.Allowlist) == 0 {
 		return cfg // opt-in: no operator allowlist ⇒ project models WARN-ignored upstream.
 	}
-	if !ingestProjectTier(cfg) {
-		return cfg // untrusted OR pin-suppressed: the project block was already WARN-ignored at capture.
+	if !projectIngestionAdmitted(cfg) {
+		return cfg // untrusted, or ingestion grant withheld: the project block was already WARN-ignored at capture.
 	}
 	proj := res.ProjectModelBindings(projectModelWorkspace(cfg))
 	if proj == nil {

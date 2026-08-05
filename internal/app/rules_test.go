@@ -121,7 +121,7 @@ func TestResolveRulesSeam(t *testing.T) {
 		writeProjectRule(t, ws, "projrule", "# Project rule\nbody")
 
 		diag := &kvDiag{}
-		cfg := Config{Workspace: ws, TrustProject: true, Diagnostics: diag}
+		cfg := Config{Workspace: ws, TrustProject: true, ProjectIngestionGranted: true, Diagnostics: diag}
 		src := resolveRulesSeam(ctx, cfg)
 		if src == nil {
 			t.Fatal("resolveRulesSeam returned nil with a trusted project rule present")
