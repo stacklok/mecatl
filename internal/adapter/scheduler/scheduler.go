@@ -161,6 +161,44 @@ type Config struct {
 	// whether to deliver based on the stop reason (it may skip a StopError
 	// fire's delivery, or deliver it — the ADR does not mandate either).
 	DeliverFireResult func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)
+	// ReconcileStaleFire is the OPTIONAL composition-injected callback
+	// (issue #386 Phase 4b, the stale-fire reconciler) the scheduler invokes
+	// from the tick loop's reconcile scan when it DETECTS a stale in-flight
+	// fire — a claimed-but-never-terminal fire left behind by a crashed
+	// process (acceptance criterion #7). It is nil-safe (nil = the
+	// byte-identical no-reconcile path, the pre-Phase-4b posture): detection
+	// is store-only (the scheduler CAN do it — it reads ScheduleStore + the
+	// leader-lease/isPriorFireLive seam it already has), but the SETTLE
+	// (session-load + cancel + RecordFire) needs Service methods the scheduler
+	// package must not import (the layering rule: the scheduler is
+	// storage-agnostic and must NOT import internal/adapter/server). So the
+	// reconcile callback is composition-injected, mirroring Fire/
+	// DeliverFireResult/DeliverFireStarted.
+	//
+	// Two crash cases the detector hands the callback:
+	//  1. Crash after Claim, before session creation: LastFireSessionID ==
+	//     port.PendingFireSessionID (the sentinel) and stale (LastFireAt older
+	//     than the stale window). No session exists. The callback records a
+	//     terminal StopError fire ("fire lost: process crashed between claim
+	//     and session creation") via RecordFire with a minted id, and clears
+	//     the in-flight fields.
+	//  2. Crash after session creation, before RecordFire: LastFireSessionID
+	//     is a real "sched--" id, the fire record is still in-flight (Stop
+	//     empty), the session's lease is released/expired (not live — the
+	//     detector's isPriorFireLive trial-lease check acquired freely), and
+	//     LastFireStartedAt is older than the stale window. The callback
+	//     settles the terminal: marks the session snapshot cancelled
+	//     (Interrupt-recoverable) and RecordFire-ing a StopError fire ("fire
+	//     lost: process crashed during run").
+	//
+	// The detector must NOT flag a genuinely-live fire (lease held → skip), and
+	// must NOT flag a freshly-claimed fire within the stale window (a fire
+	// Claimed moments ago is in flight, not crashed). The callback is
+	// idempotent: a fire already terminal is a no-op (RecordFire is idempotent
+	// per fire id). Composition wires it over svc.GetSession/svc.Persist/
+	// store.RecordFire (reusing settleFireTerminalSnapshot from #388 for the
+	// session-settle).
+	ReconcileStaleFire func(ctx context.Context, sched port.Schedule)
 }
 
 // Defaults. The leader-lease defaults mirror the run-entry lease defaults
@@ -211,6 +249,33 @@ const (
 // that ignores its cancel ctx is abandoned (best-effort), never allowed to
 // stall shutdown unboundedly.
 var stopLeadershipJoinTimeout = 5 * time.Second
+
+// staleFireWindow is the staleness threshold the stale-fire reconciler
+// (issue #386 Phase 4b) applies to a claimed-but-never-terminal fire when the
+// schedule has no explicit FireDeadline. A fire whose LastFireStartedAt (the
+// crash-after-session case) or LastFireAt (the crash-after-Claim case, where
+// LastFireStartedAt is zero — RecordFireStart never ran) is older than this
+// window is a candidate for reconciliation. It is a package var (not a const)
+// so an offline test can shrink it to exercise the reconcile path without
+// waiting the full window; production keeps the conservative default. It is
+// defaultFireTimeout-scale (the same posture as the per-fire wall-clock
+// deadline) plus a grace so a genuinely-live slow fire is NOT flagged while
+// its lease is still held (the lease check is the authoritative liveness
+// oracle; this window is the fallback when there is no explicit deadline).
+var staleFireWindow = defaultFireTimeoutScale + staleFireGrace
+
+// defaultFireTimeoutScale mirrors the deployment-default per-fire wall-clock
+// deadline (internal/app.defaultFireTimeout, issue #386). It is the scale of
+// the stale-fire window so the two share one posture: a fire is "stale" past
+// roughly the same horizon it would have been timed out by its watchdog. It is
+// a package var so a test can shrink it alongside staleFireWindow.
+const defaultFireTimeoutScale = 30 * time.Minute
+
+// staleFireGrace is the headroom added to defaultFireTimeoutScale so a
+// fire whose watchdog has NOT yet lapsed (a genuinely-live slow fire whose
+// lease is still held) is not flagged by the window-based fallback. The lease
+// check is authoritative; this grace only bounds the window-based branch.
+const staleFireGrace = 5 * time.Minute
 
 // Scheduler is the composition-layer owner of the scheduled-tasks tick loop.
 // Construct one via New, then Start (which acquires the leader lease if a
@@ -351,6 +416,23 @@ func (s *Scheduler) SetDeliverFireResult(cb func(ctx context.Context, sched port
 		panic("scheduler: SetDeliverFireResult after Start")
 	}
 	s.cfg.DeliverFireResult = cb
+}
+
+// SetReconcileStaleFire wires the OPTIONAL composition-injected stale-fire
+// reconcile callback (issue #386 Phase 4b). Composition calls it after
+// SetFire (so the FireFunc is bound) and before Start. nil is the
+// byte-identical no-reconcile path (the pre-Phase-4b posture): the reconcile
+// scan is a nil-safe skip when the callback is unwired. The scheduler invokes
+// it from the tick loop's reconcile scan (reconcileStaleFires, called from
+// tickOnce) for each detected stale in-flight fire, with the schedule whose
+// LastFireSessionID/LastFireStartedAt mark it crashed.
+func (s *Scheduler) SetReconcileStaleFire(cb func(ctx context.Context, sched port.Schedule)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started.Load() {
+		panic("scheduler: SetReconcileStaleFire after Start")
+	}
+	s.cfg.ReconcileStaleFire = cb
 }
 
 // New constructs a Scheduler. It applies Config defaults (TTLs, intervals,
@@ -791,6 +873,14 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	// return) must still re-arm a crashed one-shot. Without this ordering a
 	// crashed one-shot in a quiet deployment stalls indefinitely.
 	s.maybeReArmOneShots(ctx, now)
+	// Stale-fire reconciliation (issue #386 Phase 4b, acceptance criterion #7):
+	// scan for claimed-but-never-terminal fires left behind by a crashed
+	// process and settle them via the composition-injected callback. Runs on
+	// EVERY tick, BEFORE the len(due)==0 early return — a quiet deployment
+	// (no due cron) must still reconcile a crashed fire. Nil callback = the
+	// byte-identical no-reconcile path (pre-Phase-4b posture). See
+	// reconcileStaleFires.
+	s.reconcileStaleFires(ctx, now)
 	if len(due) == 0 {
 		return
 	}
@@ -1277,6 +1367,143 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 		return false
 	}
 	return fire.Stop == session.StopError
+}
+
+// reconcileStaleFires is the stale-fire reconciler scan (issue #386 Phase 4b,
+// acceptance criterion #7). It scans ALL schedules (List) for a
+// claimed-but-never-terminal fire left behind by a crashed process and hands
+// each detected stale one to the composition-injected ReconcileStaleFire
+// callback, which settles it (RecordFire a terminal StopError fire + settle
+// the session for the crash-after-session case). It is the DETECTION layer
+// only — store + the leader-lease/isPriorFireLive seam it already has; the
+// SETTLE (session-load + cancel) needs Service methods the scheduler package
+// must not import (the layering rule), so it delegates to composition.
+//
+// Two crash cases the detector flags:
+//
+//  1. Crash after Claim, before session creation: LastFireSessionID ==
+//     port.PendingFireSessionID (the sentinel Claim stamps, RecordFireStart
+//     overwrites with the real id) and stale — LastFireAt (the Claim instant;
+//     LastFireStartedAt is zero here because RecordFireStart never ran) is
+//     older than the stale window. No session exists.
+//
+//  2. Crash after session creation, before RecordFire: LastFireSessionID is a
+//     real "sched--" id (not the pending sentinel), the fire is still
+//     in-flight (LastFireStartedAt is set — RecordFireStart ran, RecordFire
+//     did not clear it), LastFireStartedAt is older than the stale window, AND
+//     the prior-fire lease is NOT live (the isPriorFireLive trial-lease
+//     acquired freely — the crashed process's session lease lapsed). A
+//     genuinely-live fire (lease held by the running process) is NOT flagged.
+//
+// The stale window: reuse LastFireStartedAt + FireDeadline when FireDeadline
+// is set (a fire whose explicit deadline has lapsed is stale), else
+// LastFireStartedAt (or LastFireAt for the pending case) + the package-level
+// staleFireWindow (defaultFireTimeout-scale + a grace). A freshly-claimed fire
+// within the window is NOT flagged (it is in flight, not crashed).
+//
+// Nil callback = the byte-identical no-reconcile path (pre-Phase-4b posture):
+// the scan is a nil-safe skip. Detection must NOT flag a genuinely-live fire
+// (lease held → skip) and must NOT race a fire that is concurrently being
+// recorded by a peer (the lease check is the authoritative liveness oracle;
+// the window is the fallback).
+func (s *Scheduler) reconcileStaleFires(ctx context.Context, now time.Time) {
+	if s.cfg.ReconcileStaleFire == nil {
+		return // byte-identical no-reconcile path (pre-Phase-4b posture).
+	}
+	all, err := s.cfg.Store.List(ctx)
+	if err != nil {
+		if errors.Is(err, port.ErrScheduleUnsupported) {
+			return // the same sticky-disable tickOnce already applied.
+		}
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: List for stale-fire reconcile failed", "err", err.Error())
+		return
+	}
+	for _, sched := range all {
+		if !s.shouldReconcileStaleFire(ctx, sched, now) {
+			continue
+		}
+		// Hand the stale schedule to composition for the settle. The callback
+		// is idempotent (RecordFire is idempotent per fire id); a transient
+		// settle failure WARNs inside the callback and never fails the tick.
+		s.cfg.ReconcileStaleFire(ctx, sched)
+	}
+}
+
+// shouldReconcileStaleFire reports whether the given schedule has a
+// claimed-but-never-terminal fire that is stale (older than the stale window)
+// and whose prior-fire lease is NOT live — i.e. a crashed process left it
+// behind. It encodes the two crash sub-cases of reconcileStaleFires and the
+// liveness gate (a genuinely-live fire is NOT flagged). It is the per-schedule
+// detector; reconcileStaleFires is the scan.
+func (s *Scheduler) shouldReconcileStaleFire(ctx context.Context, sched port.Schedule, now time.Time) bool {
+	// Crash sub-case 1: pending sentinel (crash after Claim, before session
+	// creation). RecordFireStart never ran, so LastFireStartedAt is zero — the
+	// staleness anchor is LastFireAt (the Claim instant). The window fallback
+	// applies (no FireDeadline for a fire that never started its run).
+	if sched.State.LastFireSessionID == port.PendingFireSessionID {
+		anchor := sched.State.LastFireAt
+		if anchor.IsZero() {
+			return false // no Claim recorded — not a crashed fire (a fresh schedule).
+		}
+		return now.Sub(anchor) > staleFireThreshold(sched, anchor)
+	}
+	// Crash sub-case 2: a real in-flight fire (crash after session creation,
+	// before RecordFire). LastFireSessionID is a real "sched--" id, the fire is
+	// still in-flight (LastFireStartedAt set — RecordFireStart ran, RecordFire
+	// did not clear it). The lease check is the authoritative liveness oracle:
+	// a held lease (the fire is genuinely running) → NOT stale (skip). The
+	// window (FireDeadline when set, else staleFireWindow) bounds the fallback.
+	if sched.State.LastFireSessionID == "" {
+		return false // no prior fire at all.
+	}
+	// Only an IN-FLIGHT fire is a candidate: LastFireStartedAt set (RecordFireStart
+	// ran) — a terminal fire has it cleared by RecordFire.
+	if sched.State.LastFireStartedAt.IsZero() {
+		return false // the prior fire already recorded terminal (RecordFire cleared it).
+	}
+	// Staleness: the in-flight fire's start is older than the stale window
+	// (or its explicit FireDeadline has lapsed).
+	anchor := sched.State.LastFireStartedAt
+	if now.Sub(anchor) <= staleFireThreshold(sched, anchor) {
+		return false // within the window — in flight, not crashed.
+	}
+	// Liveness gate: a genuinely-live fire (lease held by the running process)
+	// is NOT stale. The isPriorFireLive trial-lease check acquires freely when
+	// the crashed process's session lease lapsed; ErrLeaseHeld means the fire
+	// is still running → skip. No lease backend (single-replica by affinity) →
+	// the window is the only oracle (a stale in-flight fire with no lease
+	// backend IS stale — there is no cross-process lease to hold).
+	if s.cfg.Lease != nil {
+		overlap, rel := s.isPriorFireLive(ctx, sched.State.LastFireSessionID)
+		if rel != nil {
+			defer rel() // release the trial lease.
+		}
+		if overlap {
+			return false // the fire is genuinely running — not stale.
+		}
+	}
+	return true
+}
+
+// staleFireThreshold returns the staleness horizon for a fire: the explicit
+// FireDeadline (when set) relative to the anchor, else the package-level
+// staleFireWindow. The anchor is LastFireStartedAt for an in-flight fire
+// (sub-case 2) or LastFireAt for a pending fire (sub-case 1, where
+// LastFireStartedAt is zero). When FireDeadline is set, the threshold is
+// FireDeadline - anchor (the remaining time until the explicit deadline); a
+// non-positive result means the deadline already lapsed, so the fire is stale
+// regardless of the window. The caller compares now.Sub(anchor) > threshold.
+func staleFireThreshold(sched port.Schedule, anchor time.Time) time.Duration {
+	if !sched.State.FireDeadline.IsZero() {
+		// The explicit deadline is the authoritative horizon. A fire past its
+		// deadline is stale (the watchdog would have terminated it).
+		d := sched.State.FireDeadline.Sub(anchor)
+		if d < 0 {
+			return 0 // deadline already lapsed — any now past anchor is stale.
+		}
+		return d
+	}
+	return staleFireWindow
 }
 
 // Stop cancels the leadership loop and the current epoch (tick + renewer),

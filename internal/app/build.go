@@ -2250,6 +2250,17 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 		fireStore = ss.ScheduleStore()
 	}
 	sched.SetFire(makeFireFunc(svc, fireStore, defaultFireTimeout, deliverFireStarted(svc, deliveryQueue)))
+	// Stale-fire reconciler (issue #386 Phase 4b, acceptance criterion #7): wire
+	// the composition-injected ReconcileStaleFire callback the scheduler invokes
+	// from the tick loop's reconcile scan when it DETECTS a stale in-flight fire
+	// a crashed process left behind. The callback is the SETTLE half — it closes
+	// over the Service (for diagnostics) + the ScheduleStore (RecordFire) + the
+	// SessionStore (load/cancel/save the crashed session snapshot). Detection is
+	// scheduler-internal (store + the isPriorFireLive seam); the settle needs
+	// Service/session-load methods the scheduler package must not import (the
+	// layering rule), so it is composition-injected, mirroring Fire/
+	// DeliverFireResult. nil store = the byte-identical no-reconcile path.
+	sched.SetReconcileStaleFire(makeReconcileStaleFire(svc, fireStore, store))
 	// Fire-result delivery (ADR 0075): wire the composition-injected
 	// DeliverFireResult callback the scheduler invokes from fireClaimed AFTER
 	// RecordFire. It closes over the Service + the SAME durable DeliveryQueue
