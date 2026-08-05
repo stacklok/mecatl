@@ -337,6 +337,55 @@ The `--session-store-url` flag replaces the JSONL store with a remote gRPC drive
 (`mecak8s` uses it internally) or a custom store behind the driver protocol. It is
 mutually exclusive with `--store-dir`.
 
+### Import from Codex or Claude Code
+
+`mecated import` is an offline migration command for local Codex and Claude Code
+projects. It can seed a resumable Mecatl session, copy the project files into a
+new workspace, and copy Agent Skills bundles into `<workspace>/.mecatl/skills`.
+It does not start a server or require an API key.
+
+Codex stores active session rollouts under `~/.codex/sessions/`; Claude Code
+stores project transcripts under `~/.claude/projects/`. Select the JSONL session
+you want and use the same `--store-dir` when starting the server:
+
+```sh
+mecated import \
+  --from codex \
+  --session ~/.codex/sessions/2026/08/05/rollout-....jsonl \
+  --store-dir ~/.local/share/mecatl/sessions \
+  --workspace ~/work/imported-project \
+  --copy-files \
+  --skills
+
+mecated serve \
+  --store-dir ~/.local/share/mecatl/sessions \
+  --workspace ~/work/imported-project \
+  --skills-dir ~/work/imported-project/.mecatl/skills
+```
+
+For Claude Code, use `--from claude-code` and a transcript such as
+`~/.claude/projects/<project>/<session-id>.jsonl`. `--skills` discovers the
+source tool's conventional project and user skill directories. You can instead
+or additionally repeat `--skills-dir <source>` to name exact skill directories.
+
+The safety and portability rules are intentional:
+
+- The imported session keeps user and assistant text only. Provider-private
+  reasoning, system/developer instructions, and provider-specific tool calls or
+  results are omitted because another provider cannot safely replay them.
+- The new session is idle, uses Mecatl's default permission mode, and binds to
+  the provider/model selected when it is resumed.
+- `--copy-files` is opt-in and requires an explicit `--workspace`. It skips
+  `.git`, symlinks, and special files.
+- Existing sessions, files, and skill names are never overwritten. Resolve a
+  collision or choose a new `--id`/workspace and run the import again.
+- Session transcripts and copied files may contain secrets. Import stays local,
+  and the JSONL store remains plaintext with owner-only directory permissions.
+
+Use `--source-workspace` when the transcript's recorded `cwd` moved, and use
+`--workspace` without `--copy-files` to attach imported history to an existing
+project without copying its files.
+
 ---
 
 ## Multi-replica
