@@ -61,26 +61,19 @@ func TestTrustedWorkspaceKeepsSandboxedRunner(t *testing.T) {
 	}
 }
 
-// TestIngestionOptInDoesNotAffectShell pins the issue-#359 redesign invariant at
-// the consumer that matters: the ingestion grant axis (ProjectIngestionGranted)
-// and the shell axis are DISTINCT. The shell reads cfg.TrustProject (the operator
-// vouches for the repo's `.git`), NOT the ingestion grant — so a TRUSTED
-// workspace keeps its shell whether or not ingestion is separately admitted, and
-// the ingestion predicate stays gated on the grant.
-func TestIngestionOptInDoesNotAffectShell(t *testing.T) {
-	// Trusted workspace with ingestion NOT separately granted: the runner stays
-	// non-nil (the shell reads TrustProject), and ingestion is still admitted
-	// because trust implies the ingestion grant via applyPosture — but here we
-	// construct the raw Config to show the shell reads TrustProject directly.
-	cfg := teamCfg(t) // TrustProject=true
-	if buildSandboxedCommandRunner(cfg) == nil {
-		t.Fatal("a trusted workspace must keep the sandboxed runner (the shell reads cfg.TrustProject)")
+// TestTrustGatesIngestionAndShellTogether pins the final issue-#359 model at
+// both consumers: TrustProject is the one effective grant, so trusted means both
+// ingestion and shell, while an untrusted raw config gets neither even if its
+// posture token is auto (applyPosture is the only ladder projection).
+func TestTrustGatesIngestionAndShellTogether(t *testing.T) {
+	trusted := teamCfg(t)
+	if !projectIngestionAdmitted(trusted) || buildSandboxedCommandRunner(trusted) == nil {
+		t.Fatal("trusted workspace must admit project ingestion and the read-only child shell")
 	}
-	// An UNTRUSTED workspace gets no runner even at a shell-authorizing posture.
-	untrusted := shelllessTeamCfg(t) // TrustProject=false
+	untrusted := shelllessTeamCfg(t)
 	untrusted.Posture = PostureAuto
-	if buildSandboxedCommandRunner(untrusted) != nil {
-		t.Fatal("an untrusted workspace must get NO sandboxed runner even at --posture auto (the fork-time-RCE gate reads cfg.TrustProject, not posture)")
+	if projectIngestionAdmitted(untrusted) || buildSandboxedCommandRunner(untrusted) != nil {
+		t.Fatal("untrusted workspace must admit neither project ingestion nor the read-only child shell")
 	}
 }
 

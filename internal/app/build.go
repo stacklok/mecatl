@@ -668,26 +668,12 @@ type Config struct {
 	TrustProject            bool
 	PermissionConfigs       []string
 
-	// ProjectIngestionGranted is the INGESTION-axis positive grant (issue #359
-	// redesign): one of TWO independent grants that gate project-tier ingestion
-	// (permconfig ALLOW rules, project soul, agent defs, skills, rules, slash
-	// commands, the git snapshot, and AGENTS.md/CLAUDE.md). The single admission
-	// predicate is projectIngestionAdmitted(cfg) = cfg.TrustProject &&
-	// cfg.ProjectIngestionGranted (see project_ingestion.go). TrustProject is the
-	// workspace-trust fold (flag/declared/remembered); ProjectIngestionGranted is
-	// the root-aware opt-in raised by applyPosture: an explicit --trust-project
-	// opts into ingestion on BOTH roots, and the interactive ladder grants it at
-	// auto/yolo; on a HEADLESS root the ladder does NOT grant it (the fail-safe
-	// default — a dark factory over a freshly-cloned untrusted repo ingests NONE
-	// of the repo's steering unless the operator explicitly passes --trust-project).
-	// applyPosture only RAISES this (never lowers); it is not set directly.
-	ProjectIngestionGranted bool
-	// Headless is the explicit deployment identity (issue #359 redesign): a root
-	// declares NO human approver is attached. It is set by each cmd root — NOT
-	// inferred from Interactive (Interactive stays the main-engine ask-surface
-	// bool; Headless is the ingestion-grant axis input). applyPosture reads it to
-	// decide whether the ladder grants ingestion (interactive auto/yolo grant it;
-	// headless does not). mecated defaults false, mecatequi/mecak8s default true,
+	// Headless is the explicit deployment identity (issue #359): a root declares
+	// that no human approver is attached. It is set by each cmd root — NOT inferred
+	// from Interactive. applyPosture uses it to keep the project-trust floor
+	// interactive-only: trusted/auto/yolo may raise TrustProject for an interactive
+	// root, but never for a headless root. Explicit/declarative/remembered trust can
+	// still trust either root. mecated defaults false, mecatequi/mecak8s default true,
 	// mecatui defaults false.
 	Headless bool
 
@@ -1105,12 +1091,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err := PostureRefusalReason(cfg.Posture, cfg.Privileged); err != nil {
 		return nil, err
 	}
-	narratePosture(cfg.diag(), cfg.Posture, cfg.ProjectIngestionGranted, cfg.TrustProject)
+	// Project trust is narrated only after resolveTrust has folded the explicit,
+	// declarative, and remembered sources below, so the posture and trust facts cannot
+	// contradict each other.
 	cfg.permResolver = nil // rebuilt below with the posture-raised TrustProject
 
 	trust := resolveTrust(cfg)
-	narrateTrust(cfg.diag(), trust, cfg.Workspace)
 	cfg.TrustProject = trust.Trusted
+	narratePosture(cfg.diag(), cfg.Posture, cfg.TrustProject)
+	narrateTrust(cfg.diag(), trust, cfg.Workspace)
 
 	// File-based permission config (issues #13/#32): construct the resolver
 	// EXACTLY ONCE here, right after the trust fold (it consumes the effective
@@ -1153,7 +1142,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	// Start-of-session git snapshot, computed ONCE here (FIX 2): gitSnapshot runs git
 	// against cfg.Workspace through a HARDENED/scrubbed env and only when the project
-	// tier is ADMITTED (projectIngestionAdmitted — trust AND the ingestion grant). The
+	// tier is ADMITTED (projectIngestionAdmitted — the final effective workspace
+	// trust decision). The
 	// single value is carried on cfg.gitStatus so every
 	// child/member promptConfig threads it in rather than re-running git per build or
 	// per team-member spawn. Computed AFTER the trust fold so the gate sees effective

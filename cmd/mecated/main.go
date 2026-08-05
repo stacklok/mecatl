@@ -1126,9 +1126,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// engaging the auto-deny path and the opt-in --subagent-ask-reviewer. (The
 		// offline demo likewise leaves app.Config.Interactive false.)
 		Interactive: !cfg.headless,
-		// Headless: the explicit deployment identity for the ingestion-grant axis
-		// (issue #359 redesign). The interactive ladder grants ingestion at auto/yolo
-		// only when Headless is false.
+		// Headless is explicit deployment identity. The posture ladder raises
+		// workspace trust only when this is false.
 		Headless:               cfg.headless,
 		Sink:                   sink,
 		ToolCallRecorder:       recorder,
@@ -1159,11 +1158,12 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 // print-and-exit (run() returns nil); a non-nil err is the root/no-sandbox refusal (a
 // fast path — app.Build re-checks it authoritatively as the fail-closed backstop).
 func applyPostureCLI(cfg config, diag port.Diagnostics) (handled bool, err error) {
-	effPosture := app.ResolveAuthoritativePosture(posturePreCheckConfig(cfg, diag))
+	projection := app.ResolvePostureProjection(posturePreCheckConfig(cfg, diag))
 	if cfg.printPosture {
-		fmt.Print(renderPostureReport(effPosture))
+		fmt.Print(renderPostureReport(projection))
 		return true, nil
 	}
+	effPosture := projection.Posture
 	if !app.IsKnownPostureToken(cfg.posture) {
 		slog.Warn("unknown --posture value; failing closed to strict", "value", cfg.posture)
 	}
@@ -1199,6 +1199,8 @@ func posturePreCheckConfig(cfg config, diag port.Diagnostics) app.Config {
 		PostureFlagSet:          cfg.postureFlagSet,
 		AllowAllTools:           cfg.allowAllTools,
 		TrustProject:            cfg.trustProject,
+		Headless:                cfg.headless,
+		Interactive:             !cfg.headless,
 		Diagnostics:             diag,
 	}
 }
@@ -1215,10 +1217,10 @@ func sandboxDeclared() bool {
 	return os.Getenv("MECATL_SANDBOX") == "1" || os.Getenv("IS_SANDBOX") == "1"
 }
 
-// renderPostureReport renders the --print-posture output: the resolved tier and a
-// plain-English line per defense (allow-all, main substitution loosening, child
-// substitution loosening / child prompt-injection defense, project-trust floor).
-func renderPostureReport(p app.Posture) string {
+// renderPostureReport renders the authoritative root-aware posture and final
+// workspace-trust semantics used by Build.
+func renderPostureReport(state app.PostureProjection) string {
+	p := state.Posture
 	onoff := func(b bool) string {
 		if b {
 			return "ON"
@@ -1231,7 +1233,8 @@ func renderPostureReport(p app.Posture) string {
 	fmt.Fprintf(&b, "  main-agent substitution auto-run ($()/backtick/heredoc):       %s\n", onoff(p >= app.PostureAuto))
 	fmt.Fprintf(&b, "  child substitution auto-run (prompt-injection defense %s):     %s\n",
 		map[bool]string{true: "OFF", false: "ON"}[p == app.PostureYolo], onoff(p == app.PostureYolo))
-	fmt.Fprintf(&b, "  project-trust floor (honour a project's ALLOW rules):          %s\n", onoff(p >= app.PostureTrusted))
+	fmt.Fprintf(&b, "  project trust (steering + read-only child shell):             %s\n", onoff(state.TrustProject))
+	fmt.Fprintf(&b, "  project ingestion:                                             %s\n", onoff(state.TrustProject))
 	fmt.Fprintf(&b, "  (a Deny in any scope and any configured Ask ALWAYS apply, at every tier)\n")
 	return b.String()
 }

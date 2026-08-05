@@ -222,10 +222,10 @@ Two things worth knowing before you rely on it:
 | `--posture auto` | Allow-all server-wide + main substitution loosening; child injection defence **on**. Recommended for unattended use |
 | `--posture yolo` | Also loosens child substitution (injection defence **off**). Isolated single-tenant only. Refused as root without `MECATL_SANDBOX=1` |
 
-On a **headless** root (`--headless`), project-tier ingestion is **opt-in**: only an explicit
-`--trust-project` admits the repo's steering (AGENTS.md, project rules/agents/skills/soul/commands,
-the git snapshot). The fail-safe default yields `--posture auto`'s approvals and the subagent shell
-with NO repo steering. See
+On a **headless** root (`--headless`), posture never raises `TrustProject`. Explicit
+`--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust admits BOTH repo steering and
+the read-only child shell. Without a trust source, `--posture auto` keeps its approvals but gets
+neither because `.git` is not vouched. See
 [workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design)
 for the full walkthrough.
 

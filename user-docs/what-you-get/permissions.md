@@ -333,11 +333,10 @@ A corrupt or unparseable `settings.yaml` or `trust.yaml` always resolves to
 
 #### Project-tier ingestion on headless roots (the opt-in design)
 
-On a **headless** root (`--headless`), project-tier ingestion is **opt-in**: only an
-explicit `--trust-project` admits the repo's steering. The fail-safe default
-(`mecatequi --posture auto` without `--trust-project`) yields allow-all approvals and the
-subagent shell with NO repo steering. Add `--trust-project` only when the scheduler trusts
-the repo. See the
+On a **headless** root (`--headless`), posture never raises `TrustProject`. Explicit
+`--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust admits BOTH repo steering and
+the read-only child shell. Without any trust source, `mecatequi --posture auto` keeps allow-all
+approvals but gets neither because `.git` is not vouched. See the
 [workspace trust reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design).
 
 ---

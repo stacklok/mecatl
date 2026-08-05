@@ -41,11 +41,10 @@ func projectFoldHarness(t *testing.T, operatorYAML, projectYAML string, trust bo
 		Diagnostics:   diag,
 	})
 	cfg := Config{
-		Workspace:               ws,
-		TrustProject:            trust,
-		ProjectIngestionGranted: trust, // simulate applyPosture admitting ingestion when trusted (issue #359 redesign)
-		Diagnostics:             diag,
-		permResolver:            res,
+		Workspace:    ws,
+		TrustProject: trust,
+		Diagnostics:  diag,
+		permResolver: res,
 	}
 	return cfg, diag
 }

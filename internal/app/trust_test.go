@@ -149,15 +149,9 @@ func TestResolveTrustEmptyWorkspaceNoDeclared(t *testing.T) {
 	}
 }
 
-// TestDeclaredTrustFeedsSoulGate (R1.3) proves the FOLDED decision reaches the
-// soul provenance gate: a workspace declared in trustedWorkspaces loads its
-// project soul WITHOUT --trust-project, exactly as the flag would — because Build
-// collapses resolveTrust onto cfg.TrustProject before the soul build runs. We
-// simulate that fold here (set cfg.TrustProject = resolveTrust(...).Trusted) and
-// assert the project soul loads. The soul gate reads projectIngestionAdmitted
-// (TrustProject AND the ingestion grant, issue #359 redesign), so the grant is
-// set here to simulate applyPosture having admitted ingestion (an interactive
-// auto/yolo root, or an explicit opt-in).
+// TestDeclaredTrustFeedsSoulGate proves the folded decision reaches the soul
+// provenance gate: declared trust admits project steering exactly as the explicit
+// flag does. Build performs this same fold before selecting the soul.
 func TestDeclaredTrustFeedsSoulGate(t *testing.T) {
 	ws := realWS(t)
 	writeProjectSoul(t, ws, "You are a project persona.")
@@ -173,8 +167,7 @@ func TestDeclaredTrustFeedsSoulGate(t *testing.T) {
 	if !d.Trusted || d.Source != TrustDeclared {
 		t.Fatalf("precondition: declared workspace should resolve trusted, got %+v", d)
 	}
-	cfg.TrustProject = d.Trusted       // the Build-time fold
-	cfg.ProjectIngestionGranted = true // simulate applyPosture admitting ingestion (issue #359 redesign)
+	cfg.TrustProject = d.Trusted // the Build-time fold
 
 	src, meta := selectSoulSource(cfg, newFakeIO().io(), nil)
 	if src == nil {

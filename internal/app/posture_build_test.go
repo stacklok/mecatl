@@ -80,9 +80,8 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		}
 	})
 
-	// Headless variant (issue #359 redesign): a HEADLESS root at --posture auto
-	// WITHOUT --trust-project derives ingestion_granted=false (the fail-safe
-	// default) while still deriving shell_granted=true.
+	// Headless variant: auto does not trust a HEADLESS root. The authoritative
+	// narration and the shell consumer must both report the fail-safe result.
 	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
 		built, err := Build(context.Background(), Config{
@@ -91,6 +90,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			UseMock:           true,
 			NoSoul:            true,
 			Headless:          true,
+			Shell:             "/bin/sh", // a configured shell so the UNTRUSTED cause (not the empty-shell cause) is operative for the shell-DISABLED fact
 			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
 			Diagnostics:       diag.diag,
 		})
@@ -103,17 +103,28 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if fact == "" {
 			t.Fatalf("expected the narratePosture composition fact; log:\n%s", diag.String())
 		}
-		if !strings.Contains(fact, "ingestion_granted=false") {
-			t.Fatalf("headless auto without --trust-project must derive ingestion_granted=false (the fail-safe default); fact: %q", fact)
+		if !strings.Contains(fact, "project_ingestion=false") {
+			t.Fatalf("headless auto without trust must report project_ingestion=false; fact: %q", fact)
 		}
 		if !strings.Contains(fact, "trust_project=false") {
 			t.Fatalf("headless auto without --trust-project must leave trust_project=false (the ladder is interactive-only; the shell gate reads it); fact: %q", fact)
 		}
+		// titlani's deterministic guard (issue #359 final correction): a HEADLESS
+		// mecated at --posture auto with NO explicit --trust-project must NOT have the
+		// read-only child shell (the deliberate fail-safe capability loss — the repo's
+		// .git is not vouched, so the worktree-fork git checkout cannot run). The
+		// build-once composition fact "shell DISABLED (untrusted workspace)" MUST fire
+		// — its presence is the deterministic proof the shell builder is absent through
+		// the real factory path. Pinned alongside the interactive counterpart above so
+		// the two-cell truth (headless auto no-trust = no shell, interactive auto
+		// no-trust = shell) cannot regress independently.
+		if line := diag.lineContaining("subagent/team-member shell DISABLED"); line == "" {
+			t.Fatalf("headless auto without --trust-project must NOT have the read-only child shell (the fail-safe default); the shell-DISABLED fact did not fire; log:\n%s", diag.String())
+		}
 	})
 
-	// Interactive variant (issue #359 redesign): an INTERACTIVE root at --posture
-	// auto derives ingestion_granted=true via the ladder (the dev default ingests
-	// the operator's own CLAUDE.md), even without --trust-project.
+	// Interactive variant: auto raises the one TrustProject decision, admitting
+	// both project steering and the read-only child shell.
 	t.Run("operator auto interactive grants ingestion (dev default)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
 		built, err := Build(context.Background(), Config{
@@ -122,6 +133,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			UseMock:           true,
 			NoSoul:            true,
 			Headless:          false,
+			Shell:             "/bin/sh", // a configured shell so the untrusted-shell-DISABLED fact would fire if the gate tripped (it must NOT here)
 			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
 			Diagnostics:       diag.diag,
 		})
@@ -134,11 +146,22 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if fact == "" {
 			t.Fatalf("expected the narratePosture composition fact; log:\n%s", diag.String())
 		}
-		if !strings.Contains(fact, "ingestion_granted=true") {
-			t.Fatalf("interactive auto must derive ingestion_granted=true (the dev default); fact: %q", fact)
+		if !strings.Contains(fact, "project_ingestion=true") {
+			t.Fatalf("interactive auto must report project_ingestion=true; fact: %q", fact)
 		}
 		if !strings.Contains(fact, "trust_project=true") {
 			t.Fatalf("interactive auto must derive trust_project=true (the ladder raises it on interactive roots; the shell gate reads it); fact: %q", fact)
+		}
+		// titlani's deterministic guard (issue #359 final correction): an INTERACTIVE
+		// mecated at --posture auto with NO explicit --trust-project must keep the
+		// read-only child shell. The shell gate (buildSandboxedCommandRunner) reads
+		// cfg.TrustProject, which the ladder raised above; the build-once composition
+		// fact "shell DISABLED (untrusted workspace)" must therefore NOT fire — its
+		// absence is the deterministic, model-independent proof the shell builder is
+		// present through the real factory path. The narrated trust_project=true is the
+		// numeric half; this is the consumer half (the dirtyfork harness case).
+		if line := diag.lineContaining("subagent/team-member shell DISABLED"); line != "" {
+			t.Fatalf("interactive auto without --trust-project must KEEP the read-only child shell (the ladder raised TrustProject); the shell-DISABLED fact fired:\n%s", line)
 		}
 	})
 

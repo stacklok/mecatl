@@ -36,13 +36,13 @@ mecatequi \
   every mutating tool call, and a headless run has no approver — the run is CANCELLED
   on the first ask and exits 1. `auto` is the recommended unattended tier (allow-all,
   child injection-defense ON).
-- **Project-tier ingestion is opt-in on headless roots** ([ADR 0094](../adr/0094-opt-in-project-ingestion.md)).
-  `mecatequi --posture auto` WITHOUT `--trust-project` is the **fail-safe default**:
-  allow-all approvals + a working child shell but NO repo steering — the cloned repo's
-  AGENTS.md/CLAUDE.md, project rules/agents/skills/soul/commands, and the git snapshot
-  are NOT admitted. A scheduler running on third-party repos gets this by default. Add
-  `--trust-project` ONLY when the scheduler trusts the repo and wants its steering.
-  Supply your own framing via `--instructions`. See
+- **Project-tier ingestion AND the read-only child shell use one root-aware trust decision**
+  ([ADR 0095](../adr/0095-root-aware-project-trust.md)). Headless posture never grants trust.
+  `mecatequi --posture auto` without explicit, declared, or remembered trust is the fail-safe
+  default: allow-all approvals with NO repo steering AND NO read-only child shell. The cloned
+  repo's steering and worktree-fork git path are both withheld because `.git` was not vouched.
+  `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust admits BOTH. Supply your
+  own framing via `--instructions`. See
   [workspace trust](workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design).
 - **`--untrusted-prompt`** whenever the task body is externally sourced (an issue body,
   a task-graph node): the prompt is wrapped in the harness untrusted-data fence so the

@@ -536,10 +536,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// a headless `mecated --headless --subagent-ask-reviewer …` and point
 		// `mecatui connect` at it to use the reviewer).
 		Interactive: true,
-		// Headless: the explicit deployment identity for the ingestion-grant axis
-		// (issue #359 redesign). mecatui is INTERACTIVE (Headless false), so the
-		// posture ladder grants ingestion at auto/yolo (the dev default ingests the
-		// operator's own CLAUDE.md).
+		// mecatui is interactive, so trusted/auto/yolo retain the developer
+		// workspace-trust floor.
 		Headless: false,
 		// Diagnostics is the injected file-backed (or, under --quiet, discarding) sink.
 		// It is NEVER stderr: an operational line on stderr corrupts the Bubble Tea

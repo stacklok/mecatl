@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -79,6 +80,63 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 
 		ensurePresent(t, built.Service, "scout")
 	})
+}
+
+// TestBuildDeclaredTrustAdmitsProjectAndShell is the real composition regression
+// guard for the former pre-applyPosture/post-resolveTrust synchronization bug. A
+// trustedWorkspaces declaration, with strict posture and no --trust-project flag,
+// must fold to the same one TrustProject decision as explicit trust: project agent
+// defs are ingested and the read-only worktree shell remains available.
+func TestBuildDeclaredTrustAdmitsProjectAndShell(t *testing.T) {
+	ws := seedProjectAgentDef(t, "declared-scout")
+	fakeUserConfigEnv(t, t.TempDir(), t.TempDir())
+	withTrustEnv(t, trustSettingsEnv(t.TempDir(), []byte("trustedWorkspaces:\n  - "+ws+"\n")))
+	diag := slogdiagBuffer(t)
+	cfg := Config{
+		Workspace:          ws,
+		Model:              "mock",
+		UseMock:            true,
+		NoSoul:             true,
+		AgentsConventional: true,
+		Posture:            PostureStrict,
+		Headless:           true,
+		Shell:              "/bin/sh",
+		Diagnostics:        diag.diag,
+	}
+	decision := resolveTrust(cfg)
+	if !decision.Trusted || decision.Source != TrustDeclared {
+		t.Fatalf("declared trust did not resolve: %+v", decision)
+	}
+	cfg.TrustProject = decision.Trusted
+	if buildSandboxedCommandRunner(cfg) == nil {
+		t.Fatal("declared trust must make the read-only child shell builder present")
+	}
+	// Let Build perform its own authoritative fold from the original no-flag
+	// configuration; do not smuggle the resolved bool into this composition proof.
+	cfg.TrustProject = false
+
+	built, err := Build(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	ensurePresent(t, built.Service, "declared-scout")
+	if line := diag.lineContaining("subagent/team-member shell DISABLED"); line != "" {
+		t.Fatalf("declared trust must keep the read-only child shell; got: %s", line)
+	}
+	postureFact := diag.lineContaining("operator posture")
+	if !strings.Contains(postureFact, "trust_project=true") || !strings.Contains(postureFact, "project_ingestion=true") {
+		t.Fatalf("posture narration must use authoritative declared trust; fact: %q", postureFact)
+	}
+	trustFact := diag.lineContaining("workspace trust")
+	if !strings.Contains(trustFact, "trusted=true") || !strings.Contains(trustFact, "source=declared") {
+		t.Fatalf("workspace trust narration must report declared trust; fact: %q", trustFact)
+	}
+	log := diag.String()
+	if strings.Index(log, "operator posture") > strings.Index(log, "workspace trust") {
+		t.Fatalf("operator posture must be narrated after trust is folded and immediately before the trust fact; log:\n%s", log)
+	}
 }
 
 // seedProjectAgentDef creates a workspace under t.TempDir(), writes a minimal

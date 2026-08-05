@@ -413,15 +413,56 @@ func TestHeadlessFlagDrivesInteractive(t *testing.T) {
 	if def.headless {
 		t.Errorf("headless default = true, want false")
 	}
-	if ac := appConfig(def, nil, nil, nil, nil, nil); !ac.Interactive {
-		t.Errorf("default mecated must be Interactive=true (surfaces asks to the client)")
+	if ac := appConfig(def, nil, nil, nil, nil, nil); !ac.Interactive || ac.Headless {
+		t.Errorf("default mecated must map Interactive=true, Headless=false")
 	}
 	on, err := parseFlags([]string{"--headless"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if ac := appConfig(on, nil, nil, nil, nil, nil); ac.Interactive {
-		t.Errorf("--headless must set app.Config.Interactive=false so the reviewer/auto-deny path engages")
+	if ac := appConfig(on, nil, nil, nil, nil, nil); ac.Interactive || !ac.Headless {
+		t.Errorf("--headless must map Interactive=false, Headless=true")
+	}
+}
+
+func TestPostureReportRootAwareTrust(t *testing.T) {
+	// Isolate the trust fold from the developer's real trustedWorkspaces/trust.yaml;
+	// these rows intentionally exercise only the listed CLI trust source.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"headless auto untrusted", []string{"--headless", "--posture", "auto", "--print-posture"}, "off"},
+		{"interactive auto", []string{"--posture", "auto", "--print-posture"}, "ON"},
+		{"headless auto explicit trust", []string{"--headless", "--posture", "auto", "--trust-project", "--print-posture"}, "ON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parseFlags(tc.args)
+			if err != nil {
+				t.Fatalf("parseFlags: %v", err)
+			}
+			cfg.workspace = t.TempDir()
+			mapped := appConfig(cfg, nil, nil, nil, nil, nil)
+			if mapped.Headless != cfg.headless || mapped.Interactive == cfg.headless {
+				t.Fatalf("cmd mapping drift: Headless=%v Interactive=%v", mapped.Headless, mapped.Interactive)
+			}
+			if mapped.TrustProject != cfg.trustProject {
+				t.Fatalf("--trust-project mapping drift: app=%v flag=%v", mapped.TrustProject, cfg.trustProject)
+			}
+			state := app.ResolvePostureProjection(posturePreCheckConfig(cfg, nil))
+			report := renderPostureReport(state)
+			for _, line := range []string{
+				"project trust (steering + read-only child shell):             " + tc.want,
+				"project ingestion:                                             " + tc.want,
+			} {
+				if !strings.Contains(report, line) {
+					t.Errorf("report missing %q:\n%s", line, report)
+				}
+			}
+		})
 	}
 }
 

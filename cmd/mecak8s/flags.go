@@ -472,8 +472,8 @@ func appConfig(cfg config, diag port.Diagnostics) app.Config {
 		ReasoningEffort:        cfg.reasoningEffort,
 		ReasoningEffortFlagSet: cfg.reasoningEffortFlagSet,
 		Privileged:             privilegedProcess(),
-		// Headless: the explicit deployment identity for the ingestion-grant axis
-		// (issue #359 redesign). mecak8s defaults headless=true.
+		// Headless is explicit deployment identity; mecak8s defaults true, so
+		// posture never raises workspace trust.
 		Headless: cfg.headless,
 		// Interactive = !headless: the deliberate headless default. A child's
 		// unresolved ask is auto-denied / routed to the opt-in ask-reviewer.

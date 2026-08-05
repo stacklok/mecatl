@@ -32,7 +32,7 @@ Kill any pod. The survivor acquires the lease and resumes interrupted sessions f
 |---|---|---|
 | `--headless` default | `false` (interactive) | `true` (headless daemon) |
 | `--posture` default | `strict` | `auto` |
-| Project-tier ingestion | granted at `auto`/`yolo` by the interactive ladder | opt-in — only an explicit `--trust-project` admits the repo's steering (the fail-safe headless default gives allow-all + a child shell with NO steering) |
+| Project-tier ingestion + read-only child shell | granted at `auto`/`yolo` by the interactive ladder | one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither |
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |

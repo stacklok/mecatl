@@ -15,11 +15,10 @@ import (
 // settings.yaml by the workspacetrust adapter) into ONE answer — a TrustDecision
 // — produced once per process here in internal/app.
 //
-// The decision's .Trusted bool is fed to the SAME consumers --trust-project fed
-// before: permconfig.Options.TrustProject (so a project's ALLOW rules are
-// honoured only when trusted) and the soul provenance gate (so a project soul is
-// admitted only when trusted). Adapters still take a plain bool — no signature
-// churn. Trust is MONOTONIC-POSITIVE: it only ever GRANTS admission; it never
+// The decision's Trusted bool becomes Config.TrustProject and feeds the named
+// projectIngestionAdmitted seam plus the read-only worktree-shell gate. Thus
+// explicit, declarative, remembered, and interactive-ladder trust all admit the
+// same project authority set and shell. Adapters still take a plain bool. Trust is MONOTONIC-POSITIVE: it only ever GRANTS admission; it never
 // suppresses a Deny or a configured Ask (those compose deny-dominantly in the
 // evaluator regardless — see internal/adapter/permconfig).
 //

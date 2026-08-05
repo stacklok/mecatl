@@ -1,6 +1,7 @@
 # ADR 0094 — Opt-in project ingestion: two-axis positive grants
 
-- Status: Accepted
+- Status: Superseded
+- Superseded by: [ADR 0095](./0095-root-aware-project-trust.md)
 - Date: 2026-08-05
 - Scope: operator-tier trust/policy — splitting project-tier ingestion and the subagent shell into two independent positive grants, with a fail-safe headless default
 - Supersedes: [ADR 0092](./0092-no-project-trust-pin.md)
