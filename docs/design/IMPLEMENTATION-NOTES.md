@@ -132,7 +132,7 @@ the redesign). `applyPosture` raises the ingestion grant from an explicit `--tru
 roots) and the interactive ladder at auto/yolo; a HEADLESS root does NOT grant it via the ladder
 (the fail-safe default), so a dark factory over a freshly-cloned untrusted repo ingests NONE of the
 repo's steering unless the operator explicitly passes `--trust-project`. No engine
-API change — composition-only. See ADR 0092 and `docs/usage/workspace-trust.md`.
+API change — composition-only. See ADR 0094 and `docs/usage/workspace-trust.md`.
 
 `AllowAllTools` is still implemented as a **rule** (a single `ScopeCLI` allow-all from the shared
 `yoloAllowAllRule` in `internal/app/build.go`), NOT a `PermissionMode` and NOT an evaluator bypass —

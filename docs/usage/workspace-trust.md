@@ -300,7 +300,7 @@ MECATL_SANDBOX=1 bin/mecated serve --mock --posture auto
 MECATL_SANDBOX=1 bin/mecated serve --mock --posture yolo   # == --yolo
 ```
 
-### Suppressing project-tier ingestion (`--no-project-trust`)
+### Project-tier ingestion on headless roots (the opt-in design)
 
 The posture ladder sets `TrustProject=true` at `trusted`/`auto`/`yolo` — the project
 authority set (AGENTS.md/CLAUDE.md, project rules, agent defs, skills, soul, slash commands,
@@ -308,19 +308,51 @@ ALLOW rules, and the git snapshot) is admitted. For an **unattended scheduler** 
 mecak8s) running on cloned repos, that is a supply-chain channel: whoever pushes to the
 cloned ref can inject instructions through the repo's AGENTS.md or a project soul.
 
-`--no-project-trust` (CLI flag, default OFF) + the operator-tier `no-project-trust:` YAML
-key **suppress project-tier ingestion** without lowering `TrustProject` — so the
-read-only subagent shell stays active (lowering `TrustProject=false` disables it; the pin
-does not):
+**The fail-safe default** (issue #359 redesign, [ADR 0094](../adr/0094-opt-in-project-ingestion.md)):
+on a **headless** root project-tier ingestion is **opt-in** — the operator must EXPLICITLY
+pass `--trust-project` to admit the repo's steering. The default (`mecatequi --posture auto`
+without `--trust-project`) yields allow-all approvals + a working child shell but NO repo
+steering. The operator supplies their own framing via `--instructions`. A forgotten flag
+degrades to a less-steered agent, not a hijacked one:
 
 ```sh
-# Scheduler on cloned third-party repos: keep auto's approvals,
-# subagent shell, and child-injection defence — drop the repo's
-# own AGENTS.md / project rules / agents / skills / soul / commands.
-mecatequi --posture auto --no-project-trust --instructions "..." --prompt ...
+# Scheduler on untrusted cloned repos: fail-safe default — no ingestion.
+# The shell is ON (posture >= auto), repo steering is OFF.
+mecatequi --posture auto --instructions "..." --prompt ...
+
+# Scheduler on a repo it trusts: add the explicit opt-in.
+mecatequi --posture auto --trust-project --instructions "..." --prompt ...
 ```
 
-What the pin suppresses:
+The design splits the old `TrustProject` gate into **two independent positive grants**:
+
+1. **Ingestion axis** — `Config.ProjectIngestionGranted`. On headless roots, only an explicit
+   `--trust-project` raises it. On interactive roots, the posture ladder grants it at
+   `auto`/`yolo` (no regression — a dev's own CLAUDE.md keeps working).
+2. **Subagent-shell axis** — `Config.SubagentShellGranted`. Granted at `posture >= auto` on
+   BOTH roots, decoupled from ingestion. A scheduler gets the shell without the steering.
+
+The single-source helper `projectIngestionAdmitted(cfg) =
+cfg.TrustProject && cfg.ProjectIngestionGranted` (`internal/app/project_ingestion.go`) gates
+every project-tier ingestion site. `TrustProject` is the workspace-trust fold
+(flag/declared/remembered); `ProjectIngestionGranted` is the root-aware opt-in. The
+`--print-posture` breakdown shows both axes.
+
+**`--no-project-trust` is removed.** The negative suppressor (ADR 0092) was replaced by this
+opt-in design because the suppressor's zero-value (false = "not suppressing") silently
+granted ingestion when the operator forgot the flag — the positive grant is fail-safe.
+
+**Truth tables** (HEADLESS: G=T only, S=posture>=auto; INTERACTIVE: G=T OR posture>=auto, S=posture>=auto):
+
+| posture | --trust-project | T | G | S |
+|---|---|---|---|---|
+| (headless) strict | no | F | F | F |
+| (headless) auto | no | F | F | **T** (fail-safe default) |
+| (headless) auto | yes | T | T | T |
+| (interactive) auto | no | F | **T** (dev default) | T |
+| (interactive) trusted | yes | T | T | F |
+
+What the ingestion gate suppresses when not admitted:
 - AGENTS.md / CLAUDE.md (the highest-value injection point — the scheduler supplies its own
   `--instructions`)
 - `.mecatl`/`.claude` rules (project ALLOW rules)
@@ -331,20 +363,13 @@ What the pin suppresses:
 - the git snapshot
 
 What it does **not** affect:
-- the subagent shell (it still runs — the child injection-defence posture still holds)
+- the subagent shell (it is independently granted at `posture >= auto`)
 - the posture ladder's approvals (allow-all at `auto`/`yolo` is unaffected)
 - operator-tier config (`--instructions`, user soul, user agents/skills/commands)
 - deny/ask rules from any scope (they only tighten)
 
-The pin is **operator-tier only**; a project file's `no-project-trust:` key is ignored with a
-WARN. CLI out-ranks the operator YAML value. The `--no-project-trust` flag is intentionally a
-negative boolean — its zero-value preserves the default behaviour unchanged. An explicit
-`--no-project-trust=false` is also supported and wins over the YAML key.
-
-The pin is a separate dimension from `--trust-project`: the two combine via the single-source
-helper `ingestProjectTier(cfg)` = `cfg.TrustProject && !cfg.NoProjectIngest`. Setting both
-`--trust-project` and `--no-project-trust` gives `TrustProject=true ∧ NoProjectIngest=true`
-→ ingestion suppressed. The resolution is unambiguous from the command line.
+The ingestion grant is **operator-tier only** — composed from a CLI flag and the posture
+ladder, never from a project file. A project cannot force its own steering to be ingested.
 
 ---
 

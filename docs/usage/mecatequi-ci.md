@@ -25,7 +25,6 @@ run-contract ADR 0010). The profile such a launcher should use:
 MCP_TEQUITL_TOKEN=<per-run token> MCP_VMCP_TOKEN=<per-run token> \
 mecatequi \
   --posture auto \
-  --no-project-trust \
   --untrusted-prompt --prompt-file /work/task.md \
   --timeout 30m \
   --mcp-server tequitl=https://tequitl.internal/mcp \
@@ -37,13 +36,14 @@ mecatequi \
   every mutating tool call, and a headless run has no approver — the run is CANCELLED
   on the first ask and exits 1. `auto` is the recommended unattended tier (allow-all,
   child injection-defense ON).
-- **`--no-project-trust`** (operator-tier flag, default OFF) **suppresses the cloned
-  repo's project-tier steering** — AGENTS.md/CLAUDE.md, project rules/agents/skills/soul/
-  commands, and the git snapshot — while keeping `auto`'s approval semantics and the
-  subagent shell. A scheduler running on third-party repos should always set this;
-  supply your own framing via `--instructions`. The pin does not lower `TrustProject`,
-  so the read-only subagent/team-member shell is unaffected.
-  See [workspace trust](workspace-trust.md#suppressing-project-tier-ingestion---no-project-trust).
+- **Project-tier ingestion is opt-in on headless roots** ([ADR 0094](../adr/0094-opt-in-project-ingestion.md)).
+  `mecatequi --posture auto` WITHOUT `--trust-project` is the **fail-safe default**:
+  allow-all approvals + a working child shell but NO repo steering — the cloned repo's
+  AGENTS.md/CLAUDE.md, project rules/agents/skills/soul/commands, and the git snapshot
+  are NOT admitted. A scheduler running on third-party repos gets this by default. Add
+  `--trust-project` ONLY when the scheduler trusts the repo and wants its steering.
+  Supply your own framing via `--instructions`. See
+  [workspace trust](workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design).
 - **`--untrusted-prompt`** whenever the task body is externally sourced (an issue body,
   a task-graph node): the prompt is wrapped in the harness untrusted-data fence so the
   model treats it as data to act on, not instructions to obey.

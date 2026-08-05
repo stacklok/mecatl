@@ -222,13 +222,11 @@ Two things worth knowing before you rely on it:
 | `--posture auto` | Allow-all server-wide + main substitution loosening; child injection defence **on**. Recommended for unattended use |
 | `--posture yolo` | Also loosens child substitution (injection defence **off**). Isolated single-tenant only. Refused as root without `MECATL_SANDBOX=1` |
 
-`--no-project-trust` (operator-tier only, default `false`) suppresses project-tier
-steering ingestion — AGENTS.md, project rules/agents/skills/soul/commands, the git snapshot —
-without lowering `TrustProject`. Use on scheduler/cloned-repo runs to keep `--posture auto`'s
-approval semantics and the subagent shell while the repo's own steering is dropped; supply your
-own instructions via `--instructions`. It is a separate dimension from `--trust-project`;
-the two combine via the single `ingestProjectTier` helper. See
-[workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#suppressing-project-tier-ingestion---no-project-trust)
+On a **headless** root (`--headless`), project-tier ingestion is **opt-in**: only an explicit
+`--trust-project` admits the repo's steering (AGENTS.md, project rules/agents/skills/soul/commands,
+the git snapshot). The fail-safe default yields `--posture auto`'s approvals and the subagent shell
+with NO repo steering. See
+[workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md#project-tier-ingestion-on-headless-roots-the-opt-in-design)
 for the full walkthrough.
 
 See [Permissions & guardrails](/what-you-get/permissions.md) for the full rule
