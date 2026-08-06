@@ -17,9 +17,11 @@ import (
 // schedule_manager.go is the STORE-SHAPED schedule manager (ADR 0076): the
 // validated create/read/update/fire seam lives on a standalone value
 // constructable from a port.SessionStore + a now-func ALONE, BEFORE the
-// *Service exists. The manager holds the ScheduleStore (type-asserted off the
-// session store via the scheduleStoreProvider accessor), the cadence floor,
-// the durable EventLog, diagnostics, the shared model-inventory pointer
+// *Service exists. The manager holds the ScheduleStore (either an explicit
+// override passed via ScheduleManagerConfig.ScheduleStore — the
+// --schedule-store-url composition path — or type-asserted off the session
+// store via the scheduleStoreProvider accessor), the cadence floor, the
+// durable EventLog, diagnostics, the shared model-inventory pointer
 // (selector validation reads *models.Load()), and the late-set in-process
 // scheduler (FireNow). *server.Service delegates its nine port.ScheduleManager
 // methods + EmitScheduleEvent + GetFire to this manager — the RPC surface
@@ -38,6 +40,14 @@ import (
 // scheduleManager (ADR 0076): the plain inputs available before buildEngine.
 // Store is a port.SessionStore; the ScheduleStore is type-asserted off it via
 // the scheduleStoreProvider accessor (the jsonlstore + redisstore expose one).
+// ScheduleStore is the OPTIONAL explicit override (the --schedule-store-url
+// composition path): when non-nil it WINS over the accessor discovery, so a
+// driver-backed registry backs the in-chat Schedule TOOL too — the registry is
+// a remote driver, NOT the session store's own accessor, so the tool + tick
+// loop + fire path share the ONE resolveScheduleStore resolution (no
+// split-brain with an accessor-ful store + the override, and no absent tool
+// with an accessor-less store + the override). When nil, behaviour is
+// byte-identical to the accessor discovery (the pre-override posture).
 // Now is the now-func (the same clock the Service uses). Models is the SHARED
 // model-inventory pointer (selector validation reads *models.Load()); the
 // Service passes its own pointer so SetModels keeps working with no second
@@ -46,11 +56,21 @@ import (
 // Diagnostics tolerates an append failure silently). A store that backs no
 // ScheduleStore yields a nil manager (NewScheduleManager returns nil).
 type ScheduleManagerConfig struct {
-	Store       port.SessionStore
-	Now         func() time.Time
-	Models      *atomic.Pointer[[]*mecatlv1.ModelInfo]
-	EventLog    port.EventLog
-	Diagnostics port.Diagnostics
+	// Store is the port.SessionStore the schedule's origin validation reads
+	// (validateScheduleOrigin). It is also the ScheduleStore discovery source
+	// when ScheduleStore is nil (the scheduleStoreProvider accessor).
+	Store port.SessionStore
+	// ScheduleStore is the OPTIONAL explicit port.ScheduleStore override (the
+	// --schedule-store-url composition path). When non-nil it WINS over the
+	// Store type-assertion discovery: the registry is a remote driver, not the
+	// session store's own accessor, so the in-chat Schedule tool + the tick
+	// loop + the fire path all share the ONE resolveScheduleStore resolution.
+	// When nil, behaviour is byte-identical to the accessor discovery.
+	ScheduleStore port.ScheduleStore
+	Now           func() time.Time
+	Models        *atomic.Pointer[[]*mecatlv1.ModelInfo]
+	EventLog      port.EventLog
+	Diagnostics   port.Diagnostics
 }
 
 // scheduleManager is the store-shaped schedule create/read/update/fire seam
@@ -71,10 +91,13 @@ type scheduleManager struct {
 	// session the fire's terminal result will be delivered to). It is the SAME
 	// store the Service was configured with (cfg.Store).
 	store port.SessionStore
-	// schedStore is the ScheduleStore type-asserted off store at construction
-	// (the scheduleStoreProvider accessor). nil is impossible on a constructed
-	// manager — NewScheduleManager returns nil when the store backs no
-	// ScheduleStore (the honest no-scheduling path).
+	// schedStore is the ScheduleStore backing the manager. It is EITHER the
+	// explicit ScheduleStore override from ScheduleManagerConfig (the
+	// --schedule-store-url composition path — the registry is a remote driver)
+	// OR the ScheduleStore type-asserted off store at construction (the
+	// scheduleStoreProvider accessor). nil is impossible on a constructed
+	// manager — NewScheduleManager returns nil when NEITHER yields a store
+	// (the honest no-scheduling path).
 	schedStore port.ScheduleStore
 	// now is the now-func (the same clock the Service uses). Stamped on
 	// create/update and passed to the scheduler's FireNow.
@@ -123,9 +146,10 @@ type scheduleStoreProvider interface {
 // scheduleStoreFrom type-asserts store for a ScheduleStore via the
 // scheduleStoreProvider accessor (the jsonlstore + redisstore expose one).
 // Returns nil when the store does not expose the accessor or returns nil — the
-// honest no-scheduling path, matching ServerCapabilities.Scheduling. The single
-// discovery site (the manager constructor + the Service's self-construct
-// fallback share it).
+// honest no-scheduling path, matching ServerCapabilities.Scheduling. It is the
+// FALLBACK discovery when ScheduleManagerConfig.ScheduleStore (the explicit
+// override) is nil; the single discovery site (the manager constructor + the
+// Service's self-construct fallback share it).
 func scheduleStoreFrom(store port.SessionStore) port.ScheduleStore {
 	if store == nil {
 		return nil
@@ -149,12 +173,18 @@ type ScheduleManagerImpl = scheduleManager
 
 // NewScheduleManager constructs a scheduleManager from the plain pre-Service
 // inputs (ADR 0076): a port.SessionStore + a now-func ALONE (no *Service value
-// required, resolvable before buildEngine). It type-asserts the store for a
-// ScheduleStore via the scheduleStoreProvider accessor; a store that backs no
-// ScheduleStore (the in-memory memstore) yields a nil/absent manager — the
-// honest no-scheduling path, matching ServerCapabilities.Scheduling. The
-// returned manager satisfies port.ScheduleManager (all nine verbs) and is the
-// single truth the *Service delegates to.
+// required, resolvable before buildEngine). It resolves the ScheduleStore as
+// follows: when ScheduleManagerConfig.ScheduleStore is non-nil (the
+// --schedule-store-url composition override) it WINS — the registry is a remote
+// driver, not the session store's own accessor, so the in-chat Schedule tool +
+// the tick loop + the fire path share the ONE resolveScheduleStore resolution;
+// otherwise the store is type-asserted for a ScheduleStore via the
+// scheduleStoreProvider accessor (the jsonlstore + redisstore expose one). A
+// store that backs no ScheduleStore AND carries no override (the in-memory
+// memstore) yields a nil/absent manager — the honest no-scheduling path,
+// matching ServerCapabilities.Scheduling. The returned manager satisfies
+// port.ScheduleManager (all nine verbs) and is the single truth the *Service
+// delegates to.
 //
 // Models is OPTIONAL: a standalone-constructed manager (no Models pointer)
 // admits only the empty selector (an empty inventory) — composition passes
@@ -163,11 +193,14 @@ type ScheduleManagerImpl = scheduleManager
 //
 //nolint:revive // intentional unexported return: the manager is an adapter-internal type (ADR 0076); callers consume it via the port.ScheduleManager interface, and the *Service embeds + delegates to it. The unexported type keeps the schedule surface from leaking into the server adapter's public API.
 func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
-	schedStore := scheduleStoreFrom(cfg.Store)
+	schedStore := cfg.ScheduleStore
 	if schedStore == nil {
-		// A store with no ScheduleStore (the in-memory default) yields the
-		// honest absent manager — nil, matching the capabilities Scheduling=false
-		// gate. NEVER a stub.
+		schedStore = scheduleStoreFrom(cfg.Store)
+	}
+	if schedStore == nil {
+		// No explicit override AND no accessor-discovered store (the in-memory
+		// default) yields the honest absent manager — nil, matching the
+		// capabilities Scheduling=false gate. NEVER a stub.
 		return nil
 	}
 	now := cfg.Now
@@ -209,7 +242,8 @@ func (m *scheduleManager) setModelsPointer(p *atomic.Pointer[[]*mecatlv1.ModelIn
 	m.models = p
 }
 
-// scheduleStore returns the manager's ScheduleStore (the type-asserted
+// scheduleStore returns the manager's ScheduleStore (the explicit override
+// when ScheduleManagerConfig.ScheduleStore was set, else the
 // scheduleStoreProvider accessor result). It is the read the Service's
 // capabilities() Scheduling gate + the delegating schedule verbs use — kept
 // here so the Service no longer self-discovers the store (it consumes the
