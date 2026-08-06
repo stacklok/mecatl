@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -42,11 +43,22 @@ func run() error {
 	ctx, stop := signalCtx()
 	defer stop()
 
-	built, err := app.Build(ctx, appConfig(cfg, diag))
+	// Observability (issue #343, ADR 0097): OPT-IN. With no --otlp-* / --metrics-addr
+	// flags this is a no-op (byte-identical default). The flush defer runs BEFORE
+	// built.Close() (LIFO), so the OTLP flush completes before the service tears
+	// down on the SIGTERM path.
+	obs, oerr := buildObservability(ctx, cfg)
+	if oerr != nil {
+		return fmt.Errorf("telemetry: %w", oerr)
+	}
+
+	built, err := app.Build(ctx, appConfig(cfg, diag, obs))
 	if err != nil {
+		flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 		return err
 	}
 	defer built.Close()
+	defer flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 
-	return serve(ctx, cfg, built.Service)
+	return serve(ctx, cfg, built.Service, obs)
 }

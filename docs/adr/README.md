@@ -93,6 +93,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0019 — Perf tracking](./0019-perf-tracking.md)
 - [0020 — Diagnostics](./0020-diagnostics.md)
 - [0045 — Explicit-bucket latency histograms (zero-config quantiles on `/metrics`)](./0045-explicit-bucket-latency-histograms.md)
+- [0098 — Telemetry for the headless binaries (mecatequi, mecak8s)](./0098-headless-telemetry.md)
 
 ### Governance & trust
 - [0021 — Guardrails](./0021-guardrails.md)

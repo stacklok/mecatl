@@ -720,6 +720,8 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - \.worktrees
+      - \.scratch
 
 formatters:
   enable:
@@ -739,3 +741,5 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+      - \.worktrees
+      - \.scratch

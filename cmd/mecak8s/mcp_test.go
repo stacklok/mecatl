@@ -21,7 +21,7 @@ func TestParseFlagsMCPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags: %v", err)
 		}
-		ac := appConfig(cfg, port.NopDiagnostics{})
+		ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 		if len(ac.MCPServers) != 2 {
 			t.Fatalf("app.Config.MCPServers len = %d, want 2", len(ac.MCPServers))
 		}
@@ -47,7 +47,7 @@ func TestParseFlagsMCPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags(nil): %v", err)
 		}
-		if got := appConfig(cfg, port.NopDiagnostics{}).MCPServers; len(got) != 0 {
+		if got := appConfig(cfg, port.NopDiagnostics{}, observability{}).MCPServers; len(got) != 0 {
 			t.Errorf("MCPServers = %v, want empty", got)
 		}
 	})
@@ -68,7 +68,7 @@ func TestParseFlagsMCPServerInsecureHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseFlags (%s): %v", name, err)
 			}
-			ac := appConfig(cfg, port.NopDiagnostics{})
+			ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 			if len(ac.MCPServers) != 1 || ac.MCPServers[0].Headers["Authorization"] != "Bearer per-run-token" {
 				t.Errorf("(%s) MCPServers = %+v, want the bearer attached under the relaxation", name, ac.MCPServers)
 			}

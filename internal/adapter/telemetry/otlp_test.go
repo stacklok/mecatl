@@ -120,7 +120,7 @@ func TestNewMeterProviderEmitsClassicLatencyBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newResource: %v", err)
 	}
-	mp, reg, err := newMeterProvider(res)
+	mp, reg, err := newMeterProvider(context.Background(), res, OTLPConfig{})
 	if err != nil {
 		t.Fatalf("newMeterProvider: %v", err)
 	}

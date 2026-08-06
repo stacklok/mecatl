@@ -12,6 +12,8 @@ import (
 	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -62,6 +64,29 @@ type OTLPConfig struct {
 	SampleRatio float64
 	// Version sets the resource service.version attribute when non-empty.
 	Version string
+
+	// --- OTLP metrics push (optional; the prometheus reader stays always on) ---
+	// MetricsEndpoint is the collector address for an OTLP METRICS push reader
+	// (a PeriodicReader over an otlpmetricgrpc/otlpmetrichttp exporter). An empty
+	// MetricsEndpoint installs NO periodic reader — the scrape-only path is
+	// byte-identical. When set, the periodic reader joins the prometheus reader
+	// on the SAME MeterProvider so /metrics AND the push both export the domain
+	// instruments.
+	MetricsEndpoint string
+	// MetricsProtocol selects the metrics transport: "grpc" (default) or "http".
+	// Any other value is rejected by Setup.
+	MetricsProtocol string
+	// MetricsInsecure skips TLS when dialing the metrics collector (dev only).
+	MetricsInsecure bool
+	// MetricsHeaders are sent with every metrics export request.
+	MetricsHeaders map[string]string
+	// MetricsTimeout bounds a single metrics export request. Zero uses the
+	// exporter default.
+	MetricsTimeout time.Duration
+	// MetricsPushInterval is the PeriodicReader export cadence. Zero uses the
+	// SDK default (60s). A short-lived caller (mecatequi) should set a small
+	// interval AND call Shutdown to force a final flush before exit.
+	MetricsPushInterval time.Duration
 }
 
 // Providers bundles the OTel providers Setup installs, so callers wire metrics
@@ -103,9 +128,11 @@ type Providers struct {
 // until the first export, so Setup returns promptly even against an unreachable
 // endpoint.
 //
-// An OTLP metric exporter (push to a collector) is a deliberate seam: the
-// MeterProvider is assembled from a slice of readers, so adding an
-// otlpmetric reader here when an endpoint is configured is a one-line change.
+// An OTLP metric exporter (push to a collector) is an optional seam: when
+// cfg.MetricsEndpoint is set, Setup attaches a PeriodicReader over an
+// otlpmetricgrpc/otlpmetrichttp exporter to the MeterProvider's reader slice
+// alongside the always-on prometheus reader. The reader slice assembly (below in
+// newMeterProvider) keeps both exporters exporting the SAME instruments.
 func Setup(ctx context.Context, cfg OTLPConfig) (Providers, error) {
 	noop := func(context.Context) error { return nil }
 	providers := Providers{
@@ -119,7 +146,7 @@ func Setup(ctx context.Context, cfg OTLPConfig) (Providers, error) {
 	}
 
 	// --- Metrics (always on) ---
-	mp, reg, err := newMeterProvider(res)
+	mp, reg, err := newMeterProvider(ctx, res, cfg)
 	if err != nil {
 		return providers, fmt.Errorf("telemetry: build meter provider: %w", err)
 	}
@@ -169,7 +196,15 @@ func Setup(ctx context.Context, cfg OTLPConfig) (Providers, error) {
 // (registered on a fresh registry) and the explicit-bucket-histogram views for
 // every latency instrument (ADR 0045). It returns the provider and the registry
 // to serve at /metrics.
-func newMeterProvider(res *resource.Resource) (*sdkmetric.MeterProvider, *prometheus.Registry, error) {
+//
+// When cfg.MetricsEndpoint is set, an OTLP metrics push reader (a PeriodicReader
+// over an otlpmetricgrpc/otlpmetrichttp exporter) joins the prometheus reader on
+// the SAME MeterProvider, so /metrics AND the push both export the domain
+// instruments. The prometheus reader is ALWAYS installed (the scrape path stays
+// on even when a collector is configured). The returned shutdown (via the
+// MeterProvider's Shutdown) flushes + stops the periodic reader too, so a
+// short-lived caller can force a final export before exit.
+func newMeterProvider(ctx context.Context, res *resource.Resource, cfg OTLPConfig) (*sdkmetric.MeterProvider, *prometheus.Registry, error) {
 	reg := prometheus.NewRegistry()
 	promExporter, err := otelprom.New(otelprom.WithRegisterer(reg))
 	if err != nil {
@@ -180,11 +215,66 @@ func newMeterProvider(res *resource.Resource) (*sdkmetric.MeterProvider, *promet
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(promExporter),
 	}
+	if cfg.MetricsEndpoint != "" {
+		reader, rerr := newMetricPushReader(ctx, cfg)
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("build OTLP metric reader: %w", rerr)
+		}
+		opts = append(opts, sdkmetric.WithReader(reader))
+	}
 	for _, v := range LatencyViews() {
 		opts = append(opts, sdkmetric.WithView(v))
 	}
 	mp := sdkmetric.NewMeterProvider(opts...)
 	return mp, reg, nil
+}
+
+// newMetricPushReader builds a PeriodicReader over an otlpmetricgrpc or
+// otlpmetrichttp exporter for the OTLP metrics push path. The exporter is
+// constructed lazily for gRPC (it dials on first export, like the trace
+// exporter), so Setup returns promptly even against an unreachable endpoint.
+func newMetricPushReader(ctx context.Context, cfg OTLPConfig) (*sdkmetric.PeriodicReader, error) {
+	periodicOpts := make([]sdkmetric.PeriodicReaderOption, 0, 1)
+	if cfg.MetricsPushInterval > 0 {
+		periodicOpts = append(periodicOpts, sdkmetric.WithInterval(cfg.MetricsPushInterval))
+	}
+	switch cfg.MetricsProtocol {
+	case "", ProtocolGRPC:
+		gOpts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(cfg.MetricsEndpoint)}
+		if cfg.MetricsInsecure {
+			gOpts = append(gOpts, otlpmetricgrpc.WithInsecure())
+		}
+		if len(cfg.MetricsHeaders) > 0 {
+			gOpts = append(gOpts, otlpmetricgrpc.WithHeaders(cfg.MetricsHeaders))
+		}
+		if cfg.MetricsTimeout > 0 {
+			gOpts = append(gOpts, otlpmetricgrpc.WithTimeout(cfg.MetricsTimeout))
+		}
+		exp, eerr := otlpmetricgrpc.New(ctx, gOpts...)
+		if eerr != nil {
+			return nil, fmt.Errorf("build otlpmetricgrpc exporter: %w", eerr)
+		}
+		return sdkmetric.NewPeriodicReader(exp, periodicOpts...), nil
+	case ProtocolHTTP:
+		hOpts := []otlpmetrichttp.Option{otlpmetrichttp.WithEndpoint(cfg.MetricsEndpoint)}
+		if cfg.MetricsInsecure {
+			hOpts = append(hOpts, otlpmetrichttp.WithInsecure())
+		}
+		if len(cfg.MetricsHeaders) > 0 {
+			hOpts = append(hOpts, otlpmetrichttp.WithHeaders(cfg.MetricsHeaders))
+		}
+		if cfg.MetricsTimeout > 0 {
+			hOpts = append(hOpts, otlpmetrichttp.WithTimeout(cfg.MetricsTimeout))
+		}
+		exp, eerr := otlpmetrichttp.New(ctx, hOpts...)
+		if eerr != nil {
+			return nil, fmt.Errorf("build otlpmetrichttp exporter: %w", eerr)
+		}
+		return sdkmetric.NewPeriodicReader(exp, periodicOpts...), nil
+	default:
+		return nil, fmt.Errorf("unknown OTLP metrics protocol %q (want %q or %q)",
+			cfg.MetricsProtocol, ProtocolGRPC, ProtocolHTTP)
+	}
 }
 
 // MetricsHandler returns an http.Handler that serves the given registry in the
