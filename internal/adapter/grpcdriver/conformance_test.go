@@ -13,7 +13,9 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/leaseconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
+	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/scheduleconformance"
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
 	"github.com/stacklok/mecatl/engine/port"
@@ -178,5 +180,28 @@ func TestGRPCSoulSourceConformance(t *testing.T) {
 			driverv1.RegisterSoulSourceServiceServer(gs, NewSoulSourceServer(soulBodyFunc(body)))
 		})
 		return NewSoulSource(conn, SoulOptions{})
+	})
+}
+
+// TestGRPCScheduleStoreConformance runs the shared ScheduleStore conformance
+// table over grpcdriver → bufconn → NewScheduleStoreServer +
+// NewScheduleOneShotReArmerServer(memschedulestore.New()): the SAME suite the
+// in-memory reference passes, now over the full client → wire →
+// server-wrapper → reference-backend path. The factory registers BOTH
+// ScheduleStoreService and ScheduleOneShotReArmerService over the SAME
+// memschedulestore instance (which implements both port.ScheduleStore and
+// port.ScheduleOneShotReArmer), so the re-arm subtests inside Run (which
+// type-assert the store for port.ScheduleOneShotReArmer) RUN over the wire —
+// the integration test proves Claim/ClaimNow/ReArmOneShot atomicity +
+// RecordFire idempotency hold through the real gRPC path (the
+// encode→wire→decode→state-machine→encode→wire→decode round trip).
+func TestGRPCScheduleStoreConformance(t *testing.T) {
+	scheduleconformance.Run(t, func(t *testing.T) port.ScheduleStore {
+		backend := memschedulestore.New()
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterScheduleStoreServiceServer(gs, NewScheduleStoreServer(backend))
+			driverv1.RegisterScheduleOneShotReArmerServiceServer(gs, NewScheduleOneShotReArmerServer(backend))
+		})
+		return NewScheduleStore(conn)
 	})
 }

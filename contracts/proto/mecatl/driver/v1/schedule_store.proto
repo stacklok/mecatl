@@ -1,0 +1,385 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: the remote schedule-store protocol.
+//
+// ScheduleStoreService is the wire seam behind the harness's
+// `port.ScheduleStore` (engine/port/schedule.go): an operator-run driver process
+// persists scheduled-task schedules (and their fire records) on behalf of the
+// harness, in place of the in-process stores (memschedulestore, a future JSONL
+// store, a k8s-backed store). The driver sits at the SAME trust tier as an
+// on-disk store directory — operator-configured infrastructure, not a
+// model-facing surface.
+//
+// The schedule and fire payloads are OPAQUE to the driver: each is a
+// format-tagged JSON envelope (the SessionSnapshot{format, payload} precedent),
+// and the payload is exactly the harness's `encoding/json` of a
+// `port.Schedule` / `port.ScheduleFire` (the same encoding the in-process
+// jsonlstore/redisstore persist). The driver stores and returns the envelope
+// VERBATIM and never decodes it — schedule schema evolution lives harness-side
+// (additive JSON), while format identification lives in this envelope. The
+// harness rejects an unknown `format` on Load/LoadFire with an infrastructure
+// error (never not-found).
+//
+// CAPACITY: a schedule is small (a prompt + a few fields, no inline media —
+// the store is the durable registry, not the fire's session content), so it
+// needs no raised message cap beyond the server-level gRPC default; the
+// envelope payload is well under 4 KiB in practice. (Contrast
+// SessionSnapshot's 64 MiB minimum, which exists because a session snapshot may
+// carry inline media.)
+//
+// Driver contract (mirrors port.ScheduleStore):
+//   - Load of an unknown schedule name MUST return NOT_FOUND (the harness maps
+//     it to port.ErrScheduleNotFound). Delete is IDEMPOTENT: an unknown name is
+//     success (a NOT_FOUND from a thin driver is tolerated by the harness
+//     client and mapped to success). RecordFire is IDEMPOTENT per fire id:
+//     recording the same fire id twice is a no-op (the driver MUST NOT
+//     duplicate the fire record on a repeat RecordFire).
+//   - Claim / ClaimNow / ReArmOneShot / SetEnabled / RecordFire* carry the
+//     SAME atomic-advance semantics as the in-process port.ScheduleStore: the
+//     durable NextFireAt advance IS the at-most-once fence, and the harness
+//     CLIENT cannot fence over the wire. A conforming driver MUST apply these
+//     atomically (a backend with compare-and-swap or a per-key mutex does so
+//     natively; a backend that GET-then-SETs without a fence is non-conforming
+//     and may double-fire). The wire adds nothing to the atomicity — it is a
+//     thin translator over the wrapped backend.
+//   - A driver that cannot store schedules at all answers every RPC with
+//     UNIMPLEMENTED; the harness client maps that to port.ErrScheduleUnsupported
+//     (the sticky-disable sentinel), and composition logs one INFO and
+//     stickily disables scheduling for the process (byte-identical no-schedule
+//     path).
+//
+// ScheduleOneShotReArmerService is a SEPARATE service carrying the single
+// optional ReArmOneShot RPC (mirroring port.ScheduleOneShotReArmer, an OPTIONAL
+// interface type-asserted on a ScheduleStore). A driver that does not implement
+// the re-armer answers UNIMPLEMENTED; the harness client maps that to
+// port.ErrScheduleUnsupported (the same sticky-disable sentinel), so a driver
+// that serves only ScheduleStoreService still degrades gracefully.
+//
+// Validation: required-field annotations are authored with `buf.validate.field`
+// for documentation and future runtime enforcement; V1 enforces them in the Go
+// client/server wrappers (internal/adapter/grpcdriver).
+
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// ScheduleStoreService persists and retrieves opaque, format-tagged schedule
+// records and fire records keyed by schedule name / fire id. It is the remote
+// analogue of the 13 port.ScheduleStore methods (Save/Load/Delete/List/Due/
+// Claim/ClaimNow/SetEnabled/RecordFire/RecordFireStart/RecordFireProgress/
+// LoadFire/ListFires). Atomicity lives in the wrapped backend; the wire adds
+// nothing (a conforming driver applies Claim/ClaimNow/ReArmOneShot/SetEnabled/
+// RecordFire* with the same atomic-advance semantics as the in-process store).
+service ScheduleStoreService {
+  // Save upserts the schedule by name (the authoritative key echoed at the
+  // top level). A later Save overwrites; the firing State is preserved on
+  // overwrite (the port contract — see ScheduleRecord).
+  rpc SaveSchedule(SaveScheduleRequest) returns (SaveScheduleResponse);
+
+  // Load returns the schedule stored under name. An unknown name MUST return
+  // NOT_FOUND (the harness maps it to port.ErrScheduleNotFound).
+  rpc LoadSchedule(LoadScheduleRequest) returns (LoadScheduleResponse);
+
+  // Delete removes the schedule stored under name, idempotently: an unknown
+  // name is success (a NOT_FOUND from a thin driver is tolerated by the
+  // harness client and mapped to success).
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+
+  // List returns ALL stored schedules, in no guaranteed order.
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+
+  // Due returns the schedules whose NextFireAt is <= now AND Enabled AND
+  // (when MaxFires > 0) FireCount < MaxFires. It is side-effect-free.
+  rpc DueSchedules(DueSchedulesRequest) returns (DueSchedulesResponse);
+
+  // Claim is the at-most-once atomic advance: it atomically advances
+  // NextFireAt to next_fire, sets LastFireAt=now, increments FireCount, and
+  // sets LastFireSessionID to the pending sentinel. A zero/absent next_fire
+  // means "no further fire" (one-shot done / cron exhausted): the schedule is
+  // disabled and NextFireAt zeroed. Returns the updated ScheduleRecord.
+  rpc ClaimSchedule(ClaimScheduleRequest) returns (ClaimScheduleResponse);
+
+  // ClaimNow is the manual-trigger variant of Claim: the SAME atomic advance
+  // but WITHOUT the due-check (it claims regardless of whether the slot is
+  // due). It fences on LastFireAt: a ClaimNow at the SAME now as a prior
+  // ClaimNow is rejected. Returns the updated ScheduleRecord.
+  rpc ClaimScheduleNow(ClaimScheduleNowRequest) returns (ClaimScheduleNowResponse);
+
+  // SetEnabled atomically sets the schedule's Enabled flag without touching
+  // any other State field (the pause/resume primitive).
+  rpc SetScheduleEnabled(SetScheduleEnabledRequest) returns (SetScheduleEnabledResponse);
+
+  // RecordFire records the terminal outcome of a fire, updating the
+  // schedule's LastFireSessionID and clearing in-flight state. It is
+  // IDEMPOTENT per fire id (a repeat for the same id is a no-op).
+  rpc RecordFire(RecordFireRequest) returns (RecordFireResponse);
+
+  // RecordFireStart persists the IN-FLIGHT fire (the run has begun but not
+  // yet produced a terminal outcome). It is IDEMPOTENT per fire id.
+  rpc RecordFireStart(RecordFireStartRequest) returns (RecordFireStartResponse);
+
+  // RecordFireProgress advances the in-flight fire's last-observed-progress
+  // instant. It is BEST-EFFORT and IDEMPOTENT.
+  rpc RecordFireProgress(RecordFireProgressRequest) returns (RecordFireProgressResponse);
+
+  // LoadFire returns the fire record stored under fire_id. An unknown id MUST
+  // return NOT_FOUND.
+  rpc LoadFire(LoadFireRequest) returns (LoadFireResponse);
+
+  // ListFires returns the fire records for a schedule. An unknown SCHEDULE
+  // returns NOT_FOUND; an empty fire list for an existing schedule is a
+  // successful empty slice.
+  rpc ListFires(ListFiresRequest) returns (ListFiresResponse);
+}
+
+// ScheduleOneShotReArmerService carries the single optional ReArmOneShot RPC
+// (mirroring port.ScheduleOneShotReArmer). A driver that does not implement it
+// answers UNIMPLEMENTED; the harness client maps that to
+// port.ErrScheduleUnsupported (the sticky-disable sentinel).
+service ScheduleOneShotReArmerService {
+  // ReArmOneShot re-enables the named one-shot schedule, sets its NextFireAt to
+  // next_fire, and increments OneShotRetryCount — atomically. It is the re-arm
+  // primitive the tick loop calls for a crashed one-shot retry. An unknown name
+  // returns NOT_FOUND.
+  rpc ReArmOneShot(ReArmOneShotRequest) returns (ReArmOneShotResponse);
+}
+
+// ScheduleRecord is the opaque schedule envelope: a format tag plus the
+// encoded payload. The driver round-trips both fields VERBATIM and never
+// decodes the payload; decode happens harness-side (encoding/json of
+// port.Schedule).
+//
+// CAPACITY: a schedule is small (a prompt + a few fields, no inline media) —
+// no raised message cap is required beyond the server's gRPC default; the
+// payload is well under 4 KiB in practice.
+message ScheduleRecord {
+  // format identifies the payload encoding ("schedule-json/1" today). The
+  // harness writes it on Save and rejects an unknown format on Load with an
+  // infrastructure error (never not-found).
+  string format = 1 [(buf.validate.field).string.min_len = 1];
+
+  // payload is the encoded schedule — exactly the bytes the harness wrote
+  // (encoding/json of port.Schedule for format "schedule-json/1").
+  bytes payload = 2 [(buf.validate.field).bytes.min_len = 1];
+}
+
+// ScheduleFireRecord is the opaque fire-record envelope: a format tag plus the
+// encoded payload (encoding/json of port.ScheduleFire). Same verbatim contract
+// as ScheduleRecord.
+message ScheduleFireRecord {
+  // format identifies the payload encoding ("schedule-json/1" today).
+  string format = 1 [(buf.validate.field).string.min_len = 1];
+
+  // payload is the encoded fire record — exactly the bytes the harness wrote.
+  bytes payload = 2 [(buf.validate.field).bytes.min_len = 1];
+}
+
+// SaveScheduleRequest carries one schedule to persist.
+message SaveScheduleRequest {
+  // name duplicates the schedule's Spec.Name at the top level so a driver can
+  // key and index its storage WITHOUT decoding the opaque payload. It is the
+  // AUTHORITATIVE storage key: the harness always writes it equal to the name
+  // inside the payload, and a DECODING store (e.g. the harness-provided Go
+  // server wrappers) rejects a request where the two disagree with
+  // INVALID_ARGUMENT.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // schedule is the opaque envelope to store verbatim.
+  ScheduleRecord schedule = 2 [(buf.validate.field).required = true];
+}
+
+// SaveScheduleResponse is empty: a successful Save has no payload.
+message SaveScheduleResponse {}
+
+// LoadScheduleRequest asks for the schedule under a name.
+message LoadScheduleRequest {
+  // name is the schedule name the record was saved under.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// LoadScheduleResponse carries the schedule record for the requested name.
+message LoadScheduleResponse {
+  // schedule is the envelope exactly as it was saved (format + payload
+  // verbatim).
+  ScheduleRecord schedule = 1 [(buf.validate.field).required = true];
+}
+
+// DeleteScheduleRequest asks for the schedule under name to be removed.
+message DeleteScheduleRequest {
+  // name is the schedule to delete. An unknown name is success (idempotent).
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// DeleteScheduleResponse is empty: a successful (or idempotent no-op) Delete
+// has no payload.
+message DeleteScheduleResponse {}
+
+// ListSchedulesRequest is empty: List returns the full inventory.
+message ListSchedulesRequest {}
+
+// ListSchedulesResponse carries every stored schedule's record, in no
+// guaranteed order.
+message ListSchedulesResponse {
+  // schedules is the unfiltered inventory.
+  repeated ScheduleRecord schedules = 1;
+}
+
+// DueSchedulesRequest asks for the schedules due at now.
+message DueSchedulesRequest {
+  // now is the wall-clock instant to compare NextFireAt against. REQUIRED.
+  google.protobuf.Timestamp now = 1 [(buf.validate.field).required = true];
+}
+
+// DueSchedulesResponse carries the due schedules, in no guaranteed order.
+message DueSchedulesResponse {
+  // schedules is the set of due, enabled, non-exhausted schedules.
+  repeated ScheduleRecord schedules = 1;
+}
+
+// ClaimScheduleRequest advances the named schedule's fire slot atomically.
+message ClaimScheduleRequest {
+  // name is the schedule to claim.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // now is the claim instant (sets LastFireAt). REQUIRED.
+  google.protobuf.Timestamp now = 2 [(buf.validate.field).required = true];
+
+  // next_fire is the caller-computed next fire instant. A zero/absent value is
+  // the "no further fire" sentinel (one-shot done / cron exhausted): the
+  // schedule is disabled and NextFireAt zeroed. NOT required.
+  google.protobuf.Timestamp next_fire = 3;
+}
+
+// ClaimScheduleResponse carries the updated schedule record after the claim.
+message ClaimScheduleResponse {
+  // schedule is the claimed schedule with the advanced State.
+  ScheduleRecord schedule = 1 [(buf.validate.field).required = true];
+}
+
+// ClaimScheduleNowRequest is the manual-trigger variant of Claim (no
+// due-check).
+message ClaimScheduleNowRequest {
+  // name is the schedule to force-fire.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // now is the claim instant (sets LastFireAt). REQUIRED.
+  google.protobuf.Timestamp now = 2 [(buf.validate.field).required = true];
+
+  // next_fire is the caller-computed next fire instant (zero/absent = no
+  // further fire). NOT required.
+  google.protobuf.Timestamp next_fire = 3;
+}
+
+// ClaimScheduleNowResponse carries the updated schedule record after the
+// force-claim.
+message ClaimScheduleNowResponse {
+  // schedule is the claimed schedule with the advanced State.
+  ScheduleRecord schedule = 1 [(buf.validate.field).required = true];
+}
+
+// SetScheduleEnabledRequest sets the schedule's Enabled flag.
+message SetScheduleEnabledRequest {
+  // name is the schedule to pause/resume.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // enabled is the new Enabled value (false = pause, true = resume).
+  bool enabled = 2;
+}
+
+// SetScheduleEnabledResponse is empty: a successful flag set has no payload.
+message SetScheduleEnabledResponse {}
+
+// RecordFireRequest records a fire's terminal outcome.
+message RecordFireRequest {
+  // fire_id duplicates the fire's ID at the top level so a driver can key its
+  // fire storage WITHOUT decoding the opaque payload. It is the AUTHORITATIVE
+  // storage key: the harness always writes it equal to the ID inside the
+  // payload, and a DECODING store rejects a request where the two disagree
+  // with INVALID_ARGUMENT.
+  string fire_id = 1 [(buf.validate.field).string.min_len = 1];
+
+  // fire is the opaque fire-record envelope to store verbatim.
+  ScheduleFireRecord fire = 2 [(buf.validate.field).required = true];
+}
+
+// RecordFireResponse is empty: a successful record has no payload.
+message RecordFireResponse {}
+
+// RecordFireStartRequest persists an in-flight fire. It carries BOTH name and
+// fire_id at the top level: name keys the schedule, fire_id keys the fire
+// record.
+message RecordFireStartRequest {
+  // name is the schedule the fire belongs to (the foreign key back to
+  // ScheduleSpec.Name).
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // fire_id is the fire's unique id (must equal the fire's ID inside the
+  // payload).
+  string fire_id = 2 [(buf.validate.field).string.min_len = 1];
+
+  // fire is the opaque in-flight fire-record envelope.
+  ScheduleFireRecord fire = 3 [(buf.validate.field).required = true];
+}
+
+// RecordFireStartResponse is empty: a successful start-record has no payload.
+message RecordFireStartResponse {}
+
+// RecordFireProgressRequest advances the in-flight fire's progress instant.
+message RecordFireProgressRequest {
+  // name is the schedule the fire belongs to.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // fire_id is the in-flight fire record's id (the id RecordFireStart took).
+  string fire_id = 2 [(buf.validate.field).string.min_len = 1];
+
+  // at is the progress instant. REQUIRED.
+  google.protobuf.Timestamp at = 3 [(buf.validate.field).required = true];
+}
+
+// RecordFireProgressResponse is empty: a successful progress update has no
+// payload.
+message RecordFireProgressResponse {}
+
+// LoadFireRequest asks for the fire record under fire_id.
+message LoadFireRequest {
+  // fire_id is the fire's unique id.
+  string fire_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// LoadFireResponse carries the fire record for the requested id.
+message LoadFireResponse {
+  // fire is the envelope exactly as it was saved.
+  ScheduleFireRecord fire = 1 [(buf.validate.field).required = true];
+}
+
+// ListFiresRequest asks for all fire records belonging to a schedule.
+message ListFiresRequest {
+  // schedule_name is the schedule whose fires to list. (The port wraps
+  // ErrScheduleNotFound for an unknown schedule, so an empty name is
+  // INVALID_ARGUMENT, not a wildcard.)
+  string schedule_name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ListFiresResponse carries the schedule's fire records, in no guaranteed
+// order.
+message ListFiresResponse {
+  // fires is the schedule's fire records (empty for a schedule with no fires).
+  repeated ScheduleFireRecord fires = 1;
+}
+
+// ReArmOneShotRequest re-arms a one-shot schedule.
+message ReArmOneShotRequest {
+  // name is the one-shot schedule to re-arm.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+
+  // next_fire is the new next-fire instant to set. REQUIRED (re-arm always
+  // sets a concrete next fire).
+  google.protobuf.Timestamp next_fire = 2 [(buf.validate.field).required = true];
+}
+
+// ReArmOneShotResponse is empty: a successful re-arm has no payload.
+message ReArmOneShotResponse {}
