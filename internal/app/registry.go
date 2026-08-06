@@ -663,6 +663,13 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 			opts = append(opts, openai.WithReasoningEffort(effort))
 		}
 		opts = append(opts, openai.WithProviderCapabilities(caps))
+		// Prompt caching (ADR 0100): the dialect is a PURE (id, baseURL) gate,
+		// never id alone — an operator can point "openai" at a non-canonical
+		// compatible endpoint (vLLM/LiteLLM via --openai-base-url) that would
+		// 400 on prompt_cache_retention or an unrecognised field. INSIDE the
+		// closure (not the outer call site) so every per-session/heal re-mint
+		// carries it, not just the initial build.
+		opts = append(opts, openai.WithCacheDialect(cacheDialectFor(id, baseURL, cfg)))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -722,6 +729,12 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string) providerEntry {
 		if effort != "" {
 			opts = append(opts, openaichat.WithReasoningEffort(effort))
 		}
+		// Prompt caching (ADR 0100): dormant today (id is always providerOpenCode
+		// here, which never matches the OpenAI gate — see
+		// openaichatCacheDialectFor), but wired inside the closure so a future
+		// OpenAI-over-Chat-Completions entry gets it for free on every
+		// per-session/heal re-mint.
+		opts = append(opts, openaichat.WithCacheDialect(openaichatCacheDialectFor(id, baseURL, cfg)))
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -765,6 +778,11 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 		entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
 		return entry
 	}
+	// normaliseAnthropicCacheTTL is called ONCE here (a build-time, not a
+	// per-remint, call site — mirrors the operatorDefaultEffortFor discipline
+	// above) so an unrecognised --anthropic-cache-ttl value WARNs at most once
+	// per process, never once per session/heal re-mint.
+	cacheTTL := normaliseAnthropicCacheTTL(cfg)
 	// construct mints a resilience-wrapped anthropic adapter carrying the given
 	// reasoning-effort token (ADR 0055) and per-session capability intersection
 	// (T7), over the SAME max-tokens + thinking resolvers. It is the SINGLE
@@ -793,6 +811,15 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 				return meta.thinkingFor(providerAnthropic, model)
 			}),
 			anthropic.WithProviderCapabilities(caps),
+			// Prompt caching (ADR 0100): --no-prompt-cache disables the three NEW
+			// conversation breakpoints (the pre-existing StablePrefix breakpoint is
+			// unaffected); --anthropic-cache-ttl (normalised once, above) stamps a
+			// uniform TTL across every marker the adapter emits. INSIDE the closure
+			// so every per-session/heal re-mint carries both.
+			anthropic.WithConversationCaching(!cfg.PromptCacheDisabled),
+		}
+		if cacheTTL != "" {
+			opts = append(opts, anthropic.WithCacheTTL(cacheTTL))
 		}
 		// Reasoning effort (ADR 0055) is INDEPENDENT of the thinking config above; both
 		// coexist on the request. Anthropic identity-maps the neutral vocabulary.

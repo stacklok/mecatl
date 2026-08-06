@@ -28,6 +28,7 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -46,16 +47,25 @@ type Provider struct {
 	// normalised neutral token; unlike the openai (Responses) adapter this
 	// endpoint accepts xhigh/max, so they are NOT clamped to high.
 	effort string
+	// cacheDialect selects which provider-side prompt-cache wire dialect
+	// (ADR 0100) buildParams (method) emits. "" (CacheDialectNone, the zero
+	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
+	// wire.
+	cacheDialect CacheDialect
+	// cacheMemo memoises the last-seen (StablePrefix, hash) pair for
+	// promptCacheKey — see cachekey.go.
+	cacheMemo atomic.Pointer[prefixMemo]
 }
 
 // Option configures a Provider.
 type Option func(*config)
 
 type config struct {
-	apiKey  string
-	baseURL string
-	effort  string
-	extra   []option.RequestOption
+	apiKey       string
+	baseURL      string
+	effort       string
+	extra        []option.RequestOption
+	cacheDialect CacheDialect
 }
 
 // WithAPIKey sets the API key used to authenticate requests.
@@ -116,7 +126,7 @@ func New(opts ...Option) *Provider {
 	reqOpts = append(reqOpts, c.extra...)
 
 	client := oai.NewClient(reqOpts...)
-	return &Provider{client: client.Chat.Completions, effort: c.effort}
+	return &Provider{client: client.Chat.Completions, effort: c.effort, cacheDialect: c.cacheDialect}
 }
 
 // Stream issues a streaming Chat Completions request and yields provider-neutral
@@ -125,7 +135,7 @@ func New(opts ...Option) *Provider {
 // terminal transport/stream error as the iterator's error. The outer error is
 // reserved for a failure to construct the request parameters.
 func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-	params, err := buildParams(req, p.effort)
+	params, err := p.buildParams(req)
 	if err != nil {
 		return nil, err
 	}

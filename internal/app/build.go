@@ -223,6 +223,18 @@ type Config struct {
 	LLMBreakerThreshold  int
 	LLMBreakerCooldown   time.Duration
 
+	// Provider-side prompt caching (ADR 0100). PromptCacheDisabled (wired from
+	// --no-prompt-cache) forces every adapter's cache dialect to None,
+	// reproducing the pre-ADR-0100 wire exactly — the ZERO VALUE is false, so
+	// caching defaults ON and every existing hand-built Config / test still
+	// gets the anthropic adapter's byte-identical-default behaviour (only the
+	// TTL field's default omits "ttl"; the StablePrefix breakpoint itself
+	// predates this feature). AnthropicCacheTTL (wired from
+	// --anthropic-cache-ttl) accepts "5m" or "1h"; any other value is
+	// normalised to "" (omit) with a WARN — see normaliseAnthropicCacheTTL.
+	PromptCacheDisabled bool
+	AnthropicCacheTTL   string
+
 	// MaxNoProgressNudges bounds how many continuation nudges the loop injects after
 	// a completed turn that produced NEITHER a tool call NOR meaningful text (a
 	// reasoning-only / empty turn that a reasoning model can emit). It is threaded

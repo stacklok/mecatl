@@ -115,6 +115,10 @@ type config struct {
 	llmBreakerThreshold  int
 	llmBreakerCooldown   time.Duration
 
+	// Provider-side prompt caching (ADR 0100).
+	noPromptCache     bool
+	anthropicCacheTTL string
+
 	// maxRunTokens is the loop-level cumulative token ceiling (0 = disabled).
 	maxRunTokens int
 	// maxTeamTokens is the team-wide cumulative token ceiling (0 = disabled).
@@ -294,6 +298,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per agent run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
 
+	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching (ADR 0100): every adapter's cache dialect degrades to None, reproducing the pre-caching wire exactly. Caching is ON by default")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "TTL stamped on every Anthropic ephemeral cache_control breakpoint: \"5m\" or \"1h\". Empty (default) omits the ttl field — the API's own 5m default applies. Any other value is ignored with a WARN")
+
 	// Headless: DEFAULT true (mecak8s is a headless daemon — no human approver).
 	fs.BoolVar(&cfg.headless, "headless", true, "run NON-interactive (DEFAULT on): a child subagent/member/branch permission ask is auto-denied / routed to the opt-in --subagent-ask-reviewer rather than parked until run-end. Pass --headless=false only if a client (mecatui, an IDE) answers asks")
 
@@ -468,6 +475,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		LLMBreakerCooldown:            cfg.llmBreakerCooldown,
 		MaxRunTokens:                  cfg.maxRunTokens,
 		MaxTeamTokens:                 cfg.maxTeamTokens,
+		PromptCacheDisabled:           cfg.noPromptCache,
+		AnthropicCacheTTL:             cfg.anthropicCacheTTL,
 		ChildRetention:                cfg.childRetention,
 		ChildRetentionMaxPerFamily:    cfg.childRetentionMaxPerFamily,
 		ChildGCInterval:               cfg.childGCInterval,

@@ -51,7 +51,7 @@ Provider-private knobs that differ by adapter — OpenAI's `store`/`include` fla
 
 mecatl sends the **full conversation history on every turn** (`store: false`). There is no server-side conversation state. This has two consequences:
 
-1. **The system prompt is a `prompt.Layered` struct**, not a raw string. It has a stable prefix (the agent persona, tool schemas, and instructions — the part that does not change turn-to-turn) and a volatile suffix (per-turn context that does change). The byte-stable prefix is what provider-side prompt caching keys on; changing anything in the stable prefix busts the cache.
+1. **The system prompt is a `prompt.Layered` struct**, not a raw string. It has a stable prefix (the agent persona, tool schemas, and instructions — the part that does not change turn-to-turn) and a volatile suffix (per-turn context that does change). The byte-stable prefix is what provider-side prompt caching originally keyed on; it now also caches the growing **conversation itself** — Anthropic places breakpoints on the conversation history (not just the system prefix), and OpenAI/OpenRouter carry a routing/observability hint (`prompt_cache_key`) alongside the API's own implicit caching. Changing anything in the stable prefix still busts the cache. See [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md).
 2. **`Messages` carries every message the session has recorded**, including tool calls and results. The adapters re-serialise this into the provider's wire format on each request. Compaction trims the history when it approaches the context limit, but it never enables server-side state as a workaround.
 
 ### Reasoning and phase markers
@@ -230,6 +230,19 @@ If your provider does not support a modality, return `false` for it — even if 
 **The stream-idle watchdog** bounds mid-stream stalls. After the first chunk arrives, a per-chunk timer runs. If no new chunk arrives within `StreamIdleTimeout`, the decorator synthesizes a terminal `*StreamIdleError` (which satisfies `errors.Is(_, context.DeadlineExceeded)`) and ends the stream. This matters because the OpenAI and Anthropic adapters swallow context errors on cancel (they yield nothing), so the wrapper must synthesize the terminal signal rather than waiting for the inner iterator.
 
 A mid-stream stall is **terminal, never retried** — the no-replay-after-first-chunk contract holds.
+
+---
+
+## Provider-side prompt caching
+
+Caching is ON by default and adapter-construction-Option-driven, like the reasoning-effort knob above ([ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)):
+
+| Knob | Default | Flag |
+|-----------|---------|------|
+| Caching enabled | enabled | `--no-prompt-cache` disables it |
+| Anthropic cache TTL | API default (5 min) | `--anthropic-cache-ttl` (`5m` or `1h`) |
+
+The OpenAI/OpenRouter cache dialect — which hints get sent, if any — is gated on `(provider id, resolved base URL)`, never the provider id alone: a non-canonical base URL (`--openai-base-url` pointed at vLLM/LiteLLM, or `--openrouter-base-url` overridden) degrades to no hints at all, since a strict-compatible upstream can 400 on an unrecognised field.
 
 **`PerAttemptTimeout`** (default 300 s, `--llm-per-attempt-timeout`) bounds only the establishment phase: connect plus the first chunk. It is implemented as a `time.Timer` that fires `cancel()` if no first chunk arrives in time. It is explicitly **not** a `context.WithTimeout` — a fixed deadline that stays live through streaming would truncate slow reasoning turns when the absolute deadline passes.
 

@@ -446,11 +446,46 @@ func incompleteMessage(r responses.Response) string {
 // cached-tokens subset into CacheReadTokens and the reasoning-tokens subset into
 // ReasoningTokens (both subsets of their inclusive totals — see session.Usage).
 func mapUsage(u responses.ResponseUsage) session.Usage {
+	inputTokens := int(u.InputTokens)
 	return session.Usage{
-		InputTokens:     int(u.InputTokens),
-		OutputTokens:    int(u.OutputTokens),
-		CacheReadTokens: int(u.InputTokensDetails.CachedTokens),
-		ReasoningTokens: int(u.OutputTokensDetails.ReasoningTokens),
+		InputTokens:      inputTokens,
+		OutputTokens:     int(u.OutputTokens),
+		CacheReadTokens:  int(u.InputTokensDetails.CachedTokens),
+		CacheWriteTokens: cacheWriteTokensFrom(u.InputTokensDetails, inputTokens),
+		ReasoningTokens:  int(u.OutputTokensDetails.ReasoningTokens),
+	}
+}
+
+// cacheWriteTokensFrom probes InputTokensDetails.RawJSON() for the
+// OpenAI/OpenRouter "cache_write_tokens" field (ADR 0100) — there is no typed
+// SDK field for it (openai-go v3.37.0's ResponseUsageInputTokensDetails only
+// types CachedTokens); OpenRouter's own docs confirm the field lives at
+// usage.input_tokens_details.cache_write_tokens on the Responses surface,
+// mirroring OpenAI's own GPT-5.6+ naming. Any parse failure or absent key
+// yields 0 — fail-soft, never guess. Unlike the anthropic adapter (whose raw
+// input_tokens EXCLUDES cache tokens, requiring a fold), OpenAI's InputTokens
+// already INCLUDES cache writes, so no fold is needed here — only a clamp:
+// write is bounded to [0, inputTokens] so CacheWriteTokens ⊆ InputTokens holds
+// regardless of how an upstream (mis)reports it.
+func cacheWriteTokensFrom(details responses.ResponseUsageInputTokensDetails, inputTokens int) int {
+	raw := details.RawJSON()
+	if raw == "" {
+		return 0
+	}
+	var probe struct {
+		CacheWriteTokens int64 `json:"cache_write_tokens"`
+	}
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return 0
+	}
+	write := int(probe.CacheWriteTokens)
+	switch {
+	case write < 0:
+		return 0
+	case write > inputTokens:
+		return inputTokens
+	default:
+		return write
 	}
 }
 

@@ -181,6 +181,51 @@ func TestUsageCacheReadSubsetOfInput(t *testing.T) {
 	}
 }
 
+// TestUsageCacheWriteSubsetOfInput mirrors TestUsageCacheReadSubsetOfInput for
+// cache WRITES (ADR 0100): every Usage chunk produced from the recorded
+// fixtures must satisfy CacheWriteTokens <= InputTokens, the same
+// CacheWriteTokens ⊂ InputTokens contract the fold in translateMessageStop
+// guarantees (Anthropic's raw input_tokens excludes cache_creation_input_tokens
+// too, so this fails if the fold ever stops including it).
+func TestUsageCacheWriteSubsetOfInput(t *testing.T) {
+	skip := map[string]bool{
+		"error_event.sse":     true,
+		"two_text_blocks.sse": true,
+	}
+	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
+	if err != nil {
+		t.Fatalf("glob fixtures: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no .sse fixtures found under testdata")
+	}
+	sawCacheWrite := false
+	for _, path := range paths {
+		name := filepath.Base(path)
+		if skip[name] {
+			continue
+		}
+		chunks := decodeFixture(t, name)
+		for _, c := range chunks {
+			if c.Kind != port.ChunkUsage {
+				continue
+			}
+			if c.Usage.CacheWriteTokens > 0 {
+				sawCacheWrite = true
+			}
+			if c.Usage.CacheWriteTokens > c.Usage.InputTokens {
+				t.Errorf("%s: CacheWriteTokens %d > InputTokens %d — cache writes must be a subset of the full prompt",
+					name, c.Usage.CacheWriteTokens, c.Usage.InputTokens)
+			}
+		}
+	}
+	// Vacuity guard: if a fixture refresh drops every cache-bearing turn, the
+	// subset assertion above is trivially green — fail loudly instead.
+	if !sawCacheWrite {
+		t.Error("no fixture yielded CacheWriteTokens > 0 — the subset guard is vacuous; keep at least one cache-bearing fixture")
+	}
+}
+
 // TestTranslateThinkingToolTurn is the streaming half of the 400-trap round-trip:
 // a thinking block (thinking deltas + a signature delta) precedes a tool_use, and
 // the adapter emits the DISPLAY reasoning deltas, ONE packed ChunkReasoningItem

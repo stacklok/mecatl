@@ -48,6 +48,34 @@ func buildParams(req port.LLMRequest, effort string) (oai.ChatCompletionNewParam
 	return params, nil
 }
 
+// buildParams (method) builds the base params (the free buildParams above,
+// which stays the byte-identical baseline for existing callers/tests) and
+// then applies the cache-dialect hints (ADR 0100). Mirrors the openai
+// (Responses) adapter's free/method split: only the method form — the live
+// Stream path — carries the cache dialect.
+func (p *Provider) buildParams(req port.LLMRequest) (oai.ChatCompletionNewParams, error) {
+	params, err := buildParams(req, p.effort)
+	if err != nil {
+		return oai.ChatCompletionNewParams{}, err
+	}
+	p.applyCacheDialect(&params, req)
+	return params, nil
+}
+
+// applyCacheDialect stamps the ADR 0100 cache hint onto params per
+// p.cacheDialect. CacheDialectNone (the zero value) and any unrecognised
+// token both fall through the switch's default arm — emit nothing,
+// byte-identical to the pre-ADR-0100 wire (fail-soft, mirrors
+// reasoningEffortFor's omit-on-unknown arm).
+func (p *Provider) applyCacheDialect(params *oai.ChatCompletionNewParams, req port.LLMRequest) {
+	switch p.cacheDialect {
+	case CacheDialectOpenAI:
+		params.PromptCacheKey = oai.String(p.promptCacheKey(req.System.StablePrefix, req.Messages))
+	default:
+		// CacheDialectNone, or an unrecognised token: emit nothing.
+	}
+}
+
 // reasoningEffortFor maps a NEUTRAL composition effort token to the SDK's
 // shared.ReasoningEffort (a string alias). It passes through mecatl's neutral
 // vocabulary — low/medium/high/xhigh/max (see NormalizeReasoningEffort / ADR

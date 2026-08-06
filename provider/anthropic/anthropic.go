@@ -72,21 +72,40 @@ type Provider struct {
 	// (zero-value) intersection is distinguishable from "unset". A tool result with
 	// no Parts always takes the legacy single-string path regardless.
 	caps *port.ProviderCapabilities
+	// conversationCaching gates the three NEW conversation cache_control
+	// breakpoints (ADR 0100): the two conditional conversation anchors (the
+	// leading-turn-0-fragment boundary and the previous-turn boundary) plus the
+	// top-level automatic marker. It does NOT gate the pre-existing StablePrefix
+	// breakpoint in buildSystem, which shipped before this feature and stays
+	// unconditional. Default true (WithConversationCaching unset) — disabling via
+	// WithConversationCaching(false) (wired from --no-prompt-cache) reproduces the
+	// pre-change wire exactly.
+	conversationCaching bool
+	// cacheTTL is the raw TTL token (mirrors effort) stamped on EVERY breakpoint
+	// the adapter emits — the StablePrefix marker, the two conditional
+	// conversation anchors, and the top-level automatic marker all carry the SAME
+	// ttl (the uniform-TTL rule, ADR 0100). "" (the default) omits the ttl field
+	// everywhere (the API's own 5m default applies), byte-identical to today.
+	// Mapped per-request via cacheTTLFor; an unrecognised token degrades to ""
+	// fail-soft, mirroring outputConfigEffortFor's omit-on-unknown arm.
+	cacheTTL string
 }
 
 // Option configures a Provider.
 type Option func(*config)
 
 type config struct {
-	apiKey         string
-	baseURL        string
-	maxTokens      int64
-	maxTokensFor   maxTokensResolver
-	thinkingFor    thinkingResolver
-	thinkingBudget int64
-	effort         string
-	caps           *port.ProviderCapabilities
-	extra          []option.RequestOption
+	apiKey                     string
+	baseURL                    string
+	maxTokens                  int64
+	maxTokensFor               maxTokensResolver
+	thinkingFor                thinkingResolver
+	thinkingBudget             int64
+	effort                     string
+	caps                       *port.ProviderCapabilities
+	extra                      []option.RequestOption
+	disableConversationCaching bool
+	cacheTTL                   string
 }
 
 // WithAPIKey sets the API key used to authenticate requests (the x-api-key
@@ -171,6 +190,31 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 	}
 }
 
+// WithConversationCaching toggles the three NEW conversation cache_control
+// breakpoints (ADR 0100): the two conditional conversation anchors — the
+// leading-turn-0-fragment boundary and the previous-turn boundary — plus the
+// top-level automatic marker (MessageNewParams.CacheControl, which self-
+// advances to the last cacheable block on every turn). It does NOT gate the
+// pre-existing StablePrefix breakpoint in buildSystem, which shipped before
+// this feature and stays unconditional. Default (Option unset) is enabled;
+// pass false (wired from --no-prompt-cache) to reproduce the pre-change wire
+// exactly — the byte-identical escape hatch.
+func WithConversationCaching(enabled bool) Option {
+	return func(c *config) { c.disableConversationCaching = !enabled }
+}
+
+// WithCacheTTL sets the raw TTL token stamped on EVERY breakpoint the adapter
+// emits — the StablePrefix marker, the two conditional conversation anchors,
+// and the top-level automatic marker all carry the SAME ttl (the uniform-TTL
+// rule, ADR 0100: it makes every documented TTL-ordering 400 unreachable).
+// Accepts "5m" or "1h"; "" (the default) omits the ttl field everywhere (the
+// API's own 5m default applies), byte-identical to today. An unrecognised
+// token degrades to "" fail-soft — mirrors outputConfigEffortFor's
+// omit-on-unknown arm, so a stray/forward value can never 400 the request.
+func WithCacheTTL(ttl string) Option {
+	return func(c *config) { c.cacheTTL = ttl }
+}
+
 // WithRequestOption threads an arbitrary anthropic-sdk-go request option through
 // to the client (e.g. option.WithHeader, option.WithMaxRetries,
 // option.WithHTTPClient for a mock transport in tests). Multiple are applied in
@@ -212,13 +256,15 @@ func New(opts ...Option) *Provider {
 
 	client := sdk.NewClient(reqOpts...)
 	return &Provider{
-		client:         client.Messages,
-		maxTokens:      maxTokens,
-		maxTokensFor:   c.maxTokensFor,
-		thinkingFor:    c.thinkingFor,
-		thinkingBudget: budget,
-		effort:         c.effort,
-		caps:           c.caps,
+		client:              client.Messages,
+		maxTokens:           maxTokens,
+		maxTokensFor:        c.maxTokensFor,
+		thinkingFor:         c.thinkingFor,
+		thinkingBudget:      budget,
+		effort:              c.effort,
+		caps:                c.caps,
+		conversationCaching: !c.disableConversationCaching,
+		cacheTTL:            c.cacheTTL,
 	}
 }
 

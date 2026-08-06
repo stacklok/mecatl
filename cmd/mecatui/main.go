@@ -550,6 +550,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		LLMMaxAttempts:       3,
 		LLMPerAttemptTimeout: cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout: cfg.llmStreamIdleTimeout,
+		PromptCacheDisabled:  cfg.noPromptCache,
+		AnthropicCacheTTL:    cfg.anthropicCacheTTL,
 		LLMBreakerThreshold:  5,
 		LLMBreakerCooldown:   30 * time.Second,
 		EnableParallel:       true,

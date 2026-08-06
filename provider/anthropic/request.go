@@ -15,6 +15,23 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+// cacheTTLFor maps the adapter's raw TTL token (WithCacheTTL) to the SDK's
+// CacheControlEphemeralTTL. "" degrades to the zero value (the ttl field is
+// omitzero-dropped, so the API's own 5m default applies); an unrecognised
+// token ALSO degrades to the zero value — fail-soft, mirroring
+// outputConfigEffortFor's omit-on-unknown arm, so a stray/forward value can
+// never 400 the request.
+func cacheTTLFor(token string) sdk.CacheControlEphemeralTTL {
+	switch token {
+	case "5m":
+		return sdk.CacheControlEphemeralTTLTTL5m
+	case "1h":
+		return sdk.CacheControlEphemeralTTLTTL1h
+	default:
+		return ""
+	}
+}
+
 // encodeBase64 renders inline media bytes as a standard base64 string (the form
 // Anthropic's base64 image source expects in its data field).
 func encodeBase64(data []byte) string {
@@ -59,14 +76,27 @@ const minThinkingBudget int64 = 1024
 //   - max_tokens        -> resolved per req.Model (the per-model ceiling), NOT a
 //     fixed value, so a per-session route to a smaller-ceiling model never 400s.
 //   - thinking          -> model-CLASS config: adaptive / manual+budget / NONE.
+//
+// Conversation caching (ADR 0100, gated by p.conversationCaching, default on):
+// on top of the unconditional StablePrefix breakpoint above, buildParams stamps
+// two conditional conversation anchors (the leading-turn-0-fragment boundary
+// and the previous-turn boundary) and sets the top-level automatic marker
+// (MessageNewParams.CacheControl), which self-advances to the last cacheable
+// block on every turn — the 4-slot budget. Every breakpoint carries the SAME
+// p.cacheTTL (the uniform-TTL rule that makes the documented TTL-ordering 400s
+// unreachable).
 func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error) {
 	tools, err := buildTools(req.Tools)
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
-	messages, err := buildMessages(req.Messages, p.sessionCaps())
+	ttl := cacheTTLFor(p.cacheTTL)
+	messages, builtIdx, err := buildMessages(req.Messages, p.sessionCaps())
 	if err != nil {
 		return sdk.MessageNewParams{}, err
+	}
+	if p.conversationCaching {
+		applyConversationCacheBreakpoints(messages, builtIdx, req.Messages, ttl)
 	}
 
 	maxTokens := p.maxTokensForModel(req.Model)
@@ -75,8 +105,13 @@ func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error
 		MaxTokens: maxTokens,
 		Messages:  messages,
 		Tools:     tools,
-		System:    buildSystem(req.System),
+		System:    buildSystem(req.System, ttl),
 		Thinking:  thinkingConfigFor(req.Model, maxTokens, p.thinkingBudget, p.thinkingFor),
+	}
+	if p.conversationCaching {
+		marker := sdk.NewCacheControlEphemeralParam()
+		marker.TTL = ttl
+		params.CacheControl = marker
 	}
 	// Reasoning effort (ADR 0055) rides output_config.effort, INDEPENDENT of the
 	// extended-thinking config above (both coexist on the request). Anthropic
@@ -88,6 +123,113 @@ func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error
 		params.OutputConfig = sdk.OutputConfigParam{Effort: mapped}
 	}
 	return params, nil
+}
+
+// applyConversationCacheBreakpoints stamps the two conditional conversation
+// breakpoints (slots 2 and 3 of the 4-slot budget, ADR 0100) onto the
+// already-built message params, mutating messages in place. Slot 1 (the
+// StablePrefix marker) is buildSystem's job; slot 4 (the top-level automatic
+// marker) is the caller's. Both anchors are derived from msgs (the domain
+// conversation) and mapped to their built position via builtIdx — buildMessages
+// skips a RoleTool message carrying a nil ToolResult, so the two index spaces
+// are not guaranteed 1:1. Deduped when they resolve to the same message index:
+// a redundant second marker on the SAME block changes neither the highest-hit
+// prefix nor the write span, so it is dropped rather than wasted.
+func applyConversationCacheBreakpoints(messages []sdk.MessageParam, builtIdx []int, msgs []session.Message, ttl sdk.CacheControlEphemeralTTL) {
+	fragEnd := leadingFragmentEnd(msgs)
+	prevTurn := previousTurnBoundary(msgs)
+	if prevTurn == fragEnd {
+		prevTurn = -1
+	}
+	markBuiltMessage(messages, builtIdx, fragEnd, ttl)
+	markBuiltMessage(messages, builtIdx, prevTurn, ttl)
+}
+
+// markBuiltMessage stamps ttl on the LAST content block of the built message
+// corresponding to msgIdx (an index into the domain conversation), via the
+// builtIdx mapping produced by buildMessages. A negative/out-of-range msgIdx,
+// an unmapped (-1) built index, or an empty content list are all no-ops — the
+// anchors are best-effort, never a hard requirement.
+func markBuiltMessage(messages []sdk.MessageParam, builtIdx []int, msgIdx int, ttl sdk.CacheControlEphemeralTTL) {
+	if msgIdx < 0 || msgIdx >= len(builtIdx) {
+		return
+	}
+	j := builtIdx[msgIdx]
+	if j < 0 || j >= len(messages) {
+		return
+	}
+	content := messages[j].Content
+	if len(content) == 0 {
+		return
+	}
+	setCacheControl(&content[len(content)-1], ttl)
+}
+
+// setCacheControl stamps an ephemeral cache_control breakpoint (carrying ttl,
+// which may be "" — the API's own 5m default) on blk's underlying content-block
+// variant. It is fail-soft: a content-block kind with no CacheControl field
+// (thinking / redacted_thinking are the only ContentBlockParamUnion variants
+// GetCacheControl returns nil for) is skipped rather than panicking. Returns
+// whether the marker was applied.
+func setCacheControl(blk *sdk.ContentBlockParamUnion, ttl sdk.CacheControlEphemeralTTL) bool {
+	cc := blk.GetCacheControl()
+	if cc == nil {
+		return false
+	}
+	marker := sdk.NewCacheControlEphemeralParam()
+	marker.TTL = ttl
+	*cc = marker
+	return true
+}
+
+// leadingFragmentEnd returns the index, within msgs, of the LAST message in the
+// leading run of harness-injected turn-0 context fragments (RoleUser messages
+// whose Text matches prompt.IsInjectedTurn0Fragment) — or -1 when msgs does not
+// open with one. The leading-run rule (stop at the first non-match) mirrors
+// compaction's preservedHead discipline: an old persisted session may carry a
+// fragment mid-history (a prior harness version, or a session resumed from
+// before ADR 0043), and only the CONTIGUOUS leading run is the byte-stable
+// [system][fragments] prefix worth a breakpoint.
+//
+// Duplicated (not exported from engine/prompt) in provider/openai's cache-key
+// anchor derivation — separate Go modules, same discipline as
+// isContextOverflowMessage; keep the two in lockstep by hand.
+func leadingFragmentEnd(msgs []session.Message) int {
+	end := -1
+	for i := range msgs {
+		m := msgs[i]
+		if m.Role != session.RoleUser || !prompt.IsInjectedTurn0Fragment(m.Text) {
+			break
+		}
+		end = i
+	}
+	return end
+}
+
+// lastAssistantIndex returns the index, within msgs, of the LAST RoleAssistant
+// message, or -1 if there is none.
+func lastAssistantIndex(msgs []session.Message) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == session.RoleAssistant {
+			return i
+		}
+	}
+	return -1
+}
+
+// previousTurnBoundary returns the index, within msgs, of the message
+// immediately BEFORE the last assistant message — the previous-turn boundary
+// breakpoint (slot 3). It returns -1 when there is no assistant message yet
+// (turn 0) or the last assistant message is msgs[0] (no predecessor to mark).
+// Two adjacent RoleAssistant messages are unreachable (finishTurnNoTools
+// records an empty assistant turn then a USER nudge), so lastAssistantIndex's
+// scan is unambiguous.
+func previousTurnBoundary(msgs []session.Message) int {
+	i := lastAssistantIndex(msgs)
+	if i <= 0 {
+		return -1
+	}
+	return i - 1
 }
 
 // outputConfigEffortFor maps the NEUTRAL composition effort token to the SDK's
@@ -114,15 +256,20 @@ func outputConfigEffortFor(token string) (sdk.OutputConfigEffort, bool) {
 
 // buildSystem renders the two-layer system prompt into Anthropic's system[]
 // param. The StablePrefix becomes the first text block carrying the SINGLE
-// ephemeral cache_control breakpoint (the prefix tools→system is cached up to
-// and including it); the VolatileSuffix becomes a second, breakpoint-free block.
-// Empty parts are dropped; both empty -> nil (no system param).
-func buildSystem(l prompt.Layered) []sdk.TextBlockParam {
+// ephemeral cache_control breakpoint (slot 1 of the 4-slot budget, ADR 0100;
+// the prefix tools→system is cached up to and including it) — unconditional,
+// unaffected by WithConversationCaching, and carrying ttl so it stays uniform
+// with every OTHER breakpoint the adapter emits; the VolatileSuffix becomes a
+// second, breakpoint-free block. Empty parts are dropped; both empty -> nil (no
+// system param).
+func buildSystem(l prompt.Layered, ttl sdk.CacheControlEphemeralTTL) []sdk.TextBlockParam {
 	var blocks []sdk.TextBlockParam
 	if l.StablePrefix != "" {
+		marker := sdk.NewCacheControlEphemeralParam()
+		marker.TTL = ttl
 		blocks = append(blocks, sdk.TextBlockParam{
 			Text:         l.StablePrefix,
-			CacheControl: sdk.NewCacheControlEphemeralParam(),
+			CacheControl: marker,
 		})
 	}
 	if l.VolatileSuffix != "" {
@@ -362,9 +509,18 @@ func toStringSlice(v any) []string {
 // assistant turn places its thinking blocks BEFORE its tool_use blocks. A
 // RoleSystem message (the harness puts the system prompt in LLMRequest.System,
 // so this is belt-and-suspenders) is folded into a user text block.
-func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sdk.MessageParam, error) {
+//
+// The second return value, builtIdx, maps each index of msgs to its position in
+// the returned slice, or -1 when that message produced no block (a RoleTool
+// message with a nil ToolResult — the only skip case). It is the mapping the
+// conversation-cache anchors (leadingFragmentEnd / previousTurnBoundary, both
+// derived from msgs) use to locate their target block in the built slice, since
+// the two index spaces are not otherwise guaranteed 1:1.
+func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sdk.MessageParam, []int, error) {
 	out := make([]sdk.MessageParam, 0, len(msgs))
-	for _, m := range msgs {
+	builtIdx := make([]int, len(msgs))
+	for i, m := range msgs {
+		builtIdx[i] = -1
 		switch m.Role {
 		case session.RoleSystem:
 			// No system role inside messages; fold to a user text turn. An empty
@@ -374,20 +530,22 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 		case session.RoleUser:
 			blocks, err := userBlocks(m)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			out = append(out, sdk.NewUserMessage(blocks...))
 		case session.RoleAssistant:
 			out = append(out, sdk.NewAssistantMessage(assistantBlocks(m)...))
 		case session.RoleTool:
-			if m.ToolResult != nil {
-				out = append(out, sdk.NewUserMessage(toolResultBlock(*m.ToolResult, caps)))
+			if m.ToolResult == nil {
+				continue
 			}
+			out = append(out, sdk.NewUserMessage(toolResultBlock(*m.ToolResult, caps)))
 		default:
-			return nil, fmt.Errorf("anthropic: unsupported message role %q", m.Role)
+			return nil, nil, fmt.Errorf("anthropic: unsupported message role %q", m.Role)
 		}
+		builtIdx[i] = len(out) - 1
 	}
-	return out, nil
+	return out, builtIdx, nil
 }
 
 // toolResultBlock builds the tool_result content block for a tool result.

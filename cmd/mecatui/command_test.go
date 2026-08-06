@@ -184,6 +184,7 @@ func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 		"model", "default-provider", "default-model", "subagent-model",
 		"model-alias", "model-slot", "subagent-model-router",
 		"llm-per-attempt-timeout", "llm-stream-idle-timeout",
+		"no-prompt-cache", "anthropic-cache-ttl",
 		"memory-dir", "no-memory", "store-dir", "no-store",
 		"soul-file", "no-soul", "approve-soul", "soul-strict",
 		"user-model-dir", "no-user-model", "user-model-review", "user-model-review-interval",
@@ -247,7 +248,7 @@ func flagValueForTest(name string) string {
 		"no-soul", "approve-soul", "soul-strict", "no-user-model", "user-model-review",
 		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure",
 		"no-alt-screen", "inline", "no-mouse", "no-banner", "list-themes",
-		"subagent-model-router", "help-all", "quiet":
+		"subagent-model-router", "help-all", "quiet", "no-prompt-cache":
 		return "" // bool: no value consumed
 	}
 	// Provide a plausible value; the applicability check runs at fs.Visit time so
@@ -269,6 +270,8 @@ func flagValueForTest(name string) string {
 	case "model", "default-provider", "default-model", "subagent-model",
 		"reasoning-effort", "posture":
 		return "x"
+	case "anthropic-cache-ttl":
+		return "1h"
 	case "openai-base-url", "openrouter-base-url", "anthropic-base-url",
 		"opencode-base-url", "toolhive-llm-base-url":
 		return "http://x"

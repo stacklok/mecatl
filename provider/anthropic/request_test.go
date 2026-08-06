@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -522,5 +523,391 @@ func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
 		if !toolResultIDs[id] {
 			t.Fatalf("tool_use %q has no matching tool_result (orphan that would 400)", id)
 		}
+	}
+}
+
+// --- ADR 0100: conversation cache breakpoints -------------------------------
+
+// turn0Fragment builds a RoleUser message that matches prompt.IsInjectedTurn0Fragment
+// via the SAME "Project instructions (" marker prefix builder.go's
+// instructionFiles renders for AGENTS.md — IsInjectedTurn0Fragment matches on
+// that broader prefix (not the exact header string), so this stays robust to a
+// reword of the marker's trailing text.
+func turn0Fragment(body string) session.Message {
+	return session.NewUserMessage("Project instructions (AGENTS.md):\n" + body)
+}
+
+// cacheProvider builds a Provider for the conversation-cache test suite, always
+// supplying a max-tokens/thinking-budget floor so buildParams never errors on
+// an unrelated concern.
+func cacheProvider(opts ...Option) *Provider {
+	base := []Option{WithAPIKey("sk-test"), WithMaxTokens(16000), WithThinkingBudget(4096)}
+	return New(append(base, opts...)...)
+}
+
+// countCacheControl counts the "cache_control" JSON keys present in raw — one
+// per explicitly-marked content block (the field is omitzero, so an unmarked
+// block never contributes).
+func countCacheControl(raw []byte) int {
+	return strings.Count(string(raw), `"cache_control"`)
+}
+
+// collectTTLValues recursively walks a decoded-JSON value (map[string]any /
+// []any, the shape json.Unmarshal into `any` produces) and records every "ttl"
+// key's string value into out.
+func collectTTLValues(v any, out map[string]bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if k == "ttl" {
+				if s, ok := val.(string); ok {
+					out[s] = true
+				}
+			}
+			collectTTLValues(val, out)
+		}
+	case []any:
+		for _, e := range t {
+			collectTTLValues(e, out)
+		}
+	}
+}
+
+// explicitCacheMarkerCount returns the number of cache_control markers on the
+// system + messages arrays ONLY — the explicit breakpoints (slots 1-3), never
+// the top-level automatic marker (slot 4), so the anti-400 breakpoint budget
+// (≤3 explicit + the automatic marker) can be asserted precisely.
+func explicitCacheMarkerCount(t *testing.T, params sdk.MessageNewParams) int {
+	t.Helper()
+	sysRaw, err := json.Marshal(params.System)
+	if err != nil {
+		t.Fatalf("marshal system: %v", err)
+	}
+	msgRaw, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	return countCacheControl(sysRaw) + countCacheControl(msgRaw)
+}
+
+// wideFanOutConversation builds a leading turn-0-fragment pair, a genuine user
+// prompt, an assistant turn requesting k parallel tool calls, k tool-result
+// messages, and a final assistant text turn — modelling the wide read-parallel
+// dispatch the previous-turn-boundary anchor (slot 3) exists to guard (a turn
+// adds 1 thinking + K tool_use + 1 text + K tool_result blocks, which for
+// K >= 9 pushes the previous turn's automatic-marker entry outside Anthropic's
+// 20-block backward lookback).
+func wideFanOutConversation(k int) []session.Message {
+	msgs := []session.Message{
+		turn0Fragment("first fragment"),
+		turn0Fragment("last fragment"),
+		session.NewUserMessage("Please read these files in parallel."),
+	}
+	calls := make([]session.ToolCall, 0, k)
+	for i := 0; i < k; i++ {
+		calls = append(calls, session.NewToolCall(
+			session.ToolCallID(fmt.Sprintf("call_%d", i)), "Read",
+			json.RawMessage(fmt.Sprintf(`{"path":"f%d.go"}`, i))))
+	}
+	msgs = append(msgs, session.NewAssistantMessage("", "", calls))
+	for i := 0; i < k; i++ {
+		msgs = append(msgs, session.NewToolMessage(
+			session.NewToolResult(session.ToolCallID(fmt.Sprintf("call_%d", i)), "file body")))
+	}
+	msgs = append(msgs, session.NewAssistantMessage("Read all files.", "", nil))
+	return msgs
+}
+
+func TestBuildParamsDefaultTTLIsWireIdentical(t *testing.T) {
+	p := cacheProvider()
+	params, err := p.buildParams(port.LLMRequest{
+		Model:    "claude-sonnet-4-6",
+		System:   prompt.Layered{StablePrefix: "STABLE", VolatileSuffix: "VOLATILE"},
+		Messages: wideFanOutConversation(3),
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if strings.Contains(string(raw), `"ttl"`) {
+		t.Fatalf("default TTL must omit the ttl key entirely: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"cache_control":{"type":"ephemeral"}`) {
+		t.Fatalf("expected at least one byte-identical ephemeral marker: %s", raw)
+	}
+	if params.CacheControl.Type == "" {
+		t.Error("top-level automatic marker (slot 4) must be present")
+	}
+}
+
+func TestBuildParamsCacheTTLUniformAcrossMarkers(t *testing.T) {
+	p := cacheProvider(WithCacheTTL("1h"))
+	params, err := p.buildParams(port.LLMRequest{
+		Model:    "claude-sonnet-4-6",
+		System:   prompt.Layered{StablePrefix: "STABLE", VolatileSuffix: "VOLATILE"},
+		Messages: wideFanOutConversation(3),
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	ttls := map[string]bool{}
+	collectTTLValues(decoded, ttls)
+	if len(ttls) != 1 || !ttls["1h"] {
+		t.Fatalf("distinct ttl values = %v, want exactly {\"1h\"}", ttls)
+	}
+	// Every emitted cache_control marker must carry the SAME ttl — a marker
+	// present without one would not show up in ttls above, so cross-check the
+	// marker count against the ttl occurrence count directly.
+	markers := countCacheControl(raw)
+	ttlHits := strings.Count(string(raw), `"ttl":"1h"`)
+	if markers != ttlHits {
+		t.Fatalf("cache_control markers = %d but only %d carry ttl=1h — uniformity broken", markers, ttlHits)
+	}
+}
+
+func TestBuildParamsTurn0FragmentAnchor(t *testing.T) {
+	p := cacheProvider()
+	msgs := []session.Message{
+		turn0Fragment("first fragment"),
+		turn0Fragment("last fragment"),
+		session.NewUserMessage("Please summarise the architecture."),
+	}
+	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	raw0, _ := json.Marshal(params.Messages[0])
+	raw1, _ := json.Marshal(params.Messages[1])
+	raw2, _ := json.Marshal(params.Messages[2])
+	if countCacheControl(raw0) != 0 {
+		t.Errorf("first fragment (not the last of the leading run) must not carry a marker: %s", raw0)
+	}
+	if countCacheControl(raw1) != 1 {
+		t.Errorf("last leading fragment must carry the anchor marker: %s", raw1)
+	}
+	if countCacheControl(raw2) != 0 {
+		t.Errorf("the genuine user message must not carry the fragment marker: %s", raw2)
+	}
+}
+
+func TestBuildParamsNoFragmentsNoAnchor(t *testing.T) {
+	p := cacheProvider()
+	params, err := p.buildParams(port.LLMRequest{
+		Model:    "claude-sonnet-4-6",
+		Messages: []session.Message{session.NewUserMessage("Please summarise the architecture.")},
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	raw, _ := json.Marshal(params.Messages[0])
+	if countCacheControl(raw) != 0 {
+		t.Errorf("a genuine turn-0 user message (no leading fragment) must not carry a marker: %s", raw)
+	}
+}
+
+func TestBuildParamsPreviousTurnBoundaryAnchor(t *testing.T) {
+	p := cacheProvider()
+	tests := []struct {
+		name    string
+		msgs    []session.Message
+		markIdx int // -1 = no marker expected anywhere
+	}{
+		{
+			name: "tool-result tail",
+			msgs: []session.Message{
+				session.NewUserMessage("read a file"),
+				session.NewAssistantMessage("", "", []session.ToolCall{
+					session.NewToolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
+				}),
+				session.NewToolMessage(session.NewToolResult("call_1", "package a")),
+			},
+			markIdx: 0,
+		},
+		{
+			name: "nudge tail",
+			msgs: []session.Message{
+				session.NewUserMessage("do something"),
+				session.NewAssistantMessage("", "", nil), // degenerate empty turn (no-progress nudge)
+				session.NewUserMessage("Please continue."),
+			},
+			markIdx: 0,
+		},
+		{
+			name:    "turn 0 (absent)",
+			msgs:    []session.Message{session.NewUserMessage("first prompt")},
+			markIdx: -1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: tc.msgs})
+			if err != nil {
+				t.Fatalf("buildParams: %v", err)
+			}
+			for i, m := range params.Messages {
+				raw, _ := json.Marshal(m)
+				got := countCacheControl(raw) != 0
+				want := i == tc.markIdx
+				if got != want {
+					t.Errorf("message[%d] marked = %v, want %v: %s", i, got, want, raw)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildParamsAnchorDedupe(t *testing.T) {
+	p := cacheProvider()
+	msgs := []session.Message{
+		turn0Fragment("only fragment"),
+		session.NewAssistantMessage("", "", []session.ToolCall{
+			session.NewToolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
+		}),
+	}
+	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	raw, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	if got := countCacheControl(raw); got != 1 {
+		t.Fatalf("cache_control markers on messages = %d, want exactly 1 (fragment-end == previous-turn boundary): %s", got, raw)
+	}
+}
+
+func TestBuildParamsBreakpointBudget(t *testing.T) {
+	tests := []struct {
+		name string
+		msgs []session.Message
+	}{
+		{
+			name: "turn0",
+			msgs: []session.Message{
+				turn0Fragment("first fragment"),
+				turn0Fragment("last fragment"),
+				session.NewUserMessage("Please start."),
+			},
+		},
+		{name: "wide fan-out K=32", msgs: wideFanOutConversation(32)},
+		{
+			name: "post-compaction",
+			msgs: []session.Message{
+				turn0Fragment("first fragment"),
+				turn0Fragment("last fragment"),
+				session.NewUserMessage("original genuine instruction, pinned by compaction"),
+				session.NewUserMessage("## Compaction summary\nEarlier turns summarised here."),
+				session.NewAssistantMessage("Continuing from the summary.", "", nil),
+			},
+		},
+		{
+			name: "fork-seeded",
+			msgs: []session.Message{
+				session.NewUserMessage("forked from parent, no leading fragment"),
+				session.NewAssistantMessage("", "", []session.ToolCall{
+					session.NewToolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
+				}),
+				session.NewToolMessage(session.NewToolResult("call_1", "package a")),
+				session.NewAssistantMessage("Done.", "", nil),
+			},
+		},
+		{
+			name: "zero-fragment",
+			msgs: []session.Message{
+				session.NewUserMessage("no fragments in this session at all"),
+				session.NewAssistantMessage("Understood.", "", nil),
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := cacheProvider()
+			params, err := p.buildParams(port.LLMRequest{
+				Model:    "claude-sonnet-4-6",
+				System:   prompt.Layered{StablePrefix: "STABLE"},
+				Messages: tc.msgs,
+			})
+			if err != nil {
+				t.Fatalf("buildParams: %v", err)
+			}
+			if n := explicitCacheMarkerCount(t, params); n > 3 {
+				t.Errorf("explicit cache_control markers = %d, want <= 3 (the anti-400 budget)", n)
+			}
+			if params.CacheControl.Type == "" {
+				t.Error("top-level automatic marker (slot 4) must be present exactly once")
+			}
+		})
+	}
+}
+
+func TestBuildParamsConversationCachingDisabled(t *testing.T) {
+	p := cacheProvider(WithConversationCaching(false))
+	params, err := p.buildParams(port.LLMRequest{
+		Model:    "claude-sonnet-4-6",
+		System:   prompt.Layered{StablePrefix: "STABLE", VolatileSuffix: "VOLATILE"},
+		Messages: wideFanOutConversation(3),
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	if params.CacheControl.Type != "" {
+		t.Error("top-level automatic marker must be absent when conversation caching is disabled")
+	}
+	msgRaw, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	if countCacheControl(msgRaw) != 0 {
+		t.Errorf("no message content block should carry cache_control when disabled: %s", msgRaw)
+	}
+	// The pre-existing, unconditional StablePrefix breakpoint (slot 1) survives —
+	// this option only gates the NEW conversation breakpoints. Byte-identical to
+	// the pre-change wire.
+	if len(params.System) != 2 {
+		t.Fatalf("system blocks = %d, want 2", len(params.System))
+	}
+	stable, _ := json.Marshal(params.System[0])
+	if !strings.Contains(string(stable), `"cache_control":{"type":"ephemeral"}`) {
+		t.Errorf("StablePrefix block must keep its pre-existing ephemeral breakpoint: %s", stable)
+	}
+	volatile, _ := json.Marshal(params.System[1])
+	if strings.Contains(string(volatile), "cache_control") {
+		t.Errorf("VolatileSuffix block must never carry a cache breakpoint: %s", volatile)
+	}
+}
+
+func TestBuildParamsMarkerOnUnmarkableBlockIsSkipped(t *testing.T) {
+	p := cacheProvider()
+	thinkingOnly := session.Message{
+		Role: session.RoleAssistant,
+		Reasoning: packReasoning([]reasoningBlock{{
+			Kind:      reasoningKindThinking,
+			Thinking:  "considering the request",
+			Signature: "c2ln",
+		}}),
+	}
+	msgs := []session.Message{thinkingOnly, session.NewAssistantMessage("final answer", "", nil)}
+	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
+	if err != nil {
+		t.Fatalf("buildParams must not error when the anchor target block cannot carry cache_control: %v", err)
+	}
+	raw, err := json.Marshal(params.Messages[0])
+	if err != nil {
+		t.Fatalf("marshal messages[0]: %v", err)
+	}
+	if countCacheControl(raw) != 0 {
+		t.Errorf("a thinking-only block has no cache_control field; marking it must be a silent no-op: %s", raw)
 	}
 }

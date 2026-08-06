@@ -109,7 +109,37 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 	if mapped, ok := reasoningEffortFor(p.effort); ok {
 		params.Reasoning = shared.ReasoningParam{Effort: mapped}
 	}
+	p.applyCacheDialect(&params, req)
 	return params, nil
+}
+
+// applyCacheDialect stamps the ADR 0100 cache hints onto params per
+// p.cacheDialect. CacheDialectNone (the zero value) and any unrecognised
+// token both fall through the switch's default arm — emit nothing,
+// byte-identical to the pre-ADR-0100 wire (fail-soft, mirrors
+// reasoningEffortFor's omit-on-unknown arm).
+//
+//   - CacheDialectOpenAI: prompt_cache_key always; prompt_cache_retention
+//     only on an allow-listed model (retentionFor) — never guessed.
+//   - CacheDialectOpenRouter: prompt_cache_key, plus the OpenRouter-only
+//     request-root cache_control field (via SetExtraFields — there is no
+//     typed field for it; sending it to real OpenAI would 400). NEVER
+//     prompt_cache_retention, an OpenAI-only field.
+func (p *Provider) applyCacheDialect(params *responses.ResponseNewParams, req port.LLMRequest) {
+	switch p.cacheDialect {
+	case CacheDialectOpenAI:
+		params.PromptCacheKey = oai.String(p.promptCacheKey(req.System.StablePrefix, req.Messages))
+		if retention, ok := retentionFor(req.Model); ok {
+			params.PromptCacheRetention = retention
+		}
+	case CacheDialectOpenRouter:
+		params.PromptCacheKey = oai.String(p.promptCacheKey(req.System.StablePrefix, req.Messages))
+		params.SetExtraFields(map[string]any{
+			"cache_control": map[string]any{"type": "ephemeral"},
+		})
+	default:
+		// CacheDialectNone, or an unrecognised token: emit nothing.
+	}
 }
 
 // reasoningEffortFor maps a NEUTRAL composition effort token to the SDK's

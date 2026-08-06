@@ -2603,8 +2603,10 @@ there); `display:summarized` set so display deltas stream. `New` passes
 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/WIF autoload — single-knob custody). Tool
 `input_schema` passes the WHOLE schema (`ToolInputSchemaParam.ExtraFields` carries
 `$defs`/`additionalProperties`/enums). Per-block stream buffers (tool-args/thinking/signature)
-capped at 8 MiB. `cache_control` is a SINGLE ephemeral breakpoint at the `prompt.Layered`
-StablePrefix boundary.
+capped at 8 MiB. `cache_control` is a 4-SLOT breakpoint budget spanning the
+StablePrefix (unconditional), two conditional conversation anchors, and a
+top-level automatic marker — see "Provider-side conversation prompt caching"
+below (ADR 0100) for the full derivation.
 
 **Usage is NORMALIZED to the engine contract at `translateMessageStop`:** Anthropic reports
 `input_tokens` EXCLUDING cache reads/writes (OpenAI's includes them), so the adapter folds
@@ -2614,7 +2616,15 @@ StablePrefix boundary.
 Anthropic runs correctly (previously undercounted by the cache-served portion) and populated
 `CacheWriteTokens` (never set before — the mecatui footer's ⊕ facet now renders for Anthropic).
 Guards: `anthropic.TestTranslateCacheWriteTurn` + the `TestUsageCacheReadSubsetOfInput` parity
-pair (one per adapter package).
+pair (one per adapter package). The openai (Responses) adapter mirrors this for cache WRITES
+specifically: there is no typed SDK field for `cache_write_tokens` (only `cached_tokens` is
+typed on `ResponseUsageInputTokensDetails`), so `cacheWriteTokensFrom` probes
+`InputTokensDetails.RawJSON()` for the key (OpenAI/OpenRouter's own naming;
+`usage.input_tokens_details.cache_write_tokens`) and clamps the result to `[0, InputTokens]` —
+unlike anthropic's fold, OpenAI's raw `InputTokens` already INCLUDES cache writes, so no fold
+is needed, only the clamp (a misreporting upstream must not poison the budget accounting). Any
+parse failure or absent key yields 0. Guards: `openai.TestUsageCacheWriteSubsetOfInput` +
+`TestMapUsageCacheWriteClampedToInput`.
 
 The same normalization site surfaces the OUTPUT breakdown: Anthropic's
 `output_tokens_details.thinking_tokens` (and OpenAI's `output_tokens_details.reasoning_tokens`)
@@ -2648,6 +2658,58 @@ LIVE descriptor when `known=true` (adaptive ⇒ adaptive, else enabled ⇒ manua
 FALL BACK to the hardcoded prefix matrix
 (`adaptiveThinkingPrefixes`/`thinkingIncapablePrefixes`, NOT deleted) as the OFFLINE FLOOR; the
 `max_tokens` resolver is likewise live-first via the `liveMetaStore`.
+
+### Provider-side conversation prompt caching (ADR 0100)
+
+Extends the pre-existing single StablePrefix breakpoint to a **4-slot budget**
+in `provider/anthropic`: slot 1 (`system[0]`, unconditional, unchanged),
+slot 2 (the last block of the last leading turn-0 fragment, conditional —
+`leadingFragmentEnd`), slot 3 (the block before the last assistant turn,
+conditional — `previousTurnBoundary`), slot 4
+(`MessageNewParams.CacheControl`, the SDK's self-advancing automatic marker,
+unconditional whenever caching is enabled). Slots 2/3 are deduped to the same
+target when they coincide (`applyConversationCacheBreakpoints`). Every marker
+carries the SAME `WithCacheTTL` token (`""` / `"5m"` / `"1h"`, uniform TTL —
+the rule that makes Anthropic's documented TTL-ordering 400s unreachable).
+`WithConversationCaching(false)` (wired from `--no-prompt-cache`) disables
+slots 2–4 only; slot 1 predates this feature and is unaffected. `setCacheControl`
+is fail-soft: a thinking/redacted_thinking block (the only
+`ContentBlockParamUnion` variants with no `CacheControl` field) is silently
+skipped rather than panicking.
+
+`provider/openai` and `provider/openaichat` gain a `CacheDialect`
+adapter-construction Option (`WithCacheDialect`) instead of new breakpoint
+positions — OpenAI's implicit caching already covers the conversation. Openai
+supports `None` / `OpenAI` (`prompt_cache_key` + model-gated
+`prompt_cache_retention`, via `retentionFor`'s ordered allow/deny prefix
+table — `gpt-5.6`+ deny-listed as deprecated, checked BEFORE any allow
+prefix) / `OpenRouter` (`prompt_cache_key` + the OpenRouter-only top-level
+`cache_control` field, added via `SetExtraFields` since there is no typed SDK
+field for it). openaichat supports only `None` / `OpenAI` (no
+Chat-Completions-over-OpenRouter path). Both derive `prompt_cache_key` as
+`"mecatl-" + hex(sha256(StablePrefix))[:12] + "-" + hex(sha256(anchorText))[:8]`
+(`cachekey.go`, duplicated verbatim across the two modules — the anchor is the
+first non-turn-0-fragment message's Text, making the key per-conversation so
+concurrent Subagent children sharing the explorer prefix don't collide on one
+OpenAI routing lane); the prefix hash is memoised on the `Provider` via a
+single `atomic.Pointer[prefixMemo]` (string-equality compare, not a map).
+
+Composition (`internal/app/promptcache.go`) gates the dialect on
+**`(providerID, resolvedBaseURL)`, never providerID alone** —
+`cacheDialectFor`/`openaichatCacheDialectFor` return `None` for any
+non-canonical base URL (an operator can point `openai` at vLLM/LiteLLM via
+`--openai-base-url`, which would 400 on `prompt_cache_retention`). Wired
+INSIDE the three provider-construction closures (`newOpenAICompatEntry` —
+shared by openai/openrouter/toolhive — `newOpenCodeEntry`, `newAnthropicEntry`)
+so every per-session/heal re-mint carries it. `--anthropic-cache-ttl` is
+normalised ONCE per registry build (`normaliseAnthropicCacheTTL`, mirroring
+`operatorDefaultEffortFor`'s build-time-not-per-remint discipline) so an
+unrecognised value WARNs at most once per process. `--no-prompt-cache`
+(`Config.PromptCacheDisabled`) forces every dialect to `None` unconditionally.
+Deferred: GPT-5.6's explicit breakpoint knobs, an operator-supplied cache key,
+a `settings.yaml` TTL key, and Anthropic's 1h TTL via OpenRouter (no TTL
+concept on that path). See [ADR 0100](../adr/0100-provider-prompt-caching.md)
+for the full rationale and the rejected mixed-TTL alternative.
 
 ### Adapter request-assembly benchmarks — closing the #157 measurement gap
 

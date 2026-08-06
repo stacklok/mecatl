@@ -122,6 +122,84 @@ func TestUsageCacheReadSubsetOfInput(t *testing.T) {
 	}
 }
 
+// TestUsageCacheWriteSubsetOfInput mirrors TestUsageCacheReadSubsetOfInput for
+// cache WRITES (ADR 0100): every Usage chunk produced from the recorded
+// fixtures must satisfy CacheWriteTokens <= InputTokens — the
+// cacheWriteTokensFrom clamp's contract.
+func TestUsageCacheWriteSubsetOfInput(t *testing.T) {
+	skip := map[string]bool{
+		"error_event.sse":                true,
+		"response_failed.sse":            true,
+		"response_failed_rate_limit.sse": true,
+		"multi_text_part_turn.sse":       true,
+	}
+	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
+	if err != nil {
+		t.Fatalf("glob fixtures: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no .sse fixtures found under testdata")
+	}
+	sawCacheWrite := false
+	for _, path := range paths {
+		name := filepath.Base(path)
+		if skip[name] {
+			continue
+		}
+		chunks := decodeFixture(t, name)
+		for _, c := range chunks {
+			if c.Kind != port.ChunkUsage {
+				continue
+			}
+			if c.Usage.CacheWriteTokens > 0 {
+				sawCacheWrite = true
+			}
+			if c.Usage.CacheWriteTokens > c.Usage.InputTokens {
+				t.Errorf("%s: CacheWriteTokens %d > InputTokens %d — cache writes must be a subset of the full prompt",
+					name, c.Usage.CacheWriteTokens, c.Usage.InputTokens)
+			}
+		}
+	}
+	// Vacuity guard: if a fixture refresh drops every cache-bearing turn, the
+	// subset assertion above is trivially green — fail loudly instead.
+	if !sawCacheWrite {
+		t.Error("no fixture yielded CacheWriteTokens > 0 — the subset guard is vacuous; keep at least one cache-bearing fixture")
+	}
+}
+
+// TestMapUsageCacheWriteClampedToInput pins cacheWriteTokensFrom's clamp
+// directly (not just via the fixture-driven subset guard above): a
+// misreporting upstream that sends cache_write_tokens > input_tokens must not
+// poison session.Usage — the clamp bounds it to inputTokens, and a negative
+// value floors to 0.
+func TestMapUsageCacheWriteClampedToInput(t *testing.T) {
+	tests := []struct {
+		name       string
+		rawDetails string
+		input      int64
+		want       int
+	}{
+		{name: "within bounds", rawDetails: `{"cached_tokens":5,"cache_write_tokens":10}`, input: 40, want: 10},
+		{name: "misreported over input clamps down", rawDetails: `{"cached_tokens":5,"cache_write_tokens":999}`, input: 40, want: 40},
+		{name: "negative floors to zero", rawDetails: `{"cached_tokens":0,"cache_write_tokens":-3}`, input: 40, want: 0},
+		{name: "absent key yields zero", rawDetails: `{"cached_tokens":5}`, input: 40, want: 0},
+		{name: "empty raw yields zero", rawDetails: "", input: 40, want: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var details responses.ResponseUsageInputTokensDetails
+			if tc.rawDetails != "" {
+				if err := json.Unmarshal([]byte(tc.rawDetails), &details); err != nil {
+					t.Fatalf("unmarshal fixture details: %v", err)
+				}
+			}
+			if got := cacheWriteTokensFrom(details, int(tc.input)); got != tc.want {
+				t.Errorf("cacheWriteTokensFrom() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTranslateReasoningTurnWithCachedTokens(t *testing.T) {
 	got := decodeFixture(t, "reasoning_turn.sse")
 	want := []port.Chunk{

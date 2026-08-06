@@ -133,6 +133,17 @@ When the watchdog fires it synthesizes a terminal `StreamIdleError`. The LLM pro
 
 Pre-first-chunk stalls (before any chunk is received) are governed by `--llm-per-attempt-timeout` and are retryable.
 
+### Provider-side prompt caching
+
+Caching is ON by default across all three provider adapters (Anthropic, OpenAI/OpenRouter, and the dormant openaichat path) — see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md). It caches the growing conversation, not just the system prompt.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--no-prompt-cache` | `false` | Disable caching entirely: every adapter's cache dialect degrades to `None`, reproducing the pre-caching wire exactly. |
+| `--anthropic-cache-ttl` | `""` (API default, `5m`) | TTL stamped on every Anthropic ephemeral `cache_control` breakpoint. Accepts `5m` or `1h`; any other value is ignored with a WARN. |
+
+The token-accounting facets already surface cache activity per-turn: `mecatl_tokens_total{kind="cache read"}` / `{kind="cache write"}` and `mecatl_cache_hit_ratio` (both above) climb once caching is actually hitting. On OpenAI/OpenRouter, cache-write tokens are probed from the raw usage JSON (there is no typed SDK field for them yet) and clamped so they never exceed the turn's input tokens.
+
 ### Resilience diagnostics
 
 The resilience decorator emits structured diagnostics through the injected diagnostics channel. These are provider-level lifecycle lines, not session-correlated:

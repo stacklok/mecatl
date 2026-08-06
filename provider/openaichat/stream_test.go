@@ -277,6 +277,52 @@ data: [DONE]
 	}
 }
 
+// TestUsageCacheReadSubsetOfInput is the openaichat half of the cross-provider
+// parity guard (the missing member — anthropic and openai already carry it):
+// every Usage chunk produced from the recorded fixtures must satisfy
+// CacheReadTokens <= InputTokens, the engine/session contract that
+// CacheReadTokens ⊂ InputTokens. Fixtures are globbed so a newly recorded turn
+// is covered automatically.
+func TestUsageCacheReadSubsetOfInput(t *testing.T) {
+	// Deliberately malformed / partial-stream fixtures: decodeFixture's
+	// t.Fatalf on decode error would abort the happy-path glob loop.
+	skip := map[string]bool{
+		"stream_keepalive_ping.sse": true,
+	}
+	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
+	if err != nil {
+		t.Fatalf("glob fixtures: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no .sse fixtures found under testdata")
+	}
+	sawCacheRead := false
+	for _, path := range paths {
+		name := filepath.Base(path)
+		if skip[name] {
+			continue
+		}
+		chunks := decodeFixture(t, name)
+		for _, c := range chunks {
+			if c.Kind != port.ChunkUsage {
+				continue
+			}
+			if c.Usage.CacheReadTokens > 0 {
+				sawCacheRead = true
+			}
+			if c.Usage.CacheReadTokens > c.Usage.InputTokens {
+				t.Errorf("%s: CacheReadTokens %d > InputTokens %d — cache reads must be a subset of the full prompt",
+					name, c.Usage.CacheReadTokens, c.Usage.InputTokens)
+			}
+		}
+	}
+	// Vacuity guard: if a fixture refresh drops every cache-bearing turn, the
+	// subset assertion above is trivially green — fail loudly instead.
+	if !sawCacheRead {
+		t.Error("no fixture yielded CacheReadTokens > 0 — the subset guard is vacuous; keep at least one cache-bearing fixture")
+	}
+}
+
 // TestTranslateMultiFragmentToolCall proves the index-keyed accumulator assembles
 // a tool call whose arguments are FRAGMENTED across deltas — the spec-compliant
 // shape that the live provider (which sends whole calls) does not exercise.

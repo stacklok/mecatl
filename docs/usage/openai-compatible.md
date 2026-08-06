@@ -42,6 +42,23 @@ missing** on compatible servers include:
 If a compatible endpoint behaves oddly, suspect missing Responses-API support
 before suspecting the harness.
 
+### Prompt-cache hints are OFF for a non-canonical base URL
+
+mecatl sends OpenAI-specific prompt-cache hints — `prompt_cache_key` and the
+model-gated `prompt_cache_retention` — only when the `openai` provider id is
+talking to the **canonical** OpenAI endpoint (no `--openai-base-url`
+override). The gate is on `(provider id, resolved base URL)`, never the id
+alone: a strict-compatible upstream (vLLM/LiteLLM, an Azure OpenAI proxy via
+`--openai-base-url`) can 400 on `prompt_cache_retention` or reject an
+unrecognised field outright, so pointing `openai` at a non-canonical URL
+degrades the cache dialect to `None` — no hints sent at all, byte-identical
+to the pre-caching wire. If your requests are unexpectedly missing
+`prompt_cache_key` and you *do* want it, that is almost always why. The same
+gate applies to `openrouter`: hints are sent only at OpenRouter's default base
+URL (`https://openrouter.ai/api/v1`); an `--openrouter-base-url` override also
+degrades to `None`. See [`--no-prompt-cache` / `--anthropic-cache-ttl`](./mecated.md)
+and [ADR 0100](../adr/0100-provider-prompt-caching.md) for the full rationale.
+
 ---
 
 See also: [model routing](model-routing.md) (slots, aliases, the router); the

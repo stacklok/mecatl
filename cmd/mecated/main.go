@@ -129,6 +129,10 @@ type config struct {
 	llmBreakerThreshold  int
 	llmBreakerCooldown   time.Duration
 
+	// Provider-side prompt caching (ADR 0100).
+	noPromptCache     bool
+	anthropicCacheTTL string
+
 	// maxRunTokens is the loop-level cumulative token ceiling for a single run (the
 	// shared runaway brake). 0 (default) disables it.
 	maxRunTokens int
@@ -1019,6 +1023,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		LLMBreakerCooldown:            cfg.llmBreakerCooldown,
 		MaxRunTokens:                  cfg.maxRunTokens,
 		MaxTeamTokens:                 cfg.maxTeamTokens,
+		PromptCacheDisabled:           cfg.noPromptCache,
+		AnthropicCacheTTL:             cfg.anthropicCacheTTL,
 		MemoryDir:                     cfg.memoryDir,
 		MemoryConsolidateInterval:     cfg.memoryConsolidateInterval,
 		ChildRetention:                cfg.childRetention,
@@ -1386,6 +1392,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "how long the LLM circuit breaker stays open before half-opening")
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input+output tokens per agent run. Inherited by subagents and team members. A run that crosses it ends cleanly with stop=budget. Default: unlimited; pass a positive value to cap. (0 also means unlimited.)")
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "Maximum cumulative input+output tokens per team run, summed across all members and rounds. When crossed the team stops scheduling new rounds — the in-flight round and the lead's synthesis still complete, and the report states the budget stop. Applies to the Team tool and gRPC CreateTeam; a per-call Team max_team_tokens may only tighten it. Orthogonal to --max-run-tokens. Default: unlimited; pass a positive value to cap. (0 also means unlimited.)")
+
+	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching (ADR 0100): every adapter's cache dialect degrades to None, reproducing the pre-caching wire exactly. Caching is ON by default")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "TTL stamped on every Anthropic ephemeral cache_control breakpoint: \"5m\" or \"1h\". Empty (default) omits the ttl field — the API's own 5m default applies. Any other value is ignored with a WARN")
 
 	fs.StringVar(&cfg.metricsAddr, "metrics-addr", defaultMetricsAddr, "Prometheus /metrics listen address (empty disables the metrics endpoint)")
 

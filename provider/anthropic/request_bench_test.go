@@ -155,7 +155,7 @@ func BenchmarkBuildMessages(b *testing.B) {
 			b.ReportAllocs()
 			var params sdkParamsSink
 			for b.Loop() {
-				out, err := buildMessages(msgs, port.ProviderCapabilities{Image: true, EmbeddedContext: true})
+				out, _, err := buildMessages(msgs, port.ProviderCapabilities{Image: true, EmbeddedContext: true})
 				if err != nil {
 					b.Fatalf("buildMessages: %v", err)
 				}
@@ -190,6 +190,31 @@ func BenchmarkBuildParamsAndMarshal(b *testing.B) {
 				raw = data
 			}
 			sinkBytes = raw
+		})
+	}
+}
+
+// BenchmarkBuildParamsWithConversationCache measures buildParams with the
+// conversation-caching anchors (ADR 0100) exercised over a realistic
+// conversation shape — the baseline perf/cmd/allocsgate tracks for the new
+// derivation + mutation cost. Conversation caching is on by default, but this
+// benchmark names the Option explicitly so it keeps measuring the enabled path
+// even if the default ever changes.
+func BenchmarkBuildParamsWithConversationCache(b *testing.B) {
+	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000), WithConversationCaching(true))
+	for _, n := range benchSizes {
+		req := benchRequest(n)
+		b.Run(fmt.Sprintf("msgs=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			var params sdkParamsSink
+			for b.Loop() {
+				pr, err := p.buildParams(req)
+				if err != nil {
+					b.Fatalf("buildParams: %v", err)
+				}
+				params = pr
+			}
+			sinkParams = params
 		})
 	}
 }

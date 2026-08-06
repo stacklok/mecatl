@@ -95,6 +95,8 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"toolhive-llm":          {group: groupProvider, common: false, local: true, connect: false},
 	"toolhive-llm-base-url": {group: groupProvider, common: false, local: true, connect: false},
 	"reasoning-effort":      {group: groupProvider, common: false, local: true, connect: false},
+	"no-prompt-cache":       {group: groupProvider, common: false, local: true, connect: false},
+	"anthropic-cache-ttl":   {group: groupProvider, common: false, local: true, connect: false},
 
 	// ── LLM resilience (embedded-only) ────────────────────────────────────
 	"llm-per-attempt-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},

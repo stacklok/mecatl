@@ -23,6 +23,7 @@ import (
 	"context"
 	"iter"
 	"net/http"
+	"sync/atomic"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -55,17 +56,27 @@ type Provider struct {
 	// (zero-value) intersection is distinguishable from "unset". A tool result with
 	// no Parts always takes the legacy string path regardless.
 	caps *port.ProviderCapabilities
+	// cacheDialect selects which provider-side prompt-cache wire dialect
+	// (ADR 0100) buildParams (method) emits. "" (CacheDialectNone, the zero
+	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
+	// wire.
+	cacheDialect CacheDialect
+	// cacheMemo memoises the last-seen (StablePrefix, hash) pair for
+	// promptCacheKey — see cachekey.go. A pointer (not embedded by value) so
+	// the zero-value Provider needs no initialisation.
+	cacheMemo atomic.Pointer[prefixMemo]
 }
 
 // Option configures a Provider.
 type Option func(*config)
 
 type config struct {
-	apiKey  string
-	baseURL string
-	effort  string
-	caps    *port.ProviderCapabilities
-	extra   []option.RequestOption
+	apiKey       string
+	baseURL      string
+	effort       string
+	caps         *port.ProviderCapabilities
+	extra        []option.RequestOption
+	cacheDialect CacheDialect
 }
 
 // WithAPIKey sets the API key used to authenticate requests.
@@ -155,7 +166,7 @@ func New(opts ...Option) *Provider {
 	reqOpts = append(reqOpts, c.extra...)
 
 	client := oai.NewClient(reqOpts...)
-	return &Provider{client: client.Responses, effort: c.effort, caps: c.caps}
+	return &Provider{client: client.Responses, effort: c.effort, caps: c.caps, cacheDialect: c.cacheDialect}
 }
 
 // Stream issues a streaming Responses request and yields provider-neutral

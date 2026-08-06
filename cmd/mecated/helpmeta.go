@@ -132,6 +132,8 @@ var flagMetaByFlag = map[string]flagMeta{
 	"toolhive-llm":          {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm-base-url": {group: groupProvider, common: false, acp: acpInclude},
 	"reasoning-effort":      {group: groupProvider, common: false, acp: acpInclude},
+	"no-prompt-cache":       {group: groupProvider, common: false, acp: acpInclude},
+	"anthropic-cache-ttl":   {group: groupProvider, common: false, acp: acpInclude},
 
 	// ── LLM resilience (both) ────────────────────────────────────────────
 	"llm-max-attempts":        {group: groupLLMResilience, common: false, acp: acpInclude},
