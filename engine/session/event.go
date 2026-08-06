@@ -539,7 +539,7 @@ type TurnEndPayload struct {
 // Subagent tool's own ToolResult text does, so the LLM's context is untouched.
 //
 // Which fields are set depends on the event kind:
-//   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel], Model.
+//   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount, and —
 //     when a preview is available — Text / Detail / InnerKind (which inner event kind
 //     the preview came from: message.delta / tool.call / tool.result / result).
@@ -573,6 +573,15 @@ type SubagentPayload struct {
 	// the gRPC + HTTP relays and the mecatui client).
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY the router did NOT classify this delegation (EvSubagentStart
+	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
+	// RoutingReason* gate constants (pinned-model / agent-def-pinned-model / resume / fork /
+	// router-disabled / breaker-open / aborted) or a miss reason passed through from the
+	// classifier (the RouterMiss* values) or composition (e.g. category-selector-empty). It
+	// is BARE METADATA — a bounded harness/composition reason string, never the task prompt
+	// or the classifier's reasoning — so it is gauntlet-#7 safe (no child content, no
+	// model-influenced free text crosses). Clamped at the emit site.
+	RoutingReason string
 	// Model is the concrete MODEL id the child ACTUALLY ran on (EvSubagentStart only),
 	// set unconditionally — inherited default, agent-def pin, per-call `model` override,
 	// or the opt-in router — independent of whether the router fired. It is BARE METADATA
@@ -655,7 +664,7 @@ type SubagentPayload struct {
 //
 // Which fields are set depends on the event kind:
 //   - EvParallelStart:                       ParentCallID, Join, BranchCount.
-//   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel], Model.
+//   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvParallelBranch (Kind=branch_tool):   ParentCallID, Kind, BranchIndex, ToolName, IsError, ToolCount, and — when a preview is available — Text / Detail / InnerKind.
 //   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed, Workspace.
 //   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, WinnerWorkspace, Usage (run total), Stop.
@@ -705,6 +714,15 @@ type ParallelPayload struct {
 	// = field 19 / routed_model = field 20), surfaced via the server mapper — see ADR 0034.
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY the router did NOT classify this branch (branch_start kind
+	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
+	// RoutingReason* gate constants (router-disabled, or aborted for a branch cancelled
+	// before it started) or a miss reason passed through from the classifier (the
+	// RouterMiss* values) or composition. It is BARE METADATA — a bounded
+	// harness/composition reason string, never the branch prompt or the classifier's
+	// reasoning — so it is gauntlet-#7 safe (no branch content crosses). Clamped at the
+	// emit site.
+	RoutingReason string
 	// Model is the concrete MODEL id the branch ACTUALLY ran on (branch_start kind only),
 	// set unconditionally — inherited default branch model or the opt-in router —
 	// independent of whether the router fired. It is BARE METADATA — a model id, never
@@ -804,10 +822,11 @@ type SchedulePayload struct {
 }
 
 // TeamMemberSpec is one roster entry forwarded on EvTeamStart: the member name,
-// its role label, and the read-only/mutating and lead flags. It is a small value
-// type carrying ONLY model-supplied metadata about the team's shape — never any
-// member content (no prompt body, no transcript). It mirrors the proto
-// TeamMemberSpec.
+// its role label, and the read-only/mutating and lead flags, plus the OPT-IN model
+// router's bare-metadata routing projection ([RoutedCategory, RoutedModel,
+// RoutingReason], Model). It is a small value type carrying ONLY model-supplied
+// metadata about the team's shape — never any member content (no prompt body, no
+// transcript). It mirrors the proto TeamMemberSpec.
 type TeamMemberSpec struct {
 	// Name is the member's unique handle.
 	Name string
@@ -831,6 +850,15 @@ type TeamMemberSpec struct {
 	// via the server mapper — see ADR 0034.
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY the router did NOT classify this member (EvTeamStart roster
+	// entry only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of
+	// the RoutingReason* gate constants (agent-def-pinned-model for a DEFINED member,
+	// router-disabled when no router is wired) or a miss reason passed through from the
+	// classifier (the RouterMiss* values) or composition. It is BARE METADATA — a bounded
+	// harness/composition reason string, never the member's role/prompt or the classifier's
+	// reasoning — so it is gauntlet-#7 safe (no member content crosses). Clamped at the
+	// emit site.
+	RoutingReason string
 	// Model is the concrete MODEL id the member's engine ACTUALLY runs on (EvTeamStart
 	// roster entry only), set unconditionally — inherited default member model, agent-def
 	// pin, or the opt-in router — independent of whether the router fired. It is BARE
@@ -840,6 +868,42 @@ type TeamMemberSpec struct {
 	// field 7), surfaced via the server mapper — see ADR 0035.
 	Model string
 }
+
+// Routing-reason gate constants (issue #397): the CLOSED set of harness-authored reasons
+// a delegation-start event carries on RoutingReason when the OPT-IN model router did NOT
+// classify it. Empty ("") is the routed-hit sentinel; every non-empty value is a
+// miss/gate. The CLASSIFIER-side miss reasons (the RouterMiss* values in engine/agent)
+// and composition's category-mapping reasons (e.g. "category-selector-empty") are NOT
+// duplicated here — they flow through the same string channel verbatim.
+//
+// All reasons are metadata ONLY — never the task prompt or the classifier's output
+// (gauntlet #7).
+const (
+	// RoutingReasonPinnedModel: a per-call `model:` arg pinned the child's engine, so
+	// the router never fired (the explicit choice wins by design).
+	RoutingReasonPinnedModel = "pinned-model"
+	// RoutingReasonAgentDefPinned: a named `agent` (Subagent) or DEFINED team member
+	// whose agent def pinned its own model, so the router never fired.
+	RoutingReasonAgentDefPinned = "agent-def-pinned-model"
+	// RoutingReasonResume: a `resume:` call continues a persisted child on its own
+	// engine — the router never fires for a resume.
+	RoutingReasonResume = "resume"
+	// RoutingReasonFork: a `fork: true` call inherits the parent engine — the router
+	// never fires for a fork.
+	RoutingReasonFork = "fork"
+	// RoutingReasonRouterDisabled: no router is wired (the parentCaps routeTask closure
+	// is nil — router absent), or the delegation could not consume a routed pick (a
+	// plain writable Subagent delegation whose writable engine factory is unwired).
+	RoutingReasonRouterDisabled = "router-disabled"
+	// RoutingReasonBreakerOpen: the per-run router circuit breaker was OPEN (too many
+	// consecutive misses), so the classifier was skipped and the delegation inherited
+	// the default model.
+	RoutingReasonBreakerOpen = "breaker-open"
+	// RoutingReasonAborted: the run was already tearing down (the parent run's
+	// hardAbort fired), so the classifier was skipped; also a Parallel branch cancelled
+	// before it ever started.
+	RoutingReasonAborted = "aborted"
+)
 
 // TeamTaskSnapshot is one entry in the team's shared task list, projected onto the
 // event stream so the ctrl+a agents task sub-view can render the team's task state

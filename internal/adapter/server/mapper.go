@@ -188,6 +188,7 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		Goal:            valid(p.Goal),
 		RoutedCategory:  p.RoutedCategory,
 		RoutedModel:     p.RoutedModel,
+		RoutingReason:   p.RoutingReason,
 		Model:           p.Model,
 		ToolName:        valid(p.ToolName),
 		IsError:         p.IsError,
@@ -317,6 +318,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 			Lead:           m.Lead,
 			RoutedCategory: m.RoutedCategory,
 			RoutedModel:    m.RoutedModel,
+			RoutingReason:  m.RoutingReason,
 			Model:          m.Model,
 		})
 	}
@@ -441,6 +443,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		Background:     p.Background,
 		RoutedCategory: p.RoutedCategory,
 		RoutedModel:    p.RoutedModel,
+		RoutingReason:  p.RoutingReason,
 		Model:          p.Model,
 		ToolName:       valid(p.ToolName),
 		IsError:        p.IsError,

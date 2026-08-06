@@ -302,7 +302,12 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 	allowed := map[string]bool{
 		"ParentCallID": true, "ChildID": true, "Goal": true, "Background": true,
 		"RoutedCategory": true, "RoutedModel": true, "Model": true,
-		"ToolName": true, "IsError": true, "ToolCount": true,
+		// RoutingReason (issue #397) is the bare-metadata REASON the child was not
+		// routed (a session.RoutingReason* gate const or a bounded harness/composition
+		// miss string), EMPTY on a routed hit — never the task prompt or classifier
+		// output. Same gauntlet-#7 footing as RoutedCategory/Model.
+		"RoutingReason": true,
+		"ToolName":      true, "IsError": true, "ToolCount": true,
 		"Usage": true, "Stop": true, "DurationMs": true,
 		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields, fed
 		// ONLY through clampPreview at the single drainChildObserved chokepoint;

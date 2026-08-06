@@ -54,9 +54,9 @@ func TestMemberRoutesAtAddMember(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var seenPrompt string
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(_ context.Context, prompt string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(_ context.Context, prompt string) (string, string, string, bool) {
 		seenPrompt = prompt
-		return "large", "big-model", true
+		return "large", "big-model", "", true
 	}}
 	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -73,9 +73,9 @@ func TestMemberRoutesAtAddMember(t *testing.T) {
 		t.Fatalf("factory received routedModel=%q, want big-model", recorded["worker"])
 	}
 	mu.Unlock()
-	cat, model := sup.MemberRouting("worker")
-	if cat != "large" || model != "big-model" {
-		t.Fatalf("MemberRouting = (%q, %q), want (large, big-model)", cat, model)
+	cat, model, reason := sup.MemberRouting("worker")
+	if cat != "large" || model != "big-model" || reason != "" {
+		t.Fatalf("MemberRouting = (%q, %q, %q), want (large, big-model, empty-reason)", cat, model, reason)
 	}
 	// MemberModel (issue #112 / ADR 0035) reads back the concrete model the routed
 	// member's engine ACTUALLY runs on — the routed model, == MemberRouting's model.
@@ -91,9 +91,9 @@ func TestDefinedMemberSkipsRouter(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		calls++
-		return "large", "big-model", true
+		return "large", "big-model", "", true
 	}}
 	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -109,8 +109,8 @@ func TestDefinedMemberSkipsRouter(t *testing.T) {
 		t.Fatalf("a defined member's factory got routedModel=%q, want empty", recorded["specialist"])
 	}
 	mu.Unlock()
-	if cat, model := sup.MemberRouting("specialist"); cat != "" || model != "" {
-		t.Fatalf("MemberRouting for a defined member = (%q, %q), want empty", cat, model)
+	if cat, model, reason := sup.MemberRouting("specialist"); cat != "" || model != "" || reason != session.RoutingReasonAgentDefPinned {
+		t.Fatalf("MemberRouting for a defined member = (%q, %q, %q), want empty routed with agent-def-pinned reason", cat, model, reason)
 	}
 	// MemberModel (issue #112) still surfaces the concrete model a DEFINED member's
 	// engine runs on — the def's pinned model ("default" here), even though the router
@@ -126,8 +126,8 @@ func TestMemberRouteMissInheritsDefault(t *testing.T) {
 	tm := team.New("t")
 	recorded := map[string]string{}
 	var mu sync.Mutex
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "", "", false
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "", "", RouterMissDegenerateInput, false
 	}}
 	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -140,8 +140,8 @@ func TestMemberRouteMissInheritsDefault(t *testing.T) {
 		t.Fatalf("a router miss must pass an empty routedModel; got %q", recorded["worker"])
 	}
 	mu.Unlock()
-	if cat, model := sup.MemberRouting("worker"); cat != "" || model != "" {
-		t.Fatalf("MemberRouting after a miss = (%q, %q), want empty", cat, model)
+	if cat, model, reason := sup.MemberRouting("worker"); cat != "" || model != "" {
+		t.Fatalf("MemberRouting after a miss = (%q, %q, %q), want empty routed fields", cat, model, reason)
 	}
 	// MemberModel (issue #112): a router miss inherits the default model, so MemberModel
 	// reports the default ("default") even though the routed fields are empty.
@@ -167,8 +167,8 @@ func TestMemberZeroCapsNoRouting(t *testing.T) {
 		t.Fatalf("zero-caps must pass an empty routedModel; got %q", recorded["worker"])
 	}
 	mu.Unlock()
-	if cat, model := sup.MemberRouting("worker"); cat != "" || model != "" {
-		t.Fatalf("zero-caps MemberRouting = (%q, %q), want empty", cat, model)
+	if cat, model, reason := sup.MemberRouting("worker"); cat != "" || model != "" {
+		t.Fatalf("zero-caps MemberRouting = (%q, %q, %q), want empty routed fields", cat, model, reason)
 	}
 }
 
@@ -179,9 +179,9 @@ func TestMemberRouteFallsBackToName(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var seenPrompt string
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(_ context.Context, prompt string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(_ context.Context, prompt string) (string, string, string, bool) {
 		seenPrompt = prompt
-		return "small", "tiny-model", true
+		return "small", "tiny-model", "", true
 	}}
 	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -244,11 +244,11 @@ func TestMemberRoutesOncePerRun(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return "large", "big-model", true
+		return "large", "big-model", "", true
 	}}
 	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
 		scriptedRoutingFactory(tm, providers, recorded, &mu), withParentCaps(caps), WithMaxRounds(10))
@@ -291,8 +291,8 @@ func TestMemberSessionIDUnaffectedByRouting(t *testing.T) {
 	tm := team.New("t")
 	recorded := map[string]string{}
 	var mu sync.Mutex
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "large", "big-model", true
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "large", "big-model", "", true
 	}}
 	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps),
@@ -349,8 +349,8 @@ func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "large", "big-model", true
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "large", "big-model", "", true
 	}}
 
 	// The member's role briefing (→ InitialPrompt, the routing artifact) carries the secret.
@@ -390,9 +390,10 @@ func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 			continue
 		}
 		for _, r := range ev.Team.Roster {
-			if strings.Contains(r.RoutedCategory, secret) || strings.Contains(r.RoutedModel, secret) {
-				t.Fatalf("a team.* event (%s) leaked the classified role content into a routed field: cat=%q model=%q",
-					ev.Type, r.RoutedCategory, r.RoutedModel)
+			if strings.Contains(r.RoutedCategory, secret) || strings.Contains(r.RoutedModel, secret) ||
+				strings.Contains(r.RoutingReason, secret) {
+				t.Fatalf("a team.* event (%s) leaked the classified role content into a routed field: cat=%q model=%q reason=%q",
+					ev.Type, r.RoutedCategory, r.RoutedModel, r.RoutingReason)
 			}
 		}
 	}

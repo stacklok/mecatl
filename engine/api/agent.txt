@@ -63,7 +63,7 @@
     method func (*Supervisor).AddMember(ctx context.Context, spec MemberSpec) error
     method func (*Supervisor).CancelMember(name string) bool
     method func (*Supervisor).MemberModel(name string) string
-    method func (*Supervisor).MemberRouting(name string) (category string, model string)
+    method func (*Supervisor).MemberRouting(name string) (category string, model string, reason string)
     method func (*Supervisor).Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome
     method func (*TeamTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
     method func (*TeamTool).ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)

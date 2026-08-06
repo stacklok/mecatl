@@ -1243,58 +1243,15 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// (the loop still emits exactly THREE lines; the router INFOs are dispatch-time
 	// lines, like the policy-deny INFO).
 	if e.deps.SubagentModelRouter != nil && r.router != nil {
-		route, breaker, hardAbort, diag := e.deps.SubagentModelRouter, r.router, r.hardAbort, r.diag
 		// Pre-build a nil-safe usage-fold func to keep the closure branch-free (#92 fix,
 		// avoids +1 cyclomatic complexity inside the already-branchy closure).
 		foldUsage := foldClassifierUsage(sess)
-		caps.routeTask = func(ctx context.Context, taskPrompt string) (string, string, bool) {
-			breaker.mu.Lock()
-			defer breaker.mu.Unlock()
-			if breaker.consecutiveMiss >= breaker.max {
-				return "", "", false // breaker open: skip the classifier, inherit the default model.
-			}
-			// A run already past Cancel+grace is tearing down: skip the classifier turn
-			// rather than spend one whose child is about to be unwound. A nil channel
-			// never selects — correct no-route behaviour for a zero-caps construction.
-			select {
-			case <-hardAbort:
-				return "", "", false
-			default:
-			}
-			// Pass the run's ctx (not context.Background()) so a Run.Cancel between this
-			// check and the classifier call propagates into RunModelRouter and the
-			// classifier turn dies with the run instead of running out its 30s clock
-			// (issue #94). The hardAbort check above is a fast-path skip; ctx is the
-			// race-closing bound. Fail-soft holds: a cancelled ctx → StopCancelled →
-			// ok=false → inherit the default model, the existing miss path.
-			category, model, classifierUsage, missReason, ok := route(ctx, taskPrompt)
-			// Fold classifier spend into the parent session's cumulative Usage
-			// UNCONDITIONALLY (on both miss and hit paths) so --max-run-tokens bounds
-			// the classifier cost (#92 fix). foldUsage is nil-safe (nop when sess==nil).
-			foldUsage(classifierUsage)
-			if !ok || strings.TrimSpace(model) == "" {
-				// Per-miss observability (issue #287): log WHY this plain delegation fell
-				// through to the inherited default model, at THIS dispatch chokepoint so all
-				// three delegation families (subagent/team/parallel) share the line for free.
-				// The nil-diag guard + the "empty-model" fallback live in logRouterMissReason
-				// so this hot closure stays under the gocyclo budget. It is emitted BEFORE the
-				// breaker-open check below; the breaker-open skip and the hardAbort skip above
-				// return earlier and stay SILENT deliberately (no classifier call was made, so
-				// there is no miss to attribute — only an actual classification attempt logs).
-				logRouterMissReason(ctx, diag, missReason)
-				if justOpened := noteRouterMiss(breaker); justOpened && diag != nil {
-					diag.Log(ctx, port.LevelInfo,
-						"subagent model router: breaker OPEN after consecutive misses; remaining subagents this run inherit the default model",
-						"threshold", breaker.max)
-				}
-				return "", "", false
-			}
-			breaker.consecutiveMiss = 0 // a successful classification resets the breaker.
-			if diag != nil {
-				diag.Log(ctx, port.LevelInfo,
-					"subagent routed", "category", category, "model", model)
-			}
-			return category, model, true
+		// The classification body lives in a package-level func (routeTaskBody) so this
+		// already-branchy constructor stays under the gocyclo budget; the closure here is
+		// a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage.
+		route, breaker, hardAbort, diag := e.deps.SubagentModelRouter, r.router, r.hardAbort, r.diag
+		caps.routeTask = func(ctx context.Context, taskPrompt string) (string, string, string, bool) {
+			return routeTaskBody(ctx, taskPrompt, route, breaker, hardAbort, diag, foldUsage)
 		}
 	}
 	if interactive {
@@ -1363,6 +1320,84 @@ func foldClassifierUsage(sess *session.Session) func(session.Usage) {
 	return func(u session.Usage) {
 		_ = sess.RecordUsage(u)
 	}
+}
+
+// routeTaskBody is the classification half of the parentCaps routeTask closure, factored
+// out of parentCaps so that constructor stays under the gocyclo budget (the closure there
+// is a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage). It
+// classifies a delegation prompt via the wired SubagentModelRouter, honouring the per-run
+// circuit breaker + the run's hardAbort fast-path skip, folding classifier spend into the
+// parent session's Usage, and returning the BARE-METADATA reason on a miss (issue #397):
+// the classifier's missReason passed through verbatim (or "empty-model" for a blank-model
+// "hit"), or a synthesized gate constant (RoutingReasonBreakerOpen / RoutingReasonAborted)
+// when the classifier was skipped. Empty reason on a routed hit. All miss reasons are
+// METADATA ONLY — never the task prompt or classifier output (gauntlet #7). FAIL-SOFT
+// throughout: any miss returns ok=false and the caller inherits the default model.
+func routeTaskBody(
+	ctx context.Context,
+	taskPrompt string,
+	route func(context.Context, string) (string, string, session.Usage, string, bool),
+	breaker *modelRouterBreaker,
+	hardAbort chan struct{},
+	diag port.Diagnostics,
+	foldUsage func(session.Usage),
+) (category, model, reason string, ok bool) {
+	breaker.mu.Lock()
+	defer breaker.mu.Unlock()
+	if breaker.consecutiveMiss >= breaker.max {
+		// Breaker open: skip the classifier, inherit the default model. The
+		// synthesized reason rides the delegation-start event (issue #397); this
+		// path stays diag-SILENT (no classification attempt was made).
+		return "", "", session.RoutingReasonBreakerOpen, false
+	}
+	// A run already past Cancel+grace is tearing down: skip the classifier turn
+	// rather than spend one whose child is about to be unwound. A nil channel
+	// never selects — correct no-route behaviour for a zero-caps construction.
+	select {
+	case <-hardAbort:
+		return "", "", session.RoutingReasonAborted, false
+	default:
+	}
+	// Pass the run's ctx (not context.Background()) so a Run.Cancel between this
+	// check and the classifier call propagates into RunModelRouter and the
+	// classifier turn dies with the run instead of running out its 30s clock
+	// (issue #94). The hardAbort check above is a fast-path skip; ctx is the
+	// race-closing bound. Fail-soft holds: a cancelled ctx → StopCancelled →
+	// ok=false → inherit the default model, the existing miss path.
+	category, model, classifierUsage, missReason, routeOK := route(ctx, taskPrompt)
+	// Fold classifier spend into the parent session's cumulative Usage
+	// UNCONDITIONALLY (on both miss and hit paths) so --max-run-tokens bounds
+	// the classifier cost (#92 fix). foldUsage is nil-safe (nop when sess==nil).
+	foldUsage(classifierUsage)
+	if !routeOK || strings.TrimSpace(model) == "" {
+		// Per-miss observability (issue #287): log WHY this plain delegation fell
+		// through to the inherited default model, at THIS dispatch chokepoint so all
+		// three delegation families (subagent/team/parallel) share the line for free.
+		// The nil-diag guard + the "empty-model" fallback live in logRouterMissReason
+		// so this hot closure stays under the gocyclo budget. It is emitted BEFORE the
+		// breaker-open check below; the breaker-open skip and the hardAbort skip above
+		// return earlier and stay SILENT deliberately (no classifier call was made, so
+		// there is no miss to attribute — only an actual classification attempt logs).
+		logRouterMissReason(ctx, diag, missReason)
+		if justOpened := noteRouterMiss(breaker); justOpened && diag != nil {
+			diag.Log(ctx, port.LevelInfo,
+				"subagent model router: breaker OPEN after consecutive misses; remaining subagents this run inherit the default model",
+				"threshold", breaker.max)
+		}
+		// The missReason (or the "empty-model" fallback for a blank-model "hit")
+		// passes through as the RoutingReason the delegation-start event carries
+		// (issue #397) — bare metadata, same footing as the diag line.
+		if missReason == "" {
+			missReason = "empty-model"
+		}
+		return "", "", missReason, false
+	}
+	breaker.consecutiveMiss = 0 // a successful classification resets the breaker.
+	if diag != nil {
+		diag.Log(ctx, port.LevelInfo,
+			"subagent routed", "category", category, "model", model)
+	}
+	return category, model, "", true
 }
 
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain

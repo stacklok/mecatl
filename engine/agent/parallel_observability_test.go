@@ -398,6 +398,11 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// classifier's reasoning. Mirrors SubagentPayload's identically-justified routed
 		// fields; gauntlet-#7 safe (no branch content crosses).
 		"RoutedCategory": true, "RoutedModel": true,
+		// RoutingReason (issue #397) is the bare-metadata REASON the branch was not
+		// routed: a session.RoutingReason* gate const or the classifier's bounded
+		// missReason, EMPTY on a routed hit — never the branch prompt or the
+		// classifier's reasoning. Same gauntlet-#7 footing as RoutedCategory/Model.
+		"RoutingReason": true,
 		// Model (issue #112 / ADR 0035) is the concrete MODEL id this branch ACTUALLY ran
 		// on, regardless of how it was chosen — bare metadata, never branch content.
 		"Model": true,

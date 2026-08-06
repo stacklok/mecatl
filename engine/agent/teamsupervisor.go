@@ -452,11 +452,14 @@ type memberRT struct {
 	// for this member (ADR 0034), captured ONCE at AddMember (decide-once — a member's
 	// engine is built once and reused across rounds via Reopen, so it is never re-routed).
 	// Both empty when the router was off, missed, or the member is DEFINED (a def pins its
-	// own model so the router never fired). They are BARE METADATA the Team tool reads back
-	// (MemberRouting) to project onto the EvTeamStart roster — never member content. Written
-	// once in AddMember (single goroutine, before any round), read after AddMember.
+	// own model so the router never fired). routingReason is the bare-metadata WHY-NOT
+	// (issue #397: a session.RoutingReason* gate or the classifier's missReason), empty on
+	// a routed hit. They are BARE METADATA the Team tool reads back (MemberRouting) to
+	// project onto the EvTeamStart roster — never member content. Written once in
+	// AddMember (single goroutine, before any round), read after AddMember.
 	routedCategory string
 	routedModel    string
+	routingReason  string
 }
 
 // SupervisorOption configures a Supervisor.
@@ -717,7 +720,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel := s.maybeRouteMember(ctx, spec)
+	routedCategory, routedModel, routingReason := s.maybeRouteMember(ctx, spec)
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
@@ -814,7 +817,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, ws: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
-		routedCategory: routedCategory, routedModel: routedModel}
+		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -842,30 +845,35 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model string) {
-	if s.caps.routeTask == nil || strings.TrimSpace(spec.AgentType) != "" {
-		return "", ""
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string) {
+	if strings.TrimSpace(spec.AgentType) != "" {
+		return "", "", session.RoutingReasonAgentDefPinned
+	}
+	if s.caps.routeTask == nil {
+		return "", "", session.RoutingReasonRouterDisabled
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
 		artifact = spec.Name
 	}
-	if cat, m, ok := s.caps.routeTask(ctx, artifact); ok {
-		return cat, strings.TrimSpace(m)
+	cat, m, missReason, ok := s.caps.routeTask(ctx, artifact)
+	if ok {
+		return cat, strings.TrimSpace(m), ""
 	}
-	return "", ""
+	return "", "", missReason
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
 // model id) for a member by name (both empty when the member was not routed or is
-// unknown). It is the read-back seam the Team tool uses to project routed metadata onto
+// unknown), plus the bare-metadata REASON it was not routed (empty on a routed hit —
+// issue #397). It is the read-back seam the Team tool uses to project routed metadata onto
 // the EvTeamStart roster — captured once at AddMember, never member content. Safe to call
 // after AddMember (the fields are immutable once set).
-func (s *Supervisor) MemberRouting(name string) (category, model string) {
+func (s *Supervisor) MemberRouting(name string) (category, model, reason string) {
 	if m, ok := s.members[name]; ok {
-		return m.routedCategory, m.routedModel
+		return m.routedCategory, m.routedModel, m.routingReason
 	}
-	return "", ""
+	return "", "", ""
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs

@@ -395,7 +395,9 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, ws tool.Works
 		// the ONLY mutation of the roster the router introduces; everything else stays the
 		// metadata-only teamRoster projection (gauntlet #7 — no member content crosses).
 		for i := range roster {
-			roster[i].RoutedCategory, roster[i].RoutedModel = sup.MemberRouting(roster[i].Name)
+			cat, model, reason := sup.MemberRouting(roster[i].Name)
+			roster[i].RoutedCategory, roster[i].RoutedModel = cat, model
+			roster[i].RoutingReason = routingReasonPayload(reason)
 			roster[i].Model = sup.MemberModel(roster[i].Name)
 		}
 		emit(session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{

@@ -158,9 +158,15 @@ type parentCaps struct {
 	// model is an opaque model string — engine/agent stays model-string-only (the layering
 	// rule); composition owns aliases/slots/the cap.
 	//
+	// reason is the BARE-METADATA why on a MISS (ok=false): the classifier's missReason
+	// passed through verbatim, or a harness-synthesised gate constant
+	// (session.RoutingReasonBreakerOpen / RoutingReasonAborted) when the classifier was
+	// skipped. Empty on a hit. It rides the delegation-start events' RoutingReason field
+	// (issue #397) — never the task prompt or classifier output (gauntlet #7).
+	//
 	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
 	// (issue #94); see SubagentModelRouter.
-	routeTask func(ctx context.Context, taskPrompt string) (category, model string, ok bool)
+	routeTask func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
 }
 
 // registerChildRun is the nil-safe registration wrapper a spawning tool calls: a
@@ -1933,31 +1939,53 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 // a child has no Subagent tool, so structurally no parentCaps.routeTask). FAIL-SOFT: a
 // router miss (ok=false) returns empty strings and the caller inherits its default engine.
 //
+// reason is the BARE-METADATA why the router did NOT classify (issue #397): EMPTY on a
+// routed hit, otherwise a session.RoutingReason* gate constant (resume / fork /
+// router-disabled / pinned-model / agent-def-pinned-model) or the missReason routeTask
+// returned (classifier miss / breaker-open / aborted). It rides the subagent.start event's
+// RoutingReason field — never the task prompt or classifier output (gauntlet #7).
+//
 // Two gate shapes (routeGateOpen):
 //   - NO `agent` (a plain default delegation): routes, EXCEPT a writable delegation whose
 //     writable engine factory is unwired (issue #285 — the pick would be DISCARDED by
-//     selectChildEngine's writable arm, so don't spend the classifier).
+//     selectChildEngine's writable arm, so don't spend the classifier). That gate reports
+//     RoutingReasonRouterDisabled: the pick could not be consumed, as if no router existed.
 //   - a NAMED `agent` (issue #286): routes ONLY a ROUTABLE def — one that expressed NO model
 //     intent (composition put it in t.routableAgents) — and only READ-ONLY with the
 //     agent+model factory wired (the pick is consumed by rebuilding the def's SCOPED engine
 //     on the routed model). A pinned def (ANY def.Model, incl. explicit `inherit`), a
 //     writable specialist, or an unwired factory is NEVER routed — no classifier spend when
-//     the pick couldn't be consumed.
+//     the pick couldn't be consumed; the gate reports RoutingReasonAgentDefPinned.
 //
 // It is a method (not a free func) to read t.writableEngineFactory / t.agentModelFactory /
 // t.routableAgents. The ctx is the run's ctx, threaded to routeTask so a Run.Cancel
 // propagates into the classifier turn (issue #94).
-func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model string) {
-	if resuming || args.Fork || caps.routeTask == nil || strings.TrimSpace(args.Model) != "" {
-		return "", ""
+func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string) {
+	switch {
+	case resuming:
+		return "", "", session.RoutingReasonResume
+	case args.Fork:
+		return "", "", session.RoutingReasonFork
+	case caps.routeTask == nil:
+		return "", "", session.RoutingReasonRouterDisabled
+	case strings.TrimSpace(args.Model) != "":
+		return "", "", session.RoutingReasonPinnedModel
 	}
-	if !t.routeGateOpen(strings.TrimSpace(args.Agent), writable) {
-		return "", ""
+	if wantAgent := strings.TrimSpace(args.Agent); !t.routeGateOpen(wantAgent, writable) {
+		// The pick could not be consumed: a named agent pins its own def's model (or is
+		// a writable/unfactoryable specialist); a plain writable delegation with an
+		// unwired writable factory would DISCARD the pick (issue #285) — attribute that
+		// to router-disabled (as good as absent), the def-pinned cases to their own gate.
+		if wantAgent != "" {
+			return "", "", session.RoutingReasonAgentDefPinned
+		}
+		return "", "", session.RoutingReasonRouterDisabled
 	}
-	if cat, m, ok := caps.routeTask(ctx, args.Prompt); ok {
-		return cat, strings.TrimSpace(m)
+	cat, m, missReason, ok := caps.routeTask(ctx, args.Prompt)
+	if ok {
+		return cat, strings.TrimSpace(m), ""
 	}
-	return "", ""
+	return "", "", missReason
 }
 
 // routeGateOpen reports whether a delegation is eligible for model routing given its
@@ -2146,9 +2174,10 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// OPT-IN semantic model router (ADR 0031): for a PLAIN default delegation, classify
 	// the task and mint the child on the routed model via the per-call factory path. The
 	// gating + fail-soft live in maybeRouteModel; an empty routedModel inherits the
-	// default explorer. The run's ctx threads down so a Run.Cancel propagates into the
-	// classifier turn (issue #94).
-	routedCategory, routedModel := t.maybeRouteModel(ctx, args, resuming, writable, caps)
+	// default explorer. routingReason names WHY the router did not classify (empty on a
+	// hit) and rides the subagent.start event (issue #397). The run's ctx threads down so
+	// a Run.Cancel propagates into the classifier turn (issue #94).
+	routedCategory, routedModel, routingReason := t.maybeRouteModel(ctx, args, resuming, writable, caps)
 
 	engine, limits, errResult, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
 	if !ok {
@@ -2218,7 +2247,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 			call: call, ws: ws, emit: emit, caps: caps, args: args,
 			engine: engine, limits: limits, resuming: resuming, childID: childID,
 			forkHistory:    forkHistory,
-			routedCategory: routedCategory, routedModel: routedModel,
+			routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
 			timeoutCtx: timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
 		}), nil
 	}
@@ -2288,6 +2317,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 			Goal:           subagentGoal(args),
 			RoutedCategory: routedCategory,
 			RoutedModel:    routedModel,
+			RoutingReason:  routingReasonPayload(routingReason),
 			Model:          engine.Model(),
 		}})
 	}
@@ -2468,9 +2498,11 @@ type backgroundChild struct {
 	// closure must fire on the dispatch goroutine, not the detached one). They ride the
 	// synchronous EvSubagentStart so the routed metadata is observable; empty when the
 	// child was not routed (no router, or a fail-soft miss). The engine field already
-	// carries the routed engine — these are the LABELS only.
+	// carries the routed engine — these are the LABELS only. routingReason is the
+	// bare-metadata why-not (issue #397), captured with them (empty on a routed hit).
 	routedCategory string
 	routedModel    string
+	routingReason  string
 	childID        session.SessionID
 	// timeoutCtx is non-nil iff a per-call timeout_ms deadline applies (the
 	// DeadlineExceeded disambiguation read, same as the foreground path).
@@ -2531,6 +2563,7 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 			Background:     true,
 			RoutedCategory: b.routedCategory,
 			RoutedModel:    b.routedModel,
+			RoutingReason:  routingReasonPayload(b.routingReason),
 			Model:          b.engine.Model(),
 		}})
 	}
@@ -2709,6 +2742,25 @@ const maxSubagentCausePreview = 400
 // conversation, not a row in a table.
 func subagentCausePayload(cause string) string {
 	return clampRunes(strings.Join(strings.Fields(cause), " "), maxSubagentCausePreview)
+}
+
+// maxRoutingReasonPreview caps how many runes of a routing REASON cross onto a
+// delegation-start event payload (session.SubagentPayload/ParallelPayload/
+// TeamMemberSpec.RoutingReason). The reasons are harness/composition constants (the
+// session.RoutingReason* gates, the RouterMiss* values, composition's category-mapping
+// strings) — short by construction — but the string channel is OPEN (composition may
+// author new ones), so the projection stays BOUNDED like every other event field.
+const maxRoutingReasonPreview = 200
+
+// routingReasonPayload normalises a routing reason for the RoutingReason EVENT field:
+// whitespace collapsed to single spaces, then clamped to maxRoutingReasonPreview. It is
+// the ONE place that projection is built, shared by every delegation-start emit site
+// (subagent.start foreground + background, parallel branch_start, team.start roster),
+// mirroring subagentCausePayload's single-chokepoint discipline. The reason is BARE
+// METADATA (a harness/composition constant, never the task prompt or classifier output —
+// gauntlet #7); the collapse exists because the consumers are single-line surfaces.
+func routingReasonPayload(reason string) string {
+	return clampRunes(strings.Join(strings.Fields(reason), " "), maxRoutingReasonPreview)
 }
 
 // subagentEndMetrics is the observability half of an EvSubagentEnd payload: the
