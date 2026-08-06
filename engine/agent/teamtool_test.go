@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -915,5 +916,159 @@ func TestTeamToolParentCancelStops(t *testing.T) {
 	// at the harness level. The content is the summary of however little ran.
 	if strings.TrimSpace(res.Content) == "" {
 		t.Fatalf("expected a non-empty joined summary even on cancel")
+	}
+}
+
+// TestTeamMemberResultCarriesCauseOnStopError is the Team mirror of
+// TestSubagentEndEventCarriesClampedCause: a worker whose round ends StopError with a
+// multi-line, over-long provider error must forward that failure detail as Cause on the
+// per-round EvTeamMember (InnerKind=EvResult) — clamped and single-line — and ONLY on
+// that result event (zero cause on the message.delta/tool.call/tool.result/turn.end team
+// member events). The default retry cap means the worker needs TWO errored rounds to be
+// benched; both carry the cause.
+func TestTeamMemberResultCarriesCauseOnStopError(t *testing.T) {
+	// Multi-line AND over-long: the two halves of the field's normalisation contract in
+	// one adversarial input, driven through the real supervisor loop.
+	huge := "BOOM-\n  upstream detail\n\t" + strings.Repeat("z", 5000)
+	leadProv := mockllm.New(
+		mockllm.TextTurn("delegating"),          // round 0
+		mockllm.TextTurn("CONSOLIDATED REPORT"), // synthesis
+	)
+	// Both worker rounds fail with the same provider error; the first is recovered+retried,
+	// the second benches it stopped/error.
+	workerProv := mockllm.New(
+		mockllm.ErrorTurn(errors.New(huge)),
+		mockllm.ErrorTurn(errors.New(huge)),
+	)
+	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
+
+	teamTool := agent.NewTeamTool(teamToolFactory(t, providers))
+	parentCat := catalogWith(t, teamTool)
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Team",
+			`{"goal":"investigate","members":[{"name":"lead","role":"coordinate"},{"name":"worker","role":"investigate"}]}`)),
+		mockllm.TextTurn("parent received the report"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	evs := drain(r)
+
+	var resultCauses []string
+	var causesOnOtherKinds int
+	for _, ev := range evs {
+		if ev.Type != session.EvTeamMember || ev.Team == nil {
+			continue
+		}
+		if ev.Team.Member != "worker" {
+			continue
+		}
+		if ev.Team.InnerKind == session.EvResult {
+			resultCauses = append(resultCauses, ev.Team.Cause)
+			continue
+		}
+		if ev.Team.Cause != "" {
+			causesOnOtherKinds++
+		}
+	}
+	if len(resultCauses) == 0 {
+		t.Fatalf("no worker result events carried a cause; the round failure did not project")
+	}
+	if causesOnOtherKinds != 0 {
+		t.Fatalf("Cause is a result-only field, but %d other team.member events carried one", causesOnOtherKinds)
+	}
+	for _, c := range resultCauses {
+		if !strings.Contains(c, "BOOM-") {
+			t.Fatalf("worker result cause must carry the failure marker, got %q", c)
+		}
+		if n := len([]rune(c)); n > 401 { // maxSubagentCausePreview (400) + the ellipsis
+			t.Fatalf("worker result cause was not clamped: %d runes", n)
+		}
+		// The line-oriented half of the contract: no newline, CR or tab reaches a consumer.
+		if strings.ContainsAny(c, "\n\r\t") {
+			t.Fatalf("worker result cause must be collapsed to ONE line, got %q", c)
+		}
+		if !strings.Contains(c, "BOOM- upstream detail ") {
+			t.Fatalf("collapsing must join the source lines with single spaces, got %q", c)
+		}
+	}
+}
+
+// TestTeamMemberResultNoCauseOnCleanStop is the negative guard: a worker whose round ends
+// cleanly (StopEndTurn) must leave Cause empty on its result event, so a consumer can
+// treat a non-empty Cause as "this round failed".
+func TestTeamMemberResultNoCauseOnCleanStop(t *testing.T) {
+	leadProv := mockllm.New(
+		mockllm.TextTurn("delegating"),
+		mockllm.TextTurn("CONSOLIDATED REPORT"),
+	)
+	workerProv := mockllm.New(
+		mockllm.TextTurn("all good here"),
+	)
+	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
+
+	teamTool := agent.NewTeamTool(teamToolFactory(t, providers))
+	parentCat := catalogWith(t, teamTool)
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Team",
+			`{"goal":"investigate","members":[{"name":"lead","role":"coordinate"},{"name":"worker","role":"investigate"}]}`)),
+		mockllm.TextTurn("parent received the report"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	evs := drain(r)
+
+	for _, ev := range evs {
+		if ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.Member == "worker" &&
+			ev.Team.InnerKind == session.EvResult && ev.Team.Cause != "" {
+			t.Fatalf("a clean worker result must carry no cause, got %q", ev.Team.Cause)
+		}
+	}
+}
+
+// TestTeamRetriedMemberSurfacesCauseEachFailedRound asserts a retried member's failed
+// rounds EACH surface their own cause on their per-round result event: round 1 carries
+// C1, the retried round 2 carries C2. (The default retry cap recovers round 1 and
+// benches on round 2.)
+func TestTeamRetriedMemberSurfacesCauseEachFailedRound(t *testing.T) {
+	leadProv := mockllm.New(
+		mockllm.TextTurn("delegating"),
+		mockllm.TextTurn("CONSOLIDATED REPORT"),
+	)
+	workerProv := mockllm.New(
+		mockllm.ErrorTurn(errors.New("C1 first failure")),
+		mockllm.ErrorTurn(errors.New("C2 second failure")),
+	)
+	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
+
+	teamTool := agent.NewTeamTool(teamToolFactory(t, providers))
+	parentCat := catalogWith(t, teamTool)
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Team",
+			`{"goal":"investigate","members":[{"name":"lead","role":"coordinate"},{"name":"worker","role":"investigate"}]}`)),
+		mockllm.TextTurn("parent received the report"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	evs := drain(r)
+
+	var resultCauses []string
+	for _, ev := range evs {
+		if ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.Member == "worker" &&
+			ev.Team.InnerKind == session.EvResult {
+			resultCauses = append(resultCauses, ev.Team.Cause)
+		}
+	}
+	if len(resultCauses) < 2 {
+		t.Fatalf("want at least 2 worker result events (one per failed round), got %d: %q", len(resultCauses), resultCauses)
+	}
+	// The first two result events must carry C1 then C2 (in order).
+	if !strings.Contains(resultCauses[0], "C1 first failure") {
+		t.Errorf("round 1 result cause = %q, want C1", resultCauses[0])
+	}
+	if !strings.Contains(resultCauses[1], "C2 second failure") {
+		t.Errorf("round 2 result cause = %q, want C2", resultCauses[1])
 	}
 }

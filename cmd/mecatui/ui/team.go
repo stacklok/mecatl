@@ -424,9 +424,12 @@ func teamRosterSubhead(b *block) string {
 // (message lines + tool chips with bounded Detail previews), height-bounded to the
 // rows that FIT in the available height (teamFocusRows) so the header and the
 // "esc back" footer are never pushed off-screen — the same height-safety the
-// roster window has. A focused name with no matching lane (the member vanished —
-// defensive) falls back to a muted note. All text is sanitized.
-func renderTeamFocus(th theme.Theme, b *block, member string, height int) string {
+// roster window has. width is the OUTER viewport width, used ONLY to wrap the
+// benched member's failure line to the card's text budget (teamFailureLine) — the
+// header and trace are height-bounded, not width-wrapped. A focused name with no
+// matching lane (the member vanished — defensive) falls back to a muted note. All
+// text is sanitized.
+func renderTeamFocus(th theme.Theme, b *block, member string, width, height int) string {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
@@ -461,6 +464,15 @@ func renderTeamFocus(th theme.Theme, b *block, member string, height int) string
 		out.WriteString(capRenderedLines(th, trace, teamFocusRows(height)))
 	}
 
+	// A benched-on-error member surfaces WHY its last failed round failed, mirroring
+	// the subagent focus pane's failure block (issue #331). Rendered ONLY when the
+	// team ended with the member stopped for an error and a cause was carried; a done
+	// (possibly retried) member does not render it (it recovered).
+	if b.teamDone && ln.stopped && ln.stopReason == teamStopReasonError && ln.cause != "" {
+		out.WriteString("\n")
+		out.WriteString(teamFailureLine(ln, width))
+	}
+
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
 	// already stopped, and a known session id (the CancelChild handle).
 	hint := "esc back"
@@ -485,6 +497,27 @@ func capRenderedLines(th theme.Theme, s string, maxLines int) string {
 	extra := len(lines) - maxLines
 	kept := strings.Join(lines[:maxLines], "\n")
 	return kept + "\n" + th.Style("muted").Render(fmt.Sprintf("  … +%s", plural(extra, "more line")))
+}
+
+// teamFailureLine renders the focus pane's failure block for a team member that ended
+// benched on an error and carried a per-round cause: "  failed: <cause>", word-wrapped
+// and indented to the overlay card's text budget at the given viewport width. It
+// mirrors subagentFailureLine (agents_overlay.go) and reuses its maxSubagentCauseWidth
+// display bound — the same per-pane rune cap, no team-specific const — because the team
+// focus pane and the subagent focus pane have the SAME height/width budget for a
+// failure line. The cause is server-derived harness/provider metadata (never
+// member-authored output, so gauntlet #7 holds) and is sanitized like every other
+// server-derived string. WRAPPING IS LOAD-BEARING for the same reason as
+// subagentFailureLine: centerCard → lipgloss.Place cannot shrink content, so the widest
+// line directly sets the card's width. Returns "" for a lane without a cause, one not
+// benched, or one benched for a non-error reason — self-defensive like
+// subagentFailureLine, so a future caller without the renderTeamFocus gate cannot
+// render a stale cause on a recovered (done) member or a non-error stop.
+func teamFailureLine(ln *teamLane, width int) string {
+	if !ln.stopped || ln.stopReason != teamStopReasonError || ln.cause == "" {
+		return ""
+	}
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), cardTextWidth(width))
 }
 
 // teamFindLane returns the lane named member off the team block, or nil. Names

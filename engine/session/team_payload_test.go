@@ -31,6 +31,12 @@ func TestTeamPayloadHasReviewedContentFields(t *testing.T) {
 		"Tasks":           "bounded task snapshots; nested shape guarded separately",
 		"Findings":        "bounded finding snapshots; nested shape guarded separately",
 		"Dispositions":    "closed-enum terminal member verdicts; nested shape guarded separately",
+		// issue #331: per-round harness/provider failure detail on EvTeamMember
+		// (InnerKind=EvResult, Stop==StopError) — the mirror of SubagentPayload.Cause.
+		// Harness metadata, never member-authored output; normalised through
+		// subagentCausePayload (clamped to maxSubagentCausePreview) at the one emit
+		// site. Empty on every other kind and on the terminal disposition snapshot.
+		"Cause": "per-round harness failure detail (StopError result only)",
 	})
 }
 

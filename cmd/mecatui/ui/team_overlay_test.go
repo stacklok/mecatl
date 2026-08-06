@@ -1466,3 +1466,85 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 		t.Errorf("exactly one plain model: cue expected (the non-routed lead only), got %d:\n%s", n, out)
 	}
 }
+
+// TestTeamFocusRendersFailureCauseOnStoppedError asserts the focus pane renders the
+// per-round failure cause for a member benched on an error (issue #331, mirroring the
+// subagent focus pane). It drives a real client.TeamMsg "result" carrying a Cause
+// through addTeamMember, then a team.end that stops the member for an error, then the
+// focus render — asserting "failed: <cause>" appears. A done member with a prior cause
+// does NOT render it (it recovered), and a later result's cause overwrites an earlier
+// one (last non-empty wins).
+func TestTeamFocusRendersFailureCauseOnStoppedError(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m = seedTeam(m, func(c *conversation) {
+		c.setTeamStart("t1", "", roster())
+		// scout's round failed with a known cause.
+		c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "upstream 503: model overloaded"}))
+		// team.end benches scout on an error.
+		c.setTeamEnd("t1", "", 1, "end_turn", client.Usage{},
+			[]client.TeamMemberDisposition{{Name: "lead"}, {Name: "scout", Stopped: true, Reason: "error"}})
+	})
+	mm, _ := m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	// Move to scout (cursor 1) and focus.
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "failed: upstream 503: model overloaded") {
+		t.Errorf("focus pane for a stopped-on-error member must render the failure cause:\n%s", out)
+	}
+	// The failure line must WRAP to the card's text budget (teamFailureLine receives
+	// the viewport WIDTH, not the height — the issue-#331 review caught the height
+	// being passed, which disabled wrapping and let a long cause overflow the card).
+	// "failed: upstream 503: model overloaded" is 41 runes, so it wraps at any
+	// realistic card budget (cardTextWidth caps at min(terminal-10, 100)).
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "failed:") && len([]rune(ln)) > 104 {
+			t.Errorf("the failure line must wrap to the card text budget, got a %d-rune line %q", len([]rune(ln)), ln)
+		}
+	}
+}
+
+// TestTeamFocusNoFailureCauseForDoneMember asserts a DONE member that carried a prior
+// (recovered) cause does NOT render "failed:" — it recovered, so the cause is not
+// surfaced. It uses a direct lane + teamFailureLine check (the roster focus render
+// path is exercised above; this isolates the gate).
+func TestTeamFocusNoFailureCauseForDoneMember(t *testing.T) {
+	ln := &teamLane{name: "scout", stopped: false, stopReason: "", cause: "upstream 503"}
+	// teamFailureLine is self-defensive (mirroring subagentFailureLine): a done member
+	// (stopped=false) returns "" from the helper itself, independent of the caller's
+	// gate in renderTeamFocus.
+	if got := teamFailureLine(ln, 80); got != "" {
+		t.Errorf("a done member must not render a failure line, got %q", got)
+	}
+	if got := teamLaneState(ln, true); strings.Contains(got, "failed") {
+		t.Errorf("a done member must not surface the cause in its lane state, got %q", got)
+	}
+	// A member stopped for a NON-error reason (e.g. cancelled) with a stale cause
+	// renders nothing either.
+	ln2 := &teamLane{name: "scout", stopped: true, stopReason: "cancelled", cause: "upstream 503"}
+	if got := teamFailureLine(ln2, 80); got != "" {
+		t.Errorf("a non-error stop must not render a failure line, got %q", got)
+	}
+}
+
+// TestTeamLaneCauseLastNonEmptyWins asserts a later result's cause overwrites an
+// earlier one (the last failed round's cause is what the lane keeps).
+func TestTeamLaneCauseLastNonEmptyWins(t *testing.T) {
+	c := &conversation{}
+	c.addTool("t1", "Team", `{}`)
+	c.setTeamStart("t1", "", roster())
+	c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "first failure C1"}))
+	c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "second failure C2"}))
+	ln := c.blocks[0].lane("scout")
+	if ln.cause != "second failure C2" {
+		t.Errorf("last non-empty cause must win, got %q", ln.cause)
+	}
+	// A later empty cause (clean round) does NOT erase a prior one — last NON-EMPTY wins.
+	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
+	if ln.cause != "second failure C2" {
+		t.Errorf("an empty cause must not erase a prior non-empty one, got %q", ln.cause)
+	}
+}

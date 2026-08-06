@@ -514,6 +514,13 @@ type TurnEndPayload struct {
 // carry. TRIP-WIRE: a 4th delegation family is the point to extract a shared
 // ChildActivity value object for the common lifecycle scalars — NOT before (three, with
 // the redaction already shared, does not warrant the shipped-contract migration cost).
+// The shared failure-cause projection (subagentCausePayload, the one normalisation
+// chokepoint) now crosses Subagent AND Team (TeamPayload.Cause mirrors
+// SubagentPayload.Cause on the per-round EvTeamMember result inner kind);
+// ParallelPayload deliberately omits it (a branch failure reaches the model via the
+// Parallel ToolResult text, not an event field). That shared chokepoint is NOT itself a
+// ChildActivity extraction — it is a helper, not a value-object migration — and the
+// 4th-family bar stands.
 
 // SubagentPayload is the REDACTED observability projection carried by the three
 // subagent.* events (EvSubagentStart / EvSubagentTool / EvSubagentEnd). It is the
@@ -923,7 +930,8 @@ type TeamMemberDisposition struct {
 //   - EvTeamStart:  ParentCallID, TeamID, Roster.
 //   - EvTeamMember: ParentCallID, TeamID, Member, MemberSessionID, InnerKind, and
 //     the subset of {Text, ToolName, Detail, IsError, Usage, ContextUsed,
-//     ContextWindow} relevant to InnerKind.
+//     ContextWindow} relevant to InnerKind, and, when the round's result was
+//     StopError, Cause.
 //   - EvTeamTasks:  ParentCallID, TeamID, Tasks (the team-wide task snapshot; no
 //     Member).
 //   - EvTeamFindings: ParentCallID, TeamID, Findings (the team-wide findings ledger
@@ -1002,6 +1010,26 @@ type TeamPayload struct {
 	// carries closed-enum supervisor verdicts only, never member content. Empty on
 	// every other kind.
 	Dispositions []TeamMemberDisposition
+	// Cause carries the member run's per-round FAILURE DETAIL when that round's
+	// EvResult.Stop is StopError (empty otherwise) — the mirror of
+	// ResultPayload.Error for the team-member projection. Set on EvTeamMember with
+	// InnerKind=EvResult ONLY, and ONLY when the round failed; empty on every other
+	// inner kind and on EvTeamEnd's disposition snapshot.
+	//
+	// It is HARNESS/PROVIDER metadata — a transport or loop error string, or (for a
+	// failure BEFORE the member run started) the harness's own error text — NOT
+	// member-authored model output, so it is gauntlet-#7 safe on the same footing as
+	// Stop/Usage.
+	//
+	// It is LINE-ORIENTED by contract: the ONE emit site (projectTeamEvent) normalises
+	// it through subagentCausePayload (whitespace collapsed to single spaces, then
+	// rune-clamped to maxSubagentCausePreview), because its consumers are single-line
+	// surfaces — a mecatui roster/focus row, an ACP status line, a log line — and a
+	// provider error body routinely carries real newlines. A consumer renders it
+	// as-is rather than re-deriving the collapse. The terminal EvTeamEnd disposition
+	// stays the closed-enum reason; Cause is per-round, so a retried member's failed
+	// rounds each surface their own cause. Mirrors SubagentPayload.Cause.
+	Cause string
 }
 
 // Event is the domain-owned, provider-neutral unit of the streaming model. The

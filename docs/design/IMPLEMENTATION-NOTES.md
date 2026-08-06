@@ -2279,6 +2279,18 @@ redaction contract in code: `team.member` may be watchable, but permission asks 
 every content-shaped field is explicitly reviewed as bounded, and member transcripts still reach the
 parent only through the Team result or an explicit `InspectMember` pull.
 
+**Team member per-round failure cause (issue #331).** `session.TeamPayload.Cause` mirrors
+`session.SubagentPayload.Cause` on the per-round `EvTeamMember` (`InnerKind=EvResult`): it carries
+the member run's per-round FAILURE DETAIL when that round's `EvResult.Stop` is `StopError` (empty
+otherwise). It is set in `projectTeamEvent` (`engine/agent/teamtool.go`) via the shared
+`subagentCausePayload` chokepoint (`engine/agent/subagent.go`), so Subagent and Team collapse a
+provider error body identically (whitespace-collapsed, rune-clamped to `maxSubagentCausePreview`).
+It is harness/provider metadata — a transport/loop error string, never member-authored model output
+— so gauntlet #7 holds on the same footing as `Stop`/`Usage`. It is CLIENT-ONLY (events + mecatui +
+ACP), NOT model-visible; `writeTeamStatus` is unchanged. The terminal `EvTeamEnd` disposition stays
+the closed-enum reason (the per-round `Cause` does NOT widen it); a retried member's failed rounds
+each surface their own cause. It rides the proto `Team.cause` field 19.
+
 **The Subagent delegation tool (read-only explorer) gets the SAME treatment** (Phase 2): when Bash is
 configured, `SubagentTool` holds a worktree `childForker` (`WithChildForker`) and forks each child
 run into a throwaway git worktree BEFORE running it (`buildChildEngine` registers Bash via the

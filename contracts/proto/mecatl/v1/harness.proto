@@ -1271,6 +1271,14 @@ message Team {
   // explicitly so a client never derives ids from the (internal) id grammar.
   // (17 is taken by dispositions.)
   string member_session_id = 18;
+  // cause is the member run's per-round FAILURE DETAIL (team.member, result
+  // inner kind only) when that round ended in StopError — the harness/provider
+  // error string, never member-authored output (gauntlet #7, same footing as
+  // stop). LINE-ORIENTED: whitespace-collapsed and rune-clamped at the emit site
+  // so a client renders it as-is. Empty on every other team.member inner kind and
+  // on team.end (the terminal disposition stays the closed-enum reason). Mirrors
+  // Subagent.cause (field 17).
+  string cause = 19;
 }
 
 // Parallel is the BOUNDED observability projection carried by the three parallel.*

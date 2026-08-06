@@ -498,3 +498,50 @@ func TestDeliverableShortValidReportKept(t *testing.T) {
 		t.Errorf("a short valid report on a quiescent team must pass through verbatim, got:\n%s", got)
 	}
 }
+
+// TestProjectTeamEventResultCarriesCauseOnStopError asserts the per-round result
+// projection sets Cause (normalised through subagentCausePayload) when the round ended
+// StopError — the unit-level mirror of the loop-driven
+// TestTeamMemberResultCarriesCauseOnStopError.
+func TestProjectTeamEventResultCarriesCauseOnStopError(t *testing.T) {
+	te := TeamEvent{
+		Member: "scout",
+		Event: session.Event{
+			Type: session.EvResult,
+			Result: &session.ResultPayload{
+				Stop:  session.StopError,
+				Text:  "partial",
+				Error: "boom",
+			},
+		},
+	}
+	ev, ok := projectTeamEvent("p1", "team-p1", te)
+	if !ok || ev.Team == nil {
+		t.Fatal("result must project")
+	}
+	if ev.Team.Cause != subagentCausePayload("boom") {
+		t.Errorf("Cause = %q, want %q (subagentCausePayload(\"boom\"))", ev.Team.Cause, subagentCausePayload("boom"))
+	}
+}
+
+// TestProjectTeamEventResultNoCauseOnCleanStop asserts a clean per-round result leaves
+// Cause empty.
+func TestProjectTeamEventResultNoCauseOnCleanStop(t *testing.T) {
+	te := TeamEvent{
+		Member: "scout",
+		Event: session.Event{
+			Type: session.EvResult,
+			Result: &session.ResultPayload{
+				Stop: session.StopEndTurn,
+				Text: "done",
+			},
+		},
+	}
+	ev, ok := projectTeamEvent("p1", "team-p1", te)
+	if !ok || ev.Team == nil {
+		t.Fatal("result must still project")
+	}
+	if ev.Team.Cause != "" {
+		t.Errorf("a clean result must carry no cause, got %q", ev.Team.Cause)
+	}
+}

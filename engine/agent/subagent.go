@@ -2676,10 +2676,12 @@ func backgroundGateFullError(ids []string) string {
 // bytes onto the event stream.
 const maxSubagentCausePreview = 400
 
-// subagentCausePayload normalises a child's failure cause for the session.SubagentPayload.Cause
-// EVENT field: whitespace collapsed to single spaces, then clamped to
-// maxSubagentCausePreview. It is the ONE place that projection is built, shared by all three
-// EvSubagentEnd emit sites.
+// subagentCausePayload normalises a child's failure cause for the delegation EVENT
+// fields (session.SubagentPayload.Cause, and — since issue #331 —
+// session.TeamPayload.Cause): whitespace collapsed to single spaces, then clamped to
+// maxSubagentCausePreview. It is the ONE place that projection is built, shared by all
+// three EvSubagentEnd emit sites and the EvTeamMember result projection
+// (projectTeamEvent in teamtool.go) — two delegation families, one chokepoint.
 //
 // The collapse belongs HERE rather than in each consumer. The event field is LINE-ORIENTED
 // by contract — a mecatui roster/focus row, an ACP status line, a mecademo log line — while a

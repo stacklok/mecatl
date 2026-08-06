@@ -409,7 +409,7 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	case tabParallel:
 		body = renderParallelTab(th, par, groups, bodyHeight)
 	default:
-		body = renderTeamsTab(th, team, b, bodyHeight)
+		body = renderTeamsTab(th, team, b, width, bodyHeight)
 	}
 	return centerCard(th, bar+"\n\n"+body, width, height)
 }
@@ -451,7 +451,10 @@ func agentsTabBar(th theme.Theme, tab agentsTab) string {
 // renderTeamsTab renders the Teams tab body — the EXISTING team overlay roster /
 // focus / tasks / findings sub-views verbatim, via the team.go renderers. A nil team
 // block (no team has run) reads as an honest empty note so the tab is never blank.
-func renderTeamsTab(th theme.Theme, st teamState, b *block, height int) string {
+// width is the OUTER viewport width, forwarded to the focus pane so its failure line
+// can wrap to the card's text budget (see teamFailureLine, mirroring the subagent
+// tab's width forwarding); the roster's own lines are all rune-bounded already.
+func renderTeamsTab(th theme.Theme, st teamState, b *block, width, height int) string {
 	if b == nil {
 		muted := th.Style("muted")
 		return muted.Render("no team has run this session") + "\n\n" +
@@ -459,7 +462,7 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, height int) string {
 	}
 	switch st.view {
 	case teamFocus:
-		return renderTeamFocus(th, b, st.member, height)
+		return renderTeamFocus(th, b, st.member, width, height)
 	case teamTasks:
 		return renderTeamTasks(th, b, height)
 	case teamFindings:

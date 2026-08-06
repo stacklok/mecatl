@@ -148,6 +148,15 @@ type teamLane struct {
 	// "done (retried)" — never a bare "done", which would contradict the supervisor.
 	errorRounds int
 
+	// cause is the member run's per-round FAILURE DETAIL on a result event that
+	// ended StopError (issue #331, mirroring subagentLane.cause) — the
+	// harness/provider error, not member-authored output, so gauntlet #7 holds. Set
+	// on a "result" TeamMsg when Cause is non-empty; LAST non-empty value wins (a
+	// retried member's failed rounds each surface their own cause). Rendered only
+	// when the member is benched (stopped/error) at team.end; a done member with a
+	// prior cause does not render it (it recovered).
+	cause string
+
 	// ctxUsed / ctxWindow back the per-member context meter in the ctrl+a agents
 	// overlay. ctxUsed is the CURRENT context occupancy — the most recent turn's
 	// input-token count (ASSIGNED, not summed, each turn.end, mirroring the main
@@ -1032,6 +1041,9 @@ func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
 		}
 		if msg.Text != "" {
 			ln.appendMessage(msg.Text)
+		}
+		if msg.Cause != "" {
+			ln.cause = msg.Cause // last failed round's cause wins; rendered only when benched (stopped/error)
 		}
 	}
 	return true

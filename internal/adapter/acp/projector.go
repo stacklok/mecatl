@@ -326,6 +326,13 @@ func teamMemberLine(p *session.TeamPayload) string {
 		return line
 	default:
 		// message.delta / result / turn.end: surface the member's text if any.
+		// On a per-round result that ended StopError, lead with WHY it failed
+		// (issue #331) — the harness/provider error, never member-authored
+		// output (gauntlet #7, same footing as Subagent.cause). A clean/empty
+		// result still drops when there is no text.
+		if p.Cause != "" {
+			return fmt.Sprintf("%s failed: %s", p.Member, p.Cause)
+		}
 		if strings.TrimSpace(p.Text) == "" {
 			return ""
 		}

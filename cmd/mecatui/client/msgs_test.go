@@ -268,6 +268,18 @@ func TestEventToMsgTeam(t *testing.T) {
 				ContextUsed: 40000, ContextWindow: 200000},
 		},
 		{
+			// Issue #331: a member result that ended StopError carries the per-round
+			// failure cause (mirroring SubagentMsg.Cause); teamMsg maps it verbatim.
+			"team.member result carries cause",
+			&mecatlv1.Event{Type: "team.member", Team: &mecatlv1.Team{
+				ParentCallId: "t1", TeamId: "team-t1", Member: "scout",
+				InnerKind: "result", Stop: "error",
+				Cause: "upstream 503: model overloaded"}},
+			TeamMsg{Kind: TeamMember, ParentCallID: "t1", TeamID: "team-t1", Member: "scout",
+				InnerKind: "result", Stop: "error",
+				Cause: "upstream 503: model overloaded"},
+		},
+		{
 			"team.end",
 			&mecatlv1.Event{Type: "team.end", Team: &mecatlv1.Team{
 				ParentCallId: "t1", TeamId: "team-t1", Rounds: 3, Stop: "end_turn",

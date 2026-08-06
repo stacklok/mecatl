@@ -231,6 +231,23 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   otherwise forge the `agentId:` trailer or a bracketed harness note it is composed
   next to. No exported signature changed. (issue #319)
 
+- **`session.TeamPayload.Cause`** (issue #331) — a new `string` field on the redacted
+  `team.*` observability projection carrying the member run's per-round FAILURE DETAIL
+  (the loop's `session.ResultPayload.Error`) when the round's `EvResult.Stop` is
+  `StopError`; empty otherwise. Set on `EvTeamMember` with `InnerKind=EvResult` ONLY,
+  and ONLY when the round failed; empty on every other inner kind and on the terminal
+  `EvTeamEnd` disposition snapshot (which stays the closed-enum reason). It is
+  harness/provider metadata (a transport or loop error string), never member-authored
+  model output, so it is gauntlet-#7 safe on the same footing as `Stop`/`Usage`. It is
+  LINE-ORIENTED by contract — normalised through the shared `subagentCausePayload`
+  chokepoint (`engine/agent/subagent.go`, the one place Subagent and Team both collapse
+  a provider error body: whitespace collapsed to single spaces, then rune-clamped to
+  `maxSubagentCausePreview` = 400), so a consumer renders it as-is. It is CLIENT-ONLY
+  (events + mecatui + ACP), NOT model-visible. It rides the proto/client wire end-to-end
+  (`Team.cause` = field 19). A retried member's failed rounds each surface their own
+  cause. Classified Added per COMPATIBILITY.md (a new struct field on an existing payload
+  is a minor bump). No exported signature changed. (issue #331)
+
 - **`agent.SessionOriginScheduleManager` + `agent.NewSessionOriginScheduleManager` +
   `agent.OriginBinder` + `agent.Deps.OriginBinder`** (ADR 0075,
   fire-result-delivery task 02) — a new `port.ScheduleManager` wrapper that

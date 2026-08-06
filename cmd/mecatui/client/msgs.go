@@ -351,6 +351,14 @@ type TeamMsg struct {
 	// Dispositions is the per-member terminal disposition snapshot, set on a TeamEnd
 	// msg. It lets the overlay render a stopped member distinctly from a clean "done".
 	Dispositions []TeamMemberDisposition
+	// Cause is the member run's per-round FAILURE DETAIL on a TeamMember result
+	// (InnerKind "result") when that round ended StopError (empty otherwise): the
+	// harness/provider error the server recorded on the terminal result (issue #331,
+	// mirroring SubagentMsg.Cause). METADATA about how the round failed — a
+	// transport/loop error string, never member-authored output — so gauntlet #7
+	// holds. Server-clamped; an older server yields "". Last non-empty value wins
+	// (a retried member's failed rounds each surface their own cause).
+	Cause string
 }
 
 // ParallelKind discriminates the parallel.* event kinds carried by a ParallelMsg, so
@@ -847,6 +855,7 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 		Usage:           usageFrom(t.GetUsage()),
 		ContextUsed:     t.GetContextUsed(),
 		ContextWindow:   t.GetContextWindow(),
+		Cause:           t.GetCause(),
 	}
 	for _, r := range t.GetRoster() {
 		msg.Roster = append(msg.Roster, TeamMemberSpec{

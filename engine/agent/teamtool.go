@@ -608,6 +608,16 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		if ev.Result != nil {
 			base.Text = clampPreview(ev.Result.Text)
 			base.Usage = ev.Result.Usage
+			// Cause mirrors SubagentPayload.Cause on the per-round member result:
+			// the harness/provider FAILURE DETAIL when this round ended StopError
+			// (empty otherwise). It is the ONE emit site for TeamPayload.Cause,
+			// normalised through the shared subagentCausePayload chokepoint so
+			// Subagent and Team collapse identically. Harness metadata, never
+			// member-authored output — gauntlet-#7 safe on the same footing as
+			// Stop/Usage.
+			if ev.Result.Stop == session.StopError {
+				base.Cause = subagentCausePayload(ev.Result.Error)
+			}
 		}
 	default:
 		// permission.ask, turn.start, hook, compaction, reasoning.delta, session.init,

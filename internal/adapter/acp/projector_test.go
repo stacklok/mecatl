@@ -486,6 +486,41 @@ func TestProjectTeam(t *testing.T) {
 	}
 }
 
+// TestProjectTeamMemberResultCarriesCause asserts the ACP projection surfaces WHY a
+// member's round failed (issue #331) — the Team mirror of TestProjectSubagentEndCarriesCause.
+// A team.member result event with a Cause leads with "<member> failed: <cause>"; a clean
+// result with no cause and no text is dropped as before.
+func TestProjectTeamMemberResultCarriesCause(t *testing.T) {
+	got, _ := projectUpdate(session.Event{
+		Type: session.EvTeamMember,
+		Team: &session.TeamPayload{
+			ParentCallID: "team-1", TeamID: "t9", Member: "worker",
+			InnerKind: session.EvResult, Stop: session.StopError,
+			Cause: "upstream 503: model overloaded",
+			Text:  "partial",
+		},
+	})
+	u := got.(toolCallUpdate)
+	if len(u.Content) != 1 {
+		t.Fatalf("want one content line, got %+v", u.Content)
+	}
+	line := u.Content[0].Content.Text
+	if want := "worker failed: upstream 503: model overloaded"; line != want {
+		t.Errorf("the failed-round line must lead with the cause, got %q, want %q", line, want)
+	}
+	if strings.Contains(line, "\n") {
+		t.Errorf("the projection must stay ONE line for a line-oriented surface, got %q", line)
+	}
+
+	// Benign empty result: no cause, no text → dropped (nothing to show).
+	if _, ok := projectUpdate(session.Event{
+		Type: session.EvTeamMember,
+		Team: &session.TeamPayload{ParentCallID: "team-1", Member: "worker", InnerKind: session.EvResult, Stop: session.StopEndTurn},
+	}); ok {
+		t.Error("a clean empty result must not project (no cause, no text)")
+	}
+}
+
 func TestStopReasonFor(t *testing.T) {
 	tests := []struct {
 		in   session.StopReason

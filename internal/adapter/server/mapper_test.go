@@ -382,6 +382,38 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
+			// Issue #331: a failed round's cause must survive toProtoTeam, so the
+			// TUI/ACP can surface WHY a member round failed — the Team mirror of the
+			// #319 subagent.end cause case.
+			name: "team.member result carries the failure cause on StopError",
+			in: session.Event{Type: session.EvTeamMember, Seq: 35, Turn: 1,
+				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Member: "worker",
+					MemberSessionID: "team-p1-worker",
+					InnerKind:       session.EvResult, Stop: session.StopError,
+					Cause: "agent: stream: upstream 503 model overloaded"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				tm := got.GetTeam()
+				if tm == nil {
+					t.Fatal("team.member result payload missing")
+				}
+				if tm.GetCause() != "agent: stream: upstream 503 model overloaded" {
+					t.Fatalf("team.member result cause not mapped: %q", tm.GetCause())
+				}
+			},
+		},
+		{
+			// The negative half: a clean per-round result leaves cause empty.
+			name: "team.member clean result carries no cause",
+			in: session.Event{Type: session.EvTeamMember, Seq: 36, Turn: 1,
+				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Member: "worker",
+					InnerKind: session.EvResult, Stop: session.StopEndTurn, Text: "done"}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				if c := got.GetTeam().GetCause(); c != "" {
+					t.Fatalf("clean team.member result must carry no cause, got %q", c)
+				}
+			},
+		},
+		{
 			name: "team.end",
 			in: session.Event{Type: session.EvTeamEnd, Seq: 32, Turn: 1,
 				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Rounds: 3,
