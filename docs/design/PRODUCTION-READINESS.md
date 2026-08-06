@@ -14,7 +14,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 
 | Subsystem | Status | Design record | Architecture |
 |---|---|---|---|
-| Multi-provider / multi-model | ✅ P0+P1+live listing & metadata · ✅ same-provider history carryover (issue #20) · ⛔ disk cache (P2) · ⛔ secrets/OAuth/per-client keys (P3) | [MULTI-PROVIDER.md](../adr/0016-multi-provider.md) | [providers](../architecture/providers.md) |
+| Multi-provider / multi-model | ✅ P0+P1+live listing & metadata · ✅ same-provider history carryover (issue #20) · ✅ experimental manual `openai-codex` subscription token (ADR 0102) · ⛔ disk cache (P2) · ⛔ managed OAuth login/refresh/keyring/per-client keys (P3) | [MULTI-PROVIDER.md](../adr/0016-multi-provider.md) · [0102](../adr/0102-openai-subscription-manual-token.md) | [providers](../architecture/providers.md) |
 | Provider-side conversation prompt caching | ✅ shipped: anthropic 4-slot breakpoint budget + uniform TTL, openai/openrouter dialect-gated `prompt_cache_key`/`prompt_cache_retention`/`cache_control`, openaichat dormant-but-tested · ⛔ operator-supplied cache key · ⛔ `settings.yaml` TTL key · ⛔ Anthropic 1h TTL via OpenRouter | [0100](../adr/0100-provider-prompt-caching.md) | [providers](../architecture/providers.md) |
 | OpenAI Responses adapter | ✅ shipped (research brief frozen) | [OPENAI-RESPONSES-API.md](../adr/0017-openai-responses-api.md) | [providers](../architecture/providers.md) |
 | Agent definitions (Tier-1 specialists) | ✅ shipped · ⛔ per-agent memory write path · ⛔ `local` tier | [AGENT-DEFINITIONS.md](../adr/0013-agent-definitions.md) | [subagents & teams](../architecture/subagents-and-teams.md) |

@@ -53,6 +53,24 @@ the `openrouter` provider (set several, and you pick between their models in the
 When more than one is keyed, run `/models` to choose; the choice is persisted per
 workspace.
 
+Embedded mecatui also supports experimental ChatGPT Codex subscription inference
+through the distinct `openai-codex` provider. Put the manual OAuth snapshot in
+`auth.yaml`, then launch with the provider explicit:
+
+```sh
+bin/mecatui --workspace "$PWD" \
+  --auth-file ~/.config/mecatl/auth.yaml \
+  --default-provider openai-codex
+```
+
+The token is not public API credit and the private backend is not a supported
+third-party contract. mecatui reads one immutable snapshot before hosting its
+embedded server: after replacing an expired/rejected token, quit and relaunch.
+There is no login or refresh. See the [exact schema and plaintext same-UID Bash
+boundary](usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+`mecatui connect` never reads the local file; configure the external `mecated`
+instead.
+
 To use a specific **external** server instead, use the `connect` subcommand:
 
 ```sh
@@ -155,15 +173,15 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--no-mouse` | off | keep the alt screen but don't capture the mouse, so the terminal's **native** click-drag selection works; trades away in-app wheel scroll + drag-select/copy (or `MECATUI_NO_MOUSE=1`; see the selection section) |
 | `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> — <status word> mecatui` (the title is the first prompt, the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
 | `--no-banner` | off | disable the first-run welcome **splash** (mascot + gradient wordmark); the plain prompt hint + affordance list still show. Auto-forced on under `--quiet` or a non-interactive stdin |
-| `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`). Overridden per session by the `/models` picker |
-| `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`); overrides the built-in provider preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
+| `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`; openai-codex → first entitled live model). Overridden per session by the `/models` picker |
+| `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`, experimental `openai-codex`); overrides automatic preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
 | `--default-model` | – | **embedded** server: deployment-wide default model for the default provider; sits below client-side defaults and above the per-provider built-in. A model not catalogued for the default provider **fails startup** |
 | `--context-window-override` | `0` | **embedded** server: global context-window token override for both compaction and the footer denominator. `0` keeps exact operator `models.context_windows` → live metadata → models.dev catalog → 128K fallback resolution. Rejected in `connect` mode; configure the external `mecated` instead |
 | `--subagent-model` | – (inherits `--model`) | **embedded** server: global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (the `CLAUDE_CODE_SUBAGENT_MODEL` analogue); the Parallel judge stays on the session model. Same provider as the session; an unresolvable id **fails startup** |
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
-| `--auth-file` | – (auto) | **embedded** server: path to a YAML credentials file (`providers.<name>.api_key`); overrides the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml` (a `settings.yaml` sibling). An environment variable always wins over this file for that provider — see [`mecated`'s credentials-file docs](usage/mecated.md#credentials-file-authyaml) for the schema and precedence |
+| `--auth-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](usage/mecated.md#credentials-file-authyaml) |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
 | `--no-bash` | off | **embedded** server: disable the Bash tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |
@@ -435,6 +453,13 @@ workspaces inherit). `↑`/`↓` move the cursor over the **filtered** set, `pgu
 navigate here, unlike the read-only overlays — so a name like `kimi`/`jamba` filters
 as typed.) `esc` is **two-stage**: with a non-empty filter it clears the filter (the
 picker stays open); with an empty filter it closes the picker.
+
+For `openai-codex`, the rows are the account's live entitlements, not public
+OpenAI catalog guesses. A rejected token, unreachable private service, or
+successful empty account list is promoted into a provider-specific line with an
+actionable `auth.yaml`/restart or connectivity remedy. A prior successful list may
+remain visible during a later refresh failure, but that does not hide an inference
+failure. Codex rows never receive ToolHive's `org` intent label.
 
 `enter` on the cursor row **switches immediately** — the conversation is ALWAYS kept.
 Because the provider is FIXED per session, switching live means a real handoff: the

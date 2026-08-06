@@ -4,7 +4,9 @@
 window, tool loop, permission policy and lifecycle hooks, and talks to OpenAI
 (or any OpenAI-compatible `/v1/responses` endpoint), OpenRouter, Anthropic
 (the native Messages API), or OpenCode Go (Chat Completions — and any
-OpenAI-compatible `/v1/chat/completions` endpoint). The server, `mecated`, exposes one agent run over
+OpenAI-compatible `/v1/chat/completions` endpoint), plus the experimental
+`openai-codex` provider for a manually supplied ChatGPT Codex subscription
+token. The server, `mecated`, exposes one agent run over
 **gRPC** and **HTTP/SSE** concurrently — or, opt-in, over **ACP on stdio** for
 an editor that spawned it.
 
@@ -48,7 +50,8 @@ an editor that spawned it.
 | 15. Running mecatequi from GitHub Actions | [mecatequi-ci.md](usage/mecatequi-ci.md) |
 | 16. Live e2e suite | [e2e.md](usage/e2e.md) |
 | 17. Troubleshooting / FAQ | [troubleshooting.md](usage/troubleshooting.md) |
-| 18. ToolHive LLM gateway | [ToolHive LLM gateway](#toolhive-llm-gateway) |
+| 18. OpenAI Codex subscription | [OpenAI Codex subscription](#openai-codex-subscription-experimental) |
+| 19. ToolHive LLM gateway | [ToolHive LLM gateway](#toolhive-llm-gateway) |
 
 ## Scheduled tasks
 
@@ -184,6 +187,28 @@ in-chat `Schedule` tool, the REST/gRPC API):
     error) the fire degrades to fresh-context (WARN, never fails the fire). A
     re-armed one-shot does NOT carry context on the retry (the gate short-circuits
     on the `pending` sentinel).
+
+## OpenAI Codex subscription (experimental)
+
+`openai-codex` lets a local `mecated`, embedded `mecatui`, or `mecatequi`
+use models entitled to a ChatGPT Codex subscription. This is a distinct billing
+identity from public API-key OpenAI: a subscription is not API credit, the token
+never enables provider `openai`, and `OPENAI_API_KEY` never enables
+`openai-codex`.
+
+The first release is deliberately manual. Put an access-token snapshot under
+`providers.openai-codex.oauth` in owner-only `auth.yaml`, start with
+`--default-provider openai-codex` or send an explicit
+`provider_id: openai-codex` + `model_id` session selector, and restart after
+replacing the token. There is no login, refresh, import, keyring, or write path.
+The backend is undocumented and experimental, not a supported third-party API
+contract. See the [exact schema, precedence, lifecycle, and plaintext same-UID
+boundary](usage/mecated.md#openai-codex-subscription-manual-token-experimental)
+and the [failure table](usage/troubleshooting.md#openai-codex-manual-token-and-entitlement-failures).
+
+`mecak8s` accepts `auth.yaml` API-key entries but intentionally rejects the local
+`providers.openai-codex.oauth` entry; Kubernetes delivery for subscription OAuth
+requires a separate Secret or external-secret design.
 
 ## ToolHive LLM gateway
 

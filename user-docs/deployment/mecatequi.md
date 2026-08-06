@@ -146,7 +146,7 @@ The `publish` job resolves its write token in precedence order:
 
 ## Key flags
 
-All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`, the same credential helper `mecated`, `mecatui`, and `mecak8s` share. Never pass secrets as flag values.
+All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`. All four command roots share its API-key/base-URL wiring, but only `mecated`, embedded `mecatui`, and `mecatequi` accept the experimental Codex OAuth snapshot; `mecak8s` deliberately rejects that local-file credential. Never pass secrets as flag values.
 
 ### Prompt and output
 
@@ -167,7 +167,7 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 | Flag | Default | Notes |
 |---|---|---|
 | `--workspace` | cwd | Session workspace root. Must be a git repository top level. |
-| `--default-provider` | `""` | Select a provider by id (`openai`, `openrouter`, `anthropic`, `opencode`). |
+| `--default-provider` | `""` | Select a provider by id (`openai`, `openai-codex`, `openrouter`, `anthropic`, `opencode`). |
 | `--model` | `""` | Per-session passthrough model id. Accepts any id the provider serves, including ids newer than the embedded catalog. Prefer this over `--default-model` for newer models. |
 | `--posture` | `""` (strict) | Operator posture ladder: `strict < trusted < auto < yolo`. For an autonomous CI run use `--posture auto` (allow-all, child injection-defence on). With `strict` posture and `--headless`, a main-engine permission ask cancels the run and exits 1. |
 | `--trust-project` | `false` | One-shot workspace trust. Admits BOTH cloned-repo steering and the read-only child shell (vouches for `.git`). Headless posture never grants trust; `trustedWorkspaces:` or undrifted remembered trust are equivalent persistent/declarative sources. With no source, auto gives allow-all with neither steering nor child shell. See [ADR 0095](https://github.com/stacklok/mecatl/blob/main/docs/adr/0095-root-aware-project-trust.md). |
@@ -179,6 +179,14 @@ No two outputs may share a sink. Two writers on one stream interleave and corrup
 ### Provider keys
 
 `--default-provider` selects a provider; the matching key must be present in the environment or the run fails with "no LLM provider available". A present `OPENAI_API_KEY` auto-enables the OpenAI provider without `--default-provider`. For OpenRouter, Anthropic, or OpenCode Go, set the respective key and pass `--default-provider openrouter`, `--default-provider anthropic`, or `--default-provider opencode`.
+
+Experimental `openai-codex` is the exception: it has no environment key. Put a
+manual ChatGPT Codex OAuth snapshot in owner-only `auth.yaml`, pass
+`--auth-file PATH --default-provider openai-codex`, and replace the token plus
+restart the job when it expires or is rejected. It is a separate billing
+identity from public OpenAI API credit and uses an undocumented private backend;
+there is no login or refresh. See the [exact schema and security
+boundary](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
 
 ### Telemetry (OPT-IN OTLP push)
 

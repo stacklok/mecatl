@@ -15,26 +15,26 @@ import (
 	"time"
 )
 
-var adr0101Fixtures = []string{
+var adr0102Fixtures = []string{
 	"provider/openai/testdata/subscription_compatibility_text.sse",
 	"provider/openai/testdata/subscription_compatibility_tool_call.sse",
 	"provider/openai/testdata/subscription_compatibility_tool_continuation.sse",
 }
 
-type adr0101Record struct {
+type adr0102Record struct {
 	Schema        string               `json:"schema"`
 	ObservedAt    string               `json:"observed_at"`
 	Originator    string               `json:"originator"`
 	UserAgent     string               `json:"user_agent"`
 	Gate          string               `json:"gate"`
-	Models        adr0101Models        `json:"models"`
-	Text          adr0101Response      `json:"text_response"`
-	Tool          adr0101Tool          `json:"function_tool_roundtrip"`
-	ErrorEvidence adr0101ErrorEvidence `json:"error_evidence"`
+	Models        adr0102Models        `json:"models"`
+	Text          adr0102Response      `json:"text_response"`
+	Tool          adr0102Tool          `json:"function_tool_roundtrip"`
+	ErrorEvidence adr0102ErrorEvidence `json:"error_evidence"`
 	Fixtures      []string             `json:"fixtures"`
 }
 
-type adr0101Models struct {
+type adr0102Models struct {
 	Provenance     string `json:"provenance"`
 	StatusClass    string `json:"status_class"`
 	NonEmpty       bool   `json:"non_empty"`
@@ -44,7 +44,7 @@ type adr0101Models struct {
 	HasVisibility  bool   `json:"has_visibility"`
 }
 
-type adr0101Response struct {
+type adr0102Response struct {
 	Provenance         string `json:"provenance"`
 	StatusClass        string `json:"status_class"`
 	Completed          bool   `json:"completed"`
@@ -56,9 +56,9 @@ type adr0101Response struct {
 	ObservedEventCount int    `json:"observed_event_count"`
 }
 
-type adr0101Tool struct {
-	Initial                   adr0101Response `json:"initial"`
-	Continuation              adr0101Response `json:"continuation"`
+type adr0102Tool struct {
+	Initial                   adr0102Response `json:"initial"`
+	Continuation              adr0102Response `json:"continuation"`
 	FunctionCallObserved      bool            `json:"function_call_observed"`
 	ExactlyOneFunctionCall    bool            `json:"exactly_one_function_call"`
 	FunctionNameValid         bool            `json:"function_name_valid"`
@@ -71,7 +71,7 @@ type adr0101Tool struct {
 	NoUnknownActionableEvents bool            `json:"no_unknown_actionable_events"`
 }
 
-type adr0101ErrorEvidence struct {
+type adr0102ErrorEvidence struct {
 	Provenance     string `json:"provenance"`
 	ModelsAuth     bool   `json:"models_401_403_classified"`
 	ModelsQuota    bool   `json:"models_429_classified"`
@@ -79,12 +79,12 @@ type adr0101ErrorEvidence struct {
 	ResponsesQuota bool   `json:"responses_429_classified"`
 }
 
-func TestADR_0101_CompatibilityContract(t *testing.T) {
+func TestADR_0102_CompatibilityContract(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
-	adrBytes, err := os.ReadFile(filepath.Join(root, "docs", "adr", "0101-openai-subscription-manual-token.md"))
+	adrBytes, err := os.ReadFile(filepath.Join(root, "docs", "adr", "0102-openai-subscription-manual-token.md"))
 	if err != nil {
-		t.Fatalf("read ADR 0101: %v", err)
+		t.Fatalf("read ADR 0102: %v", err)
 	}
 	adr := string(adrBytes)
 	for _, required := range []string{
@@ -94,7 +94,7 @@ func TestADR_0101_CompatibilityContract(t *testing.T) {
 		"subscription_compatibility_tool_continuation.sse",
 	} {
 		if !strings.Contains(adr, required) {
-			t.Errorf("ADR 0101 missing compatibility-contract clause %q", required)
+			t.Errorf("ADR 0102 missing compatibility-contract clause %q", required)
 		}
 	}
 	indexBytes, err := os.ReadFile(filepath.Join(root, "docs", "adr", "README.md"))
@@ -102,23 +102,23 @@ func TestADR_0101_CompatibilityContract(t *testing.T) {
 		t.Fatalf("read ADR index: %v", err)
 	}
 	if !strings.Contains(string(indexBytes),
-		"[0101 — OpenAI subscription with a manual access token](./0101-openai-subscription-manual-token.md)") {
-		t.Error("ADR 0101 is not indexed under Providers & APIs")
+		"[0102 — OpenAI subscription with a manual access token](./0102-openai-subscription-manual-token.md)") {
+		t.Error("ADR 0102 is not indexed under Providers & APIs")
 	}
 
-	recordBytes, err := os.ReadFile(filepath.Join(root, "docs", "adr", "0101-openai-subscription-contract.json"))
+	recordBytes, err := os.ReadFile(filepath.Join(root, "docs", "adr", "0102-openai-subscription-contract.json"))
 	if err != nil {
 		t.Fatalf("read sanitized compatibility record: %v", err)
 	}
-	record, err := decodeADR0101Record(recordBytes)
+	record, err := decodeADR0102Record(recordBytes)
 	if err != nil {
 		t.Fatalf("strict compatibility record validation: %v", err)
 	}
-	if !reflect.DeepEqual(record.Fixtures, adr0101Fixtures) {
-		t.Fatalf("fixture inventory = %#v, want %#v", record.Fixtures, adr0101Fixtures)
+	if !reflect.DeepEqual(record.Fixtures, adr0102Fixtures) {
+		t.Fatalf("fixture inventory = %#v, want %#v", record.Fixtures, adr0102Fixtures)
 	}
-	for _, name := range adr0101Fixtures {
-		assertADR0101Fixture(t, filepath.Join(root, name), name)
+	for _, name := range adr0102Fixtures {
+		assertADR0102Fixture(t, filepath.Join(root, name), name)
 	}
 	for _, forbidden := range []string{
 		"access_token", "refresh_token", "id_token", "account_id", "request_id",
@@ -130,15 +130,15 @@ func TestADR_0101_CompatibilityContract(t *testing.T) {
 	}
 }
 
-func TestADR_0101_CompatibilityContractRejectsMutations(t *testing.T) {
+func TestADR_0102_CompatibilityContractRejectsMutations(t *testing.T) {
 	t.Parallel()
-	valid := validADR0101RecordForTest()
-	tests := map[string]func(*adr0101Record, map[string]any){
-		"provider_string": func(r *adr0101Record, _ map[string]any) { r.Originator = "provider-originator" },
-		"false_fact":      func(r *adr0101Record, _ map[string]any) { r.Models.NonEmpty = false },
-		"empty_array":     func(r *adr0101Record, _ map[string]any) { r.Fixtures = []string{} },
-		"invalid_date":    func(r *adr0101Record, _ map[string]any) { r.ObservedAt = "2026-8-5" },
-		"unknown_key":     func(_ *adr0101Record, m map[string]any) { m["provider_field"] = "provider-value" },
+	valid := validADR0102RecordForTest()
+	tests := map[string]func(*adr0102Record, map[string]any){
+		"provider_string": func(r *adr0102Record, _ map[string]any) { r.Originator = "provider-originator" },
+		"false_fact":      func(r *adr0102Record, _ map[string]any) { r.Models.NonEmpty = false },
+		"empty_array":     func(r *adr0102Record, _ map[string]any) { r.Fixtures = []string{} },
+		"invalid_date":    func(r *adr0102Record, _ map[string]any) { r.ObservedAt = "2026-8-5" },
+		"unknown_key":     func(_ *adr0102Record, m map[string]any) { m["provider_field"] = "provider-value" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -161,15 +161,15 @@ func TestADR_0101_CompatibilityContractRejectsMutations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := decodeADR0101Record(b); err == nil {
+			if _, err := decodeADR0102Record(b); err == nil {
 				t.Fatal("mutated contract accepted")
 			}
 		})
 	}
 }
 
-func decodeADR0101Record(b []byte) (adr0101Record, error) {
-	var r adr0101Record
+func decodeADR0102Record(b []byte) (adr0102Record, error) {
+	var r adr0102Record
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&r); err != nil {
@@ -183,62 +183,62 @@ func decodeADR0101Record(b []byte) (adr0101Record, error) {
 	dateValid := dateErr == nil && observedAt.Format("2006-01-02") == r.ObservedAt
 	if r.Schema != "mecatl-openai-subscription-compatibility/v1" ||
 		r.Originator != "mecatl" || r.UserAgent != "mecatl-manual-compatibility-probe/1.0" ||
-		r.Gate != "passed" || !dateValid || !validADR0101Models(r.Models) ||
-		!validADR0101Response(r.Text, true) || !validADR0101Response(r.Tool.Initial, false) ||
-		!validADR0101Response(r.Tool.Continuation, true) || !r.Tool.FunctionCallObserved ||
+		r.Gate != "passed" || !dateValid || !validADR0102Models(r.Models) ||
+		!validADR0102Response(r.Text, true) || !validADR0102Response(r.Tool.Initial, false) ||
+		!validADR0102Response(r.Tool.Continuation, true) || !r.Tool.FunctionCallObserved ||
 		!r.Tool.ExactlyOneFunctionCall || !r.Tool.FunctionNameValid || !r.Tool.FunctionArgumentsValid ||
 		!r.Tool.CallIdentifierPresent || !r.Tool.ItemIdentifierPresent || !r.Tool.FunctionOutputReplayed ||
 		!r.Tool.ContinuationMatched || !r.Tool.Completed || !r.Tool.NoUnknownActionableEvents ||
 		r.ErrorEvidence.Provenance != "offline_status_mapping" || !r.ErrorEvidence.ModelsAuth ||
 		!r.ErrorEvidence.ModelsQuota || !r.ErrorEvidence.ResponsesAuth || !r.ErrorEvidence.ResponsesQuota ||
-		!reflect.DeepEqual(r.Fixtures, adr0101Fixtures) {
+		!reflect.DeepEqual(r.Fixtures, adr0102Fixtures) {
 		return r, fmt.Errorf("record contains a false, missing, or non-vocabulary fact")
 	}
 	return r, nil
 }
 
-func validADR0101Models(m adr0101Models) bool {
+func validADR0102Models(m adr0102Models) bool {
 	return m.Provenance == "live_observation" && m.StatusClass == "2xx" && m.NonEmpty &&
 		m.EnvelopeValid && m.HasSlug && m.HasDisplayName && m.HasVisibility
 }
 
-func validADR0101Response(r adr0101Response, wantText bool) bool {
+func validADR0102Response(r adr0102Response, wantText bool) bool {
 	return r.Provenance == "live_observation" && r.StatusClass == "2xx" && r.Completed &&
 		r.HasReplayItemID && r.HasUsage && r.EventTopologyValid && r.ObservedEventCount > 0 &&
 		r.OutputTextObserved == wantText && (!wantText || r.HasPhase)
 }
 
-func validADR0101RecordForTest() adr0101Record {
-	text := adr0101Response{
+func validADR0102RecordForTest() adr0102Record {
+	text := adr0102Response{
 		Provenance: "live_observation", StatusClass: "2xx", Completed: true, HasPhase: true,
 		HasReplayItemID: true, HasUsage: true, OutputTextObserved: true,
 		EventTopologyValid: true, ObservedEventCount: 1,
 	}
 	initial := text
 	initial.HasPhase, initial.OutputTextObserved = false, false
-	return adr0101Record{
+	return adr0102Record{
 		Schema: "mecatl-openai-subscription-compatibility/v1", ObservedAt: "2026-08-05",
 		Originator: "mecatl", UserAgent: "mecatl-manual-compatibility-probe/1.0", Gate: "passed",
-		Models: adr0101Models{
+		Models: adr0102Models{
 			Provenance: "live_observation", StatusClass: "2xx", NonEmpty: true,
 			EnvelopeValid: true, HasSlug: true, HasDisplayName: true, HasVisibility: true,
 		},
 		Text: text,
-		Tool: adr0101Tool{
+		Tool: adr0102Tool{
 			Initial: initial, Continuation: text, FunctionCallObserved: true, ExactlyOneFunctionCall: true,
 			FunctionNameValid: true, FunctionArgumentsValid: true, CallIdentifierPresent: true,
 			ItemIdentifierPresent: true, FunctionOutputReplayed: true, ContinuationMatched: true,
 			Completed: true, NoUnknownActionableEvents: true,
 		},
-		ErrorEvidence: adr0101ErrorEvidence{
+		ErrorEvidence: adr0102ErrorEvidence{
 			Provenance: "offline_status_mapping", ModelsAuth: true, ModelsQuota: true,
 			ResponsesAuth: true, ResponsesQuota: true,
 		},
-		Fixtures: append([]string(nil), adr0101Fixtures...),
+		Fixtures: append([]string(nil), adr0102Fixtures...),
 	}
 }
 
-func assertADR0101Fixture(t *testing.T, path, name string) {
+func assertADR0102Fixture(t *testing.T, path, name string) {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -275,7 +275,7 @@ func assertADR0101Fixture(t *testing.T, path, name string) {
 		if err := dec.Decode(&value); err != nil {
 			t.Fatalf("fixture %s invalid JSON: %v", name, err)
 		}
-		assertADR0101FixtureValue(t, name, value, allowedKeys, allowedStrings)
+		assertADR0102FixtureValue(t, name, value, allowedKeys, allowedStrings)
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan fixture %s: %v", name, err)
@@ -285,7 +285,7 @@ func assertADR0101Fixture(t *testing.T, path, name string) {
 	}
 }
 
-func assertADR0101FixtureValue(t *testing.T, name string, value any, keys, stringsAllowed map[string]bool) {
+func assertADR0102FixtureValue(t *testing.T, name string, value any, keys, stringsAllowed map[string]bool) {
 	t.Helper()
 	switch v := value.(type) {
 	case map[string]any:
@@ -293,11 +293,11 @@ func assertADR0101FixtureValue(t *testing.T, name string, value any, keys, strin
 			if !keys[key] {
 				t.Fatalf("fixture %s contains unknown key %q", name, key)
 			}
-			assertADR0101FixtureValue(t, name, child, keys, stringsAllowed)
+			assertADR0102FixtureValue(t, name, child, keys, stringsAllowed)
 		}
 	case []any:
 		for _, child := range v {
-			assertADR0101FixtureValue(t, name, child, keys, stringsAllowed)
+			assertADR0102FixtureValue(t, name, child, keys, stringsAllowed)
 		}
 	case string:
 		if !stringsAllowed[v] {

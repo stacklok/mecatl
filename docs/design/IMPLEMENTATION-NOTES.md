@@ -3598,6 +3598,66 @@ its OWN `openrouter.Model` (composition maps it to `modelEntry` — no import cy
 `id`/`name`/`context_length`/`top_provider.max_completion_tokens`→OutputLimit (the output
 ceiling, captured for the resolvers)/`architecture.input_modalities`/`supported_parameters∋{reasoning,tools}`.
 
+### `authfile` + `openaicodex` — manual ChatGPT subscription adjunct (ADR 0102)
+
+`internal/adapter/authfile` accepts one additional strict leaf only at
+`providers.openai-codex.oauth`: required non-empty string `access_token`, optional
+string `account_id`, optional RFC3339 `expires_at`. Entry-local malformed OAuth
+(unknown/duplicate/non-string/aliased/tagged shape) warns and drops that provider
+entry, retaining valid siblings. Semantic validation instead salvages the entry:
+it drops only the offending mis-scoped OAuth, Codex API key, or empty Codex OAuth,
+while valid same-entry fields and siblings survive. A malformed
+root/`providers` structure, duplicate provider mapping key, or second YAML document
+instead rejects the whole file with the same value-free warning posture.
+`internal/cliconfig.ProviderFlags.Resolve` resolves the file ONCE for `mecated`,
+embedded `mecatui`, and `mecatequi`; there is deliberately no environment alias,
+write/import/refresh path, or mutable token pointer. `mecak8s` rejects the local
+credential surface.
+
+`internal/adapter/openaicodex.Credential` parses the JWT claims, reconciles optional
+explicit account/expiry fields (an explicit account must itself be valid and match
+the JWT claim when both exist; no usable resolved account rejects; `expires_at` is
+RFC3339 and the earlier explicit/JWT expiry wins), stores an immutable copy,
+redacts formatting, and validates expiry both at construction and immediately
+before every request.
+`RequestPolicy` allows only the exact HTTPS ChatGPT models/responses targets,
+refuses redirects, rebuilds the complete owned header set (`Authorization`,
+`ChatGPT-Account-ID`, request-specific `Accept`, Responses-only `Content-Type`,
+`X-Stainless-Retry-Count: 0`, conditional `X-OpenAI-Fedramp: true`, honest
+`originator: mecatl`, and literal `User-Agent: mecatl`), and
+normalizes 401/403 into a bounded value-free replace-auth.yaml-and-restart error.
+429/5xx preserve status for the ONE outer `llmresilience` retry owner; SDK retries
+are disabled and no committed turn is replayed.
+
+The registry identity is `openai-codex`, distinct from API-key `openai`.
+`newOpenAICodexEntry` delegates to the SAME `newOpenAICompatEntry` construction /
+remint closure and `provider/openai.Provider`; the adjunct never builds Responses
+input or translates successful SSE. Provider-private replay item IDs are classified
+centrally with the other Responses destinations; API OpenAI↔Codex carryover is
+cross-provider and strips private blobs. No `port.LLMRequest`, proto field, engine
+API, or persistence schema was added.
+
+The Codex lister owns its different `{models:[...]}` wire shape and fixed request
+policy but publishes the same `modelEntry` list. Its inventory is LIVE-ONLY:
+embedded OpenAI rows may enrich only an already-entitled matching slug, never add
+one. Before first success, error/empty produces no inventory; after success,
+`liveOutcomeStore` may return process-local last-known-good rows on refresh failure.
+A bounded synchronous bootstrap occurs only for a resolved Codex default with no
+configured model, choosing the first server-ordered entitlement or failing closed.
+Explicit selectors persist and rehydrate through Codex; zero selectors retain the
+existing floating default semantics. `provider_status` includes Codex entitlement
+outcomes for operator remediation, but TUI `intentProviderSet` keeps the `org` tier
+ToolHive-only.
+
+All automated coverage injects transports or uses allowlist-sanitized Step-1 SSE
+fixtures. Only `internal/adapter/openai/manualprobe/main.go`, invoked manually,
+performs the live compatibility gate. Secret sentinel tests cover the exact outbound
+Authorization boundary and assert absence from every other header/body, diagnostics,
+errors, prompts, lifecycle hooks, events, snapshots, and raw JSONL. Generic main and
+isolated-child runner oracles prove provider credentials do not enter command-runner
+environments. Residual boundary: a same-UID Bash process can read a known plaintext
+`auth.yaml` path; mode `0600` is not privilege separation.
+
 ### `openaicompat` + `toolhivellm` — ToolHive LLM gateway provider (issue #262, ADR 0064)
 
 Two-layer leaf split, mirroring the `providercatalog`/`openrouter` shape but for a
@@ -3646,9 +3706,10 @@ three new fields: `intentDriven` tiers `preferredDefaultProvider` STRICTLY below
 every key-driven provider (any resolved API key always wins the default,
 alphabetics be damned — pinned by an anthropic-keyed-beats-toolhive test, since
 "toolhive" sorts after "anthropic" and a naive sorted-pick would pass by accident)
-and filters `providerStatusProto` to intent-driven entries only (v1 is deliberately
-toolhive-scoped: an ordinary openrouter/anthropic blip never grows the client-facing
-`provider_status` wire list).
+and identifies the genuine config-intent subset used for the TUI's `org` tier and
+gateway notices. `providerStatusProto` is broader only for the operator-actionable
+Codex entitlement boundary; ordinary openrouter/anthropic blips still never grow
+the client-facing `provider_status` wire list.
 
 `probeToolhive` is the BOUNDED (1.5s) Build-time probe, run once per Build
 immediately after registration: ok(N) → INFO + (if sole+unset) fills
@@ -3776,14 +3837,13 @@ a redirect response (CWE-918).
 **`statusHintFor` — provider-scoped remediation hints (cleanup).** `toolhiveStatusHints`
 had become the de-facto remediation map for ALL providers via the shared classifier,
 so an ordinary openrouter outage could record the ToolHive-specific
-"start it with `thv llm proxy start`" hint (latent-wrong-vendor, masked only because
-`providerStatusProto` is `intentDriven`-scoped). `statusHintFor(pid, state)`
-(`internal/app/registry.go`) returns `toolhiveStatusHints[state]` ONLY for
-`pid == providerToolhive`, else `""`; `resolveProviderModels`'s failure branch and
+"start it with `thv llm proxy start`" hint (latent-wrong-vendor).
+`statusHintFor(pid, state)` (`internal/app/registry.go`) selects the ToolHive table
+for `providerToolhive`, the manual-token/account table for `providerOpenAICodex`,
+and `""` for ordinary providers; `resolveProviderModels`'s failure branch and
 `liveOutcomeStore.recordSuccess`'s empty-state hint both route through it.
 `probeToolhive` already keyed toolhive directly, so it needed no change. TRIP-WIRE:
-a SECOND gateway-shaped intent-driven provider needs a per-vendor hint table here,
-not a second `pid ==` branch.
+a new surfaced provider needs its own vendor table, never copied wording.
 
 mecatui: `client.ProviderStatus` mirrors the proto message (now with an
 `AutoSelected bool`); `ModelsMsg.Statuses` threads it through `ListModelsCmd`;
@@ -3822,7 +3882,8 @@ intent-driven provider, NONE of which change the precedence ladder (an explicit
 credential still wins; this is disclosure, not routing):
 
 - **Two additive `ProviderStatus` proto fields** (`contracts/proto/mecatl/v1/harness.proto`,
-  fields 5/6), intent-driven-scoped: `model_count` (the last-known-good live-listing
+  fields 5/6): `model_count` applies to every surfaced provider (the
+  last-known-good live-listing
   length from `liveOutcomeStore.getModelCount` in `internal/app/modellister.go`; 0 on
   empty/unreachable/unrecorded, `state` disambiguates) and `available_not_default`
   (true ONLY when an intent-driven provider is registered, `state=="ok"`, AND not the

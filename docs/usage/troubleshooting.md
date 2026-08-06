@@ -7,6 +7,27 @@ compatible/proxy endpoint pass the matching key plus `--openai-base-url` /
 `--anthropic-base-url` / `--openrouter-base-url`; or pass `--mock` for an
 offline smoke test. (The full message is quoted in §3, "Provider selection".)
 
+### OpenAI Codex manual-token and entitlement failures
+
+These failures belong to experimental provider `openai-codex`, not public API-key
+provider `openai`. Never paste the access token into an issue, log, command line,
+URL, or troubleshooting output.
+
+| Symptom | Meaning | Action |
+| --- | --- | --- |
+| Whole-file `auth file ... does not match the expected schema` warning | YAML decoding failed, the root/`providers` structure is invalid, a provider mapping key is duplicated, or the file contains a second YAML document. The entire file is ignored; credentials already supplied through API-key environment variables remain usable. | Compare with the [exact schema](mecated.md#openai-codex-subscription-manual-token-experimental), fix the file, keep mode `0600`, and restart. The warning intentionally never echoes values. |
+| `unknown provider(s) ignored` or `provider credential entry/entries ignored` | An unknown provider is ignored, or a known provider entry has a schema-invalid mapping, non-string/duplicate/unknown field, or malformed OAuth shape. The affected provider entry is dropped; valid sibling entries survive. | Fix the named class of entry without disclosing its values, then restart. |
+| `provider credential entry/entries contained ignored fields` | The entry parsed structurally, but a field is semantically invalid for that provider: for example, OAuth under an API-key provider, an API key under `openai-codex`, or empty Codex OAuth. Only the offending field is removed; other valid fields in the same entry and valid sibling entries survive. | Fix or remove the mis-scoped field, then restart. |
+| `manual access token expired` | The immutable snapshot is already expired, or expired after startup. The request is refused before network I/O. | Replace `access_token` (and matching optional claims) in `auth.yaml`, then restart. There is no automatic refresh. |
+| `manual access token was rejected (HTTP 401/403)` / picker says `manual token rejected` | The private backend rejected authentication/account headers, or stopped accepting the honest `originator: mecatl`. | Replace the token and restart. If a current token still fails, treat the experimental backend as incompatible; do not disguise mecatl as the Codex CLI. |
+| The account lists models, but an expected model is absent | The live entitlement response is authoritative for this ChatGPT account. Public OpenAI catalog entries are not subscription entitlements. | Check the selected ChatGPT account/subscription. Choose a model that `/models` actually lists; an explicit unknown slug may fail on first inference. |
+| Picker says `account lists no selectable models` / startup says `no picker-visible models` | Authentication succeeded but the account returned an empty selectable inventory. This is different from malformed/expired/unauthorized credentials. | Check the subscription/account and replace the token if it belongs to the wrong account. There is no public-catalog fallback. |
+| HTTP 429 / `rate_limit_exceeded` / quota error | The backend is rate- or quota-limiting the request. It is not an auth-file parse failure. Safe pre-commit requests use the bounded shared retry policy; exhaustion remains visible. | Wait and retry, reduce concurrency, or resolve account quota. Replacing the token is not the default remedy unless it selects the wrong account. |
+| `unreachable`, timeout, HTTP 5xx, or retry exhaustion | DNS/TLS/network or a transient private-service failure. Before the first successful model list, Codex contributes no inventory; after success, process-local last-known-good rows may remain visible while current inference still fails. | Check connectivity to `chatgpt.com`, wait, and retry. Restart is required only if you changed the credential; a stale visible model list is not proof inference is healthy. |
+
+The backend is undocumented and may change or revoke third-party compatibility.
+See [ADR 0102](../adr/0102-openai-subscription-manual-token.md) for that boundary.
+
 **`--openai requires OPENAI_API_KEY to be set`** (the `cmd/mecademo` demo only)
 The demo's `--openai` flag was passed but no key is in the environment.
 `export OPENAI_API_KEY=…`. (`mecated`/`mecatui` instead auto-detect the provider
@@ -105,4 +126,3 @@ instead — those may succeed on retry.
 ---
 
 See also: the [operator guide index](../usage.md).
-

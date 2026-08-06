@@ -42,6 +42,13 @@ The legacy `--user-model-review` flag maps to `auto` for one compatibility windo
 conflicts with an explicit non-auto `learning.mode`. Changes are build-time settings and
 require a server restart.
 
+Provider secrets do not belong in `settings.yaml`. API keys and the experimental
+manual `openai-codex` OAuth snapshot live in the separate, strict, read-only
+`auth.yaml` selected by `--auth-file` (default
+`$XDG_CONFIG_HOME/mecatl/auth.yaml`). The Codex snapshot is read once at startup,
+has no refresh/write path, and requires a process restart after replacement. See
+the [exact credential schema and trust boundary](mecated.md#openai-codex-subscription-manual-token-experimental).
+
 ### Workspace
 
 `--workspace` (server-wide default) and the per-session `workspace` field set
@@ -53,7 +60,8 @@ tool calls then return readable errors the model can act on.
 
 `--model` (empty by default — the selected provider's own default is used:
 `gpt-5` for OpenAI, `openai/gpt-5` for OpenRouter, `claude-sonnet-4-6` for
-Anthropic) is the identifier sent to the provider and stamped into the
+Anthropic; `openai-codex` uses its first entitled live model when it is the
+sole/default provider) is the identifier sent to the provider and stamped into the
 system-prompt env. Pass **strings** for forward-compatibility and for
 compatible endpoints.
 
@@ -331,4 +339,3 @@ default session is always bounded:
 | `max_consecutive_failures` | `5` | yes |
 
 Supplying **any** non-zero limit field is taken as explicit and used as-is.
-

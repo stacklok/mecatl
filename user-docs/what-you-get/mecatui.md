@@ -44,6 +44,14 @@ Switching models is a separate action from clearing your conversation. If you ac
 
 The picker lists every model the server can currently reach across every configured provider — if a model you expect isn't there, it's usually a missing credential rather than a mecatui bug. A model that doesn't support images or audio is exactly as capable as the provider and mecatl's own catalog agree it is; see [Extension points: LLM provider](/extension-points/llm-provider.md#providercapabilities) if you're curious why a model can show fewer capabilities than you expected on a given adapter.
 
+For experimental `openai-codex`, the picker lists only models the live ChatGPT
+account says are entitled; it never fills gaps from the public OpenAI catalog.
+A rejected/expired token or service failure is shown with an `auth.yaml`/restart
+or connectivity remedy. A ChatGPT subscription is a separate billing identity
+from public API credit, uses an undocumented private backend, and has no automatic
+refresh in this release. Embedded setup is documented in the [full operator
+reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+
 ## Switching reasoning effort mid-conversation (`/effort`)
 
 `/effort` opens a picker over the fixed reasoning-effort tiers (`auto`, `low`, `medium`, `high`, `xhigh`, `max`). Pick one and press `enter` — mecatui applies it by **forking your conversation** onto a new session at the new effort level. Like the model switch, nothing is lost: you'll see a brief "switching effort — forking conversation…" note while it rebinds, then you're back in the same conversation at the new tier.

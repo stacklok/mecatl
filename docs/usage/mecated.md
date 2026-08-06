@@ -77,7 +77,7 @@ explicitly enable the imported skills directory.
 | `--openai-base-url` | `""` | override the OpenAI API base URL (compatible endpoints) |
 | `--openrouter-base-url` | `""` | override the OpenRouter API base URL (default `https://openrouter.ai/api/v1`; key from `OPENROUTER_API_KEY`) |
 | `--anthropic-base-url` | `""` | override the native Anthropic API base URL (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
-| `--auth-file` | `""` | path to a YAML credentials file (`providers.<name>.api_key` for `anthropic`/`openai`/`openrouter`/`opencode`); overrides the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`, a `settings.yaml` sibling). See [Credentials file](#credentials-file-authyaml) below — an environment variable always wins over this file for that provider. |
+| `--auth-file` | `""` | path to a YAML credentials file (`providers.<name>.api_key` for `anthropic`/`openai`/`openrouter`/`opencode`, or file-only `providers.openai-codex.oauth`); overrides the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`, a `settings.yaml` sibling). See [Credentials file](#credentials-file-authyaml) below — an environment variable wins over the file only for the API-key providers; `openai-codex` has no environment alias. |
 | `--mock` | `false` | use a canned offline mock provider (no network; smoke tests only) |
 | `--shell` | `/bin/sh` | shell used to execute `Bash`-tool commands; empty disables Bash (shell-less mode). |
 | `--no-bash` | `false` | disable the `Bash` tool entirely (shell-less mode); overrides `--shell`. |
@@ -536,14 +536,19 @@ providers:
     api_key: sk-ant-...
   openai:
     api_key: sk-...
+  openai-codex:
+    oauth:
+      access_token: eyJ...manual-access-token
+      account_id: acct_...             # optional when present in the token
+      expires_at: 2026-08-06T12:00:00Z # optional when present in the token
   openrouter:
     api_key: sk-or-...
   opencode:
     api_key: sk-...
 ```
 
-Only the providers you use need an entry. Resolution order per provider,
-**environment always wins**:
+Only the providers you use need an entry. For the four **API-key providers**,
+resolution order is:
 
 1. The matching environment variable (`ANTHROPIC_API_KEY`, etc.), if set —
    unchanged existing behaviour, so a deployment that only ever used env vars
@@ -552,6 +557,10 @@ Only the providers you use need an entry. Resolution order per provider,
    passed) or the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml`
    (usually `~/.config/mecatl/auth.yaml`).
 3. Empty — the existing "no credential" behaviour.
+
+`openai-codex` is deliberately file-only: it reads
+`providers.openai-codex.oauth` and has no environment-variable alias or
+environment-over-file precedence path.
 
 The file is parsed **strictly**: an unrecognized field (e.g. `apikey` instead
 of `api_key`) or an unrecognized provider name (e.g. `anthropik`) is reported
@@ -572,9 +581,56 @@ group or other access — this file holds plaintext secrets, so a `chmod 600`
 is more than a suggestion on a shared host.
 
 There is no write path yet (no `mecated auth set` command) — create the file
-yourself. This is also the anticipated future home for OAuth-based provider
-auth (an access/refresh token pair per provider), which is why it's a
-dedicated file with room to grow rather than a flat per-provider flag.
+yourself. The `openai-codex.oauth` block above is the only accepted OAuth shape;
+OAuth under another provider and `api_key` under `openai-codex` are ignored with
+a value-free warning.
+
+#### OpenAI Codex subscription: manual token (experimental)
+
+`openai-codex` uses a ChatGPT Codex subscription against OpenAI's undocumented
+private backend. It is **not** the public OpenAI API and a ChatGPT subscription
+does not provide `OPENAI_API_KEY` credit. The two billing identities are
+independent: `openai` requires its API key; `openai-codex` requires the OAuth
+snapshot above. Configuring one never enables or replaces the other.
+
+Create `auth.yaml` with mode `0600`, then select the distinct provider explicitly:
+
+```console
+$ chmod 600 ~/.config/mecatl/auth.yaml
+$ mecated serve --default-provider openai-codex
+
+# Or name provider + model on a single HTTP session. Keep the fields separate.
+$ curl -sS -X POST http://127.0.0.1:8081/v1/sessions \
+    -H 'content-type: application/json' \
+    -d '{"workspace":"/absolute/repo","provider_id":"openai-codex","model_id":"gpt-5"}'
+```
+
+The process reads and validates one immutable snapshot at startup. `account_id`
+may be omitted only when the token carries a usable account claim. A supplied
+account ID must itself be valid and must match the token claim when both are
+present; an invalid explicit ID, a mismatch, or no usable resolved account is
+rejected. `expires_at` may be
+omitted when the token carries a usable expiry; an explicit value must be
+RFC3339, and when both expiries exist the earlier one wins. Every models/inference
+request checks the captured expiry again before network I/O,
+but this release has no login, refresh token, automatic rotation, import from
+`~/.codex/auth.json`, or auth-file writer. Replace an expired/rejected access
+token in `auth.yaml` and **restart** `mecated`, embedded `mecatui`, or
+`mecatequi`; editing the file cannot update a running process.
+
+Treat the backend as an experimental compatibility dependency, not a supported
+third-party API contract. mecatl identifies itself honestly as `mecatl` and does
+not impersonate the Codex CLI. Model inventory is live and entitlement-authoritative:
+the public OpenAI catalog cannot add subscription models. A successful list may
+remain as process-local last-known-good display data after a later refresh error,
+but current inference still fails honestly.
+
+The file is plaintext. Mode `0600` blocks other users, not another process running
+as the same UID. Agent-facing Bash does not receive the token in its environment,
+arguments, prompts, logs, diagnostics, events, or session snapshots, but Bash with
+that UID can still read a known `auth.yaml` path. Use a dedicated OS identity or
+stronger sandbox boundary when that residual risk is unacceptable. There is no
+keyring or privilege-separated secret broker in this release.
 
 ### Daemon config file (`daemon.yaml`)
 
@@ -665,20 +721,33 @@ builds an N-provider registry and AUTO-DETECTS availability from the environment
   base URL; falls back to `OPENAI_API_KEY` by convention).
 - `ANTHROPIC_API_KEY` set → the native `anthropic` Messages provider (extended
   thinking on, model-aware; default model `claude-sonnet-4-6`).
-- Any of the above also counts as "set" when it comes from
+- a valid `providers.openai-codex.oauth` snapshot in
+  [`auth.yaml`](#openai-codex-subscription-manual-token-experimental) → the
+  distinct experimental `openai-codex` provider; it has no environment alias.
+- Each API-key provider above also counts as "set" when its key comes from
   [`auth.yaml`](#credentials-file-authyaml) instead of the environment — the
   file is just a second source for the same credential, checked only when the
-  matching env var is empty.
+  matching API-key environment variable is empty. `openai-codex` instead uses
+  only its distinct `providers.openai-codex.oauth` file entry.
 - `--mock` → canned offline provider (single text turn; smoke tests only).
 - none of the above → startup error (the daemon refuses to start; mecatui fails the
-  same check client-side before hosting an embedded server). The message enumerates
-  the accepted keys per adapter, the compatible/proxy base-URL overrides
-  (`--openai-base-url` / `--anthropic-base-url` / `--openrouter-base-url` for an
-  endpoint without a public key), the offline `--mock` escape hatch, and points here:
-  `no LLM provider available: set one of ANTHROPIC_API_KEY (Claude), OPENAI_API_KEY (OpenAI), or OPENROUTER_API_KEY (one key, many models — a good first choice) in the environment; for an OpenAI- or Anthropic-compatible/proxy endpoint pass the matching key plus --openai-base-url / --anthropic-base-url / --openrouter-base-url; to try mecatl offline with no key run with --mock; see docs/usage.md for provider setup`.
+  same check client-side before hosting an embedded server). The error names all
+  four API-key environment routes (Anthropic, OpenAI, OpenRouter, and OpenCode),
+  their compatible/proxy base-URL flags, the offline `--mock` escape hatch, and
+  the operator guide. If you intended subscription access, provide a valid
+  `providers.openai-codex.oauth` entry through the conventional or explicit
+  `auth.yaml` path instead.
 
-When more than one provider is available, `openai` is the default (single-provider
-back-compat) — a `CreateSession` with no selector uses it.
+An explicit session selector wins, then an operator `--default-provider` /
+`models.default_provider`, then automatic preference. Automatic preference keeps
+every pre-existing credential-driven provider ahead of `openai-codex`, and keeps
+`openai-codex` ahead of intent-only gateways such as ToolHive. Thus merely adding
+the manual token never redirects an existing API-key deployment. Codex becomes the
+automatic default when no pre-existing credential-driven provider is available,
+even if an intent-only gateway such as ToolHive is also available. A zero-selector
+session continues to float with the deployment default after restart, while an
+explicit Codex selector is persisted and must rehydrate through Codex rather than
+`openai`.
 
 #### Per-session provider/model selection (wire)
 
@@ -726,19 +795,26 @@ mappings in user-global/explicit `settings.yaml` under `models.context_windows`:
 alias/slot routing resolves the final ID, before live metadata; project values are
 ignored with a warning. Its exact entries also replace `context_limit` in `ListModels`.
 
-For a provider with **live model listing** (currently **OpenRouter**), the picker
-reflects the provider's **real, live catalog** (336 models) rather than the curated
-embedded subset, when that provider is keyed. The live list is fetched once in the
-background just after startup and swapped in — `/models` shows the embedded subset at
-first and the full live set a moment later (and offline, or on an upstream blip, it
-keeps showing the curated subset — the embedded catalog is the fallback floor). The
-fetch is keyless and never blocks startup. Providers without a live lister (OpenAI)
-show their curated embedded catalog as before.
+Providers may opt into live model listing, but fallback semantics belong to each
+credential boundary. Providers without a live lister (including public OpenAI)
+show their curated embedded catalog.
+
+For **OpenRouter**, the picker reflects its real live catalog (336 models) rather
+than the curated subset when keyed. One unauthenticated best-effort background
+fetch swaps it in after startup; offline/error keeps the embedded floor.
 
 > Network note: a keyed OpenRouter `Build` makes **one best-effort background
 > outbound request** to `https://openrouter.ai/api/v1/models` to populate the live
 > picker. It is unauthenticated (no key on the wire) and fail-safe — offline, blocked,
 > or any error simply leaves the embedded curated subset in place.
+
+For experimental **openai-codex**, `/backend-api/codex/models` is authenticated and defines the
+account's entitlements. There is no public-catalog fallback. Before its first
+success, an authorization/service failure contributes no Codex models and a
+successful empty response stays empty. After success, process-local last-known-good
+rows may remain visible during a later refresh failure; this never makes a failing
+inference request succeed. `/models` surfaces `unauthorized`, `unreachable`, and
+`empty` with provider-specific remediation.
 
 #### The `mecatui` model picker + client-side last-used persistence
 

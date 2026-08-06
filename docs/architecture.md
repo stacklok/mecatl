@@ -115,6 +115,17 @@ in `provider/openai`, the native Anthropic Messages API in
 `provider/anthropic` ([multi-provider](architecture/providers.md)) — so the core is provider-agnostic and
 unit-testable against fakes (`mockllm`, `memfs`, `memstore`).
 
+OpenAI has two deliberately separate registry identities. `openai` uses a public
+API key and the supported public Responses API. Experimental `openai-codex`
+uses a manually supplied ChatGPT Codex access-token snapshot against OpenAI's
+undocumented private Codex backend. They are separate billing and entitlement
+boundaries; configuring either one never enables the other. Composition applies
+the Codex credential/header/model-inventory policy around the existing
+`provider/openai.Provider`, so request building, stateless replay, successful SSE
+translation, resilience, tools, and the provider-neutral engine port remain
+single-sourced. See [the provider chapter](architecture/providers.md#experimental-openai-codex-subscription-provider)
+and [ADR 0102](adr/0102-openai-subscription-manual-token.md).
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:
@@ -610,8 +621,6 @@ overlay. What remains here is the metrics surface:
   fired/skipped/failed) and `mecatl.schedule.fire_duration` (histogram, seconds,
   due→terminal — skipped fires record no duration). No role label (a fire's own run
   already carries `role="main"`).
-
-
 ## Caller identity
 
 Caller identity ([ADR 0100](adr/0100-caller-identity-threading.md), issue #367)

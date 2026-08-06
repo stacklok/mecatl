@@ -25,6 +25,22 @@ $ OPENAI_API_KEY=token go run ./cmd/mecated serve --openai \
     --openai-base-url http://127.0.0.1:8000/v1 --model my-model
 ```
 
+### ChatGPT Codex subscription is a separate provider
+
+Experimental provider `openai-codex` reuses this same stateless Responses
+request/stream implementation, but it is **not** an OpenAI-compatible base-URL
+override and does not use public API credentials. It authenticates a manual
+ChatGPT Codex access-token snapshot against OpenAI's undocumented private Codex
+backend, with a distinct live entitlement inventory and billing identity.
+Neither credential enables the other provider.
+
+Do not point `--openai-base-url` at the private backend or put the token in
+`OPENAI_API_KEY`; that bypasses the required account headers, expiry checks,
+redirect refusal, entitlement model shape, and actionable error handling. Use
+the exact [`auth.yaml` setup](mecated.md#openai-codex-subscription-manual-token-experimental)
+and select `openai-codex` explicitly. The private surface is experimental and
+may change independently of the supported public Responses API.
+
 ### What compatible servers may lack
 
 `/v1/chat/completions` is broadly supported, but `/v1/responses` support is thin
@@ -65,4 +81,3 @@ See also: [model routing](model-routing.md) (slots, aliases, the router); the
 [ToolHive LLM gateway](../usage.md#toolhive-llm-gateway) section (a zero-config,
 auto-detected OpenAI-compatible endpoint — no `--openai-base-url` needed); or
 the [operator guide index](../usage.md).
-

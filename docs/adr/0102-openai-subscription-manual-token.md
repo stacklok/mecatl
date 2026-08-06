@@ -1,4 +1,4 @@
-# ADR 0101 — OpenAI subscription with a manual access token
+# ADR 0102 — OpenAI subscription with a manual access token
 
 - Status: Accepted
 - Date: 2026-08-05
@@ -51,9 +51,10 @@ header is sent. A backend rejection of that originator is the stop condition for
 ADR: leave the record Proposed and do not begin product implementation.
 
 Model inventory for `openai-codex` is entitlement-authoritative and live-only. Before
-the first successful `/codex/models` result, a failure makes the provider unavailable
-and a successful empty result publishes an empty inventory. After a success, the
-existing process-local last-known-good inventory may survive any refresh error,
+the first successful `/codex/models` result, a failure publishes no inventory but does
+not unregister an explicitly selected provider; a successful empty result publishes
+an empty inventory. After a success, the existing process-local last-known-good
+inventory may survive any refresh error,
 including an authentication or entitlement error, for display and selection through
 the shared live-model pipeline. Requests still fail honestly with the current error,
 and the public OpenAI API catalog never invents fallback inventory for this distinct
@@ -72,8 +73,9 @@ environments, proto messages, session snapshots, URLs, or command arguments. The
 implementation must also account for the same-UID boundary: filesystem mode `0600`
 does not isolate a long-lived daemon from other processes running as that user.
 
-`mecak8s` is excluded from this first release. Its storage-free, managed-service
-posture has no local credential-file contract, and silently adding one would conflict
+`mecak8s` excludes only the local `openai-codex.oauth` credential in this first
+release. Its existing `auth.yaml` API-key entries remain supported; adding local
+subscription OAuth custody to its storage-free, managed-service posture would conflict
 with ADR 0048. A future Kubernetes integration may accept an explicitly mounted Secret
 or external secret provider under a separate deployment decision.
 
@@ -133,7 +135,7 @@ path yet.
 
 ## See also
 
-- [Sanitized compatibility record](./0101-openai-subscription-contract.json)
+- [Sanitized compatibility record](./0102-openai-subscription-contract.json)
 - [ADR 0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [OpenAI Codex repository](https://github.com/openai/codex)
 - [OpenAI authentication overview](https://platform.openai.com/docs/api-reference/authentication)

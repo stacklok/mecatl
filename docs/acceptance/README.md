@@ -77,7 +77,7 @@ when the code that satisfies the plan has landed.
   draft.
 - [OpenAI subscription manual token](openai-subscription-manual-token.md) —
   experimental ChatGPT-subscription inference through a distinct native Codex
-  provider, initially using a manually supplied access token. Status: in-progress.
+  provider, initially using a manually supplied access token. Status: landed.
 
 ## See also
 

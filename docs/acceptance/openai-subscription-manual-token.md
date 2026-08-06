@@ -1,8 +1,8 @@
 # OpenAI subscription manual token — acceptance plan
 
 **Phase:** capability — ChatGPT subscription inference through the native Codex backend
-**Status:** in-progress, 2026-08-05. Manual access token and native provider only; login and refresh are deferred.
-**Planned decision record:** ADR 0101 — proposed before the compatibility probe,
+**Status:** landed, 2026-08-06. Manual access token and native provider only; login and refresh are deferred.
+**Planned decision record:** ADR 0102 — proposed before the compatibility probe,
 accepted only if the honest-client gate passes; extends ADRs 0016, 0017, 0048,
 and 0064 without superseding them.
 **Accumulator branch:** `openai-oauth-login`
@@ -42,7 +42,7 @@ These sources document OpenAI's own client, not a stable third-party API promise
 ## Decisions fixed by this plan
 
 1. **One successful Responses implementation.**
-   `internal/adapter/openai.Provider` remains the only encoder and successful
+   `provider/openai.Provider` remains the only encoder and successful
    SSE translator. `openai-codex` is a registry identity configured over that
    adapter. `internal/adapter/openaicodex` is an adjunct for credentials,
    request policy, error normalization, and the different models wire shape; it
@@ -57,11 +57,12 @@ These sources document OpenAI's own client, not a stable third-party API promise
 4. **Separate availability and billing identity.** An API key never enables
    `openai-codex`; a ChatGPT token never enables `openai` or `openrouter`.
 5. **Stable default precedence.** Merely adding a subscription token must not
-   redirect an existing deployment. Explicit `--default-provider` wins; then
-   the existing provider preference is preserved; `openai-codex` is considered
-   only after every pre-existing keyed provider and before intent-only
-   gateways. It becomes the default automatically only when it is the sole
-   usable provider.
+   redirect an existing credential-driven/API-key deployment. Explicit
+   `--default-provider` wins; without one, the existing credential-driven
+   provider preference is preserved, then `openai-codex` is considered, then
+   intent-only gateways. Codex becomes the automatic default when no
+   pre-existing credential-driven provider is available, including when an
+   intent-only gateway is also available.
 6. **Explicit selectors are pinned; empty selectors still float.** A session
    created with `provider_id: openai-codex` persists that opaque selector and
    rehydrates through the same provider. A zero-selector session retains the
@@ -98,7 +99,7 @@ These sources document OpenAI's own client, not a stable third-party API promise
   environment/file precedence path for all four real command roots.
   `cmd/mecatui/config.go` currently performs an environment-only availability
   check before `Apply`, so even existing file-only API keys can be rejected.
-- `internal/adapter/openai/openai.go` (`WithBaseURL`, `WithHTTPClient`,
+- `provider/openai/openai.go` (`WithBaseURL`, `WithHTTPClient`,
   `WithRequestOption`) already exposes the construction seams required for a
   different endpoint, exact middleware, and SDK retry control.
 - `internal/app/registry.go` (`newOpenAICompatEntry`) captures extra
@@ -224,7 +225,7 @@ the models envelope, one text turn, one function-tool round trip, replay IDs and
 phase, usage, and representative auth/quota errors. No live call enters the
 automated suite.
 
-Write ADR 0101 from `docs/adr/template.md` as Proposed before the probe. It
+Write ADR 0102 from `docs/adr/template.md` as Proposed before the probe. It
 records the experimental private
 backend, manual-token-only scope, no-impersonation rule, default precedence,
 live-only inventory, explicit-selector persistence semantics, plaintext-file
@@ -232,8 +233,8 @@ risk, and `mecak8s` exclusion. If and only if the compatibility gate passes,
 change it to Accepted before any product-code step begins and index it under
 Providers & APIs in `docs/adr/README.md`. It supersedes no existing ADR.
 
-**Deliverable:** an accepted ADR 0101, its index entry, a structural
-`TestADR_0101_CompatibilityContract` pin, and sanitized contract notes/fixtures
+**Deliverable:** an accepted ADR 0102, its index entry, a structural
+`TestADR_0102_CompatibilityContract` pin, and sanitized contract notes/fixtures
 that are sufficient to build offline tests. The acceptance plan and index enter
 the first scoped commit. No raw token, account identifier, response ID, request
 ID, or user content is committed.
@@ -242,16 +243,16 @@ ID, or user content is committed.
 
 - AC1.1: the probe reaches `/codex/models` and `/codex/responses` with an honest
   mecatl originator and without Codex CLI impersonation.
-  - verify: demonstration — sanitized compatibility record attached to ADR 0101.
+  - verify: demonstration — sanitized compatibility record attached to ADR 0102.
 - AC1.2: the captured tool round trip establishes which existing Responses
   fields/events are required and whether any Codex-specific actionable event
   needs shared translator support.
   - verify: inspection — sanitized fixture inventory in the ADR.
 - AC1.3: if the backend rejects an unknown client/originator, implementation
   stops at this gate rather than adding spoofed headers.
-  - verify: inspection — explicit stop condition in ADR 0101.
+  - verify: inspection — explicit stop condition in ADR 0102.
 - AC1.4: the decision record passes the documentation lifecycle gate.
-  - verify: `TestADR_0101_CompatibilityContract` and `go test ./docs/lint`.
+  - verify: `TestADR_0102_CompatibilityContract` and `go test ./docs/lint`.
 
 ### Scenario 2 / Step 2 — Extend `auth.yaml` without weakening its warning and secrecy contract
 
@@ -342,7 +343,7 @@ status-coded errors, and offline tests under `internal/adapter/openaicodex`.
   - verify: `TestRequestPolicyStatusMapping`, `TestSDKRetriesDisabled`.
 - AC3.5: the package does not implement `port.LLMProvider`, construct Responses
   input items, or parse successful Responses events.
-  - verify: `TestADR_0101_OpenAICodexIsAdjunctOnly`.
+  - verify: `TestADR_0102_OpenAICodexIsAdjunctOnly`.
 
 ### Scenario 4 / Step 4 — Resolve credentials once and wire command scope explicitly
 
@@ -418,7 +419,7 @@ adapter, with fixed provider precedence and remint-safe options.
 - AC5.2: adding Codex to OpenRouter-only, Anthropic-only, or OpenAI deployments
   leaves the previous default unchanged; Codex becomes default when it is the
   sole provider or the operator names it explicitly.
-  - verify: `TestADR_0101_OpenAICodexDefaultPrecedence`.
+  - verify: `TestADR_0102_OpenAICodexDefaultPrecedence`.
 - AC5.3: the initial provider, build-time default/capability remint, and
   per-session effort/capability remint all hit `/backend-api/codex/responses`
   with identical request policy and the same immutable credential snapshot.
@@ -483,7 +484,7 @@ bootstrap.
   - verify: `TestCodexModelsEntitlementProjection`.
 - AC6.3: `embeddedModels("openai-codex")` remains empty before and after a live
   failure. A 401/403/empty response never exposes the OpenAI API inventory.
-  - verify: `TestADR_0101_OpenAICodexNeverFallsBackToAPIInventory`.
+  - verify: `TestADR_0102_OpenAICodexNeverFallsBackToAPIInventory`.
 - AC6.4: a matching entitled slug may borrow missing OpenAI catalog metadata;
   an unknown entitled slug remains selectable with adapter capabilities and the
   existing conservative context-window floor.
@@ -502,7 +503,7 @@ This scenario preserves [ADR 0017's single stateless Responses replay and SSE
 translation path](../adr/0017-openai-responses-api.md).
 
 Replay the sanitized Codex fixtures through the existing
-`internal/adapter/openai` translator. Add a shared event case only if the
+`provider/openai` translator. Add a shared event case only if the
 compatibility gate proves that a known event changes mecatl's neutral stream
 semantics. Unknown metadata events retain the current forward-compatible ignore
 behavior. Codex-specific non-2xx messages are normalized by the request policy;
@@ -537,7 +538,7 @@ replay-ID classification, and no Codex stream parser.
   - verify: `TestOpenAICodexCarryoverReplayIDs`.
 - AC7.5: no file under `internal/adapter/openaicodex` builds Responses input
   items or translates successful SSE.
-  - verify: `TestADR_0101_OpenAICodexIsAdjunctOnly`.
+  - verify: `TestADR_0102_OpenAICodexIsAdjunctOnly`.
 
 ### Scenario 8 / Step 8 — Prove full composition, persistence, and operator surfaces
 
@@ -583,7 +584,7 @@ roots, persistence/restart proof, TUI goldens, and secret-leak regression tests.
 - AC8.5: the token is absent from logs, errors, diagnostics, events, sessions,
   prompts, hooks, and child command environments. Documentation explicitly says
   same-UID Bash can still read the plaintext file.
-  - verify: `TestADR_0101_OpenAICodexSecretSentinels`,
+  - verify: `TestADR_0102_OpenAICodexSecretSentinels`,
     `TestMainCommandRunnerScrubsSecrets`, `TestSandboxedCommandRunnerScrubsSecrets`.
 - AC8.6: `engine/port.LLMRequest`, engine API snapshots, proto contracts, and
   session snapshot schemas require no change.
@@ -621,7 +622,7 @@ gate.
 
 - AC9.1: docs never describe ChatGPT subscription as public API credit and never
   imply the private backend is a supported third-party contract.
-  - verify: inspection — documentation review against ADR 0101.
+  - verify: inspection — documentation review against ADR 0102.
 - AC9.2: setup and troubleshooting distinguish malformed, expired,
   unauthorized, missing-entitlement, empty-model, quota, and transient-service
   failures without exposing credentials.
@@ -633,9 +634,9 @@ gate.
 - AC9.4: formatting, TUI goldens, lint, both module suites, standalone engine
   hygiene, internal docs, public-site docs, acceptance traceability, API
   compatibility, offline demo, and all binaries pass.
-  - verify: `task test:golden`, `task ci`, `task docs`, `task site:build`,
-    `task api:check`, `task ac-trace-strict`, `go run ./cmd/mecademo`, and
-    `git diff --check`.
+  - verify: `task test:golden`, `task ci`, `task docs`,
+    `cd website && npm ci && npm run build`, `task api:check`,
+    `task ac-trace-strict`, `go run ./cmd/mecademo`, and `git diff --check`.
 
 Before the Step 9 commit, set this plan to `landed` and run the aggregate gates
 above. Then run the repository's final panel review over the entire feature diff
@@ -685,7 +686,7 @@ unexpected diff is a design-review finding, not something to accept silently.
 
 ```text
 Step 1 — Private compatibility contract and decision
-Base: d9642d51fdbe177788a2da402aa4280880fb97bf
+Base: 07de5936d70992a575db70f46d46b0f3ab74de21
 Coder: /root/step1_probe_coder (replacement for the interrupted first coder)
 Reviewers: /root/step1_final_spec_review (specification/architecture) and
   /root/step1_security_review (correctness/security/reuse)
@@ -701,10 +702,10 @@ Verification: the honest live compatibility probe passed; `TMPDIR=/private/tmp t
   formatting, and `git diff --check` passed. `task docs` could not authenticate to
   the private matlatl module; the locally installed pinned matlatl commands completed
   the equivalent generation and strict check successfully.
-Commit: bb43e6634c99253abd99941db62f548096f1d5ab
+Commit: bfffebfb6b38a44d6111d98d28be7eca86707412
 
 Step 2 — Read-only OAuth auth-file schema
-Base: bb43e6634c99253abd99941db62f548096f1d5ab
+Base: bfffebfb6b38a44d6111d98d28be7eca86707412
 Coder: /root/step2_auth_coder
 Reviewers: /root/step2_spec_review (specification/architecture) and
   /root/step2_security_review (correctness/security/reuse)
@@ -721,10 +722,10 @@ Verification: coder observed the required OAuth tests fail before implementation
   all six named acceptance proofs, the full authfile race suite, focused `go vet`,
   gofmt, the acceptance-plan checker, fresh-cache `task lint`,
   `TMPDIR=/private/tmp task test`, and `git diff --check` pass.
-Commit: fc845f226f0e34220ab37cb76257b48f63eb7ab4
+Commit: d28d858dab31bf9e5c5d1b8118a955280b54740f
 
 Step 3 — Immutable Codex credential and request policy adjunct
-Base: fc845f226f0e34220ab37cb76257b48f63eb7ab4
+Base: d28d858dab31bf9e5c5d1b8118a955280b54740f
 Coder: /root/step3_policy_coder
 Reviewers: /root/step3_spec_review (specification/architecture) and
   /root/step3_security_review (correctness/security/reuse).
@@ -742,10 +743,10 @@ Verification: coder observed all seven named Step 3 proofs fail to compile befor
   the adjunct existed. The package race suite, focused `go vet`, the
   acceptance-plan checker, fresh-cache `task lint`, `TMPDIR=/private/tmp task test`,
   gofmt, and `git diff --check` pass on the candidate.
-Commit: f6e02263deafe52e59bef7eeb9f98383a2e22148
+Commit: 9538a96bd99b10df4f5035d97e46852db5d66136
 
 Step 4 — Resolve credentials once and wire command scope explicitly
-Base: f6e02263deafe52e59bef7eeb9f98383a2e22148
+Base: 9538a96bd99b10df4f5035d97e46852db5d66136
 Coder: /root/step4_coder
 Reviewers: /root/step4_spec_review (specification/architecture) and
   /root/step4_security_review (correctness/security/reuse).
@@ -767,10 +768,10 @@ Verification: all named Step 4 acceptance proofs, redaction/remote-boundary/root
   `git diff --check` pass. Final root verification also passed
   `TMPDIR=/private/tmp task test` (root race, engine race, and engine standalone),
   affected-package `go vet`, `task api:check`, and the final diff check.
-Commit: ef69cf315070498e500b7bad72e9da5b57bca3cd
+Commit: 27ac13ff3b4ab599af1f72956a4cd226d3525510
 
 Step 5 — Register openai-codex through the one Responses construction path
-Base: ef69cf315070498e500b7bad72e9da5b57bca3cd
+Base: 27ac13ff3b4ab599af1f72956a4cd226d3525510
 Coder: /root/step5_coder (original candidate), /root/step5_coder_recovery
   (recovered and repaired that interrupted candidate), and
   /root/step5_coder_final (finalized and verified the intact recovery diff)
@@ -794,13 +795,13 @@ Verification: the root normal/default-cache focused named race proofs, focused
   path failure in `TestFireDelivery_EmbeddedEndToEnd` fixed by `be79d21a`. No
   `TMPDIR` or `GOCACHE` workaround was used. Focused root gates pass; the aggregate
   gate was unblocked by synchronizing the fixes from origin/main before Step 6.
-Commit: 029ee48c18518e467695cf761a6c4dd11998a7be
+Commit: 25c5b29e412e7937ff2682125f16f70ce892249e
 
-Integration checkpoint before Step 6: 91fd5e3ea8db1da8d36450d8fe99eb6689ce7444
-(`origin/main` synchronized after the scoped Step 5 commit).
+The original integration checkpoint before Step 6 was folded away by the final
+rebase; the feature is a linear nine-commit series directly on `origin/main`.
 
 Step 6 — Add entitlement-authoritative live models and a bounded default bootstrap
-Base: 91fd5e3ea8db1da8d36450d8fe99eb6689ce7444
+Base: 25c5b29e412e7937ff2682125f16f70ce892249e
 Coder: /root/step6_coder (interrupted partial candidate) and
   /root/step5_coder_final (replacement owner, repair, and verification).
 Reviewers: /root/step6_spec_review (specification/architecture) and
@@ -835,10 +836,10 @@ Verification: all four named app acceptance tests first failed before compositio
   or lint-cache override was used. The final normal/default-cache `task lint`
   passes both the root and engine modules with zero issues after adding the two
   exported-symbol comments identified by the lint gate.
-Commit: d0fc6ba3
+Commit: a21fec97dcb14818096e5ddaba98e9edca762b73
 
 Step 7 — Close Responses replay, error, and carryover compatibility gaps
-Base: d0fc6ba3a9
+Base: a21fec97dcb14818096e5ddaba98e9edca762b73
 Coder: /root/step7_coder (interrupted partial candidate) and
   /root/main_sync_coder (replacement owner, repair, and verification).
 Reviewers: /root/step7_spec_review (specification/architecture) and
@@ -868,10 +869,10 @@ Verification: all named Step 7 acceptance proofs pass offline. Normal/default-
   and git diff checks pass. The final normal/default-cache `task lint` passes
   the root, engine, and every provider module with zero issues. No private cache
   or temp override was used.
-Commit: 339e0800c5099a639928fb0cca4e26a6a147b985
+Commit: c7cd40f525f4794b723afa21fcffaf170f35fa78
 
 Step 8 — Prove full composition, persistence, and operator surfaces
-Base: 339e0800c5099a639928fb0cca4e26a6a147b985
+Base: c7cd40f525f4794b723afa21fcffaf170f35fa78
 Coder handoff: /root/step8_coder supplied the interrupted partial composition,
   persistence, mecatui, and mecatequi candidate; /root/step5_coder_recovery is
   the completion coder responsible for the AC8.5 sentinel proof, candidate
@@ -915,7 +916,7 @@ Reused security oracles: `TestMainCommandRunnerScrubsSecrets` and
   `TestEventLogInheritsStreamRedaction` instead of inventing token-bearing hook
   or prompt artifacts unrelated to the authentication scenario. The accepted
   ADR and this plan explicitly retain the plaintext same-UID Bash file-read risk.
-Verification: the focused `TestADR_0083_OpenAICodexSecretSentinels` race test,
+Verification: the focused `TestADR_0102_OpenAICodexSecretSentinels` race test,
   every named AC8.1–AC8.5 proof, the explicitly reused prompt/hook/environment
   oracles, the full `internal/app` race suite, and the affected command-root/TUI
   race suites pass with normal/default caches. `task test:golden` generated and
@@ -927,5 +928,99 @@ Verification: the focused `TestADR_0083_OpenAICodexSecretSentinels` race test,
   synchronized `harness.pb.go`; its later unrelated private-matlatl step could
   not authenticate, and the partially written `llms.txt` was restored with no
   remaining diff.
-Commit: pending the scoped Step 8 local commit; no commit has been created.
+Commit: 0074705ae1fac023d97cdbfa205c6dc8c23b9b9d
+
+Step 9 — Living/operator documentation and aggregate verification
+Base: 0074705ae1fac023d97cdbfa205c6dc8c23b9b9d
+Coder: /root/step8_spec_review (sole Step 9 coding agent).
+Reviewers: /root/step5_coder_recovery (specification/architecture/docs) and
+  /root/step7_coder (correctness/security/reuse). Both the earlier Step 9 review
+  and the fresh post-rebase cleanup review returned zero blockers after the
+  repairs below.
+Findings: the living provider architecture now records `openai-codex` as an
+  experimental manual-token adjunct over the single Responses adapter, with
+  separate public-API/subscription billing identities, live-only entitlement
+  inventory, explicit-selector persistence, and unchanged neutral ports. The
+  operator reference owns the exact strict `auth.yaml` schema, immutable
+  startup/request-time-expiry lifecycle, restart workflow, default precedence,
+  no-refresh limitation, private-backend warning, and plaintext same-UID Bash
+  boundary. Troubleshooting distinguishes malformed, expired, unauthorized,
+  missing-entitlement, successful-empty, quota/rate-limit, and transient-service
+  failures without asking operators to disclose a credential. Existing public
+  deployment pages link to that one full reference; `mecak8s` names the deliberate
+  exclusion rather than implying a local-file credential path. Initial review
+  found three documentation blockers: the public `mecatequi` page implied that
+  `mecak8s` accepted the OAuth auth-file surface and omitted `openai-codex` from
+  its selector list; the operator reference overgeneralized environment-over-file
+  precedence to Codex; and the implementation notes conflated entry-local OAuth
+  rejection with whole-file structural/multi-document rejection while naming a
+  nonexistent resolver. The coder repaired each statement against the shipped
+  command-root and `authfile`/`cliconfig` seams. Security review then found the
+  account/expiry reconciliation wording, malformed-file troubleshooting scope,
+  and request-header inventory were imprecise; the coder aligned all three with
+  `Credential`, `authfile.Load`, and `RequestPolicy`. Residual re-review then
+  corrected semantic field salvage (rather than whole-entry loss) and the invalid/
+  absent explicit-account cases. Those initial six blockers and two residual
+  blockers were repaired, and both reviewers' final re-reviews returned zero
+  blockers. The aggregate panel then found the automatic-default sentence
+  understated Codex precedence over intent-only gateways and this log still
+  described completed reviews/checks as pending; both panel blockers are repaired.
+  Post-panel checking found the same stale sole-provider claim in Decision 5;
+  it now states the exact credential-driven/Codex/intent-only ladder as well.
+  Final post-panel re-review narrowed its remaining overbroad "existing
+  deployment" phrase to credential-driven/API-key deployments, preserving the
+  same explicit > keyed > Codex > intent-only ladder. The final aggregate-panel
+  rerun by /root/step5_coder_recovery and /root/step7_coder returned ZERO SHIP
+  BLOCKERS on that candidate. Fresh post-integration review then found stale ko
+  stamping of the deleted `cmd/mecatui` `main.version`, command tests consulting
+  the developer's conventional `auth.yaml`, unrelated Go 1.26 formatter churn,
+  and three operator-documentation inaccuracies. The uncommitted final repair
+  stamps every applicable ko command through `internal/buildinfo.Version`, makes
+  all four command-package suites use an empty temporary HOME/XDG config root,
+  restores every unrelated generated/e2e file byte-for-byte from `origin/main`
+  while retaining the generated `provider_status` comments, and corrects the
+  inventory, mecak8s, and no-provider guidance. The fresh final re-review by both
+  independent reviewers returned ZERO BLOCKERS.
+Pre-rebase verification: `task test:golden`, `task ci`, `task api:check`, the
+  offline `go run ./cmd/mecademo`, and the CI-equivalent `cd website && npm ci &&
+  npm run build` passed with normal/default caches. That `task ci` covered tidy,
+  formatting, lint/vet, the root/engine/provider race suites, engine/provider
+  standalone hygiene, and every binary. Its Go 1.26 formatting step exposed the
+  generated/e2e churn removed by the final cleanup above.
+Post-rebase verification: `task test:golden`, `task api:check`, the affected root
+  package race suites, the complete `provider/openai` race suite,
+  `task docs:configref`, and `git diff --check` pass with normal/default caches
+  and temp paths. A post-rebase `task ci` attempt passed tidy, formatting, and
+  every module's lint/vet before the root race suite stopped on two deterministic
+  path failures in `agentimport`/`osfs` that reproduce on the identical
+  `origin/main` code, plus one process-cancellation timing miss that passed 5/5
+  focused reruns. The operator is fixing those upstream issues separately and
+  explicitly directed that full `task ci` not be rerun for this feature; all
+  unrelated formatting-only generated/e2e changes were removed from the candidate.
+  The
+  cached Taskfile-pinned matlatl v0.0.7 module source, run directly with the
+  normal Go cache, successfully regenerated `llms.txt` and reported 187
+  documents, 1,542 references, and zero broken links, anchors, ambiguities,
+  orphans, or unreachable documents under `--strict`.
+  The exact `task docs` wrapper cannot authenticate to the private matlatl module
+  in this environment; its equivalent pinned local subcommands are green.
+  Likewise, `task ac-trace-strict` cannot authenticate to the private ac-trace
+  module. A local proof-resolution audit found all 52 test names referenced by
+  this landed plan in `*_test.go`; the reviewers inspected the remaining
+  demonstration/inspection proofs. The final focused docs lint, pinned matlatl
+  generation/strict check, and `git diff --check` are green.
+Final-cleanup verification: with normal/default caches and temp paths,
+  `go test ./cmd/mecated`, `go test ./cmd/mecatequi`, `go test ./cmd/mecak8s`,
+  `go test ./cmd/mecatui`, `go test ./docs/lint ./internal/buildinfo`, the dry-run
+  ko task expansion, and `git diff --check` pass. Full `task ci` was deliberately
+  not rerun after this cleanup; the scoped gates above are the current evidence.
+  Both fresh independent final reviewers returned ZERO BLOCKERS.
+Commit: this commit (`docs(openai-codex): publish manual token operations`).
+
+Final integration base: `origin/main` at
+`07de5936d70992a575db70f46d46b0f3ab74de21`, which contains PR #378's merge
+commit `9455fbb1c88de5ee9ba8da78171642749634a2ac` and the newer PR #407 Responses
+reasoning-item replay fix. The final linear mapping is Step 1 `bfffebfb`, Step 2
+`d28d858d`, Step 3 `9538a96b`, Step 4 `27ac13ff`, Step 5 `25c5b29e`, Step 6
+`a21fec97`, Step 7 `c7cd40f5`, Step 8 `0074705a`, and Step 9 this commit.
 ```

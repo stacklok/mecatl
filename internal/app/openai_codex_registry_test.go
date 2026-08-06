@@ -114,9 +114,9 @@ func TestRegistryOpenAICodexAvailability(t *testing.T) {
 	})
 }
 
-// TestADR_0083_OpenAICodexDefaultPrecedence locks the accepted ADR's provider
+// TestADR_0102_OpenAICodexDefaultPrecedence locks the accepted ADR's provider
 // ladder without relying on map iteration or accidental alphabetic order.
-func TestADR_0083_OpenAICodexDefaultPrecedence(t *testing.T) {
+func TestADR_0102_OpenAICodexDefaultPrecedence(t *testing.T) {
 	constructor := func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("offline"))
 	}
@@ -385,7 +385,7 @@ func codexModelsConfig(t *testing.T, transport http.RoundTripper) Config {
 	return cfg
 }
 
-func TestADR_0083_OpenAICodexNeverFallsBackToAPIInventory(t *testing.T) {
+func TestADR_0102_OpenAICodexNeverFallsBackToAPIInventory(t *testing.T) {
 	if embedded := embeddedModels(providerOpenAICodex); len(embedded) != 0 {
 		t.Fatalf("openai-codex embedded inventory = %#v, want empty", embedded)
 	}

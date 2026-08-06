@@ -111,6 +111,43 @@ into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction
 the DTO. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
+### Experimental `openai-codex` subscription provider
+
+`openai-codex` is a distinct, credential-driven registry entry for a ChatGPT
+Codex subscription. It is not public OpenAI API credit and does not reuse
+`OPENAI_API_KEY`: the operator supplies an immutable access-token/account
+snapshot through `auth.yaml`. The entry targets the undocumented private
+`https://chatgpt.com/backend-api/codex` compatibility surface and is explicitly
+experimental; OpenAI may change or withdraw that surface independently of the
+supported public API.
+
+The implementation is an adjunct, not a second Responses adapter.
+`internal/adapter/openaicodex` owns credential validation, request-time expiry,
+redirect refusal, the fixed `originator: mecatl`/account headers, error
+normalization, and the private `/codex/models` envelope. Composition passes those
+options to the same `provider/openai.Provider` constructor used by `openai` and
+OpenRouter. The shared request builder, stateless full replay, successful SSE
+translator, retry decorator, and provider-neutral `port.LLMRequest` therefore
+remain unchanged.
+
+The models endpoint is the account entitlement authority. Before the first
+successful live response, unauthorized/unreachable discovery publishes no Codex
+inventory and a successful empty response remains empty; the public OpenAI catalog
+never invents subscription entitlements. After a success, the process-local
+last-known-good list may remain visible across refresh failures, but inference
+still reports the current credential/service error. Opaque entitled slugs are
+preserved; embedded OpenAI metadata may only enrich a matching entitled slug.
+When no model is configured and Codex is the sole/default provider, a bounded
+startup discovery selects the first entitled slug or fails honestly.
+
+An explicit `(provider_id: openai-codex, model_id: ...)` selector is persisted
+and rehydrates through the same provider. An empty selector retains the existing
+floating semantics and follows the deployment default after restart. The manual
+credential is read once at startup; every request rechecks that snapshot's expiry,
+but there is no refresh, login, or auth-file writer. Replacing an expired/rejected
+token requires restarting the process. The plaintext and same-UID threat boundary
+is documented in the [operator setup](../usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+
 **OpenCode Go (`provider/openaichat`)** is the Chat Completions wire adapter —
 the sibling of the openai Responses adapter, built on the same `openai-go` SDK via
 `client.Chat.Completions`. It serves provider id `opencode` (base URL
@@ -181,8 +218,9 @@ survive a restart with the proxy down, never rejected as "unknown or unavailable
 provider"). Each `providerEntry` carries an `intentDriven` bit that
 `preferredDefaultProvider` reads to place intent-driven providers at an explicit
 LOWEST-preference tier (any key-driven provider always wins the default) and that the
-`ListModels` `provider_status` projection reads to scope its wire surface to
-intent-driven entries only. A BOUNDED (≤1.5s) Build-time probe runs immediately after
+`ListModels` `provider_status` projection also carries operator-actionable Codex
+entitlement outcomes, while `intentDriven` alone controls the TUI's `org` tier and
+gateway availability notices. A BOUNDED (≤1.5s) Build-time probe runs immediately after
 registration and drives ONLY the startup diagnostic, the initial live-model snapshot,
 and default-model eligibility for a SOLE intent-driven provider — never registration
 itself. See `docs/adr/0064-toolhive-llm-gateway-provider.md` for the full design

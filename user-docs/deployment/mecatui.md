@@ -44,6 +44,18 @@ The manifest (`cmd/mecatui/kodata/agent.yaml`) declares:
 It is operator-tunable: edit the manifest for a deployment that pins a single
 provider or applies a stricter egress profile.
 
+### Experimental ChatGPT Codex subscription
+
+Embedded mecatui can use provider `openai-codex` with a manual subscription
+token, but the shipped brood-box manifest does not mount that secret or allow
+`chatgpt.com` egress. Customize the manifest to mount owner-only `auth.yaml`,
+pass `--auth-file` and `--default-provider openai-codex`, and permit HTTPS to
+`chatgpt.com`. This is not public OpenAI API credit: it uses an undocumented
+private backend, has no refresh flow, and requires relaunch after token
+replacement. Read the [exact operator setup and same-UID plaintext
+boundary](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental)
+before adding the mount.
+
 ---
 
 ## Building locally
@@ -56,8 +68,9 @@ KO_DOCKER_REPO=ghcr.io/stacklok/mecatl/mecatui task ko:publish:mecatui
 The `mecatui` build entry in `.ko.yaml` overrides the distroless base with the
 brood-box wolfi base (`baseImageOverrides`) — brood-box connects over SSH and
 needs a shell, which the distroless static base lacks. The build version is
-stamped into the welcome splash via `-X main.version` (fed from the `VERSION`
-env var through ko's `{{.Env.VERSION}}` ldflag template).
+stamped into the welcome splash via
+`-X github.com/stacklok/mecatl/internal/buildinfo.Version` (fed from the
+`VERSION` env var through ko's `{{.Env.VERSION}}` ldflag template).
 
 ---
 

@@ -467,7 +467,7 @@ func TestSDKRetriesDisabled(t *testing.T) {
 	}
 }
 
-func TestADR_0083_OpenAICodexIsAdjunctOnly(t *testing.T) {
+func TestADR_0102_OpenAICodexIsAdjunctOnly(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

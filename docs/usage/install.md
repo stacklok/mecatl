@@ -12,10 +12,11 @@ Build the binaries into `bin/`:
 
 ```console
 $ task build
-go build -o bin/mecated ./cmd/mecated
-go build -o bin/mecademo ./cmd/mecademo
-go build -o bin/mecatequi ./cmd/mecatequi
-go build -ldflags "-X main.version=..." -o bin/mecatui ./cmd/mecatui
+go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecated ./cmd/mecated
+go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecademo ./cmd/mecademo
+go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecatequi ./cmd/mecatequi
+go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecak8s ./cmd/mecak8s
+go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecatui ./cmd/mecatui
 ```
 
 This produces `bin/mecated` (the server), `bin/mecatui` (the terminal UI),
@@ -138,4 +139,3 @@ A `.github/dependabot.yml` keeps both `go.mod` files and the SHA-pinned GitHub
 Actions current (weekly, minor+patch grouped to cut noise; the SHA-pin
 `# vX.Y.Z` comments are preserved). See
 [issue #118](https://github.com/stacklok/mecatl/issues/118).
-

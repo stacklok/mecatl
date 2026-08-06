@@ -235,6 +235,15 @@ is also supported for operators who'd rather not export a key into the shell
 environment; see
 [`docs/usage/mecated.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#credentials-file-authyaml).
 
+Experimental provider `openai-codex` can instead use a manually supplied
+ChatGPT Codex subscription token from that file. It is a separate billing
+identity from public API-key `openai`, uses an undocumented private backend,
+and has no login or refresh flow. Configure `providers.openai-codex.oauth`,
+keep the file owner-only, select `--default-provider openai-codex` (or an
+explicit session selector), and restart after replacing the token. `0600` does
+not stop same-UID Bash from reading a known plaintext file. See the
+[exact schema, lifecycle, and failure guidance](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+
 #### The ToolHive LLM gateway (no API key needed)
 
 If you have [ToolHive](https://toolhive.dev)'s local LLM proxy running, `--toolhive-llm`

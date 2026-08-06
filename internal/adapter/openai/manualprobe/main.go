@@ -1,4 +1,4 @@
-// Command manualprobe performs ADR 0101's explicit one-shot live
+// Command manualprobe performs ADR 0102's explicit one-shot live
 // compatibility check. Automated tests exercise its parsers with local servers;
 // only an operator running this command reads ~/.codex/auth.json or uses network.
 package main
@@ -155,7 +155,7 @@ func main() {
 		record.Gate = "pending"
 		record.Failure = errCategory(err)
 	}
-	if err := writeContract(filepath.Join("docs", "adr", "0101-openai-subscription-contract.json"), record); err != nil {
+	if err := writeContract(filepath.Join("docs", "adr", "0102-openai-subscription-contract.json"), record); err != nil {
 		fmt.Fprintln(os.Stderr, "probe failed: could not write sanitized record")
 		os.Exit(1)
 	}

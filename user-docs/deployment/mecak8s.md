@@ -505,6 +505,14 @@ For production load, note that Redis is a single point of failure in the default
 
 `mecak8s` trades operator surface for operational simplicity:
 
+The experimental local `auth.yaml` path for ChatGPT Codex subscription provider
+`openai-codex` is intentionally **not supported** by `mecak8s`. This rejection is
+limited to `providers.openai-codex.oauth`: existing `auth.yaml` API-key entries
+remain supported. Use an API-key provider today; a future Codex deployment needs
+a separate Kubernetes Secret or external-secret design. Do not mount a local
+Codex OAuth entry and assume the binary will accept it. See [ADR
+0083](https://github.com/stacklok/mecatl/blob/main/docs/adr/0083-openai-subscription-manual-token.md).
+
 | Capability | mecated | mecak8s |
 |---|---|---|
 | Interactive TUI clients | Yes (`mecatui` connects; `--headless=false` default) | No (`--headless=true` default; headless-only) |
