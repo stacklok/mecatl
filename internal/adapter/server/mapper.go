@@ -610,10 +610,11 @@ func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
 // toProtoResult maps a session.ResultPayload to its proto Result form.
 func toProtoResult(p session.ResultPayload) *mecatlv1.Result {
 	return &mecatlv1.Result{
-		Stop:  string(p.Stop),
-		Text:  p.Text,
-		Usage: toProtoUsage(p.Usage),
-		Error: p.Error,
+		Stop:      string(p.Stop),
+		Text:      p.Text,
+		Usage:     toProtoUsage(p.Usage),
+		Error:     p.Error,
+		Permanent: p.Permanent,
 	}
 }
 

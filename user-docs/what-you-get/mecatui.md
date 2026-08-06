@@ -37,6 +37,8 @@ You don't have to wait for a turn to finish before typing your next thing. Press
 
 `esc` backs out of things in order: it clears whatever you've typed, then clears the queue, then — only if you press it again — cancels the run itself. Nothing is one accidental keystroke away from being lost.
 
+When an error is a **permanent** provider rejection (a 4xx status other than 408/429, a context-window overflow, a policy block), mecatui shows a one-line summary instead of a raw error block, telling you plainly that retrying won't help and you should start a new session or change the request. The raw error is still available on `ctrl+t` expand. Permanent errors are never auto-retried by the queue.
+
 ## Tool calls render as compact, expandable cards
 
 A tool call doesn't dump its full JSON arguments into your terminal by default — a long value collapses to a size-and-preview summary (`body: 5.1 KB / 72 lines · "## Context…"`), and a card that hid something always says so. `ctrl+t` expands the focused card to the full pretty-printed arguments and result. Edit/Write calls are the exception: their colourised diff renders in full either way, since that's the whole point of looking at them.

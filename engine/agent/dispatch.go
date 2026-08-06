@@ -270,12 +270,12 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	ask, ok := sess.PendingAsk()
 	if !ok {
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("%w: not in StateAwaiting", ErrNotAwaiting))
+			fmt.Errorf("%w: not in StateAwaiting", ErrNotAwaiting), false)
 		return
 	}
 	if ask.AskID != askID {
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("%w: pending ask %q does not match requested %q", ErrNotAwaiting, ask.AskID, askID))
+			fmt.Errorf("%w: pending ask %q does not match requested %q", ErrNotAwaiting, ask.AskID, askID), false)
 		return
 	}
 
@@ -286,7 +286,7 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	lastAssistant, pendingIdx, ok := locatePendingCall(sess.Conversation.Messages, ask)
 	if !ok {
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("%w: pending tool call not found on the trailing assistant message", ErrNotAwaiting))
+			fmt.Errorf("%w: pending tool call not found on the trailing assistant message", ErrNotAwaiting), false)
 		return
 	}
 	msgs := sess.Conversation.Messages
@@ -298,7 +298,7 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	// in authorize; it is NOT resetToIdle (which would zero Counters + clear pending).
 	if _, err := sess.ResumeWith(); err != nil {
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("agent: resume awaiting: %w", err))
+			fmt.Errorf("agent: resume awaiting: %w", err), false)
 		return
 	}
 
@@ -307,7 +307,7 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	// further.
 	pendingResult, cancelled := e.resolvePendingCall(ctx, r, sess, ws, turnIdx, calls[pendingIdx], ask, verdict)
 	if cancelled {
-		e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil)
+		e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
 		return
 	}
 
@@ -339,7 +339,7 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 		toRecord = append(toRecord, sibling)
 	}
 	if err := sess.RecordToolResults(toRecord); err != nil {
-		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err)
+		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
 		return
 	}
 	e.save(ctx, sess)

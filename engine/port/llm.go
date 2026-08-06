@@ -131,3 +131,28 @@ type LLMProvider interface {
 	Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)
 	Capabilities() ProviderCapabilities
 }
+
+// PermanentError reports whether a provider error is a PERMANENT client-side
+// rejection — replaying the identical request cannot succeed (e.g. a 4xx other
+// than 408/429: invalid_encrypted_content, a policy-blocked model, a malformed
+// request shape baked into the persisted history). It is the neutral counterpart
+// to the retry classifier: the classification rides the error (as an
+// errors.As-reachable interface), NOT a port.LLMRequest field, so the loop,
+// EvResult, and clients can distinguish "transient — retry may work" from
+// "permanent — this request shape is rejected" without any provider-specific
+// type crossing into engine/agent.
+//
+// Fail-open contract: an error that does NOT implement PermanentError (or a nil
+// target) is treated as NOT permanent — today's behaviour is preserved for
+// unclassifiable errors. Adapters implement it on their terminal provider
+// errors; llmresilience wraps the surfaced non-retryable error.
+//
+// This interface does NOT widen LLMRequest (it rides the error, not the
+// request). Provider detail (the specific status code, the provider's named
+// error reason) stays in the adapter's Error() string and is never surfaced
+// to the domain loop.
+type PermanentError interface {
+	error
+	// Permanent returns true when the error is a permanent client-side rejection.
+	Permanent() bool
+}

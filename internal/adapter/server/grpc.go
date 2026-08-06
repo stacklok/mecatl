@@ -180,6 +180,22 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	// EOF (client closed its send half) or context cancellation.
 	go h.readControl(ctx, stream, run)
 
+	logCtx := context.WithoutCancel(ctx)
+
+	// Inject a pre-flight EvRecoverNotice when the session just recovered from a
+	// PERMANENT failure — surface the advisory BEFORE the main event loop burns a
+	// provider call on the same unrecoverable error. Emitted ONCE per recovery
+	// (RecoverNotice consumes the entry on the first call).
+	if notice := h.svc.RecoverNotice(id); notice != "" {
+		ev := session.Event{Type: session.EvRecoverNotice, Text: notice}
+		// Durable log first (cancel-detached, survives client disconnect).
+		h.svc.appendEvent(logCtx, id, ev)
+		// Forward to the client wire.
+		if err := stream.Send(&mecatlv1.ConverseResponse{Event: toProto(ev)}); err != nil {
+			return err
+		}
+	}
+
 	// Relay events on this goroutine; the channel closes when the run ends. On
 	// the FIRST Send error (the client is gone) the relay cancels the run but
 	// KEEPS RANGING, discarding events until the channel closes: a run that keeps
@@ -196,7 +212,6 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	// the durable write. This is DISTINCT from the EvPermissionAsk Persist below,
 	// which is snapshot semantics gated to the healthy path: the log is append-only
 	// history and must record what happened regardless of client liveness.
-	logCtx := context.WithoutCancel(ctx)
 	var sendErr error
 	for ev := range run.Events() {
 		if sendErr != nil {

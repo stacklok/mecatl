@@ -1372,11 +1372,101 @@ func TestLimitsWithDefaults(t *testing.T) {
 			t.Fatalf("got %+v, want %+v (MaxTurns pinned, the rest inherited — never zeroed)", got, want)
 		}
 	})
-
 	t.Run("fully-set is returned verbatim", func(t *testing.T) {
 		full := Limits{MaxTurns: 1, MaxToolCalls: 2, MaxConsecutiveFailures: 3}
 		if got := full.WithDefaults(def); got != full {
 			t.Fatalf("got %+v, want the verbatim %+v", got, full)
 		}
 	})
+}
+
+// TestRecordFailurePermanenceRejectsNonFailed asserts the state guard:
+// RecordFailurePermanence is legal ONLY from StateFailed, mirroring the guard
+// style of Fail/Recover (ErrIllegalTransition otherwise).
+func TestRecordFailurePermanenceRejectsNonFailed(t *testing.T) {
+	for _, mk := range []struct {
+		name  string
+		setup func(s *Session)
+	}{
+		{"idle", func(*Session) {}},
+		{"running", func(s *Session) { _ = s.BeginTurn() }},
+		{"awaiting", func(s *Session) {
+			_ = s.BeginTurn()
+			_ = s.PauseForApproval(PendingAsk{})
+		}},
+		{"completed", func(s *Session) {
+			_ = s.BeginTurn()
+			mustOK(t, s.Complete())
+		}},
+		{"cancelled", func(s *Session) { mustOK(t, s.Cancel()) }},
+	} {
+		t.Run(mk.name, func(t *testing.T) {
+			s := newTestSession(Limits{})
+			mk.setup(s)
+			if err := s.RecordFailurePermanence(true); !errors.Is(err, ErrIllegalTransition) {
+				t.Fatalf("RecordFailurePermanence from %s: err = %v, want ErrIllegalTransition", mk.name, err)
+			}
+			if s.FailurePermanence() {
+				t.Fatalf("FailurePermanence from %s returned true, want false (flag not set)", mk.name)
+			}
+		})
+	}
+}
+
+// TestRecordFailurePermanenceRoundTrip asserts the full lifecycle: Fail() →
+// RecordFailurePermanence(true) → FailurePermanence()==true → Recover() clears it.
+func TestRecordFailurePermanenceRoundTrip(t *testing.T) {
+	s := newTestSession(Limits{})
+	if err := s.RecordUserPrompt("prompt", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := s.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	if s.State != StateFailed {
+		t.Fatalf("precondition: state = %q, want failed", s.State)
+	}
+
+	// Not yet stamped; accessor returns false.
+	if s.FailurePermanence() {
+		t.Fatal("FailurePermanence before stamp = true, want false")
+	}
+
+	// Stamp as permanent.
+	if err := s.RecordFailurePermanence(true); err != nil {
+		t.Fatalf("RecordFailurePermanence(true): %v", err)
+	}
+	if !s.FailurePermanence() {
+		t.Fatal("FailurePermanence after stamp = false, want true")
+	}
+
+	// Recover clears the flag via resetToIdle.
+	if err := s.Recover(); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if s.FailurePermanence() {
+		t.Fatal("FailurePermanence after Recover = true, want false (cleared by resetToIdle)")
+	}
+	if s.State != StateIdle {
+		t.Fatalf("after Recover state = %q, want idle", s.State)
+	}
+}
+
+// TestFailurePermanenceFalseForNonFailed asserts the accessor returns false for any
+// state other than StateFailed, even if the underlying flag was somehow set.
+func TestFailurePermanenceFalseForNonFailed(t *testing.T) {
+	s := newTestSession(Limits{})
+	// Idle: false even though the zero value is also false — the guard is the state.
+	if s.FailurePermanence() {
+		t.Fatal("FailurePermanence from idle = true, want false")
+	}
+
+	// Running: false.
+	mustOK(t, s.BeginTurn())
+	if s.FailurePermanence() {
+		t.Fatal("FailurePermanence from running = true, want false")
+	}
 }

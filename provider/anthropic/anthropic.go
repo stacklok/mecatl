@@ -2,7 +2,9 @@ package anthropic
 
 import (
 	"context"
+	"errors"
 	"iter"
+	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -274,7 +276,7 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			if ctx.Err() != nil {
 				return
 			}
-			yield(port.Chunk{}, err)
+			yield(port.Chunk{}, anthropicStreamErr(err, err.Error()))
 		}
 	}, nil
 }
@@ -303,6 +305,65 @@ func (p *Provider) sessionCaps() port.ProviderCapabilities {
 		return *p.caps
 	}
 	return p.Capabilities()
+}
+
+// anthropicStreamError wraps a terminal stream error as port.PermanentError so
+// the llmresilience layer can distinguish permanent client-side rejections (4xx
+// other than 408/429) from transient failures (5xx, rate limits, unknown). It
+// carries the SDK error for Unwrap and a human-readable message for Error().
+type anthropicStreamError struct {
+	err    error  // original SDK/transport error (for Unwrap)
+	msg    string // human-readable Error() string
+	status int    // HTTP-status equivalent; 0 = unknown
+}
+
+func (e *anthropicStreamError) Error() string { return e.msg }
+func (e *anthropicStreamError) Unwrap() error { return e.err }
+
+// Permanent implements port.PermanentError. The error is permanent when the
+// message signals a context-window overflow, or when the status is a known
+// non-retryable 4xx. Status 0 and retryable codes (408, 429, 5xx) are NOT
+// permanent — fail-open, because an unclassifiable error may succeed on retry.
+func (e *anthropicStreamError) Permanent() bool {
+	if isContextOverflowMessage(e.msg) {
+		return true
+	}
+	if e.status != 0 && !retryableStatus(e.status) {
+		return true
+	}
+	return false
+}
+
+// isContextOverflowMessage is duplicated from provider/openai/stream.go (separate
+// Go module; a shared dep is worse than ~10 lines). It reports whether a provider
+// error message indicates the request was rejected because it exceeded the model's
+// context window — a PERMANENT client error that must NOT be retried and must NOT
+// count toward the circuit breaker.
+func isContextOverflowMessage(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "context window") ||
+		strings.Contains(m, "context length") ||
+		strings.Contains(m, "maximum context") ||
+		strings.Contains(m, "exceeds the token limit") ||
+		strings.Contains(m, "exceeded the token limit")
+}
+
+// retryableStatus reports whether an HTTP status code is transient. Must stay
+// consistent with the llmresilience classifier's retry set.
+func retryableStatus(code int) bool {
+	return code == 408 || code == 429 || code >= 500
+}
+
+// anthropicStreamErr wraps the given error as an anthropicStreamError, probing
+// the error chain for an SDK Error to extract an HTTP-status equivalent.
+// If no SDK error is found, status is 0 (unknown / fail-open).
+func anthropicStreamErr(err error, msg string) *anthropicStreamError {
+	var sdkErr *sdk.Error
+	status := 0
+	if errors.As(err, &sdkErr) {
+		status = sdkErr.StatusCode
+	}
+	return &anthropicStreamError{err: err, msg: msg, status: status}
 }
 
 // Compile-time assertion that Provider satisfies the port.

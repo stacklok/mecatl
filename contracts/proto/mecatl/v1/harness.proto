@@ -1440,6 +1440,10 @@ message Result {
   Usage usage = 3;
   // error carries the failure detail when stop is "error" (empty otherwise).
   string error = 4;
+  // permanent is true when an error stop is a PERMANENT provider rejection —
+  // replaying the identical request cannot succeed (e.g. a 4xx other than
+  // 408/429). Absent/false means transient or unclassified (fail-open).
+  bool permanent = 5;
 }
 
 // TurnEnd is the payload carried by a turn.end event. Mirrors

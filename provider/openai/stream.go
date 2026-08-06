@@ -296,6 +296,35 @@ func (e *responseStreamError) Error() string { return e.msg }
 // statuses (408, 429, 5xx) through its retry logic.
 func (e *responseStreamError) StatusCode() int { return e.status }
 
+// Permanent implements port.PermanentError. A responseStreamError is permanent
+// when the message signals a context-window overflow (replaying the identical
+// over-context prompt cannot succeed), or when the status code is a known
+// non-retryable 4xx rejection. Status 0 and retryable codes (408, 429, 5xx) are
+// NOT permanent (fail-open: an unclassifiable error may succeed on retry).
+func (e *responseStreamError) Permanent() bool {
+	if isContextOverflowMessage(e.msg) {
+		return true
+	}
+	// status==0 means "unknown" — fail-open, not permanent. Context-overflow
+	// messages are already demoted to status 0 by providerErrorStatus, so the
+	// context-overflow check above is the discriminator that separates the two
+	// cases of status==0.
+	if e.status != 0 && !retryableStatus(e.status) {
+		return true
+	}
+	return false
+}
+
+// retryableStatus reports whether an HTTP status code is transient (worthy of
+// retry). Must stay consistent with the llmresilience classifier's set: 408
+// request-timeout, 429 rate-limit, and all 5xx server errors are transient and
+// should be retried; everything else — including unknown (0) — is not. This is
+// the mirror of providerCodeToHTTPStatus: the codes that function maps INTO the
+// retryable set are the same ones this function recognises.
+func retryableStatus(code int) bool {
+	return code == 408 || code == 429 || code >= 500
+}
+
 // isContextOverflowMessage reports whether a provider error message indicates
 // the request was rejected because it exceeded the model's context window. This
 // is a PERMANENT client error: replaying the identical over-context prompt

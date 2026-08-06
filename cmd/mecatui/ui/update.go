@@ -815,6 +815,16 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// liveness; that is the intended, non-intrusive behaviour.)
 		m.statusMsg = m.deps.Theme.Style("muted").Render(noticeLine(msg))
 		return m.afterEvent()
+	case client.RecoverNoticeMsg:
+		// Recover-notice (permanent-failure advisory) is a DURABLE scrollback
+		// block, not a transient statusMsg: the run's first event would overwrite
+		// a transient footer before the user reads it, and the advisory is
+		// actionable (start a new session / change the request) so it must
+		// persist. It renders as a warning-styled ⚠ block (see renderBlock's
+		// blockNotice recover branch). It carries only harness-authored advisory
+		// Text (no model content).
+		m.conv.addRecoverNotice(msg.Text)
+		return m.afterEvent()
 	default:
 		return m, nil
 	}
@@ -830,7 +840,11 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 	// would double-count.
 	m.usage = sumUsage(m.usage, msg.Usage)
 	if msg.Stop == stopError && msg.Error != "" {
-		m.conv.addError(msg.Error)
+		if msg.Permanent {
+			m.conv.addPermanentError(msg.Error)
+		} else {
+			m.conv.addError(msg.Error)
+		}
 	}
 	m = m.endRun(msg.Stop)
 	modeCmd := m.retryPendingModeCmd()

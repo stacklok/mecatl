@@ -12,6 +12,7 @@
     ifacemethod func (LLMProvider).Capabilities() ProviderCapabilities
     ifacemethod func (LLMProvider).Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)
     ifacemethod func (MetaLister).MetaList(ctx context.Context) ([]SessionMeta, error)
+    ifacemethod func (PermanentError).Permanent() bool
     ifacemethod func (PermissionPolicy).Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
     ifacemethod func (PermissionPolicy).Learn(sessionID session.SessionID, c session.ToolCall)
     ifacemethod func (PermissionStore).Record(sessionID session.SessionID, rule governance.Rule)
@@ -47,6 +48,7 @@
     ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
+    ifacemethod func (error).Error() string
     method func (NopDeliveryQueue).Enqueue(_ context.Context, origin session.SessionID, _ string) (DeliveryNote, error)
     method func (NopDeliveryQueue).MarkDelivered(_ context.Context, _ session.SessionID, _ uint64) error
     method func (NopDeliveryQueue).Pending(_ context.Context, _ session.SessionID) ([]DeliveryNote, error)
@@ -91,6 +93,7 @@ type MetaLister interface{MetaList(ctx context.Context) ([]SessionMeta, error)}
 type MisfirePolicy int
 type NopDeliveryQueue struct{}
 type NopDiagnostics struct{}
+type PermanentError interface{Permanent() bool; error}
 type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
 type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
 type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}

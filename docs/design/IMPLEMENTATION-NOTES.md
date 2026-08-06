@@ -212,6 +212,90 @@ in settings.yaml is a TARGETED unknown-key rejection in `internal/adapter/permco
 (the top-level decode stays deliberately lenient otherwise). Generated config artifacts omit
 the key.
 
+## Permanent provider-error signal (`port.PermanentError` → `session.ResultPayload.Permanent`, issue #346)
+
+A neutral signal that threads from the provider adapter through the error chain to
+the terminal `EvResult` and a pre-retry advisory, so clients and operators can
+distinguish "retry may work" from "retrying can't help" without parsing
+provider-specific error text.
+
+**The interface.** `engine/port/llm.go` (`PermanentError`) is a new exported interface
+with a single `Permanent() bool` method. It rides the error (reachable via
+`errors.As`), NOT `port.LLMRequest` — so the domain loop stays provider-neutral
+and the LLM-request DTO is not widened. The contract is fail-open: an error that
+does not implement it (or a nil target) is treated as NOT permanent, preserving
+today's behaviour for unclassifiable errors. Provider detail (the specific status
+code, the provider's named error reason) stays in the adapter's `Error()` string
+and is never surfaced to the domain loop.
+
+**Provider adapters.** Each provider's stream error type implements `Permanent()`:
+`provider/anthropic/anthropic.go` (`anthropicStreamError`),
+`provider/openai/stream.go` (`responseStreamError`),
+`provider/openaichat/openaichat.go` (`openaichatStreamError`). The predicate is
+the same across all three: context-overflow-message OR (status ≠ 0 AND not
+retryable). The context-overflow discriminator (`isContextOverflowMessage`) is a
+keyword-based check (`"context window"`, `"context length"`, `"maximum context"`,
+`"exceeds the token limit"`, `"exceeded the token limit"`) duplicated across the
+three provider modules (separate Go modules — a shared dep is worse). The
+`retryableStatus` helper mirrors the llmresilience classifier: 408, 429, and 5xx
+are transient; everything else (including 0 = unknown) is permanent.
+
+**Resilience layer.** `internal/adapter/llmresilience/llmresilience.go` wraps
+surfaced non-retryable errors in a `permanentError` shim at two sites: (1) the
+establish path — a non-retryable classification before the first chunk becomes a
+`&permanentError{err: err}` so the caller's `errors.As` reaches it; (2) the
+mid-stream error path in `restSeq` — a non-retryable stream error that is not
+`context.Canceled` is wrapped similarly. Breaker-exhausted, idle-timeout, and
+cancellation errors are never wrapped (they are NOT permanent client rejections).
+
+**Loop signalling.** `engine/agent/loop.go` (`permanentCause`) is a one-line helper:
+`errors.As(err, &pe) && pe.Permanent()`. The `terminate` path (all Go-error
+terminations — `runTurn` failure, `RecordUserPrompt` failure, hook failure, etc.)
+passes `permanentCause(err)`. The `terminateComplete` path (ChunkDone StopError —
+no Go error to classify) always passes `false` (honest fail-open). The bit lands
+on `engine/session/event.go` (`ResultPayload`) and is meaningful
+ONLY when `Stop == StopError`.
+
+**Session aggregate.** `engine/session/session.go` (`RecordFailurePermanence` /
+`FailurePermanence`) stores a boolean on the `StateFailed` aggregate. It is legal
+ONLY when `State == StateFailed` and cleared by `resetToIdle` (every transition
+out of `StateFailed`: Recover, Interrupt, Reopen), so a healed session never
+keeps a stale permanence marker.
+
+**Snapshot.** `engine/adapter/sessnap/sessnap.go` (`Snapshot`) round-trips
+the flag so it survives a process restart (`omitempty` — purely additive, no
+format-tag bump). `RestoreState` re-drives `RecordFailurePermanence(true)` on
+restore when the flag was set.
+
+**Pre-retry advisory.** `internal/adapter/server/service.go` (`recoverNotices` +
+`RecoverNotice`): `loadAndReopen` captures `FailurePermanence()` BEFORE `Recover()`
+clears it (`resetToIdle` sets `permanent = false`), and stashes a once-per-recovery
+advisory text in a `sync.Map` keyed by session id. `LoadOrStore` ensures two
+concurrent loads still emit exactly ONE notice. The relay adapters (gRPC
+`Converse`, HTTP `relayRunSSE`) call `RecoverNotice(id)` after `StartRunContent`,
+emit an `EvRecoverNotice` synthetic event BEFORE the main event loop, and consume
+the entry (`LoadAndDelete` — returned once, then deleted). The notice is an
+advisory — it does NOT block the run.
+
+**Event.** `engine/session/event.go` (`EvRecoverNotice`): a new string-passthrough
+event type (like `EvNoProgress`), CLIENT-VISIBLE, carrying the harness-authored
+advisory text. Mapped to proto by the `toProto` passthrough.
+
+**proto.** `contracts/proto/mecatl/v1/harness.proto` (`Result.permanent = 5`):
+additive boolean field on the `Result` message.
+
+**TUI.** `cmd/mecatui/client/msgs.go` (`ResultMsg`): forces
+`Transient=false` (no auto-retry; the legacy `transientVocab` heuristic stays as
+the fallback for old servers — `TODO #346`). A permanent StopError renders a
+ONE-LINE summary block (`✗ <first line, ≤120 runes> — retrying won't help; the
+request is rejected. Start a new session or /clear.`) via
+`cmd/mecatui/ui/render.go` (`renderPermanentError`), with the raw payload behind
+`ctrl+t` expand under a dim `raw payload:` header.
+`cmd/mecatui/ui/update.go` (`RecoverNoticeMsg`): renders as a transient warning
+status line BEFORE the provider call burns tokens.
+
+---
+
 ## Port — `engine/port/`
 
 The PORT interfaces the loop consumes (`LLMProvider`, `SessionStore`, `HookRunner`,

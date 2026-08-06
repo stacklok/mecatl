@@ -4,11 +4,13 @@
     method func (*Session).Cancel() error
     method func (*Session).Complete() error
     method func (*Session).Fail() error
+    method func (*Session).FailurePermanence() bool
     method func (*Session).Interrupt() error
     method func (*Session).LimitTripped() (StopReason, bool)
     method func (*Session).PauseForApproval(ask PendingAsk) error
     method func (*Session).PendingAsk() (PendingAsk, bool)
     method func (*Session).RecordAssistant(m Message) error
+    method func (*Session).RecordFailurePermanence(permanent bool) error
     method func (*Session).RecordToolResults(results []ToolResult) error
     method func (*Session).RecordUsage(u Usage) error
     method func (*Session).RecordUserPrompt(text string, instructions []Message) error
@@ -53,6 +55,7 @@ const EvParallelStart EventType = "parallel.start"
 const EvPermissionAsk EventType = "permission.ask"
 const EvPermissionRetract EventType = "permission.retract"
 const EvReasoningDelta EventType = "reasoning.delta"
+const EvRecoverNotice EventType = "recover_notice"
 const EvResult EventType = "result"
 const EvScheduleFailed EventType = "schedule.failed"
 const EvScheduleFired EventType = "schedule.fired"
@@ -172,7 +175,7 @@ type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
-type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string}
+type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
 type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; CreatedAt time.Time}

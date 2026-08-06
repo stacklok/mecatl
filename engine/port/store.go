@@ -31,10 +31,12 @@ var ErrSessionNotFound = errors.New("port: session not found")
 //     Conversation (the user/assistant/tool message sequence, tool-pairing-valid —
 //     user-role turns INCLUDED, since the loop emits the log-only EvUserPrompt at every
 //     user-message record site), State, the recorded stop reason, the pending ask (when
-//     awaiting), cumulative Usage (the SUM of every per-run EvResult.Usage — the budget
-//     brake reads it), and the creation metadata the events do not carry (id, mode,
-//     limits, workspace, profile, provider/model selector, createdAt — supplied
-//     out-of-band, e.g. eventsource.SessionMeta).
+//     awaiting), the failure permanence flag (ResultPayload.Permanent — so a
+//     permanently-failed session reconstructs with FailurePermanence()==true and the
+//     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
+//     — the budget brake reads it), and the creation metadata the events do not carry
+//     (id, mode, limits, workspace, profile, provider/model selector, createdAt —
+//     supplied out-of-band, e.g. eventsource.SessionMeta).
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //

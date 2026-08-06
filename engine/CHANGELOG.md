@@ -13,6 +13,27 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **Permanent provider-error signal** (#346) — a neutral, fail-open way to tell
+  "transient — retry may work" from "permanent — this request shape is rejected":
+  - `port.PermanentError` — an interface (`error` + `Permanent() bool`) the
+    provider adapters and `llmresilience` implement on their terminal provider
+    errors. It rides the error chain (reachable via `errors.As`), NOT a
+    `port.LLMRequest` field, so no provider-specific type crosses into
+    `engine/agent` and `LLMRequest` stays provider-neutral. Fail-open: an error
+    that doesn't implement it is treated as not permanent.
+  - `session.ResultPayload.Permanent` — the loop sets it on `EvResult` when the
+    run's terminating error is permanent, so relays/clients render "retry won't
+    help" instead of an identical raw error wall on every retry.
+  - `Session.RecordFailurePermanence(bool)` / `Session.FailurePermanence()` —
+    the aggregate persists the permanence of a `failed` state (cleared on
+    `Recover`/`resetToIdle`), so the run-entry funnel can surface an honest
+    advisory before burning a provider call on a doomed retry.
+  - `session.EvRecoverNotice` (`"recover_notice"`) — a transient string
+    passthrough event (the `EvNoProgress` pattern) the service layer emits once
+    per recovery when a permanently-failed session is re-entered.
+  - `sessnap.Snapshot.Permanent` + `sessnap.RestoreState` gains a `permanent
+    bool` param — the flag round-trips the snapshot (additive, `omitempty`).
+
 - **`engine/adapter/search` graduated** (#363) — the WebSearch tool body
   (`WebSearchTool` / `NewWebSearchTool`), the Exa/HTTP/SearXNG search providers
   (`ExaProvider` / `HTTPProvider` / `BackendDown`), and the offline `Fake` /

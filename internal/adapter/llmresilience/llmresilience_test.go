@@ -1027,6 +1027,11 @@ func TestBreakerHalfOpenPermanentErrorStaysOpen(t *testing.T) {
 	if !errors.As(err, &got400) || got400.StatusCode != 400 {
 		t.Fatalf("half-open trial err = %v, want verbatim 400 *oai.Error", err)
 	}
+	// The 400 is a permanent client-side rejection — assert the PermanentError bit.
+	var pe port.PermanentError
+	if !errors.As(err, &pe) || !pe.Permanent() {
+		t.Fatalf("400 establishment error must carry port.PermanentError; err = %v", err)
+	}
 	if f.Calls() != 4 {
 		t.Fatalf("half-open permanent trial: inner called %d times, want 4 (trial WAS admitted)", f.Calls())
 	}
@@ -2033,5 +2038,144 @@ func TestPreCommitOnlyStreamCleanClose(t *testing.T) {
 	}
 	if f.Calls() != 1 {
 		t.Fatalf("inner called %d times, want 1 (no retry on a clean pre-commit-only close)", f.Calls())
+	}
+}
+
+// TestPermanentError400Establishment asserts a 400 establishment error (non-retryable,
+// non-transient) carries the port.PermanentError signal via errors.As so callers can
+// distinguish a permanent client-side rejection from a transient failure.
+func TestPermanentError400Establishment(t *testing.T) {
+	f := &fakeProvider{steps: []step{{outerErr: apiErr(400)}}}
+	p := Wrap(f, tinyBackoffCfg(3))
+	_, err := p.Stream(context.Background(), port.LLMRequest{})
+
+	// The underlying *oai.Error is still reachable through Unwrap.
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 {
+		t.Fatalf("err = %v, want 400 *oai.Error still reachable via errors.As", err)
+	}
+	// The PermanentError bit is set.
+	var pe port.PermanentError
+	if !errors.As(err, &pe) || !pe.Permanent() {
+		t.Fatalf("400 establishment error must carry port.PermanentError; err = %v", err)
+	}
+	if f.Calls() != 1 {
+		t.Fatalf("inner called %d times, want 1 (400 not retried)", f.Calls())
+	}
+}
+
+// TestPermanentErrorAbsentFor429 asserts a 429 (retryable) does NOT carry the
+// port.PermanentError signal: a rate limit is transient, not a permanent rejection.
+func TestPermanentErrorAbsentFor429(t *testing.T) {
+	f := &fakeProvider{steps: []step{{outerErr: apiErr(429)}}}
+	p := Wrap(f, Config{MaxAttempts: 1, BaseBackoff: time.Nanosecond})
+	_, err := p.Stream(context.Background(), port.LLMRequest{})
+
+	var pe port.PermanentError
+	if errors.As(err, &pe) {
+		t.Fatalf("429 must NOT carry port.PermanentError; err = %v", err)
+	}
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 429 {
+		t.Fatalf("err = %v, want 429 *oai.Error surfaced verbatim", err)
+	}
+}
+
+// TestPermanentErrorAbsentForCallerCancel asserts a caller-cancelled ctx does NOT
+// carry the port.PermanentError signal.
+func TestPermanentErrorAbsentForCallerCancel(t *testing.T) {
+	f := &fakeProvider{steps: []step{{block: true}}}
+	cfg := Config{MaxAttempts: 5, PerAttemptTimeout: time.Hour}
+	p := Wrap(f, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := p.Stream(ctx, port.LLMRequest{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	var pe port.PermanentError
+	if errors.As(err, &pe) {
+		t.Fatalf("caller cancel must NOT carry port.PermanentError; err = %v", err)
+	}
+}
+
+// TestPermanentErrorUnwrapIntact asserts the Unwrap chain of permanentError is
+// intact: errors.As reaches the underlying typed error.
+func TestPermanentErrorUnwrapIntact(t *testing.T) {
+	f := &fakeProvider{steps: []step{{outerErr: apiErr(400)}}}
+	p := Wrap(f, tinyBackoffCfg(3))
+	_, err := p.Stream(context.Background(), port.LLMRequest{})
+
+	// The specific *oai.Error must still be reachable.
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 {
+		t.Fatalf("errors.As(*oai.Error) must still work through the permanentError wrapper; err = %v", err)
+	}
+	// errors.Is must also work.
+	if !errors.Is(err, apiErr) {
+		t.Fatalf("errors.Is must still work through the permanentError wrapper; err = %v", err)
+	}
+}
+
+// TestPermanentErrorMidStream400 asserts a mid-stream 400 (after the first
+// committing chunk) carries port.PermanentError. Mid-stream errors are always
+// terminal (no replay after first chunk), but a client-side rejection must
+// still be distinguishable from a transient mid-stream failure.
+func TestPermanentErrorMidStream400(t *testing.T) {
+	f := &fakeProvider{steps: []step{
+		{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(400)},
+	}}
+	p := Wrap(f, Config{MaxAttempts: 1})
+
+	seq, err := p.Stream(context.Background(), port.LLMRequest{})
+	if err != nil {
+		t.Fatalf("Stream returned outer error: %v", err)
+	}
+	_, derr := drain(t, seq)
+	if derr == nil {
+		t.Fatal("expected a mid-stream error")
+	}
+	var pe port.PermanentError
+	if !errors.As(derr, &pe) || !pe.Permanent() {
+		t.Fatalf("mid-stream 400 must carry port.PermanentError; err = %v", derr)
+	}
+	var apiErr *oai.Error
+	if !errors.As(derr, &apiErr) || apiErr.StatusCode != 400 {
+		t.Fatalf("mid-stream 400 *oai.Error must still be reachable via errors.As; err = %v", derr)
+	}
+	if f.Calls() != 1 {
+		t.Fatalf("inner called %d times, want 1 (400 mid-stream not retried)", f.Calls())
+	}
+}
+
+// TestPermanentErrorMidStream429Absent asserts a mid-stream 429 (transient) does
+// NOT carry port.PermanentError: a rate limit is not a permanent rejection even
+// when it surfaces mid-stream.
+func TestPermanentErrorMidStream429Absent(t *testing.T) {
+	f := &fakeProvider{steps: []step{
+		{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(429)},
+	}}
+	p := Wrap(f, Config{MaxAttempts: 1})
+
+	seq, err := p.Stream(context.Background(), port.LLMRequest{})
+	if err != nil {
+		t.Fatalf("Stream returned outer error: %v", err)
+	}
+	_, derr := drain(t, seq)
+	if derr == nil {
+		t.Fatal("expected a mid-stream error")
+	}
+	var pe port.PermanentError
+	if errors.As(derr, &pe) {
+		t.Fatalf("mid-stream 429 must NOT carry port.PermanentError; err = %v", derr)
+	}
+	var apiErr *oai.Error
+	if !errors.As(derr, &apiErr) || apiErr.StatusCode != 429 {
+		t.Fatalf("mid-stream 429 *oai.Error must still be reachable; err = %v", derr)
 	}
 }

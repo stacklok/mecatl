@@ -237,6 +237,18 @@ type block struct {
 	resolved    bool
 	resultBody  string
 	resultError bool
+	// permanent marks a blockError as a PERMANENT provider rejection — retrying
+	// cannot succeed. When true, the renderer shows a one-line human summary
+	// instead of the raw error text, with the raw payload available on expand
+	// (ctrl+t). Meangless for non-error blocks.
+	permanent bool
+	// recover marks a blockNotice as a recover-notice advisory (a session that
+	// failed on a PERMANENT provider error was recovered for re-entry). The
+	// renderer styles it as a WARNING (⚠ glyph) rather than a muted compaction
+	// notice, so it stands out as actionable. It is a DURABLE scrollback block
+	// (not a transient statusMsg) so the run's first event does not overwrite it
+	// before the user reads it. Meaningful only for blockNotice.
+	recover bool
 	// resultBlocks carries the typed content blocks relayed from the server for a tool
 	// result (when the result carried structured Parts — resource links, images, …).
 	// The renderer surfaces user-audience artifacts (resource links, images) IN
@@ -1148,6 +1160,16 @@ func (c *conversation) addNotice(text string) {
 	c.blocks = append(c.blocks, block{kind: blockNotice, raw: text})
 }
 
+// addRecoverNotice appends a WARNING-styled recover-notice block (a session that
+// failed on a PERMANENT provider error was recovered for re-entry). Unlike a
+// compaction notice, this is ACTIONABLE (start a new session / change the
+// request), so it renders as a durable ⚠ warning block rather than a muted
+// bullet — and durable rather than a transient statusMsg so the run's first
+// event does not overwrite it before the user reads it.
+func (c *conversation) addRecoverNotice(text string) {
+	c.blocks = append(c.blocks, block{kind: blockNotice, raw: text, recover: true})
+}
+
 // addDelivery appends a fire-result delivery note block: a scheduled-task
 // affordance + the schedule name + the outcome body, visually distinct from a
 // user prompt, the model's text, and a notice. scheduleName + fireID label the
@@ -1180,4 +1202,11 @@ func (c *conversation) addHook(text, phase, tool, decision string) {
 // addError appends an error block.
 func (c *conversation) addError(text string) {
 	c.blocks = append(c.blocks, block{kind: blockError, raw: text})
+}
+
+// addPermanentError appends a permanent-error block: the error is a server-classified
+// PERMANENT provider rejection and retrying cannot help. The renderer shows a one-line
+// human summary; the raw error payload is available on expand (ctrl+t).
+func (c *conversation) addPermanentError(text string) {
+	c.blocks = append(c.blocks, block{kind: blockError, raw: text, permanent: true})
 }

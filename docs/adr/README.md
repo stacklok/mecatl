@@ -44,6 +44,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](./0096-live-feed-reconnect.md)
 - [0076 — The schedule manager is store-shaped and pre-Service; the shared catalog carries the Schedule tool](./0076-schedule-shared-catalog.md)
 - [0081 — `RulesSource` port for `.claude/rules` discovery](./0081-rules-source-port.md)
+- [0097 — Neutral permanent-provider-error signal (`port.PermanentError` → `ResultPayload.Permanent` → `EvRecoverNotice`)](./0097-permanent-provider-error-signal.md)
 
 ### Memory & context
 - [0008 — Memory on by default](./0008-memory-on-by-default.md)

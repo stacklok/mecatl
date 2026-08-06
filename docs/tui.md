@@ -987,7 +987,11 @@ instead routed to the **transient footer status**: a successful nudge-recover mu
 no permanent residue, and the *terminal* no-progress stop is already conveyed durably and
 independently by the run's `ResultMsg` → the footer label **`stopped · no progress`**. So
 no-progress never enters scrollback; during an active run it is effectively silent (the
-spinner already shows liveness), surfacing at most as a brief idle footer status. No
+spinner already shows liveness), surfacing at most as a brief idle footer status. A
+**recover-notice** (`recover_notice` event — a pre-flight advisory when a
+permanently-failed session is recovered) is also transient: a warning-coloured
+status line that fires ONCE before the first turn, so the user sees it before
+burning a provider call. No
 advisory-vs-terminal proto field is needed — the durable terminal signal rides
 `ResultMsg`. A **background subagent finishing** (`subagent.end` on a `⇢ bg` lane) rides
 the same transient channel — *"background subagent #<hash> done — result ready for the
@@ -1105,7 +1109,19 @@ rate limit, or a transient upstream 5xx — is treated like a healthy stop and
 **auto-resumes** the merged queue, since a plain retry is likely to succeed. This
 auto-resume fires **only** when follow-ups are staged: a transient death of a run with
 an **empty** queue does not auto-retry the original prompt — the user must resend it
-manually. A **hard**
+manually.
+
+A **permanent** provider error — a 4xx rejection other than 408/429, a
+context-window overflow, a policy block — renders a ONE-LINE summary block
+(`✗ <first line, ≤120 runes> — retrying won't help; the request is rejected. Start a
+new session or /clear.`) instead of a raw error block. The raw error payload is
+available on `ctrl+t` expand under a dim `raw payload:` header. A permanent error is
+never auto-retried (the `transient` flag is forced false).
+When a session that failed permanently is recovered for a new prompt, a
+transient `recover_notice` warning line appears before the first turn so you see it
+before burning another provider call.
+
+A **hard**
 error, a **user cancel**, `max_consecutive_failures`, or a stream close instead
 **pauses and keeps** the queue, so a genuinely-broken run or a deliberate cancel never
 silently fires the backlog. The card switches from the muted `⏳ N queued · ↑ edit` to a

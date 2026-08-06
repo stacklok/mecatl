@@ -113,6 +113,51 @@ func TestEventToMsgSetsResultTransient(t *testing.T) {
 	}
 }
 
+// TestEventToMsgSetsResultPermanent asserts the result mapper carries Permanent
+// from the server and that Permanent=true forces Transient=false.
+func TestEventToMsgSetsResultPermanent(t *testing.T) {
+	// Permanent=true: Transient forced false regardless of vocab.
+	permEv := &mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
+		Stop: "error", Error: "engine_overloaded", Permanent: true}}
+	rm := EventToMsg(permEv).(ResultMsg)
+	if !rm.Permanent {
+		t.Errorf("Permanent=true must survive the mapper, got %+v", rm)
+	}
+	if rm.Transient {
+		t.Errorf("Permanent=true must force Transient=false, got %+v", rm)
+	}
+
+	// Permanent=false (explicit): Transient derived from vocab.
+	noPermEv := &mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
+		Stop: "error", Error: "engine_overloaded", Permanent: false}}
+	rm2 := EventToMsg(noPermEv).(ResultMsg)
+	if rm2.Permanent {
+		t.Errorf("explicit Permanent=false must not set Permanent=true, got %+v", rm2)
+	}
+	if !rm2.Transient {
+		t.Errorf("explicit Permanent=false with transient vocab must keep Transient, got %+v", rm2)
+	}
+
+	// Permanent absent (proto3 zero): Transient derived from vocab (legacy fallback).
+	absentEv := &mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
+		Stop: "error", Error: "engine_overloaded"}}
+	rm3 := EventToMsg(absentEv).(ResultMsg)
+	if rm3.Permanent {
+		t.Errorf("absent Permanent field must leave Permanent=false, got %+v", rm3)
+	}
+	if !rm3.Transient {
+		t.Errorf("absent Permanent with transient vocab must keep Transient, got %+v", rm3)
+	}
+
+	// Hard error with Permanent=false: Transient still false from vocab.
+	hardEv := &mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
+		Stop: "error", Error: "invalid request", Permanent: false}}
+	rm4 := EventToMsg(hardEv).(ResultMsg)
+	if rm4.Transient {
+		t.Errorf("non-transient vocab with Permanent=false must stay non-transient, got %+v", rm4)
+	}
+}
+
 // TestReadLoopSetsStreamErrTransient asserts ReadLoop classifies a transient Recv
 // error onto StreamErrMsg.Transient (and leaves it false for a hard error).
 func TestReadLoopSetsStreamErrTransient(t *testing.T) {

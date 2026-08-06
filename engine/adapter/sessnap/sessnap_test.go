@@ -524,3 +524,92 @@ func TestRoundTripEmptyTitleOmitsKey(t *testing.T) {
 		t.Errorf("restored Title = %q, want empty", got.Title)
 	}
 }
+
+// TestSnapshotRoundTripsPermanentFailed asserts a failed+permanent session round-trips
+// true through Marshal/Unmarshal: the permanence flag on the session survives
+// serialisation.
+func TestSnapshotRoundTripsPermanentFailed(t *testing.T) {
+	s := session.New("perm1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := s.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	if err := s.RecordFailurePermanence(true); err != nil {
+		t.Fatalf("RecordFailurePermanence: %v", err)
+	}
+
+	line := mustMarshal(t, s)
+	// Wire JSON must carry the permanent key.
+	if !strings.Contains(string(line), `"permanent":true`) {
+		t.Fatalf("snapshot JSON missing permanent key; got:\n%s", line)
+	}
+
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.State != session.StateFailed {
+		t.Fatalf("restored state = %q, want failed", got.State)
+	}
+	if !got.FailurePermanence() {
+		t.Fatal("restored FailurePermanence = false, want true")
+	}
+}
+
+// TestSnapshotFailedWithoutPermanentFlagRoundTripsFalse asserts a failed session with
+// NO permanence stamp round-trips with FailurePermanence()==false.
+func TestSnapshotFailedWithoutPermanentFlagRoundTripsFalse(t *testing.T) {
+	s := session.New("perm2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := s.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	// Deliberately NO RecordFailurePermanence call.
+
+	line := mustMarshal(t, s)
+	// Wire JSON must NOT carry the permanent key (omitempty on false).
+	if strings.Contains(string(line), `"permanent"`) {
+		t.Fatalf("snapshot JSON unexpectedly carries permanent key; got:\n%s", line)
+	}
+
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.State != session.StateFailed {
+		t.Fatalf("restored state = %q, want failed", got.State)
+	}
+	if got.FailurePermanence() {
+		t.Fatal("restored FailurePermanence = true, want false")
+	}
+}
+
+// TestLoadV1SnapshotMissingPermanentKeyLoadsFalse asserts backward-compat: an OLD JSON
+// snapshot with no "permanent" key decodes with FailurePermanence()==false (the
+// omitempty zero value). This is the downgrade/adversarial guard.
+func TestLoadV1SnapshotMissingPermanentKeyLoadsFalse(t *testing.T) {
+	v1 := `{"id":"old","state":"failed","mode":"default","limits":{},"counters":{},` +
+		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"messages":[{"role":"user","text":"hello there"}],` +
+		`"stop_reason":"error"}`
+	got, err := sessnap.Unmarshal([]byte(v1))
+	if err != nil {
+		t.Fatalf("Unmarshal v1: %v", err)
+	}
+	if got.State != session.StateFailed {
+		t.Fatalf("restored state = %q, want failed", got.State)
+	}
+	if got.FailurePermanence() {
+		t.Fatal("restored FailurePermanence = true, want false (pre-permanent snapshot)")
+	}
+}

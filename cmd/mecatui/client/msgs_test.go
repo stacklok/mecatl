@@ -170,12 +170,22 @@ func TestEventToMsg(t *testing.T) {
 		},
 		{"compaction", &mecatlv1.Event{Type: "compaction", Text: "compacted"}, CompactionMsg{Text: "compacted"}},
 		{"no_progress", &mecatlv1.Event{Type: "no_progress", Text: "nudging to continue"}, NoProgressMsg{Text: "nudging to continue"}},
+		{"recover_notice", &mecatlv1.Event{Type: "recover_notice", Text: "permanent failure advisory"}, RecoverNoticeMsg{Text: "permanent failure advisory"}},
 		{
 			"result",
 			&mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
 				Stop: "end_turn", Text: "done", Usage: &mecatlv1.Usage{InputTokens: 10, OutputTokens: 5},
 			}},
 			ResultMsg{Stop: "end_turn", Text: "done", Usage: Usage{InputTokens: 10, OutputTokens: 5}},
+		},
+		{
+			"result permanent error",
+			&mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
+				Stop: "error", Error: "invalid_encrypted_content: the blob is malformed", Permanent: true,
+				Usage: &mecatlv1.Usage{InputTokens: 20, OutputTokens: 2},
+			}},
+			ResultMsg{Stop: "error", Error: "invalid_encrypted_content: the blob is malformed",
+				Usage: Usage{InputTokens: 20, OutputTokens: 2}, Permanent: true, Transient: false},
 		},
 		{
 			// The three log-only kinds are relayed ONLY by the replay (the live

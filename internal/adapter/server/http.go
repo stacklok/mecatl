@@ -461,7 +461,7 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher)
+	h.relayRunSSE(w, r, id, run, flusher, h.svc.RecoverNotice(id))
 }
 
 // relayRunSSE streams run's Events to w as Server-Sent Events until the channel
@@ -471,7 +471,11 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 // the EvPermissionAsk persist, and the deregister-on-end discipline cannot drift
 // between the two entry points. The caller must already have validated the Flusher
 // and written nothing to w yet (this sets the headers + 200 itself).
-func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, run *agent.Run, flusher http.Flusher) {
+//
+// notice, when non-empty, is a pre-flight EvRecoverNotice message emitted BEFORE
+// the main event loop — the prompt run-entry path passes it; the approve handler
+// path passes "".
+func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, run *agent.Run, flusher http.Flusher, notice string) {
 	defer h.svc.deregister(id, run)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -479,6 +483,26 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	logCtx := context.WithoutCancel(r.Context())
+	enc := json.NewEncoder(w)
+
+	// Inject a pre-flight EvRecoverNotice when the session just recovered from a
+	// PERMANENT failure — surface the advisory BEFORE the main event loop burns a
+	// provider call. Emitted ONCE per recovery.
+	if notice != "" {
+		ev := session.Event{Type: session.EvRecoverNotice, Text: notice}
+		h.svc.appendEvent(logCtx, id, ev)
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			return
+		}
+		if err := enc.Encode(toProto(ev)); err != nil {
+			return
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
 
 	// If the client disconnects, cancel the run.
 	go func() {
@@ -501,8 +525,6 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	// the durable write. This is DISTINCT from the EvPermissionAsk Persist below,
 	// which is snapshot semantics gated to the healthy path: the log is append-only
 	// history and must record what happened regardless of client liveness.
-	logCtx := context.WithoutCancel(r.Context())
-	enc := json.NewEncoder(w)
 	failed := false
 	fail := func() {
 		failed = true
@@ -584,7 +606,7 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher)
+	h.relayRunSSE(w, r, id, run, flusher, "")
 }
 
 // verdictFromHTTP maps the HTTP approve body's string verdict to the domain

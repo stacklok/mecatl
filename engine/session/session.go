@@ -395,6 +395,11 @@ type Session struct {
 	pending *PendingAsk
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
+	// permanent records whether the failure that landed this session in StateFailed
+	// is permanent (unrecoverable). It is meaningful ONLY when State==StateFailed;
+	// any transition out (resetToIdle via Recover/Reopen/Interrupt) clears it so a
+	// healed session never keeps a stale permanence flag.
+	permanent bool
 }
 
 // New constructs an idle Session with an empty conversation.
@@ -646,6 +651,31 @@ func (s *Session) Cancel() error {
 	return nil
 }
 
+// RecordFailurePermanence stamps whether the failure that landed this session in
+// StateFailed is permanent (unrecoverable, e.g. a fatal configuration error) versus
+// transient (retryable, e.g. a provider 5xx). It is legal ONLY when State==StateFailed
+// (mirroring the guard style of Fail/Recover: an idle session or a non-failed
+// terminal returns ErrIllegalTransition). The flag is cleared on any transition out
+// of StateFailed (resetToIdle via Recover/Interrupt/Reopen), so a healed session
+// never keeps a stale permanence marker.
+func (s *Session) RecordFailurePermanence(permanent bool) error {
+	if s.State != StateFailed {
+		return fmt.Errorf("%w: RecordFailurePermanence from %q", ErrIllegalTransition, s.State)
+	}
+	s.permanent = permanent
+	return nil
+}
+
+// FailurePermanence reports whether the failure that landed this session in
+// StateFailed was marked as permanent. It returns false for any state other than
+// StateFailed.
+func (s *Session) FailurePermanence() bool {
+	if s.State != StateFailed {
+		return false
+	}
+	return s.permanent
+}
+
 // Fail transitions the session to StateFailed with StopError. It is legal from
 // any non-terminal state.
 //
@@ -703,6 +733,7 @@ func (s *Session) resetToIdle() {
 	s.State = StateIdle
 	s.stop = StopNone
 	s.pending = nil
+	s.permanent = false
 	s.Counters = Counters{}
 	// CRITICAL: Usage is DELIBERATELY NOT cleared here (the divergence from
 	// Counters). The MaxRunTokens budget (StopBudget) is evaluated against the

@@ -79,6 +79,16 @@ $ jq . DIR/8867….tools.jsonl
 $ jq . DIR/8867….events.jsonl
 ```
 
+**`✗ … — retrying won't help; the request is rejected.` (permanent provider error)**
+The provider returned a **permanent** rejection — a 4xx status other than 408/429, a
+context-window overflow, or a content-policy block. Replaying the identical request
+cannot succeed. Start a new session (a new `CreateSession`, or restart the mecatui
+client — `/clear` only wipes the local transcript and the next prompt re-enters the
+SAME poisoned server session), change your prompt to stay within the budget or avoid
+the blocked content, or fix the credential/permission on the provider side. A
+transient failure (5xx, rate limit, or an unknown error) shows the usual error block
+instead — those may succeed on retry.
+
 ---
 
 See also: the [operator guide index](../usage.md).

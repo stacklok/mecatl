@@ -69,6 +69,11 @@ type Snapshot struct {
 	// restore. It is what the MaxRunTokens budget brake is evaluated against, so
 	// persisting it lets the budget survive restart.
 	Usage *session.Usage `json:"usage,omitempty"`
+	// Permanent records whether a StateFailed session's failure was flagged as
+	// permanent (session.RecordFailurePermanence). omitempty keeps a pre-flag
+	// snapshot with no "permanent" key decoding to false — purely additive, no
+	// format-tag bump.
+	Permanent bool `json:"permanent,omitempty"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -144,6 +149,7 @@ func Of(s *session.Session) (Snapshot, error) {
 	if r, ok := s.RecordedStopReason(); ok {
 		snap.StopReason = r
 	}
+	snap.Permanent = s.FailurePermanence()
 	return snap, nil
 }
 
@@ -177,7 +183,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 
 	// Drive the state machine to the recorded lifecycle state, seed the running
 	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
-	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage); err != nil {
+	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -195,8 +201,9 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 // recorded terminal stop reason (used for the completed-vs-stop distinction); pending
 // is the parked ask (used only for StateAwaiting). counters seed the running totals
 // (preserved across the BeginTurn that running/awaiting restore performs); usage
-// seeds the cumulative budget figure. It returns an error on an unknown state or a
-// transition the aggregate rejects.
+// seeds the cumulative budget figure; permanent records a permanence flag on
+// StateFailed (meaningful only when state==StateFailed and permanent==true). It
+// returns an error on an unknown state or a transition the aggregate rejects.
 func RestoreState(
 	s *session.Session,
 	state session.State,
@@ -204,6 +211,7 @@ func RestoreState(
 	pending *session.PendingAsk,
 	counters session.Counters,
 	usage session.Usage,
+	permanent bool,
 ) error {
 	// Restore running totals directly; these are exported and authoritative.
 	s.Counters = counters
@@ -247,6 +255,11 @@ func RestoreState(
 	case session.StateFailed:
 		if err := s.Fail(); err != nil {
 			return fmt.Errorf("sessnap: restore failed: %w", err)
+		}
+		if permanent {
+			if err := s.RecordFailurePermanence(true); err != nil {
+				return fmt.Errorf("sessnap: record failure permanence: %w", err)
+			}
 		}
 	default:
 		return fmt.Errorf("sessnap: unknown state %q", state)

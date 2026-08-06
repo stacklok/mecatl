@@ -1252,3 +1252,47 @@ func TestStreamContextCancel(t *testing.T) {
 func itoa(i int) string {
 	return string(rune('0' + i%10)) // single-digit-ish; sequence_number value is not asserted
 }
+
+// TestResponseStreamErrorPermanent exercises Permanent() on responseStreamError.
+// Non-retryable 4xx (≠408/429) and context-overflow messages are permanent;
+// transient codes (408, 429, 5xx) and unknown (0) are NOT permanent (fail-open).
+func TestResponseStreamErrorPermanent(t *testing.T) {
+	tests := []struct {
+		msg    string
+		status int
+		want   bool
+	}{
+		// Non-retryable 4xx — permanent client-side rejections.
+		{"response failed: invalid_request_error: bad request", 400, true},
+		{"response failed: permission_error: forbidden", 403, true},
+		{"response failed: not_found_error: not found", 404, true},
+		// Retryable codes — transient, NOT permanent.
+		{"response failed: rate_limit_exceeded: too many requests", 429, false},
+		{"response failed: server_error: internal error", 503, false},
+		{"response failed: gateway_timeout: upstream timeout", 504, false},
+		// Status 0 (unknown) — NOT permanent, fail-open.
+		{"response failed: unknown code", 0, false},
+		{"", 0, false},
+		// Context overflow — permanent even with transient-looking status.
+		{"response failed: server_error: Your input exceeds the context window of this model.", 503, true},
+		{"stream error: server_error: input exceeds the context length", 503, true},
+		{"response failed: server_error: maximum context length exceeded", 503, true},
+		{"response failed: server_error: prompt exceeds the token limit", 503, true},
+		{"response failed: server_error: request exceeded the token limit for this model", 503, true},
+	}
+	for _, tt := range tests {
+		e := &responseStreamError{msg: tt.msg, status: tt.status}
+		if got := e.Permanent(); got != tt.want {
+			t.Errorf("Permanent() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
+		}
+	}
+}
+
+// TestResponseStreamErrorErrorMessageUnchanged pins the invariant that adding
+// Permanent() does not change the Error() string.
+func TestResponseStreamErrorErrorMessageUnchanged(t *testing.T) {
+	e := &responseStreamError{msg: "response failed: rate_limit_exceeded: Too Many Requests", status: 429}
+	if got := e.Error(); got != "response failed: rate_limit_exceeded: Too Many Requests" {
+		t.Errorf("Error() = %q, want unchanged message", got)
+	}
+}

@@ -1021,18 +1021,144 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	case blockTool:
 		return r.renderTool(b, expand)
 	case blockNotice:
+		if b.recover {
+			// A recover-notice is an actionable WARNING, not a muted compaction
+			// bullet: render it with the warning style + ⚠ so it stands out.
+			return r.wrapPrefixed("⚠ ", sanitizeTerminal(b.raw), r.th.Style("warning"))
+		}
 		return r.wrapPrefixed("• ", sanitizeTerminal(b.raw), r.th.Style("muted"))
 	case blockHook:
 		return r.renderHook(b)
 	case blockTurnStat:
 		return r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
 	case blockError:
+		if b.permanent {
+			return r.renderPermanentError(b, expand)
+		}
 		return r.wrapPrefixed("✗ ", sanitizeTerminal(b.raw), r.th.Style("errorText"))
 	case blockDelivery:
 		return r.renderDelivery(b)
 	default:
 		return r.wrapStyled(sanitizeTerminal(b.raw), lipgloss.NewStyle())
 	}
+}
+
+// renderPermanentError renders a PERMANENT error block: a one-line human summary
+// derived from the provider error, with the raw payload available on expand (ctrl+t).
+func (r *renderer) renderPermanentError(b *block, expand bool) string {
+	summary := permanentErrorSummary(b.raw)
+	errStyle := r.th.Style("errorText")
+	line := r.wrapPrefixed("✗ ", summary, errStyle)
+	if !expand {
+		return line
+	}
+	// Expanded: the summary line + the raw error under a dim header.
+	raw := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
+	return line + "\n" + r.th.Style("muted").Render("raw payload:") + "\n" + raw
+}
+
+// permanentErrorSummary derives a one-line human-readable summary from a provider
+// error string. The anthropic/openaichat adapters format translated EVENT errors as
+// "code: message" — take the first line, truncate sanely, and append the "retrying
+// won't help" advisory. The openai/openaichat SDK transport error (stream.Err, an
+// HTTP-level rejection before any SSE event) comes through as a raw
+// 'POST "<url>": 400 Bad Request {"error":{…json…}}' string; collapseErrorSummary
+// strips the 'POST "…"' prefix and trailing JSON, extracting the embedded message so
+// the summary is not a truncated-JSON wall (matching the "code: message" shape). The
+// summary is TERMINAL-SANITIZED (control/ANSI sequences scrubbed) so a hostile
+// provider/gateway can't inject escapes into the scrollback — the blockError path
+// already sanitizes via sanitizeTerminal, and the permanent path must too. Falls
+// back to a generic message when the error is unparseable or blank.
+//
+// The extraction lives in the TUI (not the adapter Error()) because the adapters'
+// Error() text is a deliberate byte-identical invariant (TestResponseStreamErrorMessageUnchanged);
+// the SDK transport error is forwarded verbatim and has no such invariant, but the
+// render layer is the single chokepoint that covers both the translated-event and the
+// transport-error shapes without touching either adapter's contract.
+func permanentErrorSummary(raw string) string {
+	// Collapse the SDK transport shape (POST "…" + trailing JSON) into a clean
+	// token on the FULL raw string BEFORE first-line truncation: a single-line
+	// SDK error like 'POST "<url>": 400 Bad Request {"error":{…json…}}' would
+	// otherwise be truncated mid-JSON by firstLineCap, leaving a fragment
+	// extractJSONMessage cannot parse. Collapsing first yields a clean first
+	// line that firstLineCap then caps sanely.
+	first := firstLineCap(collapseErrorSummary(raw), 120)
+	if first == "" {
+		return "permanent provider error — retrying won't help; the request is rejected. Start a new session."
+	}
+	return sanitizeTerminal(first) + " — retrying won't help; the request is rejected. Start a new session."
+}
+
+// collapseErrorSummary rewrites a provider/SDK error first-line into a cleaner
+// human-readable token. It strips a leading 'POST "<url>"' SDK-transport prefix and
+// a trailing JSON object ('{"error":{…}}'), so an openai-go error like
+// 'POST "https://api.openai.com/v1/responses": 400 Bad Request {"error":{"message":"…"}}'
+// collapses to '400 Bad Request' plus any extracted message. A plain 'code: message'
+// (anthropic / the translated event error) is returned unchanged.
+func collapseErrorSummary(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// Strip a leading SDK transport prefix: 'POST "<url>": ' (or any
+	// '<METHOD> "<url>": ' shape the openai-go SDK emits). Keep everything after it.
+	if i := strings.Index(s, `": `); i >= 0 && strings.HasPrefix(s, `POST "`) {
+		s = strings.TrimSpace(s[i+len(`": `):])
+	}
+	// A trailing JSON object ('{"error":{…}}' or bare '{…}') is opaque in a one-line
+	// summary — replace it with its embedded "message" field if present, else drop it.
+	if i := strings.IndexByte(s, '{'); i >= 0 {
+		head := strings.TrimRight(s[:i], " :")
+		tail := s[i:]
+		if msg := extractJSONMessage(tail); msg != "" {
+			if head != "" {
+				return head + ": " + msg
+			}
+			return msg
+		}
+		return head
+	}
+	return s
+}
+
+// extractJSONMessage best-effort extracts the "message" string field from a leading
+// JSON object (an OpenAI error envelope like {"error":{"code":"…","message":"…"}}).
+// It returns "" if the JSON cannot be parsed or carries no string "message" field.
+func extractJSONMessage(s string) string {
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &env); err != nil {
+		return ""
+	}
+	// An OpenAI envelope nests {"error": {...}}; unwrap one level.
+	if raw, ok := env["error"]; ok {
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return ""
+		}
+	}
+	if raw, ok := env["message"]; ok {
+		var msg string
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			return strings.TrimSpace(msg)
+		}
+	}
+	return ""
+}
+
+// firstLineCap returns the first line of s (up to a newline or maxRunes runes,
+// whichever is shorter). Returns "" for an empty/blank string.
+func firstLineCap(s string, maxRunes int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if first, _, ok := strings.Cut(s, "\n"); ok {
+		s = first
+	}
+	// Rune-safe truncation: keep at most maxRunes runes.
+	if rs := []rune(s); len(rs) > maxRunes {
+		s = string(rs[:maxRunes])
+	}
+	return s
 }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED

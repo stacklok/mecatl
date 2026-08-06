@@ -413,3 +413,71 @@ func TestFoldReconstructsTypedToolResult(t *testing.T) {
 		t.Fatalf("reconstructed history is not tool-pairing-valid: %v", err)
 	}
 }
+
+// TestFoldRoundTripsFailurePermanence asserts the event-sourced fold reconstructs
+// the failure-permanence flag from the terminal EvResult (ADR 0038's reconstruction
+// contract requires it, so a permanently-failed session's recover advisory fires on
+// an event-log-SoR backend just as it does on the snapshot path). A StopError run
+// with Permanent==true folds to StateFailed + FailurePermanence()==true; the same run
+// with Permanent==false folds to StateFailed + FailurePermanence()==false. A clean
+// (non-error) terminal with Permanent==true is meaningless and must NOT set the flag.
+func TestFoldRoundTripsFailurePermanence(t *testing.T) {
+	cases := []struct {
+		name       string
+		stop       session.StopReason
+		permanent  bool
+		wantState  session.State
+		wantPerman bool
+	}{
+		{"permanent error", session.StopError, true, session.StateFailed, true},
+		{"transient error", session.StopError, false, session.StateFailed, false},
+		// A Permanent flag on a clean terminal is meaningless; the fold must ignore it.
+		{"clean terminal ignores permanent flag", session.StopEndTurn, true, session.StateCompleted, false},
+	}
+	for _, tc := range cases {
+		evs := []session.Event{
+			{Type: session.EvTurnStart, Turn: 0},
+			{Type: session.EvMessageDelta, Turn: 0, Text: "boom"},
+			{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{
+				Stop:      tc.stop,
+				Permanent: tc.permanent,
+				Error:     "provider error",
+				Usage:     session.Usage{InputTokens: 2, OutputTokens: 1},
+			}},
+		}
+		s, err := eventsource.Fold(meta(), seq(evs))
+		if err != nil {
+			t.Fatalf("Fold(%s): %v", tc.name, err)
+		}
+		if s.State != tc.wantState {
+			t.Fatalf("%s: state = %q, want %q", tc.name, s.State, tc.wantState)
+		}
+		if got := s.FailurePermanence(); got != tc.wantPerman {
+			t.Fatalf("%s: FailurePermanence = %v, want %v", tc.name, got, tc.wantPerman)
+		}
+	}
+}
+
+// TestFoldMultiRunPermanenceIsLastRun asserts that when a session was reopened after a
+// transient failure and later ended in a different failure, the fold reports the LATEST
+// run's permanence (mirroring how a snapshot captures the final state, not a mid-run).
+func TestFoldMultiRunPermanenceIsLastRun(t *testing.T) {
+	evs := []session.Event{
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopError, Permanent: true, Error: "perm"}},
+		// Reopen: a new run begins.
+		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "retry"}},
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopError, Permanent: false, Error: "transient"}},
+	}
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if s.State != session.StateFailed {
+		t.Fatalf("state = %q, want failed", s.State)
+	}
+	if s.FailurePermanence() {
+		t.Fatalf("FailurePermanence = true, want false (last run was transient)")
+	}
+}

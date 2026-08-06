@@ -310,3 +310,56 @@ data: [DONE]
 		t.Errorf("call id/name = %q/%q, want call_frag/get_weather", call.ID, call.Name)
 	}
 }
+
+// TestOpenAIChatStreamErrorPermanent exercises Permanent() on openaichatStreamError.
+// Non-retryable 4xx (≠408/429) and context-overflow messages are permanent;
+// transient codes (408, 429, 5xx) and unknown (0) are NOT permanent (fail-open).
+func TestOpenAIChatStreamErrorPermanent(t *testing.T) {
+	tests := []struct {
+		msg    string
+		status int
+		want   bool
+	}{
+		// Non-retryable 4xx — permanent client-side rejections.
+		{"request failed: 400 bad request", 400, true},
+		{"request failed: 403 forbidden", 403, true},
+		{"request failed: 404 not found", 404, true},
+		// Retryable codes — transient, NOT permanent.
+		{"request failed: 429 too many requests", 429, false},
+		{"request failed: 503 service unavailable", 503, false},
+		{"request failed: 500 internal server error", 500, false},
+		// Status 0 (unknown) — NOT permanent, fail-open.
+		{"request failed: unknown error", 0, false},
+		{"", 0, false},
+		// Context overflow — permanent even with transient-looking status.
+		{"request failed: 500 Your input exceeds the context window of this model.", 500, true},
+		{"request failed: 500 input exceeds the context length", 500, true},
+		{"request failed: 500 maximum context length exceeded", 500, true},
+		{"request failed: 500 prompt exceeds the token limit", 500, true},
+		{"request failed: 500 request exceeded the token limit for this model", 500, true},
+	}
+	for _, tt := range tests {
+		e := &openaichatStreamError{msg: tt.msg, status: tt.status}
+		if got := e.Permanent(); got != tt.want {
+			t.Errorf("Permanent() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
+		}
+	}
+}
+
+// TestOpenAIChatStreamErrorErrorMessageUnchanged pins the invariant that wrapping
+// does not change the Error() string.
+func TestOpenAIChatStreamErrorErrorMessageUnchanged(t *testing.T) {
+	e := &openaichatStreamError{msg: "request failed: 429 too many requests", status: 429}
+	if got := e.Error(); got != "request failed: 429 too many requests" {
+		t.Errorf("Error() = %q, want unchanged message", got)
+	}
+}
+
+// TestOpenAIChatStreamErrorUnwrap verifies Unwrap returns the inner error.
+func TestOpenAIChatStreamErrorUnwrap(t *testing.T) {
+	inner := errors.New("inner transport error")
+	e := &openaichatStreamError{err: inner, msg: "wrapped: " + inner.Error(), status: 0}
+	if !errors.Is(e, inner) {
+		t.Error("Unwrap should reach the inner error")
+	}
+}

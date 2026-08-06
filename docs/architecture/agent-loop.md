@@ -58,6 +58,12 @@ goroutine; the `Run` exposes:
 
 The loop terminates the session in exactly one of `Complete`/`Stop`/`Cancel`/
 `Fail` and emits exactly one terminal `result` event carrying cumulative usage.
+The `result` payload includes a `Permanent` boolean — meaningful only when
+`stop=error` — that distinguishes a permanent provider rejection (retrying
+can't help) from a transient failure ([ADR 0097](../adr/0097-permanent-provider-error-signal.md)).
+A permanently-failed session that is recovered for re-entry emits a one-time
+`recover_notice` advisory BEFORE the first turn, so the operator sees the
+warning before burning a provider call.
 
 A run-level **token budget** bounds the whole loop: `Deps.MaxRunTokens`
 (`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is checked at the turn boundary — never

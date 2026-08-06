@@ -443,6 +443,13 @@ type CompactionMsg struct{ Text string }
 // CompactionMsg; it carries only the harness-authored reason Text (no model content).
 type NoProgressMsg struct{ Text string }
 
+// RecoverNoticeMsg is an advisory notice emitted at run start when a session that
+// failed on a PERMANENT provider error is recovered for re-entry. It is rendered as
+// a transient status/warning (the run's first event overwrites it); it does NOT
+// block the run. It carries only the harness-authored advisory Text (no model
+// content).
+type RecoverNoticeMsg struct{ Text string }
+
 // ResultMsg is the terminal event: stop reason, final text, error, usage.
 type ResultMsg struct {
 	Stop  string
@@ -454,6 +461,12 @@ type ResultMsg struct {
 	// queue on a transient error; a hard error still pauses. Always false for a
 	// non-error stop.
 	Transient bool
+	// Permanent reports whether a stop=error failure is a PERMANENT provider
+	// rejection — the server classified it as irrecoverable (e.g. a 4xx other than
+	// 408/429). When true, the ui renders a structured permanent-error block
+	// instead of a raw error block and forces Transient=false. Older servers leave
+	// this false; the legacy Transient vocab path is the fallback.
+	Permanent bool
 }
 
 // Usage is the token accounting carried by ResultMsg (and usage-bearing events).
@@ -954,14 +967,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "no_progress":
 		return NoProgressMsg{Text: ev.GetText()}
 	case "result":
-		r := ev.GetResult()
-		return ResultMsg{
-			Stop:      r.GetStop(),
-			Text:      r.GetText(),
-			Error:     r.GetError(),
-			Usage:     usageFrom(r.GetUsage()),
-			Transient: TransientResultError(r.GetError()),
-		}
+		return resultMsg(ev.GetResult())
 	case "approval":
 		return approvalMsg(ev.GetApproval())
 	case "user_prompt":
@@ -1018,6 +1024,8 @@ func delegationEventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return parallelMsg(parallelBranchKind(ev.GetParallel().GetKind()), ev.GetParallel())
 	case "parallel.end":
 		return parallelMsg(ParallelEnd, ev.GetParallel())
+	case "recover_notice":
+		return RecoverNoticeMsg{Text: ev.GetText()}
 	default:
 		return nil
 	}
@@ -1167,4 +1175,18 @@ func conversationMessagesFromProto(in []*mecatlv1.ConversationMessage) []Convers
 		out = append(out, msg)
 	}
 	return out
+}
+
+// resultMsg builds a ResultMsg from the proto Result payload.
+// The helper exists to keep EventToMsg within the cyclomatic-complexity bound.
+func resultMsg(r *mecatlv1.Result) ResultMsg {
+	transient := TransientResultError(r.GetError()) && !r.GetPermanent()
+	return ResultMsg{
+		Stop:      r.GetStop(),
+		Text:      r.GetText(),
+		Error:     r.GetError(),
+		Usage:     usageFrom(r.GetUsage()),
+		Transient: transient,
+		Permanent: r.GetPermanent(),
+	}
 }

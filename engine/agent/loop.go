@@ -1018,7 +1018,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, ws to
 	// run before any prompt processing or model call.
 	if sess.Counters.Turns == 0 {
 		if blocked, reason := e.fireSessionStart(ctx, r, sess); blocked {
-			e.terminate(ctx, r, sess, session.StopError, reason, session.Usage{}, fmt.Errorf("agent: session rejected by SessionStart hook: %s", reason))
+			e.terminate(ctx, r, sess, session.StopError, reason, session.Usage{}, fmt.Errorf("agent: session rejected by SessionStart hook: %s", reason), false)
 			return
 		}
 	}
@@ -1030,11 +1030,11 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, ws to
 	// any model call; ok=false signals that without recording anything.
 	ok, reason, err := e.recordPrompt(ctx, r, sess, ws, userText, parts)
 	if err != nil {
-		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err)
+		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
 		return
 	}
 	if !ok {
-		e.terminate(ctx, r, sess, session.StopError, reason, session.Usage{}, fmt.Errorf("agent: prompt rejected by UserPromptSubmit hook: %s", reason))
+		e.terminate(ctx, r, sess, session.StopError, reason, session.Usage{}, fmt.Errorf("agent: prompt rejected by UserPromptSubmit hook: %s", reason), false)
 		return
 	}
 
@@ -1098,7 +1098,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		// finishing between this scan and the rest of the iteration is simply noticed
 		// at the NEXT boundary.
 		if err := e.injectBackgroundNotice(ctx, r, sess); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
 
@@ -1114,7 +1114,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		// read fault WARNs and ends the run StopError (a broken queue must not
 		// silently lose notes); a record fault likewise.
 		if err := e.drainPendingDelivery(ctx, r, sess); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
 
@@ -1126,7 +1126,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		}
 
 		if err := sess.BeginTurn(); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
 		turnIdx := sess.Counters.Turns - 1
@@ -1146,10 +1146,10 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, sess, ws, turnIdx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-				e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil)
+				e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 				return
 			}
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, permanentCause(err))
 			return
 		}
 		// Zero-input-usage fallback (issue #82) — DISPLAY-ONLY. A turn that produced
@@ -1208,7 +1208,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 			}})
 
 		if err := sess.RecordAssistant(asst); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
 
@@ -1225,11 +1225,11 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		// Step 6: dispatch the tool calls, then loop back to step 2.
 		results, cancelled := e.dispatch(ctx, r, sess, ws, turnIdx, asst.ToolCalls)
 		if cancelled {
-			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil)
+			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 			return
 		}
 		if err := sess.RecordToolResults(results); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
 		e.save(ctx, sess)
@@ -1312,7 +1312,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 			if ids := r.children.liveBackgroundIDsMatching(nil); len(ids) > 0 {
 				*bgPendingNudged = true
 				if err := e.recordContinuation(r, sess, turnIdx, backgroundPendingNudgeText(ids)); err != nil {
-					e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+					e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 					return true
 				}
 				e.save(ctx, sess)
@@ -1330,7 +1330,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 	if streamStop != session.StopNone && streamStop != session.StopEndTurn {
 		if streamStop == session.StopError {
 			e.terminate(ctx, r, sess, session.StopError, lastText, total,
-				fmt.Errorf("agent: model ended turn with no output and a terminal stop reason %q", streamStop))
+				fmt.Errorf("agent: model ended turn with no output and a terminal stop reason %q", streamStop), false)
 			return true
 		}
 		e.terminateComplete(ctx, r, sess, streamStop, lastText, total,
@@ -1372,7 +1372,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 	*noProgressNudges++
 	e.emit(r, session.Event{Type: session.EvNoProgress, Turn: turnIdx, Text: advisory})
 	if err := e.recordContinuation(r, sess, turnIdx, nudgeText); err != nil {
-		e.terminate(ctx, r, sess, session.StopError, lastText, total, err)
+		e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 		return true
 	}
 	e.save(ctx, sess)
@@ -1538,11 +1538,11 @@ func (e *Engine) lookupTool(r *Run, name string) (tool.Tool, bool) {
 //     completes (no mid-stream abort → no-replay-after-first-chunk holds).
 func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Session, lastText string, total session.Usage) bool {
 	if reason, stopped := sess.StopReason(); stopped {
-		e.terminate(ctx, r, sess, reason, lastText, total, nil)
+		e.terminate(ctx, r, sess, reason, lastText, total, nil, false)
 		return true
 	}
 	if ctx.Err() != nil {
-		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil)
+		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
 	if e.budgetExhausted(r, sess.Usage) {
@@ -2175,14 +2175,16 @@ func joinChildren(joins []backgroundJoin, d time.Duration) []backgroundJoin {
 
 // terminate ends the run with a non-success terminal state. It moves the session
 // to the matching terminal state (Cancel for cancelled, Fail for error, Stop for
-// a tripped limit) and emits the terminal result Event.
-func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, cause error) {
+// a tripped limit) and emits the terminal result Event. permanent records whether
+// a StopError failure is permanent (unrecoverable; retry will fail again).
+func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, cause error, permanent bool) {
 	e.drainChildren(ctx, r)
 	switch reason {
 	case session.StopCancelled:
 		_ = sess.Cancel()
 	case session.StopError:
 		_ = sess.Fail()
+		_ = sess.RecordFailurePermanence(permanent)
 	default:
 		if !sess.State.IsTerminal() {
 			_ = sess.Stop(reason)
@@ -2193,7 +2195,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 		errMsg = cause.Error()
 	}
 	e.fireStop(ctx, r, sess, reason)
-	e.emitResult(r, sess, reason, text, usage, errMsg)
+	e.emitResult(r, sess, reason, text, usage, errMsg, permanent)
 	e.save(ctx, sess)
 }
 
@@ -2225,6 +2227,8 @@ func (e *Engine) planApprovalTerminal(ctx context.Context, r *Run, sess *session
 // NON-benign stop chunk (StopError / StopCancelled) carries one, synthesised by
 // stopTerminalCause at the call site, so a delegation never renders the child's
 // last text AS the failure on this path either (the #319 terminateComplete shape).
+// permanent is always false here (the ChunkDone StopError path has NO Go error
+// to classify — honest fail-open).
 func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string) {
 	e.drainChildren(ctx, r)
 	if !sess.State.IsTerminal() {
@@ -2243,7 +2247,10 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 		e.save(ctx, sess)
 	}
 	e.fireStop(ctx, r, sess, reason)
-	e.emitResult(r, sess, reason, text, usage, errMsg)
+	// terminateComplete has no Go error to classify (the provider relays a stop
+	// CHUNK, not an error), so the permanence bit is always false here — honest
+	// fail-open. Only the error terminate() path carries a real classified cause.
+	e.emitResult(r, sess, reason, text, usage, errMsg, false)
 	e.save(ctx, sess)
 }
 
@@ -2267,6 +2274,13 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 // returns "" for a benign stop (end_turn / a clean limit), where a cause would
 // be noise — StopBudget/StopMaxTurns/StopNoProgress already carry their own
 // honest notes.
+// permanentCause reports whether err is a permanent provider rejection that will
+// fail again on retry (fail-open: an unclassifiable error returns false).
+func permanentCause(err error) bool {
+	var pe port.PermanentError
+	return errors.As(err, &pe) && pe.Permanent()
+}
+
 func stopTerminalCause(stop session.StopReason, text string) string {
 	if stop != session.StopError {
 		return ""
@@ -2279,15 +2293,17 @@ func stopTerminalCause(stop session.StopReason, text string) string {
 
 // emitResult publishes the single terminal result Event. errMsg carries the
 // failure detail on an error termination (empty for success/limit/cancel).
-func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string) {
+// permanent records whether a StopError failure is permanent (unrecoverable).
+func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string, permanent bool) {
 	u := usage
 	e.emit(r, session.Event{
 		Type: session.EvResult,
 		Result: &session.ResultPayload{
-			Stop:  reason,
-			Text:  text,
-			Usage: usage,
-			Error: errMsg,
+			Stop:      reason,
+			Text:      text,
+			Usage:     usage,
+			Error:     errMsg,
+			Permanent: permanent,
 		},
 		Usage: &u,
 	})

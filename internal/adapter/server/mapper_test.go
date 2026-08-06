@@ -688,6 +688,9 @@ func TestToProtoTable(t *testing.T) {
 				if res == nil || res.GetStop() != "end_turn" || res.GetText() != "all done" {
 					t.Fatalf("result mismatch: %+v", got)
 				}
+				if res.GetPermanent() {
+					t.Fatalf("Permanent should be false for a non-error stop: %+v", got)
+				}
 				u := res.GetUsage()
 				if u.GetInputTokens() != 15 || u.GetOutputTokens() != 5 ||
 					u.GetCacheReadTokens() != 3 || u.GetCacheWriteTokens() != 1 {
@@ -695,6 +698,24 @@ func TestToProtoTable(t *testing.T) {
 				}
 				if got.GetUsage().GetInputTokens() != 15 {
 					t.Fatalf("event usage mismatch: %+v", got.GetUsage())
+				}
+			},
+		},
+		{
+			name: "result permanent error",
+			in: session.Event{Type: session.EvResult, Seq: 10, Turn: 2,
+				Result: &session.ResultPayload{
+					Stop:      session.StopError,
+					Error:     "invalid_encrypted_content",
+					Permanent: true,
+				}},
+			assert: func(t *testing.T, got *mecatlv1.Event) {
+				res := got.GetResult()
+				if res == nil || res.GetStop() != "error" || res.GetError() != "invalid_encrypted_content" {
+					t.Fatalf("result mismatch: %+v", got)
+				}
+				if !res.GetPermanent() {
+					t.Fatalf("Permanent should be true for a permanent provider rejection: %+v", got)
 				}
 			},
 		},

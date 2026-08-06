@@ -168,7 +168,12 @@ func translate(event sdk.MessageStreamEventUnion, st *streamState) ([]port.Chunk
 			return nil, nil
 		}
 		st.done = true
-		return nil, fmt.Errorf("stream error: %s", eventErrorString(event))
+		inner := fmt.Errorf("stream error: %s", eventErrorString(event))
+		return nil, &anthropicStreamError{
+			err:    inner,
+			msg:    inner.Error(),
+			status: eventErrorStatus(event),
+		}
 
 	default:
 		// ping and any unknown/forward-compatible event: ignore.
@@ -367,6 +372,50 @@ func eventErrorString(event sdk.MessageStreamEventUnion) string {
 		}
 	}
 	return "unknown error"
+}
+
+// eventErrorStatus extracts the error type from a top-level "error" stream event
+// and maps it to an HTTP-status equivalent for Permanent() classification.
+// Unknown types map to 0 (fail-open — not permanent).
+func eventErrorStatus(event sdk.MessageStreamEventUnion) int {
+	var payload struct {
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if raw := event.RawJSON(); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil && payload.Error.Type != "" {
+			return anthropicErrorTypeToStatus(payload.Error.Type)
+		}
+	}
+	return 0
+}
+
+// anthropicErrorTypeToStatus maps an Anthropic API error type string to an
+// HTTP-status equivalent. The mapping is a conservative allowlist:
+// known permanent (4xx other than 408/429) and known transient (5xx, 429) types
+// receive matching statuses; everything else maps to 0 (unknown / fail-open).
+func anthropicErrorTypeToStatus(typ string) int {
+	switch typ {
+	case "invalid_request_error":
+		return 400
+	case "authentication_error":
+		return 401
+	case "permission_error":
+		return 403
+	case "not_found_error":
+		return 404
+	case "request_too_large":
+		return 413
+	case "rate_limit_error":
+		return 429
+	case "api_error":
+		return 500
+	case "overloaded_error":
+		return 503
+	default:
+		return 0
+	}
 }
 
 // decodeSSE reads an Anthropic SSE byte stream and translates it into a flat

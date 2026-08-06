@@ -90,6 +90,20 @@ const (
 	// a transient status line, like EvCompaction. It maps to the proto event-type
 	// string verbatim (no proto enum; the wire type field is a string passthrough).
 	EvNoProgress EventType = "no_progress"
+	// EvRecoverNotice is emitted at the run-entry funnel (in the Service layer,
+	// NOT the agent loop) when a session that failed on a PERMANENT provider error is
+	// recovered for re-entry. Text carries a short human-readable advisory (e.g.
+	// "this session's last turn failed on a permanent provider error; retrying replays
+	// the same request and will fail again. Start a new session, or change the
+	// request."). It is CLIENT-VISIBLE (like EvNoProgress) — rendered as a
+	// transient status/warning so the user sees it at run start (before the run's
+	// first event overwrites it). It does NOT block the run — Recover stays honest
+	// (retry POSSIBLE, not guaranteed). It is emitted ONCE per recovery (the
+	// permanence flag is cleared when Recover resets the session to idle, so a
+	// subsequent prompt on the same session emits no repeat notice). It maps to the
+	// proto event-type string verbatim (no proto enum; the wire type field is a
+	// string passthrough, like EvNoProgress).
+	EvRecoverNotice EventType = "recover_notice"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -431,6 +445,13 @@ type ResultPayload struct {
 	// It surfaces the error the loop would otherwise drop so callers (the demo,
 	// API clients) can see why a run failed instead of an opaque "error".
 	Error string
+	// Permanent reports whether a StopError failure is a PERMANENT provider
+	// rejection — replaying the identical request cannot succeed (e.g. a 4xx
+	// other than 408/429: invalid_encrypted_content, a policy-blocked model).
+	// It is meaningful ONLY when Stop==StopError; false for a transient failure
+	// (retryable, e.g. a 5xx) and for any non-Error terminal. Fail-open: an
+	// unclassifiable error is treated as NOT permanent.
+	Permanent bool
 }
 
 // TurnEndPayload is the payload carried by an EvTurnEnd Event. It is a typed

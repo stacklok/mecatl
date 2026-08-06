@@ -590,6 +590,17 @@ const leaseAcquireTimeout = 5 * time.Second
 // computed from LeaseRenewInterval (renewTimeout), never a flag.
 const leaseRenewFraction = 2
 
+// recoverNoticeText is the advisory emitted as an EvRecoverNotice event when a
+// permanently-failed session is recovered for re-entry (issue #346). It surfaces a
+// clear, actionable message: the prior failure was permanent, so retrying the same
+// request replays the same rejection. It does NOT block the run — Recover stays
+// honest (retry POSSIBLE, not guaranteed). The notice is emitted at run-START and
+// rendered as a transient footer status line (the run's first event overwrites it);
+// it is a prompt to START A NEW SESSION, not to /clear — /clear only wipes the local
+// transcript and the next prompt re-enters the SAME poisoned server session.
+const recoverNoticeText = "this session's last turn failed on a permanent provider error; " +
+	"retrying replays the same request and will fail again. Start a new session, or change the request."
+
 // ErrConfig is returned by NewService when a required dependency is missing.
 var ErrConfig = errors.New("server: invalid config")
 
@@ -694,6 +705,15 @@ type Service struct {
 	// sessionEngines (live) AND reservedIDs (in-flight) under a single lock hold.
 	// Guarded by s.mu.
 	reservedIDs map[session.SessionID]struct{}
+
+	// recoverNotices carries the pre-flight advisory message for a session that just
+	// recovered from a PERMANENT failure. loadAndReopen stores the notice BEFORE
+	// Recover() clears the permanence flag; RecoverNotice(id) returns it once and
+	// deletes the entry, so it is emitted ONCE per recovery. The map is only ever
+	// populated for StateFailed→idle transitions on permanently-failed sessions;
+	// a transient failure stores nothing. It is a sync.Map (lock-free for the
+	// common NOT-present read path in RecoverNotice — called at every run-entry).
+	recoverNotices sync.Map
 
 	// resumeMu serializes the awaiting-approval resume DECISION per session id
 	// (cloud-native Phase 2): ApproveRun holds the per-session lock across the whole
@@ -1567,6 +1587,11 @@ func (s *Service) CloseSession(id session.SessionID) {
 	// the rules evicted, re-opening the very re-ask wart 3b kills. Clearing it also
 	// keeps the map from growing unbounded on a long-lived server.
 	delete(s.replayedApprovals, id)
+	// Drop any stored recover-notice (issue #346): a session closed without
+	// re-entry after a permanent failure would otherwise leak one entry in the
+	// sync.Map; like the approval-replay marker above, clearing it keeps the map
+	// from growing unbounded on a long-lived server.
+	s.recoverNotices.Delete(id)
 	s.mu.Unlock()
 	if ok && se.close != nil {
 		_ = se.close()
@@ -2116,6 +2141,16 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 			return nil, fmt.Errorf("server: persist interrupted session: %w", serr)
 		}
 	case session.StateFailed:
+		// Capture permanence BEFORE Recover() clears it (resetToIdle
+		// sets permanent=false). Store the pre-flight advisory so the
+		// relay can emit an EvRecoverNotice before the next turn burns a
+		// provider call on the same unrecoverable error.
+		if sess.FailurePermanence() {
+			// Use LoadOrStore so two concurrent loads of the same
+			// session (under different surface adapters) still emit
+			// exactly ONE notice. Keyed by the session id.
+			s.recoverNotices.LoadOrStore(id, recoverNoticeText)
+		}
 		if rerr := sess.Recover(); rerr != nil {
 			return nil, fmt.Errorf("server: recover session: %w", rerr)
 		}
@@ -2124,6 +2159,25 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 		}
 	}
 	return sess, nil
+}
+
+// RecoverNotice returns the pre-flight advisory message for session id when
+// the last loadAndReopen recovered a PERMANENTLY-failed session. It returns ""
+// when there is no pending notice (the common case: a freshly-created session, a
+// transient failure, or a follow-up prompt on the same recovered session). Each
+// notice is consumed on the first call — a subsequent call for the same id
+// returns "" — so the advisory is emitted ONCE per recovery and never repeats.
+//
+// It is called by the relay adapters (gRPC Converse, HTTP relayRunSSE) right
+// after StartRunContent to inject an EvRecoverNotice synthetic event BEFORE
+// the main event loop, so the client sees the warning before the provider call
+// burns tokens on the same unrecoverable error.
+func (s *Service) RecoverNotice(id session.SessionID) string {
+	v, ok := s.recoverNotices.LoadAndDelete(id)
+	if !ok {
+		return ""
+	}
+	return v.(string)
 }
 
 // LoadSessionWithMCP resumes a previously-persisted session AND re-mounts the
@@ -2968,6 +3022,10 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 			// synthetic terminal result so the relay's client sees a terminal
 			// (never a silent close). This mirrors how the engine surfaces a run-
 			// entry failure: an EvResult with StopError.
+			// Permanent is left false (zero value) — cerr is a service-layer error
+			// (session load, engine build, etc.), not a provider rejection, so it
+			// cannot implement port.PermanentError. The loop's EvResult is the
+			// authoritative carrier of the permanent bit.
 			res := &session.ResultPayload{
 				Stop:  session.StopError,
 				Error: "continuation run failed to start: " + cerr.Error(),

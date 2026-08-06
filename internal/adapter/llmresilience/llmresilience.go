@@ -198,6 +198,32 @@ func (*StreamIdleError) Unwrap() error { return context.DeadlineExceeded }
 // instead of a phantom empty-success completion. See establish's empty branch.
 var errFirstChunkTimeout = errors.New("llmresilience: per-attempt timeout before first chunk")
 
+// permanentError wraps a provider error as port.PermanentError when the
+// resilience layer surfaces a non-retryable, non-transient rejection (a 4xx
+// other than 408/429 where the classifier already decided non-retryable). The
+// Unwrap chain passes through to the inner error so errors.As reaches it.
+type permanentError struct {
+	err error
+}
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
+func (*permanentError) Permanent() bool { return true }
+
+// asPermanent wraps a mid-stream error as port.PermanentError when the
+// classifier says non-retryable AND the error is not a caller cancellation
+// (context.Canceled). Mid-stream errors are never retried regardless, but a
+// non-retryable client rejection (400/401/403/404) carries the
+// port.PermanentError signal so callers can distinguish a permanent rejection
+// from a transient mid-stream failure (e.g. 429/503). Fail-open: any other
+// error (nil, cancellation, retryable/transient) is returned unchanged.
+func (p *resilientProvider) asPermanent(err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || p.cfg.Classifier(err) {
+		return err
+	}
+	return &permanentError{err: err}
+}
+
 // breakerState is the closed/open/half-open state machine, guarded by mu.
 type breakerState struct {
 	mu sync.Mutex
@@ -482,7 +508,7 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 				"model", req.Model,
 				"attempt", attempt+1,
 				"err", clampErr(err))
-			return nil, err
+			return nil, &permanentError{err: err}
 		}
 		// Backoff before the next attempt, unless this was the last one.
 		if attempt < p.cfg.MaxAttempts-1 {
@@ -702,34 +728,44 @@ func (p *resilientProvider) pullToCommit(
 // cancel so it cannot leak.
 func (p *resilientProvider) restSeq(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
 	if p.cfg.StreamIdleTimeout <= 0 {
-		return func(yield func(port.Chunk, error) bool) {
-			defer stop()
-			if cancel != nil {
-				defer cancel()
+		return p.restSeqUnbounded(model, next, stop, cancel)
+	}
+	return p.restSeqIdleBounded(model, next, stop, cancel)
+}
+
+// restSeqUnbounded is the restSeq variant with no idle timeout.
+func (p *resilientProvider) restSeqUnbounded(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
+	return func(yield func(port.Chunk, error) bool) {
+		defer stop()
+		if cancel != nil {
+			defer cancel()
+		}
+		for {
+			c, e, ok := next()
+			if !ok {
+				return
 			}
-			for {
-				c, e, ok := next()
-				if !ok {
-					return
-				}
-				if e != nil {
-					// Logged BEFORE the yield: an ordinary consumer BREAKS its range loop on
-					// the error, which makes yield return false — so a log placed after the
-					// yield-false return is unreachable on the very path that matters.
-					p.logMidStreamError(model, e)
-				}
-				if !yield(c, e) {
-					return
-				}
-				if e != nil {
-					return
-				}
+			if e != nil {
+				// Logged BEFORE the yield: an ordinary consumer BREAKS its range loop on
+				// the error, which makes yield return false — so a log placed after the
+				// yield-false return is unreachable on the very path that matters.
+				p.logMidStreamError(model, e)
+				e = p.asPermanent(e)
+			}
+			if !yield(c, e) {
+				return
+			}
+			if e != nil {
+				return
 			}
 		}
 	}
+}
 
-	// Idle-bounded variant. A real time.NewTimer is used (NOT cfg.Clock — that
-	// drives breaker math only, consistent with backoff()).
+// restSeqIdleBounded is the restSeq variant bounded by the stream-idle
+// watchdog. A real time.NewTimer is used (NOT cfg.Clock — that drives breaker
+// math only, consistent with backoff()).
+func (p *resilientProvider) restSeqIdleBounded(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
 	return func(yield func(port.Chunk, error) bool) {
 		defer stop()
 		if cancel != nil {
@@ -771,6 +807,7 @@ func (p *resilientProvider) restSeq(model string, next func() (port.Chunk, error
 					// See the non-idle variant above: logged BEFORE the yield because a
 					// consumer that breaks on the error makes yield return false.
 					p.logMidStreamError(model, r.e)
+					r.e = p.asPermanent(r.e)
 				}
 				if !yield(r.c, r.e) {
 					return

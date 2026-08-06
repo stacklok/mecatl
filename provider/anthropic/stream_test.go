@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -427,5 +428,58 @@ func TestStreamBufferCap(t *testing.T) {
 	}
 	if !strings.Contains(capErr.Error(), "buffer exceeded") {
 		t.Fatalf("cap error = %q, want a buffer-exceeded error", capErr)
+	}
+}
+
+// TestAnthropicStreamErrorPermanent exercises Permanent() on anthropicStreamError.
+// Non-retryable 4xx (≠408/429) and context-overflow messages are permanent;
+// transient codes (408, 429, 5xx) and unknown (0) are NOT permanent (fail-open).
+func TestAnthropicStreamErrorPermanent(t *testing.T) {
+	tests := []struct {
+		msg    string
+		status int
+		want   bool
+	}{
+		// Non-retryable 4xx — permanent client-side rejections.
+		{"stream error: invalid_request_error: bad request", 400, true},
+		{"stream error: permission_error: forbidden", 403, true},
+		{"stream error: not_found_error: not found", 404, true},
+		// Retryable codes — transient, NOT permanent.
+		{"stream error: rate_limit_error: too many requests", 429, false},
+		{"stream error: overloaded_error: server overloaded", 503, false},
+		{"head error: api_error: internal error", 500, false},
+		// Status 0 (unknown) — NOT permanent, fail-open.
+		{"stream error: unknown error", 0, false},
+		{"", 0, false},
+		// Context overflow — permanent even with transient-looking status.
+		{"stream error: api_error: Your input exceeds the context window of this model.", 500, true},
+		{"stream error: api_error: input exceeds the context length", 500, true},
+		{"stream error: api_error: maximum context length exceeded", 500, true},
+		{"stream error: api_error: prompt exceeds the token limit", 500, true},
+		{"stream error: api_error: request exceeded the token limit for this model", 500, true},
+	}
+	for _, tt := range tests {
+		e := &anthropicStreamError{msg: tt.msg, status: tt.status}
+		if got := e.Permanent(); got != tt.want {
+			t.Errorf("Permanent() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
+		}
+	}
+}
+
+// TestAnthropicStreamErrorErrorMessageUnchanged pins the invariant that wrapping
+// the error event does not change the Error() string.
+func TestAnthropicStreamErrorErrorMessageUnchanged(t *testing.T) {
+	e := &anthropicStreamError{msg: "stream error: overloaded_error: Overloaded", status: 503}
+	if got := e.Error(); got != "stream error: overloaded_error: Overloaded" {
+		t.Errorf("Error() = %q, want unchanged message", got)
+	}
+}
+
+// TestAnthropicStreamErrorUnwrap verifies Unwrap returns the inner error.
+func TestAnthropicStreamErrorUnwrap(t *testing.T) {
+	inner := errors.New("inner transport error")
+	e := &anthropicStreamError{err: inner, msg: "wrapped: " + inner.Error(), status: 0}
+	if !errors.Is(e, inner) {
+		t.Error("Unwrap should reach the inner error")
 	}
 }
