@@ -122,6 +122,18 @@ const (
 	// holds. It maps to the proto stop string verbatim (no proto enum; the wire stop
 	// field is a string passthrough, exactly like StopNoProgress).
 	StopBudget StopReason = "budget"
+	// StopTimeout means a per-fire wall-clock deadline expired (issue #386, the
+	// in-flight scheduled-fire state). Like StopBudget it is a CLEAN terminal
+	// (not StopError — nothing failed, the fire ran out of its allotted time), a
+	// budget exhaustion rather than a fault or cancel, routed through the same
+	// completed path as StopEndTurn, so the session ends COMPLETED and stays
+	// Reopen-recoverable. It is distinct from a per-call Subagent time-budget
+	// timeout (which lands StopCancelled on the child and renders as a tool
+	// error); StopTimeout is the scheduled-fire wall-clock deadline, checked at a
+	// turn boundary exactly like StopBudget. It maps to the proto stop string
+	// verbatim (no proto enum; the wire stop field is a string passthrough, exactly
+	// like StopNoProgress / StopBudget).
+	StopTimeout StopReason = "timeout"
 	// StopStructuredOutput means a structured-output (output_schema) child run
 	// exhausted its bounded SubmitResult validation-retry budget without ever
 	// producing a schema-valid payload. Like StopNoProgress / StopBudget it is a

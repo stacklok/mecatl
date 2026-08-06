@@ -149,6 +149,43 @@ Two metrics instruments are emitted:
 
 Neither carries a role label — a fire's own run already reports `role="main"` on its usual per-run metrics.
 
+## Shutdown and in-flight fires
+
+Quitting an embedded `mecatui` (or stopping a `mecated`) runs a **bounded** shutdown
+(issue #388): an in-flight fire is **cancelled**, its session snapshot is persisted as
+`cancelled` (recoverable on the next run via the normal resume path, never left
+permanently `running`/`pending`), and the whole cleanup is capped — it cannot hang on
+a stuck fire, MCP server, or gRPC stream. A second `SIGINT`/`SIGTERM` during cleanup
+forces an immediate exit. See the [mecatui shutdown contract](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#shutdown)
+for the per-layer timeout budget.
+
+## Live-fire notifications reconnect automatically
+
+When a fire's result reports back into the conversation that created it, `mecatui`
+receives it over a live session feed. If that feed drops (a server restart, a network
+blip, a proxy idle timeout), the TUI now **reconnects automatically** with bounded
+backoff and catches up on any delivery note emitted during the gap — rendering it
+exactly once — instead of silently going quiet (issue #387). A brief "live feed
+reconnecting…" cue shows in the footer while it recovers; no reload or re-prompt is
+needed.
+
+## Watching a fire while it runs
+
+A fire is observable **in-flight**, not only after it completes (issue #386).
+`ScheduleQuery inspect` (and the `/schedule` overlay, and the gRPC/HTTP schedule
+surface) show a claimed fire as `in-flight: claimed (session pending)` the moment
+it's picked up — never an ambiguous "no fires" — then `in-flight` with its start
+time, last-progress time, and deadline while it runs. You get a "started" notice in
+the originating conversation as soon as the fire's session exists, and the terminal
+result when it finishes.
+
+Each fire has a **wall-clock deadline** (`fire_timeout` on the schedule spec; a
+30-minute default otherwise). A fire that runs past it terminates with a `timeout`
+stop reason — distinguishable from a manual cancel — and its session stays
+recoverable. If the process crashes mid-fire, the next leader reconciles the orphaned
+fire to a terminal `timeout`/`error` record instead of leaving it `pending` forever,
+so a crashed fire is never mistaken for a live one.
+
 ## What's next
 
 - [Operator deployment — mecated](/deployment/mecated.md) for the full flag reference and how the scheduler fits into a running server.

@@ -201,7 +201,7 @@ func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	fire := makeFireFunc(svc)
+	fire := makeFireFunc(svc, store.ScheduleStore(), defaultFireTimeout, nil)
 	sched := port.Schedule{
 		Spec: port.ScheduleSpec{
 			Name:      "lease-release",

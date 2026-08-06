@@ -20,6 +20,12 @@ type SessionSnapshot struct {
 	State         string
 	ResolvedModel ResolvedModel
 	Title         string
+	// Capabilities is the server's feature-advertisement snapshot from the Session
+	// proto (the SAME value CreateSessionResponse carries). A client that re-hydrates
+	// a persisted session on adopt (continue, /effort fork) reads this to re-derive
+	// its affordances. An older server (nil field) yields the zero value, which the
+	// consumer treats as "keep current caps" (fail-conservative).
+	Capabilities Capabilities
 }
 
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
@@ -31,6 +37,7 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		State:         s.GetState(),
 		ResolvedModel: resolvedModelFrom(s.GetResolvedModel()),
 		Title:         s.GetTitle(),
+		Capabilities:  capabilitiesFrom(s.GetCapabilities()),
 	}
 }
 
@@ -66,8 +73,9 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 }
 
 // ResolvedModelMsg carries the result of a GetSession refetch (the footer
-// context-meter heal, issue #66, and the plan-approval mode+model refresh,
-// issue #206). SessionID is STAMPED on every result — success AND error — so
+// context-meter heal, issue #66, the plan-approval mode+model refresh,
+// issue #206, and the caps-heal path for /sessions continue + /effort fork,
+// issue #348). SessionID is STAMPED on every result — success AND error — so
 // the reducer can drop a result that landed AFTER a /models switch rebound the
 // ui to a new session (a stale window must never clobber the new session's
 // denominator). Err set ⇒ the refetch failed; the reducer keeps the current
@@ -82,6 +90,12 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 // paths where the server already set a title this client never saw (the on-sent
 // set-once in submitPrompt only seeds from a prompt the user typed HERE). The
 // reducer adopts it only when the local sessionTitle is still empty (set-once).
+//
+// Capabilities carries the server's feature-advertisement snapshot from the
+// Session proto (issue #348). It arrives on the SAME GetSession refetch so the
+// caps-heal path (/sessions continue, /effort fork) can re-derive affordances in
+// one round-trip. A zero value means an older server (field absent) — the reducer
+// keeps the current caps untouched (fail-conservative).
 type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel
@@ -89,7 +103,9 @@ type ResolvedModelMsg struct {
 	// Title is the session's stored title from the snapshot (self-heal channel for
 	// the window title). See the struct doc.
 	Title string
-	Err   error
+	// Capabilities is the server's feature-advertisement snapshot. See the struct doc.
+	Capabilities Capabilities
+	Err          error
 }
 
 // SessionGetter is the narrow subset of *Client that RefreshResolvedModelCmd needs.
@@ -134,9 +150,11 @@ func SetModeCmd(ctx context.Context, s ModeSetter, id, mode string) tea.Cmd {
 //
 // Mode is carried alongside ResolvedModel so the reducer can update both the mode
 // echo and the effective model in one refetch (reusing the ResolvedModelMsg arm).
+// Capabilities is carried so the caps-heal path (/sessions continue, /effort fork,
+// issue #348) can re-derive affordances in the same round-trip.
 func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) tea.Cmd {
 	return func() tea.Msg {
 		snap, err := g.GetSession(ctx, id)
-		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode, Title: snap.Title, Err: err}
+		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode, Title: snap.Title, Capabilities: snap.Capabilities, Err: err}
 	}
 }

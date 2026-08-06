@@ -5184,6 +5184,93 @@ self-correct test (`internal/app/session_engine_test.go`
 (`TestSharedAndSelectorEngineResolveSameSource`), and the selector echo heal
 (`internal/adapter/server/resolved_model_test.go` `TestServiceResolvedModelSelectorLiveFirst`).
 
+**Bounded shutdown (issue #388).** Embedded-mecatui shutdown is bounded end to end so
+quitting on an in-flight scheduled fire cannot hang the process. Each layer has a
+package-level test-overridable `var` timeout and abandons (WARN via the injected
+`port.Diagnostics`) rather than block unboundedly: `embed.Server.Close` bounds gRPC
+`GracefulStop` (`gracefulStopTimeout` 30s) with a hard `grpc.Server.Stop()` fallback
+and bounds composition teardown (`compositionCloseTimeout` 10s); `Scheduler.Stop`
+bounds the leadership-loop and epoch joins (`stopLeadershipJoinTimeout` 5s each);
+`Service.Close` cancels in-flight runs via `run.Cancel()` — EXCLUDING runs parked on
+a permission ask whose durable awaiting snapshot is the cloud-native Phase-2 resume
+point (the race-free `runState.awaiting` atomic, set by `Persist` only AFTER the
+durable `Save` lands) — and bounds per-session engine close (`engineCloseTimeout`
+10s); `mcp.Manager.Close` is bounded by `managerCloseTimeout` (5s). In `cmd/mecatui`,
+`setupSignalHandler` owns the signal channel as its SOLE consumer (no `signal.Stop`
+on the force-exit path) so a second `SIGINT`/`SIGTERM` during cleanup deterministically
+hard-exits `os.Exit(130)`, and `runCleanup` bounds the whole post-quit cleanup at 45s
+(retiring the handler only after cleanup completes, so the force-exit window is never
+raced). A shutdown-cancelled fire is persisted terminal via `settleFireTerminalSnapshot`
+(`internal/app/scheduler_fire.go`) calling `Service.Persist` — the session lands
+`cancelled` (Interrupt-recoverable) and `RecordFire` stores the real fire id, never
+`pending`. Covered by `cmd/mecatui/embed/shutdown_e2e_test.go` (the blocked-fire e2e),
+`close_internal_test.go`, `internal/adapter/server/close_test.go`, and
+`internal/app/scheduler_fire_cancel_test.go`.
+
+**In-flight fire state (issue #386, ADR 0097).** A scheduled fire is observable
+while it runs — previously a claimed fire was invisible until `RecordFire`,
+rendering `fires: none` (ambiguous: running / stuck / crashed / RecordFire-failed).
+The in-flight fire is now a first-class PERSISTED lifecycle stage in the durable
+store (`engine/port/schedule.go`): `ScheduleState` gains
+`LastFireStartedAt`/`LastFireProgressAt`/`FireDeadline`, `ScheduleFire` gains
+`StartedAt`/`ProgressAt`/`Deadline`, `ScheduleSpec` gains `FireTimeout`, and
+`ScheduleStore` gains `RecordFireStart` (persist the in-flight fire — empty `Stop` —
+and stamp the real `sched--` session id early) + `RecordFireProgress` (advance
+last-progress; one write per turn boundary, never per chunk). `RecordFire` flips
+terminal + clears the in-flight fields; `Claim`/`ClaimNow` zero them. All three
+backends (memschedulestore/jsonlstore/redisstore) implement the methods; the
+scheduleconformance suite pins the contract. The fire lifecycle
+(`internal/app/scheduler_fire.go` `makeFireFunc`) calls `RecordFireStart` right
+after session create, arms a `time.AfterFunc` watchdog that cancels the run via the
+`Service.Cancel`/`run.Cancel` seam after `effectiveFireDeadline`
+(`spec.FireTimeout`, else `defaultFireTimeout` = 30m, test-overridable), and
+overrides a deadline-fired `StopCancelled` to the new `session.StopTimeout` (a
+clean, recoverable budget terminal — a `StopBudget` sibling) with an honest error.
+`deliverFireStarted` (`internal/app/scheduler_delivery_run.go`) enqueues a
+fenced-untrusted, harness-authored "started" notice to the SAME `DeliveryQueue`
+exactly-once ledger (a distinct entry from the terminal note, no model content).
+The stale reconciler keeps the scheduler storage-agnostic: it DETECTS stale
+in-flight state store-only (the `pending` sentinel past the window, or a real
+in-flight fire whose prior-fire lease is no longer live) and RECONCILES via a
+composition-injected `ReconcileStaleFire` callback (crash-after-Claim → terminal
+`StopError`; crash-after-session → session settled `cancelled` + `StopError`); a
+live fire (lease held) is never reconciled. All three surfaces
+(`engine/agent/scheduletool.go` `renderScheduleInspect`, the gRPC/HTTP wire mappers
+in `internal/adapter/server/grpc_schedule.go`, the `cmd/mecatui` overlay) render a
+claimed fire as `in-flight: claimed (session pending)` — never `fires: none` — and
+an in-flight fire with started/last-progress/deadline. Covered by
+`internal/app/scheduler_fire_state_test.go`, `scheduler_reconcile_test.go`,
+`internal/adapter/server/schedule_inflight_wire_test.go`, and the agent/TUI render
+tests.
+
+**Live-feed reconnect (issue #387, ADR 0096).** The mecatui per-session
+`StreamSessionLive` subscription self-heals: a clean close or a transient error on
+the live reader now drives a client-owned reconnect instead of the old silent-drop.
+The reconnect is entirely a `cmd/mecatui` concern (the server is unchanged — no
+engine-port or proto widening): `client.ReconnectLiveCmd`/`reconnectLiveLoop`
+(`cmd/mecatui/client/events.go`) runs a bounded exponential-backoff loop (base
+500ms, ×2 per attempt, cap 30s, ±20% jitter — package-level test-overridable `var`s
+in `cmd/mecatui/client/backoff.go`) that, per attempt, (a) drains the durable
+catch-up via the EXISTING `StreamSessionEvents` full replay (recovering any
+fire-result delivery note emitted during the gap — NO `from_seq`/`log_seq` cursor)
+and (b) re-opens `StreamSessionLive`. Exactly-once is a CLIENT-side FireID dedup,
+not a server ordinal: the ui's `seenFireIDs` set (keyed on `DeliveryNoteMsg.FireID`,
+stable across replay + live) suppresses a note that arrives via BOTH the catch-up
+and the re-opened live feed — the single dedup site is `applyDeliveryNote`
+(`cmd/mecatui/ui/update.go`), which BOTH the live path and the catch-up path funnel
+through. The reconnect loop gets its OWN generation guard (`liveReconGen`, parallel
+to `liveGen`) so a stale reconnect reader after a session switch is dropped WITHOUT
+reconnecting the old session, and a second reconnect for the same session is refused
+(no duplicate concurrent subscriptions); `disarmLiveFeed`/`resetSession` tear it
+down. The degraded state is a concise footer cue ("live feed reconnecting (attempt
+N)…", `idleFooterLeft` in `cmd/mecatui/ui/view.go`), cleared on reconnect — not a
+new UI phase. The fenced delivery discriminator (`deliverNoteFrom`) is unchanged and
+regression-pinned (an un-fenced `[scheduled task …` prompt is never misclassified).
+The full-replay-per-reconnect is O(log) not O(gap) — accepted (the real gap is a
+handful of buffered events); the server-side cursor is the documented upgrade path
+if a deployment proves it hot. Covered by `cmd/mecatui/client/reconnect_test.go` +
+`cmd/mecatui/ui/reconnect_live_test.go`.
+
 ## Store drivers — `contracts/proto/mecatl/driver/v1/` + `internal/adapter/grpcdriver/` + `engine/adapter/storeconformance/` (Phase B)
 
 The remote-store seam: `SessionStoreService` (behind `port.SessionStore`) and

@@ -593,6 +593,13 @@ const leaseRenewFraction = 2
 // ErrConfig is returned by NewService when a required dependency is missing.
 var ErrConfig = errors.New("server: invalid config")
 
+// engineCloseTimeout bounds how long Close waits for all per-session engine close
+// calls to complete before proceeding. It is a `var` (not a const) so a test can
+// shrink it to assert Close is bounded; production keeps the conservative default.
+// A wedged engine close that ignores its deadline is abandoned (best-effort), never
+// allowed to stall shutdown unboundedly.
+var engineCloseTimeout = 10 * time.Second
+
 // Service is the surface-agnostic application service shared by the gRPC and
 // HTTP/SSE adapters. It owns session lifecycle (create/lookup), starts runs on
 // the shared engine, and keeps a registry of in-flight runs keyed by session id
@@ -747,6 +754,11 @@ type Service struct {
 	// the run-entry hot path (no s.mu).
 	draining atomic.Bool
 
+	// shutdownCancel is called at the START of Close to signal shutdown; currently
+	// its only effect is to mark the closing state (in-flight runs are cancelled
+	// explicitly via run.Cancel below). Kept as a one-time idempotent signal.
+	shutdownCancel context.CancelFunc
+
 	// schedMgr is the embedded store-shaped schedule manager (ADR 0076): the
 	// single truth the Service's nine port.ScheduleManager methods +
 	// EmitScheduleEvent + GetFire delegate to. Constructed in NewService from
@@ -822,9 +834,22 @@ type sessionEngine struct {
 // runState couples an in-flight *agent.Run with the live *session.Session the
 // engine mutates in place, so the Service can persist the current session state
 // (e.g. on entering awaiting, or at run end) without re-loading from the store.
+//
+// awaiting is an atomic flag that Persist sets when the session is StateAwaiting
+// — i.e. the run is parked on a permission ask and a durable StateAwaiting
+// snapshot has been persisted (the relay's Persist-on-ask). It is read by Close to
+// EXCLUDE such runs from the shutdown cancel loop (cancelling them would
+// overwrite the resumable awaiting snapshot with cancelled). Reading the live
+// sess.State from Close would race the engine loop's mutation; the flag is the
+// race-free signal (Persist reads sess.State only when the loop is parked/done —
+// see Persist's doc). A fire-driven run (no wire relay) never marks it, so it is
+// cancelled on shutdown like any mid-stream run — which is correct: the fire path
+// does not persist an awaiting snapshot, so there is no resumable state to
+// preserve.
 type runState struct {
-	run  *agent.Run
-	sess *session.Session
+	run      *agent.Run
+	sess     *session.Session
+	awaiting atomic.Bool
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -913,8 +938,10 @@ func NewService(cfg Config) (*Service, error) {
 			cfg.LeaseRenewInterval = cfg.LeaseTTL // tiny-TTL guard: never a zero ticker.
 		}
 	}
+	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
 		cfg:               cfg,
+		shutdownCancel:    shutdownCancel,
 		runs:              make(map[session.SessionID]*runState),
 		teams:             make(map[string]*teamState),
 		sessionEngines:    make(map[session.SessionID]*sessionEngine),
@@ -1570,6 +1597,46 @@ func (s *Service) EndSession(ctx context.Context, id session.SessionID) error {
 // shutdown hook so a process exit does not leak any per-session MCP connection.
 // It is safe to call multiple times.
 func (s *Service) Close() {
+	// Signal shutdown so in-flight runs (scheduled fires and foreground turns)
+	// observe the cancellation and unwind. This fires BEFORE the scheduler stop
+	// and before engine-close so runs unblock promptly rather than waiting on
+	// the full shutdown sequence.
+	s.shutdownCancel()
+
+	// Cancel every in-flight run so an LLM/MCP call blocked on its context
+	// unwinds. Snapshot under s.mu, then cancel outside to avoid holding the
+	// lock across Cancel (which may block briefly on hardAbort).
+	//
+	// AWAITING runs are EXCLUDED: a run parked on a permission ask persists a
+	// durable StateAwaiting snapshot (the relay's Persist-on-ask) that is the
+	// cloud-native Phase 2 resume point — a restarted process (or a peer replica)
+	// re-enters the loop at the ask via ApproveRun/ApprovePlan (Engine.
+	// ResumeApproval). Cancelling such a run would transition awaiting→cancelled
+	// and persist the cancelled snapshot OVER the awaiting one, destroying the
+	// cross-process resume contract. The parked run's goroutine waits on
+	// askRegistry.await (ctx-gated, but we do NOT cancel it); it is goleak-ignored
+	// (leakmain_test.go), so leaving it parked across Close is leak-clean, and the
+	// durable awaiting snapshot survives the shutdown. The awaiting signal is the
+	// race-free runState.awaiting atomic that Persist sets when the session is
+	// StateAwaiting (the relay calls Persist on EvPermissionAsk; reading sess.State
+	// there races no concurrent loop write — the loop is parked). A fire-driven run
+	// (no relay) never marks the flag, so it is cancelled like any mid-stream run —
+	// correct, since the fire path persists no awaiting snapshot to preserve.
+	// Mid-stream (StateRunning) runs have no durable mid-flight snapshot, so they
+	// ARE cancelled to unwind blocked LLM/MCP calls (the Task #3 intent).
+	s.mu.Lock()
+	var runs []*runState
+	for _, rs := range s.runs {
+		runs = append(runs, rs)
+	}
+	s.mu.Unlock()
+	for _, rs := range runs {
+		if rs.awaiting.Load() {
+			continue // resumable cross-process via the durable awaiting snapshot
+		}
+		rs.run.Cancel()
+	}
+
 	// Stop the scheduler FIRST so in-flight fires drain while the service is
 	// still alive to serve them (the FireFunc drives StartRunContent on this
 	// Service). Stop cancels the tick loop, joins in-flight fires (with a grace),
@@ -1616,11 +1683,27 @@ func (s *Service) Close() {
 		leasedIDs = append(leasedIDs, id)
 	}
 	s.mu.Unlock()
-	for _, se := range engines {
-		if se.close != nil {
-			_ = se.close()
+
+	// Close every per-session engine in a goroutine with a BOUNDED timeout so a
+	// stuck engine close (e.g. a wedged MCP transport) cannot stall shutdown
+	// unboundedly. On timeout the goroutine is abandoned (best-effort) and a
+	// WARN is logged; the leases still release so the process can exit.
+	done := make(chan struct{})
+	go func() {
+		for _, se := range engines {
+			if se.close != nil {
+				_ = se.close()
+			}
 		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(engineCloseTimeout):
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "timed out waiting for per-session engine close; abandoning",
+			"timeout", engineCloseTimeout.String())
 	}
+
 	// Stop every renewer and release every held cross-process lease on shutdown
 	// (cloud-native Phase 4), so a restarted process can take the sessions over
 	// without waiting out the TTL. Best-effort (detached short-timeout ctx).
@@ -3003,6 +3086,16 @@ func (s *Service) noActiveRun(ctx context.Context, id session.SessionID) error {
 // after a restart) and at run end (so the terminal state is durable). The engine
 // mutates the session in place, so this captures whatever state it is in now. A
 // best-effort no-op when no run is registered.
+//
+// When the session is StateAwaiting, Persist also marks the runState.awaiting
+// flag (race-free for Close's cancel loop). The flag is the signal Close uses to
+// EXCLUDE a parked-awaiting run from the shutdown cancel loop: cancelling such a
+// run would overwrite the durable awaiting snapshot (the cloud-native Phase 2
+// resume point) with cancelled. Persist is called by the relay/test AFTER
+// observing an event (EvPermissionAsk → loop parked, or EvResult → loop done), so
+// reading sess.State here races no concurrent loop write (the loop is parked or
+// exited; the state write happened-before the event the caller observed). The
+// flag is a server-layer atomic, never read by the engine loop.
 func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	s.mu.Lock()
 	st, ok := s.runs[id]
@@ -3010,11 +3103,22 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if !ok {
 		return
 	}
-	if err := s.cfg.Store.Save(ctx, st.sess); err != nil {
+	// Save FIRST, then mark awaiting on success (H1 ordering): the flag must be
+	// set only after the durable StateAwaiting snapshot has actually landed, so
+	// Close (which skips cancelling awaiting runs) never skips a run whose
+	// resumable snapshot was never persisted. Set-before-save would let Close
+	// skip a run whose Save then fails, losing the resume point.
+	err := s.cfg.Store.Save(ctx, st.sess)
+	if err != nil {
 		// Persistence is best-effort: a Save failure must not break the live
 		// stream. The run continues from in-memory state; only resume-across-
-		// restart is affected.
+		// restart is affected. Leave the awaiting flag unset so Close still
+		// cancels this run (there is no durable snapshot worth preserving).
 		_ = err
+		return
+	}
+	if st.sess.State == session.StateAwaiting {
+		st.awaiting.Store(true)
 	}
 }
 
@@ -3060,6 +3164,20 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 // cancel-on-error, and its drain-to-discard guard.
 func (s *Service) relayEvent(ctx context.Context, logCtx context.Context, id session.SessionID, ev session.Event, autoApprove bool) (forward bool) {
 	s.appendEvent(logCtx, id, ev)
+	// A non-ask event means the run is PROGRESSING (a tool result, a turn end, a
+	// verdict, the terminal EvResult) — it is no longer parked awaiting. Clear the
+	// runState.awaiting flag so Close's cancel loop does not skip a resumed-mid-
+	// stream run (which would leave it StateRunning in the store on shutdown). The
+	// flag is (re)set by Persist when EvPermissionAsk parks the run again. Race-free:
+	// the atomic is mutated here on the relay thread and only read by Close. EvPermissionAsk
+	// itself is handled below (Persist sets the flag), so it is excluded from this clear.
+	if ev.Type != session.EvPermissionAsk {
+		s.mu.Lock()
+		if st, ok := s.runs[id]; ok {
+			st.awaiting.Store(false)
+		}
+		s.mu.Unlock()
+	}
 	// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
 	// consumed by the durable log ONLY — appended above but NOT relayed to the
 	// client wire (the verdict record, the pre-compaction archive, and the

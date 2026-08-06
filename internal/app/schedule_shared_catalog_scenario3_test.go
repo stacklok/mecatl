@@ -266,7 +266,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 		Diagnostics:  port.NopDiagnostics{},
 		TickInterval: time.Hour, // the manual FireNow path drives the test
 	})
-	sched.SetFire(makeFireFunc(built.Service))
+	sched.SetFire(makeFireFunc(built.Service, schedStore.ScheduleStore(), defaultFireTimeout, nil))
 	sched.SetDeliverFireResult(deliverFireResult(built.Service, queue))
 	defer func() { _ = sched.Stop() }()
 

@@ -906,11 +906,17 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 	// The short tick fires the one-shot; the scheduler drives deliverFireResult;
 	// the delivery run's EvUserPrompt is fanned to this subscription and relayed
 	// live (the ONE log-only-kind exception).
-	const deliveryHeaderPrefix = "[scheduled task "
+	// The started notice ("... started (fire ...)") and the terminal note
+	// ("... completed with stop reason: ...") both carry the delivery header
+	// prefix "[scheduled task <name> (fire <id>)"; this test asserts the TERMINAL
+	// delivery, so match the stop-reason marker, not just the shared prefix (a
+	// started note arriving first would otherwise satisfy the looser match and
+	// the stop-reason assertion would fail).
+	const terminalMarker = "completed with stop reason:"
 	deadline := time.Now().Add(15 * time.Second)
 	var deliveredNote string
 	for {
-		if txt, ok := liveFirstUserPromptContaining(&evMu, &evs, deliveryHeaderPrefix); ok {
+		if txt, ok := liveFirstUserPromptContaining(&evMu, &evs, terminalMarker); ok {
 			deliveredNote = txt
 			break
 		}

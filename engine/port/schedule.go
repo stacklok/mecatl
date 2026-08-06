@@ -273,6 +273,16 @@ const (
 //     failure (not found, decode error) the fire degrades to fresh-context
 //     (WARN, never fails the fire). A re-armed one-shot does NOT carry context
 //     on the retry.
+//   - FireTimeout is the per-fire wall-clock deadline (issue #386, the in-flight
+//     scheduled-fire state). Zero means "use the deployment default" (a zero here
+//     is NOT "no timeout" — it defers to the operator-tier deployment default,
+//     which may itself be zero for "no explicit deadline"). When non-zero,
+//     RecordFireStart stamps ScheduleState.FireDeadline = start + FireTimeout,
+//     and a watchdog terminates the in-flight run with session.StopTimeout (a
+//     CLEAN, recoverable terminal, like StopBudget) when it lapses. It bounds a
+//     single fire's RUN, not the schedule's lifetime (MaxFires bounds the count).
+//     The store stores it inertly (the store never interprets it); composition
+//     reads it at fire-start.
 type ScheduleSpec struct {
 	Name      string
 	Prompt    string
@@ -322,6 +332,18 @@ type ScheduleSpec struct {
 	// class as the other spec rejections). An empty OriginSessionID is always
 	// valid (delivery is OFF — the byte-identical pre-delivery posture).
 	OriginSessionID session.SessionID
+	// FireTimeout is the per-fire wall-clock deadline (issue #386, the in-flight
+	// scheduled-fire state). Zero means "use the deployment default" (the operator-
+	// tier default applied by composition; a zero here is NOT "no timeout" — it
+	// defers to the deployment default, which may itself be zero for "no explicit
+	// deadline"). When non-zero, RecordFireStart stamps FireDeadline = start +
+	// FireTimeout on the ScheduleState, and a watchdog reads FireDeadline to
+	// terminate the in-flight run with session.StopTimeout when it lapses (a CLEAN,
+	// recoverable terminal, like StopBudget). It bounds a single fire's RUN, not
+	// the schedule's lifetime (MaxFires bounds the count). Per-fire: each fire gets
+	// a fresh deadline from its own start instant. The store stores it inertly
+	// (the store never interprets it); composition reads it at fire-start.
+	FireTimeout time.Duration
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half that
@@ -368,6 +390,31 @@ type ScheduleState struct {
 	// schedule never re-arms (a cron self-heals via misfire) so the counter stays
 	// 0 for cron.
 	OneShotRetryCount int
+	// LastFireStartedAt is when the current fire's RUN actually began — the instant
+	// the fire's session was driven (RecordFireStart), DISTINCT from LastFireAt
+	// which is the Claim instant (a claim-before-fire advance happens BEFORE the
+	// run starts, so LastFireStartedAt >= LastFireAt). It is the in-flight liveness
+	// marker: zero means "the current fire has not started its run yet" (the
+	// crash-after-Claim state — Claim happened, RecordFireStart did not). Set by
+	// RecordFireStart, cleared by RecordFire (a terminal fire has no in-flight run).
+	// Issue #386.
+	LastFireStartedAt time.Time
+	// LastFireProgressAt is the last observed progress instant for the current
+	// fire (RecordFireProgress), advanced as the fire's run produces events. Zero
+	// means "no progress observed yet" (the run started but has not emitted, or
+	// RecordFireProgress was never called). It is best-effort liveness: a stale
+	// value (far behind the wall-clock) is a stuck-fire signal a watchdog may act
+	// on. Set by RecordFireStart (seeded to the start instant) and RecordFireProgress;
+	// cleared by RecordFire. Issue #386.
+	LastFireProgressAt time.Time
+	// FireDeadline is the current fire's wall-clock deadline — the instant at
+	// which the fire is considered to have exceeded its per-fire timeout
+	// (ScheduleSpec.FireTimeout, the deployment default when zero). It is set by
+	// RecordFireStart (start + FireTimeout, or zero when FireTimeout is zero / the
+	// deployment default applies) and cleared by RecordFire. A watchdog reads it to
+	// decide whether to terminate the in-flight run with StopTimeout. Zero means
+	// "no explicit deadline (default or not set)". Issue #386.
+	FireDeadline time.Time
 }
 
 // Schedule is the aggregate value object a ScheduleStore returns from Load/List:
@@ -397,6 +444,20 @@ type ScheduleFire struct {
 	// FiredAt is when the fire was Claimed (its start instant). It is the same
 	// instant recorded as LastFireAt on the schedule.
 	FiredAt time.Time
+	// StartedAt is when the fire's run actually began (RecordFireStart). It is
+	// distinct from FiredAt (the Claim instant): a fire is Claimed BEFORE its run
+	// starts, so StartedAt >= FiredAt. A fire written by RecordFireStart is
+	// IN-FLIGHT (Stop empty, StartedAt set); a fire written by RecordFire is
+	// terminal. Zero on a terminal-only fire (one never observed in-flight by the
+	// store, e.g. a legacy record). Issue #386.
+	StartedAt time.Time
+	// ProgressAt is the last observed progress instant for the fire
+	// (RecordFireProgress). Zero means "no progress observed". Issue #386.
+	ProgressAt time.Time
+	// Deadline is the fire's wall-clock deadline (RecordFireStart): start +
+	// ScheduleSpec.FireTimeout (or zero when FireTimeout is zero / the deployment
+	// default applies). Zero means "no explicit deadline". Issue #386.
+	Deadline time.Time
 	// Stop is the terminal stop reason of the fire's run (the same
 	// session.StopReason EvResult carries). Empty if the fire has not yet
 	// completed.
@@ -542,7 +603,58 @@ type ScheduleStore interface {
 	// may safely retry after a transient infrastructure failure. The not-found
 	// case (the schedule was deleted between Claim and RecordFire) wraps
 	// ErrScheduleNotFound.
+	//
+	// It FLIPS the fire terminal and clears the in-flight ScheduleState fields
+	// (LastFireStartedAt/LastFireProgressAt/FireDeadline) — a recorded (terminal)
+	// fire has no in-flight run. It overwrites any in-flight fire record the same
+	// f.ID had under RecordFireStart with the terminal one (Stop/Err set). Issue #386.
 	RecordFire(ctx context.Context, f ScheduleFire) error
+
+	// RecordFireStart persists the IN-FLIGHT fire (issue #386, the in-flight
+	// scheduled-fire state) — the fire's run has begun but not yet produced a
+	// terminal outcome. It persists the fire record f (ID, SessionID, StartedAt,
+	// Deadline) as IN-FLIGHT: Stop empty, StartedAt set. It also sets
+	// ScheduleState.LastFireSessionID to the REAL session id f.SessionID
+	// (overwriting the port.PendingFireSessionID sentinel Claim stamped) and
+	// ScheduleState.LastFireStartedAt to f.StartedAt (and seeds
+	// LastFireProgressAt to f.StartedAt when the caller passed a zero ProgressAt).
+	// The FireDeadline field on the state is set to f.Deadline (zero when no
+	// explicit deadline applies). The not-found case (the schedule was deleted
+	// between Claim and RecordFireStart) wraps ErrScheduleNotFound.
+	//
+	// It is IDEMPOTENT per fire id: recording the same f.ID twice (with the same
+	// StartedAt) is a no-op for the in-flight record (it does not re-stamp or
+	// double-advance), so a caller may safely retry after a transient
+	// infrastructure failure. A RecordFireStart for a fire id that is ALREADY
+	// terminal (a prior RecordFire recorded it) is a no-op too (a terminal fire
+	// is not re-opened) — the caller should not interleave RecordFireStart after
+	// RecordFire, but the store is honest about it. Issue #386.
+	RecordFireStart(ctx context.Context, name string, fire ScheduleFire) error
+
+	// RecordFireProgress advances the in-flight fire's last-observed-progress
+	// instant (issue #386). It updates ScheduleState.LastFireProgressAt to `at`
+	// (when `at` is after the stored value; an earlier `at` is ignored so a
+	// reordered/delayed update cannot rewind progress) and the in-flight fire
+	// record's ProgressAt to `at`.
+	//
+	// fireID is the id of the in-flight fire record the caller's RecordFireStart
+	// wrote (the same `fire.ID` RecordFireStart took). It targets the SINGLE fire
+	// record by its known key directly — there is NO directory/keyspace scan to
+	// locate the schedule's in-flight fire (review finding M1: scanning every fire
+	// record under the store mutex on every turn boundary is O(N) in the fire
+	// population, up to ~10k with 7d retention, and blocks Claim/RecordFire/List/
+	// Due). The caller (the fire loop) has fireID in scope.
+	//
+	// It is BEST-EFFORT and IDEMPOTENT: a missing in-flight fire record (no prior
+	// RecordFireStart, or it was already flipped terminal) is a no-op success (the
+	// progress is recorded on the state alone), and a not-found SCHEDULE wraps
+	// ErrScheduleNotFound. It never re-opens a terminal fire: a progress write to
+	// an already-TERMINAL fire record is a no-op for the record (it MUST NOT
+	// revert the record from terminal back to in-flight — review finding M2, the
+	// cross-replica race a non-atomic GET-then-SET had where a concurrent terminal
+	// RecordFire's SET landing between the GET and SET reverted the record). Issue
+	// #386.
+	RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error
 
 	// LoadFire returns the fire record stored under fireID. The not-found case
 	// wraps ErrScheduleNotFound; any other error is an infrastructure failure. It

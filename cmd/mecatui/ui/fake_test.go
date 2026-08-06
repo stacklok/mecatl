@@ -216,6 +216,11 @@ type fakeConv struct {
 	getSessionErr     error
 	getSessionCount   int
 	getSessionTitle   string
+	// getSessionCaps, when non-zero, is returned as the snapshot's Capabilities
+	// (the caps-heal channel for /sessions continue + /effort fork, issue #348).
+	// A zero value (default, no field set) models an older server that omits the
+	// field.
+	getSessionCaps client.Capabilities
 
 	// ForkSession recorders (ADR 0068 effort fork-resume). forkedFrom/forkedEffort
 	// record the LAST fork's source id + effort override; forkCount counts calls.
@@ -286,7 +291,7 @@ func (c *fakeConv) GetSession(_ context.Context, _ string) (client.SessionSnapsh
 	if mode == "" {
 		mode = client.ModeDefaultString
 	}
-	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved, Title: c.getSessionTitle}, nil
+	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved, Title: c.getSessionTitle, Capabilities: c.getSessionCaps}, nil
 }
 
 func (c *fakeConv) SetMode(_ context.Context, _ string, mode string) (string, error) {

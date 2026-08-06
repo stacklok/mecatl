@@ -3,6 +3,7 @@ package jsonlstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -260,6 +261,12 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 	st.NextFireAt = nextFire
 	st.FireCount++
 	st.LastFireSessionID = port.PendingFireSessionID
+	// A fresh claim has no in-flight run yet: zero the in-flight fields a prior
+	// fire's RecordFireStart may have set (issue #386). RecordFireStart sets them;
+	// RecordFire clears them; a new Claim starts from a clean slate.
+	st.LastFireStartedAt = time.Time{}
+	st.LastFireProgressAt = time.Time{}
+	st.FireDeadline = time.Time{}
 	if nextFire.IsZero() {
 		// A one-shot fired, or a cron whose MaxFires is exhausted: no further
 		// fire. The schedule is DONE.
@@ -302,6 +309,10 @@ func (s *scheduleStore) ClaimNow(_ context.Context, name string, now, nextFire t
 	st.NextFireAt = nextFire
 	st.FireCount++
 	st.LastFireSessionID = port.PendingFireSessionID
+	// A fresh claim has no in-flight run yet (see Claim's comment).
+	st.LastFireStartedAt = time.Time{}
+	st.LastFireProgressAt = time.Time{}
+	st.FireDeadline = time.Time{}
 	if nextFire.IsZero() {
 		st.Enabled = false
 	}
@@ -312,17 +323,121 @@ func (s *scheduleStore) ClaimNow(_ context.Context, name string, now, nextFire t
 	return port.Schedule{Spec: cloneSpec(spec), State: st}, nil
 }
 
+// RecordFireStart persists the IN-FLIGHT fire (issue #386): the fire's run has
+// begun but not yet produced a terminal outcome. It writes the fire record
+// (in-flight: Stop empty, StartedAt set) and stamps the schedule's
+// LastFireSessionID to the REAL session id (overwriting the pending sentinel
+// Claim set) + LastFireStartedAt (and seeds LastFireProgressAt to StartedAt
+// when the caller passed a zero ProgressAt) + FireDeadline. It is IDEMPOTENT
+// per fire id: a re-record of the same in-flight fire (same StartedAt) is a
+// no-op for the in-flight record; a re-record for a fire id that is ALREADY
+// terminal is a no-op (a terminal fire is not re-opened). The not-found case
+// (the schedule was deleted between Claim and RecordFireStart) wraps
+// port.ErrScheduleNotFound. The semantics mirror memschedulestore.RecordFireStart
+// byte-for-byte.
+func (s *scheduleStore) RecordFireStart(_ context.Context, name string, fire port.ScheduleFire) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil {
+		return err
+	}
+	// A fire id that is already terminal is not re-opened.
+	if existing, err := s.readFireFileLocked(fire.ID); err == nil && existing.Stop != "" {
+		return nil
+	}
+	// Idempotent per fire id: a re-record of the same in-flight fire (same
+	// StartedAt) is a no-op for the in-flight record.
+	if existing, err := s.readFireFileLocked(fire.ID); err == nil && existing.StartedAt.Equal(fire.StartedAt) {
+		return nil
+	}
+	rec.Schedule.State.LastFireSessionID = fire.SessionID
+	rec.Schedule.State.LastFireStartedAt = fire.StartedAt
+	if fire.ProgressAt.IsZero() {
+		rec.Schedule.State.LastFireProgressAt = fire.StartedAt
+	} else {
+		rec.Schedule.State.LastFireProgressAt = fire.ProgressAt
+	}
+	rec.Schedule.State.FireDeadline = fire.Deadline
+	if err := s.writeScheduleLocked(name, rec); err != nil {
+		return err
+	}
+	inFlight := fire
+	inFlight.Stop = "" // an in-flight fire has no terminal outcome
+	return s.writeFireLocked(inFlight)
+}
+
+// RecordFireProgress advances the in-flight fire's last-observed-progress
+// instant (issue #386). It updates LastFireProgressAt on the state and ProgressAt
+// on the in-flight fire record (when `at` is after the stored value — an earlier
+// `at` is ignored so a reordered update cannot rewind progress). It is
+// best-effort/idempotent: a missing in-flight fire record records on the state
+// alone; a not-found schedule wraps port.ErrScheduleNotFound; a terminal fire is
+// untouched. The semantics mirror memschedulestore.RecordFireProgress
+// byte-for-byte.
+//
+// fireID targets the SINGLE in-flight fire record by its known file directly
+// (review finding M1): there is NO os.ReadDir scan of every fire file under the
+// store mutex — the caller (the fire loop) has the fireID its RecordFireStart
+// wrote, so the record is addressed by its key. A terminal fire record (Stop
+// non-empty) is left untouched: the progress write MUST NOT revert a terminal
+// record back to in-flight (review finding M2).
+func (s *scheduleStore) RecordFireProgress(_ context.Context, name string, fireID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil {
+		return err
+	}
+	if !at.IsZero() && at.After(rec.Schedule.State.LastFireProgressAt) {
+		rec.Schedule.State.LastFireProgressAt = at
+		if err := s.writeScheduleLocked(name, rec); err != nil {
+			return err
+		}
+	}
+	// Advance the in-flight fire record's ProgressAt directly by its known id
+	// (no directory scan). Best-effort: a missing record is fine (the state alone
+	// carries it); a TERMINAL fire record (Stop non-empty) is untouched — the
+	// progress write must never revert a terminal record to in-flight (review
+	// finding M2).
+	fire, err := s.readFireFileLocked(fireID)
+	if err != nil {
+		if errors.Is(err, ErrScheduleNotFound) {
+			return nil // best-effort: no in-flight record; the state alone carries it
+		}
+		return err
+	}
+	if fire.Stop != "" {
+		return nil // terminal fire: untouched (never revert terminal → in-flight)
+	}
+	if !at.IsZero() && at.After(fire.ProgressAt) {
+		fire.ProgressAt = at
+		if err := s.writeFireLocked(fire); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RecordFire records the outcome of a fire (f) and updates the schedule's
 // LastFireSessionID to f.SessionID (overwriting the port.PendingFireSessionID value
 // Claim set). It is IDEMPOTENT per fire id: recording the same f.ID twice is a
 // no-op (the second call returns nil without mutating state). The not-found
 // case (the schedule was deleted between Claim and RecordFire) wraps
 // port.ErrScheduleNotFound.
+//
+// It FLIPS the fire terminal and clears the in-flight ScheduleState fields
+// (LastFireStartedAt/LastFireProgressAt/FireDeadline) — a recorded (terminal)
+// fire has no in-flight run (issue #386). It overwrites any in-flight fire record
+// the same f.ID had under RecordFireStart with the terminal one. The semantics
+// mirror memschedulestore.RecordFire byte-for-byte.
 func (s *scheduleStore) RecordFire(_ context.Context, f port.ScheduleFire) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Idempotent per fire id: a re-record of an already-stored fire is a no-op.
-	if _, err := s.readFireFileLocked(f.ID); err == nil {
+	// Idempotent per fire id: a re-record of an already-TERMINAL fire is a no-op.
+	// (An in-flight record under the same id is overwritten with the terminal one
+	// below — the fire transitions in-flight → terminal.)
+	if existing, err := s.readFireFileLocked(f.ID); err == nil && existing.Stop != "" {
 		return nil
 	}
 	rec, err := s.loadLocked(f.ScheduleName)
@@ -330,6 +445,10 @@ func (s *scheduleStore) RecordFire(_ context.Context, f port.ScheduleFire) error
 		return err
 	}
 	rec.Schedule.State.LastFireSessionID = f.SessionID
+	// Clear the in-flight fields: a terminal fire has no in-flight run.
+	rec.Schedule.State.LastFireStartedAt = time.Time{}
+	rec.Schedule.State.LastFireProgressAt = time.Time{}
+	rec.Schedule.State.FireDeadline = time.Time{}
 	if err := s.writeScheduleLocked(f.ScheduleName, rec); err != nil {
 		return err
 	}

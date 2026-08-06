@@ -917,7 +917,7 @@ func TestToProtoTeamOutcomeQuiescentBudgetExhausted(t *testing.T) {
 func TestSessionMapping(t *testing.T) {
 	sess := session.New("s1", session.ModePlan, "/ws",
 		session.Limits{MaxTurns: 4, MaxToolCalls: 8, MaxConsecutiveFailures: 2}, time.Unix(1000, 0))
-	got := toProtoSession(sess, ResolvedModel{ProviderID: "openai", ModelID: "gpt-x", ContextWindow: 2048})
+	got := toProtoSession(sess, ResolvedModel{ProviderID: "openai", ModelID: "gpt-x", ContextWindow: 2048}, nil)
 	if got.GetSessionId() != "s1" || got.GetState() != "idle" {
 		t.Fatalf("got %+v", got)
 	}

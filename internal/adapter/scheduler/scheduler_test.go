@@ -2264,3 +2264,86 @@ func TestTickOnceNoFireWhenNotLeader(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 }
+
+// blockingDueStore wraps a ScheduleStore whose Due blocks until a release
+// channel closes (simulating a wedged store call that ignores ctx). It signals
+// `entered` the first time Due is called so a test can wait for the tick
+// goroutine to actually be inside Due before calling Stop. All other methods
+// delegate to the wrapped store.
+type blockingDueStore struct {
+	port.ScheduleStore
+	release chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingDueStore) Due(ctx context.Context, now time.Time) ([]port.Schedule, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release // block until released (intentionally ignores ctx — the stuck-goroutine case)
+	return b.ScheduleStore.Due(ctx, now)
+}
+
+// TestSchedulerStopBounded asserts Stop returns within a bounded time even when
+// the tick goroutine is stuck inside a store call that ignores its cancel ctx.
+// It overrides stopLeadershipJoinTimeout to a small value (via the internal
+// package's exported test helper) and skips goleak: the test intentionally
+// abandons a stuck goroutine (the blocking Due), which a goleak check would
+// (correctly) flag.
+func TestSchedulerStopBounded(t *testing.T) {
+	// Override the join timeout via the internal-package test helper.
+	restore := scheduler.SetStopLeadershipJoinTimeoutForTest(50 * time.Millisecond)
+	defer restore()
+
+	joinTimeout := 50 * time.Millisecond
+	margin := 500 * time.Millisecond
+
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	inner := memschedulestore.New()
+	store := &blockingDueStore{
+		ScheduleStore: inner,
+		release:       make(chan struct{}),
+		entered:       make(chan struct{}),
+	}
+	fire := &fireStub{}
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Lease:              nil, // standalone: only activeDone is exercised
+		Fire:               fire.fire,
+		Clock:              clk,
+		TickInterval:       10 * time.Millisecond, // tick enters Due quickly
+		MaxConcurrentFires: 4,
+		StopFireGrace:      20 * time.Millisecond,
+	})
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Wait for the tick goroutine to enter the blocking Due.
+	select {
+	case <-store.entered:
+		// tick goroutine is now stuck inside Due (ignoring ctx).
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick goroutine never entered Due")
+	}
+
+	// Stop must return within the bounded join timeout (+ margin), even though
+	// the stuck Due goroutine never exits and activeDone never closes.
+	start := time.Now()
+	stopErr := make(chan error, 1)
+	go func() { stopErr <- s.Stop() }()
+	select {
+	case err := <-stopErr:
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		if elapsed > joinTimeout+margin {
+			t.Fatalf("Stop took %v, want < %v (bounded join did not time out)", elapsed, joinTimeout+margin)
+		}
+	case <-time.After(joinTimeout + margin + 2*time.Second):
+		t.Fatal("Stop did not return within the bounded timeout (unbounded join)")
+	}
+
+	// Release the stuck goroutine so it can exit (cleanup; goleak is skipped).
+	close(store.release)
+}

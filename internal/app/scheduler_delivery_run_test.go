@@ -740,3 +740,190 @@ func (*errQueue) Pending(_ context.Context, _ session.SessionID) ([]port.Deliver
 func (*errQueue) MarkDelivered(_ context.Context, _ session.SessionID, _ uint64) error { return nil }
 
 var _ port.DeliveryQueue = (*errQueue)(nil)
+
+// --- Phase 4a: started-notice delivery tests (deliverFireStarted) ---
+
+// TestFireStarted_StartedNoticeEnqueuedWithIDs verifies the started notice is
+// enqueued via deliverFireStarted carrying the schedule name + fire id.
+func TestFireStarted_StartedNoticeEnqueuedWithIDs(t *testing.T) {
+	env := newDeliveryTestEnv(t,
+		mockllm.TextTurn("origin done"),
+		mockllm.TextTurn("ack: started"),
+	)
+	originID := env.createOrigin(t, "hello")
+
+	startDeliver := deliverFireStarted(env.svc, env.queue)
+	sched := port.Schedule{Spec: port.ScheduleSpec{
+		Name: "my-schedule", OriginSessionID: originID,
+	}}
+	fire := port.ScheduleFire{
+		ID:           "sched--my-schedule-1-abc",
+		ScheduleName: "my-schedule",
+		SessionID:    session.SessionID("sched--my-schedule-1-abc"),
+	}
+	startDeliver(context.Background(), sched, fire)
+
+	// The started note was delivered to the origin.
+	after, _ := env.svc.GetSession(context.Background(), originID)
+	if !originHasNote(after, "my-schedule") || !originHasNote(after, "started") {
+		t.Fatalf("origin conversation does not contain the started note: %+v", after.Conversation.Messages)
+	}
+	// Must be fenced.
+	if !originHasNote(after, "<<<UNTRUSTED") {
+		t.Fatalf("started note is not fenced: %+v", after.Conversation.Messages)
+	}
+	// Must NOT contain model-authored content (none exists at start — the note
+	// is ONLY the harness-authored header).
+	found := false
+	for _, m := range after.Conversation.Messages {
+		if strings.Contains(m.Text, "[scheduled task") && strings.Contains(m.Text, "started") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("started notice not found as a fenced harness note: %+v", after.Conversation.Messages)
+	}
+}
+
+// TestFireStarted_BusyOriginEnqueueOnly verifies a busy origin enqueues-only
+// for the started notice (no delivery run driven past an in-flight run).
+func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
+	diag := &captureDiag{}
+	storeDir := t.TempDir()
+	store, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	queue := NewInMemoryDeliveryQueue(WithDeliveryDiagnostics(diag))
+	engine := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall(session.ToolCallID("c1"), "Block", []byte(`{}`))),
+		),
+		Catalog: func() *tool.Catalog {
+			c := tool.NewCatalog()
+			c.MustRegister(&blockTool{})
+			return c
+		}(),
+		Policy:        permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:         "m",
+		Store:         store,
+		DeliveryQueue: queue,
+	})
+	svc, err := server.NewService(server.Config{
+		Engine: engine, Store: store,
+		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:                 time.Now,
+		DefaultCapabilities: mockllm.New().Capabilities(),
+		EventLog:            store, Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	// Create an origin session and start a blocking run.
+	sess, err := svc.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := svc.StartRunContent(context.Background(), sess.ID, "block me", nil)
+	if err != nil {
+		t.Fatalf("StartRunContent: %v", err)
+	}
+	defer run.Cancel()
+	if !eventually(2*time.Second, func() bool { return svc.IsLive(sess.ID) }) {
+		t.Fatalf("origin run did not go live")
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	startDeliver := deliverFireStarted(svc, queue)
+	sched := port.Schedule{Spec: port.ScheduleSpec{
+		Name: "s", OriginSessionID: sess.ID,
+	}}
+	fire := port.ScheduleFire{
+		ID:           "sched--f1",
+		ScheduleName: "s",
+		SessionID:    session.SessionID("sched--f1"),
+	}
+	startDeliver(context.Background(), sched, fire)
+
+	// The note is queued (pending) — NOT delivered (no delivery run ran).
+	pending, _ := queue.Pending(context.Background(), sess.ID)
+	if len(pending) != 1 {
+		t.Fatalf("pending = %d, want 1 (started note queued)", len(pending))
+	}
+	run.Cancel()
+	for range run.Events() {
+	}
+}
+
+// TestFireStarted_EmptyOriginNoOp verifies a schedule with no origin is a no-op.
+func TestFireStarted_EmptyOriginNoOp(t *testing.T) {
+	diag := &captureDiag{}
+	queue := NewInMemoryDeliveryQueue(WithDeliveryDiagnostics(diag))
+	startDeliver := deliverFireStarted(nil, queue)
+	sched := port.Schedule{Spec: port.ScheduleSpec{
+		Name: "s", OriginSessionID: "", // empty origin
+	}}
+	fire := port.ScheduleFire{ID: "sched--f1", ScheduleName: "s"}
+	startDeliver(context.Background(), sched, fire)
+	// No warning should be emitted — this is the normal no-origin path.
+	if n := diag.warnCount("delivery"); n != 0 {
+		t.Fatalf("expected 0 delivery WARNs for empty origin, got %d", n)
+	}
+}
+
+// TestFireStarted_StartedNoteDoesNotDuplicateTerminalNote verifies the started
+// note is a DISTINCT entry from the terminal note — both survive in the
+// conversation without collision.
+func TestFireStarted_StartedNoteDoesNotDuplicateTerminalNote(t *testing.T) {
+	env := newDeliveryTestEnv(t,
+		mockllm.TextTurn("origin done"),
+		mockllm.TextTurn("ack: started"),
+		mockllm.TextTurn("ack: terminal"),
+	)
+	originID := env.createOrigin(t, "hello")
+
+	sched := port.Schedule{Spec: port.ScheduleSpec{
+		Name: "test-sched", OriginSessionID: originID,
+	}}
+	// Deliver the started notice.
+	startDeliver := deliverFireStarted(env.svc, env.queue)
+	startDeliver(context.Background(), sched, fireRecord("sched--fire1", session.StopEndTurn))
+
+	// Verify started note was delivered and origin was reopened.
+	after, _ := env.svc.GetSession(context.Background(), originID)
+	if !originHasNote(after, "test-sched") || !originHasNote(after, "started") {
+		t.Fatalf("origin conversation missing started note: %+v", after.Conversation.Messages)
+	}
+
+	// Now deliver the terminal note for the SAME fire — both must coexist.
+	env.deliver(context.Background(), sched, fireRecord("sched--fire1", session.StopEndTurn))
+
+	after2, _ := env.svc.GetSession(context.Background(), originID)
+	// Both notes are recorded.
+	startCount := 0
+	terminalCount := 0
+	for _, m := range after2.Conversation.Messages {
+		if m.Role == session.RoleUser {
+			if strings.Contains(m.Text, "started") && strings.Contains(m.Text, "<<<UNTRUSTED") {
+				startCount++
+			}
+			if strings.Contains(m.Text, "completed with stop reason") && strings.Contains(m.Text, "<<<UNTRUSTED") {
+				terminalCount++
+			}
+		}
+	}
+	// A delivery run may double-record its own note (the Step 2a drain + the
+	// recordPrompt both record it — bounded and benign, same as deliverFireResult).
+	// At least one copy of each note is required.
+	if startCount < 1 {
+		t.Fatalf("started note count = %d, want >= 1", startCount)
+	}
+	if terminalCount < 1 {
+		t.Fatalf("terminal note count = %d, want >= 1", terminalCount)
+	}
+	// ValidateToolPairing must hold (no orphaned tool_use).
+	if err := session.ValidateToolPairing(after2.Conversation.Messages); err != nil {
+		t.Fatalf("ValidateToolPairing failed after both deliveries: %v", err)
+	}
+}

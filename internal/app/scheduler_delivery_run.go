@@ -10,6 +10,73 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+// deliverFireStarted is the composition-injected "started" notice driver (issue
+// #386, Phase 4a): right after RecordFireStart, route a fenced-untrusted harness
+// note carrying ONLY the schedule name + fire/session id back into the fire's
+// origin conversation. It mirrors deliverFireResult: it renders the start note
+// (renderFireStarted — NO model-authored content, none exists at start) and
+// drives it through the SAME state-aware enqueue+drive path, so the start note
+// and the terminal note are distinct ledger entries (Enqueue mints a fresh seq
+// per call) and exactly-once rides the SAME delivery-queue ledger. A nil queue
+// is the byte-identical no-start-notice path.
+func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire) {
+	return func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire) {
+		origin := sched.Spec.OriginSessionID
+		if origin == "" {
+			return // no origin → no start notice (mirrors deliverFireResult)
+		}
+		diag := svc.Diagnostics()
+		if diag == nil {
+			diag = port.NopDiagnostics{}
+		}
+		note := renderFireStarted(sched.Spec.Name, fire.ID)
+
+		// Enqueue to the durable per-session queue (the session-scoped exactly-once
+		// ledger). A nil queue (the no-delivery posture) is a no-op drop.
+		if queue == nil {
+			return
+		}
+		enq, err := queue.Enqueue(ctx, origin, note)
+		if err != nil {
+			diag.Log(ctx, port.LevelWarn, "delivery: enqueue failed (start notice stays pull-able)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
+			return
+		}
+
+		// State-aware delivery. Determine the origin's state via GetSession.
+		originSess, err := svc.GetSession(ctx, origin)
+		if err != nil {
+			diag.Log(ctx, port.LevelWarn, "delivery: origin session not found (degrading to pull-only)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
+			return
+		}
+		if isNonDeliverableOrigin(origin) {
+			diag.Log(ctx, port.LevelWarn, "delivery: origin is a child/sched-- session (degrading to pull-only)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started")
+			return
+		}
+		if svc.IsLive(origin) || originSess.State == session.StateAwaiting {
+			// Enqueued; the loop drains it. Done.
+			return
+		}
+		// idle/completed/cancelled/failed: drive a delivery run.
+		run, err := svc.StartRunContent(ctx, origin, note, nil)
+		if err != nil {
+			diag.Log(ctx, port.LevelWarn, "delivery: drive run failed (start notice stays pull-able)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
+			return
+		}
+		for ev := range run.Events() {
+			svc.PublishSessionEvent(origin, ev)
+		}
+		svc.FinishRun(origin, run)
+		if err := queue.MarkDelivered(ctx, origin, enq.Seq); err != nil {
+			diag.Log(ctx, port.LevelWarn, "delivery: mark-delivered after drive failed (note may double-drain)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "seq", enq.Seq, "err", err.Error())
+		}
+	}
+}
+
 // deliverFireResult is the composition-injected ADR-0075 fire-result delivery
 // driver: after a fire of a schedule with a non-empty OriginSessionID reaches
 // its terminal EvResult AND RecordFire has persisted the fire record, it renders

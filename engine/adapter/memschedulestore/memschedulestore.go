@@ -202,6 +202,12 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 	rec.state.NextFireAt = nextFire
 	rec.state.FireCount++
 	rec.state.LastFireSessionID = port.PendingFireSessionID
+	// A fresh claim has no in-flight run yet: zero the in-flight fields a prior
+	// fire's RecordFireStart may have set (issue #386). RecordFireStart sets them;
+	// RecordFire clears them; a new Claim starts from a clean slate.
+	rec.state.LastFireStartedAt = time.Time{}
+	rec.state.LastFireProgressAt = time.Time{}
+	rec.state.FireDeadline = time.Time{}
 	if nextFire.IsZero() {
 		// A one-shot fired, or a cron whose MaxFires is exhausted: no further
 		// fire. The schedule is DONE.
@@ -244,6 +250,10 @@ func (s *Store) ClaimNow(_ context.Context, name string, now, nextFire time.Time
 	rec.state.NextFireAt = nextFire
 	rec.state.FireCount++
 	rec.state.LastFireSessionID = port.PendingFireSessionID
+	// A fresh claim has no in-flight run yet (see Claim's comment).
+	rec.state.LastFireStartedAt = time.Time{}
+	rec.state.LastFireProgressAt = time.Time{}
+	rec.state.FireDeadline = time.Time{}
 	if nextFire.IsZero() {
 		rec.state.Enabled = false
 	}
@@ -273,11 +283,18 @@ func (s *Store) SetEnabled(_ context.Context, name string, enabled bool) error {
 // no-op (the second call returns nil without mutating state). The not-found
 // case (the schedule was deleted between Claim and RecordFire) wraps
 // ErrScheduleNotFound.
+//
+// It FLIPS the fire terminal and clears the in-flight ScheduleState fields
+// (LastFireStartedAt/LastFireProgressAt/FireDeadline) — a recorded (terminal) fire
+// has no in-flight run (issue #386). It overwrites any in-flight fire record the
+// same f.ID had under RecordFireStart with the terminal one.
 func (s *Store) RecordFire(_ context.Context, f port.ScheduleFire) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Idempotent per fire id: a re-record of an already-stored fire is a no-op.
-	if _, exists := s.fires[f.ID]; exists {
+	// Idempotent per fire id: a re-record of an already-TERMINAL fire is a no-op.
+	// (An in-flight record under the same id is overwritten with the terminal one
+	// below — the fire transitions in-flight → terminal.)
+	if existing, exists := s.fires[f.ID]; exists && existing.Stop != "" {
 		return nil
 	}
 	rec, ok := s.scheds[f.ScheduleName]
@@ -285,8 +302,89 @@ func (s *Store) RecordFire(_ context.Context, f port.ScheduleFire) error {
 		return ErrNotFound
 	}
 	rec.state.LastFireSessionID = f.SessionID
+	// Clear the in-flight fields: a terminal fire has no in-flight run.
+	rec.state.LastFireStartedAt = time.Time{}
+	rec.state.LastFireProgressAt = time.Time{}
+	rec.state.FireDeadline = time.Time{}
 	s.scheds[f.ScheduleName] = rec
 	s.fires[f.ID] = cloneFire(f)
+	return nil
+}
+
+// RecordFireStart persists the IN-FLIGHT fire (issue #386): the fire's run has
+// begun but not yet produced a terminal outcome. It writes the fire record
+// (in-flight: Stop empty, StartedAt set) and stamps the schedule's
+// LastFireSessionID to the REAL session id (overwriting the pending sentinel
+// Claim set) + LastFireStartedAt (and seeds LastFireProgressAt to StartedAt when
+// the caller passed a zero ProgressAt) + FireDeadline. It is IDEMPOTENT per fire
+// id: a re-record of the same in-flight fire (same StartedAt) is a no-op for the
+// in-flight record; a re-record for a fire id that is ALREADY terminal is a
+// no-op (a terminal fire is not re-opened). The not-found case wraps
+// ErrScheduleNotFound.
+func (s *Store) RecordFireStart(_ context.Context, name string, fire port.ScheduleFire) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.scheds[name]
+	if !ok {
+		return ErrNotFound
+	}
+	// A fire id that is already terminal is not re-opened.
+	if existing, exists := s.fires[fire.ID]; exists && existing.Stop != "" {
+		return nil
+	}
+	// Idempotent per fire id: a re-record of the same in-flight fire (same
+	// StartedAt) is a no-op for the in-flight record.
+	if existing, exists := s.fires[fire.ID]; exists && existing.StartedAt.Equal(fire.StartedAt) {
+		return nil
+	}
+	rec.state.LastFireSessionID = fire.SessionID
+	rec.state.LastFireStartedAt = fire.StartedAt
+	if fire.ProgressAt.IsZero() {
+		rec.state.LastFireProgressAt = fire.StartedAt
+	} else {
+		rec.state.LastFireProgressAt = fire.ProgressAt
+	}
+	rec.state.FireDeadline = fire.Deadline
+	s.scheds[name] = rec
+	s.fires[fire.ID] = cloneFire(fire)
+	return nil
+}
+
+// RecordFireProgress advances the in-flight fire's last-observed-progress
+// instant (issue #386). It updates LastFireProgressAt on the state and ProgressAt
+// on the in-flight fire record (when `at` is after the stored value — an earlier
+// `at` is ignored so a reordered update cannot rewind progress). It is
+// best-effort/idempotent: a missing in-flight fire record records on the state
+// alone; a not-found schedule wraps ErrScheduleNotFound; a terminal fire is
+// untouched. fireID targets the single in-flight fire record by its known id
+// directly (review finding M1 — no scan); a terminal fire record is untouched
+// (review finding M2 — never revert terminal → in-flight).
+func (s *Store) RecordFireProgress(_ context.Context, name string, fireID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.scheds[name]
+	if !ok {
+		return ErrNotFound
+	}
+	if !at.IsZero() && at.After(rec.state.LastFireProgressAt) {
+		rec.state.LastFireProgressAt = at
+		s.scheds[name] = rec
+	}
+	// Advance the in-flight fire record's ProgressAt directly by its known id
+	// (no scan). Best-effort: a missing record is fine (the state alone carries
+	// it); a TERMINAL fire record (Stop non-empty) is untouched — never revert
+	// terminal → in-flight (review finding M2).
+	f, ok := s.fires[fireID]
+	if !ok {
+		return nil // best-effort: no in-flight record; the state alone carries it
+	}
+	if f.Stop != "" {
+		return nil // terminal fire: untouched
+	}
+	if !at.IsZero() && at.After(f.ProgressAt) {
+		f.ProgressAt = at
+		s.fires[fireID] = f
+	}
 	return nil
 }
 

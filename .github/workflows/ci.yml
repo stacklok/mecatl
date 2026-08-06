@@ -296,16 +296,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the opt-in provider/ submodules build + test with NO workspace
-    # (GOWORK=off), the same hygiene gate as engine-standalone. ONLY ssefilter is
-    # covered: it is the sole self-contained provider (stdlib + openai-go, no
-    # mecatl-module dependency). anthropic/openai/openaichat each `require`
-    # another mecatl module (engine, and provider/ssefilter for the openai-go
-    # family) — and mecatl is a PRIVATE/INTERNAL repo, so a GOWORK=off build must
-    # fetch that dependency from the origin: proxy.golang.org cannot serve a
-    # private module, and this job checks out with persist-credentials: false (no
-    # git auth), so the fetch 401s. Their standalone proof is deferred until the
-    # repo is public OR the job wires git credentials + GOPRIVATE (ADR 0093); they
-    # are covered by the workspace (GOWORK=on) build/test jobs above.
+    # (GOWORK=off), the engine-standalone hygiene gate. Because mecatl is a
+    # private/INTERNAL repo, a module that `require`s another mecatl module
+    # (anthropic → engine; openai/openaichat → engine + provider/ssefilter) can
+    # only be fetched from the origin WITH auth — proxy.golang.org cannot serve a
+    # private module. So the cache is WARMED with read-only git auth (the
+    # workflow's GITHUB_TOKEN via an insteadOf rewrite), then the gate itself runs
+    # fully OFFLINE (GOPROXY=off): the proof that the module's closure is
+    # self-contained never touches the network, and the token lives only on the
+    # warm step. Covers ssefilter + anthropic. openai + openaichat additionally
+    # `require provider/ssefilter v0.0.0`, which is unresolvable until the first
+    # provider/ssefilter/vX.Y.Z tag — deferred (issue #379); covered by the
+    # workspace (GOWORK=on) build/test jobs. Once mecatl is open-sourced the warm
+    # needs no token (proxy serves the modules). See ADR 0093.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -315,17 +320,49 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: provider/ssefilter/go.sum
+          cache-dependency-path: |
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
 
-      - name: go build (provider standalone)
+      # Warm the module cache. The build/test resolve the FULL (incl. test-only)
+      # dependency graph into the cache. engine v0.8.0 (and provider/ssefilter for
+      # the openai family) are fetched from the private origin over HTTPS using
+      # the GITHUB_TOKEN via an insteadOf rewrite; GOFLAGS=-mod=mod overrides the
+      # global -mod=readonly so the graph can resolve. GOPRIVATE keeps the
+      # checksum DB + proxy from rejecting the private module path.
+      - name: warm module cache (ssefilter + anthropic)
         env:
           GOWORK: off
-        run: (cd provider/ssefilter && go build ./...)
+          GOFLAGS: -mod=mod
+          GOPRIVATE: github.com/stacklok/*
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          (cd provider/ssefilter && go build ./... && go test ./... >/dev/null)
+          (cd provider/anthropic && go build ./... && go test ./... >/dev/null)
 
-      - name: go test (provider standalone)
+      - name: drop git credential rewrite
+        if: always()
+        run: git config --global --unset-all url."https://x-access-token@github.com/".insteadOf || true
+
+      # The proof itself: fully offline (GOPROXY=off) + no workspace (GOWORK=off).
+      # If any dependency were missing from the cache this fails — no credential
+      # is present on this step.
+      - name: go build (provider standalone, offline)
         env:
           GOWORK: off
-        run: (cd provider/ssefilter && go test ./...)
+          GOPROXY: off
+        run: |
+          (cd provider/ssefilter && go build ./...)
+          (cd provider/anthropic && go build ./...)
+
+      - name: go test (provider standalone, offline)
+        env:
+          GOWORK: off
+          GOPROXY: off
+        run: |
+          (cd provider/ssefilter && go test ./...)
+          (cd provider/anthropic && go test ./...)
 
   api-compat:
     name: API compat (engine public surface)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -42,7 +43,7 @@ const (
 // advanced NextFireAt, so a failed fire is NOT retried). Model pinning is
 // fail-closed at the provider call — there is NO pre-flight ListModels check (a
 // live network call, deferred); an unknown model surfaces as StopError.
-func makeFireFunc(svc *server.Service) scheduler.FireFunc {
+func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		sel := server.ProviderSelector{
 			ProviderID: sched.Spec.Selector.ProviderID,
@@ -112,41 +113,113 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 		// in the scheduler ignores CarryContext (the crashed fire's context is
 		// untrusted AND incomplete); this gate is on CarryContext + a real prior
 		// session id (not the pending sentinel, not empty).
-		prompt := sched.Spec.Prompt
-		if sched.Spec.CarryContext && sched.State.LastFireSessionID != "" && sched.State.LastFireSessionID != port.PendingFireSessionID {
-			priorSess, err := svc.GetSession(ctx, sched.State.LastFireSessionID)
-			if err != nil {
-				// Degrade to fresh-context — the fire is NOT failed (a missing
-				// prior session is recoverable; the carried context is an
-				// enhancement, not a requirement).
-				if diag := svc.Diagnostics(); diag != nil {
-					diag.Log(ctx, port.LevelWarn, "scheduler: carried-context prior session load failed; degrading to fresh-context",
-						"schedule", sched.Spec.Name, "prior_session", sched.State.LastFireSessionID, "err", err.Error())
-				}
-			} else {
-				preamble := renderCarriedContext(priorSess)
-				if preamble != "" {
-					prompt = preamble + "\n\n" + prompt
-				}
-			}
+		prompt := carriedContextPrompt(ctx, svc, sched)
+
+		// Issue #386 — the in-flight scheduled-fire state: RecordFireStart flips
+		// LastFireSessionID off the "pending" sentinel to the REAL session id and
+		// writes a discoverable in-flight fire record (Stop="", StartedAt set)
+		// BEFORE the run. A crash after this point leaves a real session id (not
+		// "pending"), so shouldReArmOneShot's crash case + the operator's
+		// ListFires can see it. Best-effort WARN on failure — the Claim already
+		// advanced, so the fire is NOT failed; the record is an enhancement.
+		startedAt := now
+		deadline := effectiveFireDeadline(sched.Spec.FireTimeout, defaultTimeout, now)
+		recordFireStart(ctx, svc.Diagnostics(), store, port.ScheduleFire{
+			ID:           fireID,
+			ScheduleName: sched.Spec.Name,
+			SessionID:    sess.ID,
+			FiredAt:      now,
+			StartedAt:    startedAt,
+			Deadline:     deadline,
+		})
+		// "Started" notice (issue #386, Phase 4a): route a fenced-untrusted
+		// harness note carrying ONLY the schedule name + fire/session id back
+		// into the fire's origin conversation, right AFTER RecordFireStart.
+		// A nil deliverStarted is the byte-identical no-start-notice path.
+		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
+			deliverStarted(ctx, sched, port.ScheduleFire{
+				ID:           fireID,
+				ScheduleName: sched.Spec.Name,
+				SessionID:    sess.ID,
+				FiredAt:      now,
+				StartedAt:    startedAt,
+				Deadline:     deadline,
+			})
 		}
+
+		// Arm the wall-clock watchdog (issue #386): a non-zero deadline bounds the
+		// fire's RUN. On lapse it cancels the in-flight run via the Service's
+		// run-registry cancel seam (Service.Cancel → run.Cancel(), the same path
+		// #388's Service.Close uses) — the loop yields StopCancelled, which the
+		// event loop below OVERRIDES to StopTimeout so a caller distinguishes
+		// "timed out" from a user cancel. The watchdog is a LIVENESS bound, NOT
+		// load-bearing for at-most-once (Claim already advanced). Stopped on the
+		// terminal EvResult (defer) so a clean completion does not double-fire.
+		var timedOut atomic.Bool
+		stopTimer := func() {}
+		if !deadline.IsZero() {
+			timer := time.AfterFunc(time.Until(deadline), func() {
+				timedOut.Store(true)
+				// Service.Cancel looks up the run by session id and calls
+				// run.Cancel(); a not-found/already-finished run is a nil-safe
+				// no-op (the watchdog only arms for a deadline, so a stale fire
+				// after a clean completion is harmless — Stop already ran).
+				_ = svc.Cancel(context.Background(), sess.ID)
+			})
+			stopTimer = func() { timer.Stop() }
+		}
+		defer stopTimer()
 
 		run, err := svc.StartRunContent(ctx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
 
-		// Drive the run to its terminal EvResult. The session is persisted by the
-		// relay (the same path a wire client takes); the fire record carries only
-		// the stop reason + error pointer to the session id.
+		// Drive the run to its terminal EvResult. The agent loop persists the
+		// terminal session snapshot itself (engine/agent terminate→save, the SAME
+		// path a wire relay's run takes — the relay's Persist is only for the
+		// awaiting-ask snapshot); the fire record carries the stop reason + error
+		// pointer to the session id.
 		var stop session.StopReason
 		var runErr string
 		for ev := range run.Events() {
+			// RecordFireProgress on turn-boundary / activity events (issue #386):
+			// NOT every chunk — once per EvToolCall / EvTurnEnd / EvResult, so a
+			// long streaming turn does not stamp a per-delta. Best-effort WARN.
+			recordFireProgressOnEvent(ctx, svc.Diagnostics(), store, sched.Spec.Name, fireID, ev.Type)
 			if ev.Type == session.EvResult && ev.Result != nil {
 				stop = ev.Result.Stop
 				runErr = ev.Result.Error
 				break
 			}
+		}
+		// Settle the terminal session snapshot HERE, best-effort, so it is durable
+		// BEFORE the fire returns. A fire whose run was cancelled mid-flight
+		// (Service.Close → run.Cancel on shutdown, issue #388 Task #3, OR the
+		// wall-clock watchdog below) unwinds to StopCancelled and the loop's
+		// save() persists the cancelled snapshot — but that save races process
+		// exit (Close returns, the cmd binary tears down, and a slow store's save
+		// may be killed before it lands). settleFireTerminalSnapshot persists the
+		// in-memory registered session's terminal state via the same Persist the
+		// wire relays call, so the snapshot lands recoverable (cancelled, NOT
+		// running) regardless of the loop's save race. An empty stop (the Events
+		// channel closed with no terminal EvResult — an abandoned run) is treated
+		// as StopCancelled. See settleFireTerminalSnapshot.
+		stop = settleFireTerminalSnapshot(ctx, svc, sess.ID, stop)
+		// The watchdog fired: the loop's StopCancelled is a watchdog cancel, not
+		// a user cancel. Override the recorded stop so a caller distinguishes
+		// "timed out" from an explicit cancel (the domain declares StopTimeout;
+		// this is the composition-level override). The honest Err names the
+		// timeout duration so an operator reading the fire record sees why. The
+		// session snapshot stays the loop's persisted StateCancelled (terminal +
+		// Interrupt-recoverable, like a shutdown-cancelled fire).
+		if timedOut.Load() && stop == session.StopCancelled {
+			stop = session.StopTimeout
+			timeout := sched.Spec.FireTimeout
+			if timeout <= 0 {
+				timeout = defaultTimeout
+			}
+			runErr = fmt.Sprintf("scheduled fire exceeded its wall-clock deadline of %s", timeout)
 		}
 		// Decision #7 Phase-2: the fire ID IS the session id (the session id is the
 		// discoverability key — LastFireSessionID, which RecordFire sets to
@@ -166,6 +239,8 @@ func makeFireFunc(svc *server.Service) scheduler.FireFunc {
 			ScheduleName: sched.Spec.Name,
 			SessionID:    sess.ID,
 			FiredAt:      now,
+			StartedAt:    startedAt,
+			Deadline:     deadline,
 			Stop:         stop,
 			Err:          runErr,
 		}, nil
@@ -227,6 +302,66 @@ func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) po
 		Stop:         session.StopError,
 		Err:          err.Error(),
 	}
+}
+
+// carriedContextPrompt resolves the fire's prompt, optionally prepending a
+// FENCED untrusted preamble rendered from the prior fire's conversation when
+// CarryContext is set and a real (non-pending) prior session id exists (ADR
+// 0059 Phase 2). It is extracted from makeFireFunc to keep that func's
+// cyclomatic complexity under the lint cap. On prior-session-load failure (not
+// found, decode error) the fire degrades to fresh-context (WARN, never fails the
+// fire — the carried context is an enhancement, not a requirement).
+func carriedContextPrompt(ctx context.Context, svc *server.Service, sched port.Schedule) string {
+	prompt := sched.Spec.Prompt
+	if !sched.Spec.CarryContext || sched.State.LastFireSessionID == "" || sched.State.LastFireSessionID == port.PendingFireSessionID {
+		return prompt
+	}
+	priorSess, err := svc.GetSession(ctx, sched.State.LastFireSessionID)
+	if err != nil {
+		// Degrade to fresh-context — the fire is NOT failed (a missing prior
+		// session is recoverable; the carried context is an enhancement, not a
+		// requirement).
+		if diag := svc.Diagnostics(); diag != nil {
+			diag.Log(ctx, port.LevelWarn, "scheduler: carried-context prior session load failed; degrading to fresh-context",
+				"schedule", sched.Spec.Name, "prior_session", sched.State.LastFireSessionID, "err", err.Error())
+		}
+		return prompt
+	}
+	preamble := renderCarriedContext(priorSess)
+	if preamble == "" {
+		return prompt
+	}
+	return preamble + "\n\n" + prompt
+}
+
+// settleFireTerminalSnapshot best-effort ensures the durable session snapshot
+// for a cancelled/abandoned fire run is TERMINAL (cancelled) before the fire
+// returns, closing the exit-race where the agent loop's own save()
+// (engine/agent terminate→save) races process teardown after Service.Close
+// (issue #388 Task #6). It returns the stop reason to record on the fire record
+// (StopCancelled when the run was abandoned with no terminal EvResult, so the
+// record is honest).
+//
+// It reuses the EXISTING Service.Persist seam, which saves the in-memory
+// registered session (the SAME pointer the loop mutated to StateCancelled via
+// sess.Cancel() before emitResult — so Persist writes the terminal state without
+// waiting for the loop's post-emitResult save). Persist is a no-op when no run is
+// registered (the run was already deregistered), in which case the loop's own
+// save() is the durable writer and this is a harmless no-op.
+//
+// It does NOT introduce a new persistence path: it calls the same Persist the
+// wire relays call, just from the fire body so the snapshot is settled before the
+// fire record is recorded. Best-effort throughout — a persist failure is swallowed
+// (Persist itself swallows Save errors) so a store hiccup never fails the fire.
+func settleFireTerminalSnapshot(ctx context.Context, svc *server.Service, id session.SessionID, stop session.StopReason) session.StopReason {
+	if stop != "" && stop != session.StopCancelled {
+		return stop // a successful/errored fire: the loop's save() settles the terminal snapshot
+	}
+	svc.Persist(ctx, id)
+	if stop == "" {
+		return session.StopCancelled // abandoned run (no terminal EvResult) — record the honest outcome
+	}
+	return stop
 }
 
 // carriedContextMaxTurns bounds the number of recent turns rendered into the
@@ -331,4 +466,79 @@ func clampRunes(s string, maxRunes int) string {
 		return s
 	}
 	return string(r[:maxRunes]) + "…"
+}
+
+// defaultFireTimeout is the deployment-default per-fire wall-clock deadline
+// (issue #386) applied when a schedule's Spec.FireTimeout is zero. It is a
+// package var (not a const) so an offline test can override it to a small value
+// to exercise the StopTimeout path without waiting 30 minutes. The operator
+// tier may carry its own override threaded through makeFireFunc's defaultTimeout
+// argument (a future Config knob); this var is the floor.
+var defaultFireTimeout = 30 * time.Minute
+
+// effectiveFireDeadline resolves the in-flight fire's wall-clock deadline (issue
+// #386): the per-schedule FireTimeout wins when non-zero; otherwise the
+// deployment-default defaultTimeout (the operator-tier knob, falling back to the
+// package var defaultFireTimeout when zero) is the fallback; a zero effective
+// timeout (both zero) means "no deadline" — the watchdog is not armed. The
+// deadline is start + timeout (a DURATION, not an absolute instant), so it is
+// computed against the fire's start `now`.
+func effectiveFireDeadline(specTimeout, defaultTimeout time.Duration, start time.Time) time.Time {
+	timeout := specTimeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	if timeout <= 0 {
+		return time.Time{} // no deadline — the watchdog is not armed
+	}
+	return start.Add(timeout)
+}
+
+// recordFireStart persists the IN-FLIGHT fire via the ScheduleStore's
+// RecordFireStart seam (issue #386). It is best-effort: a failure WARNs and
+// NEVER fails the fire (the at-most-once Claim already advanced; the record is an
+// enhancement, not a correctness requirement). A nil store (the byte-identical
+// no-schedule path) is a no-op.
+func recordFireStart(ctx context.Context, diag port.Diagnostics, store port.ScheduleStore, f port.ScheduleFire) {
+	if store == nil {
+		return
+	}
+	if err := store.RecordFireStart(ctx, f.ScheduleName, f); err != nil {
+		if diag == nil {
+			diag = port.NopDiagnostics{}
+		}
+		diag.Log(ctx, port.LevelWarn, "scheduler: RecordFireStart failed (in-flight record not persisted; the fire still runs)",
+			"schedule", f.ScheduleName, "fire", f.ID, "err", err.Error())
+	}
+}
+
+// fireProgressEvents is the set of event types that mark a turn boundary / real
+// activity (issue #386): a tool call starts, a turn closes, or the run ends.
+// Per-delta streaming events (message.delta/reasoning.delta/tool.progress) are
+// NOT progress markers — they would stamp a per-chunk record. The throttle is
+// "once per turn boundary", expressed as "only these event types".
+var fireProgressEvents = map[session.EventType]bool{
+	session.EvToolCall: true,
+	session.EvTurnEnd:  true,
+	session.EvResult:   true,
+}
+
+// recordFireProgressOnEvent advances the in-flight fire's last-observed-progress
+// instant via the ScheduleStore's RecordFireProgress seam (issue #386). It is
+// called from the fire event loop on turn-boundary / activity events (NOT every
+// chunk). Best-effort: a failure WARNs and NEVER fails the run. A nil store is a
+// no-op (the byte-identical no-schedule path). fireID is the id of the in-flight
+// fire record RecordFireStart wrote (review finding M1 — the store targets the
+// single record by its key, no scan).
+func recordFireProgressOnEvent(ctx context.Context, diag port.Diagnostics, store port.ScheduleStore, scheduleName string, fireID string, evType session.EventType) {
+	if store == nil || !fireProgressEvents[evType] {
+		return
+	}
+	if err := store.RecordFireProgress(ctx, scheduleName, fireID, time.Now()); err != nil {
+		if diag == nil {
+			diag = port.NopDiagnostics{}
+		}
+		diag.Log(ctx, port.LevelWarn, "scheduler: RecordFireProgress failed (best-effort; the run continues)",
+			"schedule", scheduleName, "fire", fireID, "err", err.Error())
+	}
 }

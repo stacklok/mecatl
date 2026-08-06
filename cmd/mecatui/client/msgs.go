@@ -499,6 +499,26 @@ type StreamErrMsg struct {
 // (e.g. server closed early). Normal completion arrives as ResultMsg first.
 type StreamClosedMsg struct{}
 
+// LiveReconnectingMsg marks one attempt of the live-feed reconnect+catch-up loop
+// (issue #387): the live feed dropped (StreamClosedMsg/StreamErrMsg on the live
+// reader) and the client is recovering it with bounded exponential backoff. It
+// carries the 1-based Attempt index and the Err that closed the previous attempt
+// (nil on the first attempt). The ui renders a degraded footer state from it.
+// The loop also drains the durable catch-up (StreamSessionEvents) before each
+// live reopen so delivery notes emitted during the gap are recovered; those
+// catch-up events arrive as ordinary event msgs (DeliveryNoteMsg/…) on the SAME
+// reconnect channel, NOT wrapped in this msg.
+type LiveReconnectingMsg struct {
+	Attempt int
+	Err     error
+}
+
+// LiveReconnectedMsg marks a successful live-feed reopen: the reconnect loop
+// re-opened StreamSessionLive after draining the durable catch-up. The ui clears
+// the degraded footer state and re-arms the live reader (waitLiveCmd) off a
+// FRESH live channel — the reconnect channel's job is done.
+type LiveReconnectedMsg struct{}
+
 // The log-only replay msgs. These three kinds (approval/user_prompt/
 // compaction.archive) are LOG-ONLY on the live Converse wire (the relay skips
 // them) and are relayed ONLY by the StreamSessionEvents replay. They are the
