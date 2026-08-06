@@ -377,6 +377,7 @@ The driver protocol lets you run storage and content sources as external process
 | `SoulSourceService` | `prompt.SoulSource` | Serve the operator persona body; `LoadSoul` |
 | `AgentSourceService` | `tool.AgentDefSource` | Serve named agent definitions; `ListAgentDefs` |
 | `CommandSourceService` | `prompt.CommandSource` | Serve slash-command templates; `ListCommands`, `GetCommandBody` |
+| `ScheduleStoreService` | `port.ScheduleStore` (+ `port.ScheduleOneShotReArmer`) | Durable schedule registry (scheduled tasks); `--schedule-store-url`, INDEPENDENT of the session store — replaces the `ScheduleStore()` discovery; the driver's `Claim`/`ClaimNow`/`ReArmOneShot` run the at-most-once atomic advance server-side |
 
 In addition, `contracts/proto/mecatl/driver/v1/session_lease.proto` and `event_log.proto` back the session lease and durable event log seams respectively — these are cloud-native (Redis / k8s lease) concerns rather than an embedding point.
 
@@ -399,6 +400,7 @@ Wire a driver backend with these flags:
 --soul-source-url    grpc://host:port   # SoulSourceService
 --agent-source-url   grpc://host:port   # AgentSourceService
 --command-source-url grpc://host:port   # CommandSourceService
+--schedule-store-url grpc://host:port   # ScheduleStoreService + ScheduleOneShotReArmerService (durable schedule registry, independent of the session store)
 ```
 
 ---

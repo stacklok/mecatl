@@ -151,6 +151,7 @@ secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/b
 | `--scheduler-tick-interval` | `30s` | How often the tick loop polls for due schedules |
 | `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
+| `--schedule-store-url` | `""` | gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs the atomic advance server-side |
 
 See [Scheduled tasks](/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 

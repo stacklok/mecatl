@@ -31,10 +31,13 @@ func TestBuildSchedulerStoreBackedByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore.New: %v", err)
 	}
-	sched, closeFn := buildScheduler(Config{
+	sched, _, closeFn, err := buildScheduler(Config{
 		SchedulerEnabled: true,
 		Diagnostics:      port.NopDiagnostics{},
 	}, store, nil, "test-owner")
+	if err != nil {
+		t.Fatalf("buildScheduler: %v", err)
+	}
 	if sched == nil {
 		t.Fatal("buildScheduler returned a nil scheduler over a ScheduleStore-backed store, want a ticking scheduler (on by default)")
 	}
@@ -73,10 +76,13 @@ func TestBuildSchedulerInMemoryInertByDefault(t *testing.T) {
 				}
 				store = jstore
 			}
-			sched, closeFn := buildScheduler(Config{
+			sched, _, closeFn, err := buildScheduler(Config{
 				SchedulerEnabled: tc.enabled,
 				Diagnostics:      port.NopDiagnostics{},
 			}, store, nil, "test-owner")
+			if err != nil {
+				t.Fatalf("buildScheduler: %v", err)
+			}
 			if sched != nil {
 				t.Fatal("buildScheduler returned a scheduler, want nil (inert)")
 			}

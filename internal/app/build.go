@@ -368,12 +368,34 @@ type Config struct {
 	// in-memory sibling, and a session-store DRIVER without this flag records
 	// nothing (the relay no-ops). It shares the same Driver* auth/TLS posture
 	// and per-target connection cache as the store drivers.
-	EventLogURL     string
-	DriverAuthToken string
-	DriverTLS       bool
-	DriverTLSCA     string
-	DriverTLSCert   string
-	DriverTLSKey    string
+	EventLogURL string
+	// ScheduleStoreURL (cloud-native Phase 5, issue #257) points the durable
+	// schedule registry at a mecatl.driver.v1.ScheduleStoreService +
+	// ScheduleOneShotReArmerService driver, INDEPENDENT of the session store
+	// (the schedule store is a separate seam — ADR 0059 decision #5: an
+	// independent override wins, else the configured store is type-asserted,
+	// else no scheduling). Empty keeps today's behaviour byte-identical: the
+	// scheduler + the fire-path's RecordFireStart/RecordFireProgress/RecordFire
+	// discover the store by type-asserting the configured store for a
+	// ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one); a store
+	// that does not (the in-memory default) is the byte-identical no-scheduling
+	// path. When set, the override REPLACES that discovery: the SAME grpcdriver
+	// client backs the tick loop's Store, the fire-path's fireStore, the
+	// delivery-queue gate, AND the in-chat Schedule TOOL's manager
+	// (server.NewScheduleManager — composition passes the resolved store as
+	// ScheduleManagerConfig.ScheduleStore, so the tool + tick loop + fire path
+	// share the ONE resolution — no absent tool with an accessor-less session
+	// store, no split-brain with an accessor-ful one). A dial failure is a
+	// fatal operator misconfiguration (an explicitly-configured driver that
+	// won't dial is NOT silently fallen back to no-scheduling). It shares the
+	// same Driver* auth/TLS posture and per-target connection cache as the
+	// store/event-log drivers (equal URLs share one connection).
+	ScheduleStoreURL string
+	DriverAuthToken  string
+	DriverTLS        bool
+	DriverTLSCA      string
+	DriverTLSCert    string
+	DriverTLSKey     string
 
 	// Session leasing (cloud-native Phase 4, ADR 0027): OPTIONAL cross-process
 	// single-writer enforcement for multi-replica deployments over a shared store.
@@ -2176,40 +2198,86 @@ func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, 
 	return nil, "", noop, nil
 }
 
+// resolveScheduleStore resolves the port.ScheduleStore the scheduler (and the
+// fire-path / delivery-queue gate) reads, mirroring the --event-log-url /
+// --session-lease-url INDEPENDENT-override stance (ADR 0059 decision #5: an
+// independent override wins, else the configured store is type-asserted, else
+// no scheduling). Resolution precedence:
+//  1. an explicit --schedule-store-url wins — a grpcdriver ScheduleStoreService +
+//     ScheduleOneShotReArmerService client over its OWN dialled connection
+//     (shared via the driverConns cache when the URL equals another driver's),
+//     with its close func returned so the caller chains it into teardown. A dial
+//     FAILURE is returned as an error — an explicitly-configured driver that
+//     won't dial is an operator misconfiguration, NOT a silent fall-back to
+//     no-scheduling (the --event-log-url precedent: a misconfigured override
+//     fails loud, never hides).
+//  2. else the configured SessionStore is type-asserted for the ScheduleStore()
+//     ACCESSOR (the jsonlstore + redisstore expose one); a store that does not,
+//     or returns nil, yields a nil store (the byte-identical no-scheduling
+//     path). No Build-scoped resource is held (the accessor returns the store's
+//     OWN ScheduleStore), so the returned close is a no-op.
+//
+// Returns (store, close, err); store is nil (and close a no-op) on the
+// no-scheduling path. The SAME resolution is shared by buildScheduler (the
+// tick loop's Store) and startScheduler (the fire-path's fireStore), so the
+// two never disagree about which registry backs scheduling.
+func resolveScheduleStore(cfg Config, store port.SessionStore) (port.ScheduleStore, func(), error) {
+	noop := func() {}
+	if cfg.ScheduleStoreURL != "" {
+		conn, closeConn, err := cfg.drivers().dial(cfg, cfg.ScheduleStoreURL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dial schedule-store driver %q: %w", cfg.ScheduleStoreURL, err)
+		}
+		cfg.diag().Log(context.Background(), port.LevelInfo, "schedule store: grpc driver", "target", cfg.ScheduleStoreURL)
+		return grpcdriver.NewScheduleStore(conn), closeConn, nil
+	}
+	if ss, ok := store.(interface{ ScheduleStore() port.ScheduleStore }); ok && ss.ScheduleStore() != nil {
+		return ss.ScheduleStore(), noop, nil
+	}
+	return nil, noop, nil
+}
+
 // buildScheduler resolves the OPTIONAL in-process scheduled-tasks tick loop
 // (issue #189, Phase 1f; ADR 0073 decision 2 — ON BY DEFAULT). It mirrors
 // buildSessionLease: when SchedulerEnabled is false (the operator's explicit
-// --no-scheduler opt-out) it returns (nil, noop, nil). When enabled it
-// discovers the port.ScheduleStore by type-asserting the configured store for
-// the ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one); a
-// store that does not expose one (the in-memory default: mecademo, mecatequi,
-// offline tests) is SILENTLY INERT — the byte-identical no-scheduling path
-// ((nil, noop, nil)), never a startup failure. (The pre-ADR-0073 enabled-but-
-// no-store case FAILED LOUD because enabling was an explicit operator ask;
-// with the default ON, no-store is the common case, so inert is the honest
-// posture.) The leader-lease reuses the SAME backend as the run-entry session
-// lease (owner leaseOwner, id port.SchedulerLeaderLeaseID) so the two never
-// contend. The FireFunc is LATE-BOUND: buildScheduler returns the
-// *scheduler.Scheduler with Fire nil; Build calls SetFire(makeFireFunc(svc))
+// --no-scheduler opt-out) it returns (nil, noop, nil). When enabled it resolves
+// the port.ScheduleStore via resolveScheduleStore — an explicit
+// --schedule-store-url driver wins, else the configured store is type-asserted
+// for the ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one);
+// a store that does not expose one (the in-memory default: mecademo,
+// mecatequi, offline tests) is SILENTLY INERT — the byte-identical no-scheduling
+// path ((nil, noop, nil)), never a startup failure. (The pre-ADR-0073
+// enabled-but-no-store case FAILED LOUD because enabling was an explicit
+// operator ask; with the default ON, no-store is the common case, so inert is
+// the honest posture.) The ONE exception to "no startup error": an explicitly
+// configured --schedule-store-url driver that fails to dial is a fatal
+// operator misconfiguration (returned as err) — a silent fall-back to
+// no-scheduling would hide it. The leader-lease reuses the SAME backend as the
+// run-entry session lease (owner leaseOwner, id port.SchedulerLeaderLeaseID)
+// so the two never contend. The FireFunc is LATE-BOUND: buildScheduler returns
+// the *scheduler.Scheduler with Fire nil; Build calls SetFire(makeFireFunc(svc))
 // after NewService, then Start. The returned close calls sched.Stop (which
-// drains in-flight fires, releases the leader lease). buildScheduler CANNOT
-// FAIL with the on-by-default posture — the former enabled-but-no-store
-// startup error is gone with the opt-in flag — so it returns no error.
-func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string) (*scheduler.Scheduler, func()) {
+// drains in-flight fires, releases the leader lease) AND the override conn's
+// close (when a driver backs the store). The ScheduleStore is threaded back
+// to the caller so startScheduler's fire-path resolves the SAME store once.
+func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string) (*scheduler.Scheduler, port.ScheduleStore, func(), error) {
 	noop := func() {}
 	if !cfg.SchedulerEnabled {
-		return nil, noop
+		return nil, nil, noop, nil
 	}
-	schedStore, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
-	if !ok || schedStore.ScheduleStore() == nil {
+	schedStore, storeClose, err := resolveScheduleStore(cfg, store)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if schedStore == nil {
 		// On-by-default reconciliation: a store with no ScheduleStore (the
 		// in-memory default) gets the byte-identical no-scheduling path — no
 		// tick goroutine, Scheduling capability false, the Schedule tool
 		// absent — NOT a startup error.
-		return nil, noop
+		return nil, nil, noop, nil
 	}
 	scfg := scheduler.Config{
-		Store:              schedStore.ScheduleStore(),
+		Store:              schedStore,
 		Lease:              sessionLease, // same backend, different id — no contention
 		LeaseOwner:         leaseOwner,
 		LeaseTTL:           cfg.SessionLeaseTTL,
@@ -2236,7 +2304,10 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, "scheduler: enabled",
 		"tick", scfg.TickInterval, "maxConcurrentFires", scfg.MaxConcurrentFires, "owner", leaseOwner, "lease", sessionLease != nil)
-	return sched, func() { _ = sched.Stop() }
+	return sched, schedStore, func() {
+		_ = sched.Stop()
+		storeClose()
+	}, nil
 }
 
 // startScheduler builds, wires (SetScheduler + SetFire), and starts the
@@ -2247,22 +2318,23 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 // cyclomatic complexity under the lint cap.
 func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, sessionLease port.SessionLease, leaseOwner string, svc *server.Service, deliveryQueue port.DeliveryQueue) (func(), error) {
 	noop := func() {}
-	sched, schedClose := buildScheduler(cfg, store, sessionLease, leaseOwner)
+	sched, fireStore, schedClose, err := buildScheduler(cfg, store, sessionLease, leaseOwner)
+	if err != nil {
+		return noop, err
+	}
 	if sched == nil {
 		return noop, nil // byte-identical default
 	}
 	svc.SetScheduler(sched)
 	// makeFireFunc needs the ScheduleStore to persist the in-flight fire record
 	// (RecordFireStart/RecordFireProgress, issue #386). buildScheduler already
-	// discovered it; rediscover it here (the FireFunc closes over the store, not
-	// the scheduler, so it can persist BEFORE/AFTER the run without going through
-	// the scheduler's fireClaimed tail). defaultFireTimeout is the package var
-	// (test-overridable); a future operator-tier Config knob would thread through
-	// here instead.
-	var fireStore port.ScheduleStore
-	if ss, ok := store.(interface{ ScheduleStore() port.ScheduleStore }); ok {
-		fireStore = ss.ScheduleStore()
-	}
+	// resolved it via resolveScheduleStore — the SAME grpcdriver client when
+	// --schedule-store-url is set (RecordFireStart/RecordFireProgress/RecordFire
+	// go over the wire too), else the configured store's ScheduleStore()
+	// accessor. It is threaded back here so the fire-path and the tick loop
+	// never disagree about which registry backs scheduling. defaultFireTimeout
+	// is the package var (test-overridable); a future operator-tier Config knob
+	// would thread through here instead.
 	sched.SetFire(makeFireFunc(svc, fireStore, defaultFireTimeout, deliverFireStarted(svc, deliveryQueue)))
 	// Stale-fire reconciler (issue #386 Phase 4b, acceptance criterion #7): wire
 	// the composition-injected ReconcileStaleFire callback the scheduler invokes
@@ -2358,9 +2430,18 @@ func newK8sClientset() (kubernetes.Interface, error) {
 // share the SAME instance.
 func buildDeliveryQueue(cfg Config, store port.SessionStore) port.DeliveryQueue {
 	// A store with no ScheduleStore (the in-memory default) has no scheduling,
-	// so no delivery — the byte-identical no-delivery path.
-	ss, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
-	if !ok || ss.ScheduleStore() == nil {
+	// so no delivery — the byte-identical no-delivery path. An explicit
+	// --schedule-store-url driver override is schedule-capable even when the
+	// session store exposes no accessor, so the gate admits it too (the
+	// queue is the SAME durability posture as today: file-backed under a store
+	// dir, in-memory otherwise — the override does not change WHERE the
+	// process-local delivery queue lives).
+	scheduleCapable := cfg.ScheduleStoreURL != ""
+	if !scheduleCapable {
+		ss, ok := store.(interface{ ScheduleStore() port.ScheduleStore })
+		scheduleCapable = ok && ss.ScheduleStore() != nil
+	}
+	if !scheduleCapable {
 		return nil
 	}
 	// A durable store dir (jsonlstore) → a durable file-backed queue under it.
@@ -2492,10 +2573,32 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// nil check returns an UNTYPED nil port.ScheduleManager — never a
 	// non-nil interface boxing a nil pointer (registerScheduleTool's
 	// mgr == nil gate must hold).
+	//
+	// Schedule tool + tick loop + fire path share the ONE resolveScheduleStore
+	// resolution (issue #257 Wave 3): the manager resolves its ScheduleStore
+	// via the SAME resolveScheduleStore buildScheduler/startScheduler use, so
+	// a --schedule-store-url override backs the in-chat Schedule TOOL too (no
+	// absent-tool gap with an accessor-less session store) and there is no
+	// split-brain with an accessor-ful session store + the override (the
+	// override wins for BOTH the tool and the tick loop). The override's
+	// dialled conn is shared via the driverConns cache (equal URLs return the
+	// SAME *grpc.ClientConn), and its close is once-guarded, so folding the
+	// override close into mcpClose here AND into schedClose in buildScheduler
+	// closes the conn exactly once (the dedup the --event-log-url path relies
+	// on). The accessor path returns a no-op close, so the fold is a no-op
+	// there (byte-identical to the pre-override posture). The resolution runs
+	// AFTER buildCatalog (mcpClose is the close fold target, declared by
+	// buildCatalog); the factory below captures the resolved store so the
+	// eager bind still precedes catalog assembly's registerScheduleTool.
+	toolSchedStore, toolSchedClose, err := resolveScheduleStore(cfg, store)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, fmt.Errorf("resolve schedule store for tool: %w", err)
+	}
 	scheduleMgr := server.NewScheduleManager(server.ScheduleManagerConfig{
-		Store:       store,
-		EventLog:    eventLog,
-		Diagnostics: cfg.diag(),
+		Store:         store,
+		ScheduleStore: toolSchedStore,
+		EventLog:      eventLog,
+		Diagnostics:   cfg.diag(),
 	})
 	scheduleManagerFactory := func() port.ScheduleManager {
 		if scheduleMgr == nil {
@@ -2510,7 +2613,17 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// SAME registry, closed over below) — ONE resolution per process.
 	cat, assets, mcpProvider, mcpInventory, mcpClose, err := buildCatalog(ctx, cfg, reg, provider, hooks, agentReg, store, scheduleManagerFactory)
 	if err != nil {
+		toolSchedClose()
 		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, err
+	}
+	// Fold the schedule-tool override conn close into the engine teardown chain
+	// (mcpClose). The close is once-guarded by driverConns, so this AND
+	// buildScheduler's schedClose close the shared conn exactly once (the dedup
+	// the --event-log-url path relies on). A no-op on the accessor path.
+	prevClose := mcpClose
+	mcpClose = func() {
+		prevClose()
+		toolSchedClose()
 	}
 	memStore, userModelStore := assets.memStore, assets.userModelStore
 

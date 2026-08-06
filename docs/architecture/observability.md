@@ -176,7 +176,12 @@ The session and memory stores have a **wire seam**: an operator can point
 either at a remote, operator-run **driver process** speaking the
 `mecatl.driver.v1` protocol (`contracts/proto/mecatl/driver/v1/` —
 `SessionStoreService` for `port.SessionStore`, `MemoryStoreService` for
-`tool.MemoryStore`). Selection is composition-only (`app.Build`):
+`tool.MemoryStore`). The durable **schedule registry** has the same seam:
+`ScheduleStoreService` + `ScheduleOneShotReArmerService` back
+`port.ScheduleStore` + `port.ScheduleOneShotReArmer` (`--schedule-store-url`,
+INDEPENDENT of the session store — replaces the `ScheduleStore()` discovery;
+the driver's `Claim`/`ClaimNow`/`ReArmOneShot` run the at-most-once atomic
+advance server-side). Selection is composition-only (`app.Build`):
 `--session-store-url` replaces `--store-dir` (mutually exclusive, fatal at
 build), `--memory-store-url` replaces `--memory-dir`; all-empty keeps the
 local stores byte-identical. Equal URLs share ONE lazy `ClientConn` (the

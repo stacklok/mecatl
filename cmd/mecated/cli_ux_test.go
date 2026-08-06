@@ -546,6 +546,7 @@ func TestAcpCommonHelpExcludesServerBoundary(t *testing.T) {
 		"otlp-endpoint",
 		"driver-tls",
 		"session-store-url",
+		"schedule-store-url",
 		"scheduler-tick-interval",
 		"flight-recorder",
 		"headless",

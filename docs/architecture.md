@@ -390,8 +390,21 @@ the existing run-entry funnel. The pieces:
   decision 2 — the opt-in `--scheduler` flag is deleted; `--no-scheduler` is
   the disable knob) whenever the configured store exposes a `ScheduleStore()`
   accessor (discovered by type-assertion) — a store with none (the in-memory
-  default) stays on the byte-identical no-scheduling path. The leader-lease
-  reuses the session-lease backend (same backend, different id). The
+  default) stays on the byte-identical no-scheduling path. The registry can
+  also be REMOTE: `--schedule-store-url` points it at a
+  `mecatl.driver.v1.ScheduleStoreService` + `ScheduleOneShotReArmerService`
+  driver (a peer of `SessionStoreService`/`EventLogService` on the same
+  `mecatl.driver.v1` protocol), INDEPENDENT of the session store — when set
+  it REPLACES the `ScheduleStore()` discovery, and the driver's
+  `Claim`/`ClaimNow`/`ReArmOneShot` run the at-most-once atomic advance
+  server-side (the durable NextFireAt advance IS the fence, exactly as the
+  in-process store's is). A dial failure is fatal (an explicitly-configured
+  driver that won't dial is an operator misconfiguration). The override backs
+  the in-chat `Schedule` TOOL too: composition passes the ONE resolved
+  `port.ScheduleStore` into `server.ScheduleManagerConfig.ScheduleStore`, so
+  the tool + tick loop + fire path share the one registry — no absent tool
+  with an accessor-less session store, and no split-brain with an accessor-ful
+  one. The leader-lease reuses the session-lease backend (same backend, different id). The
   `FireFunc` mints a fresh `sched--`
   top-level session per fire via `Service.CreateSessionWithProfile` +
   `StartRunContent` with subagent-grade defaults (bounded budgets, read-leaning

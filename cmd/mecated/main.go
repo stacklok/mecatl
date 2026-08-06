@@ -186,6 +186,7 @@ type config struct {
 	agentSourceURL   string
 	commandSourceURL string
 	eventLogURL      string
+	scheduleStoreURL string
 	driverAuthToken  string
 	driverTLS        bool
 	driverTLSCA      string
@@ -1030,6 +1031,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SessionStoreURL:               cfg.sessionStoreURL,
 		MemoryStoreURL:                cfg.memoryStoreURL,
 		EventLogURL:                   cfg.eventLogURL,
+		ScheduleStoreURL:              cfg.scheduleStoreURL,
 		SessionLeaseURL:               cfg.sessionLeaseURL,
 		SessionLeaseDir:               cfg.sessionLeaseDir,
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
@@ -1411,6 +1413,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = sweep at startup only. Only meaningful when a child or main retention/cap knob is active")
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.eventLogURL, "event-log-url", "", "host:port of a remote event-log gRPC driver (mecatl.driver.v1.EventLogService) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); INDEPENDENT of the session store. Empty keeps the local default (the --store-dir jsonl log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
+	fs.StringVar(&cfg.scheduleStoreURL, "schedule-store-url", "", "host:port of a remote schedule-store gRPC driver (mecatl.driver.v1.ScheduleStoreService + ScheduleOneShotReArmerService) for the durable schedule registry (scheduled tasks); INDEPENDENT of the session store — when set, replaces the ScheduleStore() discovery from the configured store. Empty keeps the byte-identical default (the configured store's own ScheduleStore() accessor, or no scheduling). The driver's Claim/ClaimNow/ReArmOneShot run the atomic advance server-side. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host:port of a remote session-lease gRPC driver (mecatl.driver.v1.SessionLeaseService) for cross-process single-writer enforcement (cloud-native Phase 4, multi-replica). Empty = NO leasing (the byte-identical single-writer-by-affinity default: route every session to one replica). Mutually exclusive with --session-lease-dir / --session-lease-k8s-namespace. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for a SINGLE-HOST flock session lease (cross-process single-writer enforcement among processes on ONE machine; flock auto-releases on crash). NOT safe across hosts — use --session-lease-k8s-namespace or --session-lease-url for multi-host/multi-replica. Empty = no leasing")
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see docs/usage.md). Empty = no leasing")

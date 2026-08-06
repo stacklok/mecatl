@@ -43,7 +43,7 @@ The loop stays storage-agnostic throughout. It only emits — it never imports `
 | Shape | Disposable process | Externalized state | Durable record |
 |---|---|---|---|
 | **Embed the engine** | No — you wire it | You implement `port.SessionStore` and `port.EventLog` | You implement `port.EventLog` |
-| **mecated** | Yes, with `--store-dir` + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
+| **mecated** | Yes, with `--store-dir` + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
 | **mecak8s** | Yes, out of the box | Redis (`internal/adapter/redisstore`) | Redis via same adapter |
 
 **Embed:** the engine exports the ports; the reference adapters under `engine/adapter/` — `memstore`, `memlease`, `sessnap` — give you a working in-process starting point. For real externalization, implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` against your own backing service and wire them in composition.
