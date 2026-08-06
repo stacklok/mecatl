@@ -73,6 +73,15 @@ func TestParseRejectsUnknownSource(t *testing.T) {
 	}
 }
 
+func TestParseRejectsMalformedJSONL(t *testing.T) {
+	raw := `{"type":"event_msg","payload":{"type":"user_message","message":"ok"}}` + "\n" +
+		`this is not json`
+	if _, err := Parse(SourceCodex, strings.NewReader(raw)); err == nil ||
+		!strings.Contains(err.Error(), "decode JSONL line 2") {
+		t.Fatalf("Parse error = %v", err)
+	}
+}
+
 func assertMessages(t *testing.T, got []session.Message, roles []session.Role, texts []string) {
 	t.Helper()
 	if len(got) != len(roles) || len(got) != len(texts) {

@@ -368,6 +368,10 @@ For Claude Code, use `--from claude-code` and a transcript such as
 source tool's conventional project and user skill directories. You can instead
 or additionally repeat `--skills-dir <source>` to name exact skill directories.
 
+TRUST BOUNDARY: imported `SKILL.md` files steer the model exactly like
+`AGENTS.md`/`CLAUDE.md` — only import skills from a source you trust, the same
+way you would point `mecated serve --skills-dir` at a trusted directory.
+
 The safety and portability rules are intentional:
 
 - The imported session keeps user and assistant text only. Provider-private

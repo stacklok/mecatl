@@ -57,8 +57,11 @@ reasoning and tool-call records are omitted so the history remains valid when a
 different Mecatl provider resumes it. `--copy-files` never overwrites existing
 paths and skips `.git`, symlinks, and special files. `--skills` copies
 conventional Agent Skills bundles to `<workspace>/.mecatl/skills`; repeat
-`--skills-dir` to add explicit sources. Start `mecated serve` with the same
-`--store-dir`, and explicitly enable the imported skills directory.
+`--skills-dir` to add explicit sources. TRUST BOUNDARY: imported `SKILL.md`
+files steer the model like `AGENTS.md`/`CLAUDE.md` — only import skills from a
+trusted source, the same way you would point `mecated serve --skills-dir` at a
+trusted directory. Start `mecated serve` with the same `--store-dir`, and
+explicitly enable the imported skills directory.
 
 ### Flags
 

@@ -82,6 +82,31 @@ func TestRunImportCopyFilesRequiresExplicitWorkspace(t *testing.T) {
 	}
 }
 
+func TestRunImportRejectsTranscriptWithNoImportableText(t *testing.T) {
+	root := t.TempDir()
+	transcript := filepath.Join(root, "session.jsonl")
+	// Only system/developer/reasoning records: none yield importable user or
+	// assistant text, so the import must fail before touching the store.
+	writeImportTestFile(t, transcript, strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"abc","cwd":"/work"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"private instructions"}]}}`,
+		`{"type":"response_item","payload":{"type":"reasoning","encrypted_content":"opaque"}}`,
+	}, "\n"))
+	storeDir := filepath.Join(root, "store")
+	err := runImport([]string{
+		"--from", "codex",
+		"--session", transcript,
+		"--store-dir", storeDir,
+		"--workspace", filepath.Join(root, "ws"),
+	}, os.Stdout)
+	if err == nil || !strings.Contains(err.Error(), "contains no importable user or assistant text") {
+		t.Fatalf("runImport error = %v", err)
+	}
+	if _, statErr := os.Stat(storeDir); !os.IsNotExist(statErr) {
+		t.Fatalf("store created on empty-text import, stat error = %v", statErr)
+	}
+}
+
 func writeImportTestFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -23,12 +23,6 @@ func CopyWorkspace(src, dst string) (CopyStats, error) {
 	return copyTree(src, dst, map[string]bool{".git": true})
 }
 
-// CopySkills copies each direct <name>/SKILL.md bundle from src into dst. A
-// bundle includes its supporting files. Existing skill names are never replaced.
-func CopySkills(src, dst string) (CopyStats, error) {
-	return CopySkillSources([]string{src}, dst)
-}
-
 // CopySkillSources imports bundles from all sources after checking cross-source
 // and destination name collisions, so a duplicate is reported before any bundle
 // is written.
@@ -49,21 +43,28 @@ func CopySkillSources(sources []string, dst string) (CopyStats, error) {
 			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 				continue
 			}
-			path := filepath.Join(src, entry.Name())
+			name := entry.Name()
+			// Skill names are joined into the destination tree, so reject any name
+			// that would escape confinement ("."/".." or one carrying a separator).
+			// Matches the safeAgentMemoryDir sanitization discipline.
+			if !isSafeSkillName(name) {
+				continue
+			}
+			path := filepath.Join(src, name)
 			manifest, err := os.Lstat(filepath.Join(path, "SKILL.md"))
 			if err != nil || !manifest.Mode().IsRegular() {
 				continue
 			}
-			if previous, ok := seen[entry.Name()]; ok {
-				return total, fmt.Errorf("skill %q exists in both %s and %s; pass explicit --skills-dir values without collisions", entry.Name(), previous, src)
+			if previous, ok := seen[name]; ok {
+				return total, fmt.Errorf("skill %q exists in both %s and %s; pass explicit --skills-dir values without collisions", name, previous, src)
 			}
-			if _, err := os.Lstat(filepath.Join(dst, entry.Name())); err == nil {
-				return total, fmt.Errorf("destination skill already exists: %s", filepath.Join(dst, entry.Name()))
+			if _, err := os.Lstat(filepath.Join(dst, name)); err == nil {
+				return total, fmt.Errorf("destination skill already exists: %s", filepath.Join(dst, name))
 			} else if !os.IsNotExist(err) {
-				return total, fmt.Errorf("inspect destination skill %q: %w", entry.Name(), err)
+				return total, fmt.Errorf("inspect destination skill %q: %w", name, err)
 			}
-			seen[entry.Name()] = src
-			bundles = append(bundles, bundle{name: entry.Name(), path: path})
+			seen[name] = src
+			bundles = append(bundles, bundle{name: name, path: path})
 		}
 	}
 	for _, bundle := range bundles {
@@ -79,6 +80,17 @@ func CopySkillSources(sources []string, dst string) (CopyStats, error) {
 	return total, nil
 }
 
+// isSafeSkillName reports whether name is a single path component that stays
+// within the destination tree: neither "." nor ".." and free of any path
+// separator. Rejecting traversal names here keeps the filepath.Join under dst
+// confined, matching the safeAgentMemoryDir token discipline.
+func isSafeSkillName(name string) bool {
+	if name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsAny(name, `/\`) && !strings.ContainsRune(name, filepath.Separator)
+}
+
 type copyEntry struct {
 	src  string
 	dst  string
@@ -87,32 +99,45 @@ type copyEntry struct {
 }
 
 func copyTree(src, dst string, skipTopLevel map[string]bool) (CopyStats, error) {
-	var stats CopyStats
 	srcAbs, err := filepath.Abs(src)
 	if err != nil {
-		return stats, fmt.Errorf("resolve source %q: %w", src, err)
+		return CopyStats{}, fmt.Errorf("resolve source %q: %w", src, err)
 	}
 	srcAbs, err = filepath.EvalSymlinks(srcAbs)
 	if err != nil {
-		return stats, fmt.Errorf("resolve source symlinks %q: %w", src, err)
+		return CopyStats{}, fmt.Errorf("resolve source symlinks %q: %w", src, err)
 	}
 	dstAbs, err := filepath.Abs(dst)
 	if err != nil {
-		return stats, fmt.Errorf("resolve destination %q: %w", dst, err)
+		return CopyStats{}, fmt.Errorf("resolve destination %q: %w", dst, err)
 	}
 	info, err := os.Stat(srcAbs)
 	if err != nil {
-		return stats, fmt.Errorf("stat source %q: %w", srcAbs, err)
+		return CopyStats{}, fmt.Errorf("stat source %q: %w", srcAbs, err)
 	}
 	if !info.IsDir() {
-		return stats, fmt.Errorf("source %q is not a directory", srcAbs)
+		return CopyStats{}, fmt.Errorf("source %q is not a directory", srcAbs)
 	}
 	if dstAbs == srcAbs || strings.HasPrefix(dstAbs, srcAbs+string(filepath.Separator)) {
-		return stats, fmt.Errorf("destination %q must not be inside source %q", dstAbs, srcAbs)
+		return CopyStats{}, fmt.Errorf("destination %q must not be inside source %q", dstAbs, srcAbs)
 	}
+	plan, stats, err := planCopy(srcAbs, dstAbs, skipTopLevel)
+	if err != nil {
+		return stats, fmt.Errorf("plan copy from %q: %w", srcAbs, err)
+	}
+	if err := executeCopy(dstAbs, plan, &stats); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
 
+// planCopy walks srcAbs and builds the ordered copy plan, performing the
+// symlink/skip/overwrite preflight checks so a collision fails before any file
+// is written.
+func planCopy(srcAbs, dstAbs string, skipTopLevel map[string]bool) ([]copyEntry, CopyStats, error) {
+	var stats CopyStats
 	var plan []copyEntry
-	err = filepath.WalkDir(srcAbs, func(path string, entry fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(srcAbs, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -146,25 +171,28 @@ func copyTree(src, dst string, skipTopLevel map[string]bool) (CopyStats, error) 
 		plan = append(plan, copyEntry{src: path, dst: target, mode: info.Mode(), dir: info.IsDir()})
 		return nil
 	})
-	if err != nil {
-		return stats, fmt.Errorf("plan copy from %q: %w", srcAbs, err)
-	}
+	return plan, stats, err
+}
+
+// executeCopy creates the destination root and applies the plan (directories
+// first via mkdir, then regular file copies), accumulating counts into stats.
+func executeCopy(dstAbs string, plan []copyEntry, stats *CopyStats) error {
 	if err := os.MkdirAll(dstAbs, 0o700); err != nil {
-		return stats, fmt.Errorf("create destination %q: %w", dstAbs, err)
+		return fmt.Errorf("create destination %q: %w", dstAbs, err)
 	}
 	for _, item := range plan {
 		if item.dir {
 			if err := os.Mkdir(item.dst, item.mode.Perm()); err != nil {
-				return stats, fmt.Errorf("create directory %q: %w", item.dst, err)
+				return fmt.Errorf("create directory %q: %w", item.dst, err)
 			}
 			continue
 		}
 		if err := copyRegularFile(item.src, item.dst, item.mode.Perm()); err != nil {
-			return stats, err
+			return err
 		}
 		stats.Files++
 	}
-	return stats, nil
+	return nil
 }
 
 func copyRegularFile(src, dst string, mode fs.FileMode) (err error) {

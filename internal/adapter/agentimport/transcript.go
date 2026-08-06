@@ -19,7 +19,9 @@ import (
 type Source string
 
 const (
-	SourceCodex      Source = "codex"
+	// SourceCodex identifies the Codex external agent transcript format.
+	SourceCodex Source = "codex"
+	// SourceClaudeCode identifies the Claude Code external agent transcript format.
 	SourceClaudeCode Source = "claude-code"
 	maxRecordBytes          = 16 << 20
 )
@@ -231,8 +233,12 @@ func appendTextMessage(dst *[]session.Message, role, text string) {
 	}
 	// Tool-only records are deliberately omitted. Coalescing the text records on
 	// either side keeps the resulting provider-neutral history well formed.
-	if len(*dst) > 0 && (*dst)[len(*dst)-1].Role == message.Role {
-		(*dst)[len(*dst)-1].Text += "\n\n" + message.Text
+	// Message is an immutable value object, so coalescing replaces the last
+	// element with a freshly constructed message rather than mutating its Text.
+	if n := len(*dst); n > 0 && (*dst)[n-1].Role == message.Role {
+		coalesced := message
+		coalesced.Text = (*dst)[n-1].Text + "\n\n" + message.Text
+		(*dst)[n-1] = coalesced
 		return
 	}
 	*dst = append(*dst, message)
