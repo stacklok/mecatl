@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -1480,6 +1481,49 @@ func TestModelsPickerDisabledGolden(t *testing.T) {
 	compareGolden(t, "models_disabled.golden", got)
 }
 
+// TestOpenAICodexCommandRootSurfaces pins AC8.4 at the TUI boundary: a
+// rejected manual token is promoted as the empty inventory's cause with the
+// auth.yaml/restart remedy supplied by composition. The golden makes this an
+// operator-visible contract rather than a server-only status assertion.
+func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
+	fm := &fakeModels{statuses: []client.ProviderStatus{{
+		ProviderID: "openai-codex",
+		State:      "unauthorized",
+		Hint:       "replace the manual token in auth.yaml and restart mecatl",
+	}}}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	rendered := stripANSI([]byte(m.View().Content))
+	for _, want := range []string{"openai-codex", "manual token rejected", "auth.yaml", "restart"} {
+		if !bytes.Contains(rendered, []byte(want)) {
+			t.Errorf("Codex unauthorized surface missing %q:\n%s", want, rendered)
+		}
+	}
+	compareGolden(t, "models_codex_unauthorized.golden", rendered)
+}
+
+// TestOpenAICodexHealthyStatusDoesNotImplyOrgGolden proves the broader
+// provider_status wire is not confused with ToolHive's config-intent tier: an
+// entitled Codex model is selectable, but it never gains the "org" label.
+func TestOpenAICodexHealthyStatusDoesNotImplyOrgGolden(t *testing.T) {
+	fm := &fakeModels{
+		models:   []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai-codex", DisplayName: "GPT-5"}},
+		statuses: []client.ProviderStatus{{ProviderID: "openai-codex", State: "ok", ModelCount: 1}},
+	}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	rendered := stripANSI([]byte(m.View().Content))
+	if !bytes.Contains(rendered, []byte("openai-codex · GPT-5")) {
+		t.Fatalf("healthy Codex model missing from picker:\n%s", rendered)
+	}
+	if bytes.Contains(rendered, []byte("org")) {
+		t.Fatalf("manually configured Codex status must not imply org intent:\n%s", rendered)
+	}
+	compareGolden(t, "models_codex_healthy.golden", rendered)
+}
+
 // TestModelsPickerEmptyGolden locks the "enabled but empty" state.
 func TestModelsPickerEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, &fakeModels{}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
@@ -1818,6 +1862,19 @@ func TestModelRowOrgTagForIntentProvider(t *testing.T) {
 	got = modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, openrouter)
 	if strings.Contains(got, "org") {
 		t.Errorf("openrouter row must NOT carry the org tag, got %q", got)
+	}
+}
+
+func TestIntentProviderSetExcludesOpenAICodexStatus(t *testing.T) {
+	got := intentProviderSet([]client.ProviderStatus{
+		{ProviderID: "toolhive", State: "ok"},
+		{ProviderID: "openai-codex", State: "ok"},
+	})
+	if !got["toolhive"] {
+		t.Fatal("ToolHive status lost its config-intent classification")
+	}
+	if got["openai-codex"] {
+		t.Fatal("Codex entitlement status was misclassified as config intent")
 	}
 }
 

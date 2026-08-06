@@ -51,8 +51,9 @@ func (s ModelSelection) Matches(m ModelInfo) bool {
 	return s.ProviderID == m.ProviderID && s.ModelID == m.ID
 }
 
-// ProviderStatus is one provider's last live-listing outcome (issue #262: the
-// ToolHive LLM gateway), the proto-free mirror of mecatlv1.ProviderStatus.
+// ProviderStatus is one operator-actionable provider's last live-listing
+// outcome (ToolHive or openai-codex), the proto-free mirror of
+// mecatlv1.ProviderStatus.
 // State is "ok" | "unreachable" | "unauthorized" | "empty"; Hint is a short
 // human remediation string, empty for "ok".
 type ProviderStatus struct {
@@ -66,7 +67,7 @@ type ProviderStatus struct {
 	// wire field (default_model_auto_selected) and the server-side accessor
 	// (providerRegistry.DefaultModelAutoSelected) verbatim.
 	DefaultModelAutoSelected bool
-	// ModelCount is the count of models this intent-driven provider's last
+	// ModelCount is the count of models this surfaced provider's last
 	// successful live listing returned. 0 on empty/unreachable/unrecorded.
 	// Named to match the wire field (model_count) verbatim.
 	ModelCount int32
@@ -80,8 +81,7 @@ type ProviderStatus struct {
 // ModelsMsg carries a ListModels result for the /models picker. Err is set on
 // failure; the picker surfaces it rather than silently degrading. Statuses is
 // the (possibly empty) per-provider live-listing outcome list — empty for
-// every deployment without an intent-driven provider (byte-identical to
-// before issue #262).
+// every deployment without a surfaced live-inventory provider.
 type ModelsMsg struct {
 	Models   []ModelInfo
 	Statuses []ProviderStatus

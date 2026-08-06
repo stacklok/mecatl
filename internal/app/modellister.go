@@ -701,14 +701,11 @@ func (s *liveOutcomeStore) getStatus(pid string) (providerStatus, bool) {
 	return v, ok
 }
 
-// providerStatusProto projects the outcome store into the v1 wire message,
-// scoped to INTENT-DRIVEN providers ONLY (issue #262: so an ordinary
-// openrouter/anthropic live-listing blip never grows the client-facing
-// status list — v1 is deliberately toolhive-scoped). Sorted by provider id
-// for a deterministic wire shape. Returns nil for a nil registry or when no
-// intent-driven provider has a recorded status yet (e.g. Build hasn't probed
-// it — never reachable in practice, since probeToolhive always records
-// something for a registered toolhive entry).
+// providerStatusProto projects operator-actionable live-inventory outcomes into
+// the v1 wire message. That includes intent-driven gateways and openai-codex,
+// whose live list is the account entitlement boundary; ordinary OpenRouter and
+// Anthropic listing blips remain unprojected. Sorted by provider id for a
+// deterministic wire shape.
 func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 	if reg == nil {
 		return nil
@@ -716,7 +713,7 @@ func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 	var out []*mecatlv1.ProviderStatus
 	for _, pid := range reg.Available() {
 		entry, ok := reg.Lookup(pid)
-		if !ok || !entry.intentDriven {
+		if !ok || (!entry.intentDriven && pid != providerOpenAICodex) {
 			continue
 		}
 		status, ok := reg.outcomes.getStatus(pid)

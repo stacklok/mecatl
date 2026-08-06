@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -18,16 +19,17 @@ import (
 // of the build-once guard, records onto the SAME shared store so a child sink's
 // emissions are still counted against the parent's tally. It is concurrency-safe.
 type capturingDiagnostics struct {
-	mu    *sync.Mutex
-	msgs  *[]string
-	bound []any
+	mu      *sync.Mutex
+	msgs    *[]string
+	records *[]string
+	bound   []any
 }
 
 func newCapturingDiagnostics() *capturingDiagnostics {
-	return &capturingDiagnostics{mu: &sync.Mutex{}, msgs: &[]string{}}
+	return &capturingDiagnostics{mu: &sync.Mutex{}, msgs: &[]string{}, records: &[]string{}}
 }
 
-func (c *capturingDiagnostics) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+func (c *capturingDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
 	// A nil store (zero value used only as a non-nil sink, e.g. in
 	// TestSubproviderChildTelemetryOff) drops the record like a Nop.
 	if c.mu == nil {
@@ -36,10 +38,17 @@ func (c *capturingDiagnostics) Log(_ context.Context, _ port.Level, msg string, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	*c.msgs = append(*c.msgs, msg)
+	*c.records = append(*c.records, fmt.Sprint(append(append([]any{msg}, c.bound...), args...)...))
 }
 
 func (c *capturingDiagnostics) With(args ...any) port.Diagnostics {
-	return &capturingDiagnostics{mu: c.mu, msgs: c.msgs, bound: append(append([]any{}, c.bound...), args...)}
+	return &capturingDiagnostics{mu: c.mu, msgs: c.msgs, records: c.records, bound: append(append([]any{}, c.bound...), args...)}
+}
+
+func (c *capturingDiagnostics) capturedStrings() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), (*c.records)...)
 }
 
 func (c *capturingDiagnostics) countContaining(substr string) int {

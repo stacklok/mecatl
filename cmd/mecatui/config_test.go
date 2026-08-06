@@ -906,6 +906,60 @@ func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
 	})
 }
 
+// TestOpenAICodexCommandRootSurfaces pins the embedded command-root half of
+// AC8.4: local help exposes the file-auth entry point, a file-only credential
+// survives pure projection, and an expired snapshot produces one actionable,
+// secret-free pre-TUI warning.
+func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
+	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(envName, "")
+	}
+	help := helpRenderOut(t, modeLocal, []string{"--help"})
+	if !hasFlagHeader(help, "auth-file") || !strings.Contains(help, "openai-codex") {
+		t.Fatalf("embedded help does not surface manual Codex file auth:\n%s", help)
+	}
+
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	validToken := configTestCodexToken(expires, "acct-tui-surface")
+	validPath := filepath.Join(t.TempDir(), "auth.yaml")
+	validBody := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-tui-surface\n      expires_at: %s\n", validToken, expires.Format(time.RFC3339))
+	if err := os.WriteFile(validPath, []byte(validBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", validPath, "--toolhive-llm=false"})
+	if err != nil {
+		t.Fatalf("parse valid file-only credential: %v", err)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate valid file-only credential: %v", err)
+	}
+	if got := embeddedConfig(cfg, port.NopDiagnostics{}); !got.OpenAICodexCredential.Configured() {
+		t.Fatal("embedded projection lost the valid manual credential")
+	}
+
+	expiredAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	expiredToken := configTestCodexToken(expiredAt, "acct-expired")
+	expiredPath := filepath.Join(t.TempDir(), "auth.yaml")
+	expiredBody := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-expired\n      expires_at: %s\n", expiredToken, expiredAt.Format(time.RFC3339))
+	if err := os.WriteFile(expiredPath, []byte(expiredBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expiredCfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", expiredPath, "--mock"})
+	if err != nil {
+		t.Fatalf("parse expired credential: %v", err)
+	}
+	var warning bytes.Buffer
+	emitAuthFileWarning(&warning, expiredCfg.providerCredentials.AuthFileWarning)
+	for _, want := range []string{"expired", "auth.yaml", "restart"} {
+		if !strings.Contains(warning.String(), want) {
+			t.Errorf("expired warning %q missing %q", warning.String(), want)
+		}
+	}
+	if strings.Count(warning.String(), "mecatui: WARNING:") != 1 || strings.Contains(warning.String(), expiredToken) {
+		t.Fatalf("expired warning must be emitted once without the token: %q", warning.String())
+	}
+}
+
 func TestConnectSkipsLocalAuthFile(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)

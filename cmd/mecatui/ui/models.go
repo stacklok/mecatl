@@ -63,16 +63,14 @@ type modelsState struct {
 	// globalDefault is the global `default:` block (drives the ★ marker + the
 	// "global default" provenance label).
 	globalDefault client.ModelSelection
-	// statuses is the (possibly empty) per-provider live-listing status list
-	// (issue #262: the ToolHive LLM gateway) relayed alongside models. Empty
-	// for every deployment without an intent-driven provider — the render
-	// path is then byte-identical to before this feature.
+	// statuses is the (possibly empty) operator-actionable per-provider
+	// live-listing status list relayed alongside models. It currently carries
+	// ToolHive gateway intent and openai-codex account-entitlement outcomes.
 	statuses []client.ProviderStatus
-	// intentProviders is the set of provider ids that appear in statuses —
-	// every row in provider_status is intent-driven by the providerStatusProto
-	// filter, so membership ⇒ intent-driven (the "org" tier). A model row
-	// whose ProviderID is in this set carries a "org" segment. nil when there
-	// are no statuses (byte-identical to the pre-feature render path).
+	// intentProviders is the subset of status providers that are genuinely
+	// config-detected intent providers (currently ToolHive). A model row whose
+	// ProviderID is in this set carries an "org" segment. A Codex status row
+	// never implies that label. nil when there are no intent providers.
 	intentProviders map[string]bool
 }
 
@@ -640,10 +638,9 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.models.err = nil
 		m.models.models = msg.Models
 		m.models.statuses = msg.Statuses
-		// Derive the intent-driven provider set (every row in provider_status is
-		// intent-driven by the providerStatusProto filter) — membership ⇒ the
-		// "org" tier glyph on a model row. nil when there are no statuses, so the
-		// no-gateway render path stays byte-identical.
+		// Derive the genuine config-intent subset. provider_status also carries
+		// Codex entitlement outcomes, which are actionable but are not an "org"
+		// provider tier.
 		m.models.intentProviders = intentProviderSet(msg.Statuses)
 		// Derive the filtered slice (+ clamp the cursor) from the current filter
 		// value; on a fresh open the filter is empty, so filtered == models.
@@ -828,18 +825,20 @@ func statusAutoSelected(statuses []client.ProviderStatus, providerID string) boo
 	return false
 }
 
-// intentProviderSet builds the set of provider ids that appear in statuses —
-// every row in provider_status is intent-driven by the providerStatusProto
-// filter, so membership ⇒ intent-driven (the "org" tier). Returns nil for an
-// empty slice so the no-gateway render path stays byte-identical (a nil map
-// reads as "not present" for every key).
+// intentProviderSet projects only genuine config-detected intent providers from
+// the broader operator-status list. ToolHive is the sole such provider today;
+// openai-codex has an actionable entitlement status but is manually configured
+// and must never gain the "org" tier label. A future intent-driven provider must
+// be added here alongside its server registration contract.
 func intentProviderSet(statuses []client.ProviderStatus) map[string]bool {
-	if len(statuses) == 0 {
-		return nil
-	}
-	out := make(map[string]bool, len(statuses))
+	var out map[string]bool
 	for _, s := range statuses {
-		out[s.ProviderID] = true
+		if s.ProviderID == "toolhive" {
+			if out == nil {
+				out = make(map[string]bool, 1)
+			}
+			out[s.ProviderID] = true
+		}
 	}
 	return out
 }
@@ -882,7 +881,8 @@ func (m Model) modelsRowBudget() int {
 // on the connected server (caps.ModelSelection == false / zero providers), with
 // the remedy — aligned with the zero-keys actionable copy.
 const modelsDisabledNote = "Model selection is not available on this server.\n" +
-	"Set OPENAI_API_KEY or OPENROUTER_API_KEY and reconnect."
+	"Embedded: configure openai-codex OAuth in --auth-file, then relaunch.\n" +
+	"Alternatively, set OPENAI_API_KEY or OPENROUTER_API_KEY and restart."
 
 // modelsErrorHint is the next-action line rendered beneath a raw ListModels
 // RPC error (review UX finding: a bare "✗ list models: <error>" was a dead
@@ -962,6 +962,12 @@ var toolhiveStatusCopy = map[string]string{
 	"empty":        "credential lists no models",
 }
 
+var openAICodexStatusCopy = map[string]string{
+	"unreachable":  "ChatGPT Codex service not reachable",
+	"unauthorized": "manual token rejected",
+	"empty":        "account lists no selectable models",
+}
+
 // providerStatusLine builds the one-line remediation clause for a non-ok
 // status: "<provider_id>: <short copy> — <hint>" (issue #262 R6.2). Extracted
 // (review finding 6) so modelsEmptyCopy's promoted-cause line and
@@ -970,7 +976,11 @@ var toolhiveStatusCopy = map[string]string{
 // addition) still renders using the raw state string, so a new state is
 // never silently dropped.
 func providerStatusLine(s client.ProviderStatus) string {
-	clause := toolhiveStatusCopy[s.State]
+	copyByState := toolhiveStatusCopy
+	if s.ProviderID == "openai-codex" {
+		copyByState = openAICodexStatusCopy
+	}
+	clause := copyByState[s.State]
 	if clause == "" {
 		clause = s.State
 	}
@@ -1119,11 +1129,10 @@ func modelsPositionLabel(start, end, total int) string {
 // selection (else " "), cell 2 is "★" on the GLOBAL-DEFAULT row (else " "). A row
 // that is both pending AND the global default shows "●★".
 //
-// intentProviders is the set of provider ids that appear in provider_status (every
-// such row is intent-driven by the providerStatusProto filter); a model row whose
-// ProviderID is in it carries a "org" segment (Proposal 2 — ASCII, 3 chars, matching
-// the img/reason token style; fixed-width after ANSI strip per the golden-stability
-// comment). nil ⇒ no row carries it (the no-gateway render path stays byte-identical).
+// intentProviders is the genuine config-intent subset of provider_status; a model
+// row whose ProviderID is in it carries an "org" segment (Proposal 2 — ASCII,
+// 3 chars, matching the img/reason token style). Actionable non-intent statuses
+// such as openai-codex are deliberately absent. nil ⇒ no row carries the label.
 func modelRowText(active, globalDefault client.ModelSelection, intentProviders map[string]bool, mi client.ModelInfo) string {
 	activeMark := " "
 	if active.Matches(mi) {

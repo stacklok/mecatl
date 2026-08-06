@@ -7332,11 +7332,11 @@ func (*ListModelsRequest) Descriptor() ([]byte, []int) {
 // surfacing (issue #262). state is a STRING passthrough (no enum — the
 // EvNoProgress/StopBudget discipline): "ok" | "unreachable" | "unauthorized" | "empty".
 //
-// model_count and available_not_default are scoped to INTENT-DRIVEN providers
-// ONLY (the v1 invariant: a key-driven openrouter/anthropic live-listing blip
-// never grows this list). They are additive (fields 5/6) and carry 0/false for
-// every deployment without an intent-driven provider — byte-identical to before
-// this wave.
+// Rows are scoped to OPERATOR-ACTIONABLE live-inventory providers: currently
+// config-detected intent gateways and the manually configured openai-codex
+// entitlement boundary. A keyed openrouter/anthropic live-listing blip never
+// grows this list. The additive fields carry 0/false for every deployment
+// without a surfaced provider — byte-identical to before this wave.
 type ProviderStatus struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	ProviderId string                 `protobuf:"bytes,1,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
@@ -7347,9 +7347,9 @@ type ProviderStatus struct {
 	// heal/probe pick, issue #262 R2.4) — never true when an operator
 	// configured --model/--default-model. A client uses this (rather than a
 	// vendor-name check) to label the current model "(auto-selected)" honestly
-	// for ANY intent-driven provider, present or future.
+	// for ANY surfaced provider, present or future.
 	DefaultModelAutoSelected bool `protobuf:"varint,4,opt,name=default_model_auto_selected,json=defaultModelAutoSelected,proto3" json:"default_model_auto_selected,omitempty"`
-	// model_count is the count of models this intent-driven provider's last
+	// model_count is the count of models this surfaced provider's last
 	// successful live listing returned (derived from the outcome store's
 	// last-known-good snapshot). 0 on empty/unreachable/unrecorded — so a client
 	// cannot distinguish "0 models" from "never probed" by this field alone
@@ -7451,9 +7451,9 @@ type ListModelsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// models are the (possibly empty) selectable models, (provider_id, id)-sorted.
 	Models []*ModelInfo `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
-	// provider_status surfaces live-listing outcomes for intent-driven providers
-	// (issue #262: e.g. the ToolHive LLM gateway) so a client can render a
-	// remediation hint even when the provider contributes zero models.
+	// provider_status surfaces operator-actionable live-inventory outcomes for
+	// intent-driven gateways and openai-codex, so a client can render a
+	// provider-specific remediation hint even when it contributes zero models.
 	ProviderStatus []*ProviderStatus `protobuf:"bytes,2,rep,name=provider_status,json=providerStatus,proto3" json:"provider_status,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

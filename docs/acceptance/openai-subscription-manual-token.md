@@ -843,8 +843,8 @@ Coder: /root/step7_coder (interrupted partial candidate) and
   /root/main_sync_coder (replacement owner, repair, and verification).
 Reviewers: /root/step7_spec_review (specification/architecture) and
   /root/step5_coder_recovery (correctness/security/reuse). The specification
-  reviewer returned zero blockers; security final confirmation is pending this
-  log correction.
+  and correctness/security/reuse reviewers both returned zero blockers after
+  re-review.
 Findings: the existing provider/openai translator and request builder already
   consume every neutral fact in the sanitized Codex fixtures, so no second SSE
   decoder or Codex-specific Responses builder was added. The Step 7 product
@@ -868,5 +868,64 @@ Verification: all named Step 7 acceptance proofs pass offline. Normal/default-
   and git diff checks pass. The final normal/default-cache `task lint` passes
   the root, engine, and every provider module with zero issues. No private cache
   or temp override was used.
-Commit: pending security final confirmation and scoped Step 7 local commit.
+Commit: 339e0800c5099a639928fb0cca4e26a6a147b985
+
+Step 8 — Prove full composition, persistence, and operator surfaces
+Base: 339e0800c5099a639928fb0cca4e26a6a147b985
+Coder handoff: /root/step8_coder supplied the interrupted partial composition,
+  persistence, mecatui, and mecatequi candidate; /root/step5_coder_recovery is
+  the completion coder responsible for the AC8.5 sentinel proof, candidate
+  audit, and final verification.
+Reviewers: /root/step8_spec_review (specification/architecture) and
+  /root/step7_coder (correctness/security/reuse). Both final re-reviews returned
+  zero blockers after the repairs below.
+Findings: the recovered candidate needed a durable, non-vacuous bearer sentinel
+  proof and its new Codex status row needed the existing provider-status
+  projection expanded beyond ToolHive. The completion test mints a structurally
+  valid Credential whose canonical JWT signature segment is a unique sentinel,
+  drives an offline 401 through the real Codex policy/Responses construction,
+  and checks the returned error plus every captured Build diagnostic string,
+  provider-status/service relay, provider request body, loaded session, durable
+  event, and raw jsonlstore artifact. The bearer is intentionally present only
+  in the outbound Authorization header at the provider boundary. No duplicate
+  Responses adapter, lister, session-factory path, prompt builder, hook runner,
+  or persistence schema was added.
+Review repairs: the sentinel transport now captures every request header and
+  proves the exact Bearer boundary while scanning every other header/body; late
+  diagnostics are collected after both rejected inference paths; the persisted
+  session must be failed with a sanitized StopError result rather than merely
+  containing creation events. A private composition test seam installs a
+  recording HookRunner on that actual bearer-configured Build and scans the
+  SessionStart, UserPromptSubmit, and Stop HookEvents. The mecatequi proof now
+  calls production `realMain`, so deleting its one warning emission fails.
+  Codex remains on provider_status for actionable entitlement remediation, but
+  only genuine ToolHive config intent receives the TUI `org` label. The healthy
+  Codex golden pins that separation, and the disabled-state remedy is bounded to
+  the normal viewport and explicitly requires relaunch/restart after startup-only
+  credential resolution. Final specification review found the protobuf comments
+  still described provider_status as intent-only; the source and generated Go
+  comments now name the broader operator-actionable live-inventory contract for
+  intent gateways and openai-codex, with no field or schema change.
+Reused security oracles: `TestMainCommandRunnerScrubsSecrets` and
+  `TestSandboxedCommandRunnerScrubsSecrets` cover the main and isolated child
+  environments. The bearer-specific run now inspects its real prompt/lifecycle
+  HookEvents directly; the provider-neutral redaction paths additionally reuse
+  `TestPromptFramingHeadersCannotBeForgedOnThePromptSurface`,
+  `TestPostToolUseHookMutatesResult`, and
+  `TestEventLogInheritsStreamRedaction` instead of inventing token-bearing hook
+  or prompt artifacts unrelated to the authentication scenario. The accepted
+  ADR and this plan explicitly retain the plaintext same-UID Bash file-read risk.
+Verification: the focused `TestADR_0083_OpenAICodexSecretSentinels` race test,
+  every named AC8.1–AC8.5 proof, the explicitly reused prompt/hook/environment
+  oracles, the full `internal/app` race suite, and the affected command-root/TUI
+  race suites pass with normal/default caches. `task test:golden` generated and
+  rechecked the unauthorized-Codex, healthy-Codex-no-`org`, and bounded
+  disabled-state goldens. `task api:check`, focused vet, docs lint, the
+  repository-wide `task lint`, gofmt, and `git diff --check` pass. Root confirmed
+  the final API and diff checks, and both independent reviewers returned zero
+  blockers. The required `task generate`
+  synchronized `harness.pb.go`; its later unrelated private-matlatl step could
+  not authenticate, and the partially written `llms.txt` was restored with no
+  remaining diff.
+Commit: pending the scoped Step 8 local commit; no commit has been created.
 ```

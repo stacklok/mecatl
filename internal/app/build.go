@@ -948,6 +948,10 @@ type Config struct {
 	// construction/remint path is exercised fully offline.
 	openAICodexNow       func() time.Time
 	openAICodexTransport http.RoundTripper
+	// hookRunner is the composition-only test seam for observing the real main
+	// engine lifecycle on a fully built provider path. Production leaves it nil,
+	// which preserves the inert hookexec.New(nil) default.
+	hookRunner port.HookRunner
 
 	// toolhiveConfigPath is the composition-only test seam for the ToolHive
 	// config-file path (mirroring envDetector/liveModelHTTPClient): ""
@@ -2730,7 +2734,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// learned rules; a nil resolver makes NewPolicyWithResolver behave exactly
 	// like NewPolicy (built-ins + learned only).
 	policy := permpolicy.NewPolicyWithResolver(mainRules(cfg), learned, cfg.permResolver, mainEvaluatorOptions(cfg)...)
-	hooks := hookexec.New(nil) // no hooks by default; map is the injection seam
+	hooks := cfg.hookRunner
+	if hooks == nil {
+		hooks = hookexec.New(nil) // no hooks by default; map is the injection seam
+	}
 
 	// Schedule manager (ADR 0076, task 02 eager bind): the schedule capability
 	// is STORE-shaped, so the manager is resolvable from the store ALONE —

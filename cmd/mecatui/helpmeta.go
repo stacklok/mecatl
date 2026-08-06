@@ -92,7 +92,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"openrouter-base-url":   {group: groupProvider, common: false, local: true, connect: false},
 	"anthropic-base-url":    {group: groupProvider, common: false, local: true, connect: false},
 	"opencode-base-url":     {group: groupProvider, common: false, local: true, connect: false},
-	"auth-file":             {group: groupProvider, common: false, local: true, connect: false},
+	"auth-file":             {group: groupProvider, common: true, local: true, connect: false},
 	"mock":                  {group: groupProvider, common: true, local: true, connect: false},
 	"no-bash":               {group: groupProvider, common: false, local: true, connect: false},
 	"toolhive-llm":          {group: groupProvider, common: false, local: true, connect: false},

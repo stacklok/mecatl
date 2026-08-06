@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -41,6 +42,44 @@ func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 		if got.OpenAICodexCredential.AccessToken() != token {
 			t.Fatal("mecatequi appConfig omitted or re-resolved the parsed credential")
 		}
+	}
+}
+
+// TestOpenAICodexCommandRootSurfaces pins mecatequi's production noninteractive
+// AC8.4 surface. realMain emits the resolved warning before workspace validation,
+// so a non-git workspace makes the proof hermetic while still failing if the
+// production emitAuthFileWarning call is deleted.
+func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
+	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(envName, "")
+	}
+	expires := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	token := mecatequiTestCodexToken(expires, "acct-mecatequi-expired")
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	body := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-mecatequi-expired\n      expires_at: %s\n", token, expires.Format(time.RFC3339))
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := realMain([]string{
+		"--prompt", "test",
+		"--auth-file", path,
+		"--mock",
+		"--workspace", t.TempDir(), // deliberately not a git repository
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("realMain(non-git workspace) = %d, want setup failure 2; stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{"expired", "auth.yaml", "restart"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("mecatequi warning %q missing %q", stderr.String(), want)
+		}
+	}
+	if strings.Count(stderr.String(), "mecatequi: WARNING:") != 1 || strings.Contains(stderr.String(), token) {
+		t.Fatalf("mecatequi warning must be emitted once without the token: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "not a git repository") {
+		t.Fatalf("test did not reach the post-warning workspace-validation boundary: %q", stderr.String())
 	}
 }
 

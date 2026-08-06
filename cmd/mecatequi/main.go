@@ -62,6 +62,7 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "mecatequi: %v\n", err)
 		return 2
 	}
+	emitAuthFileWarning(stderr, f.providerCredentials.AuthFileWarning)
 	diag := newDiagnostics()
 
 	// Observability (issue #343, ADR 0097): OPT-IN OTLP push. Built right after
@@ -153,6 +154,15 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stderr, verdictLine(sum, outcome.NoApprover, ctx.Err() == context.DeadlineExceeded))
 
 	return exitCode(sum)
+}
+
+// emitAuthFileWarning is the single noninteractive warning seam. Credential
+// resolution happens during flag parsing; appConfig remains a pure projection
+// and cannot duplicate the warning when reused by tests or future callers.
+func emitAuthFileWarning(w io.Writer, warning string) {
+	if warning != "" {
+		_, _ = fmt.Fprintln(w, "mecatequi: WARNING:", warning)
+	}
 }
 
 // verdictLine is the one-line human summary printed to stderr after the run. It is

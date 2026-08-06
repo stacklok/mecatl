@@ -2,21 +2,21 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
 ┃  Models                                                                                             ┃
 ┃  current: gpt-5 (server default)                                                                    ┃
 ┃  > filter models…                                                                                   ┃
 ┃                                                                                                     ┃
-┃  Model selection is not available on this server.                                                   ┃
-┃  Embedded: configure openai-codex OAuth in --auth-file, then relaunch.                              ┃
-┃  Alternatively, set OPENAI_API_KEY or OPENROUTER_API_KEY and restart.                               ┃
+┃  openai-codex: manual token rejected — replace the manual token in auth.yaml and restart mecatl     ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃
 ┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
 ┃                                                                                                     ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 
 

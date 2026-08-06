@@ -183,8 +183,9 @@ type providerEntry struct {
 	defaultCaps port.ProviderCapabilities
 	// intentDriven marks a registry entry that exists by CONFIG-DETECTED INTENT
 	// (issue #262: the ToolHive LLM gateway) rather than a resolved credential.
-	// It tiers preferredDefaultProvider (below every key-driven provider) and
-	// filters the v1 provider_status projection to intent-driven entries only.
+	// It tiers preferredDefaultProvider (below every credential-driven provider)
+	// and drives the client's "org" classification. provider_status is broader:
+	// it also carries manually configured Codex entitlement outcomes.
 	intentDriven bool
 	// intentGatewayURL is the UPSTREAM the proxy forwards to, captured for
 	// DIAGNOSTIC DISPLAY ONLY (R5.1/R5.2 — never used to build a request) when
@@ -1443,20 +1444,29 @@ var toolhiveStatusHints = map[string]string{
 	statusEmpty:        "your ToolHive gateway credential lists no models — ask your platform admin or re-run `thv llm setup`",
 }
 
-// statusHintFor returns the ToolHive remediation hint for state, scoped to
-// pid == providerToolhive ONLY — every other provider (e.g. an openrouter
-// outage) gets "" (cleanup: toolhiveStatusHints had become the generic
-// remediation map for ALL providers via the pre-cleanup classifyListError,
-// so an openrouter outage recorded the "start it with `thv llm proxy start`"
-// hint — latent-wrong-vendor, currently masked only because the v1 wire
-// projection (providerStatusProto) filters to intentDriven entries). TRIP-
-// WIRE: a SECOND gateway-shaped intent-driven provider needs a per-vendor
-// hint table here, not a second `pid ==` branch bolted on.
+// openAICodexStatusHints keeps manual-token remediation distinct from the
+// ToolHive gateway. Codex is the only non-intent-driven provider whose live
+// inventory is also the account entitlement boundary, so its listing outcome
+// is operator-actionable and is projected through provider_status.
+var openAICodexStatusHints = map[string]string{
+	statusUnreachable:  "check connectivity to chatgpt.com and retry",
+	statusUnauthorized: "replace the manual token in auth.yaml and restart mecatl",
+	statusEmpty:        "the ChatGPT account lists no selectable Codex models; replace the manual token or check the subscription",
+}
+
+// statusHintFor returns provider-specific remediation only for providers whose
+// listing outcome is operator-actionable on provider_status. Ordinary provider
+// outages (for example OpenRouter) get "". Keep each vendor's copy in its own
+// table so gateway and manual-token remedies cannot cross-contaminate.
 func statusHintFor(pid, state string) string {
-	if pid != providerToolhive {
+	switch pid {
+	case providerToolhive:
+		return toolhiveStatusHints[state]
+	case providerOpenAICodex:
+		return openAICodexStatusHints[state]
+	default:
 		return ""
 	}
-	return toolhiveStatusHints[state]
 }
 
 // errToolhiveNoModels is the actionable Build-fail error (D2 R2.3): toolhive
