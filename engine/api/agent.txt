@@ -63,7 +63,7 @@
     method func (*Supervisor).AddMember(ctx context.Context, spec MemberSpec) error
     method func (*Supervisor).CancelMember(name string) bool
     method func (*Supervisor).MemberModel(name string) string
-    method func (*Supervisor).MemberRouting(name string) (category string, model string)
+    method func (*Supervisor).MemberRouting(name string) (category string, model string, reason string)
     method func (*Supervisor).Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome
     method func (*TeamTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
     method func (*TeamTool).ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)
@@ -92,6 +92,14 @@ const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
 const RouterMissDegenerateInput untyped string = "degenerate-input"
 const RouterMissUnknownCategory untyped string = "unknown-category"
+const RoutingReasonAgentDefPinnedModel untyped string = "agent-def-pinned-model"
+const RoutingReasonBreakerOpen untyped string = "breaker-open"
+const RoutingReasonFork untyped string = "fork"
+const RoutingReasonNotRouted untyped string = "not-routed"
+const RoutingReasonPinnedModel untyped string = "pinned-model"
+const RoutingReasonResume untyped string = "resume"
+const RoutingReasonRouterDisabled untyped string = "router-disabled"
+const RoutingReasonWritableUnroutable untyped string = "writable-unroutable"
 const ScheduleQueryToolName untyped string = "ScheduleQuery"
 const ScheduleToolName untyped string = "Schedule"
 const StopReasonBudget MemberStopReason = "budget"

@@ -58,6 +58,54 @@ const (
 	RouterMissUnknownCategory = "unknown-category"
 )
 
+// Routing-reason constants (issue #367): the CLOSED set of harness-owned labels naming
+// WHY a delegation was NOT routed onto a router-selected model. They ride the new
+// `RoutingReason` field on the delegation wire projections (SubagentPayload /
+// ParallelPayload / TeamMemberSpec) so a UI can distinguish the cases that
+// routed_category/routed_model="" alone collapses: router disabled, an explicit pin,
+// an agent-def pin, an inherited default, a classifier failure, or a breaker-open
+// fallback. They are DISTINCT from the RouterMiss* set above: RouterMiss* names a
+// CLASSIFIER miss (a classification was attempted and failed), whereas these name the
+// GATES that kept the classifier from firing or the pick from being consumed. On a
+// routed HIT the reason is empty (""), the success sentinel — routed_category /
+// routed_model carry the classification instead.
+//
+// Like the RouterMiss* values, every label is BARE METADATA — a closed harness
+// constant or a clamped composition-authored mapping-miss string, never the task
+// prompt or the classifier's reasoning (gauntlet #7). A consumer never branches on
+// the free-form composition strings; the closed labels below are the stable set.
+const (
+	// RoutingReasonPinnedModel: the Subagent call supplied an explicit per-call
+	// `model`, which PINS the child's engine — the router never fires for an explicit
+	// choice (it fills the gap, never overrides).
+	RoutingReasonPinnedModel = "pinned-model"
+	// RoutingReasonAgentDefPinnedModel: the delegation named an `agent` whose def
+	// expressed a model intent (def.Model set, incl. explicit `inherit`) — the def's
+	// pin wins, so the router never fires (the def is not in routableAgents).
+	RoutingReasonAgentDefPinnedModel = "agent-def-pinned-model"
+	// RoutingReasonResume: the Subagent call RESUMED a persisted child — the resume
+	// pins the engine/conversation, so the router never fires.
+	RoutingReasonResume = "resume"
+	// RoutingReasonFork: the Subagent call FORKED the parent conversation — the fork
+	// pins the engine/history, so the router never fires.
+	RoutingReasonFork = "fork"
+	// RoutingReasonWritableUnroutable: a writable (read-write) delegation whose
+	// writable engine factory is unwired — the routed pick would be DISCARDED by the
+	// writable engine-selection arm, so the classifier is not spent (issue #285).
+	RoutingReasonWritableUnroutable = "writable-unroutable"
+	// RoutingReasonBreakerOpen: the per-run router circuit breaker is OPEN after
+	// consecutive classifier misses — the classifier is skipped and the delegation
+	// inherits the default model for the rest of the run.
+	RoutingReasonBreakerOpen = "breaker-open"
+	// RoutingReasonRouterDisabled: no router is wired for this run — no taxonomy
+	// configured, the kill-switch on, a child run (no nesting), or a zero-caps
+	// construction. The byte-identical default; the delegation inherits its model.
+	RoutingReasonRouterDisabled = "router-disabled"
+	// RoutingReasonNotRouted: the floor for a gate the specific branch did not name —
+	// the delegation was eligible in principle but no more specific label applies.
+	RoutingReasonNotRouted = "not-routed"
+)
+
 // modelRouterTimeout bounds one classification so a Subagent call never hangs on a
 // wedged classifier model: RunModelRouter derives this deadline from the caller's
 // context, and a timed-out classification returns ok=false (fail-soft, inherit the

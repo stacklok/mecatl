@@ -81,8 +81,8 @@ func parallelArgsJSON(tasks ...string) json.RawMessage {
 // A wired routeTask + factory mints each branch on the ROUTED model.
 func TestParallelRoutesBranchOnClassifiedModel(t *testing.T) {
 	tl := routerParallelTool(true)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "large", "big-model", true
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "large", "big-model", "", true
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("explore A", "explore B")),
@@ -103,8 +103,8 @@ func TestParallelRoutesBranchOnClassifiedModel(t *testing.T) {
 // branch still completes, never errors.
 func TestParallelRouteMissInheritsDefault(t *testing.T) {
 	tl := routerParallelTool(true)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "", "", false // miss
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "", "", "", false // miss
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("explore A")),
@@ -137,9 +137,9 @@ func TestParallelOffIsDefaultEngine(t *testing.T) {
 	// routed engine, so classifying would be wasted spend; the gate skips it entirely).
 	var calls int
 	tl2 := routerParallelTool(false) // factory nil
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		calls++
-		return "large", "big", true
+		return "large", "big", "", true
 	}}
 	res2, err := tl2.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p2", "Parallel", parallelArgsJSON("a")),
@@ -153,6 +153,16 @@ func TestParallelOffIsDefaultEngine(t *testing.T) {
 	if !strings.Contains(res2.Content, "DEFAULT") {
 		t.Fatalf("no-factory: branch must run on the default child; got %q", res2.Content)
 	}
+
+	// The two OFF preconditions carry DISTINCT wire reasons (issue #367): they send an
+	// operator to different places, so "router configured but no branch factory" must NOT
+	// report the router as disabled.
+	if _, _, reason := tl.maybeRouteBranchModel(context.Background(), parentCaps{}, "a"); reason != RoutingReasonRouterDisabled {
+		t.Fatalf("no routeTask reason = %q, want %q", reason, RoutingReasonRouterDisabled)
+	}
+	if _, _, reason := tl2.maybeRouteBranchModel(context.Background(), caps, "a"); reason != RoutingReasonNotRouted {
+		t.Fatalf("routeTask wired but no factory: reason = %q, want %q", reason, RoutingReasonNotRouted)
+	}
 }
 
 // DECIDE-ONCE: each branch routes at most once — routeTask is consulted exactly len(tasks)
@@ -163,11 +173,11 @@ func TestParallelRoutesEachBranchExactlyOnce(t *testing.T) {
 		mu    sync.Mutex
 		calls int
 	)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return "large", "big-model", true
+		return "large", "big-model", "", true
 	}}
 	const branches = 3
 	tasks := make([]string, branches)
@@ -200,11 +210,11 @@ func TestParallelRoutesMultiTurnBranchExactlyOnce(t *testing.T) {
 		mu    sync.Mutex
 		calls int
 	)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return "large", "big-model", true
+		return "large", "big-model", "", true
 	}}
 	// Pass an emit closure so the branch's intermediate tool.result is counted — proving the
 	// branch genuinely ran multi-turn (a branch_tool event for the Noop call must appear),
@@ -255,8 +265,8 @@ func TestParallelBranchStartCarriesRoutedMetadata(t *testing.T) {
 		evs = append(evs, ev)
 		mu.Unlock()
 	}
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "large", "big-model", true
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "large", "big-model", "", true
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
@@ -299,8 +309,8 @@ func TestParallelBranchStartEmptyRoutedOnMiss(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "", "", false
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "", "", "", false
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
@@ -398,8 +408,8 @@ func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, bool) {
-		return "large", "big", true
+	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "large", "big", "", true
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("benign task prompt")),

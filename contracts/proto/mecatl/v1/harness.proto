@@ -1161,6 +1161,19 @@ message Subagent {
   // context-isolation safe (gauntlet #7: no child content crosses). Clamped at
   // the emit site. Mirrors session.SubagentPayload.Cause.
   string cause = 17;
+  // routing_reason names WHY this delegation was NOT routed onto a
+  // router-selected model (subagent.start only; empty on a routed hit, when
+  // routed_category/routed_model carry the classification). A closed harness
+  // label for the gates the engine owns (pinned-model / agent-def-pinned-model /
+  // resume / fork / writable-unroutable / breaker-open / router-disabled /
+  // not-routed), a RouterMiss* value for a classifier miss, or a clamped
+  // composition-authored mapping-miss string. BARE METADATA — a reason label,
+  // never the task prompt or the classifier's reasoning — so it is
+  // context-isolation safe (gauntlet #7: no child content crosses). Lets a UI
+  // distinguish "router off / pinned / def-pinned / inherited default" from a
+  // classifier failure or breaker-open fallback, which routed_*="" alone
+  // collapses. Mirrors session.SubagentPayload.RoutingReason.
+  string routing_reason = 18;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -1196,6 +1209,16 @@ message TeamMemberSpec {
   // content crosses). When the router classified this member, model == routed_model.
   // Mirrors session.TeamMemberSpec.Model.
   string model = 7;
+  // routing_reason names WHY this member was NOT routed onto a router-selected
+  // model (team.start roster only; empty on a routed hit, when
+  // routed_category/routed_model carry the classification). A closed harness label
+  // (agent-def-pinned-model / router-disabled / not-routed / breaker-open), a
+  // RouterMiss* value for a classifier miss, or a clamped composition-authored
+  // mapping-miss string. BARE METADATA — a reason label, never the member's
+  // role/prompt or the classifier's reasoning — so it is context-isolation safe
+  // (gauntlet #7: no member content crosses). Mirrors
+  // session.TeamMemberSpec.RoutingReason.
+  string routing_reason = 8;
 }
 
 // Team is the BOUNDED observability projection carried by the three team.* events.
@@ -1394,6 +1417,15 @@ message Parallel {
   // result's body (tool.result) — control-byte scrubbed and rune-capped upstream,
   // never the raw, unbounded args/result body (branch_tool).
   string detail = 24;
+  // routing_reason names WHY this branch was NOT routed onto a router-selected
+  // model (branch_start only; empty on a routed hit, when
+  // routed_category/routed_model carry the classification). A closed harness label
+  // (router-disabled / not-routed / breaker-open), a RouterMiss* value for a
+  // classifier miss, or a clamped composition-authored mapping-miss string. BARE
+  // METADATA — a reason label, never the branch prompt or the classifier's
+  // reasoning — so it is context-isolation safe (gauntlet #7: no branch content
+  // crosses). Mirrors session.ParallelPayload.RoutingReason.
+  string routing_reason = 25;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors

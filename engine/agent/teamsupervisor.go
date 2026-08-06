@@ -457,6 +457,10 @@ type memberRT struct {
 	// once in AddMember (single goroutine, before any round), read after AddMember.
 	routedCategory string
 	routedModel    string
+	// routingReason names WHY the member was not routed (issue #367) when routedModel
+	// is empty — a closed RoutingReason* label or a classifier/mapping miss reason; ""
+	// on a routed hit. Captured alongside routedCategory/routedModel at AddMember.
+	routingReason string
 }
 
 // SupervisorOption configures a Supervisor.
@@ -717,7 +721,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel := s.maybeRouteMember(ctx, spec)
+	routedCategory, routedModel, routingReason := s.maybeRouteMember(ctx, spec)
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
@@ -814,7 +818,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, ws: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
-		routedCategory: routedCategory, routedModel: routedModel}
+		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -842,30 +846,40 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model string) {
-	if s.caps.routeTask == nil || strings.TrimSpace(spec.AgentType) != "" {
-		return "", ""
+// The reason return (issue #367) names WHY the member was not routed:
+// RoutingReasonAgentDefPinnedModel for a DEFINED member (its def pins the model),
+// RoutingReasonRouterDisabled when no router is wired, the routeTask-supplied reason
+// for a classifier or breaker miss, or "" on a hit. Bare metadata for the roster wire
+// projection (gauntlet #7).
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string) {
+	if strings.TrimSpace(spec.AgentType) != "" {
+		return "", "", RoutingReasonAgentDefPinnedModel
+	}
+	if s.caps.routeTask == nil {
+		return "", "", RoutingReasonRouterDisabled
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
 		artifact = spec.Name
 	}
-	if cat, m, ok := s.caps.routeTask(ctx, artifact); ok {
-		return cat, strings.TrimSpace(m)
+	cat, m, routeReason, ok := s.caps.routeTask(ctx, artifact)
+	if !ok {
+		return "", "", routeReason
 	}
-	return "", ""
+	return cat, strings.TrimSpace(m), ""
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
 // model id) for a member by name (both empty when the member was not routed or is
-// unknown). It is the read-back seam the Team tool uses to project routed metadata onto
-// the EvTeamStart roster — captured once at AddMember, never member content. Safe to call
-// after AddMember (the fields are immutable once set).
-func (s *Supervisor) MemberRouting(name string) (category, model string) {
+// unknown), plus the reason it was not routed (issue #367, "" on a hit). It is the
+// read-back seam the Team tool uses to project routed metadata onto the EvTeamStart
+// roster — captured once at AddMember, never member content. Safe to call after
+// AddMember (the fields are immutable once set).
+func (s *Supervisor) MemberRouting(name string) (category, model, reason string) {
 	if m, ok := s.members[name]; ok {
-		return m.routedCategory, m.routedModel
+		return m.routedCategory, m.routedModel, m.routingReason
 	}
-	return "", ""
+	return "", "", ""
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs

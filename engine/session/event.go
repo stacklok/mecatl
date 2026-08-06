@@ -573,6 +573,20 @@ type SubagentPayload struct {
 	// the gRPC + HTTP relays and the mecatui client).
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY this delegation was NOT routed onto a router-selected
+	// model (EvSubagentStart only; issue #367). Empty on a routed HIT (RoutedCategory /
+	// RoutedModel carry the classification); otherwise a closed harness label naming the
+	// gate (pinned-model / agent-def-pinned-model / resume / fork / writable-unroutable /
+	// breaker-open / router-disabled / not-routed), a RouterMiss* value for a classifier
+	// miss, or a clamped composition-authored mapping-miss string. It lets a UI tell
+	// "router off / pinned / def-pinned / inherited default" apart from a classifier
+	// failure or a breaker-open fallback — the cases RoutedCategory/RoutedModel="" alone
+	// collapse. It is BARE METADATA — a closed label or operator-authored mapping string,
+	// never the task prompt or the classifier's reasoning — so it is gauntlet-#7 safe, on
+	// the same footing as RoutedCategory/RoutedModel. Composition-authored strings are
+	// whitespace-collapsed + rune-clamped at the emit site (the subagentCausePayload
+	// discipline). Rides the wire as Subagent.routing_reason = field 18.
+	RoutingReason string
 	// Model is the concrete MODEL id the child ACTUALLY ran on (EvSubagentStart only),
 	// set unconditionally — inherited default, agent-def pin, per-call `model` override,
 	// or the opt-in router — independent of whether the router fired. It is BARE METADATA
@@ -705,6 +719,16 @@ type ParallelPayload struct {
 	// = field 19 / routed_model = field 20), surfaced via the server mapper — see ADR 0034.
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY this branch was NOT routed onto a router-selected model
+	// (branch_start kind only; issue #367). Empty on a routed HIT; otherwise a closed
+	// harness label (router-disabled / not-routed / breaker-open), a RouterMiss* value
+	// for a classifier miss, or a clamped composition-authored mapping-miss string. It
+	// is BARE METADATA — a closed label or operator-authored mapping string, never the
+	// branch prompt or the classifier's reasoning — so it is gauntlet-#7 safe, on the
+	// same footing as RoutedCategory/RoutedModel. Composition-authored strings are
+	// whitespace-collapsed + rune-clamped at the emit site. Rides the wire as
+	// Parallel.routing_reason = field 25.
+	RoutingReason string
 	// Model is the concrete MODEL id the branch ACTUALLY ran on (branch_start kind only),
 	// set unconditionally — inherited default branch model or the opt-in router —
 	// independent of whether the router fired. It is BARE METADATA — a model id, never
@@ -831,6 +855,17 @@ type TeamMemberSpec struct {
 	// via the server mapper — see ADR 0034.
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY this member was NOT routed onto a router-selected model
+	// (EvTeamStart roster entry only; issue #367). Empty on a routed HIT; otherwise a
+	// closed harness label (agent-def-pinned-model / router-disabled / not-routed /
+	// breaker-open), a RouterMiss* value for a classifier miss, or a clamped
+	// composition-authored mapping-miss string. It is BARE METADATA — a closed label or
+	// operator-authored mapping string, never the member's role/prompt or the
+	// classifier's reasoning — so it is gauntlet-#7 safe, on the same footing as
+	// RoutedCategory/RoutedModel. Composition-authored strings are whitespace-collapsed
+	// + rune-clamped at the emit site. Rides the wire as TeamMemberSpec.routing_reason =
+	// field 8.
+	RoutingReason string
 	// Model is the concrete MODEL id the member's engine ACTUALLY runs on (EvTeamStart
 	// roster entry only), set unconditionally — inherited default member model, agent-def
 	// pin, or the opt-in router — independent of whether the router fired. It is BARE

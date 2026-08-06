@@ -166,6 +166,69 @@ func TestRouteTaskMissEmptyReasonFallsBackToEmptyModel(t *testing.T) {
 	}
 }
 
+// TestRouteTaskMissReasonMatchesWireClamp pins issue #367's fixed defect: the diagnostics
+// INFO's reason attr and the delegation wire's RoutingReason field must agree byte-for-byte
+// on a MESSY classifier-miss reason, not just a clean one. A composition-authored
+// mapping-miss reason (internal/app/build.go's "category-selector-empty (category=%s)" /
+// "category-target-unresolvable (category=%s selector=%s)") embeds an operator-controlled
+// category/selector that can carry internal whitespace runs or a newline and, unbounded,
+// could exceed maxSubagentCausePreview — routerMissWireReason (dispatch.go, the diagnostics
+// sink) and clampRoutingReason (subagent.go, the wire sink) must normalise it identically.
+func TestRouteTaskMissReasonMatchesWireClamp(t *testing.T) {
+	messy := "category-target-unresolvable (category=weird   category\nwith a newline and " +
+		strings.Repeat("x", maxSubagentCausePreview) + " trailing runes)"
+
+	diag := newInternalCapturingDiag()
+	mainEngine := NewEngine(Deps{
+		LLM:     mockllm.New(),
+		Catalog: tool.NewCatalog(),
+		Policy:  allowAllInt(),
+		Model:   "main",
+		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+			return "", "", session.Usage{}, messy, false
+		},
+	})
+	run := &Run{
+		router:   &modelRouterBreaker{max: defaultModelRouterMaxMisses},
+		children: newChildRunRegistry(),
+		diag:     diag,
+	}
+	caps := mainEngine.parentCaps(run, nil, 0)
+
+	caps.routeTask(context.Background(), "task")
+
+	var loggedReason string
+	var found bool
+	for _, r := range diag.snapshot() {
+		if strings.Contains(r.msg, "classification MISSED") {
+			found = true
+			loggedReason, _ = r.attrs["reason"].(string)
+		}
+	}
+	if !found {
+		t.Fatal("a messy-reason miss must still log a miss INFO")
+	}
+
+	wireReason := clampRoutingReason(messy)
+	if loggedReason != wireReason {
+		t.Fatalf("diagnostics reason %q != wire RoutingReason %q; the two sinks must agree byte-for-byte (issue #367)",
+			loggedReason, wireReason)
+	}
+	// Both must actually be NORMALISED (not the raw messy string), or the assertion above
+	// would pass vacuously on two unnormalised-but-equal values.
+	if strings.Contains(loggedReason, "\n") || strings.Contains(loggedReason, "  ") {
+		t.Fatalf("diagnostics reason not normalised: %q", loggedReason)
+	}
+	// clampRunes truncates to maxSubagentCausePreview runes plus a trailing ellipsis rune,
+	// so the clamped ceiling is maxSubagentCausePreview+1, not maxSubagentCausePreview.
+	if got := len([]rune(loggedReason)); got > maxSubagentCausePreview+1 {
+		t.Fatalf("diagnostics reason not clamped: %d runes > %d", got, maxSubagentCausePreview+1)
+	}
+	if !strings.HasSuffix(loggedReason, "…") {
+		t.Fatalf("diagnostics reason should have been truncated with an ellipsis: %q", loggedReason)
+	}
+}
+
 // TestRouterBreakerOpenSkipStaysSilent pins that the per-miss INFO fires ONLY for a real
 // classification attempt — the breaker-OPEN skip path emits NO per-miss line. Driving
 // misses PAST the breaker max, the "classification MISSED" INFO count must equal exactly

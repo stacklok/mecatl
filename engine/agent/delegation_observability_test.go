@@ -302,7 +302,12 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 	allowed := map[string]bool{
 		"ParentCallID": true, "ChildID": true, "Goal": true, "Background": true,
 		"RoutedCategory": true, "RoutedModel": true, "Model": true,
-		"ToolName": true, "IsError": true, "ToolCount": true,
+		// RoutingReason (issue #367) names WHY the delegation was not routed — a closed
+		// harness label or a clamped composition-authored mapping-miss string, never the
+		// task prompt or the classifier's reasoning. Bare metadata on the same
+		// gauntlet-#7 footing as RoutedCategory/RoutedModel.
+		"RoutingReason": true,
+		"ToolName":      true, "IsError": true, "ToolCount": true,
 		"Usage": true, "Stop": true, "DurationMs": true,
 		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields, fed
 		// ONLY through clampPreview at the single drainChildObserved chokepoint;

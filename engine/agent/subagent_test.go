@@ -334,6 +334,11 @@ func TestSubagentStartCarriesResolvedModel(t *testing.T) {
 			if ev.Subagent.RoutedCategory != "" || ev.Subagent.RoutedModel != "" {
 				t.Fatalf("EvSubagentStart routed fields should be empty without the router: %+v", ev.Subagent)
 			}
+			// Issue #367: the wire reason names WHY — router-disabled, not a silent empty.
+			if ev.Subagent.RoutingReason != "router-disabled" {
+				t.Fatalf("EvSubagentStart.RoutingReason = %q, want %q without the router",
+					ev.Subagent.RoutingReason, "router-disabled")
+			}
 		}
 	}
 	if !found {

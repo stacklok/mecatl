@@ -1247,18 +1247,22 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		// Pre-build a nil-safe usage-fold func to keep the closure branch-free (#92 fix,
 		// avoids +1 cyclomatic complexity inside the already-branchy closure).
 		foldUsage := foldClassifierUsage(sess)
-		caps.routeTask = func(ctx context.Context, taskPrompt string) (string, string, bool) {
+		caps.routeTask = func(ctx context.Context, taskPrompt string) (string, string, string, bool) {
 			breaker.mu.Lock()
 			defer breaker.mu.Unlock()
 			if breaker.consecutiveMiss >= breaker.max {
-				return "", "", false // breaker open: skip the classifier, inherit the default model.
+				// breaker open: skip the classifier, inherit the default model. The
+				// reason names the skip for the wire (issue #367); the DIAGNOSTIC path
+				// stays silent here deliberately (the breaker-open INFO was already
+				// emitted once, the first crossing, below).
+				return "", "", RoutingReasonBreakerOpen, false
 			}
 			// A run already past Cancel+grace is tearing down: skip the classifier turn
 			// rather than spend one whose child is about to be unwound. A nil channel
 			// never selects — correct no-route behaviour for a zero-caps construction.
 			select {
 			case <-hardAbort:
-				return "", "", false
+				return "", "", RouterMissCancelled, false
 			default:
 			}
 			// Pass the run's ctx (not context.Background()) so a Run.Cancel between this
@@ -1287,14 +1291,16 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 						"subagent model router: breaker OPEN after consecutive misses; remaining subagents this run inherit the default model",
 						"threshold", breaker.max)
 				}
-				return "", "", false
+				// The wire reason (issue #367) mirrors the logged miss reason, with the
+				// same "empty-model" floor for the defensive blank-model-no-reason path.
+				return "", "", routerMissWireReason(missReason), false
 			}
 			breaker.consecutiveMiss = 0 // a successful classification resets the breaker.
 			if diag != nil {
 				diag.Log(ctx, port.LevelInfo,
 					"subagent routed", "category", category, "model", model)
 			}
-			return category, model, true
+			return category, model, "", true
 		}
 	}
 	if interactive {
@@ -1365,23 +1371,44 @@ func foldClassifierUsage(sess *session.Session) func(session.Usage) {
 	}
 }
 
+// routerMissWireReason normalises a classifier-miss reason: it applies the "empty-model"
+// floor for the defensive blank-model-no-reason path (a route that reported ok but a blank
+// model, so it carries no reason of its own), THEN applies the same whitespace-collapse +
+// rune-clamp as clampRoutingReason (engine/agent/subagent.go) — a composition-authored
+// mapping-miss reason (category-selector-empty/category-target-unresolvable,
+// internal/app/build.go) embeds an operator-controlled category/selector that can carry
+// internal whitespace runs, a newline, or exceed maxSubagentCausePreview runes, and both
+// sinks must agree on what survives. It is the SINGLE floor+clamp — logRouterMissReason
+// calls it too, so the delegation wire's RoutingReason (issue #367) and the diagnostics
+// line agree byte-for-byte by construction rather than by two call sites being kept in
+// step (they had already drifted once: `== ""` vs `TrimSpace(…) == ""`, and would have
+// drifted again had the clamp only lived at the event emit sites). The clampRoutingReason
+// calls at the emit sites stay in place on top of this — they are the defensive floor for
+// RoutingReason values that do NOT come through routeTask (e.g. caller-supplied gate
+// labels), and normalising an already-normalised string here is a no-op for them.
+// Factored out of the parentCaps routeTask closure so that closure stays under the
+// gocyclo budget.
+func routerMissWireReason(missReason string) string {
+	if strings.TrimSpace(missReason) == "" {
+		return "empty-model"
+	}
+	return clampRoutingReason(missReason)
+}
+
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain
 // delegation fell through to the inherited default model. It is factored out of the
 // parentCaps routeTask closure so that closure stays under the gocyclo budget. The reason
 // is METADATA ONLY — a harness/composition constant, never the task prompt or the
 // classifier output (gauntlet #7). A nil diag is a no-op; a blank reason (a route that
 // reported ok but a blank model — a defensive belt-and-braces path with no reason of its
-// own) is logged as "empty-model".
+// own) is logged as "empty-model" via the shared routerMissWireReason floor.
 func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason string) {
 	if diag == nil {
 		return
 	}
-	if missReason == "" {
-		missReason = "empty-model"
-	}
 	diag.Log(ctx, port.LevelInfo,
 		"subagent model router: classification MISSED; child inherits the default model",
-		"reason", missReason)
+		"reason", routerMissWireReason(missReason))
 }
 
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for

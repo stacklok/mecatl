@@ -51,6 +51,10 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		// member's role/prompt or the classifier's reasoning.
 		"RoutedCategory": "router category label",
 		"RoutedModel":    "routed concrete model id",
+		// ISSUE #367: WHY the member was not routed — a closed harness label or a clamped
+		// composition-authored mapping-miss string, never the member's role/prompt or the
+		// classifier's reasoning. Bare metadata on the same footing as RoutedCategory.
+		"RoutingReason": "router miss/gate reason label (bare metadata)",
 		// ISSUE #112 / ADR 0035: the concrete MODEL id the member's engine ACTUALLY runs
 		// on, regardless of how it was chosen — bare metadata, never member content.
 		"Model": "resolved concrete model id (bare metadata)",

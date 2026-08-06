@@ -549,8 +549,9 @@ func (e branchEmitter) start(join string, branchCount int) {
 // ride the branch_start event exactly as SubagentPayload's routed fields ride subagent.start.
 // model is the concrete MODEL id this branch ACTUALLY runs on (issue #112, ADR 0035),
 // independent of whether the router fired — inherited default or routed. When routed,
-// model == routedModel.
-func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel, model string) {
+// model == routedModel. routingReason names WHY the branch was not routed (issue #367)
+// when routedModel is empty; "" on a routed hit.
+func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel, routingReason, model string) {
 	if !e.active() {
 		return
 	}
@@ -563,6 +564,7 @@ func (e branchEmitter) branchStart(i int, goal, routedCategory, routedModel, mod
 		Goal:           truncateGoal(strings.TrimSpace(goal)),
 		RoutedCategory: routedCategory,
 		RoutedModel:    routedModel,
+		RoutingReason:  clampRoutingReason(routingReason),
 		Model:          model,
 	}})
 }
@@ -904,8 +906,11 @@ func cancelledBeforeStart(i int, be branchEmitter, clientCancelled bool) branchR
 	res := branchResult{index: i, label: branchLabel(i), failed: true, failReason: reason, childID: be.branchChildID(i)}
 	// A branch cancelled before it ever started was never routed, so the routed metadata
 	// is empty (a router miss and a never-routed branch are indistinguishable on the wire
-	// — both carry no category/model, which is correct: the branch ran on nothing).
-	be.branchStart(i, "", "", "", "")
+	// — both carry no category/model, which is correct: the branch ran on nothing). The
+	// reason is the RoutingReasonNotRouted floor, NOT "" — empty is the routed-HIT sentinel
+	// (issue #367), so a blank reason here would read to a consumer as a hit whose model
+	// happened to be empty. The branch never reached the router at all.
+	be.branchStart(i, "", "", "", RoutingReasonNotRouted, "")
 	be.branchEnd(res, session.StopCancelled, session.Usage{}, 0, 0)
 	return res
 }
@@ -996,7 +1001,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// routeTask closure holds the per-run breaker mutex, so the concurrent branch
 	// classifications + the classifier-usage fold into the parent session are serialised.
 	prompt := composePrompt(shared, task)
-	routedCategory, routedModel := t.maybeRouteBranchModel(ctx, caps, prompt)
+	routedCategory, routedModel, routingReason := t.maybeRouteBranchModel(ctx, caps, prompt)
 	branchEngine := t.childEngine
 	if routedModel != "" && t.engineFactory != nil {
 		if eng, found := t.engineFactory(routedModel); found && eng != nil {
@@ -1008,7 +1013,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// (truncated, model-authored) goal + the routed metadata; branch_end (below) carries
 	// the redacted terminal metadata. A fork-failed branch still gets its branch_end so
 	// EVERY branch is represented (no missing event).
-	be.branchStart(i, prompt, routedCategory, routedModel, branchEngine.Model())
+	be.branchStart(i, prompt, routedCategory, routedModel, routingReason, branchEngine.Model())
 	start := branchEngine.now()
 
 	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty
@@ -1121,14 +1126,26 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 // Run.Cancel propagates into the classifier turn (issue #94). routeTask is nil on a child
 // run (no nesting — a Parallel branch child has no Parallel tool) and when no router is
 // wired (the byte-identical default).
-func (t *ParallelTool) maybeRouteBranchModel(ctx context.Context, caps parentCaps, prompt string) (category, model string) {
-	if t.engineFactory == nil || caps.routeTask == nil {
-		return "", ""
+//
+// The reason return (issue #367) names WHY the branch was not routed, and the two
+// preconditions get DISTINCT labels because they send an operator to different places:
+// RoutingReasonRouterDisabled when no router is wired at all, RoutingReasonNotRouted when
+// a router IS configured but the branch engine factory is unwired (nothing could consume
+// the pick — not the router being off). Otherwise the routeTask-supplied reason for a
+// classifier or breaker miss, or "" on a hit. Bare metadata for the branch_start wire
+// projection (gauntlet #7).
+func (t *ParallelTool) maybeRouteBranchModel(ctx context.Context, caps parentCaps, prompt string) (category, model, reason string) {
+	if caps.routeTask == nil {
+		return "", "", RoutingReasonRouterDisabled
 	}
-	if cat, m, ok := caps.routeTask(ctx, prompt); ok {
-		return cat, strings.TrimSpace(m)
+	if t.engineFactory == nil {
+		return "", "", RoutingReasonNotRouted
 	}
-	return "", ""
+	cat, m, routeReason, ok := caps.routeTask(ctx, prompt)
+	if !ok {
+		return "", "", routeReason
+	}
+	return cat, strings.TrimSpace(m), ""
 }
 
 // fireSubagentStop runs the SubagentStop hook for a finished branch run

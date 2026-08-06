@@ -93,8 +93,8 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"subagent.start",
 			&mecatlv1.Event{Type: "subagent.start", Subagent: &mecatlv1.Subagent{
-				ParentCallId: "p1", ChildId: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5"}},
-			SubagentMsg{Kind: SubagentStart, ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5"},
+				ParentCallId: "p1", ChildId: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5", RoutingReason: "model-pinned"}},
+			SubagentMsg{Kind: SubagentStart, ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5", RoutingReason: "model-pinned"},
 		},
 		{
 			"subagent.start background",
@@ -135,8 +135,8 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"parallel.branch branch_start",
 			&mecatlv1.Event{Type: "parallel.branch", Parallel: &mecatlv1.Parallel{
-				ParentCallId: "p1", Kind: "branch_start", BranchIndex: 1, ChildId: "parallel-p1-1", BranchLabel: "branch-2", Goal: "explore beta", Model: "anthropic/claude-3.5"}},
-			ParallelMsg{Kind: ParallelBranchStart, ParentCallID: "p1", BranchIndex: 1, ChildID: "parallel-p1-1", BranchLabel: "branch-2", Goal: "explore beta", Model: "anthropic/claude-3.5"},
+				ParentCallId: "p1", Kind: "branch_start", BranchIndex: 1, ChildId: "parallel-p1-1", BranchLabel: "branch-2", Goal: "explore beta", Model: "anthropic/claude-3.5", RoutingReason: "router-disabled"}},
+			ParallelMsg{Kind: ParallelBranchStart, ParentCallID: "p1", BranchIndex: 1, ChildID: "parallel-p1-1", BranchLabel: "branch-2", Goal: "explore beta", Model: "anthropic/claude-3.5", RoutingReason: "router-disabled"},
 		},
 		{
 			"parallel.branch branch_tool",
@@ -247,12 +247,12 @@ func TestEventToMsgTeam(t *testing.T) {
 			"team.start",
 			&mecatlv1.Event{Type: "team.start", Team: &mecatlv1.Team{
 				ParentCallId: "t1", TeamId: "team-t1", Roster: []*mecatlv1.TeamMemberSpec{
-					{Name: "lead", Role: "coordinator", Lead: true, Mutating: true, Model: "openai/gpt-4.5"},
-					{Name: "scout", Role: "researcher", Model: "anthropic/claude-3.5"},
+					{Name: "lead", Role: "coordinator", Lead: true, Mutating: true, Model: "openai/gpt-4.5", RoutingReason: "model-pinned"},
+					{Name: "scout", Role: "researcher", Model: "anthropic/claude-3.5", RoutingReason: "router-disabled"},
 				}}},
 			TeamMsg{Kind: TeamStart, ParentCallID: "t1", TeamID: "team-t1", Roster: []TeamMemberSpec{
-				{Name: "lead", Role: "coordinator", Lead: true, Mutating: true, Model: "openai/gpt-4.5"},
-				{Name: "scout", Role: "researcher", Model: "anthropic/claude-3.5"},
+				{Name: "lead", Role: "coordinator", Lead: true, Mutating: true, Model: "openai/gpt-4.5", RoutingReason: "model-pinned"},
+				{Name: "scout", Role: "researcher", Model: "anthropic/claude-3.5", RoutingReason: "router-disabled"},
 			}},
 		},
 		{

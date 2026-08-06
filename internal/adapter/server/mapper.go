@@ -178,16 +178,24 @@ func toProto(ev session.Event) *mecatlv1.Event {
 // content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 	return &mecatlv1.Parallel{
-		ParentCallId:    p.ParentCallID,
-		Kind:            string(p.Kind),
-		Join:            valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
-		BranchCount:     ClampInt32(p.BranchCount),
-		BranchIndex:     ClampInt32(p.BranchIndex),
-		ChildId:         p.ChildID,
-		BranchLabel:     valid(p.BranchLabel),
-		Goal:            valid(p.Goal),
-		RoutedCategory:  p.RoutedCategory,
-		RoutedModel:     p.RoutedModel,
+		ParentCallId:   p.ParentCallID,
+		Kind:           string(p.Kind),
+		Join:           valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
+		BranchCount:    ClampInt32(p.BranchCount),
+		BranchIndex:    ClampInt32(p.BranchIndex),
+		ChildId:        p.ChildID,
+		BranchLabel:    valid(p.BranchLabel),
+		Goal:           valid(p.Goal),
+		RoutedCategory: p.RoutedCategory,
+		RoutedModel:    p.RoutedModel,
+		// RoutingReason is repaired, unlike its RoutedCategory/RoutedModel siblings
+		// above (harness/catalog tokens, allowlisted in the #402 structural guard): a
+		// composition-authored mapping-miss reason interpolates an operator-authored
+		// category/selector read from settings.yaml, and clampRoutingReason only
+		// re-encodes through []rune when it actually truncates — a SHORT reason
+		// carrying invalid bytes reaches the wire verbatim, which is the codes.Internal
+		// marshal kill (#402).
+		RoutingReason:   valid(p.RoutingReason),
 		Model:           p.Model,
 		ToolName:        valid(p.ToolName),
 		IsError:         p.IsError,
@@ -317,6 +325,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 			Lead:           m.Lead,
 			RoutedCategory: m.RoutedCategory,
 			RoutedModel:    m.RoutedModel,
+			RoutingReason:  valid(m.RoutingReason),
 			Model:          m.Model,
 		})
 	}
@@ -441,6 +450,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		Background:     p.Background,
 		RoutedCategory: p.RoutedCategory,
 		RoutedModel:    p.RoutedModel,
+		RoutingReason:  valid(p.RoutingReason),
 		Model:          p.Model,
 		ToolName:       valid(p.ToolName),
 		IsError:        p.IsError,

@@ -13,6 +13,23 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **Routing-miss reason on the delegation wire** (#367, ADR 0101) — a `RoutingReason`
+  field on `session.SubagentPayload`, `session.TeamMemberSpec`, and
+  `session.ParallelPayload` naming WHY a delegation was NOT routed onto a
+  router-selected model (empty on a routed hit). One of the closed harness
+  `RoutingReason*` gate labels (`pinned-model` / `agent-def-pinned-model` / `resume` /
+  `fork` / `writable-unroutable` / `breaker-open` / `router-disabled` / `not-routed`),
+  a `RouterMiss*` classifier-miss value, or a clamped composition-authored
+  mapping-miss string. Bare metadata (never the task prompt or the classifier's
+  reasoning), so a UI can distinguish "router off / pinned / def-pinned / inherited
+  default" from a classifier failure or breaker-open fallback — the cases
+  `RoutedCategory`/`RoutedModel`=`""` alone collapse. Rides the wire as
+  `Subagent.routing_reason` = 18, `TeamMemberSpec.routing_reason` = 8,
+  `Parallel.routing_reason` = 25. The internal `parentCaps.routeTask` closure was
+  widened to carry the reason; the exported `Deps.SubagentModelRouter` signature is
+  unchanged. The read-back seam `(*Supervisor).MemberRouting` DID change shape — see
+  the BREAKING note under Changed below.
+
 - **`session.ToValidUTF8` and `session.RepairToolResult`** (issue #402) — the
   UTF-8 repair primitives that close the Converse-stream kill. A tool can hand
   back arbitrary bytes (a command's stdout, a file's contents, an MCP server's
@@ -387,6 +404,14 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Changed
 
+- **BREAKING: `(*Supervisor).MemberRouting` returns a third value** (#367, ADR 0101) —
+  `MemberRouting(name string) (category, model string)` became
+  `MemberRouting(name string) (category, model, reason string)`, where `reason` is the
+  new routing-miss label (empty on a routed hit). A caller doing
+  `cat, model := sup.MemberRouting(n)` no longer compiles; add the third return (`_`
+  if unused). This is the read-back seam the Team tool uses to project the roster's
+  routed metadata onto `EvTeamStart`; the sibling `(*Supervisor).MemberModel` is
+  unchanged.
 - **A text-bearing `StopError` turn now carries a terminal CAUSE** (issue #319
   review-audit follow-up) — BEHAVIOUR only; no exported signature moved and
   `engine/api/*.txt` is unaffected. `Engine.terminateComplete` gains an internal
