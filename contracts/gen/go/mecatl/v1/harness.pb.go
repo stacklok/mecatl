@@ -3442,8 +3442,9 @@ type Subagent struct {
 	// this delegation was NOT routed by the semantic model router (subagent.start
 	// only) — empty on a routed HIT (routed_category/routed_model carry the hit).
 	// A short label (e.g. "pinned-model", "agent-def-pinned-model", "resume",
-	// "fork", "router-disabled", "breaker-open", "aborted", or a RouterMiss*
-	// classifier miss) — BARE METADATA, never the task prompt or classifier
+	// "fork", "router-disabled", "route-target-unavailable", "breaker-open",
+	// "aborted", "empty-model", or a RouterMiss* classifier miss) — BARE METADATA,
+	// never the task prompt or classifier
 	// reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the
 	// emit site. Mirrors session.SubagentPayload.RoutingReason.
 	RoutingReason string `protobuf:"bytes,18,opt,name=routing_reason,json=routingReason,proto3" json:"routing_reason,omitempty"`
@@ -4106,8 +4107,9 @@ type Parallel struct {
 	// routing_reason is a BOUNDED harness/composition reason string explaining WHY
 	// this branch was NOT routed by the semantic model router (branch_start only)
 	// — empty on a routed HIT (routed_category/routed_model carry the hit). A
-	// short label (e.g. "router-disabled", "aborted", or a RouterMiss* classifier
-	// miss) — BARE METADATA, never the branch prompt or classifier reasoning — so
+	// short label (e.g. "router-disabled", "route-target-unavailable", "aborted",
+	// or a RouterMiss* classifier miss) — BARE METADATA, never the branch prompt or
+	// classifier reasoning — so
 	// it is context-isolation safe (gauntlet #7: no branch content crosses).
 	// Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason.
 	RoutingReason string `protobuf:"bytes,25,opt,name=routing_reason,json=routingReason,proto3" json:"routing_reason,omitempty"`

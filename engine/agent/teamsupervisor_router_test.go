@@ -140,8 +140,9 @@ func TestMemberRouteMissInheritsDefault(t *testing.T) {
 		t.Fatalf("a router miss must pass an empty routedModel; got %q", recorded["worker"])
 	}
 	mu.Unlock()
-	if cat, model, reason := sup.MemberRouting("worker"); cat != "" || model != "" {
-		t.Fatalf("MemberRouting after a miss = (%q, %q, %q), want empty routed fields", cat, model, reason)
+	if cat, model, reason := sup.MemberRouting("worker"); cat != "" || model != "" || reason != RouterMissDegenerateInput {
+		t.Fatalf("MemberRouting after a miss = (%q, %q, %q), want empty routed fields + %q",
+			cat, model, reason, RouterMissDegenerateInput)
 	}
 	// MemberModel (issue #112): a router miss inherits the default model, so MemberModel
 	// reports the default ("default") even though the routed fields are empty.
@@ -167,8 +168,9 @@ func TestMemberZeroCapsNoRouting(t *testing.T) {
 		t.Fatalf("zero-caps must pass an empty routedModel; got %q", recorded["worker"])
 	}
 	mu.Unlock()
-	if cat, model, reason := sup.MemberRouting("worker"); cat != "" || model != "" {
-		t.Fatalf("zero-caps MemberRouting = (%q, %q, %q), want empty routed fields", cat, model, reason)
+	if cat, model, reason := sup.MemberRouting("worker"); cat != "" || model != "" || reason != session.RoutingReasonRouterDisabled {
+		t.Fatalf("zero-caps MemberRouting = (%q, %q, %q), want empty routed fields + %q",
+			cat, model, reason, session.RoutingReasonRouterDisabled)
 	}
 }
 

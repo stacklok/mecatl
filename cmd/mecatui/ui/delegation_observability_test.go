@@ -24,7 +24,7 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	r := newTestRenderer()
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"investigate the loop"}`)
-	c.setSubagentStart("p1", "investigate the loop", "", "", "")
+	c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
 	addSubTool(c, "p1", "Grep", false, 1)
 	addSubTool(c, "p1", "Read", false, 2)
 	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))

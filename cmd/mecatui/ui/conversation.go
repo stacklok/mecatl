@@ -119,6 +119,9 @@ type teamLane struct {
 	// content — so gauntlet #7 holds.
 	routedCategory string
 	routedModel    string
+	// routingReason names WHY the router did not classify this member (issue #397 /
+	// ADR 0083); "" on a routed hit. BARE metadata — never member content.
+	routingReason string
 	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112 /
 	// ADR 0035), regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never member content — so gauntlet #7 holds.
@@ -295,6 +298,10 @@ type block struct {
 	// metadata — never child content — so gauntlet #7 holds.
 	subRoutedCategory string
 	subRoutedModel    string
+	// subRoutingReason names WHY the opt-in router did NOT classify this delegation
+	// (issue #397 / ADR 0083): empty on a routed hit, else a bounded gate/miss string.
+	// BARE metadata — never child content — so gauntlet #7 holds.
+	subRoutingReason string
 	// subModel is the concrete model id the child ACTUALLY ran on (issue #112 /
 	// ADR 0035), regardless of how it was chosen. When routed, equals subRoutedModel.
 	// BARE metadata — never child content — so gauntlet #7 holds.
@@ -347,6 +354,7 @@ type subagentLane struct {
 	background     bool
 	routedCategory string // opt-in model router's category label (ADR 0031); "" when unrouted
 	routedModel    string // opt-in model router's chosen model id (ADR 0031); "" when unrouted
+	routingReason  string // WHY the router did not classify (issue #397 / ADR 0083); "" on a routed hit
 	model          string // concrete model id the child ACTUALLY ran on (issue #112 / ADR 0035); == routedModel when routed
 	current        string // latest child tool name, "" when none yet
 	trace          []teamTrace
@@ -561,7 +569,7 @@ func (c *conversation) subagentBlock(parentCallID string) *block {
 // setSubagentStart marks the Subagent block matching parentCallID as a subagent and
 // records its goal title and routed-category metadata. Returns false when no
 // matching block exists.
-func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, routedModel, model string) bool {
+func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, routedModel, routingReason, model string) bool {
 	b := c.subagentBlock(parentCallID)
 	if b == nil {
 		return false
@@ -570,6 +578,7 @@ func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, rout
 	b.subGoal = goal
 	b.subRoutedCategory = routedCategory
 	b.subRoutedModel = routedModel
+	b.subRoutingReason = routingReason
 	b.subModel = model
 	return true
 }
@@ -652,7 +661,7 @@ func (c *conversation) fleetLane(childID string) *subagentLane {
 // metadata on its fleet lane (creating the lane). A missing childID is dropped:
 // the fleet keys on ChildID, so without one there is no stable row — the inline
 // card (keyed by ParentCallID) still renders regardless.
-func (c *conversation) fleetStart(childID, goal, routedCategory, routedModel, model string, background bool) {
+func (c *conversation) fleetStart(childID, goal, routedCategory, routedModel, routingReason, model string, background bool) {
 	if childID == "" {
 		return
 	}
@@ -661,6 +670,7 @@ func (c *conversation) fleetStart(childID, goal, routedCategory, routedModel, mo
 	ln.background = background
 	ln.routedCategory = routedCategory
 	ln.routedModel = routedModel
+	ln.routingReason = routingReason
 	ln.model = model
 }
 
@@ -743,6 +753,9 @@ type parallelBranch struct {
 	// branch content — so gauntlet #7 holds.
 	routedCategory string
 	routedModel    string
+	// routingReason names WHY the router did not classify this branch (issue #397 /
+	// ADR 0083); "" on a routed hit. BARE metadata — never branch content.
+	routingReason string
 	// model is the concrete model id this branch ACTUALLY ran on (issue #112 /
 	// ADR 0035), regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never branch content — so gauntlet #7 holds.
@@ -832,7 +845,7 @@ func (c *conversation) parallelStart(parentCallID, join string, branchCount int)
 // metadata on its group branch (creating both). The child id (the CancelChild handle)
 // is set only when non-empty, so a later event from an older server never erases a
 // known id.
-func (c *conversation) parallelBranchStart(parentCallID string, index int, childID, label, goal, routedCategory, routedModel, model string) {
+func (c *conversation) parallelBranchStart(parentCallID string, index int, childID, label, goal, routedCategory, routedModel, routingReason, model string) {
 	if parentCallID == "" {
 		return
 	}
@@ -844,6 +857,7 @@ func (c *conversation) parallelBranchStart(parentCallID string, index int, child
 	br.goal = goal
 	br.routedCategory = routedCategory
 	br.routedModel = routedModel
+	br.routingReason = routingReason
 	br.model = model
 }
 
@@ -965,6 +979,7 @@ func (c *conversation) setTeamStart(parentCallID, teamID string, roster []client
 			lead:           m.Lead,
 			routedCategory: m.RoutedCategory,
 			routedModel:    m.RoutedModel,
+			routingReason:  m.RoutingReason,
 			model:          m.Model,
 		})
 	}

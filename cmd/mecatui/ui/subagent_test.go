@@ -43,7 +43,7 @@ func addSubTool(c *conversation, parentCallID, toolName string, isError bool, to
 // changes only when the tool actually changes).
 func TestSubagentLiveCollapsed(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "")
+		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
 		addSubTool(c, "p1", "Grep", false, 1)
 		addSubTool(c, "p1", "Read", false, 2)
 	})
@@ -63,7 +63,7 @@ func TestSubagentLiveCollapsed(t *testing.T) {
 // honesty note (ADR 0079).
 func TestSubagentExpandedChips(t *testing.T) {
 	out := subagentCard(t, true, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "")
+		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
 		addSubTool(c, "p1", "Grep", false, 1)
 		addSubTool(c, "p1", "Read", true, 2)
 	})
@@ -82,7 +82,7 @@ func TestSubagentExpandedChips(t *testing.T) {
 // maxSubagentTrace, dropping the oldest chips.
 func TestSubagentExpandedCapsTrace(t *testing.T) {
 	out := subagentCard(t, true, func(c *conversation) {
-		c.setSubagentStart("p1", "big investigation", "", "", "")
+		c.setSubagentStart("p1", "big investigation", "", "", "", "")
 		for i := 0; i < maxSubagentTrace+5; i++ {
 			addSubTool(c, "p1", "Read", false, i+1)
 		}
@@ -133,7 +133,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 	r.setWidth(24) // narrow card
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"x"}`)
-	c.setSubagentStart("p1", "narrow", "", "", "")
+	c.setSubagentStart("p1", "narrow", "", "", "", "")
 	for i := 0; i < 6; i++ {
 		addSubTool(c, "p1", "Read", false, i+1)
 	}
@@ -159,7 +159,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 // "0 writes", and the child's summary renders via the normal result body path.
 func TestSubagentResolved(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "")
+		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
 		addSubTool(c, "p1", "Grep", false, 1)
 		c.setSubagentEnd("p1", client.Usage{InputTokens: 1200, OutputTokens: 80}, 4, "end_turn", 2500)
 		c.resolveTool("p1", "found the bug in dispatch.go", false)
@@ -185,7 +185,7 @@ func TestSubagentResolved(t *testing.T) {
 // "✗" glyph, stop:error, and the error text in the result slot.
 func TestSubagentErrorResolves(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "")
+		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
 		c.setSubagentEnd("p1", client.Usage{}, 0, "error", 100)
 		// The server-composed StopError body shape (subagentErrorBody's floor, which is
 		// caller-neutral: "Subagent: " + "failed without producing a summary").
@@ -209,7 +209,7 @@ func TestSubagentAttributionByParentCallID(t *testing.T) {
 	c.addTool("pa", "Subagent", `{"prompt":"alpha"}`)
 	c.addTool("pb", "Subagent", `{"prompt":"bravo"}`)
 
-	if !c.setSubagentStart("pa", "alpha goal", "", "", "") || !c.setSubagentStart("pb", "bravo goal", "", "", "") {
+	if !c.setSubagentStart("pa", "alpha goal", "", "", "", "") || !c.setSubagentStart("pb", "bravo goal", "", "", "", "") {
 		t.Fatalf("both starts should attribute")
 	}
 	addSubTool(c, "pa", "Grep", false, 1)
@@ -227,7 +227,7 @@ func TestSubagentAttributionByParentCallID(t *testing.T) {
 // Subagent card is silently dropped (no panic, returns false).
 func TestSubagentMissAttributionIsSafe(t *testing.T) {
 	c := &conversation{}
-	if c.setSubagentStart("nope", "goal", "", "", "") {
+	if c.setSubagentStart("nope", "goal", "", "", "", "") {
 		t.Errorf("setSubagentStart should miss when no Subagent card matches")
 	}
 	if addSubTool(c, "nope", "Read", false, 1) {
@@ -244,7 +244,7 @@ func TestSubagentMissAttributionIsSafe(t *testing.T) {
 // when the child was not routed. It carries no child content (gauntlet #7).
 func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "openai/gpt-4.1-mini")
+		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "", "openai/gpt-4.1-mini")
 		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if !strings.Contains(out, "routed: small → openai/gpt-4.1-mini") {
@@ -253,7 +253,7 @@ func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
 
 	// An unrouted child (empty category/model) must NOT render the routed line.
 	unrouted := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "")
+		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
 		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if strings.Contains(unrouted, "routed:") {
@@ -269,7 +269,7 @@ func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
 func TestSubagentModelMetadataSurfaced(t *testing.T) {
 	// Inherited / default model (no router): the plain "model:" cue is shown.
 	inherited := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "openai/gpt-4.5")
+		c.setSubagentStart("p1", "investigate the loop", "", "", "", "openai/gpt-4.5")
 		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if !strings.Contains(inherited, "model: openai/gpt-4.5") {
@@ -280,7 +280,7 @@ func TestSubagentModelMetadataSurfaced(t *testing.T) {
 	}
 	// Routed child (model == routedModel): the routed cue is shown, NOT duplicated as model:.
 	routed := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "openai/gpt-4.1-mini")
+		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "", "openai/gpt-4.1-mini")
 		addSubTool(c, "p1", "Grep", false, 1)
 	})
 	if !strings.Contains(routed, "routed: small → openai/gpt-4.1-mini") {
@@ -296,18 +296,48 @@ func TestSubagentModelMetadataSurfaced(t *testing.T) {
 // there too — not only on the inline card.
 func TestSubagentFleetRoutedMetadata(t *testing.T) {
 	c := &conversation{}
-	c.fleetStart("c1", "audit auth", "large", "openai/gpt-4.1", "openai/gpt-4.1", false)
+	c.fleetStart("c1", "audit auth", "large", "openai/gpt-4.1", "", "openai/gpt-4.1", false)
 	ln := subagentRosterLine(&c.subagentFleet[0])
 	if !strings.Contains(ln, "routed: large → openai/gpt-4.1") {
 		t.Errorf("fleet roster row should carry the routed line, got %q", ln)
 	}
 	// Plain (non-routed) inherited model: the roster row shows "model: <id>" (issue #112).
-	c.fleetStart("c2", "map coverage", "", "", "openai/gpt-4.5", false)
+	c.fleetStart("c2", "map coverage", "", "", "", "openai/gpt-4.5", false)
 	plain := subagentRosterLine(&c.subagentFleet[1])
 	if !strings.Contains(plain, "model: openai/gpt-4.5") {
 		t.Errorf("fleet roster row should carry the plain model: line, got %q", plain)
 	}
 	if strings.Contains(plain, "routed:") {
 		t.Errorf("non-routed fleet row must not show a routed line, got %q", plain)
+	}
+}
+
+// TestSubagentRoutingReasonSurfaced asserts the routing-miss reason (issue #397 /
+// ADR 0083) surfaces on the inline Subagent card and the fleet roster row, so a
+// router-off / pinned / breaker-open delegation is distinguishable from a routed
+// one — the distinction the feature exists to expose. Bare metadata, gauntlet #7.
+func TestSubagentRoutingReasonSurfaced(t *testing.T) {
+	// Router off (no router wired): the card shows the inherited model + the reason.
+	off := subagentCard(t, false, func(c *conversation) {
+		c.setSubagentStart("p1", "investigate the loop", "", "", "router-disabled", "openai/gpt-4.5")
+		addSubTool(c, "p1", "Grep", false, 1)
+	})
+	if !strings.Contains(off, "model: openai/gpt-4.5 · not routed: router-disabled") {
+		t.Errorf("router-off card should show the miss reason, got %q", off)
+	}
+	// A routed hit carries an EMPTY reason: no "not routed" annotation leaks through.
+	routed := subagentCard(t, false, func(c *conversation) {
+		c.setSubagentStart("p1", "investigate the loop", "small", "openai/gpt-4.1-mini", "", "openai/gpt-4.1-mini")
+		addSubTool(c, "p1", "Grep", false, 1)
+	})
+	if strings.Contains(routed, "not routed:") {
+		t.Errorf("routed card must not show a miss reason, got %q", routed)
+	}
+	// Fleet roster row: the reason rides the plain-model line there too.
+	c := &conversation{}
+	c.fleetStart("c1", "audit auth", "", "", "pinned-model", "openai/gpt-4.5", false)
+	ln := subagentRosterLine(&c.subagentFleet[0])
+	if !strings.Contains(ln, "model: openai/gpt-4.5 · not routed: pinned-model") {
+		t.Errorf("fleet roster row should carry the miss reason, got %q", ln)
 	}
 }

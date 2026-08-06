@@ -220,7 +220,7 @@ func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProvi
 //     pick that can never be minted (it falls back to the pre-built def engine anyway).
 //
 // The set is consulted ONLY by the engine's router gate (agent.WithRoutableAgents →
-// routeGateOpen). It is layering-clean: only def NAME strings cross into engine/agent. A nil
+// maybeRouteModel). It is layering-clean: only def NAME strings cross into engine/agent. A nil
 // reg (no agent source) yields nil → no def routes (byte-identical to pre-#286). It is SILENT
 // (no diagnostics): the per-def provider/MCP WARNs are emitted by the actual engine build
 // (buildAgentSubagentEngines), so re-logging here would double-emit (the build-once discipline).
@@ -238,6 +238,27 @@ func routableAgentNames(provReg *providerRegistry, reg *agents.Registry, parentP
 		}
 		if defHasInlineMCP(def) {
 			continue // the agent+model factory declines inline-MCP defs — no classifier spend.
+		}
+		if n := strings.TrimSpace(def.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// pinnedAgentNames computes the narrower attribution set for agent defs that explicitly
+// expressed model intent. It must not be derived as the complement of routableAgentNames:
+// provider-switched and inline-MCP defs are also unroutable, but did not pin a model. The
+// sorted names cross into engine/agent through WithPinnedAgents; no adapter value does.
+func pinnedAgentNames(reg *agents.Registry) []string {
+	if reg == nil {
+		return nil
+	}
+	var names []string
+	for _, def := range reg.List() {
+		if strings.TrimSpace(def.Model) == "" {
+			continue
 		}
 		if n := strings.TrimSpace(def.Name); n != "" {
 			names = append(names, n)

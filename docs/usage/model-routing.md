@@ -177,6 +177,23 @@ models:
   path is excluded (zero-caps). See [ADR 0031](../adr/0031-subagent-model-router.md) (the
   router) and [ADR 0042](../adr/0042-taxonomy-gated-model-router.md) (the taxonomy-gated
   enable model).
+- **Why a delegation was NOT routed rides the wire** (issue #397, ADR 0083): every
+  delegation-start event (`subagent.start`, `parallel.branch` `branch_start`, the
+  `team.start` roster) carries a bounded `routing_reason` — EMPTY on a routed hit,
+  otherwise a bare-metadata gate/miss constant (`router-disabled` / `pinned-model` /
+  `agent-def-pinned-model` / `resume` / `fork` / `route-target-unavailable` /
+  `breaker-open` / `aborted` / `empty-model`, or a
+  static classifier/composition miss code). It lets a UI distinguish router-off from
+  pinned-model from agent-def-pinned from classifier-failure from breaker-open, where
+  previously every miss collapsed to empty `routed_*`. mecatui renders it as
+  ` · not routed: <reason>` on the delegation's model line. Bare metadata only
+  (never the task prompt or classifier reasoning — gauntlet #7). Known composition
+  detail is reduced to its static code; any other non-allowlisted reason from an external
+  engine composition is substituted with a generic `routing-miss` label on the wire,
+  with the verbatim text kept in the operator-diagnostics channel.
+  `route-target-unavailable` means the classifier picked a model but the relevant engine
+  factory declined it; the delegation ran its fallback model, which remains visible in
+  the event's ordinary `model` field.
 - **Cost note (CWE-770):** an untrusted/peer-injected task prompt can **steer** the
   classifier toward your most-expensive category (the breaker only counts *misses*, not
   steered-but-valid classifications). It is **bounded** — the router can only pick from
@@ -266,4 +283,3 @@ models:
 - **Out of scope (this slice):** the allowlist caps **config-file** bindings only — an
   agent-def `model:` literal and the per-session API `model_id` selector are not capped
   here.
-

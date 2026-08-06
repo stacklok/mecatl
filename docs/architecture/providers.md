@@ -413,6 +413,9 @@ routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through
 the gRPC + HTTP relays and rendered by mecatui (inline card + ctrl+a fleet roster).
 
+The structured miss/gate half of this observability surface is described below under the
+per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
+
 **Team members + Parallel branches (ADR 0034).** The same router governs the other two
 delegation families, reusing the one `parentCaps.routeTask` closure the dispatcher binds per
 run (so a mixed turn shares ONE breaker / miss-counter / classifier-usage fold across all
@@ -450,6 +453,30 @@ and is bare metadata (a model id, never child content), gauntlet-#7 safe. When r
 `model == routed_model`. mecatui renders `routed: …` when the router fired (not duplicated
 as a `model:` line), else `model: <id>` for the plain case. The gRPC `RunTeam` direct path
 emits no EvTeamStart roster, so the only roster projection site is the in-process Team tool.
+
+**The routing-reason surface (ADR 0083, issue #397).** The `model` field answers "what did
+it run on" but not "why didn't the router fire". A bounded `routing_reason` now rides all
+three delegation-start events — `Subagent` (field 18), `TeamMemberSpec` (field 8),
+`Parallel` (field 25) — EMPTY on a routed hit, otherwise a bare-metadata gate/miss constant
+(`session.RoutingReason*`: `router-disabled` / `pinned-model` / `agent-def-pinned-model` /
+`resume` / `fork` / `route-target-unavailable` / `breaker-open` / `aborted`) or a static
+classifier/composition miss code (including `empty-model`).
+The three `maybeRoute*` gates attribute their own gate (an explicit
+`model`/`fork`/`resume`/agent-def pin is named BEFORE the router-absent gate, so a pinned
+delegation is never mislabeled `router-disabled`). Subagent composition supplies an explicit
+pinned-name set: provider-switched and inline-MCP defs are ineligible but are not falsely
+called model-pinned. If a routed factory declines its selected model, the routed fields are
+cleared and `route-target-unavailable` records the fallback; `model` still names the engine
+that actually ran. The dispatch closure synthesizes `breaker-open`/`aborted`/`empty-model`.
+One chokepoint `routingReasonPayload` (whitespace-collapse +
+200-rune cap + an event-safe allowlist) projects it at every emit site — the allowlist
+confines the wire to static harness/classifier/composition codes, reducing known detailed
+composition reasons to their code and substituting a generic
+`routing-miss` for any non-allowlisted string an external `Deps.SubagentModelRouter`
+composition returns (gauntlet #7), the verbatim text kept in the operator-diagnostics
+channel. mecatui threads it through the client view-model and renders it as
+` · not routed: <reason>` on the delegation's model line. `Supervisor.MemberRouting` widens
+2→3 returns so the Team tool reads the reason back for the roster.
 
 The category→model→engine mapping stays in composition (`buildMemberEngine` substitutes the
 routed model on the undefined branch; the new `buildParallelEngineFactory` mints the branch

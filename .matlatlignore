@@ -10,6 +10,9 @@
 # .claude/worktrees; .scratch is the same kind of thing.)
 .scratch/
 
+# Root-level review artifacts are transient working notes, not product documentation.
+review-*.md
+
 # Claude Code sub-agent definitions (reviewer/specialist agents). These are
 # isolated by nature — no inbound or outbound doc links — so there is nothing to
 # link-check; keeping them in the corpus only adds orphan findings that block a

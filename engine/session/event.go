@@ -576,9 +576,10 @@ type SubagentPayload struct {
 	// RoutingReason names WHY the router did NOT classify this delegation (EvSubagentStart
 	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
 	// RoutingReason* gate constants (pinned-model / agent-def-pinned-model / resume / fork /
-	// router-disabled / breaker-open / aborted) or a miss reason passed through from the
-	// classifier (the RouterMiss* values) or composition (e.g. category-selector-empty). It
-	// is BARE METADATA — a bounded harness/composition reason string, never the task prompt
+	// router-disabled / breaker-open / aborted) or a static miss code from the classifier
+	// (the RouterMiss* values) or composition (e.g. category-selector-empty). Open callback
+	// detail is reduced to a static/generic code before emission. It is BARE METADATA — a
+	// bounded harness/composition reason code, never the task prompt
 	// or the classifier's reasoning — so it is gauntlet-#7 safe (no child content, no
 	// model-influenced free text crosses). Clamped at the emit site.
 	RoutingReason string
@@ -717,9 +718,9 @@ type ParallelPayload struct {
 	// RoutingReason names WHY the router did NOT classify this branch (branch_start kind
 	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
 	// RoutingReason* gate constants (router-disabled, or aborted for a branch cancelled
-	// before it started) or a miss reason passed through from the classifier (the
-	// RouterMiss* values) or composition. It is BARE METADATA — a bounded
-	// harness/composition reason string, never the branch prompt or the classifier's
+	// before it started) or a static miss code from the classifier (the RouterMiss* values)
+	// or composition. Open callback detail is reduced before emission. It is BARE METADATA
+	// — a bounded harness/composition reason code, never the branch prompt or classifier
 	// reasoning — so it is gauntlet-#7 safe (no branch content crosses). Clamped at the
 	// emit site.
 	RoutingReason string
@@ -853,11 +854,11 @@ type TeamMemberSpec struct {
 	// RoutingReason names WHY the router did NOT classify this member (EvTeamStart roster
 	// entry only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of
 	// the RoutingReason* gate constants (agent-def-pinned-model for a DEFINED member,
-	// router-disabled when no router is wired) or a miss reason passed through from the
-	// classifier (the RouterMiss* values) or composition. It is BARE METADATA — a bounded
-	// harness/composition reason string, never the member's role/prompt or the classifier's
-	// reasoning — so it is gauntlet-#7 safe (no member content crosses). Clamped at the
-	// emit site.
+	// router-disabled when no router is wired) or a static miss code from the classifier
+	// (the RouterMiss* values) or composition. Open callback detail is reduced before
+	// emission. It is BARE METADATA — a bounded harness/composition reason code, never the
+	// member's role/prompt or classifier reasoning — so it is gauntlet-#7 safe (no member
+	// content crosses). Clamped at the emit site.
 	RoutingReason string
 	// Model is the concrete MODEL id the member's engine ACTUALLY runs on (EvTeamStart
 	// roster entry only), set unconditionally — inherited default member model, agent-def
@@ -873,8 +874,9 @@ type TeamMemberSpec struct {
 // a delegation-start event carries on RoutingReason when the OPT-IN model router did NOT
 // classify it. Empty ("") is the routed-hit sentinel; every non-empty value is a
 // miss/gate. The CLASSIFIER-side miss reasons (the RouterMiss* values in engine/agent)
-// and composition's category-mapping reasons (e.g. "category-selector-empty") are NOT
-// duplicated here — they flow through the same string channel verbatim.
+// and composition's category-mapping reason codes (e.g. "category-selector-empty") are NOT
+// duplicated here — they flow through the same internal string channel, then the event
+// projection confines them to static codes.
 //
 // All reasons are metadata ONLY — never the task prompt or the classifier's output
 // (gauntlet #7).
@@ -892,9 +894,14 @@ const (
 	// never fires for a fork.
 	RoutingReasonFork = "fork"
 	// RoutingReasonRouterDisabled: no router is wired (the parentCaps routeTask closure
-	// is nil — router absent), or the delegation could not consume a routed pick (a
-	// plain writable Subagent delegation whose writable engine factory is unwired).
+	// is nil — router absent), or the delegation cannot consume a routed pick (for
+	// example an ineligible named agent or an unwired writable/agent model factory).
 	RoutingReasonRouterDisabled = "router-disabled"
+	// RoutingReasonTargetUnavailable: the router selected a concrete model, but the
+	// engine factory could not build that target and the delegation therefore fell
+	// back to its inherited/default engine. The router is fail-soft, but the event
+	// must not claim the rejected target was actually used.
+	RoutingReasonTargetUnavailable = "route-target-unavailable"
 	// RoutingReasonBreakerOpen: the per-run router circuit breaker was OPEN (too many
 	// consecutive misses), so the classifier was skipped and the delegation inherited
 	// the default model.

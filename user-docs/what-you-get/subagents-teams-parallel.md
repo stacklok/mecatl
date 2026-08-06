@@ -123,6 +123,8 @@ If a named specialist agent definition has no `model:` key at all, it's eligible
 
 **It never blocks a delegation.** A classifier failure, a hallucinated category, or an unresolvable target model all fail the same way: the delegation just runs on the model it would have used anyway. A run-scoped breaker gives up on the classifier for the rest of that run after 3 consecutive misses (a hit resets the count), rather than keep paying for a classifier call that keeps failing.
 
+**You can see *why* a delegation wasn't routed.** Every delegation-start event carries a short `routing_reason`: empty when the router picked and successfully built a model, otherwise a plain label like `router-disabled`, `pinned-model`, `agent-def-pinned-model`, `route-target-unavailable`, `resume`, `fork`, or `breaker-open`. mecatui shows it on the delegation's model line as ` · not routed: <reason>`, so you can tell "the router is off" apart from "this agent pinned its own model" apart from "the classifier kept failing" or "the selected target was unavailable" at a glance.
+
 See [`docs/usage/model-routing.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md) for the full taxonomy schema and the `--subagent-model-router` flag — it's a kill-switch only, it can turn a configured router *off* but there's no separate flag to turn it on.
 
 ## Configuring the defaults

@@ -37,7 +37,9 @@ func routerTool() *SubagentTool {
 	factory := func(model string) (*Engine, bool) {
 		return markerEngine("ROUTED:" + model), true
 	}
-	return NewSubagentTool(markerEngine("DEFAULT"), WithSubagentEngineFactory(factory)).(*SubagentTool)
+	return NewSubagentTool(markerEngine("DEFAULT"),
+		WithSubagentEngineFactory(factory),
+		WithPinnedAgents([]string{"reviewer"})).(*SubagentTool)
 }
 
 // A plain default delegation with a wired routeTask mints the child on the ROUTED model.
@@ -118,6 +120,7 @@ func TestRunNamedAgentBeatsRouter(t *testing.T) {
 		WithSubagentEngineFactory(func(model string) (*Engine, bool) { return markerEngine("ROUTED:" + model), true }),
 		WithAgentEngines(map[string]*Engine{"reviewer": specialist},
 			[]AgentMeta{{Name: "reviewer", Description: "a specialist"}}),
+		WithPinnedAgents([]string{"reviewer"}),
 	).(*SubagentTool)
 	var calls int
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
@@ -200,9 +203,12 @@ func TestRunRoutableAgentRoutesViaFactory(t *testing.T) {
 func TestSelectReadOnlyAgentEnginePreservesDefLimitsOnRoutedSwap(t *testing.T) {
 	defLimits := session.Limits{MaxTurns: 7, MaxToolCalls: 13}
 	tl := routableAgentTool(true, true, defLimits)
-	eng, limits, _, ok := tl.selectReadOnlyAgentEngine("p1", "reviewer", "router-model")
+	eng, limits, _, routed, ok := tl.selectReadOnlyAgentEngine("p1", "reviewer", "router-model")
 	if !ok || eng == nil {
 		t.Fatalf("selectReadOnlyAgentEngine = (%v, ok=%v), want a non-nil engine", eng, ok)
+	}
+	if !routed {
+		t.Fatal("selectReadOnlyAgentEngine must report that the routed factory accepted the target")
 	}
 	if eng.Model() != "AGENTMODEL:reviewer:router-model" {
 		t.Fatalf("routed swap must run the factory engine; Model()=%q", eng.Model())
@@ -218,13 +224,19 @@ func TestSelectReadOnlyAgentEnginePreservesDefLimitsOnRoutedSwap(t *testing.T) {
 func TestRunRoutableAgentMissUsesPrebuilt(t *testing.T) {
 	tl := routableAgentTool(true, true, session.Limits{})
 	var calls int
+	var start *session.SubagentPayload
+	emit := func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart {
+			start = ev.Subagent
+		}
+	}
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		calls++
 		return "", "", RouterMissBadVerdict, false // miss
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memfs.NewWorkspace("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -233,6 +245,45 @@ func TestRunRoutableAgentMissUsesPrebuilt(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "SPECIALIST") {
 		t.Fatalf("a routable-agent miss must fall back to the pre-built specialist; got %q", res.Content)
+	}
+	if start == nil || start.RoutingReason != RouterMissBadVerdict {
+		t.Fatalf("subagent.start RoutingReason = %q, want %q", startReason(start), RouterMissBadVerdict)
+	}
+}
+
+// The background path has a distinct synchronous EvSubagentStart emitter. Keep the
+// producer-to-event contract pinned there too, rather than relying only on foreground
+// coverage of the shared routing decision.
+func TestRunBackgroundMissCarriesRoutingReason(t *testing.T) {
+	tl := routerTool()
+	reg := newChildRunRegistry()
+	var start *session.SubagentPayload
+	emit := func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart {
+			start = ev.Subagent
+		}
+	}
+	caps := parentCaps{children: reg, routeTask: func(context.Context, string) (string, string, string, bool) {
+		return "", "", RouterMissCancelled, false
+	}}
+	res, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","background":true}`)),
+		memfs.NewWorkspace("/ws"), emit, caps)
+	if err != nil || res.IsError {
+		t.Fatalf("background start failed: %v %+v", err, res)
+	}
+	if start == nil || !start.Background || start.RoutingReason != RouterMissCancelled {
+		t.Fatalf("background subagent.start = %+v, want Background and RoutingReason %q",
+			start, RouterMissCancelled)
+	}
+	done, ok := reg.doneChFor("subagent-p1")
+	if !ok {
+		t.Fatal("background registry entry missing")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background child did not finish")
 	}
 }
 
@@ -263,10 +314,16 @@ func TestRunRoutableAgentNoFactoryDoesNotSpendClassifier(t *testing.T) {
 func TestRunRoutableAgentFactoryDeclineUsesPrebuilt(t *testing.T) {
 	tl := routableAgentTool(false /*factory declines*/, true, session.Limits{})
 	var calls int
+	var start *session.SubagentPayload
+	emit := func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart {
+			start = ev.Subagent
+		}
+	}
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memfs.NewWorkspace("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -278,6 +335,16 @@ func TestRunRoutableAgentFactoryDeclineUsesPrebuilt(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "SPECIALIST") {
 		t.Fatalf("a factory decline must fall back to the pre-built specialist; got %q", res.Content)
+	}
+	if start == nil {
+		t.Fatal("factory-decline delegation emitted no subagent.start event")
+	}
+	if start.RoutedCategory != "" || start.RoutedModel != "" || start.RoutingReason != session.RoutingReasonTargetUnavailable {
+		t.Fatalf("factory-decline routing metadata = (%q, %q, %q), want empty routed fields + %q",
+			start.RoutedCategory, start.RoutedModel, start.RoutingReason, session.RoutingReasonTargetUnavailable)
+	}
+	if start.Model != "SPECIALIST" {
+		t.Fatalf("factory-decline Model = %q, want the actual fallback engine model", start.Model)
 	}
 }
 
@@ -344,39 +411,163 @@ func TestMaybeRouteModelGateAttribution(t *testing.T) {
 			return "", "", reason, false
 		}
 	}
+	// agentModelFactory wires the agent+model factory (issue #286) so a ROUTABLE def can be
+	// rebuilt on the routed model; routable marks the named def as expressing NO model intent.
+	agentModelFactory := func() func(agentName, model string) (*Engine, bool) {
+		return func(agentName, model string) (*Engine, bool) {
+			return markerEngine("AGENTMODEL:" + agentName + ":" + model), true
+		}
+	}
 	cases := []struct {
 		name     string
 		args     subagentArgs
 		resuming bool
+		writable bool
 		route    func(context.Context, string) (string, string, string, bool) // nil = router absent
+		tool     func() *SubagentTool                                         // nil = routerTool()
 		wantCat  string
 		wantMod  string
 		wantWhy  string
 	}{
-		{name: "router absent", args: subagentArgs{Prompt: "x"}, route: nil,
-			wantWhy: session.RoutingReasonRouterDisabled},
-		{name: "pinned model", args: subagentArgs{Prompt: "x", Model: "fast"}, route: routeOK,
-			wantWhy: session.RoutingReasonPinnedModel},
-		{name: "fork", args: subagentArgs{Prompt: "x", Fork: true}, route: routeOK,
-			wantWhy: session.RoutingReasonFork},
-		{name: "agent-def pinned", args: subagentArgs{Prompt: "x", Agent: "reviewer"}, route: routeOK,
-			wantWhy: session.RoutingReasonAgentDefPinned},
-		{name: "routed hit", args: subagentArgs{Prompt: "x"}, route: routeOK,
-			wantCat: "large", wantMod: "big-model", wantWhy: ""},
-		{name: "classifier miss passes through", args: subagentArgs{Prompt: "x"}, route: routeMiss(RouterMissClassifierError),
-			wantWhy: RouterMissClassifierError},
-		{name: "breaker-open passes through", args: subagentArgs{Prompt: "x"}, route: routeMiss(session.RoutingReasonBreakerOpen),
-			wantWhy: session.RoutingReasonBreakerOpen},
+		{
+			name: "router absent", args: subagentArgs{Prompt: "x"}, route: nil,
+			wantWhy: session.RoutingReasonRouterDisabled,
+		},
+		{
+			name: "pinned model", args: subagentArgs{Prompt: "x", Model: "fast"}, route: routeOK,
+			wantWhy: session.RoutingReasonPinnedModel,
+		},
+		{
+			name: "fork", args: subagentArgs{Prompt: "x", Fork: true}, route: routeOK,
+			wantWhy: session.RoutingReasonFork,
+		},
+		{
+			name: "agent-def pinned", args: subagentArgs{Prompt: "x", Agent: "reviewer"}, route: routeOK,
+			wantWhy: session.RoutingReasonAgentDefPinned,
+		},
+		{
+			name: "unroutable def without model pin", args: subagentArgs{Prompt: "x", Agent: "switched"}, route: routeOK,
+			tool: func() *SubagentTool {
+				return NewSubagentTool(markerEngine("DEFAULT")).(*SubagentTool)
+			},
+			wantWhy: session.RoutingReasonRouterDisabled,
+		},
+		{
+			name: "routed hit", args: subagentArgs{Prompt: "x"}, route: routeOK,
+			wantCat: "large", wantMod: "big-model", wantWhy: "",
+		},
+		{
+			name: "classifier miss passes through", args: subagentArgs{Prompt: "x"}, route: routeMiss(RouterMissClassifierError),
+			wantWhy: RouterMissClassifierError,
+		},
+		{
+			name: "breaker-open passes through", args: subagentArgs{Prompt: "x"}, route: routeMiss(session.RoutingReasonBreakerOpen),
+			wantWhy: session.RoutingReasonBreakerOpen,
+		},
+
+		// PRECEDENCE OVERLAPS (issue #397): the explicit CHOICE gates attribute BEFORE the
+		// router-absent gate, so a pinned delegation is never mislabeled "router-disabled".
+		{
+			name: "router absent + pinned model", args: subagentArgs{Prompt: "x", Model: "fast"}, route: nil,
+			wantWhy: session.RoutingReasonPinnedModel,
+		},
+		{
+			name: "router absent + agent-def pinned", args: subagentArgs{Prompt: "x", Agent: "reviewer"}, route: nil,
+			wantWhy: session.RoutingReasonAgentDefPinned,
+		},
+		{
+			name: "router absent + resume", args: subagentArgs{Prompt: "x", Resume: "subagent-abc"}, resuming: true, route: nil,
+			wantWhy: session.RoutingReasonResume,
+		},
+		{
+			name: "router absent + fork", args: subagentArgs{Prompt: "x", Fork: true}, route: nil,
+			wantWhy: session.RoutingReasonFork,
+		},
+
+		// A ROUTABLE def (NO model intent) that still cannot be routed is NOT "agent-def-pinned":
+		// the def never pinned a model. A writable routable specialist, or a routable def whose
+		// agent+model factory is unwired, attributes to router-disabled (the pick could not be
+		// consumed — as good as no router).
+		{
+			name: "routable def + writable", args: subagentArgs{Prompt: "x", Agent: "explore"}, writable: true, route: routeOK,
+			tool: func() *SubagentTool {
+				return NewSubagentTool(markerEngine("DEFAULT"),
+					WithAgentModelEngineFactory(agentModelFactory()),
+					WithRoutableAgents([]string{"explore"})).(*SubagentTool)
+			},
+			wantWhy: session.RoutingReasonRouterDisabled,
+		},
+		{
+			name: "routable def + agent+model factory unwired", args: subagentArgs{Prompt: "x", Agent: "explore"}, route: routeOK,
+			tool: func() *SubagentTool {
+				return NewSubagentTool(markerEngine("DEFAULT"),
+					WithRoutableAgents([]string{"explore"})).(*SubagentTool)
+			},
+			wantWhy: session.RoutingReasonRouterDisabled,
+		},
+		{
+			name: "routable def + read-only + factory wired routes", args: subagentArgs{Prompt: "x", Agent: "explore"}, route: routeOK,
+			tool: func() *SubagentTool {
+				return NewSubagentTool(markerEngine("DEFAULT"),
+					WithAgentModelEngineFactory(agentModelFactory()),
+					WithRoutableAgents([]string{"explore"})).(*SubagentTool)
+			},
+			wantCat: "large", wantMod: "big-model", wantWhy: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			tl := routerTool()
+			if tc.tool != nil {
+				tl = tc.tool()
+			}
 			caps := parentCaps{children: newChildRunRegistry(), routeTask: tc.route}
-			cat, model, reason := routerTool().maybeRouteModel(context.Background(), tc.args, tc.resuming, false /*writable*/, caps)
+			cat, model, reason := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, tc.writable, caps)
 			if cat != tc.wantCat || model != tc.wantMod {
 				t.Fatalf("routed = (%q, %q), want (%q, %q)", cat, model, tc.wantCat, tc.wantMod)
 			}
 			if reason != tc.wantWhy {
 				t.Fatalf("RoutingReason = %q, want %q", reason, tc.wantWhy)
+			}
+		})
+	}
+}
+
+// EVENT-SAFE ALLOWLIST (issue #397, Finding 3): routingReasonPayload confines the wire
+// RoutingReason to the harness/composition metadata constants. The missReason channel is
+// OPEN to external engine compositions (Deps.SubagentModelRouter is exported); one returning
+// a provider error body, classifier output, or a task excerpt must see it substituted with
+// the generic label on the wire (gauntlet #7), while in-tree detailed composition reasons
+// are reduced to static codes.
+func TestRoutingReasonPayloadEventSafeAllowlist(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty stays empty (routed hit)", "", ""},
+		{"gate constant passes", session.RoutingReasonPinnedModel, session.RoutingReasonPinnedModel},
+		{"router-disabled passes", session.RoutingReasonRouterDisabled, session.RoutingReasonRouterDisabled},
+		{"target-unavailable passes", session.RoutingReasonTargetUnavailable, session.RoutingReasonTargetUnavailable},
+		{"empty routed model passes", routingReasonEmptyModel, routingReasonEmptyModel},
+		{"classifier miss constant passes", RouterMissClassifierError, RouterMissClassifierError},
+		{"bad-verdict passes", RouterMissBadVerdict, RouterMissBadVerdict},
+		{"composition selector detail reduces to static code", "category-selector-empty (category=large)", routingReasonCategorySelectorEmpty},
+		{"composition target detail reduces to static code", "category-target-unresolvable (category=large selector=fast)", routingReasonCategoryTargetUnresolvable},
+		{"whitespace collapsed", "  breaker-open  ", session.RoutingReasonBreakerOpen},
+		// The attack surface: an external router leaking dynamic text onto the wire.
+		{"provider error body replaced", "provider 500: upstream overloaded at /v1/chat\nstack trace…", routingReasonGeneric},
+		{"task excerpt replaced", "the task was: delete the prod database", routingReasonGeneric},
+		{"classifier prose replaced", "I think this is a large task because…", routingReasonGeneric},
+		{"unknown constant replaced", "some-future-reason", routingReasonGeneric},
+		{"trusted prefix without composition shape replaced", "category-selector-empty task excerpt: delete prod", routingReasonGeneric},
+		{"trusted selector shape discards hostile suffix", "category-selector-empty (task excerpt: delete prod)", routingReasonCategorySelectorEmpty},
+		{"trusted target shape discards hostile suffix", "category-target-unresolvable (provider body: secret)", routingReasonCategoryTargetUnresolvable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := routingReasonPayload(tc.in); got != tc.want {
+				t.Fatalf("routingReasonPayload(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -466,12 +657,18 @@ func TestRunWritableRoutesWhenFactoryWired(t *testing.T) {
 // never an error (the router is never load-bearing).
 func TestRunWritableRoutedFactoryMissFailSoft(t *testing.T) {
 	tl := writableRouterTool(false) // factory always misses
+	var start *session.SubagentPayload
+	emit := func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart {
+			start = ev.Subagent
+		}
+	}
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		return "large", "big-model", "", true
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memfs.NewWorkspace("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -481,6 +678,17 @@ func TestRunWritableRoutedFactoryMissFailSoft(t *testing.T) {
 	if !strings.Contains(res.Content, "WRITABLE-DEFAULT") {
 		t.Fatalf("a routed writable factory miss must fall back to the DEFAULT writable explorer; got %q", res.Content)
 	}
+	if start == nil || start.RoutedModel != "" || start.RoutingReason != session.RoutingReasonTargetUnavailable {
+		t.Fatalf("writable factory-decline start = %+v, want no routed model and reason %q",
+			start, session.RoutingReasonTargetUnavailable)
+	}
+}
+
+func startReason(p *session.SubagentPayload) string {
+	if p == nil {
+		return ""
+	}
+	return p.RoutingReason
 }
 
 // TestRunWritableDoesNotSpendClassifierWhenFactoryUnwired (issue #285): a writable
@@ -520,12 +728,15 @@ func TestWritableResumeUsesWritableChildEngine(t *testing.T) {
 		WithSubagentStore(memstore.New())).(*SubagentTool)
 
 	args := subagentArgs{Prompt: "continue", Resume: "subagent-abc"}
-	engine, _, _, ok := tl.resolveEngineAndLimits("p1", args, true /*resuming*/, true /*writable*/, "")
+	engine, _, _, routed, ok := tl.resolveEngineAndLimits("p1", args, true /*resuming*/, true /*writable*/, "")
 	if !ok {
 		t.Fatal("a writable resume with a wired store must resolve")
 	}
 	if engine != writable {
 		t.Fatal("a writable resume must run on the WRITABLE explorer engine, not the read-only default explorer")
+	}
+	if routed {
+		t.Fatal("a resumed child must never report a routed factory target")
 	}
 }
 

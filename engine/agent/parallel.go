@@ -1000,11 +1000,15 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	prompt := composePrompt(shared, task)
 	routedCategory, routedModel, routingReason := t.maybeRouteBranchModel(ctx, caps, prompt)
 	branchEngine := t.childEngine
+	routedAccepted := false
 	if routedModel != "" && t.engineFactory != nil {
 		if eng, found := t.engineFactory(routedModel); found && eng != nil {
 			branchEngine = eng
+			routedAccepted = true
 		}
 	}
+	routedCategory, routedModel, routingReason = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routedAccepted)
 
 	// Bracket the branch on the observability stream: branch_start carries the
 	// (truncated, model-authored) goal + the routed metadata (incl. the bare-metadata

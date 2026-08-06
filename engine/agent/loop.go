@@ -298,8 +298,13 @@ type Deps struct {
 	// rule): composition owns the classifier engine, the category taxonomy, and the
 	// category→model mapping (aliases/slots/the allowlist cap), and hands the engine
 	// only func(ctx, string)(string, string, session.Usage, string, bool) (the trailing
-	// string is the miss REASON — issue #287, logged at the dispatch chokepoint on a
-	// miss; empty on a hit). It is consulted by
+	// string is the miss REASON — issue #287, logged VERBATIM at the dispatch chokepoint
+	// on a miss; empty on a hit). The reason is OPERATOR-DIAGNOSTIC detail: it also rides
+	// the delegation-start event's RoutingReason field, but ONLY after the engine's
+	// event-safe allowlist (routingReasonPayload) confines it to the harness/composition
+	// metadata constants — an external composition returning a provider error body,
+	// classifier output, or a task excerpt sees it substituted with a generic label on the
+	// wire (gauntlet #7), while the verbatim text stays in the diagnostics channel. It is consulted by
 	// the Subagent run() hook ONLY for a plain default delegation (no per-call model,
 	// no agent, no fork, no resume) and is FAIL-SOFT throughout: ok=false (any
 	// classifier failure, an unknown category, the breaker open) → the call falls

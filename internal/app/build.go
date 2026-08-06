@@ -5535,6 +5535,10 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// when the router is off (routeTask nil) or no def qualifies (nil set = byte-identical).
 	opts = append(opts, agent.WithRoutableAgents(
 		routableAgentNames(provReg, reg, parentProviderID)))
+	// PINNED agent defs are carried separately from the routable set so the event reason
+	// does not falsely call every ineligible def model-pinned (provider-switched and
+	// inline-MCP defs are also unroutable, but expressed no model intent).
+	opts = append(opts, agent.WithPinnedAgents(pinnedAgentNames(reg)))
 	// WRITABLE named specialist (mode:"read-write"+`agent`, ADR 0058): a factory that
 	// REBUILDS the named specialist's scoped engine with allowMutating=true on the def's
 	// resolved model, using the MAIN session's command runner (direct-write parity, ADR

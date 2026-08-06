@@ -34,7 +34,9 @@ import (
 // OPEN-SET free-form reasons for its own category-mapping misses (e.g.
 // "category-selector-empty (category=…)", "category-target-unresolvable (category=… selector=…)",
 // and the dispatch closure's "empty-model" fallback). Those are NOT in this enum — the
-// reason string is INFORMATIONAL (for the operator log), never a value callers branch on.
+// full string is INFORMATIONAL for the operator log. routingReasonPayload reduces the two
+// known composition shapes to static codes before an event is emitted and substitutes a
+// generic code for every other open-set value; callers never branch on the free-form text.
 //
 // All reasons are metadata ONLY — never the task prompt or the classifier's output
 // (gauntlet #7).

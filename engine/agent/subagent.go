@@ -158,11 +158,11 @@ type parentCaps struct {
 	// model is an opaque model string — engine/agent stays model-string-only (the layering
 	// rule); composition owns aliases/slots/the cap.
 	//
-	// reason is the BARE-METADATA why on a MISS (ok=false): the classifier's missReason
-	// passed through verbatim, or a harness-synthesised gate constant
+	// reason is the internal why on a MISS (ok=false): the classifier's missReason passed
+	// through to diagnostics/event projection, or a harness-synthesised gate constant
 	// (session.RoutingReasonBreakerOpen / RoutingReasonAborted) when the classifier was
-	// skipped. Empty on a hit. It rides the delegation-start events' RoutingReason field
-	// (issue #397) — never the task prompt or classifier output (gauntlet #7).
+	// skipped. Empty on a hit. routingReasonPayload reduces it to a closed static code before
+	// it rides delegation-start events (issue #397), so arbitrary callback text cannot cross.
 	//
 	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
 	// (issue #94); see SubagentModelRouter.
@@ -666,9 +666,15 @@ type SubagentTool struct {
 	// parent-provider ids) and a def with INLINE MCP servers (the agent+model factory would
 	// decline — excluding avoids wasted classifier spend). nil/empty (the default) means NO
 	// def routes — byte-identical to pre-#286. It is consulted ONLY by the router gate
-	// (routeGateOpen); the engine layer stays model-string-only (names only — no adapter/
+	// (maybeRouteModel); the engine layer stays model-string-only (names only — no adapter/
 	// registry/provider type crosses).
 	routableAgents map[string]struct{}
+
+	// pinnedAgents is the composition-computed SET of agent-def names that expressed
+	// model intent (ANY non-empty def.Model). It is distinct from the complement of
+	// routableAgents: provider-switched and inline-MCP defs are also unroutable, but
+	// they did not pin a model and must not be attributed as if they had.
+	pinnedAgents map[string]struct{}
 
 	// agentWritableFactory, when non-nil, mints a WRITABLE child engine for a
 	// mode:"read-write"+`agent` call: the named specialist's scoped engine
@@ -1175,10 +1181,11 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 // `model:`), does not switch provider away from the parent, and has no inline MCP servers.
 // An `agent`-named delegation to one of these — read-only, with the agent+model factory
 // wired — is CLASSIFIED and its SCOPED engine rebuilt on the routed model (fail-soft to the
-// pre-built def engine). A def NOT in this set is PINNED (its `model:`, incl. explicit
-// `inherit`, is honoured verbatim — resolution unchanged). nil/empty (the default) means NO
-// def routes — byte-identical to pre-#286. It is layering-clean: only def NAME strings flow
-// in. It is inert when the router is off (routeTask nil) — wiring it unconditionally is safe.
+// pre-built def engine). Absence from this set does NOT itself mean pinned: provider-switched
+// and inline-MCP defs are also ineligible. WithPinnedAgents carries the narrower attribution
+// set. nil/empty (the default) means NO def routes — byte-identical to pre-#286. It is
+// layering-clean: only def NAME strings flow in. It is inert when the router is off
+// (routeTask nil) — wiring it unconditionally is safe.
 func WithRoutableAgents(names []string) SubagentOption {
 	return func(t *SubagentTool) {
 		if len(names) == 0 {
@@ -1189,6 +1196,27 @@ func WithRoutableAgents(names []string) SubagentOption {
 		for _, n := range names {
 			if n = strings.TrimSpace(n); n != "" {
 				t.routableAgents[n] = struct{}{}
+			}
+		}
+	}
+}
+
+// WithPinnedAgents injects the composition-computed SET of agent-def names that expressed
+// model intent (ANY non-empty `model:`, including explicit `inherit`). The set is used only
+// to attribute an unrouted named delegation as RoutingReasonAgentDefPinned. It is separate
+// from WithRoutableAgents because a def may be unroutable for reasons other than a model pin
+// (for example a provider switch or inline MCP server); those cases report router-disabled.
+// nil/empty is safe and preserves the pre-option default.
+func WithPinnedAgents(names []string) SubagentOption {
+	return func(t *SubagentTool) {
+		if len(names) == 0 {
+			t.pinnedAgents = nil
+			return
+		}
+		t.pinnedAgents = make(map[string]struct{}, len(names))
+		for _, n := range names {
+			if n = strings.TrimSpace(n); n != "" {
+				t.pinnedAgents[n] = struct{}{}
 			}
 		}
 	}
@@ -1488,7 +1516,7 @@ func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolC
 // It returns ok=false with a model-addressable error ToolResult on a bad selection (an
 // unsupported combination, an unknown agent, an unwired/unroutable model), and the chosen
 // engine + limits on success.
-func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagentArgs, writable bool, routedModel string) (engine *Engine, limits session.Limits, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagentArgs, writable bool, routedModel string) (engine *Engine, limits session.Limits, errResult session.ToolResult, routed, ok bool) {
 	wantAgent := strings.TrimSpace(args.Agent)
 	wantModel := strings.TrimSpace(args.Model)
 
@@ -1502,15 +1530,15 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 	if wantAgent != "" && wantModel != "" {
 		if t.agentModelFactory == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
-				"Subagent: `agent`+`model` together is not supported in this deployment"), false
+				"Subagent: `agent`+`model` together is not supported in this deployment"), false, false
 		}
 		if _, found := t.agentEngines[wantAgent]; !found {
-			return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false
+			return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false, false
 		}
 		eng, found := t.agentModelFactory(wantAgent, wantModel)
 		if !found || eng == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
-				fmt.Sprintf("Subagent: unknown or unroutable model %q for agent %q; omit `model` to run the specialist on its own model", wantModel, wantAgent)), false
+				fmt.Sprintf("Subagent: unknown or unroutable model %q for agent %q; omit `model` to run the specialist on its own model", wantModel, wantAgent)), false, false
 		}
 		engine = eng
 		if l, found := t.agentLimits[wantAgent]; found {
@@ -1518,7 +1546,7 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 		} else {
 			limits = t.limits
 		}
-		return engine, limits, session.ToolResult{}, true
+		return engine, limits, session.ToolResult{}, false, true
 	}
 
 	// Route to a named specialist when requested (each arm returns): a WRITABLE specialist
@@ -1528,7 +1556,8 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 	// those helpers; it never silently falls back to the wrong scope/prompt.
 	if wantAgent != "" {
 		if writable {
-			return t.selectWritableSpecialistEngine(callID, wantAgent)
+			eng, lim, errRes, found := t.selectWritableSpecialistEngine(callID, wantAgent)
+			return eng, lim, errRes, false, found
 		}
 		return t.selectReadOnlyAgentEngine(callID, wantAgent, routedModel)
 	}
@@ -1549,17 +1578,17 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 // selectReadOnlyAgentEngine resolves a read-only `agent` delegation to its pre-built SCOPED
 // specialist engine (agentEngines) + per-def limits, then applies the issue-#286 routable-def
 // routed override: when the OPT-IN router classified this delegation (routedModel != "", set
-// ONLY for a def in t.routableAgents — maybeRouteModel/routeGateOpen gate it) and the
+// ONLY for a def in t.routableAgents — maybeRouteModel gates it) and the
 // agent+model factory is wired, the def's SCOPED engine is REBUILT on the routed model via
 // agentModelFactory. It is FAIL-SOFT — a factory decline (e.g. an inline-MCP def) or a miss
 // keeps the pre-built def engine, never an error (the router is never load-bearing). Per-def
 // limits are UNTOUCHED — only the engine swaps (the def's own turn/tool bounds still bind). An
 // unknown name is the same model-addressable error the pinned path returns (never a silent
 // fallback to the wrong scope). Extracted from selectChildEngine for the gocyclo budget.
-func (t *SubagentTool) selectReadOnlyAgentEngine(callID session.ToolCallID, wantAgent, routedModel string) (*Engine, session.Limits, session.ToolResult, bool) {
+func (t *SubagentTool) selectReadOnlyAgentEngine(callID session.ToolCallID, wantAgent, routedModel string) (*Engine, session.Limits, session.ToolResult, bool, bool) {
 	eng, found := t.agentEngines[wantAgent]
 	if !found {
-		return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false
+		return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false, false
 	}
 	limits := t.limits
 	if l, ok := t.agentLimits[wantAgent]; ok {
@@ -1567,10 +1596,10 @@ func (t *SubagentTool) selectReadOnlyAgentEngine(callID session.ToolCallID, want
 	}
 	if routedModel != "" && t.agentModelFactory != nil {
 		if eng2, ok := t.agentModelFactory(wantAgent, routedModel); ok && eng2 != nil {
-			eng = eng2
+			return eng2, limits, session.ToolResult{}, true, true
 		}
 	}
-	return eng, limits, session.ToolResult{}, true
+	return eng, limits, session.ToolResult{}, false, true
 }
 
 // selectReadOnlyModelEngine resolves the READ-ONLY explorer engine for a per-call `model`
@@ -1589,25 +1618,25 @@ func (t *SubagentTool) selectReadOnlyAgentEngine(callID session.ToolCallID, want
 // model" vs "run the writable subagent on its default model"). Merging them onto a shared
 // helper would couple the read-only and writable posture and force one of those seams to
 // leak into the other — the wrong abstraction. Keep them parallel.
-func (t *SubagentTool) selectReadOnlyModelEngine(callID session.ToolCallID, wantModel, routedModel string, fallback *Engine, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool) {
+func (t *SubagentTool) selectReadOnlyModelEngine(callID session.ToolCallID, wantModel, routedModel string, fallback *Engine, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool, bool) {
 	if wantModel != "" {
 		if t.engineFactory == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
-				"Subagent: per-call `model` override is not supported in this deployment"), false
+				"Subagent: per-call `model` override is not supported in this deployment"), false, false
 		}
 		eng, found := t.engineFactory(wantModel)
 		if !found || eng == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
-				fmt.Sprintf("Subagent: unknown or unroutable model %q; omit `model` to inherit the parent's model", wantModel)), false
+				fmt.Sprintf("Subagent: unknown or unroutable model %q; omit `model` to inherit the parent's model", wantModel)), false, false
 		}
-		return eng, limits, session.ToolResult{}, true
+		return eng, limits, session.ToolResult{}, false, true
 	}
 	if routedModel != "" && t.engineFactory != nil {
 		if eng, found := t.engineFactory(routedModel); found && eng != nil {
-			return eng, limits, session.ToolResult{}, true
+			return eng, limits, session.ToolResult{}, true, true
 		}
 	}
-	return fallback, limits, session.ToolResult{}, true
+	return fallback, limits, session.ToolResult{}, false, true
 }
 
 // selectWritableExplorerEngine resolves a mode:"read-write" call with NO `agent` (issue
@@ -1629,25 +1658,25 @@ func (t *SubagentTool) selectReadOnlyModelEngine(callID session.ToolCallID, want
 // (writableEngineFactory vs engineFactory), the fallback (writableChildEngine vs a passed-in
 // `fallback`), and the error wording — merging would couple the writable and read-only
 // posture, the wrong abstraction. See selectReadOnlyModelEngine's note.
-func (t *SubagentTool) selectWritableExplorerEngine(callID session.ToolCallID, wantModel, routedModel string, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool) {
+func (t *SubagentTool) selectWritableExplorerEngine(callID session.ToolCallID, wantModel, routedModel string, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool, bool) {
 	if wantModel != "" {
 		if t.writableEngineFactory == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
-				"Subagent: mode:\"read-write\" with a per-call `model` is not supported in this deployment; omit `model` to run the writable subagent on its default model"), false
+				"Subagent: mode:\"read-write\" with a per-call `model` is not supported in this deployment; omit `model` to run the writable subagent on its default model"), false, false
 		}
 		eng, found := t.writableEngineFactory(wantModel)
 		if !found || eng == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
-				fmt.Sprintf("Subagent: unknown or unroutable model %q; omit `model` to run the writable subagent on its default model", wantModel)), false
+				fmt.Sprintf("Subagent: unknown or unroutable model %q; omit `model` to run the writable subagent on its default model", wantModel)), false, false
 		}
-		return eng, limits, session.ToolResult{}, true
+		return eng, limits, session.ToolResult{}, false, true
 	}
 	if routedModel != "" && t.writableEngineFactory != nil {
 		if eng, found := t.writableEngineFactory(routedModel); found && eng != nil {
-			return eng, limits, session.ToolResult{}, true
+			return eng, limits, session.ToolResult{}, true, true
 		}
 	}
-	return t.writableChildEngine, limits, session.ToolResult{}, true
+	return t.writableChildEngine, limits, session.ToolResult{}, false, true
 }
 
 // selectWritableSpecialistEngine resolves a mode:"read-write"+`agent` call to a WRITABLE
@@ -1945,7 +1974,7 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 // returned (classifier miss / breaker-open / aborted). It rides the subagent.start event's
 // RoutingReason field — never the task prompt or classifier output (gauntlet #7).
 //
-// Two gate shapes (routeGateOpen):
+// Two gate shapes:
 //   - NO `agent` (a plain default delegation): routes, EXCEPT a writable delegation whose
 //     writable engine factory is unwired (issue #285 — the pick would be DISCARDED by
 //     selectChildEngine's writable arm, so don't spend the classifier). That gate reports
@@ -1953,32 +1982,49 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 //   - a NAMED `agent` (issue #286): routes ONLY a ROUTABLE def — one that expressed NO model
 //     intent (composition put it in t.routableAgents) — and only READ-ONLY with the
 //     agent+model factory wired (the pick is consumed by rebuilding the def's SCOPED engine
-//     on the routed model). A pinned def (ANY def.Model, incl. explicit `inherit`), a
-//     writable specialist, or an unwired factory is NEVER routed — no classifier spend when
-//     the pick couldn't be consumed; the gate reports RoutingReasonAgentDefPinned.
+//     on the routed model). A pinned def (ANY def.Model, incl. explicit `inherit`) reports
+//     RoutingReasonAgentDefPinned; a routable def that is writable or whose agent+model
+//     factory is unwired reports RoutingReasonRouterDisabled (the pick could not be
+//     consumed — as good as no router — NOT a def-pinned model the def never expressed).
 //
 // It is a method (not a free func) to read t.writableEngineFactory / t.agentModelFactory /
 // t.routableAgents. The ctx is the run's ctx, threaded to routeTask so a Run.Cancel
 // propagates into the classifier turn (issue #94).
 func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string) {
+	// PRECEDENCE (issue #397): the explicit CHOICE gates (resume / fork / per-call model /
+	// agent def) attribute BEFORE the router-absent gate, so a delegation that pinned its
+	// model is never mislabeled "router-disabled" when no router is wired. The choice
+	// exists regardless of whether a router could have consumed a pick; naming it is the
+	// accurate why.
 	switch {
 	case resuming:
 		return "", "", session.RoutingReasonResume
 	case args.Fork:
 		return "", "", session.RoutingReasonFork
-	case caps.routeTask == nil:
-		return "", "", session.RoutingReasonRouterDisabled
 	case strings.TrimSpace(args.Model) != "":
 		return "", "", session.RoutingReasonPinnedModel
 	}
-	if wantAgent := strings.TrimSpace(args.Agent); !t.routeGateOpen(wantAgent, writable) {
-		// The pick could not be consumed: a named agent pins its own def's model (or is
-		// a writable/unfactoryable specialist); a plain writable delegation with an
-		// unwired writable factory would DISCARD the pick (issue #285) — attribute that
-		// to router-disabled (as good as absent), the def-pinned cases to their own gate.
-		if wantAgent != "" {
+	if wantAgent := strings.TrimSpace(args.Agent); wantAgent != "" {
+		// A NAMED agent: a def that expressed model intent (recorded explicitly in pinnedAgents)
+		// attributes to its own gate. A ROUTABLE def (no model intent) that still cannot be
+		// routed — writable, or the agent+model factory unwired — attributes to
+		// router-disabled: the pick could not be consumed, as good as no router, and the def
+		// never pinned a model. Only then does the router-absent gate apply.
+		if _, pinned := t.pinnedAgents[wantAgent]; pinned {
 			return "", "", session.RoutingReasonAgentDefPinned
 		}
+		if _, routable := t.routableAgents[wantAgent]; !routable {
+			return "", "", session.RoutingReasonRouterDisabled
+		}
+		if writable || t.agentModelFactory == nil {
+			return "", "", session.RoutingReasonRouterDisabled
+		}
+	} else if writable && t.writableEngineFactory == nil {
+		// A plain WRITABLE delegation whose writable engine factory is unwired would DISCARD
+		// the pick (issue #285) — router-disabled (as good as absent).
+		return "", "", session.RoutingReasonRouterDisabled
+	}
+	if caps.routeTask == nil {
 		return "", "", session.RoutingReasonRouterDisabled
 	}
 	cat, m, missReason, ok := caps.routeTask(ctx, args.Prompt)
@@ -1988,23 +2034,17 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 	return "", "", missReason
 }
 
-// routeGateOpen reports whether a delegation is eligible for model routing given its
-// resolved `agent` name and writable flag (the per-call model / fork / resume / nil-router
-// gates are checked by the caller). See maybeRouteModel for the two gate shapes. It never
-// spends the classifier when the routed pick could not be consumed.
-func (t *SubagentTool) routeGateOpen(wantAgent string, writable bool) bool {
-	if wantAgent == "" {
-		// Plain default delegation: a writable one needs the writable engine factory to
-		// consume the pick (issue #285); a read-only one always routes.
-		return !writable || t.writableEngineFactory != nil
+// reconcileRoutedModel makes delegation-start metadata agree with the engine that will
+// actually run. Router factories are deliberately fail-soft: a selected target may be
+// unavailable and the delegation then inherits its fallback engine. In that case the
+// routed category/model must be cleared so consumers do not report a model that never ran,
+// and the static reason records the fallback. The factory-acceptance bit handles every
+// path (plain, writable, named specialist, and Parallel) without guessing from model ids.
+func reconcileRoutedModel(category, routedModel, reason string, accepted bool) (string, string, string) {
+	if strings.TrimSpace(routedModel) != "" && !accepted {
+		return "", "", session.RoutingReasonTargetUnavailable
 	}
-	// Named agent (issue #286): route ONLY a routable, read-only def with the agent+model
-	// factory wired. A writable specialist or a pinned def (not in routableAgents) is skipped.
-	if writable || t.agentModelFactory == nil {
-		return false
-	}
-	_, routable := t.routableAgents[wantAgent]
-	return routable
+	return category, routedModel, reason
 }
 
 // resolveEngineAndLimits resolves one Subagent call's child engine and base
@@ -2029,19 +2069,19 @@ func (t *SubagentTool) routeGateOpen(wantAgent string, writable bool) bool {
 // plain default delegation (the run() hook gates it on no model/agent/fork/resume), so it
 // never collides with an explicit args.Model/args.Agent — and a resume ignores it (a
 // resumed child runs on the default explorer engine only).
-func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args subagentArgs, resuming, writable bool, routedModel string) (engine *Engine, limits session.Limits, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args subagentArgs, resuming, writable bool, routedModel string) (engine *Engine, limits session.Limits, errResult session.ToolResult, routed, ok bool) {
 	if resuming {
 		eng, errRes, vok := t.validateResume(callID, args)
 		if !vok {
-			return nil, session.Limits{}, errRes, false
+			return nil, session.Limits{}, errRes, false, false
 		}
 		engine = eng
 	} else {
-		eng, lim, errRes, sok := t.selectChildEngine(callID, args, writable, routedModel)
+		eng, lim, errRes, accepted, sok := t.selectChildEngine(callID, args, writable, routedModel)
 		if !sok {
-			return nil, session.Limits{}, errRes, false
+			return nil, session.Limits{}, errRes, false, false
 		}
-		engine, limits = eng, lim
+		engine, limits, routed = eng, lim, accepted
 	}
 	// RESUME + read-write: force the default writable explorer engine (issue #285). A
 	// resumed child rejects `model`/`agent` and gates the router (validateResume +
@@ -2060,7 +2100,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 	}
 	limits.MaxTurns = tightenLimit(limits.MaxTurns, args.MaxTurns)
 	limits.MaxToolCalls = tightenLimit(limits.MaxToolCalls, args.MaxToolCalls)
-	return engine, limits, session.ToolResult{}, true
+	return engine, limits, session.ToolResult{}, routed, true
 }
 
 // prepareChildSession resolves everything between the concurrency slot and the
@@ -2179,10 +2219,12 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// a Run.Cancel propagates into the classifier turn (issue #94).
 	routedCategory, routedModel, routingReason := t.maybeRouteModel(ctx, args, resuming, writable, caps)
 
-	engine, limits, errResult, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
+	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
 	if !ok {
 		return errResult, nil
 	}
+	routedCategory, routedModel, routingReason = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routedAccepted)
 
 	// Background requires the parent run's child registry: it is where the started
 	// child's rendered result lands for SubagentStatus collection and what the
@@ -2752,15 +2794,93 @@ func subagentCausePayload(cause string) string {
 // author new ones), so the projection stays BOUNDED like every other event field.
 const maxRoutingReasonPreview = 200
 
+// routingReasonGeneric is the wire value substituted for a routing reason that is NOT on
+// the event-safe allowlist (routingReasonEventSafe). The in-tree engine gates and the
+// reference composition author only allowlisted metadata, but Deps.SubagentModelRouter is
+// an EXPORTED callback — an external engine composition could return a provider error body,
+// classifier output, or a task excerpt as its missReason. That text is NOT gauntlet-#7
+// safe, so the wire projection substitutes this generic label and keeps the verbatim reason
+// in the operator-diagnostics channel only (logRouterMissReason), which is where dynamic
+// detail belongs.
+const routingReasonGeneric = "routing-miss"
+
+// routingReasonEmptyModel attributes the fail-soft case where a router reported a hit but
+// returned no usable model id. It is static event-safe metadata; the classifier detail, if
+// any, remains diagnostic-only.
+const routingReasonEmptyModel = "empty-model"
+
+// The reference composition's two category-mapping miss codes. Composition appends
+// operator-facing detail to these values for diagnostics, but the event projection always
+// reduces that detail back to the static code: Deps.SubagentModelRouter is an exported
+// callback, so no arbitrary suffix is allowed to cross the client wire.
+const (
+	routingReasonCategorySelectorEmpty      = "category-selector-empty"
+	routingReasonCategoryTargetUnresolvable = "category-target-unresolvable"
+)
+
+// routingReasonEventSafe is the CLOSED set of reason strings permitted to cross onto a
+// delegation-start event verbatim. It is the union of the harness gate constants
+// (session.RoutingReason*), the engine classifier-miss constants (RouterMiss*), and the
+// reference composition's static category-mapping codes. Category/selector detail remains
+// diagnostic-only. Anything else an external router returns is replaced by
+// routingReasonGeneric. Built once at init.
+var routingReasonEventSafe = func() map[string]struct{} {
+	safe := []string{
+		session.RoutingReasonPinnedModel,
+		session.RoutingReasonAgentDefPinned,
+		session.RoutingReasonResume,
+		session.RoutingReasonFork,
+		session.RoutingReasonRouterDisabled,
+		session.RoutingReasonTargetUnavailable,
+		session.RoutingReasonBreakerOpen,
+		session.RoutingReasonAborted,
+		RouterMissDegenerateInput,
+		RouterMissClassifierError,
+		RouterMissCancelled,
+		RouterMissBadVerdict,
+		RouterMissUnknownCategory,
+		routingReasonEmptyModel,
+		// The reference composition's category-mapping miss CODES. Its callback may append
+		// operator-authored detail for diagnostics; routingReasonPayload strips that detail
+		// before the value reaches an event.
+		routingReasonCategorySelectorEmpty,
+		routingReasonCategoryTargetUnresolvable,
+	}
+	m := make(map[string]struct{}, len(safe))
+	for _, s := range safe {
+		m[s] = struct{}{}
+	}
+	return m
+}()
+
 // routingReasonPayload normalises a routing reason for the RoutingReason EVENT field:
-// whitespace collapsed to single spaces, then clamped to maxRoutingReasonPreview. It is
-// the ONE place that projection is built, shared by every delegation-start emit site
-// (subagent.start foreground + background, parallel branch_start, team.start roster),
-// mirroring subagentCausePayload's single-chokepoint discipline. The reason is BARE
-// METADATA (a harness/composition constant, never the task prompt or classifier output —
-// gauntlet #7); the collapse exists because the consumers are single-line surfaces.
+// whitespace collapsed to single spaces, clamped to maxRoutingReasonPreview, AND confined
+// to the event-safe allowlist. It is the ONE place that projection is built, shared by
+// every delegation-start emit site (subagent.start foreground + background, parallel
+// branch_start, team.start roster), mirroring subagentCausePayload's single-chokepoint
+// discipline. The OUTPUT is BARE METADATA (a static harness/classifier/composition code,
+// never the task prompt or classifier output — gauntlet #7); the collapse exists because
+// the consumers are single-line surfaces, and the allowlist exists because the missReason
+// INPUT channel is OPEN to external engine compositions (see routingReasonGeneric).
 func routingReasonPayload(reason string) string {
-	return clampRunes(strings.Join(strings.Fields(reason), " "), maxRoutingReasonPreview)
+	reason = clampRunes(strings.Join(strings.Fields(reason), " "), maxRoutingReasonPreview)
+	if reason == "" {
+		return ""
+	}
+	if _, ok := routingReasonEventSafe[reason]; ok {
+		return reason
+	}
+	// The in-tree composition adds parenthesised category/selector detail for the operator
+	// diagnostic. Reduce those known shapes to a CLOSED static wire code. Even if an external
+	// callback forges the same prefix/shape, its suffix is discarded rather than copied to
+	// the event (gauntlet #7). A bare prefix is already handled by the exact allowlist above.
+	switch {
+	case strings.HasPrefix(reason, routingReasonCategorySelectorEmpty+" ("):
+		return routingReasonCategorySelectorEmpty
+	case strings.HasPrefix(reason, routingReasonCategoryTargetUnresolvable+" ("):
+		return routingReasonCategoryTargetUnresolvable
+	}
+	return routingReasonGeneric
 }
 
 // subagentEndMetrics is the observability half of an EvSubagentEnd payload: the

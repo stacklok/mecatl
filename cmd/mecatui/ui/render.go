@@ -1616,7 +1616,7 @@ func (r *renderer) renderSubagent(b *block, expand bool) string {
 		out.WriteString(muted.Render("↳ " + sanitizeTerminal(b.subGoal)))
 		out.WriteString("\n")
 	}
-	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subModel); routed != "" {
+	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel); routed != "" {
 		out.WriteString(muted.Render(routed))
 		out.WriteString("\n")
 	}
@@ -1643,13 +1643,16 @@ func (r *renderer) renderSubagent(b *block, expand bool) string {
 // cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
 // when the router classified the delegation (ADR 0031); otherwise it shows the
 // concrete model the child ACTUALLY ran on as "model: <model>" (issue #112 / ADR 0035)
-// — inherited default, agent-def pin, or per-call override. It returns "" when no
-// model is known and the router did not fire. The category/model are server-derived
-// bare metadata (sanitized) — never child content — so gauntlet #7 holds. When routed,
-// model == routedModel, so the routed cue is shown (not duplicated as a model: line).
-func subagentModelLabel(category, routedModel, model string) string {
+// — inherited default, agent-def pin, or per-call override — annotated with WHY the
+// router did not classify as " · not routed: <reason>" when the server supplied a
+// reason (issue #397 / ADR 0083). It returns "" when no model is known and the router
+// did not fire. The category/model/reason are server-derived bare metadata (sanitized)
+// — never child content — so gauntlet #7 holds. When routed, model == routedModel and
+// the reason is empty, so the routed cue is shown (not duplicated as a model: line).
+func subagentModelLabel(category, routedModel, routingReason, model string) string {
 	category = sanitizeTerminal(category)
 	routedModel = sanitizeTerminal(routedModel)
+	routingReason = sanitizeTerminal(routingReason)
 	model = sanitizeTerminal(model)
 	// Router fired: show the routed cue (category + the routed model).
 	if category != "" || routedModel != "" {
@@ -1661,9 +1664,17 @@ func subagentModelLabel(category, routedModel, model string) string {
 		}
 		return "routed: " + category + " → " + routedModel
 	}
-	// Plain case: show the concrete model the child ran on.
+	// Plain case: show the concrete model the child ran on, plus the miss reason.
 	if model != "" {
+		if routingReason != "" {
+			return "model: " + model + " · not routed: " + routingReason
+		}
 		return "model: " + model
+	}
+	// No model known (e.g. an aborted branch that ran on nothing) but the router was
+	// skipped: surface the reason so a router-off/pinned delegation is not silent.
+	if routingReason != "" {
+		return "not routed: " + routingReason
 	}
 	return ""
 }

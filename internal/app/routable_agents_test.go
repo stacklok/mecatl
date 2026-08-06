@@ -34,6 +34,10 @@ func TestRoutableAgentNamesMatrix(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routableAgentNames = %v, want %v", got, want)
 	}
+	pinnedWant := []string{"alias-pin", "concrete-pin", "inherit-pin", "unknown-alias-pin"}
+	if pinnedGot := pinnedAgentNames(reg); !reflect.DeepEqual(pinnedGot, pinnedWant) {
+		t.Fatalf("pinnedAgentNames = %v, want %v", pinnedGot, pinnedWant)
+	}
 }
 
 // TestRoutableAgentNamesByteIdenticalDefaults pins the no-op paths: a nil registry, and a
@@ -42,11 +46,17 @@ func TestRoutableAgentNamesByteIdenticalDefaults(t *testing.T) {
 	if got := routableAgentNames(nil, nil, providerMock); got != nil {
 		t.Fatalf("nil registry must yield nil; got %v", got)
 	}
+	if got := pinnedAgentNames(nil); got != nil {
+		t.Fatalf("nil registry must yield no pinned names; got %v", got)
+	}
 	pinnedOnly := agents.NewRegistry([]agents.AgentDef{
 		{Name: "a", Model: "inherit"},
 		{Name: "b", Model: "gpt-4o"},
 	})
 	if got := routableAgentNames(regForTest(nil, providerMock, "m"), pinnedOnly, providerMock); got != nil {
 		t.Fatalf("a registry of only pinned defs must yield nil; got %v", got)
+	}
+	if got, want := pinnedAgentNames(pinnedOnly), []string{"a", "b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("pinnedAgentNames = %v, want %v", got, want)
 	}
 }

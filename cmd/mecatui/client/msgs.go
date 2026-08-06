@@ -200,6 +200,11 @@ type SubagentMsg struct {
 	Background     bool
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY the opt-in router did NOT classify this delegation
+	// (subagent.start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
+	// bounded harness/composition gate or classifier-miss string. Bare metadata —
+	// never child content — so gauntlet #7 holds.
+	RoutingReason string
 	// Model is the concrete model id the child ACTUALLY ran on (subagent.start only),
 	// regardless of how it was chosen — inherited default, agent-def pin, per-call
 	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
@@ -298,6 +303,11 @@ type TeamMemberSpec struct {
 	// #7 holds.
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY the opt-in router did NOT classify this member
+	// (team.start roster only; issue #397 / ADR 0083): empty on a routed hit,
+	// otherwise a bounded harness/composition gate string. Bare metadata — never
+	// member content — so gauntlet #7 holds.
+	RoutingReason string
 	// Model is the concrete model id the member's engine ACTUALLY runs on (team.start
 	// roster only), regardless of how it was chosen (issue #112 / ADR 0035). When routed,
 	// Model == RoutedModel. Bare metadata, never member content, so gauntlet #7 holds.
@@ -411,6 +421,11 @@ type ParallelMsg struct {
 	// content, so gauntlet #7 holds.
 	RoutedCategory string
 	RoutedModel    string
+	// RoutingReason names WHY the opt-in router did NOT classify this branch
+	// (branch_start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
+	// bounded harness/composition gate or classifier-miss string. Bare metadata —
+	// never branch content — so gauntlet #7 holds.
+	RoutingReason string
 	// Model is the concrete model id the branch ACTUALLY ran on (branch_start only),
 	// regardless of how it was chosen (issue #112 / ADR 0035). When routed, Model ==
 	// RoutedModel. Bare metadata, never branch content, so gauntlet #7 holds.
@@ -775,6 +790,7 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 		Background:     s.GetBackground(),
 		RoutedCategory: s.GetRoutedCategory(),
 		RoutedModel:    s.GetRoutedModel(),
+		RoutingReason:  s.GetRoutingReason(),
 		Model:          s.GetModel(),
 		ToolName:       s.GetToolName(),
 		IsError:        s.GetIsError(),
@@ -805,6 +821,7 @@ func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 		Goal:            p.GetGoal(),
 		RoutedCategory:  p.GetRoutedCategory(),
 		RoutedModel:     p.GetRoutedModel(),
+		RoutingReason:   p.GetRoutingReason(),
 		Model:           p.GetModel(),
 		ToolName:        p.GetToolName(),
 		IsError:         p.GetIsError(),
@@ -867,6 +884,7 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 			Lead:           r.GetLead(),
 			RoutedCategory: r.GetRoutedCategory(),
 			RoutedModel:    r.GetRoutedModel(),
+			RoutingReason:  r.GetRoutingReason(),
 			Model:          r.GetModel(),
 		})
 	}

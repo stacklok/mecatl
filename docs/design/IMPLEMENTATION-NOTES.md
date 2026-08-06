@@ -740,12 +740,12 @@ Composition-side mapping misses carry their own reasons: `category-selector-empt
 (category=<name>)` and `category-target-unresolvable (category=<name> selector=<sel>)` (both
 operator-authored, safe). The breaker-open skip and the `hardAbort` skip stay SILENT by
 design (no classifier call was made — nothing to attribute). All three delegation families
-share the closure, so team/parallel misses get the line for free. The wire cue
-(`SubagentPayload.RoutedMiss`) is a deferred follow-up; the INFO closes the observability gap.
+share the closure, so team/parallel misses get the line for free. ADR 0083 now carries the
+same static reason on each delegation-start event; operator-only detail remains in the INFO.
 
-The RUN() HOOK (`(*SubagentTool).maybeRouteModel` → `routeGateOpen`, `engine/agent/subagent.go`):
+The RUN() HOOK (`(*SubagentTool).maybeRouteModel`, `engine/agent/subagent.go`):
 the router is consulted BETWEEN `validateFork` and `resolveEngineAndLimits` and its pick is
-threaded into `selectChildEngine`. The gate (`routeGateOpen`) has TWO shapes: for NO `agent`
+threaded into `selectChildEngine`. The gate has TWO shapes: for NO `agent`
 (a plain default delegation) it routes unless a writable call's factory is unwired (issue #285);
 for a NAMED `agent` (issue #286) it routes ONLY a ROUTABLE def — read-only, agent+model factory
 wired, and `wantAgent ∈ t.routableAgents` — otherwise it skips (no classifier spend when the
@@ -761,12 +761,16 @@ Composition computes the set via `routableAgentNames` (`internal/app/agentdefs.g
 included iff unpinned AND `!providerSwitchesAway` (routed ids are parent-provider ids) AND
 `!defHasInlineMCP` (the agent+model factory declines inline-MCP defs) — sorted, SIDE-EFFECT-FREE
 (the per-def WARNs are the real engine build's job), wired via `agent.WithRoutableAgents`.
+Composition separately wires `pinnedAgentNames` through `agent.WithPinnedAgents`; this
+narrower set contains ONLY defs with non-empty `model:` and prevents provider-switched or
+inline-MCP defs from being falsely attributed as `agent-def-pinned-model` merely because
+they are absent from the routable set.
 `selectChildEngine`'s read-only agent branch (`selectReadOnlyAgentEngine`) applies the routed pick
 by rebuilding the def's SCOPED engine on it via the EXISTING `agentModelFactory`
 (`WithAgentModelEngineFactory`), FAIL-SOFT to the pre-built def engine on a decline (e.g. an
 inline-MCP def); per-def limits are UNTOUCHED (only the engine swaps). Team members / Parallel
 branches are out of scope. Guarded by `engine/agent`'s `TestRunRoutableAgent*` +
-`TestRunNamedAgentBeatsRouter` (the pin: no `WithRoutableAgents` ⇒ named agents stay unrouted) +
+`TestRunNamedAgentBeatsRouter` (the explicit pin enters through `WithPinnedAgents`) +
 `internal/app`'s `TestRoutableAgentNamesMatrix` + the `TestRoutableDef*E2E` composition e2es.
 
 WRITABLE parity (issue #285): a `mode:"read-write"` explorer (no `agent`) honours the per-call
@@ -785,6 +789,47 @@ metadata: a category label + a model id, gauntlet-#7 safe), surfaced end-to-end 
 the session struct + a per-classification INFO + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload, relayed through
 gRPC + HTTP and rendered by mecatui).
+
+**Routing reason (issue #397, ADR 0083).** The start events above carry only the
+router-*hit* half; on a miss or a gate every delegation read identically
+(`routed_*=""`) while the *why* lived only in operator diagnostics. A bounded,
+additive `RoutingReason` now rides all three delegation-start events —
+`session.SubagentPayload.RoutingReason` (field 18), `ParallelPayload` (field 25),
+`TeamMemberSpec` (field 8) — EMPTY on a routed hit, otherwise a
+`session.RoutingReason*` gate constant (`pinned-model` / `agent-def-pinned-model` /
+`resume` / `fork` / `router-disabled` / `route-target-unavailable` / `breaker-open` /
+`aborted`) or a static
+classifier/composition miss code (`RouterMiss*`, `category-selector-empty`, …).
+The internal `parentCaps.routeTask` closure widened to
+`(category, model, reason, ok)` (the exported `Deps.SubagentModelRouter` is
+untouched — it already returned `missReason`); the three `maybeRoute*` gates
+attribute their own gate; the dispatch `routeTaskBody` synthesizes
+`breaker-open`/`aborted`. There is NO `WithRouterConfigured` bit — a nil router IS
+the honest router-absent signal. The Subagent gate (`maybeRouteModel`) attributes
+the explicit CHOICE gates (resume / fork / per-call `model` / agent-def pin) BEFORE
+the router-absent gate, so a pinned delegation is never mislabeled `router-disabled`
+when no router is wired; only names in `t.pinnedAgents` report
+`agent-def-pinned-model`. A def excluded for a provider switch or inline MCP, and a
+ROUTABLE def that still cannot be routed (writable, or the agent+model factory unwired),
+report `router-disabled`. If classification hits but the selected factory declines,
+`reconcileRoutedModel` clears the routed fields and reports `route-target-unavailable`,
+so the start event names the fallback engine rather than a model that never ran. Every emit site
+projects via `routingReasonPayload` (whitespace-collapse + 200-rune cap, mirroring
+`subagentCausePayload`) AND confines the wire value to an event-safe allowlist
+(`routingReasonEventSafe` — the `session.RoutingReason*` gates + the `RouterMiss*`
+constants + the reference composition's two static `category-*` codes): the missReason
+channel is OPEN to external engine compositions via the exported
+`Deps.SubagentModelRouter`, so known parenthesised composition detail is reduced to its
+static code and any other non-allowlisted reason (a provider error body, classifier
+output, a task excerpt) is substituted with the generic `routing-miss`
+label on the wire while the verbatim text stays in the operator-diagnostics channel
+(`logRouterMissReason`). The reason is bare metadata, never the task prompt or
+classifier reasoning (gauntlet #7), and rides events (NOT a diag line — the
+THREE-lines invariant holds). `Supervisor.MemberRouting` widened 2→3 returns so the
+Team tool reads the reason back for the roster. mecatui projects it end-to-end
+(`SubagentMsg`/`ParallelMsg`/`TeamMemberSpec.RoutingReason` → the conversation/fleet/
+team/parallel block fields → `subagentModelLabel`, rendered as
+` · not routed: <reason>` alongside the model cue).
 
 COMPOSITION half: `buildModelRouterTask` (`internal/app/build.go`, sibling of `buildAskAdjudicator`)
 returns the `Deps.SubagentModelRouter` closure — nil when OFF (`cfg.RouterDisabled ||

@@ -920,8 +920,8 @@ func (m *Model) applySubagent(msg client.SubagentMsg) {
 func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 	switch msg.Kind {
 	case client.SubagentStart:
-		c.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
-		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model, msg.Background)
+		c.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
+		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model, msg.Background)
 	case client.SubagentTool:
 		c.addSubagentTool(msg)
 		c.fleetTool(msg)
@@ -950,7 +950,7 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 	case client.ParallelStart:
 		c.parallelStart(msg.ParentCallID, msg.Join, msg.BranchCount)
 	case client.ParallelBranchStart:
-		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.Model)
+		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
 	case client.ParallelBranchTool:
 		c.parallelBranchTool(msg)
 	case client.ParallelBranchEnd:

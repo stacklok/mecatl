@@ -83,9 +83,9 @@ func seedSubagents(m Model, parent string, msgs ...client.SubagentMsg) Model {
 func TestSubagentFleetCounts(t *testing.T) {
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{}`)
-	c.fleetStart("c1", "audit auth", "", "", "", false)
-	c.fleetStart("c2", "map coverage", "", "", "", false)
-	c.fleetStart("c3", "trace config", "", "", "", false)
+	c.fleetStart("c1", "audit auth", "", "", "", "", false)
+	c.fleetStart("c2", "map coverage", "", "", "", "", false)
+	c.fleetStart("c3", "trace config", "", "", "", "", false)
 	c.fleetEnd("c3", client.Usage{}, 4, "end_turn", "", 1000)
 	running, done := c.subagentFleetCounts()
 	if running != 2 || done != 1 {
@@ -113,7 +113,7 @@ func TestSubagentFleetEmpty(t *testing.T) {
 // ParentCallID.
 func TestFleetMissingChildIDDropped(t *testing.T) {
 	c := &conversation{}
-	c.fleetStart("", "no id", "", "", "", false)
+	c.fleetStart("", "no id", "", "", "", "", false)
 	if c.hasSubagents() {
 		t.Error("a childID-less start must not create a fleet lane")
 	}

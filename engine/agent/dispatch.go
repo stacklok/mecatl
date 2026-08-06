@@ -1327,12 +1327,12 @@ func foldClassifierUsage(sess *session.Session) func(session.Usage) {
 // is a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage). It
 // classifies a delegation prompt via the wired SubagentModelRouter, honouring the per-run
 // circuit breaker + the run's hardAbort fast-path skip, folding classifier spend into the
-// parent session's Usage, and returning the BARE-METADATA reason on a miss (issue #397):
-// the classifier's missReason passed through verbatim (or "empty-model" for a blank-model
-// "hit"), or a synthesized gate constant (RoutingReasonBreakerOpen / RoutingReasonAborted)
-// when the classifier was skipped. Empty reason on a routed hit. All miss reasons are
-// METADATA ONLY — never the task prompt or classifier output (gauntlet #7). FAIL-SOFT
-// throughout: any miss returns ok=false and the caller inherits the default model.
+// parent session's Usage, and returning the internal reason on a miss (issue #397): the
+// classifier's missReason (or "empty-model" for a blank-model "hit"), or a synthesized gate
+// constant (RoutingReasonBreakerOpen / RoutingReasonAborted) when the classifier was skipped.
+// Empty reason on a routed hit. The full reason reaches operator diagnostics; every event
+// emitter reduces it through routingReasonPayload to a static/generic code (gauntlet #7).
+// FAIL-SOFT throughout: any miss returns ok=false and the caller inherits the default model.
 func routeTaskBody(
 	ctx context.Context,
 	taskPrompt string,
@@ -1388,7 +1388,7 @@ func routeTaskBody(
 		// passes through as the RoutingReason the delegation-start event carries
 		// (issue #397) — bare metadata, same footing as the diag line.
 		if missReason == "" {
-			missReason = "empty-model"
+			missReason = routingReasonEmptyModel
 		}
 		return "", "", missReason, false
 	}
