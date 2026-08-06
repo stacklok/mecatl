@@ -613,3 +613,94 @@ func TestLoadV1SnapshotMissingPermanentKeyLoadsFalse(t *testing.T) {
 		t.Fatal("restored FailurePermanence = true, want false (pre-permanent snapshot)")
 	}
 }
+
+// TestSnapshotRoundTripsLastErrorFailed asserts a failed session stamped with a
+// terminal cause round-trips it through Marshal/Unmarshal: the last_error key on the
+// session survives serialisation (issue #332 — the snapshot is the durable cause
+// source, so the marshal path must carry it).
+func TestSnapshotRoundTripsLastErrorFailed(t *testing.T) {
+	s := session.New("le1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := s.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	if err := s.RecordLastError("upstream 503: model overloaded"); err != nil {
+		t.Fatalf("RecordLastError: %v", err)
+	}
+
+	line := mustMarshal(t, s)
+	// Wire JSON must carry the last_error key.
+	if !strings.Contains(string(line), `"last_error":"upstream 503: model overloaded"`) {
+		t.Fatalf("snapshot JSON missing last_error key; got:\n%s", line)
+	}
+
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.State != session.StateFailed {
+		t.Fatalf("restored state = %q, want failed", got.State)
+	}
+	if got.LastError() != "upstream 503: model overloaded" {
+		t.Fatalf("restored LastError = %q, want the stamped cause", got.LastError())
+	}
+}
+
+// TestSnapshotFailedWithoutLastErrorRoundTripsEmpty asserts a failed session with NO
+// cause stamp round-trips with LastError()=="" (omitempty on the empty string keeps
+// the key off the wire).
+func TestSnapshotFailedWithoutLastErrorRoundTripsEmpty(t *testing.T) {
+	s := session.New("le2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	if err := s.RecordUserPrompt("do stuff", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := s.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	// Deliberately NO RecordLastError call.
+
+	line := mustMarshal(t, s)
+	// Wire JSON must NOT carry the last_error key (omitempty on "").
+	if strings.Contains(string(line), `"last_error"`) {
+		t.Fatalf("snapshot JSON unexpectedly carries last_error key; got:\n%s", line)
+	}
+
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.State != session.StateFailed {
+		t.Fatalf("restored state = %q, want failed", got.State)
+	}
+	if got.LastError() != "" {
+		t.Fatalf("restored LastError = %q, want empty", got.LastError())
+	}
+}
+
+// TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty asserts backward-compat: an OLD
+// JSON snapshot with no "last_error" key decodes with LastError()=="" (the omitempty
+// zero value). This is the downgrade/adversarial guard (issue #332).
+func TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty(t *testing.T) {
+	v1 := `{"id":"old","state":"failed","mode":"default","limits":{},"counters":{},` +
+		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z",` +
+		`"messages":[{"role":"user","text":"hello there"}],` +
+		`"stop_reason":"error"}`
+	got, err := sessnap.Unmarshal([]byte(v1))
+	if err != nil {
+		t.Fatalf("Unmarshal v1: %v", err)
+	}
+	if got.State != session.StateFailed {
+		t.Fatalf("restored state = %q, want failed", got.State)
+	}
+	if got.LastError() != "" {
+		t.Fatalf("restored LastError = %q, want empty (pre-last_error snapshot)", got.LastError())
+	}
+}

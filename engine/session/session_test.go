@@ -1470,3 +1470,126 @@ func TestFailurePermanenceFalseForNonFailed(t *testing.T) {
 		t.Fatal("FailurePermanence from running = true, want false")
 	}
 }
+
+// TestRecordLastErrorStateGuardAndClear asserts the state guard (legal ONLY from
+// StateFailed, mirroring RecordFailurePermanence), the one-line collapse + 400-rune
+// clamp, and that Recover/Reopen clear the cause via resetToIdle so a recovered
+// session never keeps a stale cause. Mirrors the permanence test shape.
+func TestRecordLastErrorStateGuardAndClear(t *testing.T) {
+	for _, mk := range []struct {
+		name  string
+		setup func(s *Session)
+	}{
+		{"idle", func(*Session) {}},
+		{"running", func(s *Session) { _ = s.BeginTurn() }},
+		{"awaiting", func(s *Session) {
+			_ = s.BeginTurn()
+			_ = s.PauseForApproval(PendingAsk{})
+		}},
+		{"completed", func(s *Session) {
+			_ = s.BeginTurn()
+			mustOK(t, s.Complete())
+		}},
+		{"cancelled", func(s *Session) { mustOK(t, s.Cancel()) }},
+	} {
+		t.Run(mk.name, func(t *testing.T) {
+			s := newTestSession(Limits{})
+			mk.setup(s)
+			if err := s.RecordLastError("boom"); !errors.Is(err, ErrIllegalTransition) {
+				t.Fatalf("RecordLastError from %s: err = %v, want ErrIllegalTransition", mk.name, err)
+			}
+			if s.LastError() != "" {
+				t.Fatalf("LastError from %s = %q, want empty (not set)", mk.name, s.LastError())
+			}
+		})
+	}
+
+	// Full lifecycle: Fail() → RecordLastError → LastError() → Recover clears it.
+	s := newTestSession(Limits{})
+	if err := s.RecordUserPrompt("prompt", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.Fail())
+	if s.State != StateFailed {
+		t.Fatalf("precondition: state = %q, want failed", s.State)
+	}
+	if s.LastError() != "" {
+		t.Fatal("LastError before stamp = non-empty, want empty")
+	}
+	mustOK(t, s.RecordLastError("upstream 503: model overloaded"))
+	if got, want := s.LastError(), "upstream 503: model overloaded"; got != want {
+		t.Fatalf("LastError after stamp = %q, want %q", got, want)
+	}
+	mustOK(t, s.Recover())
+	if s.LastError() != "" {
+		t.Fatal("LastError after Recover = non-empty, want empty (cleared by resetToIdle)")
+	}
+
+	// Reopen from a completed-then-failed cycle also clears it.
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.Complete())
+	mustOK(t, s.Reopen())
+	if s.LastError() != "" {
+		t.Fatal("LastError after Reopen = non-empty, want empty (cleared by resetToIdle)")
+	}
+}
+
+// TestRecordLastErrorNormalisesAndClamps asserts the cause is collapsed to ONE line
+// (whitespace → single spaces) and clamped to maxSnapshotErrorRunes (400) + ellipsis,
+// mirroring the event-side subagentCausePayload normaliser so the snapshot and the
+// event agree byte-for-byte on the persisted cause.
+func TestRecordLastErrorNormalisesAndClamps(t *testing.T) {
+	s := newTestSession(Limits{})
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.Fail())
+
+	// One-line collapse: newlines/tabs/extra spaces → single spaces.
+	mustOK(t, s.RecordLastError("BOOM-\n  upstream detail\n\tdetail"))
+	if got, want := s.LastError(), "BOOM- upstream detail detail"; got != want {
+		t.Fatalf("LastError not collapsed to one line: got %q, want %q", got, want)
+	}
+	if strings.ContainsAny(s.LastError(), "\n\r\t") {
+		t.Fatalf("LastError must contain no raw line/control separators, got %q", s.LastError())
+	}
+
+	// Rune clamp: 5000 runes → 400 + ellipsis.
+	huge := strings.Repeat("z", 5000)
+	mustOK(t, s.RecordLastError(huge))
+	if n := len([]rune(s.LastError())); n != maxSnapshotErrorRunes+1 {
+		t.Fatalf("LastError was not clamped: %d runes, want %d+1 (the ellipsis)", n, maxSnapshotErrorRunes)
+	}
+	if !strings.HasSuffix(s.LastError(), "…") {
+		t.Fatalf("LastError must end with the truncation ellipsis, got %q", s.LastError())
+	}
+}
+
+// TestSnapshotCauseMirrorsEventCauseContract pins the DOC-COMMENT'S byte-for-byte
+// agreement claim between the session-local snapshot normaliser
+// (normaliseSnapshotError / clampSnapshotRunes / maxSnapshotErrorRunes) and the
+// event-side engine/agent subagentCausePayload / clampRunes /
+// maxSubagentCausePreview. The layering rule forbids session importing
+// engine/agent, so this session-package test pins its OWN side against the
+// hardcoded outputs the agent algorithm produces; a companion test in
+// engine/agent (TestSnapshotAndEventCauseAgreement) pins the agent side against
+// the same expectations. A change to either side's algorithm or constant breaks
+// exactly one of the two, tripping CI on the drift.
+func TestSnapshotCauseMirrorsEventCauseContract(t *testing.T) {
+	if maxSnapshotErrorRunes != 400 {
+		t.Fatalf("maxSnapshotErrorRunes = %d, must stay 400 to agree with engine/agent's maxSubagentCausePreview", maxSnapshotErrorRunes)
+	}
+	// Each expectation is the output engine/agent's subagentCausePayload produces
+	// (strings.Join(strings.Fields(in), " ") then clampRunes(400) with the
+	// ellipsis appended on truncation).
+	for _, tc := range []struct{ in, want string }{
+		{"upstream 503: model overloaded", "upstream 503: model overloaded"},
+		{"BOOM-\n  upstream detail\n\tdetail", "BOOM- upstream detail detail"},
+		{"  leading and trailing  ", "leading and trailing"},
+		{"", ""},
+		{strings.Repeat("z", 5000), strings.Repeat("z", 400) + "…"},
+	} {
+		if got := normaliseSnapshotError(tc.in); got != tc.want {
+			t.Errorf("normaliseSnapshotError(%q) = %q, want the event-side output %q", tc.in, got, tc.want)
+		}
+	}
+}

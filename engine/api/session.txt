@@ -6,11 +6,13 @@
     method func (*Session).Fail() error
     method func (*Session).FailurePermanence() bool
     method func (*Session).Interrupt() error
+    method func (*Session).LastError() string
     method func (*Session).LimitTripped() (StopReason, bool)
     method func (*Session).PauseForApproval(ask PendingAsk) error
     method func (*Session).PendingAsk() (PendingAsk, bool)
     method func (*Session).RecordAssistant(m Message) error
     method func (*Session).RecordFailurePermanence(permanent bool) error
+    method func (*Session).RecordLastError(cause string) error
     method func (*Session).RecordToolResults(results []ToolResult) error
     method func (*Session).RecordUsage(u Usage) error
     method func (*Session).RecordUserPrompt(text string, instructions []Message) error

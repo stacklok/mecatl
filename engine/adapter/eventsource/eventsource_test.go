@@ -428,11 +428,15 @@ func TestFoldRoundTripsFailurePermanence(t *testing.T) {
 		permanent  bool
 		wantState  session.State
 		wantPerman bool
+		// wantLastError pins the issue-#332 fold: the terminal EvResult.Error is
+		// captured on StateFailed (StopError) runs, ignored on clean terminals.
+		wantLastError string
 	}{
-		{"permanent error", session.StopError, true, session.StateFailed, true},
-		{"transient error", session.StopError, false, session.StateFailed, false},
-		// A Permanent flag on a clean terminal is meaningless; the fold must ignore it.
-		{"clean terminal ignores permanent flag", session.StopEndTurn, true, session.StateCompleted, false},
+		{"permanent error", session.StopError, true, session.StateFailed, true, "provider error"},
+		{"transient error", session.StopError, false, session.StateFailed, false, "provider error"},
+		// A Permanent flag / Error body on a clean terminal is meaningless; the fold
+		// must ignore both.
+		{"clean terminal ignores permanent flag", session.StopEndTurn, true, session.StateCompleted, false, ""},
 	}
 	for _, tc := range cases {
 		evs := []session.Event{
@@ -454,6 +458,9 @@ func TestFoldRoundTripsFailurePermanence(t *testing.T) {
 		}
 		if got := s.FailurePermanence(); got != tc.wantPerman {
 			t.Fatalf("%s: FailurePermanence = %v, want %v", tc.name, got, tc.wantPerman)
+		}
+		if got := s.LastError(); got != tc.wantLastError {
+			t.Fatalf("%s: LastError = %q, want %q", tc.name, got, tc.wantLastError)
 		}
 	}
 }

@@ -161,7 +161,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
 	// through the SAME state-driving logic sessnap.Restore uses (sessnap.RestoreState),
 	// so the terminal-transition vocabulary lives in exactly one place.
-	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent); err != nil {
+	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	// Seed the session Title from the first genuine user prompt captured during the
@@ -237,8 +237,9 @@ type folder struct {
 	usage     session.Usage // cumulative = SUM of every EvResult.Usage
 	stop      session.StopReason
 	pending   *session.PendingAsk
-	ended     bool // a terminal EvResult was seen
-	permanent bool // last EvResult.Permanent (meaningful only when stop==StopError)
+	ended     bool   // a terminal EvResult was seen
+	permanent bool   // last EvResult.Permanent (meaningful only when stop==StopError)
+	lastError string // last EvResult.Error (meaningful only when stop==StopError) — issue #332
 
 	// counters of the CURRENT run segment (reset on each terminal, so the final
 	// values reflect the latest run — mirroring resetToIdle on Reopen).
@@ -346,6 +347,9 @@ func (f *folder) applyResult(ev session.Event) {
 		f.usage = f.usage.Add(ev.Result.Usage)
 		f.stop = ev.Result.Stop
 		f.permanent = ev.Result.Stop == session.StopError && ev.Result.Permanent
+		if ev.Result.Stop == session.StopError {
+			f.lastError = ev.Result.Error
+		}
 	}
 	f.ended = true
 	f.pending = nil

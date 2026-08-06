@@ -2325,6 +2325,14 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	final, stop, cause, usage, toolCount := driveChild(ctx, engine, child, runWS, prompt, runOpts, emit, call, childID, posture, submit, args.OutputSchema)
 	terminalStop = stop
 
+	// Persist the terminal failure CAUSE on the child snapshot (issue #332): the
+	// child is StateFailed here (the loop's terminate ran on StopError), so the
+	// state guard passes. This makes the snapshot the single durable cause source
+	// independent of the parent's subagent.end emit — belt-and-suspenders for the
+	// foreground path (the emit here is synchronous), load-bearing for the
+	// background path where the emit can lose the race with the run-end seal.
+	recordChildCauseOnSnapshot(child, stop, cause)
+
 	// Best-effort persist of the child's FINAL state (after any structured-output
 	// re-drives) so InspectSubagent can load it by the trailer id. persistMember
 	// discipline: nil store disables; a save failure is advisory and swallowed.
@@ -2610,6 +2618,15 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	start := b.engine.now()
 	final, st, cause, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runOpts, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
 	stop = st
+
+	// Persist the terminal failure CAUSE on the child snapshot BEFORE persistChild
+	// (issue #332, the load-bearing change): the child is StateFailed here (the
+	// loop's terminate ran on StopError), so the state guard passes. The snapshot
+	// becomes the single durable cause source independent of the post-seal emit
+	// race — the background end-emit below can lose the race with the run-end seal
+	// (drainChildren's abortEmits), so without this the cause would be lost when a
+	// background child's subagent.end never reaches the parent's event stream.
+	recordChildCauseOnSnapshot(child, st, cause)
 
 	// Best-effort persist on EVERY terminal — including the run-end drain's cancel —
 	// so the child is resumable in a later run (the loss-mitigation that makes
@@ -4013,6 +4030,18 @@ func (t *SubagentTool) fireSubagentStop(ctx context.Context, child *session.Sess
 // InspectSubagent tool can later load its transcript by the agentId trailer. A nil
 // store disables persistence; a save failure is advisory and swallowed (persistMember
 // discipline).
+// recordChildCauseOnSnapshot persists the terminal failure CAUSE on the child
+// session snapshot via RecordLastError (issue #332). It is a no-op unless the
+// child's drive ended in StopError with a non-empty cause; the child is StateFailed
+// at this point (the loop's terminate ran), so the RecordLastError state guard
+// passes. Extracted from run()/driveBackground so the cause-stamping does not add
+// a branch to either caller's gocyclo budget.
+func recordChildCauseOnSnapshot(child *session.Session, stop session.StopReason, cause string) {
+	if stop == session.StopError && cause != "" {
+		_ = child.RecordLastError(cause)
+	}
+}
+
 func (t *SubagentTool) persistChild(ctx context.Context, child *session.Session) {
 	if t.store == nil {
 		return

@@ -996,6 +996,28 @@ the card border at 80/100 columns). It is the only channel there
 inline card at all (its Subagent call already returned the started-result). `cmd/mecademo` prints
 `cause=…` on `EvSubagentEnd` when set, so the field is discoverable from the runnable example.
 
+**The cause is durable on the child snapshot (issue #332, the `Permanent`-analog).** The
+event-side cause (#319 above) rides the parent's `subagent.end` emit, but a BACKGROUND child's
+end-emit can lose the race with the run-end seal (`drainChildren`'s `abortEmits` closes
+`emitAbort`, the parked emit gives up, the event is dropped) — so the event is not a durable
+channel. The cause is now ALSO persisted on the CHILD snapshot: `engine/session/session.go`
+(`Session.RecordLastError`/`LastError`) stamps the terminal cause on a `failed` session
+(legal ONLY from `StateFailed`, mirroring `RecordFailurePermanence`; cleared on
+`Recover`/`resetToIdle`), normalised to one line + clamped to `maxSnapshotErrorRunes` = 400
+(the session-local mirror of `maxSubagentCausePreview` in `engine/agent/subagent.go`, so the
+snapshot and the event agree byte-for-byte — the session package cannot import `engine/agent`,
+hence the deliberate local mirror, not a shared abstraction). It round-trips on
+`engine/adapter/sessnap/sessnap.go` (`Snapshot.LastError`, `RestoreState`'s trailing
+`lastError` param, additive `omitempty` — the same contract as `Permanent`) and the
+event-sourced fold (`engine/adapter/eventsource/eventsource.go` folds `EvResult.Error` on a
+`StopError` terminal). `engine/agent/subagent.go` calls `RecordLastError` BEFORE `persistChild`
+on BOTH the foreground (`run()`) and background (`driveBackground`) paths — belt-and-suspenders
+for the foreground (the emit is synchronous), load-bearing for the background (the emit can be
+dropped post-seal). The pre-run `endOnError` site (a fork/session-build failure) has NO child
+session, so its cause rides the event only — the accepted boundary. No proto change: the cause
+already rides `session.SubagentPayload.Cause`/`session.TeamPayload.Cause` on the wire; the snapshot
+field is engine-domain only. Cross-ref #319 (the event cause) / #332 (the snapshot cause).
+
 **Subagent typed result taxonomy + agentId trailer (`renderSubagentResult`/`renderSubagentTrailer`).** The Subagent
 RESULT is now LABELLED by terminal stop reason: `StopError` → tool error whose body is composed by
 `subagentErrorBody` (cause first, child text as clamped context — see the #319 note above);

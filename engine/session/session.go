@@ -400,6 +400,43 @@ type Session struct {
 	// any transition out (resetToIdle via Recover/Reopen/Interrupt) clears it so a
 	// healed session never keeps a stale permanence flag.
 	permanent bool
+	// lastError records the terminal failure CAUSE (the loop's
+	// session.ResultPayload.Error) when this session is in StateFailed. It is the
+	// Permanent-analog for the failure detail itself: persisted on the snapshot so a
+	// delegation's cause survives on the CHILD snapshot independent of the parent's
+	// subagent.end emit (issue #332 — a background child's end-emit can lose the race
+	// with the run-end seal, so the snapshot is the single durable source). It is
+	// meaningful ONLY when State==StateFailed; resetToIdle clears it so a recovered
+	// session never keeps a stale cause.
+	lastError string
+}
+
+// maxSnapshotErrorRunes caps how many runes of a StateFailed session's terminal
+// cause are persisted on the snapshot. It mirrors the event-side
+// maxSubagentCausePreview (engine/agent) so the snapshot and the subagent.end
+// event agree byte-for-byte on the persisted cause. The session package cannot
+// import engine/agent, so the constant lives here as a deliberate local mirror
+// (two call sites — premature to extract a shared abstraction).
+const maxSnapshotErrorRunes = 400
+
+// normaliseSnapshotError collapses a failure cause to ONE line and clamps it to
+// maxSnapshotErrorRunes. It mirrors engine/agent's subagentCausePayload normaliser
+// (whitespace collapsed to single spaces, then rune-clamped) so the snapshot field
+// and the event field carry the same persisted value; the two helpers must agree
+// byte-for-byte, hence the explicit mirror note here.
+func normaliseSnapshotError(cause string) string {
+	return clampSnapshotRunes(strings.Join(strings.Fields(cause), " "), maxSnapshotErrorRunes)
+}
+
+// clampSnapshotRunes truncates s to at most n runes, appending an ellipsis on
+// truncation. It is the session-local mirror of engine/agent's clampRunes (the
+// session package cannot import engine/agent).
+func clampSnapshotRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // New constructs an idle Session with an empty conversation.
@@ -676,6 +713,32 @@ func (s *Session) FailurePermanence() bool {
 	return s.permanent
 }
 
+// RecordLastError stamps the terminal failure CAUSE (the loop's
+// session.ResultPayload.Error) onto a StateFailed session so it persists on the
+// snapshot independent of the parent's subagent.end emit (issue #332). It is the
+// Permanent-analog for the failure detail itself, mirroring the guard style of
+// RecordFailurePermanence: legal ONLY when State==StateFailed (an idle or non-failed
+// terminal returns ErrIllegalTransition). The cause is normalised to ONE line and
+// clamped to maxSnapshotErrorRunes (mirroring the event-side
+// subagentCausePayload normaliser so the snapshot and event fields agree). The
+// field is cleared on any transition out of StateFailed (resetToIdle via
+// Recover/Reopen/Interrupt), so a healed session never keeps a stale cause.
+func (s *Session) RecordLastError(cause string) error {
+	if s.State != StateFailed {
+		return fmt.Errorf("%w: RecordLastError from %q", ErrIllegalTransition, s.State)
+	}
+	s.lastError = normaliseSnapshotError(cause)
+	return nil
+}
+
+// LastError reports the terminal failure cause a StateFailed session was stamped
+// with via RecordLastError. It is an unguarded read (returns "" for any state);
+// callers that need the state guard should check State == StateFailed first. The
+// cause is already normalised (one line, rune-clamped) at stamp time.
+func (s *Session) LastError() string {
+	return s.lastError
+}
+
 // Fail transitions the session to StateFailed with StopError. It is legal from
 // any non-terminal state.
 //
@@ -734,6 +797,7 @@ func (s *Session) resetToIdle() {
 	s.stop = StopNone
 	s.pending = nil
 	s.permanent = false
+	s.lastError = ""
 	s.Counters = Counters{}
 	// CRITICAL: Usage is DELIBERATELY NOT cleared here (the divergence from
 	// Counters). The MaxRunTokens budget (StopBudget) is evaluated against the

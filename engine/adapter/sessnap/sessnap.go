@@ -74,6 +74,14 @@ type Snapshot struct {
 	// snapshot with no "permanent" key decoding to false — purely additive, no
 	// format-tag bump.
 	Permanent bool `json:"permanent,omitempty"`
+	// LastError records a StateFailed session's terminal failure CAUSE
+	// (session.RecordLastError, the Permanent-analog for the failure detail).
+	// omitempty keeps a pre-#332 snapshot with no "last_error" key decoding to ""
+	// — purely additive, no format-tag bump (the same precedent as Permanent). It
+	// is normalised at stamp time (one line, rune-clamped), mirroring the
+	// event-side subagentCausePayload so the snapshot and the subagent.end event
+	// carry the same persisted cause.
+	LastError string `json:"last_error,omitempty"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -150,6 +158,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		snap.StopReason = r
 	}
 	snap.Permanent = s.FailurePermanence()
+	snap.LastError = s.LastError()
 	return snap, nil
 }
 
@@ -183,7 +192,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 
 	// Drive the state machine to the recorded lifecycle state, seed the running
 	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
-	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent); err != nil {
+	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -202,8 +211,11 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 // is the parked ask (used only for StateAwaiting). counters seed the running totals
 // (preserved across the BeginTurn that running/awaiting restore performs); usage
 // seeds the cumulative budget figure; permanent records a permanence flag on
-// StateFailed (meaningful only when state==StateFailed and permanent==true). It
-// returns an error on an unknown state or a transition the aggregate rejects.
+// StateFailed (meaningful only when state==StateFailed and permanent==true);
+// lastError records the terminal failure cause on StateFailed (the Permanent-analog
+// for the failure detail, issue #332 — meaningful only when state==StateFailed and
+// lastError!=""). It returns an error on an unknown state or a transition the
+// aggregate rejects.
 func RestoreState(
 	s *session.Session,
 	state session.State,
@@ -212,6 +224,7 @@ func RestoreState(
 	counters session.Counters,
 	usage session.Usage,
 	permanent bool,
+	lastError string,
 ) error {
 	// Restore running totals directly; these are exported and authoritative.
 	s.Counters = counters
@@ -256,13 +269,29 @@ func RestoreState(
 		if err := s.Fail(); err != nil {
 			return fmt.Errorf("sessnap: restore failed: %w", err)
 		}
-		if permanent {
-			if err := s.RecordFailurePermanence(true); err != nil {
-				return fmt.Errorf("sessnap: record failure permanence: %w", err)
-			}
+		if err := recordFailedStateFlags(s, permanent, lastError); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("sessnap: unknown state %q", state)
+	}
+	return nil
+}
+
+// recordFailedStateFlags stamps the optional StateFailed metadata (permanence +
+// terminal cause) after the Fail() transition. Extracted from RestoreState so the
+// state-machine switch stays under the gocyclo budget; each flag is independently
+// guarded (meaningful only when non-zero/non-empty).
+func recordFailedStateFlags(s *session.Session, permanent bool, lastError string) error {
+	if permanent {
+		if err := s.RecordFailurePermanence(true); err != nil {
+			return fmt.Errorf("sessnap: record failure permanence: %w", err)
+		}
+	}
+	if lastError != "" {
+		if err := s.RecordLastError(lastError); err != nil {
+			return fmt.Errorf("sessnap: record last error: %w", err)
+		}
 	}
 	return nil
 }

@@ -34,6 +34,22 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   - `sessnap.Snapshot.Permanent` + `sessnap.RestoreState` gains a `permanent
     bool` param — the flag round-trips the snapshot (additive, `omitempty`).
 
+- **`session.Session.RecordLastError` / `Session.LastError`** (#332) — the
+  aggregate persists the terminal failure CAUSE of a `failed` state (the loop's
+  `session.ResultPayload.Error`, normalised to one line and clamped to 400 runes
+  — mirroring the event-side `subagentCausePayload` so the snapshot and
+  `subagent.end` event agree byte-for-byte), cleared on `Recover`/`resetToIdle`.
+  `sessnap.Snapshot.LastError` + `sessnap.RestoreState` gains a trailing
+  `lastError string` param (additive, `omitempty`). A delegation's failure cause
+  now survives on the CHILD snapshot independent of the parent's `subagent.end`
+  emit — a background child's end-emit can lose the race with the run-end seal
+  (`drainChildren`'s `abortEmits`), so the snapshot is the single durable cause
+  source. `engine/agent` records the cause on the child before `persistChild` on
+  BOTH the foreground and background paths (belt-and-suspenders for the former,
+  load-bearing for the latter). No proto change — the cause already rides
+  `SubagentPayload.Cause`/`TeamPayload.Cause` on the wire. Classified Added
+  (minor) per COMPATIBILITY.md.
+
 - **`engine/adapter/search` graduated** (#363) — the WebSearch tool body
   (`WebSearchTool` / `NewWebSearchTool`), the Exa/HTTP/SearXNG search providers
   (`ExaProvider` / `HTTPProvider` / `BackendDown`), and the offline `Fake` /
