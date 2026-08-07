@@ -2,6 +2,7 @@ package skillfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -10,12 +11,16 @@ import (
 
 // Activation is the load-on-activation payload the Skill tool renders: the
 // skill's full instruction body plus the BASE DIRECTORY its bundled files are
-// readable under. BaseDir "" means the skill has no on-disk payloads — the
+// readable under, and the asset LOGICAL NAMES it carries (enumerated, never
+// eagerly read). BaseDir "" means the skill has no on-disk payloads — the
 // activation header then omits the Base-directory block entirely (the
-// pre-existing dir=="" rendering branch).
+// pre-existing dir=="" rendering branch). Assets is nil/empty for a skill with
+// no bundled files; the enumeration block is gated on len(Assets) > 0 so an
+// asset-less skill renders byte-identically to before.
 type Activation struct {
 	Body    string
 	BaseDir string
+	Assets  []tool.SkillAsset
 }
 
 // Activator is the seam the Skill tool loads a skill through on activation.
@@ -43,14 +48,22 @@ type snapshotActivator struct {
 
 // Activate loads the named skill from the snapshot. The base directory is the
 // canonical per-skill dir (AssetDir) — exactly the value the read-root
-// allowlist is keyed on — or "" for a skill with no source path.
+// allowlist is keyed on — or "" for a skill with no source path. Assets are
+// enumerated via ListSkillAssets (logical names only, never eagerly read); an
+// ErrSkillNotFound-class error on a KNOWN skill is treated as "no assets"
+// (the snapshot activator holds the skill, so a not-found is anomalous but
+// non-fatal), while a genuine read fault propagates.
 func (a snapshotActivator) Activate(ctx context.Context, name string) (Activation, error) {
 	body, err := a.src.SkillBody(ctx, name)
 	if err != nil {
 		return Activation{}, err
 	}
+	assets, aerr := a.src.ListSkillAssets(ctx, name)
+	if aerr != nil && !errors.Is(aerr, tool.ErrSkillNotFound) {
+		return Activation{}, fmt.Errorf("listing assets of skill %q: %w", name, aerr)
+	}
 	dir, _ := a.src.AssetDir(name)
-	return Activation{Body: body, BaseDir: dir}, nil
+	return Activation{Body: body, BaseDir: dir, Assets: assets}, nil
 }
 
 // assetProvisioner is the consumer-side seam for the remote-driver asset
@@ -78,11 +91,11 @@ type sourceActivator struct {
 	cache map[string]Activation // by skill name, successes only
 }
 
-// Activate loads the body and provisions the payloads, caching after the
-// first success. Failures are NOT cached here, and the materializer beneath
-// latches only SUCCESS and DETERMINISTIC bundle rejections (over-cap/invalid
-// names — errBundleRejected): a transient transport/ctx fault on one
-// activation is retried in full on the next.
+// Activate loads the body, enumerates the asset logical names, and provisions
+// the payloads, caching after the first success. Failures are NOT cached here,
+// and the materializer beneath latches only SUCCESS and DETERMINISTIC bundle
+// rejections (over-cap/invalid names — errBundleRejected): a transient
+// transport/ctx fault on one activation is retried in full on the next.
 func (a *sourceActivator) Activate(ctx context.Context, name string) (Activation, error) {
 	a.mu.Lock()
 	got, ok := a.cache[name]
@@ -95,6 +108,10 @@ func (a *sourceActivator) Activate(ctx context.Context, name string) (Activation
 	if err != nil {
 		return Activation{}, err
 	}
+	assets, aerr := a.src.ListSkillAssets(ctx, name)
+	if aerr != nil && !errors.Is(aerr, tool.ErrSkillNotFound) {
+		return Activation{}, fmt.Errorf("listing assets of skill %q: %w", name, aerr)
+	}
 	var dir string
 	if a.mat != nil {
 		dir, err = a.mat.Provision(ctx, name)
@@ -102,7 +119,7 @@ func (a *sourceActivator) Activate(ctx context.Context, name string) (Activation
 			return Activation{}, fmt.Errorf("provisioning bundled files: %w", err)
 		}
 	}
-	act := Activation{Body: body, BaseDir: dir}
+	act := Activation{Body: body, BaseDir: dir, Assets: assets}
 	a.mu.Lock()
 	a.cache[name] = act
 	a.mu.Unlock()

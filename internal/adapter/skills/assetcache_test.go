@@ -390,3 +390,41 @@ func TestMaterializerProvisionConcurrentOnce(t *testing.T) {
 		t.Errorf("source read %d assets, want exactly one bundle's worth (%d)", got, want)
 	}
 }
+
+// TestSourceActivatorReturnsAssets pins the driver-path Assets population: the
+// source activator calls ListSkillAssets on the port and caches the full
+// Activation (including Assets) so repeat activations re-render from memory.
+func TestSourceActivatorReturnsAssets(t *testing.T) {
+	src := newMapSource()
+	mat := NewAssetMaterializer(src, t.TempDir())
+	act := NewSourceActivator(src, mat)
+
+	got, err := act.Activate(context.Background(), "bundle")
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if len(got.Assets) != 2 {
+		t.Fatalf("expected 2 assets, got %d: %v", len(got.Assets), got.Assets)
+	}
+	if got.Assets[0].Name != "references/deep/api.md" || got.Assets[1].Name != "scripts/run.sh" {
+		t.Errorf("asset names wrong: %q, %q", got.Assets[0].Name, got.Assets[1].Name)
+	}
+
+	// Cached activation returns the same Assets.
+	got2, err := act.Activate(context.Background(), "bundle")
+	if err != nil {
+		t.Fatalf("Activate #2: %v", err)
+	}
+	if len(got2.Assets) != 2 || got2.Assets[0].Name != got.Assets[0].Name {
+		t.Errorf("cached activation lost Assets: %v", got2.Assets)
+	}
+
+	// Asset-less skill yields nil Assets.
+	got, err = act.Activate(context.Background(), "lean")
+	if err != nil {
+		t.Fatalf("Activate(lean): %v", err)
+	}
+	if len(got.Assets) != 0 {
+		t.Errorf("asset-less skill should have nil Assets, got %v", got.Assets)
+	}
+}

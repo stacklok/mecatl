@@ -37,6 +37,19 @@ func writeSkill(t *testing.T, dir, name, content string) {
 	}
 }
 
+// writeAsset creates <dir>/<skill>/<logical-name> with the given content,
+// making parent directories as needed.
+func writeAsset(t *testing.T, dir, skill, logicalName, content string) {
+	t.Helper()
+	p := filepath.Join(dir, skill, filepath.FromSlash(logicalName))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir asset dir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write asset %q: %v", logicalName, err)
+	}
+}
+
 // validSkill is a structurally-valid SKILL.md used by promote tests.
 const validSkill = `---
 name: commit-style
@@ -183,6 +196,108 @@ func TestFSSkillActivationByteIdentical(t *testing.T) {
 		}
 		if res.Content != want {
 			t.Errorf("activation output drifted from the pre-seam rendering:\n got %q\nwant %q", res.Content, want)
+		}
+	})
+
+	// A skill WITH the optional `allowed-tools` frontmatter (agentskills.io,
+	// Experimental; issue #419) renders an ADVISORY note — which EXPLICITLY states
+	// calls still follow normal permission rules — between the base-directory
+	// block and the blank line + body. Pinned byte-for-byte so the wording the
+	// model reads cannot drift. It is ADVISORY ONLY — never a permission grant.
+	t.Run("skill with allowed-tools renders the advisory note", func(t *testing.T) {
+		tl := newToolOver(t, []Skill{{
+			Name:         "tooling",
+			Description:  "a skill with allowed-tools",
+			Body:         "BODY",
+			AllowedTools: []string{"Bash", "Read", "Grep"},
+		}})
+		want := "Skill: tooling\n" +
+			"This skill declares allowed-tools: Bash, Read, Grep. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
+			"\n" +
+			"BODY"
+		res := exec(t, tl, call(t, map[string]any{"name": "tooling"}))
+		if res.IsError {
+			t.Fatalf("Execute errored: %s", res.Content)
+		}
+		if res.Content != want {
+			t.Errorf("activation output with allowed-tools drifted from the pinned rendering:\n got %q\nwant %q", res.Content, want)
+		}
+	})
+
+	// A skill WITH bundled assets on disk renders the "Bundled files:"
+	// enumeration block — the agentskills.io "should enumerate bundled
+	// scripts/resources" contract. The block lists each asset's logical name
+	// (sorted, indented) WITHOUT reading payloads. Pinned byte-for-byte.
+	t.Run("skill with bundled assets renders the enumeration block", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "deploy", "---\nname: deploy\ndescription: deploy the app\n---\nRun the deploy script.\n")
+		writeAsset(t, dir, "deploy", "scripts/run.sh", "#!/bin/sh\ndeploy\n")
+		writeAsset(t, dir, "deploy", "references/api.md", "API notes\n")
+
+		src, skips, err := NewFSSource(context.Background(), DirSource{Dir: dir})
+		if err != nil || len(skips) != 0 {
+			t.Fatalf("NewFSSource: %v skips=%v", err, skips)
+		}
+		metas, _ := src.ListSkills(context.Background())
+		tl := NewTool(metas, NewSnapshotActivator(src))
+
+		canon, err := osfs.ResolveRoot(filepath.Join(dir, "deploy"))
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		want := "Skill: deploy\n" +
+			"Base directory: " + canon + "\n" +
+			"Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n" +
+			"Bundled files:\n" +
+			"  - references/api.md\n" +
+			"  - scripts/run.sh\n" +
+			"\n" +
+			"Run the deploy script."
+		res := exec(t, tl, call(t, map[string]any{"name": "deploy"}))
+		if res.IsError {
+			t.Fatalf("Execute errored: %s", res.Content)
+		}
+		if res.Content != want {
+			t.Errorf("activation output with assets drifted from the pinned rendering:\n got %q\nwant %q", res.Content, want)
+		}
+	})
+
+	// Combined golden: a skill with base-dir + compatibility + allowed-tools
+	// + on-disk assets all present pins the relative ordering of the blocks:
+	// base-dir → compatibility → allowed-tools → bundled-files → body.
+	t.Run("combined block ordering", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "full", "---\nname: full\ndescription: a skill with every block\ncompatibility: \"mecatl >= 0.1\"\nallowed-tools: \"Bash Read Grep\"\n---\nFull body.\n")
+		writeAsset(t, dir, "full", "scripts/run.sh", "#!/bin/sh\necho ok\n")
+		writeAsset(t, dir, "full", "references/api.md", "API notes\n")
+
+		src, skips, err := NewFSSource(context.Background(), DirSource{Dir: dir})
+		if err != nil || len(skips) != 0 {
+			t.Fatalf("NewFSSource: %v skips=%v", err, skips)
+		}
+		metas, _ := src.ListSkills(context.Background())
+		tl := NewTool(metas, NewSnapshotActivator(src))
+
+		canon, err := osfs.ResolveRoot(filepath.Join(dir, "full"))
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		want := "Skill: full\n" +
+			"Base directory: " + canon + "\n" +
+			"Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n" +
+			"Compatibility: mecatl >= 0.1\n" +
+			"This skill declares allowed-tools: Bash, Read, Grep. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
+			"Bundled files:\n" +
+			"  - references/api.md\n" +
+			"  - scripts/run.sh\n" +
+			"\n" +
+			"Full body."
+		res := exec(t, tl, call(t, map[string]any{"name": "full"}))
+		if res.IsError {
+			t.Fatalf("Execute errored: %s", res.Content)
+		}
+		if res.Content != want {
+			t.Errorf("combined activation output drifted from the pinned rendering:\n got %q\nwant %q", res.Content, want)
 		}
 	})
 }
