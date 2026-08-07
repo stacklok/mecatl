@@ -43,6 +43,34 @@ When you promote, **read the body** — it is agent-authored, untrusted,
 instruction-like text that becomes trusted on promotion. The automated injection
 scan is a backstop, not a substitute for reading it.
 
+### Skills as slash commands (`/<skill-name>`)
+
+Each discovered skill is also invocable as a **slash command** — a Claude-Code
+skill-as-command semantics: `/<skill-name>` expands to the skill's **body**
+directly in context (the body IS the command template; the model then has the
+instructions). No new tool, no new dispatch concept — it reuses the existing
+slash-command layer, so `$ARGUMENTS`/`$1`/`$2` placeholders substitute exactly
+like a file-backed command.
+
+This means the two ways to load a skill are equivalent:
+- call the **`Skill`** tool with the skill's `name` (the progressive-disclosure
+  path, which also surfaces the base directory + bundled files), or
+- type **`/<skill-name> <args>`** at the prompt (the inline path, which injects
+  just the body).
+
+**Precedence** (first-that-expands-wins): a local command file (`<commands-dir>/<name>.md`)
+**shadows** a same-named skill; a skill **shadows** a same-named slash-command
+driver source; both shadow MCP prompts. So a repo's own `<name>.md` command
+file wins over a skill of the same name, and a skill wins over a driver command.
+
+The **project-tier trust gate is inherited by construction**: an untrusted
+workspace's project-tier skills (under `<workspace>/.mecatl/skills`,
+`<workspace>/.claude/skills`) never enter the seam, so they are **not** invocable
+as `/<skill-name>` until you `--trust-project`. Operator-explicit `--skills-dir`
+paths and your user-tier skills (`~/.claude/skills`) are never gated — they are
+always invocable. With no skills discovered, the bridge is a no-op (an unknown
+`/<name>` passes through unchanged, never a blank substitution).
+
 ### Persona / soul (`~/.config/mecatl/soul.md`)
 
 A **user-scoped, agent-read-only** persona fragment — the operator's "soul": who

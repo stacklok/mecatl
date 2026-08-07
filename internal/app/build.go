@@ -928,6 +928,19 @@ type Config struct {
 	// nil when CommandSourceURL is unset. Unexported: an internal composition
 	// detail, not an operator knob.
 	commandSource prompt.CommandSource
+	// skillCommandInputs is the build-once skill→command bridge inputs
+	// (the resolved seam's always-in-context SkillMeta inventory + the
+	// Activator the Skill tool loads through), stashed by buildEngine after
+	// buildCatalog resolves the seam (the commandSource precedent):
+	// buildCommandExpander runs PER SESSION and composes a SkillCommandSource
+	// over them rather than re-resolving the seam. nil/empty when no skills
+	// are discovered (the no-skills path stays byte-identical — the bridge is
+	// a no-op). The project-tier trust gate is INHERITED by construction: an
+	// untrusted workspace's project-tier skills never enter the seam
+	// (ResolveSources drops them), so a SkillCommandSource over these inputs
+	// never leaks untrusted project skills. Unexported: an internal
+	// composition detail, not an operator knob.
+	skillCommandInputs skillCommandInputs
 
 	// permResolver is the ONE file-based permission-config resolver (issue #13),
 	// constructed EXACTLY ONCE in Build right after the trust fold (the
@@ -1381,6 +1394,17 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, err
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
+
+	// Stash the resolved skill seam's command-bridge inputs onto the Build-scope
+	// cfg (the commandSource precedent) so buildCommandLister — which runs HERE,
+	// after buildEngine returned the assets — composes a SkillCommandSource over
+	// the SAME seam pieces the main + per-session engines already wired above.
+	// buildEngine stashed its own copy for the main engine + the per-session
+	// factory; this stash closes the loop for the ListCommands RPC palette. The
+	// project-tier trust gate is INHERITED by construction (ResolveSources dropped
+	// the untrusted project tier inside buildCatalog). Empty on the no-skills
+	// path (the bridge is a no-op).
+	cfg.skillCommandInputs = skillCommandInputs{metas: assets.skills, activator: assets.skillActivator}
 
 	// The command lister backs ListCommands (the TUI palette). It reuses the SAME
 	// expander build the engine consumes, so the palette offers exactly the
@@ -2628,6 +2652,15 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		toolSchedClose()
 		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, err
 	}
+	// Stash the resolved skill seam's command-bridge inputs onto cfg (the
+	// commandSource precedent): buildCommandExpander runs PER SESSION
+	// (engineDepsForProvider → baseEngineDeps below, and the per-session
+	// factory), so it composes a SkillCommandSource over the already-resolved
+	// metas + activator rather than re-resolving the seam. The project-tier
+	// trust gate is INHERITED by construction (ResolveSources dropped the
+	// untrusted project tier before the seam was built). Empty on the
+	// no-skills path (the bridge is a no-op).
+	cfg.skillCommandInputs = skillCommandInputs{metas: assets.skills, activator: assets.skillActivator}
 	// Fold the schedule-tool override conn close into the engine teardown chain
 	// (mcpClose). The close is once-guarded by driverConns, so this AND
 	// buildScheduler's schedClose close the shared conn exactly once (the dedup
@@ -3147,24 +3180,36 @@ func engineDepsForProvider(
 // buildCommandExpander selects the slash-command expander for the agent Deps.
 // Command expansion is OFF by default (the NoopExpander, leaving raw user text
 // untouched). It is turned ON when CommandsDir is set, EnableCommands is true,
-// or a slash-command driver source is stashed (cfg.commandSource — dialled and
-// probed ONCE in Build, never here: this builder runs per session).
+// a slash-command driver source is stashed (cfg.commandSource — dialled and
+// probed ONCE in Build, never here: this builder runs per session), or the
+// resolved skill seam stashed its command-bridge inputs (cfg.skillCommandInputs
+// — the discovered skills are invocable as /<skill-name>, the Claude-Code
+// skill-as-slash-command semantics).
 //
 // COMPOSITION ORDER (first-that-expands-wins): file-backed commands (dirExp),
-// then the driver source (sourceExp), then MCP prompts (mcpExp) — a local
-// command file shadows a same-named driver command, and both shadow a
-// same-named MCP prompt (the MCP prompt namespace is disjoint anyway, kept
-// last as before).
+// then skills as commands (skillExp), then the driver source (sourceExp), then
+// MCP prompts (mcpExp). So a local command file SHADOWS a same-named skill, a
+// skill SHADOWS a same-named driver command, and both shadow a same-named MCP
+// prompt (the MCP prompt namespace is disjoint anyway, kept last as before).
+// The skill bridge reuses the SAME resolved seam the Skill tool loads through
+// (cfg.skillCommandInputs.metas + .activator), so the driver path's
+// caching/materialization is shared and the project-tier trust gate is
+// INHERITED by construction — an untrusted workspace's project-tier skills
+// never enter the seam, so they never become invocable as /<skill-name>.
 func buildCommandExpander(cfg Config, mcpProvider mcp.Provider) prompt.CommandExpander {
 	dirExp := buildDirCommandExpander(cfg)
+	var skillExp prompt.CommandExpander
+	if len(cfg.skillCommandInputs.metas) > 0 && cfg.skillCommandInputs.activator != nil {
+		skillExp = prompt.NewSourceExpander(skills.NewSkillCommandSource(cfg.skillCommandInputs.metas, cfg.skillCommandInputs.activator))
+	}
 	var sourceExp prompt.CommandExpander
 	if cfg.commandSource != nil {
 		sourceExp = prompt.NewSourceExpander(cfg.commandSource)
 	}
 	mcpExp := buildMCPPromptExpander(cfg, mcpProvider)
 
-	expanders := make([]prompt.CommandExpander, 0, 3)
-	for _, e := range []prompt.CommandExpander{dirExp, sourceExp, mcpExp} {
+	expanders := make([]prompt.CommandExpander, 0, 4)
+	for _, e := range []prompt.CommandExpander{dirExp, skillExp, sourceExp, mcpExp} {
 		if e != nil {
 			expanders = append(expanders, e)
 		}
@@ -4197,6 +4242,20 @@ type skillSeam struct {
 	// close is the driver branch's teardown (asset-cache RemoveAll + the
 	// once-guarded conn close); nil for the FS/disabled branches.
 	close func()
+}
+
+// skillCommandInputs is the per-session-consumable half of the resolved skill
+// seam: the always-in-context SkillMeta inventory (the names a `/skill` can
+// resolve to) and the Activator the Skill tool loads bodies through. It is
+// stashed on cfg after buildCatalog resolves the seam so buildCommandExpander
+// — which runs per session — composes a SkillCommandSource over them without
+// re-resolving. The activator is the SAME seam the Skill tool uses (the
+// driver's caching/materialization is shared); the metas already passed the
+// project-tier trust gate at source construction, so the bridge inherits it.
+// Empty (nil metas / nil activator) on the no-skills path.
+type skillCommandInputs struct {
+	metas     []tool.SkillMeta
+	activator skills.Activator
 }
 
 // resolveSkillSeam resolves the skills wiring from cfg: the remote-driver

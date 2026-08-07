@@ -242,6 +242,20 @@ Skills may have **assets**: auxiliary payloads (scripts, data files, reference d
 
 Activating a skill does **not** register new tools in the catalog. A skill's `SKILL.md` body is returned as the tool result of the `Skill` tool call, and the model incorporates it as instructions. If you want to expose new tool capabilities, register a `Tool` (see above); skills are for instruction and behavioral guidance.
 
+### Skills as slash commands (`/<skill-name>`)
+
+Each discovered skill is also invocable as a **slash command**: `/<skill-name>`
+expands to the skill's body directly in context (Claude-Code skill-as-command
+semantics — the body IS the command template). It reuses the existing
+slash-command layer, so `$ARGUMENTS`/`$1`/`$2` placeholders substitute exactly
+like a file-backed command. Precedence (first-that-expands-wins): a local
+command file shadows a same-named skill; a skill shadows a same-named
+slash-command driver source; both shadow MCP prompts. The project-tier trust
+gate is inherited — an untrusted workspace's project-tier skills are not
+invocable as `/<skill-name>` until you `--trust-project`. See
+[`docs/usage/skills-soul-usermodel.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/skills-soul-usermodel.md#skills-as-slash-commands-skill-name)
+for the full rules.
+
 ### The filesystem source
 
 `engine/adapter/skillfs.FSSource` is the reference `SkillSource` implementation (graduated into the importable engine module per #328; the in-repo binaries consume it through `internal/adapter/skills`, which re-exports it via alias). It discovers `SKILL.md` files under a directory at construction time and takes a **snapshot** — `ListSkills` is stable for the life of the source. There is no watch seam: skills are resolved once at `app.Build` and do not change mid-process. This is deliberate: the build-once trust-gate invariant depends on skills being resolved at a known trust level before any session starts.

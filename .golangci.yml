@@ -197,6 +197,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/prompt
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool
             - go.yaml.in/yaml/v3

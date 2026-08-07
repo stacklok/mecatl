@@ -29,6 +29,57 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   through the loop. Classified Added per COMPATIBILITY.md (new exported funcs
   are a minor bump). (issue #402)
 
+- **Advisory skill frontmatter fields** (#419) — the optional `license`,
+  `compatibility`, `metadata`, and `allowed-tools` agentskills.io frontmatter
+  fields are now parsed and carried through to the port as advisory/observability
+  metadata (never trust-bearing, never a gate):
+  - `tool.SkillMeta.License`, `tool.SkillMeta.Compatibility` (string),
+    `tool.SkillMeta.Metadata` (`map[string]string`), and
+    `tool.SkillMeta.AllowedTools` (`[]string`) — name/description-adjacent
+    advisory fields on the always-in-context metadata layer. The parser
+    (skillfs.ParseSkill) clamps `License`/`Compatibility` to ≤1024 bytes
+    (rune-safe), caps `Metadata` at ≤32 entries with each value ≤4096 bytes
+    (dropping the whole map to nil on overflow), and splits `allowed-tools`
+    (space-separated string or YAML list form) into ≤64 names each ≤64 chars
+    — all with a non-fatal warning note on overflow. A SKILL.md without them
+    parses exactly as before.
+  - `allowed-tools` (agentskills.io, Experimental) is ADVISORY ONLY: it names
+    the tools a skill EXPECTS to use, surfaced as a note on activation that
+    explicitly states calls still follow normal permission rules. It is NEVER a
+    permission grant — the permission evaluator never reads it, and a call
+    still resolves through the normal deny-dominant policy at every posture
+    (including yolo).
+  - The driver protocol `SkillMeta` message gains `license` (field 5),
+    `compatibility` (field 6), `metadata` (field 7, `map<string,string>`), and
+    `allowed_tools` (field 8, `repeated string`) — all optional, documented
+    advisory; the grpcdriver client/server round-trip them with the SAME
+    defensive clamps the parser uses.
+
+- **Skill activation enumerates bundled-asset logical names** (#419) — the
+  `Activation` struct (skillfs adapter) gains an `Assets []tool.SkillAsset`
+  field populated by both activators (`snapshotActivator` and
+  `sourceActivator`) via `ListSkillAssets`. The Skill tool's `Execute` now
+  renders a `Bundled files:` block listing each asset's logical name (sorted,
+  indented) after the base-directory guidance, so the model discovers bundled
+  scripts/references without eagerly reading them (agentskills.io "should
+  enumerate but must not eagerly read"). An asset-less skill renders
+  byte-identically to before (the enumeration is gated on `len(Assets) > 0`).
+  No port change — `tool.SkillSource.ListSkillAssets` already existed.
+
+- **Skill name validation + dir-name match** (#419) — discovery now validates
+  the frontmatter `name` against the ONE shared grammar
+  `^[a-z0-9][a-z0-9_-]{0,63}$` (skillfs.ValidSkillName, re-exported via
+  `internal/adapter/skills.ValidSkillName`), the LAXER agentskills-style form
+  with the underscore DELIBERATELY allowed so existing drafted and discovered
+  skills keep validating. `ParseSkill` rejects a name that fails the grammar
+  with a fatal SkipError reason (fail-soft: the skill is excluded, the scan
+  continues), and `DirSource.Skills` additionally enforces the agentskills.io
+  dir-name-match rule: the frontmatter `name` must EQUAL the parent directory
+  name or the skill is skipped with a mismatch SkipError. The draft write path
+  (`internal/adapter/skills/drafter.go`) routes through the SAME
+  `ValidSkillName` (behavior unchanged — it already used this exact regex) so
+  read and write paths share the single source of truth.
+
 - **Permanent provider-error signal** (#346) — a neutral, fail-open way to tell
   "transient — retry may work" from "permanent — this request shape is rejected":
   - `port.PermanentError` — an interface (`error` + `Permanent() bool`) the

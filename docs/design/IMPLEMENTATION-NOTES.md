@@ -5784,13 +5784,49 @@ The settled decisions, condensed:
   stdlib-only (zero depguard/DAG churn; Phase-A MemoryStore precedent). No new Go port for soul —
   the existing consumer-local `prompt.SoulSource` is already file-agnostic; a gRPC soul source
   implements it directly.
-- **B — The port.** `SkillMeta{Name,Description,Origin,HasAssets}` (Origin = a CLOSED admission-
-  tier label set `explicit|project|user|driver`, NEVER a location; trust is enforced at source
-  CONSTRUCTION in composition), `SkillAsset{Name,Size,Executable}`, sentinels
+- **B — The port.** `SkillMeta{Name,Description,Origin,HasAssets,License,Compatibility,Metadata,AllowedTools}`
+  (Origin = a CLOSED admission-tier label set `explicit|project|user|driver`, NEVER a location; trust
+  is enforced at source CONSTRUCTION in composition), `SkillAsset{Name,Size,Executable}`, sentinels
   `ErrSkillNotFound`/`ErrSkillAssetNotFound`, and `ValidSkillAssetName` — THE one shared
   logical-name validator (slash-separated, relative, no empty/`.`/`..` segments, no backslash,
   no NUL). SNAPSHOT semantics: ListSkills is stable for the source's life — **no watch/reload
   seam, deliberately** (the build-once trust-gate-completeness invariant depends on it).
+  `License`/`Compatibility`/`Metadata` (issue #419) are the OPTIONAL ADVISORY agentskills.io
+  frontmatter fields — never trust-bearing, never enforced as a gate. The parser
+  (`skillfs.ParseSkill`) carries them verbatim from the `license`/`compatibility`/`metadata`
+  frontmatter, clamping `License`/`Compatibility` to ≤1024 bytes (rune-safe, `TruncateRunes`)
+  and capping `Metadata` at ≤32 entries with each value ≤4096 bytes (dropping the WHOLE map to
+  nil on overflow, with a non-fatal warning note via the `notes` mechanism). They ride the
+  always-in-context SkillMeta; `Compatibility` is surfaced as an advisory note on activation.
+  `Metadata` is a `map[string]string`; a SKILL.md without them parses to the zero value (no
+  skip, no note). Unknown frontmatter keys remain ignored (the "format can grow" contract).
+  The skill NAME is validated against the ONE shared grammar `^[a-z0-9][a-z0-9_-]{0,63}$`
+  (skillfs.ValidSkillName, re-exported via `internal/adapter/skills.ValidSkillName`) — the
+  LAXER agentskills-style form with the underscore DELIBERATELY allowed so existing drafted
+  and discovered skills keep validating. Discovery (ParseSkill) now rejects a name that fails
+  the grammar with a fatal SkipError reason (fail-soft: the skill is excluded, the scan
+  continues), and DirSource.Skills additionally enforces the agentskills.io dir-name-match
+  rule: the frontmatter `name` must EQUAL the parent directory name or the skill is skipped
+  with a mismatch SkipError. The draft write path (internal/adapter/skills/drafter.go) routes
+  through the SAME ValidSkillName (behavior unchanged — it already used this exact regex) so
+  read and write paths share the single source of truth.
+  `AllowedTools` (issue #419, agentskills.io Experimental) is the OPTIONAL ADVISORY
+  `allowed-tools` frontmatter field — a list of tool names a skill EXPECTS to use. It is
+  ADVISORY ONLY — NEVER a permission grant: the permission evaluator (governance/
+  `port.PermissionPolicy`/`engine/agent` dispatch) NEVER reads it, and every call still
+  resolves through the normal deny-dominant policy at EVERY posture (including yolo), so a
+  skill declaring `allowed-tools: "Bash"` does NOT pre-approve or loosen a Bash call. The
+  parser splits the YAML value (the spec's space-separated STRING form, or a YAML list form)
+  on whitespace, trimming/dropping empties, and defensively caps the count at ≤64 names and
+  each name at ≤64 chars (truncating the PREFIX on count overflow with a non-fatal warning
+  note, keeping the partial signal; a SKILL.md without it parses to nil — no skip, no note,
+  and a skill without the field renders byte-identically to before). On activation it is
+  surfaced as an advisory note that EXPLICITLY states calls still follow normal permission
+  rules, so the model does NOT infer pre-approval from the field.
+  The driver protocol `SkillMeta` carries the same four fields (`license`=5,
+  `compatibility`=6, `metadata`=7, `map<string,string>`, `allowed_tools`=8, `repeated string`);
+  the grpcdriver client re-clamps defensively to the SAME caps the parser uses (the driver
+  sits at the operator tier, but its metadata feeds the always-in-context layer).
 - **C — Aux assets: real disk behind the existing Read/read-roots contract.** FS skills serve
   IN PLACE (zero copy; `FSSource.AssetDirs` = the old per-skill `skillReadRoots`). Driver skills
   materialize LAZILY (`skills.AssetMaterializer`, over the PORT only) into
@@ -5804,13 +5840,18 @@ The settled decisions, condensed:
   A dedicated asset tool was REJECTED: it orphans every SKILL.md's relative-Read/script
   instructions (model-facing regression for zero interface gain).
 - **K — Skill tool seam.** `skills.NewTool(metas []tool.SkillMeta, act Activator)`;
-  `Activator.Activate(ctx,name) → Activation{Body, BaseDir}` (BaseDir "" omits the
-  Base-directory header block). `NewSnapshotActivator(*FSSource)` (FS, byte-identical — the
+  `Activator.Activate(ctx,name) → Activation{Body, BaseDir, Assets}` (BaseDir "" omits the
+  Base-directory header block; Assets is the bundled-asset logical-name list, enumerated
+  but never eagerly read). `NewSnapshotActivator(*FSSource)` (FS, byte-identical — the
   golden `TestFSSkillActivationByteIdentical` pins Execute output AND Spec().Description
   byte-for-byte against the pre-seam rendering) and `NewSourceActivator(tool.SkillSource,
-  *AssetMaterializer)` (driver; caches body+BaseDir after first success; failures NOT cached —
-  the materializer's once caches deterministic rejections). descriptionPreamble / header strings
-  / truncation are UNCHANGED — editing them is a defect against the C1 plan.
+  *AssetMaterializer)` (driver; caches body+BaseDir+Assets after first success; failures NOT
+  cached — the materializer's once caches deterministic rejections). descriptionPreamble /
+  header strings / truncation are UNCHANGED — editing them is a defect against the C1 plan.
+  Activation renders a `Bundled files:` block (one indented logical name per line, sorted)
+  after the base-directory guidance when `len(Assets) > 0`, per the agentskills.io "should
+  enumerate bundled scripts/resources but must not eagerly read them" contract; an asset-less
+  skill renders byte-identically to before.
 - **H — Wire + client discipline.** `SkillSourceService{ListSkills,GetSkillBody,
   ListSkillAssets,ReadSkillAsset}` (unary; rides the 64 MiB ceiling; origin is a string
   passthrough, no proto enum) and `SoulSourceService{LoadSoul}`. Server wrappers
@@ -5968,6 +6009,39 @@ rejection rationale (Bash executes real processes — drivers must materialize).
   COMPOSES, no exclusivity rule — `validateDriverConfig` has the agent rule only). One
   build-fact INFO ("slash-command driver source ENABLED, target=…") rides
   `logBuildConfigFacts`.
+- **Skills as slash commands (issue #419): `/skill-name` injects the BODY.** A
+  discovered skill doubles as a slash command (Claude-Code skill-as-command
+  semantics): a skill body IS the command template, so `/<skill-name>` expands to
+  the skill's instructions directly in context — no new tool, no new dispatch
+  concept. The bridge is `engine/adapter/skillfs.SkillCommandSource`, a
+  `prompt.CommandSource` over the resolved skill seam's always-in-context
+  `SkillMeta` inventory + the `Activator` the Skill tool already loads through.
+  `ListCommands` projects one `prompt.Command` per skill, defensively filtered by
+  `prompt.ValidCommandName` (the skill-name grammar is a subset of the command
+  grammar, so the filter is belt-and-braces), de-duped + name-sorted.
+  `CommandBody` calls `Activator.Activate` and returns the body (ALREADY
+  frontmatter-stripped by `ParseSkill`, so `SourceExpander`'s `stripFrontmatter`
+  is a no-op); an `ErrSkillNotFound`-class activation is the NORMAL `found=false`
+  outcome (the input passes through unchanged), a genuine activation fault
+  surfaces as an error (mirroring the Skill tool's addressable-error posture),
+  and an empty body does NOT expand (never a blank substitution). The driver
+  path's caching/materialization is SHARED — a `/skill` expansion and a Skill
+  tool activation read through one activator. Composition (`internal/app`
+  `buildCommandExpander`) inserts the bridge into the expander chain with
+  precedence `dirExp > skillExp > sourceExp > mcpExp`: a local command file
+  SHADOWS a same-named skill, a skill SHADOWS a same-named driver command, both
+  shadow MCP prompts. The seam inputs (metas + activator) are stashed on the
+  unexported `Config.skillCommandInputs` after `buildCatalog` resolves the seam
+  (the `Config.commandSource` precedent — `buildCommandExpander` runs per
+  session), so the main engine, the per-session factory, and the `ListCommands`
+  palette all compose the SAME `SkillCommandSource`. The project-tier trust gate
+  is INHERITED by construction: an untrusted workspace's project-tier skills
+  never enter the seam (`ResolveSources` drops them before it is built), so they
+  never become invocable as `/skill-name`. A nil/empty seam (no skills) makes the
+  bridge a no-op — the no-skills path stays byte-identical. Guarded by
+  `TestSkillCommandSource*` (adapter unit tests) and
+  `TestSkillCommandBridge*` (`internal/app` wiring tests: expand, pass-through,
+  precedence both ways, no-op, trust-gate withhold + admit, end-to-end Build).
 - **Conformance as contract.** `RunAgentSource` (canonical `AgentFixture`: minimal /
   fully-loaded incl. hooks+skills+limits+model+provider+permissionMode+color / MCP-bearing
   with one reference + one inline-with-headers; authored to round-trip the frontmatter
