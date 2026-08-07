@@ -38,13 +38,93 @@ const MaxDescriptionBytes = 800
 // retained so the parse/draft sites (and their tests) read unchanged.
 const maxDescriptionBytes = MaxDescriptionBytes
 
-// frontmatter is the parsed YAML header of a SKILL.md file. Only name and
-// description are part of the always-in-context metadata; any other keys are
+// frontmatter is the parsed YAML header of a SKILL.md file. Name and
+// description are part of the always-in-context metadata; license,
+// compatibility, metadata, and allowed-tools are OPTIONAL ADVISORY fields
+// carried verbatim (byte-capped defensively by parseSkill); any other keys are
 // ignored so the format can grow without breaking discovery.
+//
+// AllowedTools is the agentskills.io Experimental `allowed-tools` field. The
+// spec form is a SPACE-SEPARATED STRING (e.g. `allowed-tools: "Bash Read Grep"`),
+// parsed by splitting on whitespace; a YAML LIST form (`[Bash, Read]`) is
+// accepted too (yaml.v3 unifies into a []string here) but the string form is
+// canonical. It is ADVISORY ONLY — surfaced as a note on activation, never a
+// permission grant.
 type frontmatter struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name          string            `yaml:"name"`
+	Description   string            `yaml:"description"`
+	License       string            `yaml:"license"`
+	Compatibility string            `yaml:"compatibility"`
+	Metadata      map[string]string `yaml:"metadata"`
+	AllowedTools  yamlAllowedTools  `yaml:"allowed-tools"`
 }
+
+// yamlAllowedTools accepts the `allowed-tools` field as EITHER a
+// space-separated string (the spec form) OR a YAML list of strings, normalizing
+// both into a []string. yaml.v3's default []string unmarshal would reject the
+// scalar string form, so a custom unmarshaler unifies the two.
+type yamlAllowedTools []string
+
+func (a *yamlAllowedTools) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		// Reject a non-string scalar (e.g. allowed-tools: 123) — the spec form is
+		// a quoted string, so an integer/bool/float is a malformed value.
+		if value.Tag != "!!str" {
+			return fmt.Errorf("allowed-tools must be a string or a list of strings, got a scalar %s", value.Tag)
+		}
+		var s string
+		if err := value.Decode(&s); err != nil {
+			return err
+		}
+		*a = splitAllowedTools(s)
+		return nil
+	}
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	out := make([]string, 0, len(list))
+	for _, t := range list {
+		out = append(out, splitAllowedTools(t)...)
+	}
+	*a = out
+	return nil
+}
+
+// splitAllowedTools splits a whitespace-separated allowed-tools string into
+// trimmed, non-empty tokens.
+func splitAllowedTools(s string) []string {
+	return strings.Fields(s)
+}
+
+// MaxLicenseBytes and MaxCompatibilityBytes cap the advisory license and
+// compatibility strings carried on the always-in-context SkillMeta. They are
+// ADVISORY (never enforced as a gate), but they ride the in-context metadata,
+// so an unbounded one could inflate every prompt and break the byte-stable
+// prompt-prefix caching. Exported so the remote-driver skill-source client
+// (grpcdriver) can re-truncate defensively to the SAME cap.
+const (
+	MaxLicenseBytes       = 1024
+	MaxCompatibilityBytes = 1024
+
+	// MaxMetadataEntries caps the advisory metadata map's entry count; an
+	// over-count drops the WHOLE map to nil (and a warning note) rather than
+	// silently truncating it.
+	MaxMetadataEntries = 32
+	// MaxMetadataValueBytes caps one metadata value; a single over-sized value
+	// drops the WHOLE map to nil (and a warning note).
+	MaxMetadataValueBytes = 4096
+
+	// MaxAllowedTools caps the advisory `allowed-tools` entry count; an
+	// over-count truncates to the first MaxAllowedTools names (and a warning
+	// note). It rides the always-in-context SkillMeta, so an unbounded list could
+	// inflate every prompt. Exported so the remote-driver skill-source client
+	// (grpcdriver) re-clamps defensively to the SAME cap.
+	MaxAllowedTools = 64
+	// MaxAllowedToolNameBytes caps one advisory `allowed-tools` name; an
+	// over-long name is truncated (and a warning note).
+	MaxAllowedToolNameBytes = 64
+)
 
 // DirSource is the local-OS-filesystem implementation of Source: it produces the
 // skills laid out as <Dir>/<name>/SKILL.md under a single directory. It is the
@@ -78,11 +158,13 @@ type DirSource struct {
 // returns a non-nil error only for a genuine I/O fault reading the directory
 // itself.
 //
-// A skill whose frontmatter `name` disagrees with its directory name is accepted
-// using the FRONTMATTER name (the frontmatter is the source of truth for the
-// activation key); duplicate effective names WITHIN this directory are resolved by
-// keeping the first in sorted-path order and skipping the rest (reported as a
-// SkipError). Cross-source collisions are resolved one level up, by MultiSource.
+// A skill whose frontmatter `name` does not EXACTLY match its parent directory
+// name is SKIPPED (fail-soft, reported as a SkipError) — the agentskills.io
+// dir-name-match rule. The directory name is the activation key; the frontmatter
+// must agree with it. Duplicate effective names WITHIN this directory are
+// resolved by keeping the first in sorted-path order and skipping the rest
+// (reported as a SkipError). Cross-source collisions are resolved one level up,
+// by MultiSource.
 func (s DirSource) Skills(_ context.Context) ([]Skill, []SkipError, error) {
 	dir := strings.TrimSpace(s.Dir)
 	if dir == "" {
@@ -126,6 +208,16 @@ func (s DirSource) Skills(_ context.Context) ([]Skill, []SkipError, error) {
 			continue
 		}
 		sk.Origin = s.origin()
+		// The agentskills.io dir-name-match rule: the frontmatter name must
+		// equal the parent directory name. A mismatch is fail-soft (skip, keep
+		// scanning), reported as a SkipError.
+		if sk.Name != e.Name() {
+			skips = append(skips, SkipError{
+				Path:   path,
+				Reason: fmt.Sprintf("skill name %q does not match its directory %q", sk.Name, e.Name()),
+			})
+			continue
+		}
 		// Non-fatal warnings (e.g. truncation): the skill is kept, but the author
 		// gets a signal via the returned diagnostics.
 		for _, n := range notes {
@@ -195,6 +287,9 @@ func ParseSkill(raw []byte, path string) (Skill, string, []string) {
 	if name == "" {
 		return Skill{}, "frontmatter is missing a non-empty \"name\"", nil
 	}
+	if !ValidSkillName(name) {
+		return Skill{}, fmt.Sprintf("skill name %q is invalid: must be 1-64 chars, lowercase letters/digits/'-'/'_', starting with a letter or digit (no spaces, no uppercase, no path separators)", name), nil
+	}
 	desc := strings.TrimSpace(fm.Description)
 	if desc == "" {
 		return Skill{}, "frontmatter is missing a non-empty \"description\"", nil
@@ -215,10 +310,106 @@ func ParseSkill(raw []byte, path string) (Skill, string, []string) {
 			len(trimmedBody), MaxOutputBytes))
 	}
 
+	license := strings.TrimSpace(fm.License)
+	if len(license) > MaxLicenseBytes {
+		notes = append(notes, fmt.Sprintf(
+			"license is %d bytes; truncated to the advisory cap of %d bytes",
+			len(license), MaxLicenseBytes))
+		license = TruncateRunes(license, MaxLicenseBytes)
+	}
+	compat := strings.TrimSpace(fm.Compatibility)
+	if len(compat) > MaxCompatibilityBytes {
+		notes = append(notes, fmt.Sprintf(
+			"compatibility is %d bytes; truncated to the advisory cap of %d bytes",
+			len(compat), MaxCompatibilityBytes))
+		compat = TruncateRunes(compat, MaxCompatibilityBytes)
+	}
+	meta := clampMetadata(fm.Metadata, &notes)
+	allowed := clampAllowedTools(fm.AllowedTools, &notes)
+
 	return Skill{
-		Name:        name,
-		Description: desc,
-		Body:        trimmedBody,
-		Path:        path,
+		Name:          name,
+		Description:   desc,
+		Body:          trimmedBody,
+		Path:          path,
+		License:       license,
+		Compatibility: compat,
+		Metadata:      meta,
+		AllowedTools:  allowed,
 	}, "", notes
+}
+
+// clampMetadata defensively bounds the optional advisory metadata map to
+// MaxMetadataEntries with each value ≤ MaxMetadataValueBytes. On ANY overflow
+// (too many entries, or a single over-sized value) the WHOLE map drops to nil
+// and a non-fatal warning note is recorded — the map is advisory, so dropping
+// it is honest rather than silently truncating. A nil/empty map stays nil.
+// Keys/values are trimmed of surrounding whitespace; an empty key is dropped.
+func clampMetadata(in map[string]string, notes *[]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	if len(in) > MaxMetadataEntries {
+		*notes = append(*notes, fmt.Sprintf(
+			"metadata has %d entries; dropped (the advisory cap is %d entries)",
+			len(in), MaxMetadataEntries))
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if len(v) > MaxMetadataValueBytes {
+			*notes = append(*notes, fmt.Sprintf(
+				"metadata entry %q is %d bytes; the whole metadata map was dropped (the advisory per-value cap is %d bytes)",
+				k, len(v), MaxMetadataValueBytes))
+			return nil
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// clampAllowedTools defensively bounds the advisory `allowed-tools` list to
+// MaxAllowedTools entries with each name ≤ MaxAllowedToolNameBytes. The list
+// is ADVISORY (never enforced as a gate), but it rides the always-in-context
+// SkillMeta, so an unbounded list could inflate every prompt. On count
+// overflow the list is truncated to the parsed PREFIX (not dropped — the
+// field is a list of names, so the prefix is the honest partial signal) and a
+// non-fatal warning note is recorded. An over-long single NAME is truncated
+// rune-safe. An empty list stays nil.
+func clampAllowedTools(in []string, notes *[]string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	if len(in) > MaxAllowedTools {
+		*notes = append(*notes, fmt.Sprintf(
+			"allowed-tools has %d entries; truncated to the advisory cap of %d entries",
+			len(in), MaxAllowedTools))
+		in = in[:MaxAllowedTools]
+	}
+	out := make([]string, 0, len(in))
+	for _, name := range in {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if len(name) > MaxAllowedToolNameBytes {
+			*notes = append(*notes, fmt.Sprintf(
+				"allowed-tools entry %q is %d bytes; truncated to the advisory cap of %d bytes",
+				name, len(name), MaxAllowedToolNameBytes))
+			name = TruncateRunes(name, MaxAllowedToolNameBytes)
+		}
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

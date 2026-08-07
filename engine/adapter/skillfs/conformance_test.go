@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
@@ -39,7 +41,34 @@ func writeFixtureTree(t *testing.T) string {
 		if err := os.MkdirAll(skillDir, 0o755); err != nil {
 			t.Fatalf("mkdir %q: %v", skillDir, err)
 		}
-		content := "---\nname: " + f.Name + "\ndescription: " + f.Description + "\n---\n" + f.Body + "\n"
+		// Compose the YAML frontmatter: name + description (required) plus the
+		// optional advisory license/compatibility/metadata fields, in the same
+		// shape ParseSkill reads. The metadata map is emitted as a YAML block
+		// map so go.yaml.in/yaml/v3 parses it back into a map[string]string.
+		front := "---\nname: " + f.Name + "\ndescription: " + f.Description + "\n"
+		if f.License != "" {
+			front += "license: " + f.License + "\n"
+		}
+		if f.Compatibility != "" {
+			front += "compatibility: " + f.Compatibility + "\n"
+		}
+		if len(f.Metadata) > 0 {
+			// Emit a sorted block map so the round-trip is deterministic.
+			keys := make([]string, 0, len(f.Metadata))
+			for k := range f.Metadata {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			front += "metadata:\n"
+			for _, k := range keys {
+				front += "  " + k + ": " + f.Metadata[k] + "\n"
+			}
+		}
+		if len(f.AllowedTools) > 0 {
+			// Emit the canonical space-separated string form.
+			front += "allowed-tools: \"" + strings.Join(f.AllowedTools, " ") + "\"\n"
+		}
+		content := front + "---\n" + f.Body + "\n"
 		if err := os.WriteFile(filepath.Join(skillDir, SkillFileName), []byte(content), 0o644); err != nil {
 			t.Fatalf("write SKILL.md: %v", err)
 		}

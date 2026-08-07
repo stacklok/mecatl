@@ -160,6 +160,41 @@ func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace
 		fmt.Fprintf(&b, "Base directory: %s\n", dir)
 		b.WriteString("Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n")
 	}
+	// Compatibility is the optional ADVISORY `compatibility` frontmatter field
+	// (issue #419). Surface it as an advisory note on activation so the model
+	// learns the author's stated compatibility (e.g. "mecatl >= 0.1"); it is
+	// never enforced as a gate — only shown. Omitted (empty) → no note, so the
+	// pre-seam byte-identical rendering for skills without the field is
+	// preserved.
+	if sk.Compatibility != "" {
+		fmt.Fprintf(&b, "Compatibility: %s\n", sk.Compatibility)
+	}
+	// AllowedTools is the optional ADVISORY `allowed-tools` frontmatter field
+	// (agentskills.io, Experimental; issue #419): a list of tool names the skill
+	// EXPECTS to use. Surface it as an advisory note on activation so the model
+	// learns the author's intent — and EXPLICITLY state that calls still follow
+	// normal permission rules, so the model does NOT infer pre-approval. It is
+	// NEVER a permission grant: the permission evaluator never reads it, and a
+	// call still resolves through the normal deny-dominant policy at every
+	// posture (including yolo). Omitted (empty) → no note, so a skill without the
+	// field renders byte-identically to before (preserving the activation
+	// golden).
+	if len(sk.AllowedTools) > 0 {
+		fmt.Fprintf(&b, "This skill declares allowed-tools: %s. These are the tools the skill expects to use; each call still follows normal permission rules.\n",
+			strings.Join(sk.AllowedTools, ", "))
+	}
+	// Bundled-asset enumeration (agentskills.io "should enumerate bundled
+	// scripts/resources but must not eagerly read them"): list the asset LOGICAL
+	// NAMES so the model knows what payloads exist without reading them. The
+	// FS source's listAssets walk already sorts by name; a driver source must
+	// also sort (the driver client sorts its wire results). Gated on len(Assets) > 0
+	// so an asset-less skill renders byte-identically to before.
+	if len(act.Assets) > 0 {
+		b.WriteString("Bundled files:\n")
+		for _, a := range act.Assets {
+			fmt.Fprintf(&b, "  - %s\n", a.Name)
+		}
+	}
 	b.WriteString("\n")
 	b.WriteString(act.Body)
 	return session.NewToolResult(in.ID, Truncate(b.String(), MaxOutputBytes)), nil

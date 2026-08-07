@@ -76,10 +76,14 @@ func NewFSSource(ctx context.Context, sources ...Source) (*FSSource, []SkipError
 		}
 		assets, aerr := src.listAssets(sk.Name)
 		src.metas = append(src.metas, tool.SkillMeta{
-			Name:        sk.Name,
-			Description: sk.Description,
-			Origin:      origin,
-			HasAssets:   aerr == nil && len(assets) > 0,
+			Name:          sk.Name,
+			Description:   sk.Description,
+			Origin:        origin,
+			HasAssets:     aerr == nil && len(assets) > 0,
+			License:       sk.License,
+			Compatibility: sk.Compatibility,
+			Metadata:      sk.Metadata,
+			AllowedTools:  sk.AllowedTools,
 		})
 	}
 	return src, skips, nil

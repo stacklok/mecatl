@@ -74,4 +74,17 @@ type Skill struct {
 	// never a location. DirSource stamps it from its Tier; ResolveSources sets
 	// the tiers. It backs SkillMeta.Origin on the port.
 	Origin tool.SkillOrigin
+	// License, Compatibility, Metadata, and AllowedTools mirror the like-named
+	// SkillMeta fields and are ADVISORY/observability only — never trust-bearing,
+	// never a gate. They are parsed from the optional `license`/`compatibility`/
+	// `metadata`/`allowed-tools` SKILL.md frontmatter and carried verbatim
+	// (byte-capped defensively); empty/zero when the skill omits them.
+	// AllowedTools is the agentskills.io Experimental `allowed-tools` field — a
+	// list of tool names the skill EXPECTS to use; it is surfaced as an advisory
+	// note on activation and is NEVER a permission grant (calls still resolve
+	// through the normal deny-dominant policy).
+	License       string
+	Compatibility string
+	Metadata      map[string]string
+	AllowedTools  []string
 }

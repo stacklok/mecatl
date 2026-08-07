@@ -42,11 +42,24 @@ type FixtureAsset struct {
 // FixtureSkill is one canonical fixture skill: metadata + instruction body +
 // auxiliary payloads. The Body is a trimmed string (no leading/trailing
 // whitespace) so filesystem backends that trim on parse round-trip it exactly.
+//
+// License, Compatibility, Metadata, and AllowedTools are the OPTIONAL ADVISORY
+// frontmatter fields (issue #419); they are advisory/observability only and
+// mirror SkillMeta. Populate them on at least one fixture so the conformance
+// contract pins their round-trip across every backend; zero values are
+// exercised by the fixtures that omit them. AllowedTools (agentskills.io
+// Experimental) is NEVER a permission grant — advisory only.
 type FixtureSkill struct {
 	Name        string
 	Description string
 	Body        string
 	Assets      []FixtureAsset
+	// License, Compatibility, Metadata, and AllowedTools mirror the like-named
+	// SkillMeta fields; advisory only.
+	License       string
+	Compatibility string
+	Metadata      map[string]string
+	AllowedTools  []string
 }
 
 // Fixture is the canonical skill set RunSkillSource asserts against, sorted by
@@ -68,9 +81,16 @@ var Fixture = []FixtureSkill{
 		},
 	},
 	{
-		Name:        "review",
-		Description: "Run a structured code review.",
-		Body:        "Follow references/checklist.md, then run scripts/lint.sh.",
+		Name:          "review",
+		Description:   "Run a structured code review.",
+		Body:          "Follow references/checklist.md, then run scripts/lint.sh.",
+		License:       "MIT",
+		Compatibility: "mecatl >= 0.1",
+		Metadata: map[string]string{
+			"author":  "stacklok",
+			"version": "1",
+		},
+		AllowedTools: []string{"Read", "Grep", "Bash"},
 		Assets: []FixtureAsset{
 			{Name: "references/checklist.md", Content: "- correctness first\n- style second\n"},
 			{Name: "scripts/lint.sh", Content: "#!/bin/sh\necho lint\n", Executable: true},
@@ -129,6 +149,19 @@ func RunSkillSource(t *testing.T, newSource func(t *testing.T) tool.SkillSource)
 			}
 			if m.Origin == "" {
 				t.Errorf("skill %q Origin is empty (a tier label is required for observability)", m.Name)
+			}
+			// Advisory optional frontmatter (issue #419) must round-trip.
+			if m.License != want.License {
+				t.Errorf("skill %q License = %q, want %q", m.Name, m.License, want.License)
+			}
+			if m.Compatibility != want.Compatibility {
+				t.Errorf("skill %q Compatibility = %q, want %q", m.Name, m.Compatibility, want.Compatibility)
+			}
+			if !reflect.DeepEqual(m.Metadata, want.Metadata) {
+				t.Errorf("skill %q Metadata = %v, want %v", m.Name, m.Metadata, want.Metadata)
+			}
+			if !reflect.DeepEqual(m.AllowedTools, want.AllowedTools) {
+				t.Errorf("skill %q AllowedTools = %v, want %v", m.Name, m.AllowedTools, want.AllowedTools)
 			}
 		}
 	})
@@ -335,10 +368,14 @@ func (fixtureSource) ListSkills(_ context.Context) ([]tool.SkillMeta, error) {
 	metas := make([]tool.SkillMeta, 0, len(Fixture))
 	for _, f := range Fixture {
 		metas = append(metas, tool.SkillMeta{
-			Name:        f.Name,
-			Description: f.Description,
-			Origin:      tool.SkillOriginExplicit,
-			HasAssets:   len(f.Assets) > 0,
+			Name:          f.Name,
+			Description:   f.Description,
+			Origin:        tool.SkillOriginExplicit,
+			HasAssets:     len(f.Assets) > 0,
+			License:       f.License,
+			Compatibility: f.Compatibility,
+			Metadata:      f.Metadata,
+			AllowedTools:  f.AllowedTools,
 		})
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Name < metas[j].Name })

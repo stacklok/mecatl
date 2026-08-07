@@ -78,7 +78,7 @@ type SearchProvider interface{Search(ctx context.Context, q SearchQuery) ([]Sear
 type SearchQuery struct{Query string; Limit int; Site string; Freshness string}
 type SearchResult struct{Title string; URL string; Snippet string; Date string; Source string}
 type SkillAsset struct{Name string; Size int64; Executable bool}
-type SkillMeta struct{Name string; Description string; Origin SkillOrigin; HasAssets bool}
+type SkillMeta struct{Name string; Description string; Origin SkillOrigin; HasAssets bool; License string; Compatibility string; Metadata map[string]string; AllowedTools []string}
 type SkillOrigin string
 type SkillSource interface{ListSkillAssets(ctx context.Context, name string) ([]SkillAsset, error); ListSkills(ctx context.Context) ([]SkillMeta, error); ReadSkillAsset(ctx context.Context, skill string, asset string) ([]byte, error); SkillBody(ctx context.Context, name string) (string, error)}
 type Tool interface{Execute(ctx context.Context, in session.ToolCall, ws Workspace) (session.ToolResult, error); ReadOnly() bool; Spec() ToolSpec}

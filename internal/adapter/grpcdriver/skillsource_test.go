@@ -3,6 +3,8 @@ package grpcdriver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,20 +21,39 @@ import (
 // hostileSkillServer is a RAW driverv1 server (NOT the harness wrapper) so the
 // client's defensive normalization can be fed wire data a well-behaved Go
 // source could never produce: blank names, duplicates, unsorted order,
-// oversized descriptions, unknown origin labels.
+// oversized descriptions, unknown origin labels, unsorted assets.
 type hostileSkillServer struct {
 	driverv1.UnimplementedSkillSourceServiceServer
 	skills []*driverv1.SkillMeta
+	// skillAssets maps skill name → wire assets (returned verbatim, unsorted,
+	// with a defensive NO-OP for unknown skills so the sentinel test stays
+	// intact). A nil value means the skill is known but asset-less.
+	skillAssets map[string][]*driverv1.SkillAsset
 }
 
 func (s *hostileSkillServer) ListSkills(context.Context, *driverv1.ListSkillsRequest) (*driverv1.ListSkillsResponse, error) {
 	return &driverv1.ListSkillsResponse{Skills: s.skills}, nil
 }
 
+func (s *hostileSkillServer) ListSkillAssets(_ context.Context, req *driverv1.ListSkillAssetsRequest) (*driverv1.ListSkillAssetsResponse, error) {
+	assets, ok := s.skillAssets[req.GetName()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "skill not found")
+	}
+	return &driverv1.ListSkillAssetsResponse{Assets: assets}, nil
+}
+
 func newHostileSkillClient(t *testing.T, metas []*driverv1.SkillMeta) *SkillSource {
 	t.Helper()
+	return newHostileSkillClientWithAssets(t, metas, nil)
+}
+
+// newHostileSkillClientWithAssets returns a SkillSource over a hostile server
+// that also hosts assets (unsorted, for the ListSkillAssets regression test).
+func newHostileSkillClientWithAssets(t *testing.T, metas []*driverv1.SkillMeta, assets map[string][]*driverv1.SkillAsset) *SkillSource {
+	t.Helper()
 	conn := dialBufconn(t, func(gs *grpc.Server) {
-		driverv1.RegisterSkillSourceServiceServer(gs, &hostileSkillServer{skills: metas})
+		driverv1.RegisterSkillSourceServiceServer(gs, &hostileSkillServer{skills: metas, skillAssets: assets})
 	})
 	return NewSkillSource(conn)
 }
@@ -146,5 +167,161 @@ func TestSkillSourceCtxRewrap(t *testing.T) {
 	}
 	if _, err := src.SkillBody(ctx, "review"); !errors.Is(err, context.Canceled) {
 		t.Errorf("SkillBody(cancelled ctx) = %v, want errors.Is(_, context.Canceled)", err)
+	}
+}
+
+// TestSkillSourceOptionalFrontmatterRoundTrip pins the advisory frontmatter
+// wire fields (issue #419): license/compatibility/metadata project from the
+// fixture source through the server wrapper onto the wire and back into
+// tool.SkillMeta.
+func TestSkillSourceOptionalFrontmatterRoundTrip(t *testing.T) {
+	src := newFixtureSkillClient(t)
+	got, err := src.ListSkills(context.Background())
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	var review *tool.SkillMeta
+	for i, m := range got {
+		if m.Name == "review" {
+			review = &got[i]
+			break
+		}
+	}
+	if review == nil {
+		t.Fatalf("review skill missing from ListSkills: %+v", got)
+	}
+	if review.License != "MIT" {
+		t.Errorf("review License = %q, want %q", review.License, "MIT")
+	}
+	if review.Compatibility != "mecatl >= 0.1" {
+		t.Errorf("review Compatibility = %q, want %q", review.Compatibility, "mecatl >= 0.1")
+	}
+	wantMeta := map[string]string{"author": "stacklok", "version": "1"}
+	if !reflect.DeepEqual(review.Metadata, wantMeta) {
+		t.Errorf("review Metadata = %v, want %v", review.Metadata, wantMeta)
+	}
+	wantTools := []string{"Read", "Grep", "Bash"}
+	if !reflect.DeepEqual(review.AllowedTools, wantTools) {
+		t.Errorf("review AllowedTools = %v, want %v", review.AllowedTools, wantTools)
+	}
+	// The other fixtures omit the optional fields and must round-trip zero.
+	for _, m := range got {
+		if m.Name == "review" {
+			continue
+		}
+		if m.License != "" || m.Compatibility != "" || m.Metadata != nil || m.AllowedTools != nil {
+			t.Errorf("skill %q should have zero advisory fields, got License=%q Compatibility=%q Metadata=%v AllowedTools=%v",
+				m.Name, m.License, m.Compatibility, m.Metadata, m.AllowedTools)
+		}
+	}
+}
+
+// TestSkillSourceHostileMetadataDefensiveClamp pins the client's defensive
+// clamp on hostile wire metadata: oversized license/compatibility are
+// truncated to the advisory cap, an over-count metadata map drops to nil, and
+// an over-sized value drops the whole map — no panic.
+func TestSkillSourceHostileMetadataDefensiveClamp(t *testing.T) {
+	longLicense := strings.Repeat("L", skills.MaxLicenseBytes*2)
+	longCompat := strings.Repeat("C", skills.MaxCompatibilityBytes*2)
+	// Entry-count overflow.
+	hugeMeta := make(map[string]string, skills.MaxMetadataEntries+1)
+	for i := 0; i < skills.MaxMetadataEntries+1; i++ {
+		hugeMeta[fmt.Sprintf("k%d", i)] = "v"
+	}
+	src := newHostileSkillClient(t, []*driverv1.SkillMeta{
+		{Name: "big-license", Description: "x", License: longLicense, Compatibility: longCompat},
+		{Name: "too-many", Description: "x", Metadata: hugeMeta},
+		{Name: "one-huge-val", Description: "x", Metadata: map[string]string{"k": strings.Repeat("V", skills.MaxMetadataValueBytes+1)}},
+	})
+	got, err := src.ListSkills(context.Background())
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	byName := map[string]tool.SkillMeta{}
+	for _, m := range got {
+		byName[m.Name] = m
+	}
+	if b, ok := byName["big-license"]; !ok {
+		t.Fatalf("big-license missing: %+v", got)
+	} else {
+		if len(b.License) > skills.MaxLicenseBytes {
+			t.Errorf("License not clamped: %d > %d", len(b.License), skills.MaxLicenseBytes)
+		}
+		if len(b.Compatibility) > skills.MaxCompatibilityBytes {
+			t.Errorf("Compatibility not clamped: %d > %d", len(b.Compatibility), skills.MaxCompatibilityBytes)
+		}
+	}
+	if t2, ok := byName["too-many"]; !ok {
+		t.Fatalf("too-many missing: %+v", got)
+	} else if t2.Metadata != nil {
+		t.Errorf("too-many Metadata should drop to nil on entry overflow, got %v", t2.Metadata)
+	}
+	if t3, ok := byName["one-huge-val"]; !ok {
+		t.Fatalf("one-huge-val missing: %+v", got)
+	} else if t3.Metadata != nil {
+		t.Errorf("one-huge-val Metadata should drop to nil on value overflow, got %v", t3.Metadata)
+	}
+}
+
+// TestSkillSourceHostileAllowedToolsDefensiveClamp pins the client's defensive
+// clamp on hostile wire `allowed-tools`: an over-count list is truncated to the
+// advisory cap, and an over-long name is truncated — no panic, and ADVISORY
+// ONLY (never a permission grant).
+func TestSkillSourceHostileAllowedToolsDefensiveClamp(t *testing.T) {
+	// Entry-count overflow.
+	huge := make([]string, skills.MaxAllowedTools+1)
+	for i := range huge {
+		huge[i] = "tool"
+	}
+	longName := strings.Repeat("T", skills.MaxAllowedToolNameBytes*2)
+	src := newHostileSkillClient(t, []*driverv1.SkillMeta{
+		{Name: "too-many-tools", Description: "x", AllowedTools: huge},
+		{Name: "huge-name", Description: "x", AllowedTools: []string{longName}},
+	})
+	got, err := src.ListSkills(context.Background())
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	byName := map[string]tool.SkillMeta{}
+	for _, m := range got {
+		byName[m.Name] = m
+	}
+	if b, ok := byName["too-many-tools"]; !ok {
+		t.Fatalf("too-many-tools missing: %+v", got)
+	} else if len(b.AllowedTools) > skills.MaxAllowedTools {
+		t.Errorf("AllowedTools not clamped to the count cap: %d > %d", len(b.AllowedTools), skills.MaxAllowedTools)
+	}
+	if b, ok := byName["huge-name"]; !ok {
+		t.Fatalf("huge-name missing: %+v", got)
+	} else if len(b.AllowedTools) != 1 || len(b.AllowedTools[0]) > skills.MaxAllowedToolNameBytes {
+		t.Errorf("AllowedTools name not clamped: %d > %d", len(b.AllowedTools[0]), skills.MaxAllowedToolNameBytes)
+	}
+}
+
+// TestSkillSourceListAssetsSortsHostileOrder is the regression test for the
+// ListSkillAssets latent bug (MUST-FIX 1): the driver client must sort assets by
+// name so the "Bundled files:" rendering is deterministic — the FS source's
+// listAssets already sorts, and the conformance suite's sortAssets masked the
+// driver client's omission by sorting both sides before comparing. Feed the
+// hostile server assets in REVERSE (descending) order and assert the client
+// returns them name-sorted. This test FAILS without the client-side sort.
+func TestSkillSourceListAssetsSortsHostileOrder(t *testing.T) {
+	src := newHostileSkillClientWithAssets(t, []*driverv1.SkillMeta{
+		{Name: "bundle", Description: "x", HasAssets: true},
+	}, map[string][]*driverv1.SkillAsset{
+		"bundle": {
+			{Name: "scripts/run.sh", Size: 14, Executable: true},
+			{Name: "references/api.md", Size: 9},
+		},
+	})
+	got, err := src.ListSkillAssets(context.Background(), "bundle")
+	if err != nil {
+		t.Fatalf("ListSkillAssets: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 assets, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "references/api.md" || got[1].Name != "scripts/run.sh" {
+		t.Errorf("ListSkillAssets not sorted: %q, %q (want references/api.md then scripts/run.sh)", got[0].Name, got[1].Name)
 	}
 }

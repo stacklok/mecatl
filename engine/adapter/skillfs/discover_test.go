@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,19 @@ func writeSkill(t *testing.T, dir, name, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(sub, SkillFileName), []byte(content), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+// writeAsset creates <dir>/<skill>/<logical-name> with the given content,
+// making parent directories as needed.
+func writeAsset(t *testing.T, dir, skill, logicalName, content string) {
+	t.Helper()
+	p := filepath.Join(dir, skill, filepath.FromSlash(logicalName))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir asset dir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write asset %q: %v", logicalName, err)
 	}
 }
 
@@ -88,7 +102,7 @@ func TestDiscoverEmptyDirArg(t *testing.T) {
 
 func TestDiscoverMalformedFrontmatterIsSkipped(t *testing.T) {
 	dir := t.TempDir()
-	writeSkill(t, dir, "good", validSkill)
+	writeSkill(t, dir, "commit-style", validSkill)
 	// No frontmatter at all.
 	writeSkill(t, dir, "no-frontmatter", "just a body, no header\n")
 	// Frontmatter present but missing required name.
@@ -129,40 +143,152 @@ body
 }
 
 func TestDiscoverDuplicateNameKeepsFirst(t *testing.T) {
-	dir := t.TempDir()
-	// Two directories whose frontmatter declares the SAME name.
-	writeSkill(t, dir, "a-dir", `---
+	// Under the dir-name-match rule two directories in the SAME parent cannot
+	// both hold the same frontmatter name (each dir name must equal its skill
+	// name), so the keep-first dedup lives at the CROSS-SOURCE layer. Exercise
+	// it via MultiSource over two single-skill sources that both declare "dup".
+	dirA := t.TempDir()
+	writeSkill(t, dirA, "dup", `---
 name: dup
 description: first
 ---
 first body
 `)
-	writeSkill(t, dir, "b-dir", `---
+	dirB := t.TempDir()
+	writeSkill(t, dirB, "dup", `---
 name: dup
 description: second
 ---
 second body
 `)
 
-	got, skips, err := Discover(dir)
+	src := NewMultiSource(
+		DirSource{Dir: dirA, Label: "a"},
+		DirSource{Dir: dirB, Label: "b"},
+	)
+	got, skips, err := src.Skills(context.Background())
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("MultiSource.Skills: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("duplicate name should yield 1 skill, got %d", len(got))
 	}
-	// a-dir sorts first, so it wins.
+	// The earlier (higher-precedence) source wins.
 	if got[0].Description != "first" {
 		t.Errorf("expected first definition kept, got %q", got[0].Description)
 	}
 	if len(skips) != 1 {
-		t.Fatalf("expected 1 duplicate skip, got %d", len(skips))
+		t.Fatalf("expected 1 duplicate skip, got %d: %v", len(skips), skips)
+	}
+}
+
+// TestValidSkillName pins the shared skill-name grammar
+// (^[a-z0-9][a-z0-9_-]{0,63}$): a leading lowercase letter or digit, then
+// lowercase letters/digits/underscore/hyphen, 1-64 chars. Underscore is
+// DELIBERATELY allowed (the lax grammar the draft write path already used) — a
+// future "tighten to the spec's hyphens-only form" change must trip this test.
+func TestValidSkillName(t *testing.T) {
+	valid := []string{"review", "commit-style", "deploy-to-staging", "api_v2", "a", "a1", "my_skill-2", "1skill"}
+	for _, n := range valid {
+		if !ValidSkillName(n) {
+			t.Errorf("ValidSkillName(%q) = false, want true", n)
+		}
+	}
+	invalid := []string{
+		"",                            // empty
+		"Review",                      // uppercase
+		"UPPER",                       // uppercase
+		"my skill",                    // space
+		"-lead",                       // leading hyphen
+		"_lead",                       // leading underscore
+		"has.dot",                     // dot
+		"a" + strings.Repeat("b", 64), // 65 chars, over the cap
+	}
+	for _, n := range invalid {
+		if ValidSkillName(n) {
+			t.Errorf("ValidSkillName(%q) = true, want false", n)
+		}
+	}
+}
+
+// TestParseSkillRejectsInvalidName pins that a name failing the shared grammar
+// is a fatal parse skip (the skill is excluded), never silently accepted.
+func TestParseSkillRejectsInvalidName(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "Bad Name", `---
+name: Bad Name
+description: uppercase and space
+---
+body
+`)
+	got, skips, err := Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("an invalid name must be skipped, got %+v", got)
+	}
+	if !hasReasonContaining(skips, "name") {
+		t.Errorf("expected an invalid-name skip reason, got %v", skips)
+	}
+}
+
+// TestDiscoveryRejectsDirNameMismatch pins the spec rule that the frontmatter
+// name must equal the parent directory name (fail-soft: skip, don't abort).
+func TestDiscoveryRejectsDirNameMismatch(t *testing.T) {
+	dir := t.TempDir()
+	// name: foo inside dir bar/ is skipped.
+	writeSkill(t, dir, "bar", `---
+name: foo
+description: mismatched
+---
+body
+`)
+	// name: baz inside dir baz/ is accepted.
+	writeSkill(t, dir, "baz", `---
+name: baz
+description: matched
+---
+body
+`)
+	got, skips, err := Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "baz" {
+		t.Fatalf("only the dir-matched skill should survive, got %+v", got)
+	}
+	if !hasReasonContaining(skips, "does not match its directory") {
+		t.Errorf("expected a dir-name-mismatch skip reason, got %v", skips)
+	}
+}
+
+// TestDiscoveryAcceptsUnderscoreNames pins the deliberate lax-grammar decision:
+// a name with an underscore (e.g. my_skill) in a matching dir IS accepted. This
+// is the tripwire against a future "tighten to hyphens-only" change.
+func TestDiscoveryAcceptsUnderscoreNames(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "my_skill", `---
+name: my_skill
+description: underscore name
+---
+body
+`)
+	got, skips, err := Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "my_skill" {
+		t.Fatalf("an underscore name in a matching dir must be accepted, got %+v skips=%v", got, skips)
+	}
+	if len(skips) != 0 {
+		t.Errorf("unexpected skips: %v", skips)
 	}
 }
 
 func TestDiscoverIgnoresNonSkillDirsAndFiles(t *testing.T) {
 	dir := t.TempDir()
-	writeSkill(t, dir, "real", validSkill)
+	writeSkill(t, dir, "commit-style", validSkill)
 	// A subdirectory with no SKILL.md must be silently ignored (no skip).
 	if err := os.MkdirAll(filepath.Join(dir, "notaskill"), 0o755); err != nil {
 		t.Fatal(err)
@@ -286,4 +412,313 @@ func TestDiscoverCRLFFrontmatter(t *testing.T) {
 	if len(got) != 1 || got[0].Name != "win" {
 		t.Fatalf("CRLF skill not parsed: %+v", got)
 	}
+}
+
+func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
+	t.Run("round-trips into Skill and SkillMeta", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "licensed", "---\nname: licensed\ndescription: A skill with optional advisory frontmatter.\nlicense: MIT\ncompatibility: \"mecatl >= 0.1\"\nmetadata:\n  author: stacklok\n  version: \"1\"\n---\nbody\n")
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(skips) != 0 {
+			t.Fatalf("optional fields should not produce skips: %v", skips)
+		}
+		if len(got) != 1 || got[0].Name != "licensed" {
+			t.Fatalf("licensed skill not parsed: %+v", got)
+		}
+		sk := got[0]
+		if sk.License != "MIT" {
+			t.Errorf("Skill.License = %q, want %q", sk.License, "MIT")
+		}
+		if sk.Compatibility != "mecatl >= 0.1" {
+			t.Errorf("Skill.Compatibility = %q, want %q", sk.Compatibility, "mecatl >= 0.1")
+		}
+		wantMeta := map[string]string{"author": "stacklok", "version": "1"}
+		if !reflect.DeepEqual(sk.Metadata, wantMeta) {
+			t.Errorf("Skill.Metadata = %v, want %v", sk.Metadata, wantMeta)
+		}
+
+		// The same values thread through the port-shaped SkillMeta produced by
+		// NewFSSource (the FS source is the consumer that feeds the catalog).
+		src, fskips, sErr := NewFSSource(context.Background(), DirSource{Dir: dir})
+		if sErr != nil {
+			t.Fatalf("NewFSSource: %v", sErr)
+		}
+		if len(fskips) != 0 {
+			t.Fatalf("unexpected NewFSSource skips: %v", fskips)
+		}
+		metas, mErr := src.ListSkills(context.Background())
+		if mErr != nil {
+			t.Fatalf("ListSkills: %v", mErr)
+		}
+		if len(metas) != 1 || metas[0].Name != "licensed" {
+			t.Fatalf("ListSkills = %+v", metas)
+		}
+		m := metas[0]
+		if m.License != "MIT" {
+			t.Errorf("SkillMeta.License = %q, want %q", m.License, "MIT")
+		}
+		if m.Compatibility != "mecatl >= 0.1" {
+			t.Errorf("SkillMeta.Compatibility = %q, want %q", m.Compatibility, "mecatl >= 0.1")
+		}
+		if !reflect.DeepEqual(m.Metadata, wantMeta) {
+			t.Errorf("SkillMeta.Metadata = %v, want %v", m.Metadata, wantMeta)
+		}
+	})
+
+	t.Run("missing fields yield zero values with no skip and no note", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "commit-style", validSkill) // validSkill has only name+description
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(skips) != 0 {
+			t.Fatalf("a skill omitting the optional fields must not produce notes: %v", skips)
+		}
+		if len(got) != 1 || got[0].Name != "commit-style" {
+			t.Fatalf("plain skill not parsed: %+v", got)
+		}
+		if got[0].License != "" || got[0].Compatibility != "" || got[0].Metadata != nil {
+			t.Errorf("omitted optional fields must be zero: License=%q Compatibility=%q Metadata=%v",
+				got[0].License, got[0].Compatibility, got[0].Metadata)
+		}
+	})
+
+	t.Run("oversized license and compatibility are clamped with a note", func(t *testing.T) {
+		dir := t.TempDir()
+		longLicense := strings.Repeat("L", MaxLicenseBytes*2)
+		longCompat := strings.Repeat("C", MaxCompatibilityBytes*2)
+		writeSkill(t, dir, "verbose", fmt.Sprintf("---\nname: verbose\ndescription: clamps advisory fields\nlicense: %s\ncompatibility: %s\n---\nbody\n", longLicense, longCompat))
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("oversized advisory fields should not drop the skill, got %d", len(got))
+		}
+		if len(got[0].License) > MaxLicenseBytes {
+			t.Errorf("License not clamped: %d > %d", len(got[0].License), MaxLicenseBytes)
+		}
+		if len(got[0].Compatibility) > MaxCompatibilityBytes {
+			t.Errorf("Compatibility not clamped: %d > %d", len(got[0].Compatibility), MaxCompatibilityBytes)
+		}
+		if !hasReasonContaining(skips, "license") {
+			t.Errorf("expected a license-clamp warning, got %v", skips)
+		}
+		if !hasReasonContaining(skips, "compatibility") {
+			t.Errorf("expected a compatibility-clamp warning, got %v", skips)
+		}
+	})
+
+	t.Run("oversized metadata map drops to nil with a warning note", func(t *testing.T) {
+		dir := t.TempDir()
+		// Too many entries (> MaxMetadataEntries).
+		var metaBlock strings.Builder
+		metaBlock.WriteString("---\nname: big-meta\ndescription: too many metadata entries\nmetadata:\n")
+		for i := 0; i < MaxMetadataEntries+1; i++ {
+			fmt.Fprintf(&metaBlock, "  k%d: v%d\n", i, i)
+		}
+		metaBlock.WriteString("---\nbody\n")
+		writeSkill(t, dir, "big-meta", metaBlock.String())
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		var sk Skill
+		for _, s := range got {
+			if s.Name == "big-meta" {
+				sk = s
+			}
+		}
+		if sk.Name != "big-meta" {
+			t.Fatalf("big-meta skill not parsed: %+v", got)
+		}
+		if sk.Metadata != nil {
+			t.Errorf("Metadata should be dropped to nil on entry-count overflow, got %v", sk.Metadata)
+		}
+		if !hasReasonContaining(skips, "metadata") {
+			t.Errorf("expected a metadata-drop warning on entry overflow, got %v", skips)
+		}
+	})
+
+	t.Run("oversized metadata value drops the whole map with a warning note", func(t *testing.T) {
+		dir := t.TempDir()
+		bigVal := strings.Repeat("V", MaxMetadataValueBytes+1)
+		writeSkill(t, dir, "big-val", fmt.Sprintf("---\nname: big-val\ndescription: one huge metadata value\nmetadata:\n  author: %s\n---\nbody\n", bigVal))
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		var sk Skill
+		for _, s := range got {
+			if s.Name == "big-val" {
+				sk = s
+			}
+		}
+		if sk.Name != "big-val" {
+			t.Fatalf("big-val skill not parsed: %+v", got)
+		}
+		if sk.Metadata != nil {
+			t.Errorf("Metadata should be dropped to nil on value-overflow, got %v", sk.Metadata)
+		}
+		if !hasReasonContaining(skips, "metadata") {
+			t.Errorf("expected a metadata-drop warning on value overflow, got %v", skips)
+		}
+	})
+}
+
+// TestParseSkillAllowedTools pins the ADVISORY `allowed-tools` frontmatter
+// (agentskills.io, Experimental; issue #419): the spec's space-separated STRING
+// form splits into the SkillMeta field, extra whitespace is tolerated, a
+// missing field yields nil (no skip), and oversized lists/names are truncated
+// with a non-fatal warning note. A YAML LIST form is accepted too. A non-string
+// scalar (e.g. allowed-tools: 123) is a FATAL parse error (fail-closed). The
+// field is ADVISORY ONLY — it never grants permission; it is only surfaced as a
+// note on activation.
+func TestParseSkillAllowedTools(t *testing.T) {
+	t.Run("space-separated string form splits into names", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "tooling", "---\nname: tooling\ndescription: a skill with allowed-tools\nallowed-tools: \"Bash Read Grep\"\n---\nbody\n")
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(skips) != 0 {
+			t.Fatalf("a well-formed allowed-tools field must not produce notes: %v", skips)
+		}
+		if len(got) != 1 || got[0].Name != "tooling" {
+			t.Fatalf("tooling skill not parsed: %+v", got)
+		}
+		want := []string{"Bash", "Read", "Grep"}
+		if !reflect.DeepEqual(got[0].AllowedTools, want) {
+			t.Errorf("AllowedTools = %v, want %v", got[0].AllowedTools, want)
+		}
+
+		// Threads through the port-shaped SkillMeta produced by NewFSSource.
+		src, fskips, sErr := NewFSSource(context.Background(), DirSource{Dir: dir})
+		if sErr != nil || len(fskips) != 0 {
+			t.Fatalf("NewFSSource: %v skips=%v", sErr, fskips)
+		}
+		metas, _ := src.ListSkills(context.Background())
+		if len(metas) != 1 || !reflect.DeepEqual(metas[0].AllowedTools, want) {
+			t.Errorf("SkillMeta.AllowedTools = %v, want %v", metas[0].AllowedTools, want)
+		}
+	})
+
+	t.Run("extra whitespace is tolerated", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "ws", "---\nname: ws\ndescription: lots of whitespace\nallowed-tools: \"  Bash   Read    Grep  \"\n---\nbody\n")
+		got, _, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		want := []string{"Bash", "Read", "Grep"}
+		if !reflect.DeepEqual(got[0].AllowedTools, want) {
+			t.Errorf("AllowedTools = %v, want %v (extra whitespace should collapse)", got[0].AllowedTools, want)
+		}
+	})
+
+	t.Run("YAML list form is accepted", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "listform", "---\nname: listform\ndescription: list form\nallowed-tools:\n  - Bash\n  - Read\n  - Grep\n---\nbody\n")
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(skips) != 0 {
+			t.Fatalf("list form must parse cleanly, skips=%v", skips)
+		}
+		want := []string{"Bash", "Read", "Grep"}
+		if !reflect.DeepEqual(got[0].AllowedTools, want) {
+			t.Errorf("AllowedTools = %v, want %v", got[0].AllowedTools, want)
+		}
+	})
+
+	t.Run("missing field yields nil with no skip and no note", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "commit-style", validSkill) // no allowed-tools
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(skips) != 0 {
+			t.Fatalf("a skill omitting allowed-tools must not produce notes: %v", skips)
+		}
+		if got[0].AllowedTools != nil {
+			t.Errorf("omitted allowed-tools must be nil, got %v", got[0].AllowedTools)
+		}
+	})
+
+	t.Run("oversized list is truncated to the prefix with a warning note", func(t *testing.T) {
+		dir := t.TempDir()
+		// Build a space-separated list with MaxAllowedTools+1 names.
+		var b strings.Builder
+		for i := 0; i < MaxAllowedTools+1; i++ {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			fmt.Fprintf(&b, "t%d", i)
+		}
+		writeSkill(t, dir, "many", fmt.Sprintf("---\nname: many\ndescription: too many tools\nallowed-tools: %q\n---\nbody\n", b.String()))
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("oversized allowed-tools should not drop the skill, got %d", len(got))
+		}
+		if len(got[0].AllowedTools) != MaxAllowedTools {
+			t.Errorf("AllowedTools not truncated to cap: %d (want %d)", len(got[0].AllowedTools), MaxAllowedTools)
+		}
+		// The parsed PREFIX is kept (first MaxAllowedTools names), in order.
+		for i, name := range got[0].AllowedTools {
+			want := fmt.Sprintf("t%d", i)
+			if name != want {
+				t.Errorf("AllowedTools[%d] = %q, want the parsed prefix %q", i, name, want)
+			}
+		}
+		if !hasReasonContaining(skips, "allowed-tools") || !hasReasonContaining(skips, "truncated") {
+			t.Errorf("expected an allowed-tools truncation warning, got %v", skips)
+		}
+	})
+
+	t.Run("oversized name is truncated with a warning note", func(t *testing.T) {
+		dir := t.TempDir()
+		long := strings.Repeat("T", MaxAllowedToolNameBytes*2)
+		writeSkill(t, dir, "longname", fmt.Sprintf("---\nname: longname\ndescription: one huge tool name\nallowed-tools: %q\n---\nbody\n", long))
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("oversized name should not drop the skill, got %d", len(got))
+		}
+		if len(got[0].AllowedTools) != 1 {
+			t.Fatalf("expected exactly one allowed tool, got %v", got[0].AllowedTools)
+		}
+		if len(got[0].AllowedTools[0]) > MaxAllowedToolNameBytes {
+			t.Errorf("name not truncated: %d > %d", len(got[0].AllowedTools[0]), MaxAllowedToolNameBytes)
+		}
+		if !hasReasonContaining(skips, "allowed-tools") {
+			t.Errorf("expected an allowed-tools name-truncation warning, got %v", skips)
+		}
+	})
+
+	t.Run("non-string scalar is a YAML parse failure (fail-closed)", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "bad-scalar", "---\nname: bad-scalar\ndescription: int scalar\nallowed-tools: 123\n---\nbody\n")
+		got, skips, err := Discover(dir)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("a skill with a non-string allowed-tools scalar must be SKIPPED, got %d: %+v", len(got), got)
+		}
+		if !hasReasonContaining(skips, "malformed YAML") {
+			t.Errorf("expected a malformed-YAML skip reason, got %v", skips)
+		}
+	})
 }

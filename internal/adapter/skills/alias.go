@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -79,6 +80,24 @@ const DefaultDir = skillfs.DefaultDir
 // skillfs.MaxDescriptionBytes.
 const MaxDescriptionBytes = skillfs.MaxDescriptionBytes
 
+// MaxLicenseBytes, MaxCompatibilityBytes, MaxMetadataEntries, and
+// MaxMetadataValueBytes are the advisory caps for the optional license/
+// compatibility/metadata frontmatter. See the skillfs constants. Exported so
+// the remote-driver client (grpcdriver) re-clamps defensively to the SAME caps
+// the parser uses.
+//
+// MaxAllowedTools and MaxAllowedToolNameBytes are the advisory caps for the
+// optional `allowed-tools` frontmatter (agentskills.io, Experimental). Same
+// export rationale.
+const (
+	MaxLicenseBytes         = skillfs.MaxLicenseBytes
+	MaxCompatibilityBytes   = skillfs.MaxCompatibilityBytes
+	MaxMetadataEntries      = skillfs.MaxMetadataEntries
+	MaxMetadataValueBytes   = skillfs.MaxMetadataValueBytes
+	MaxAllowedTools         = skillfs.MaxAllowedTools
+	MaxAllowedToolNameBytes = skillfs.MaxAllowedToolNameBytes
+)
+
 // ProjectDirMecatl is the project-level skills dir under the workspace. See
 // skillfs.ProjectDirMecatl.
 const ProjectDirMecatl = skillfs.ProjectDirMecatl
@@ -107,6 +126,15 @@ func NewSnapshotActivator(src *FSSource) Activator { return skillfs.NewSnapshotA
 // structurally (Provision), so callers passing a *AssetMaterializer compile
 // unchanged. A wrapper would have to name the unexported type.
 var NewSourceActivator = skillfs.NewSourceActivator
+
+// NewSkillCommandSource builds a prompt.CommandSource over the resolved skill
+// seam so each discovered skill is invocable as /<skill-name>. See
+// skillfs.NewSkillCommandSource. Re-exported so the composition layer
+// (internal/app) composes the bridge over the SAME seam pieces the Skill tool
+// uses, without importing the engine adapter directly.
+func NewSkillCommandSource(metas []tool.SkillMeta, act Activator) prompt.CommandSource {
+	return skillfs.NewSkillCommandSource(metas, act)
+}
 
 // RegisterSource discovers skills from src and, when at least one valid skill
 // is found, registers a single Skill tool into cat. See skillfs.RegisterSource.
@@ -137,4 +165,13 @@ func ScanForInjection(s string) (marker string, found bool) { return skillfs.Sca
 // SAME parser the read-only core uses. See skillfs.ParseSkill.
 func ParseSkill(raw []byte, path string) (Skill, string, []string) {
 	return skillfs.ParseSkill(raw, path)
+}
+
+// ValidSkillName reports whether name is a valid skill activation name under
+// the shared grammar. It is exported so this package's writable half (the
+// DirDrafter's validateName) routes through the SAME validator the read-only
+// discovery core uses — a single source of truth, not two regexes to drift.
+// See skillfs.ValidSkillName.
+func ValidSkillName(name string) bool {
+	return skillfs.ValidSkillName(name)
 }

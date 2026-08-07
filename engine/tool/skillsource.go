@@ -31,6 +31,36 @@ type SkillMeta struct {
 	Description string      // one-line trigger metadata; non-empty, single-line, byte-capped by the source
 	Origin      SkillOrigin // admission tier (observability only)
 	HasAssets   bool        // whether ListSkillAssets will return at least one asset
+	// License is the optional `license` frontmatter field (e.g. "MIT",
+	// "Apache-2.0"). ADVISORY/observability metadata only — never trust-bearing,
+	// never a gate; empty when the skill omits it. Carried verbatim from the
+	// source (byte-capped defensively), never interpreted.
+	License string
+	// Compatibility is the optional `compatibility` frontmatter field (a free-form
+	// advisory string such as "mecatl >= 0.1"). ADVISORY/observability metadata
+	// only — never trust-bearing, never enforced as a gate; empty when the skill
+	// omits it. Surfaced as an advisory note on activation, never parsed.
+	Compatibility string
+	// Metadata is the optional `metadata` frontmatter map (string→string), a
+	// free-form advisory bag (e.g. {author: stacklok, version: "1"}). ADVISORY/
+	// observability metadata only — never trust-bearing; nil/empty when the skill
+	// omits it. Values are byte-capped defensively; the whole map drops to nil on
+	// an oversized entry/count. Never interpreted by the harness.
+	Metadata map[string]string
+	// AllowedTools is the optional `allowed-tools` frontmatter field
+	// (agentskills.io, Experimental): a list of tool names the skill EXPECTS to
+	// use. ADVISORY METADATA ONLY — it names the tools the skill anticipates
+	// calling, surfaced as a note on Skill activation so the model learns the
+	// author's intent. It is NEVER a permission grant: the permission evaluator
+	// (governance/port.PermissionPolicy/engine/agent dispatch) NEVER reads it.
+	// Every call still resolves through the normal deny-dominant policy — at
+	// every posture, including yolo — so a skill declaring `allowed-tools: "Bash"`
+	// does NOT pre-approve, loosen, or auto-approve a Bash call. nil/empty when the
+	// skill omits it (a skill without the field renders byte-identically to
+	// before). The parser splits the YAML value on whitespace and defensively
+	// caps the count at ≤64 names and each name at ≤64 chars (recording a
+	// non-fatal warning note on overflow, keeping the parsed prefix).
+	AllowedTools []string
 }
 
 // SkillAsset describes one auxiliary payload of a skill, addressed by LOGICAL
