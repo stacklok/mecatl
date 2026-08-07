@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -35,11 +34,6 @@ const maxDescriptionBytes = MaxDescriptionBytes
 // body shares the adapter-layer output cap; a root-local const because skillfs
 // does not export a draft-specific cap.
 const maxBodyBytes = 25_000
-
-// nameRE is the activation-name validator: lowercase Agent-Skills style, so it
-// blocks whitespace, control characters, uppercase, and path-traversal name
-// attacks (".."/"."/"/"). A name is 1..64 chars, starting alphanumeric.
-var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // DraftRequest is one candidate skill the model proposes. It is UNTRUSTED model
 // output: every field is sanitized and validated by the Drafter before any byte
@@ -259,11 +253,14 @@ func (d *DirDrafter) render(name, desc, body string) string {
 
 // validateName enforces the activation-name policy: lowercase Agent-Skills style,
 // blocking whitespace, control chars, uppercase, and path-traversal name attacks.
+// It routes through the ONE shared validator (skillfs.ValidSkillName, re-exported
+// via the alias) so the draft write path and the discovery read path enforce the
+// exact same grammar — a single source of truth, not two regexes to drift.
 func validateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("name is required (a short, lowercase activation name, e.g. \"deploy-to-staging\")")
 	}
-	if !nameRE.MatchString(name) {
+	if !ValidSkillName(name) {
 		return fmt.Errorf("invalid name %q: must be 1-64 chars, lowercase letters/digits/'-'/'_', starting with a letter or digit (no spaces, no uppercase, no path separators)", name)
 	}
 	return nil

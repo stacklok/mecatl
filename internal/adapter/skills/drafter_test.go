@@ -80,6 +80,7 @@ func TestDraftRejectsBadNames(t *testing.T) {
 		{"slash", "a/b"},
 		{"too-long", strings.Repeat("a", 65)},
 		{"leading-dash", "-deploy"},
+		{"leading-underscore", "_deploy"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +101,26 @@ func TestDraftRejectsBadNames(t *testing.T) {
 				t.Errorf("rejected draft wrote %d entries to disk", len(entries))
 			}
 		})
+	}
+}
+
+// TestDraftAcceptsUnderscoreName pins the DELIBERATE lax-grammar decision on
+// the WRITE path: a name with an underscore still validates through the shared
+// skillfs.ValidSkillName (behavior unchanged — the draft path already used the
+// same grammar; routing it through the shared validator is a single-source-of-
+// truth refactor, not a tightening). A future "tighten to the strict spec's
+// hyphens-only form" change must update this test.
+func TestDraftAcceptsUnderscoreName(t *testing.T) {
+	quarantine := t.TempDir()
+	d := newDrafter(t, quarantine, nil)
+	req := draftReq()
+	req.Name = "my_skill"
+	res, err := d.Draft(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Draft(underscore name) = %v, want nil (underscore is allowed)", err)
+	}
+	if res.Path == "" {
+		t.Fatal("Draft(underscore name) returned an empty Path — the skill should be written")
 	}
 }
 
