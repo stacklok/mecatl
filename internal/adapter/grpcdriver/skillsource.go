@@ -69,6 +69,13 @@ func (s *SkillSource) ListSkills(ctx context.Context) ([]tool.SkillMeta, error) 
 			// "project"/"user" would launder itself into a trusted-looking tier).
 			Origin:    tool.SkillOriginDriver,
 			HasAssets: m.GetHasAssets(),
+			// Advisory frontmatter metadata (agentskills.io, #419): re-clamped
+			// defensively to the parser's caps — a hostile/buggy driver must not
+			// bloat the always-in-context tool spec.
+			License:       clampAdvisoryString(m.GetLicense(), skills.MaxLicenseBytes),
+			Compatibility: clampAdvisoryString(m.GetCompatibility(), skills.MaxCompatibilityBytes),
+			Metadata:      clampAdvisoryMetadata(m.GetMetadata()),
+			AllowedTools:  clampAllowedTools(m.GetAllowedTools()),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -103,6 +110,10 @@ func (s *SkillSource) ListSkillAssets(ctx context.Context, name string) ([]tool.
 	for _, a := range wire {
 		out = append(out, tool.SkillAsset{Name: a.GetName(), Size: a.GetSize(), Executable: a.GetExecutable()})
 	}
+	// Name-sorted for FS-source parity (the FS listAssets walk is sorted): the
+	// Skill tool's "Bundled files:" enumeration renders in this order, so a
+	// driver must not impose wire order on the model-facing listing.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
@@ -133,4 +144,68 @@ func singleLine(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// clampAdvisoryString bounds one advisory single-string field (license,
+// compatibility) to the parser's cap, rune-safe. These ride the
+// always-in-context SkillMeta, so an unbounded wire value must not inflate
+// every prompt.
+func clampAdvisoryString(s string, maxLen int) string {
+	return toolkit.TruncateRunes(strings.TrimSpace(s), maxLen)
+}
+
+// clampAdvisoryMetadata defensively bounds the advisory metadata map to the
+// parser's caps: at most skills.MaxMetadataEntries entries, each value ≤
+// skills.MaxMetadataValueBytes. On ANY overflow the WHOLE map drops to nil
+// (advisory data — dropping is honest, silent truncation is not). A nil/empty
+// map stays nil.
+func clampAdvisoryMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	if len(in) > skills.MaxMetadataEntries {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if len(v) > skills.MaxMetadataValueBytes {
+			return nil
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// clampAllowedTools defensively bounds the advisory allowed-tools list to the
+// parser's caps: at most skills.MaxAllowedTools names, each ≤
+// skills.MaxAllowedToolNameBytes. On count overflow the parsed PREFIX is kept
+// (it is a list of names — the prefix is the honest partial signal); an
+// over-long single name is truncated rune-safe. An empty list stays nil.
+func clampAllowedTools(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	if len(in) > skills.MaxAllowedTools {
+		in = in[:skills.MaxAllowedTools]
+	}
+	out := make([]string, 0, len(in))
+	for _, name := range in {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		out = append(out, toolkit.TruncateRunes(name, skills.MaxAllowedToolNameBytes))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
