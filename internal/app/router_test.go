@@ -543,3 +543,86 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 		}
 	}
 }
+
+// drainRunWithSubagentStart is drainRun plus capture of every EvSubagentStart payload, so a
+// test can assert what actually crossed the wire on the delegation-start event (not just the
+// terminal text).
+func drainRunWithSubagentStart(run interface {
+	Events() <-chan session.Event
+	Approve(string, session.ApprovalVerdict)
+}) (final string, starts []session.SubagentPayload) {
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+		}
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			starts = append(starts, *ev.Subagent)
+		}
+		if ev.Type == session.EvResult && ev.Result != nil {
+			final = ev.Result.Text
+		}
+	}
+	return final, starts
+}
+
+// END-TO-END (JAORMX PR #408 non-blocking note): buildModelRouterTask's composition-side
+// category-selector-empty miss (issue #287) — a detailed reason like
+// "category-selector-empty (category=small)" — must be REDUCED to the bare static code
+// before it reaches the delegation-start event (routingReasonPayload's allowlist,
+// engine/agent/subagent.go). This closes the composition-to-wire seam that was previously
+// only indirectly verified: TestBuildModelRouterTaskFailSoftOnEmptySelector proves the
+// closure returns the detailed string, and the routingReasonPayload unit tests prove the
+// reduction in isolation, but nothing drove the two together through a real Build → Run.
+func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+
+	built, err := Build(ctx, Config{
+		Workspace: workspace,
+		NoSoul:    true,
+		Model:     "gpt-5",
+		// The "small" category's selector is EMPTY — the classifier's pick maps to no
+		// concrete model, forcing buildModelRouterTask's composition-side miss.
+		RouterCategories: []permconfig.RouterCategory{
+			{Name: "small", Description: "trivial tasks", Model: ""},
+		},
+		RouterDefaultCategory: "small",
+		AllowAllTools:         true,
+		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient:   offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.NewWith(nil,
+				mockllm.ToolCallTurn(session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"explore"}`))),
+				mockllm.TextTurn(`{"category":"small"}`), // the classifier turn: picks "small"
+				mockllm.TextTurn("CHILD SUMMARY"),        // the child, fallen back to the session model
+				mockllm.TextTurn("parent done"),
+			)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(ctx, sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	final, starts := drainRunWithSubagentStart(run)
+	if final != "parent done" {
+		t.Fatalf("terminal text = %q, want parent done", final)
+	}
+
+	if len(starts) != 1 {
+		t.Fatalf("got %d subagent.start events, want exactly 1", len(starts))
+	}
+	if got := starts[0].RoutingReason; got != "category-selector-empty" {
+		t.Fatalf("delegation-start RoutingReason = %q, want the reduced static code "+
+			"\"category-selector-empty\" (the detailed \"category-selector-empty "+
+			"(category=small)\" composition reason must never reach the wire)", got)
+	}
+}
