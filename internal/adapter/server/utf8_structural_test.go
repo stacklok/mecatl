@@ -94,6 +94,11 @@ var harnessTokenFields = map[string]bool{
 	".Team.Roster[].RoutedCategory": true, ".Team.Roster[].RoutedModel": true,
 	".Team.Roster[].Model": true,
 	".Parallel.Model":      true, ".Parallel.RoutedCategory": true, ".Parallel.RoutedModel": true,
+	// RoutingReason (issue #397): harness gate constants / classifier miss codes /
+	// operator-authored category names, confined to a closed allowlist and reduced to a
+	// generic label otherwise (routingReasonPayload, engine/agent/subagent.go) — never
+	// producer/task/classifier prose.
+	".Subagent.RoutingReason": true, ".Team.Roster[].RoutingReason": true, ".Parallel.RoutingReason": true,
 	// MIME is an IANA machine token, byte-exact by contract (see RepairToolResult).
 	".ToolResult.Parts[].MIMEType":                              true,
 	".UserPrompt.Parts[].MIMEType":                              true,
