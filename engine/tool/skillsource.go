@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode"
 )
 
 // SkillOrigin classifies the ADMISSION TIER a skill entered the catalog
@@ -103,13 +104,19 @@ type SkillSource interface {
 
 // ValidSkillAssetName reports whether name is a valid LOGICAL asset name:
 // non-empty, slash-separated, relative, no empty/"."/".."/ segments, no
-// backslash, no NUL — the ONE validator every implementation/consumer shares.
+// backslash, and no control or line-separator rune — the ONE validator every
+// implementation/consumer shares.
 func ValidSkillAssetName(name string) bool {
 	if name == "" {
 		return false
 	}
 	if strings.ContainsAny(name, "\\\x00") {
 		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return false
+		}
 	}
 	for _, seg := range strings.Split(name, "/") {
 		if seg == "" || seg == "." || seg == ".." {

@@ -33,6 +33,12 @@ func TestValidSkillAssetName(t *testing.T) {
 		{"trailing slash (empty segment)", "a/", false},
 		{"double slash (empty segment)", "a//b", false},
 		{"NUL byte", "a\x00b", false},
+		{"newline", "a\nb", false},
+		{"carriage return", "a\rb", false},
+		{"ASCII control", "a\tb", false},
+		{"Unicode control NEL", "a\u0085b", false},
+		{"Unicode line separator", "a\u2028b", false},
+		{"Unicode paragraph separator", "a\u2029b", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

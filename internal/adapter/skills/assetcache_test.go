@@ -217,7 +217,7 @@ func TestMaterializerRejectsInvalidNames(t *testing.T) {
 func TestMaterializerRejectsHostileSkillName(t *testing.T) {
 	src := newMapSource()
 	mat := NewAssetMaterializer(src, t.TempDir())
-	for _, bad := range []string{"../evil", "a/b", `a\b`, "..", ""} {
+	for _, bad := range []string{"../evil", "a/b", `a\b`, "..", "", "line\nbreak", "line\u2028break"} {
 		if _, err := mat.Provision(context.Background(), bad); err == nil {
 			t.Errorf("Provision(%q) must reject a non-segment skill name", bad)
 		}

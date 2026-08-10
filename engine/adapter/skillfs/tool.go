@@ -13,6 +13,11 @@ import (
 // ToolName is the catalog name of the single skills tool.
 const ToolName = "Skill"
 
+// maxBundledAssetInventoryBytes bounds the activation result space devoted to
+// enumerating bundled asset names. The remainder remains available for the
+// skill's instructions, which are the activation's primary payload.
+const maxBundledAssetInventoryBytes = 8_000
+
 // descriptionPreamble is the static head of the Skill tool's description. The
 // per-skill metadata (name + one-line description) is appended to it at
 // construction time, so the always-in-context inventory of skills lives in the
@@ -156,10 +161,7 @@ func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Skill: %s\n", sk.Name)
-	if dir := act.BaseDir; dir != "" {
-		fmt.Fprintf(&b, "Base directory: %s\n", dir)
-		b.WriteString("Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n")
-	}
+	b.WriteString(renderBaseDirectory(act, true))
 	// Compatibility is the optional ADVISORY `compatibility` frontmatter field
 	// (issue #419). Surface it as an advisory note on activation so the model
 	// learns the author's stated compatibility (e.g. "mecatl >= 0.1"); it is
@@ -183,18 +185,7 @@ func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace
 		fmt.Fprintf(&b, "This skill declares allowed-tools: %s. These are the tools the skill expects to use; each call still follows normal permission rules.\n",
 			strings.Join(sk.AllowedTools, ", "))
 	}
-	// Bundled-asset enumeration (agentskills.io "should enumerate bundled
-	// scripts/resources but must not eagerly read them"): list the asset LOGICAL
-	// NAMES so the model knows what payloads exist without reading them. The
-	// FS source's listAssets walk already sorts by name; a driver source must
-	// also sort (the driver client sorts its wire results). Gated on len(Assets) > 0
-	// so an asset-less skill renders byte-identically to before.
-	if len(act.Assets) > 0 {
-		b.WriteString("Bundled files:\n")
-		for _, a := range act.Assets {
-			fmt.Fprintf(&b, "  - %s\n", a.Name)
-		}
-	}
+	b.WriteString(renderBundledAssetInventory(act.Assets))
 	b.WriteString("\n")
 	b.WriteString(act.Body)
 	return session.NewToolResult(in.ID, Truncate(b.String(), MaxOutputBytes)), nil
@@ -256,4 +247,43 @@ func RegisterSource(ctx context.Context, cat *tool.Catalog, src Source) ([]Skill
 // composed Source.
 func Register(cat *tool.Catalog, dir string) ([]Skill, []SkipError, error) {
 	return RegisterSource(context.Background(), cat, DirSource{Dir: dir})
+}
+
+// renderActivationAssets renders the activation-derived header shared by Skill
+// slash commands. Command sources cannot know which tools their consuming
+// catalog exposes, so they omit the tool-specific guidance.
+func renderActivationAssets(act Activation, includeToolGuidance bool) string {
+	return renderBaseDirectory(act, includeToolGuidance) + renderBundledAssetInventory(act.Assets)
+}
+
+func renderBaseDirectory(act Activation, includeToolGuidance bool) string {
+	if act.BaseDir == "" {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Base directory: %s\n", act.BaseDir)
+	if includeToolGuidance {
+		b.WriteString("Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n")
+	}
+	return b.String()
+}
+
+// renderBundledAssetInventory caps the prompt-visible inventory while retaining
+// the number of omitted assets. Both Skill activation and slash commands use it.
+func renderBundledAssetInventory(assets []tool.SkillAsset) string {
+	if len(assets) == 0 {
+		return ""
+	}
+	var inventory strings.Builder
+	inventory.WriteString("Bundled files:\n")
+	for i, a := range assets {
+		line := fmt.Sprintf("  - %s\n", a.Name)
+		omitted := fmt.Sprintf("  ... %d bundled files omitted.\n", len(assets)-i)
+		if inventory.Len()+len(line)+len(omitted) > maxBundledAssetInventoryBytes {
+			inventory.WriteString(omitted)
+			break
+		}
+		inventory.WriteString(line)
+	}
+	return inventory.String()
 }

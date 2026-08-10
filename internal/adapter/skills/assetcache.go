@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -211,13 +212,19 @@ func (m *AssetMaterializer) writeAsset(ctx context.Context, dir, skill string, a
 }
 
 // validSkillDirSegment reports whether a skill name is usable as ONE cache
-// path segment: non-empty, no separators/NUL, not "."/"..". Skill names come
-// from a remote driver, so this is enforced here rather than assumed.
+// path segment: non-empty, no separators/NUL/control/line-separator runes,
+// not "."/"..". Skill names come from a remote driver, so this is enforced
+// here rather than assumed.
 func validSkillDirSegment(name string) bool {
-	if name == "" || name == "." || name == ".." {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00") {
 		return false
 	}
-	return !strings.ContainsAny(name, "/\\\x00")
+	for _, r := range name {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return false
+		}
+	}
+	return true
 }
 
 // containedIn reports whether child (post-Clean) stays at or under parent.

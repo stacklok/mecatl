@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -51,6 +52,14 @@ type CommandSource interface {
 	CommandBody(ctx context.Context, name string) (body string, found bool, err error)
 }
 
+// CommandPostExpansionSource optionally supplies activation-derived text that
+// SourceExpander prepends after it has stripped frontmatter and substituted
+// placeholders in the command body. It preserves CommandSource's raw-template
+// contract while keeping non-template activation metadata out of substitution.
+type CommandPostExpansionSource interface {
+	CommandBodyWithPost(ctx context.Context, name string) (body, post string, found bool, err error)
+}
+
 // SourceExpander adapts a CommandSource to the CommandExpander/CommandLister
 // seams the agent loop and the palette consume, reusing the SAME grammar
 // (parseCommand), frontmatter stripping, and placeholder substitution as
@@ -76,6 +85,16 @@ func (e *SourceExpander) Expand(ctx context.Context, _ tool.Workspace, input str
 	if !ok {
 		return input, false, nil
 	}
+	if src, ok := e.src.(CommandPostExpansionSource); ok {
+		body, post, found, err := src.CommandBodyWithPost(ctx, name)
+		if err != nil {
+			return input, false, err
+		}
+		if !found {
+			return input, false, nil
+		}
+		return truncatePostExpansion(post + substitute(stripFrontmatter(body), args)), true, nil
+	}
 	body, found, err := e.src.CommandBody(ctx, name)
 	if err != nil {
 		return input, false, err
@@ -96,3 +115,27 @@ var (
 	_ CommandExpander = (*SourceExpander)(nil)
 	_ CommandLister   = (*SourceExpander)(nil)
 )
+
+// maxPostExpansionBytes and postExpansionTruncationMarker intentionally match
+// skillfs.MaxOutputBytes and skillfs.TruncationMarker. prompt cannot import the
+// skillfs adapter without reversing the dependency direction, so this private
+// copy keeps the post-expansion seam bounded with the same model-visible result.
+const (
+	maxPostExpansionBytes         = 25_000
+	postExpansionTruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"
+)
+
+// truncatePostExpansion preserves the established tool-output truncation
+// behavior: retain a rune-safe prefix of the ceiling and append its explicit
+// marker. It is applied after post metadata, frontmatter stripping, and
+// substitution, so the complete model-facing expansion is bounded.
+func truncatePostExpansion(s string) string {
+	if len(s) <= maxPostExpansionBytes {
+		return s
+	}
+	cut := maxPostExpansionBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + postExpansionTruncationMarker
+}

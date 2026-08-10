@@ -20,8 +20,8 @@ import (
 // It is translation plus a DEFENSIVE normalization layer on ListSkills (the
 // driver sits at the operator-infrastructure trust tier, but its metadata
 // feeds the always-in-context tool description, so the client re-enforces the
-// invariants the port promises rather than trusting the wire): blank-name
-// skills are dropped, duplicate names de-dup first-wins, the result is
+// invariants the port promises rather than trusting the wire): invalid skill
+// names are dropped, duplicate names de-dup first-wins, the result is
 // name-sorted, descriptions are forced single-line (control characters →
 // spaces) then re-truncated to the always-in-context cap
 // (skills.MaxDescriptionBytes), and Origin is stamped SkillOriginDriver
@@ -54,8 +54,8 @@ func (s *SkillSource) ListSkills(ctx context.Context) ([]tool.SkillMeta, error) 
 	seen := make(map[string]bool, len(wire))
 	for _, m := range wire {
 		name := m.GetName()
-		if strings.TrimSpace(name) == "" {
-			continue // drop blank-name skills
+		if !skills.ValidSkillName(name) {
+			continue // drop invalid model-facing identity data
 		}
 		if seen[name] {
 			continue // de-dup first-wins (wire order)
@@ -108,6 +108,9 @@ func (s *SkillSource) ListSkillAssets(ctx context.Context, name string) ([]tool.
 	wire := resp.GetAssets()
 	out := make([]tool.SkillAsset, 0, len(wire))
 	for _, a := range wire {
+		if !tool.ValidSkillAssetName(a.GetName()) {
+			return nil, fmt.Errorf("list skill assets: invalid logical asset name %q", a.GetName())
+		}
 		out = append(out, tool.SkillAsset{Name: a.GetName(), Size: a.GetSize(), Executable: a.GetExecutable()})
 	}
 	// Name-sorted for FS-source parity (the FS listAssets walk is sorted): the
@@ -122,6 +125,9 @@ func (s *SkillSource) ListSkillAssets(ctx context.Context, name string) ([]tool.
 // server pre-validates logical names via tool.ValidSkillAssetName) surfaces
 // as a non-nil infrastructure error — never content.
 func (s *SkillSource) ReadSkillAsset(ctx context.Context, skill, asset string) ([]byte, error) {
+	if !tool.ValidSkillAssetName(asset) {
+		return nil, fmt.Errorf("read skill asset: invalid logical asset name %q", asset)
+	}
 	resp, err := s.client.ReadSkillAsset(ctx, &driverv1.ReadSkillAssetRequest{Skill: skill, Asset: asset})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {

@@ -3,6 +3,7 @@ package skillfs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -446,6 +447,37 @@ func TestExecuteEnumeratesBundledAssets(t *testing.T) {
 	})
 }
 
+func TestToolExecuteBoundsBundledAssetInventory(t *testing.T) {
+	assets := make([]tool.SkillAsset, 1_000)
+	for i := range assets {
+		assets[i] = tool.SkillAsset{Name: fmt.Sprintf("references/%04d.md", i)}
+	}
+	tl := NewTool(
+		[]tool.SkillMeta{{Name: "asset-heavy", Description: "many assets"}},
+		assetInventoryActivator{body: "Follow these instructions.", assets: assets},
+	)
+	res := exec(t, tl, call(t, map[string]any{"name": "asset-heavy"}))
+	if res.IsError {
+		t.Fatalf("Execute errored: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "Follow these instructions.") {
+		t.Errorf("asset inventory consumed the activation result before the body: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "bundled files omitted.") {
+		t.Errorf("large asset inventory must disclose omitted entries, got %q", res.Content)
+	}
+}
+
+type assetInventoryActivator struct {
+	body    string
+	baseDir string
+	assets  []tool.SkillAsset
+}
+
+func (a assetInventoryActivator) Activate(context.Context, string) (Activation, error) {
+	return Activation{Body: a.body, BaseDir: a.baseDir, Assets: a.assets}, nil
+}
+
 func TestToolBodyTruncated(t *testing.T) {
 	big := strings.Repeat("x", 30_000)
 	tl := newToolOver(t, []Skill{{Name: "big", Description: "huge", Body: big}})
@@ -458,5 +490,28 @@ func TestToolBodyTruncated(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "truncated") {
 		t.Error("truncated body should carry a truncation marker")
+	}
+}
+
+func TestToolExecuteActivationHeaderOrder(t *testing.T) {
+	tl := NewTool([]tool.SkillMeta{{
+		Name: "ordered", Description: "ordered", Compatibility: "mecatl >= 0.1", AllowedTools: []string{"Read", "Bash"},
+	}}, assetInventoryActivator{
+		body:    "BODY",
+		baseDir: "/opt/skills/ordered",
+		assets:  []tool.SkillAsset{{Name: "references/api.md"}},
+	})
+	res := exec(t, tl, call(t, map[string]any{"name": "ordered"}))
+	if res.IsError {
+		t.Fatalf("Execute errored: %s", res.Content)
+	}
+	want := "Skill: ordered\n" +
+		"Base directory: /opt/skills/ordered\n" +
+		"Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n" +
+		"Compatibility: mecatl >= 0.1\n" +
+		"This skill declares allowed-tools: Read, Bash. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
+		"Bundled files:\n  - references/api.md\n\nBODY"
+	if res.Content != want {
+		t.Errorf("activation header order drifted:\n got %q\nwant %q", res.Content, want)
 	}
 }

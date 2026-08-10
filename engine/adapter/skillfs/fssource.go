@@ -190,6 +190,9 @@ func (s *FSSource) listAssets(name string) ([]tool.SkillAsset, error) {
 		if logical == SkillFileName {
 			return nil // the body, not a payload
 		}
+		if !tool.ValidSkillAssetName(logical) {
+			return fmt.Errorf("skills: invalid logical asset name %q", logical)
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err

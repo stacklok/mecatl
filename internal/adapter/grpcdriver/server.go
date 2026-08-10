@@ -308,6 +308,9 @@ func (s *skillSourceServer) ListSkillAssets(ctx context.Context, req *driverv1.L
 	}
 	out := make([]*driverv1.SkillAsset, len(assets))
 	for i, a := range assets {
+		if !tool.ValidSkillAssetName(a.Name) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid logical asset name %q", a.Name)
+		}
 		out[i] = &driverv1.SkillAsset{Name: a.Name, Size: a.Size, Executable: a.Executable}
 	}
 	return &driverv1.ListSkillAssetsResponse{Assets: out}, nil

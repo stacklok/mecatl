@@ -28,7 +28,9 @@ type hostileSkillServer struct {
 	// skillAssets maps skill name → wire assets (returned verbatim, unsorted,
 	// with a defensive NO-OP for unknown skills so the sentinel test stays
 	// intact). A nil value means the skill is known but asset-less.
-	skillAssets map[string][]*driverv1.SkillAsset
+	skillAssets         map[string][]*driverv1.SkillAsset
+	readSkillAssetCalls int
+	readSkillAssetData  []byte
 }
 
 func (s *hostileSkillServer) ListSkills(context.Context, *driverv1.ListSkillsRequest) (*driverv1.ListSkillsResponse, error) {
@@ -41,6 +43,11 @@ func (s *hostileSkillServer) ListSkillAssets(_ context.Context, req *driverv1.Li
 		return nil, status.Error(codes.NotFound, "skill not found")
 	}
 	return &driverv1.ListSkillAssetsResponse{Assets: assets}, nil
+}
+
+func (s *hostileSkillServer) ReadSkillAsset(_ context.Context, _ *driverv1.ReadSkillAssetRequest) (*driverv1.ReadSkillAssetResponse, error) {
+	s.readSkillAssetCalls++
+	return &driverv1.ReadSkillAssetResponse{Data: s.readSkillAssetData}, nil
 }
 
 func newHostileSkillClient(t *testing.T, metas []*driverv1.SkillMeta) *SkillSource {
@@ -59,7 +66,7 @@ func newHostileSkillClientWithAssets(t *testing.T, metas []*driverv1.SkillMeta, 
 }
 
 // TestSkillSourceListDefensiveDiscipline pins the §H client discipline: drop
-// blank names, de-dup first-wins, sort by name, force descriptions
+// invalid names, de-dup first-wins, sort by name, force descriptions
 // single-line then truncate to the always-in-context cap, and stamp Origin
 // SkillOriginDriver UNCONDITIONALLY (a driver must not claim project/user
 // tier labels).
@@ -69,6 +76,9 @@ func TestSkillSourceListDefensiveDiscipline(t *testing.T) {
 		{Name: "zeta", Description: "claims a trusted tier", Origin: "user"},
 		{Name: "", Description: "blank name must be dropped"},
 		{Name: "   ", Description: "whitespace name must be dropped"},
+		{Name: "line\nbreak", Description: "control name must be dropped"},
+		{Name: "line\u2028break", Description: "line-separator name must be dropped"},
+		{Name: "BadName", Description: "grammar-violating name must be dropped"},
 		{Name: "dup", Description: "first wins", Origin: "registry-of-doom"},
 		{Name: "dup", Description: "second loses"},
 		{Name: "alpha", Description: long, Origin: ""},
@@ -79,7 +89,7 @@ func TestSkillSourceListDefensiveDiscipline(t *testing.T) {
 		t.Fatalf("ListSkills: %v", err)
 	}
 	if len(got) != 4 {
-		t.Fatalf("ListSkills kept %d skills, want 4 (blank dropped, dup de-duped): %+v", len(got), got)
+		t.Fatalf("ListSkills kept %d skills, want 4 (invalid names dropped, dup de-duped): %+v", len(got), got)
 	}
 	if got[0].Name != "alpha" || got[1].Name != "dup" || got[2].Name != "multiline" || got[3].Name != "zeta" {
 		t.Errorf("not name-sorted: %q, %q, %q, %q", got[0].Name, got[1].Name, got[2].Name, got[3].Name)
@@ -140,19 +150,33 @@ func TestSkillSourceSentinelMapping(t *testing.T) {
 	if _, err := src.ReadSkillAsset(ctx, "review", "no-such.md"); !errors.Is(err, tool.ErrSkillAssetNotFound) {
 		t.Errorf("ReadSkillAsset(unknown asset) = %v, want ErrSkillAssetNotFound", err)
 	}
-	// Invalid logical name: a non-nil non-sentinel error carrying the server's
-	// INVALID_ARGUMENT (the wrapper pre-validates via ValidSkillAssetName),
-	// never content. The explicit code assertion guards against a regression
-	// to Internal/Unknown silently passing as "some error".
+	// Invalid logical names are rejected locally before an RPC; a separate raw
+	// hostile-server test proves a nonconforming driver cannot supply content.
 	data, err := src.ReadSkillAsset(ctx, "review", "../escape")
 	if err == nil || len(data) != 0 {
 		t.Errorf("ReadSkillAsset(invalid name) = %q, %v; want an error and no content", data, err)
 	}
 	if errors.Is(err, tool.ErrSkillAssetNotFound) {
-		t.Errorf("invalid name mapped to the not-found sentinel %v; want a distinct infra error", err)
+		t.Errorf("invalid name mapped to the not-found sentinel %v; want a distinct validation error", err)
 	}
-	if got := status.Code(err); got != codes.InvalidArgument {
-		t.Errorf("ReadSkillAsset(invalid name) status code = %v, want InvalidArgument (server pre-validation)", got)
+}
+
+// TestSkillSourceReadAssetRejectsInvalidNameBeforeRPC proves the client keeps
+// the SkillSource invalid-name contract even when a raw nonconforming driver
+// would return bytes for the request.
+func TestSkillSourceReadAssetRejectsInvalidNameBeforeRPC(t *testing.T) {
+	server := &hostileSkillServer{readSkillAssetData: []byte("hostile driver content")}
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSkillSourceServiceServer(gs, server)
+	})
+	src := NewSkillSource(conn)
+
+	data, err := src.ReadSkillAsset(context.Background(), "bundle", "references/forged\nasset.md")
+	if err == nil || len(data) != 0 {
+		t.Fatalf("ReadSkillAsset(invalid) = %q, %v; want local error and no content", data, err)
+	}
+	if server.readSkillAssetCalls != 0 {
+		t.Errorf("invalid asset reached hostile driver %d time(s), want no RPC", server.readSkillAssetCalls)
 	}
 }
 
@@ -323,5 +347,15 @@ func TestSkillSourceListAssetsSortsHostileOrder(t *testing.T) {
 	}
 	if got[0].Name != "references/api.md" || got[1].Name != "scripts/run.sh" {
 		t.Errorf("ListSkillAssets not sorted: %q, %q (want references/api.md then scripts/run.sh)", got[0].Name, got[1].Name)
+	}
+}
+
+func TestSkillSourceListAssetsRejectsControlName(t *testing.T) {
+	src := newHostileSkillClientWithAssets(t, []*driverv1.SkillMeta{{Name: "bundle", Description: "x", HasAssets: true}}, map[string][]*driverv1.SkillAsset{
+		"bundle": {&driverv1.SkillAsset{Name: "references/good\nforged.md"}},
+	})
+	assets, err := src.ListSkillAssets(context.Background(), "bundle")
+	if err == nil || assets != nil {
+		t.Fatalf("ListSkillAssets(control name) = (%+v, %v), want nil assets and error", assets, err)
 	}
 }

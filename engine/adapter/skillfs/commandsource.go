@@ -31,6 +31,7 @@ import (
 // construction, the same way the Skill tool's inventory is.
 type SkillCommandSource struct {
 	metas []tool.SkillMeta
+	names map[string]struct{}
 	act   Activator
 }
 
@@ -39,7 +40,13 @@ type SkillCommandSource struct {
 // loads a named skill's body on CommandBody. A nil/empty metas yields a source
 // that lists and expands nothing (the no-skills path stays byte-identical).
 func NewSkillCommandSource(metas []tool.SkillMeta, act Activator) *SkillCommandSource {
-	return &SkillCommandSource{metas: metas, act: act}
+	names := make(map[string]struct{}, len(metas))
+	for _, m := range metas {
+		if prompt.ValidCommandName(m.Name) {
+			names[m.Name] = struct{}{}
+		}
+	}
+	return &SkillCommandSource{metas: metas, names: names, act: act}
 }
 
 // ListCommands returns one prompt.Command per skill, defensively filtered by
@@ -68,37 +75,57 @@ func (s *SkillCommandSource) ListCommands(_ context.Context) ([]prompt.Command, 
 	return out, nil
 }
 
-// CommandBody returns the named skill's body. An unknown name (or a name not
-// invocable as a command) is the NORMAL found=false outcome (the input passes
-// through the expander unchanged), never an error. An activation fault (e.g. a
-// driver materialization failure) is returned as an error, mirroring the Skill
-// tool's addressable activation-error posture.
+// CommandBody returns the named skill's raw instruction template. Activation
+// metadata is deliberately not concatenated here: SourceExpander substitutes
+// placeholders only in this body before its optional post-expansion seam adds
+// the metadata.
 func (s *SkillCommandSource) CommandBody(ctx context.Context, name string) (string, bool, error) {
-	if name == "" || s.act == nil {
-		return "", false, nil
+	act, found, err := s.activate(ctx, name)
+	if err != nil || !found {
+		return "", found, err
 	}
-	// Defensively skip a name the command grammar could not have parsed, so an
-	// unknown non-command name short-circuits to found=false without an activator
-	// round-trip (a not-found Activate is the normal outcome anyway, but this
-	// keeps the contract honest for a caller that hand-builds a name).
-	if !prompt.ValidCommandName(name) {
-		return "", false, nil
+	return act.Body, true, nil
+}
+
+// CommandBodyWithPost supplies the raw body plus the activation header for
+// prompt.SourceExpander. Keeping them separate prevents $1 and $ARGUMENTS in
+// a base directory or logical asset name from being treated as placeholders.
+func (s *SkillCommandSource) CommandBodyWithPost(ctx context.Context, name string) (body, post string, found bool, err error) {
+	act, found, err := s.activate(ctx, name)
+	if err != nil || !found {
+		return "", "", found, err
+	}
+	if len(act.Assets) == 0 {
+		return act.Body, "", true, nil
+	}
+	return act.Body, renderActivationAssets(act, false), true, nil
+}
+
+func (s *SkillCommandSource) activate(ctx context.Context, name string) (Activation, bool, error) {
+	if name == "" || s.act == nil || !prompt.ValidCommandName(name) {
+		return Activation{}, false, nil
+	}
+	if _, ok := s.names[name]; !ok {
+		return Activation{}, false, nil
 	}
 	act, err := s.act.Activate(ctx, name)
 	if err != nil {
 		if errors.Is(err, tool.ErrSkillNotFound) {
-			return "", false, nil
+			return Activation{}, false, nil
 		}
-		return "", false, err
+		return Activation{}, false, err
 	}
-	body := strings.TrimSpace(act.Body)
-	if body == "" {
+	act.Body = strings.TrimSpace(act.Body)
+	if act.Body == "" {
 		// An empty body is not an expansion: leave the input unchanged so the
-		// model sees its raw `/name` rather than a blank substitution.
-		return "", false, nil
+		// model sees its raw /name rather than a blank substitution.
+		return Activation{}, false, nil
 	}
-	return body, true, nil
+	return act, true, nil
 }
 
-// Compile-time assertion that *SkillCommandSource satisfies prompt.CommandSource.
-var _ prompt.CommandSource = (*SkillCommandSource)(nil)
+// Compile-time assertions for the base and optional post-expansion seams.
+var (
+	_ prompt.CommandSource              = (*SkillCommandSource)(nil)
+	_ prompt.CommandPostExpansionSource = (*SkillCommandSource)(nil)
+)

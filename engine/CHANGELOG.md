@@ -29,6 +29,13 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   through the loop. Classified Added per COMPATIBILITY.md (new exported funcs
   are a minor bump). (issue #402)
 
+- **`prompt.CommandPostExpansionSource`** — optional additive command-source
+  extension consumed by `prompt.SourceExpander`: it supplies activation-derived
+  text after the source's raw template has undergone the ordinary frontmatter
+  stripping and placeholder substitution. This prevents non-template metadata
+  from being interpreted as `$1` or `$ARGUMENTS`; sources that implement only
+  `CommandSource` remain byte-identical. Classified Added (minor).
+
 - **Advisory skill frontmatter fields** (#419) — the optional `license`,
   `compatibility`, `metadata`, and `allowed-tools` agentskills.io frontmatter
   fields are now parsed and carried through to the port as advisory/observability

@@ -1,5 +1,6 @@
     ifacemethod func (CommandExpander).Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)
     ifacemethod func (CommandLister).List(ctx context.Context, ws tool.Workspace) ([]Command, error)
+    ifacemethod func (CommandPostExpansionSource).CommandBodyWithPost(ctx context.Context, name string) (body string, post string, found bool, err error)
     ifacemethod func (CommandSource).CommandBody(ctx context.Context, name string) (body string, found bool, err error)
     ifacemethod func (CommandSource).ListCommands(ctx context.Context) ([]Command, error)
     ifacemethod func (InstructionAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
@@ -43,6 +44,7 @@ type Builder func(Config) Layered
 type Command struct{Name string; Description string}
 type CommandExpander interface{Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)}
 type CommandLister interface{List(ctx context.Context, ws tool.Workspace) ([]Command, error)}
+type CommandPostExpansionSource interface{CommandBodyWithPost(ctx context.Context, name string) (body string, post string, found bool, err error)}
 type CommandSource interface{CommandBody(ctx context.Context, name string) (body string, found bool, err error); ListCommands(ctx context.Context) ([]Command, error)}
 type Config struct{Role string; Tone string; Safety string; Tools []tool.ToolSpec; Env Env}
 type DirCommandExpander struct{}
