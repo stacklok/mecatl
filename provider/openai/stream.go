@@ -33,12 +33,26 @@ type streamState struct {
 	// Message.Text is one string, so a turn may carry exactly one visible text
 	// part; a second distinct text item/content part is a loud error rather than
 	// a silent fusion (see translate's "response.output_text.delta" case). These
-	// are per-stream only — no payload buffering, so the adapter stays
-	// effectively stateless.
+	// are per-stream only.
 	textItemID       string
 	textOutputIndex  int64
 	textContentIndex int64
 	textIndexSet     bool
+
+	// reasoning accumulates the turn's (id, encrypted_content) reasoning items in
+	// arrival order, packed into ONE ChunkReasoningItem at the terminal event.
+	// A turn may emit several — each blob is bound to its own item id and must be
+	// replayed under that id, which one chunk per item cannot express (the port
+	// carries a single id, and the loop folds the chunks into one Message field).
+	// See reasoning.go. This is the adapter's only payload buffering; it is
+	// bounded by the turn's reasoning output and released with the stream.
+	reasoning []reasoningItem
+
+	// callsSeen counts the function_call items emitted so far this turn. It stamps
+	// each buffered reasoning item's After, which is what lets replay put the item
+	// back BETWEEN the right two tool calls instead of hoisting every reasoning
+	// item to the front of the turn.
+	callsSeen int
 }
 
 // errTruncatedStream is surfaced when the Responses stream ends cleanly (no error
@@ -74,10 +88,10 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 //   - response.output_text.delta            -> ChunkText (event.Delta)
 //   - response.reasoning_summary_text.delta -> ChunkReasoning (event.Delta, DISPLAY summary)
 //   - response.reasoning_text.delta         -> ChunkReasoning (event.Delta, DISPLAY summary)
-//   - response.output_item.done (reasoning)     -> ChunkReasoningItem (encrypted_content, REPLAY blob)
+//   - response.output_item.done (reasoning)     -> BUFFERED (encrypted_content + item id)
 //   - response.output_item.done (message)       -> ChunkPhase (opaque phase marker, REPLAYED)
 //   - response.output_item.done (function_call) -> ChunkToolCall
-//   - response.completed                    -> ChunkUsage then ChunkDone(end_turn)
+//   - response.completed                    -> ChunkReasoningItem (packed)? then ChunkUsage, ChunkDone(end_turn)
 //   - response.incomplete                   -> ChunkUsage then ChunkDone(error)
 //   - response.failed / error               -> non-nil error (provider message)
 //
@@ -86,6 +100,13 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 // prose for display, whereas the replay blob is OpenAI's opaque encrypted_content
 // token that must be sent back verbatim (request.go) for stateless multi-turn
 // reasoning continuity. They MUST NOT be conflated.
+//
+// Reasoning replay items are BUFFERED across the turn and packed into a single
+// ChunkReasoningItem at response.completed, because each blob only verifies
+// under its own reasoning-item id and the port carries one id per chunk. See
+// streamState.reasoning and reasoning.go. A turn that ends WITHOUT
+// response.completed (incomplete/failed/error/truncation) drops them, which
+// costs nothing: the engine discards the whole assistant message on those paths.
 //
 // Single visible text part assumption: the harness assembles exactly ONE visible
 // assistant text part per turn, because the domain Message.Text is a single
@@ -121,13 +142,23 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		case "reasoning":
 			// The reasoning item carries encrypted_content (requested via
 			// Include: reasoning.encrypted_content) — the opaque REPLAY blob that
-			// must be sent back verbatim for stateless reasoning continuity. An
-			// empty blob (non-reasoning models, or encryption not honoured) yields
-			// no chunk, so replay is a no-op.
-			if item.EncryptedContent == "" {
+			// must be sent back verbatim for stateless reasoning continuity, bound
+			// to THIS item's id. An empty blob (non-reasoning models, or encryption
+			// not honoured) is skipped, so replay is a no-op. An id-less item is
+			// skipped too: it could only be replayed as `"id":""`, which strict
+			// gateways reject (the D1a degrade).
+			//
+			// It is BUFFERED rather than emitted here: a turn may produce several,
+			// and each blob only verifies under its own id, so they ride out
+			// together as one packed envelope at the terminal event (see the
+			// "response.completed" case below, and reasoning.go).
+			if item.EncryptedContent == "" || item.ID == "" {
 				return nil, nil
 			}
-			return []port.Chunk{{Kind: port.ChunkReasoningItem, Text: item.EncryptedContent, ReasoningItemID: item.ID}}, nil
+			st.reasoning = append(st.reasoning, reasoningItem{
+				ID: item.ID, Blob: item.EncryptedContent, After: st.callsSeen,
+			})
+			return nil, nil
 		case "message":
 			// The assembled assistant message item carries an opaque PHASE marker
 			// ("commentary" / "final_answer") that store:false manual-replay apps must
@@ -156,6 +187,9 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 				Name:   item.Name,
 				Args:   json.RawMessage(item.Arguments.OfString),
 			}
+			// Advance the cursor a later reasoning item stamps itself against, so
+			// replay can rebuild the original interleaving (see reasoningItem.After).
+			st.callsSeen++
 			return []port.Chunk{{Kind: port.ChunkToolCall, ToolCall: &call}}, nil
 		default:
 			return nil, nil
@@ -167,10 +201,19 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		usage := mapUsage(event.Response.Usage)
-		return []port.Chunk{
-			{Kind: port.ChunkUsage, Usage: &usage},
-			{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
-		}, nil
+		chunks := make([]port.Chunk, 0, 3)
+		// The turn's buffered reasoning items, packed into one replay blob. It
+		// rides out here — the only point at which the full ordered list is known.
+		// ReasoningItemID stays EMPTY: with several ids in play the port's single
+		// id cannot name them, and each id now travels inside the envelope beside
+		// the blob it belongs to (provider/anthropic does the same).
+		if packed := packReasoningItems(st.reasoning); packed != "" {
+			chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
+		}
+		return append(chunks,
+			port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
+			port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
+		), nil
 
 	case "response.incomplete":
 		// An incomplete response still carries usage and a reason (e.g.

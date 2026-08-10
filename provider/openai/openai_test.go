@@ -1,8 +1,11 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -206,11 +211,12 @@ func TestTranslateReasoningTurnWithCachedTokens(t *testing.T) {
 		// Human-readable summary deltas: DISPLAY-only.
 		{Kind: port.ChunkReasoning, Text: "Let me think"},
 		{Kind: port.ChunkReasoning, Text: " about this."},
-		// The assembled reasoning item's encrypted_content: the opaque REPLAY blob.
-		// The chunk carries the provider's per-item id (item.ID, e.g. "rs_1") so
-		// the loop can stamp it onto Message.ReasoningItemID for verbatim replay.
-		{Kind: port.ChunkReasoningItem, Text: "ENCRYPTED_BLOB", ReasoningItemID: "rs_1"},
 		{Kind: port.ChunkText, Text: "Answer."},
+		// The turn's reasoning items, packed into ONE replay blob at the terminal
+		// event: each encrypted_content paired with the item id it is bound to
+		// (see reasoning.go). ReasoningItemID is empty on the chunk — the ids
+		// travel inside the envelope, because a turn may carry several.
+		{Kind: port.ChunkReasoningItem, Text: packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "ENCRYPTED_BLOB"}})},
 		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 80, ReasoningTokens: 40}},
 		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 	}
@@ -296,16 +302,23 @@ func TestUsageReasoningSubsetOfOutput(t *testing.T) {
 //     becomes "", and replay degrades to a no-op — this test fails first.
 func TestReasoningReplayUsesRealBlobNotSummary(t *testing.T) {
 	// Fact 1: the streamed reasoning item is the blob, the deltas are the summary.
+	// The replay chunk carries the packed envelope, so the blob is read back out
+	// of it (unpacking is the same path replay itself takes).
 	got := decodeFixture(t, "reasoning_turn.sse")
-	var summary, blob string
+	var summary, packed string
 	for _, c := range got {
 		switch c.Kind {
 		case port.ChunkReasoning:
 			summary += c.Text
 		case port.ChunkReasoningItem:
-			blob += c.Text
+			packed += c.Text
 		}
 	}
+	items := unpackReasoningItems(packed, "")
+	if len(items) != 1 {
+		t.Fatalf("unpacked %d reasoning items, want 1; packed=%q", len(items), packed)
+	}
+	blob := items[0].Blob
 	if blob != "ENCRYPTED_BLOB" {
 		t.Errorf("reasoning REPLAY item = %q, want the encrypted_content blob %q", blob, "ENCRYPTED_BLOB")
 	}
@@ -1337,6 +1350,265 @@ func TestStreamContextCancel(t *testing.T) {
 	if n >= 50 {
 		t.Fatalf("got %d chunks; cancellation did not stop the stream", n)
 	}
+}
+
+// TestStreamRecoversInvalidEncryptedContent pins the one-shot stateless replay
+// recovery: a pre-commit 400 naming an invalid encrypted reasoning item causes one
+// retry with only reasoning blobs removed. Visible/tool history and provider-assigned
+// function-call item IDs remain intact so recovery does not create a second replay bug.
+func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			return
+		}
+		bodies = append(bodies, body)
+		if len(bodies) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(
+			"event: response.output_text.delta\n" +
+				`data: {"type":"response.output_text.delta","sequence_number":0,"delta":"recovered"}` + "\n\n" +
+				"event: response.completed\n" +
+				`data: {"type":"response.completed","sequence_number":1,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"))
+	}))
+	defer srv.Close()
+
+	assistant := session.NewAssistantMessage("", "opaque-blob", []session.ToolCall{{
+		ID: "call_1", Name: "Read", Args: json.RawMessage(`{"path":"README.md"}`), ItemID: "fc_keep",
+	}})
+	assistant.ReasoningItemID = "rs_bad"
+	assistant.Text = "visible assistant text"
+	assistant.ProviderPhase = "commentary"
+	req := port.LLMRequest{Model: "gpt-5.6-terra", Messages: []session.Message{
+		session.NewUserMessage("inspect"),
+		assistant,
+		{Role: session.RoleTool, ToolResult: func() *session.ToolResult {
+			result := session.NewToolResult("call_1", "ok")
+			return &result
+		}()},
+	}}
+	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
+	seq, err := p.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var text string
+	for chunk, streamErr := range seq {
+		if streamErr != nil {
+			t.Fatalf("recovery stream: %v", streamErr)
+		}
+		if chunk.Kind == port.ChunkText {
+			text += chunk.Text
+		}
+	}
+	if text != "recovered" {
+		t.Fatalf("text = %q, want recovered", text)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("request count = %d, want exactly 2", len(bodies))
+	}
+
+	var first, second struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(bodies[0], &first); err != nil {
+		t.Fatalf("decode first request: %v", err)
+	}
+	if err := json.Unmarshal(bodies[1], &second); err != nil {
+		t.Fatalf("decode fallback request: %v", err)
+	}
+	if got := countInputType(first.Input, "reasoning"); got != 1 {
+		t.Fatalf("first reasoning items = %d, want 1", got)
+	}
+	if got := countInputType(second.Input, "reasoning"); got != 0 {
+		t.Fatalf("fallback reasoning items = %d, want 0", got)
+	}
+	firstWithoutReasoning := make([]map[string]any, 0, len(first.Input)-1)
+	for _, item := range first.Input {
+		if item["type"] != "reasoning" {
+			firstWithoutReasoning = append(firstWithoutReasoning, item)
+		}
+	}
+	wantKept, _ := json.Marshal(firstWithoutReasoning)
+	gotKept, _ := json.Marshal(second.Input)
+	if !bytes.Equal(gotKept, wantKept) {
+		t.Fatalf("fallback changed non-reasoning history:\n got: %s\nwant: %s", gotKept, wantKept)
+	}
+	var keptID string
+	for _, item := range second.Input {
+		if item["type"] == "function_call" {
+			keptID, _ = item["id"].(string)
+		}
+	}
+	if keptID != "fc_keep" {
+		t.Fatalf("fallback function-call item id = %q, want fc_keep", keptID)
+	}
+	if req.Messages[1].Reasoning != "opaque-blob" || req.Messages[1].ReasoningItemID != "rs_bad" {
+		t.Fatal("recovery mutated the caller's request")
+	}
+}
+
+func TestStreamEncryptedReasoningRecoveryBoundary(t *testing.T) {
+	invalidBody := `{"error":{"code":"invalid_encrypted_content","message":"Encrypted content could not be verified or decrypted"}}`
+	tests := []struct {
+		name      string
+		reasoning string
+		itemID    string
+		body      string
+	}{
+		{name: "unrelated 400", reasoning: "blob", itemID: "rs_1", body: `{"error":{"message":"unrelated bad parameter"}}`},
+		{name: "blob without id has no wire envelope", reasoning: "blob", body: invalidBody},
+		{name: "id without blob has no wire envelope", itemID: "rs_1", body: invalidBody},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			var requestBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				requestBody, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			assistant := session.NewAssistantMessage("visible", tt.reasoning, nil)
+			assistant.ReasoningItemID = tt.itemID
+			req := port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}}
+			err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1")), req)
+			if err == nil {
+				t.Fatal("stream error = nil, want rejected request")
+			}
+			if calls != 1 {
+				t.Fatalf("request count = %d, want 1 (no hidden fallback)", calls)
+			}
+			if tt.reasoning == "" || tt.itemID == "" {
+				var wire struct {
+					Input []map[string]any `json:"input"`
+				}
+				if err := json.Unmarshal(requestBody, &wire); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				if got := countInputType(wire.Input, "reasoning"); got != 0 {
+					t.Fatalf("partial reasoning state serialized %d reasoning envelope(s), want 0", got)
+				}
+			}
+		})
+	}
+}
+
+func TestStreamDoesNotRepairPreChunkSSEError(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w,
+			"event: error\n"+
+				`data: {"type":"error","sequence_number":0,"code":"invalid_encrypted_content","message":"Encrypted content could not be verified or decrypted"}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	assistant := session.NewAssistantMessage("", "blob", nil)
+	assistant.ReasoningItemID = "rs_1"
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
+	if err == nil {
+		t.Fatal("stream error = nil, want pre-chunk SSE rejection")
+	}
+	if calls != 1 {
+		t.Fatalf("request count = %d, want 1 because HTTP 200 SSE errors do not unlock repair", calls)
+	}
+}
+
+func TestStreamDoesNotRepairAfterNeutralChunk(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w,
+			"event: response.reasoning_summary_text.delta\n"+
+				`data: {"type":"response.reasoning_summary_text.delta","sequence_number":0,"delta":"thinking"}`+"\n\n"+
+				"event: error\n"+
+				`data: {"type":"error","sequence_number":1,"code":"invalid_encrypted_content","message":"Encrypted content could not be verified or decrypted"}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	assistant := session.NewAssistantMessage("", "blob", nil)
+	assistant.ReasoningItemID = "rs_1"
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
+	if err == nil {
+		t.Fatal("stream error = nil, want invalid encrypted-content event")
+	}
+	if calls != 1 {
+		t.Fatalf("request count = %d, want 1 after a neutral chunk committed the attempt", calls)
+	}
+}
+
+func TestStreamFailedEncryptedReasoningFallbackIsNonRetryableAndCausal(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"invalid_encrypted_content","message":"Encrypted content could not be verified or decrypted"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":"server_error","message":"cleaned fallback unavailable"}}`)
+	}))
+	defer srv.Close()
+
+	assistant := session.NewAssistantMessage("", "blob", nil)
+	assistant.ReasoningItemID = "rs_1"
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
+	if calls != 2 {
+		t.Fatalf("request count = %d, want initial request plus exactly one cleaned fallback", calls)
+	}
+	var retryDecision interface{ Retryable() bool }
+	if !errors.As(err, &retryDecision) || retryDecision.Retryable() {
+		t.Fatalf("fallback error = %T %v, want explicit non-retryable marker", err, err)
+	}
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("fallback error cause = %T %v, want unwrap-visible OpenAI 503", err, err)
+	}
+}
+
+func collectStreamError(t *testing.T, p *Provider, req port.LLMRequest) error {
+	t.Helper()
+	seq, err := p.Stream(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	var streamErr error
+	for _, err := range seq {
+		if err != nil {
+			streamErr = err
+		}
+	}
+	return streamErr
+}
+
+func countInputType(items []map[string]any, kind string) int {
+	var count int
+	for _, item := range items {
+		if item["type"] == kind {
+			count++
+		}
+	}
+	return count
 }
 
 func itoa(i int) string {

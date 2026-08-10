@@ -1,0 +1,36 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_multi","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"rs_aaa","type":"reasoning","summary":[]}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":2,"item_id":"rs_aaa","output_index":0,"summary_index":0,"delta":"First I inspect the code."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"id":"rs_aaa","type":"reasoning","summary":[{"type":"summary_text","text":"First I inspect the code."}],"encrypted_content":"ENCRYPTED_AAA"}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":4,"output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_one","name":"Read","arguments":"{\"path\":\"a.go\"}"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":5,"output_index":2,"item":{"id":"rs_bbb","type":"reasoning","summary":[]}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":6,"item_id":"rs_bbb","output_index":2,"summary_index":0,"delta":" Now I delegate the edit."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":7,"output_index":2,"item":{"id":"rs_bbb","type":"reasoning","summary":[{"type":"summary_text","text":" Now I delegate the edit."}],"encrypted_content":"ENCRYPTED_BBB"}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":8,"output_index":3,"item":{"id":"fc_2","type":"function_call","call_id":"call_two","name":"Subagent","arguments":"{\"task\":\"Enforce client map bound\"}"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":9,"output_index":4,"item":{"id":"rs_ccc","type":"reasoning","summary":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":10,"output_index":4,"item":{"id":"rs_ccc","type":"reasoning","summary":[],"encrypted_content":"ENCRYPTED_CCC"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":11,"response":{"id":"resp_multi","status":"completed","output":[],"usage":{"input_tokens":80,"input_tokens_details":{"cached_tokens":20},"output_tokens":40,"output_tokens_details":{"reasoning_tokens":25},"total_tokens":120}}}
+

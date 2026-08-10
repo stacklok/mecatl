@@ -59,6 +59,8 @@ mecatl sends the **full conversation history on every turn** (`store: false`). T
 Two fields on `session.Message` carry provider-private blobs that ride the stateless replay without being interpreted:
 
 - **`Message.Reasoning`** — an opaque replay blob (OpenAI `reasoning_item.encrypted_content`, or Anthropic's `(thinking, signature)` pair). The loop stores it on the assistant message and sends it back verbatim on the next call. It is never displayed and never parsed; the display summary arrives on `ChunkReasoning` instead.
+
+  It is one string, but a provider's replay unit may be a *list* — several OpenAI reasoning items, several Anthropic thinking blocks, one per step of a turn that interleaves reasoning with tool calls. When that happens the adapter packs the ordered list into its own JSON envelope inside this one string and unpacks it on replay. Emitting one `ChunkReasoningItem` per unit and letting the loop concatenate them does **not** work: the loop keeps only the last item id, so per-unit ids are lost and OpenAI rejects the replay with `invalid_encrypted_content`. Structure belongs in your envelope, never in the loop's concatenation.
 - **`Message.ProviderPhase`** — an OpenAI Responses API phase marker (`commentary` / `final_answer`). GPT-5.x uses it to distinguish intermediate preambles from the actual answer. The loop stores and replays it verbatim; dropping it causes the model to treat every preamble as the final answer and stop early.
 
 Neither of these widens `LLMRequest`. The structure is neutral (one opaque blob per message); the contents are provider-private.
@@ -73,7 +75,7 @@ Neither of these widens `LLMRequest`. The structure is neutral (one opaque blob 
 |------|--------------|-----------------|
 | `ChunkText` | `Text` | An assistant text delta — append to the in-progress message |
 | `ChunkReasoning` | `Text` | A human-readable reasoning summary delta — display-only, not replayed |
-| `ChunkReasoningItem` | `Text` | The opaque reasoning replay blob — stored on `Message.Reasoning`, never displayed |
+| `ChunkReasoningItem` | `Text` | The opaque reasoning replay blob — stored on `Message.Reasoning`, never displayed. Emit **one per turn**; pack a multi-unit payload into your own envelope |
 | `ChunkToolCall` | `ToolCall` | A fully assembled tool call, emitted once complete (not streamed per-token) |
 | `ChunkUsage` | `Usage` | Terminal usage/cache accounting — input tokens, output tokens, cache hits |
 | `ChunkDone` | `Stop` | End of stream with the stop reason (`end_turn`, `max_tokens`, `error`, etc.) |

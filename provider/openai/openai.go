@@ -21,8 +21,11 @@ package openai
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 
 	oai "github.com/openai/openai-go/v3"
@@ -174,61 +177,169 @@ func New(opts ...Option) *Provider {
 // stops (abandoning the underlying stream) when ctx is cancelled, and surfaces a
 // terminal transport error as the iterator's error. The outer error is reserved
 // for a failure to construct the request parameters.
+//
+// A rejection of the replayed encrypted reasoning is REPAIRED once, before any
+// chunk has gone out: see withoutEncryptedReasoning. Everything else — an
+// ordinary 4xx, a post-commit failure, a cancellation — stays terminal.
 func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	params, err := p.buildParams(req)
 	if err != nil {
 		return nil, err
 	}
 
-	stream := p.client.NewStreaming(ctx, params)
-
 	return func(yield func(port.Chunk, error) bool) {
-		defer func() { _ = stream.Close() }()
-		var st streamState
-		for stream.Next() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			event := stream.Current()
-			chunks, terr := translate(event, &st)
-			for _, c := range chunks {
-				if !yield(c, nil) {
-					return
-				}
-			}
-			if terr != nil {
-				// A terminal failure event (response.failed / error / incomplete)
-				// carries the provider's real message; surface it as the stream's
-				// error so the loop reports the reason rather than a bare stop.
-				yield(port.Chunk{}, terr)
-				return
-			}
-		}
-		if err := stream.Err(); err != nil {
-			// Don't report a plain context cancellation as a stream error; the
-			// caller cancelled deliberately.
-			if ctx.Err() != nil {
-				return
-			}
-			yield(port.Chunk{}, err)
+		emitted, stopped, streamErr := p.streamAttempt(ctx, params, yield)
+		if stopped || streamErr == nil || ctx.Err() != nil {
 			return
 		}
-		if !st.done {
-			// Clean EOF but NO terminal Responses event: the SDK's ssestream
-			// returns Err()==nil on a plain mid-stream EOF, so a dropped connection
-			// is indistinguishable from a normal close here. FAIL CLOSED — do NOT let
-			// this fall through as a benign end, or the engine promotes the partial
-			// text to a successful StopEndTurn (loop.go finishTurnNoTools). Surface
-			// a truncation error instead (retryable pre-commit; terminal once a
-			// committing chunk has gone out, by the no-replay rule).
-			if ctx.Err() != nil {
-				return
-			}
-			yield(port.Chunk{}, errTruncatedStream)
+
+		// Encrypted reasoning is intentionally opaque and normally replayed verbatim.
+		// A provider may nevertheless reject a blob it previously returned. Recovery is
+		// safe only before the attempt emitted any neutral chunk: retry once with just
+		// the encrypted reasoning items removed, retaining visible history, tool
+		// calls/results, provider phases, and provider-assigned tool item IDs. Ordinary
+		// 4xx errors and post-commit failures remain terminal.
+		fallbackReq, hasEncryptedReasoning := withoutEncryptedReasoning(req)
+		if emitted || !hasEncryptedReasoning || !isInvalidEncryptedContent(streamErr) {
+			yield(port.Chunk{}, streamErr)
+			return
+		}
+		fallbackParams, buildErr := p.buildParams(fallbackReq)
+		if buildErr != nil {
+			yield(port.Chunk{}, buildErr)
+			return
+		}
+		_, stopped, streamErr = p.streamAttempt(ctx, fallbackParams, yield)
+		if !stopped && streamErr != nil && ctx.Err() == nil {
+			yield(port.Chunk{}, &encryptedReasoningFallbackError{err: streamErr})
 		}
 	}, nil
+}
+
+// encryptedReasoningFallbackError marks a failed cleaned fallback as terminal for
+// an outer resilience decorator. The original failure remains unwrap-visible for
+// diagnostics and errors.As, but another whole-request retry would repeat both the
+// rejected replay and its already-spent repair attempt.
+type encryptedReasoningFallbackError struct {
+	err error
+}
+
+func (e *encryptedReasoningFallbackError) Error() string { return e.err.Error() }
+func (e *encryptedReasoningFallbackError) Unwrap() error { return e.err }
+func (*encryptedReasoningFallbackError) Retryable() bool { return false }
+
+// streamAttempt performs one Responses streaming attempt. emitted means at least one
+// provider-neutral chunk was handed to the caller; stopped means the caller declined a
+// chunk. An HTTP/SSE/clean-EOF failure is returned rather than yielded so Stream can make
+// the single pre-commit encrypted-reasoning recovery decision in one place.
+func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseNewParams, yield func(port.Chunk, error) bool) (emitted, stopped bool, err error) {
+	stream := p.client.NewStreaming(ctx, params)
+	defer func() { _ = stream.Close() }()
+
+	var st streamState
+	for stream.Next() {
+		if ctx.Err() != nil {
+			return emitted, false, nil
+		}
+		chunks, terr := translate(stream.Current(), &st)
+		for _, c := range chunks {
+			emitted = true
+			if !yield(c, nil) {
+				return emitted, true, nil
+			}
+		}
+		if terr != nil {
+			// A terminal failure event (response.failed / error / incomplete)
+			// carries the provider's real message; surface it as the stream's
+			// error so the loop reports the reason rather than a bare stop.
+			return emitted, false, terr
+		}
+	}
+	if streamErr := stream.Err(); streamErr != nil {
+		// Don't report a plain context cancellation as a stream error; the
+		// caller cancelled deliberately.
+		if ctx.Err() != nil {
+			return emitted, false, nil
+		}
+		return emitted, false, streamErr
+	}
+	if !st.done && ctx.Err() == nil {
+		// Clean EOF but NO terminal Responses event: the SDK's ssestream
+		// returns Err()==nil on a plain mid-stream EOF, so a dropped connection
+		// is indistinguishable from a normal close here. FAIL CLOSED — do NOT let
+		// this fall through as a benign end, or the engine promotes the partial
+		// text to a successful StopEndTurn (loop.go finishTurnNoTools). Surface
+		// a truncation error instead (retryable pre-commit; terminal once a
+		// committing chunk has gone out, by the no-replay rule).
+		return emitted, false, errTruncatedStream
+	}
+	return emitted, false, nil
+}
+
+// withoutEncryptedReasoning clones the request with every REASONING replay
+// envelope removed and nothing else touched. The visible messages, tool calls and
+// results, assistant phase markers, and provider-assigned function-call item IDs
+// all survive: dropping those would trade one rejection for two other known
+// failures (GPT-5.x treats a phase-less preamble as a final answer and stops
+// early; a phase-less function_call collides as "Duplicate item found with id
+// fc_N"). The caller's request is never mutated.
+//
+// The bool reports whether anything was actually removed, so a 400 on a request
+// that carried no reasoning envelope cannot unlock a hidden retry.
+// "Carried one" is decided by the SAME unpack the wire projection uses
+// (assistantItems), so the two can never disagree about whether an envelope
+// exists — a packed multi-item blob, a legacy (blob, id) pair, and a partial
+// state that would already have been omitted are each classified identically
+// here and there.
+func withoutEncryptedReasoning(req port.LLMRequest) (port.LLMRequest, bool) {
+	messages := slices.Clone(req.Messages)
+	found := false
+	for i := range messages {
+		if len(unpackReasoningItems(messages[i].Reasoning, messages[i].ReasoningItemID)) == 0 {
+			continue
+		}
+		found = true
+		messages[i].Reasoning = ""
+		messages[i].ReasoningItemID = ""
+	}
+	if !found {
+		return req, false
+	}
+	req.Messages = messages
+	return req, true
+}
+
+// isInvalidEncryptedContent reports whether a provider error is the specific
+// refusal to verify replayed encrypted reasoning. It gates a retry that silently
+// discards a turn's reasoning, so it is deliberately narrow: a typed 400 with the
+// invalid_encrypted_content code, or a 400 whose message carries the
+// verification/decryption phrasing. A neighbouring 400 must not match.
+func isInvalidEncryptedContent(err error) bool {
+	var apiErr *oai.Error
+	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode != http.StatusBadRequest {
+			return false
+		}
+		if apiErr.Code == "invalid_encrypted_content" {
+			return true
+		}
+		if hasInvalidEncryptedDetail(apiErr.Message) {
+			return true
+		}
+	}
+
+	// Some Responses-compatible gateways return a non-standard root JSON object,
+	// leaving the SDK's typed Message/Code empty while retaining the body in Error().
+	msg := err.Error()
+	return strings.Contains(strings.ToLower(msg), "400 bad request") && hasInvalidEncryptedDetail(msg)
+}
+
+// hasInvalidEncryptedDetail matches the human-readable half of the rejection, for
+// an upstream that relays the message without the structured code.
+func hasInvalidEncryptedDetail(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "encrypted content") &&
+		(strings.Contains(m, "could not be verified") || strings.Contains(m, "could not be decrypted"))
 }
 
 // Capabilities reports the provider's multimodal input support — the ADAPTER

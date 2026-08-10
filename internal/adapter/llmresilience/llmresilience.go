@@ -210,6 +210,14 @@ func (e *permanentError) Error() string { return e.err.Error() }
 func (e *permanentError) Unwrap() error { return e.err }
 func (*permanentError) Permanent() bool { return true }
 
+func explicitRetryDecision(err error) (retryable, explicit bool) {
+	var decision interface{ Retryable() bool }
+	if !errors.As(err, &decision) {
+		return false, false
+	}
+	return decision.Retryable(), true
+}
+
 // asPermanent wraps a mid-stream error as port.PermanentError when the
 // classifier says non-retryable AND the error is not a caller cancellation
 // (context.Canceled). Mid-stream errors are never retried regardless, but a
@@ -218,7 +226,17 @@ func (*permanentError) Permanent() bool { return true }
 // from a transient mid-stream failure (e.g. 429/503). Fail-open: any other
 // error (nil, cancellation, retryable/transient) is returned unchanged.
 func (p *resilientProvider) asPermanent(err error) error {
-	if err == nil || errors.Is(err, context.Canceled) || p.cfg.Classifier(err) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return err
+	}
+	// A provider-private repair may deliberately exhaust its one safe replay
+	// while retaining a transient unwrap-visible cause. That is terminal for this
+	// Stream invocation, but it is not a claim that a future user retry cannot
+	// succeed (port.PermanentError). Mid-stream replay is already impossible.
+	if retryable, explicit := explicitRetryDecision(err); explicit && !retryable {
+		return err
+	}
+	if p.cfg.Classifier(err) {
 		return err
 	}
 	return &permanentError{err: err}
@@ -490,6 +508,18 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 				"per_attempt_timeout", p.cfg.PerAttemptTimeout,
 				"attempt", attempt+1,
 				"max_attempts", p.cfg.MaxAttempts)
+		}
+		// A provider adapter may already have spent one narrowly safe internal
+		// repair. Its explicit no-retry decision is stronger than even an
+		// operator-supplied classifier: replaying the outer request would repeat
+		// the rejected request plus the exhausted repair. Keep the causal error
+		// unwrapped by permanentError; a future user retry may still succeed.
+		if retryable, explicit := explicitRetryDecision(err); explicit && !retryable {
+			p.diag().Log(ctx, port.LevelInfo, "llm provider recovery retry budget exhausted; ending turn",
+				"model", req.Model,
+				"attempt", attempt+1,
+				"err", clampErr(err))
+			return nil, err
 		}
 		// Permanent (non-retryable) errors are surfaced verbatim, not retried. This
 		// TERMINALLY ends the turn, so it is logged at Info: the recoverable lifecycle
@@ -983,6 +1013,13 @@ func DefaultClassifier(err error) bool {
 	// Caller-style context cancellation is never retryable.
 	if errors.Is(err, context.Canceled) {
 		return false
+	}
+
+	// Provider adapters may spend a bounded, protocol-private recovery attempt
+	// inside one Stream call. Honour that explicit outcome before unwrapping to a
+	// retryable HTTP status, or the generic wrapper would replay the entire pair.
+	if retryable, explicit := explicitRetryDecision(err); explicit {
+		return retryable
 	}
 
 	// HTTP/2 stream resets (peer RST_STREAM / INTERNAL_ERROR) are transient

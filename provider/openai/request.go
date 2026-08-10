@@ -350,11 +350,20 @@ func dataURL(mime string, data []byte) string {
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
-// assistantItems expands an assistant message into its ordered input items:
-// the reasoning item (carrying encrypted_content verbatim) first, then a
-// function_call item per requested tool call, then a text message item if the
-// assistant produced visible text. This ordering matches the brief's multi-turn
-// rule: prior reasoning -> function_call(s).
+// assistantItems expands an assistant message into its ordered input items: the
+// reasoning items (carrying encrypted_content verbatim) INTERLEAVED with the
+// function_call items in the order the model originally emitted them, then a text
+// message item if the assistant produced visible text.
+//
+// The interleaving is the point. A reasoning turn that calls tools emits
+// rs_a, fc_1, rs_b, fc_2, rs_c — and the stateless-replay rule is to pass those
+// prior output items back untouched, so hoisting every reasoning item to the
+// front (the shape this used to emit, when a turn only ever had one) rewrites the
+// model's own trajectory. session.Message keeps reasoning and tool calls in two
+// separate fields with no relative order between them, so the adapter records
+// each reasoning item's slot in its own envelope (reasoningItem.After) and
+// rebuilds the sequence here. A single-item turn and any pre-packing blob both
+// carry After 0 and replay reasoning-then-calls exactly as before.
 //
 // The opaque PHASE marker (m.ProviderPhase, "commentary"/"final_answer") rides ONLY the
 // emitted message item — phase is a message-item property, and a tool-call-only
@@ -367,24 +376,40 @@ func dataURL(mime string, data []byte) string {
 // validated against the enum (forward-compat).
 func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 	out := make([]responses.ResponseInputItemUnionParam, 0, len(m.ToolCalls)+2)
-	if m.Reasoning != "" && m.ReasoningItemID != "" {
-		// The SDK's ResponseReasoningItemParam.ID is a PLAIN string tagged
-		// `json:"id" api:"required"` with NO omitzero, so an unset id
-		// serialises unconditionally as `"id":""`. Strict OpenAI-compatible
-		// gateways (Azure GPT-5.x) reject that with HTTP 400 on turn 2+ during
-		// store:false stateless replay. Therefore the reasoning item is only
-		// emitted when we captured a real provider reasoning-item id
-		// (Message.ReasoningItemID); when Reasoning is present but no id was
-		// captured, DROP the item entirely (D1a: lose that turn's reasoning
-		// continuity, never 400) rather than emit an id-less one.
+	// One input item per captured reasoning item, in emission order, each under
+	// the id ITS blob is bound to. Sending several blobs under one id is what the
+	// provider rejects as invalid_encrypted_content, so the pairing is preserved
+	// end to end (see reasoning.go); a pre-packing blob unpacks to the single
+	// (m.Reasoning, m.ReasoningItemID) pair, replaying exactly as it used to.
+	//
+	// The SDK's ResponseReasoningItemParam.ID is a PLAIN string tagged
+	// `json:"id" api:"required"` with NO omitzero, so an unset id serialises
+	// unconditionally as `"id":""`, which strict OpenAI-compatible gateways (Azure
+	// GPT-5.x) reject with HTTP 400 on turn 2+ during store:false stateless
+	// replay. unpackReasoningItems therefore drops any item missing an id (D1a:
+	// lose that item's reasoning continuity, never 400), so every item reaching
+	// this loop carries one.
+	items := unpackReasoningItems(m.Reasoning, m.ReasoningItemID)
+	next := 0
+	emitReasoning := func(it reasoningItem) {
 		reasoning := responses.ResponseReasoningItemParam{
-			ID:               m.ReasoningItemID,
+			ID:               it.ID,
 			Summary:          []responses.ResponseReasoningItemSummaryParam{},
-			EncryptedContent: oai.String(m.Reasoning),
+			EncryptedContent: oai.String(it.Blob),
 		}
 		out = append(out, responses.ResponseInputItemUnionParam{OfReasoning: &reasoning})
 	}
-	for _, call := range m.ToolCalls {
+	// emitReasoningBefore flushes every reasoning item the model produced before
+	// tool call #idx. Items arrive with a non-decreasing After, so one forward
+	// cursor walks them in order.
+	emitReasoningBefore := func(idx int) {
+		for next < len(items) && items[next].After <= idx {
+			emitReasoning(items[next])
+			next++
+		}
+	}
+	for i, call := range m.ToolCalls {
+		emitReasoningBefore(i)
 		fc := responses.ResponseFunctionToolCallParam{
 			Arguments: string(call.Args),
 			CallID:    string(call.ID),
@@ -401,6 +426,16 @@ func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 			fc.ID = oai.String(call.ItemID)
 		}
 		out = append(out, responses.ResponseInputItemUnionParam{OfFunctionCall: &fc})
+	}
+	// Drain whatever is left: reasoning the model produced after its last tool
+	// call, every item on a turn with no tool calls, and — the reason this is
+	// UNCONDITIONAL rather than one more emitReasoningBefore — any item whose
+	// stored After overruns the calls this message actually carries (a truncated
+	// or hand-edited snapshot). Position is best-effort; never dropping a blob is
+	// not, since a dropped one is exactly the continuity loss the envelope exists
+	// to prevent.
+	for ; next < len(items); next++ {
+		emitReasoning(items[next])
 	}
 	if m.Text != "" {
 		item := responses.ResponseInputItemParamOfMessage(

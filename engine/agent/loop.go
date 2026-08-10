@@ -1806,11 +1806,21 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, ws 
 			noteStreamDelta()
 			e.emit(r, session.Event{Type: session.EvReasoningDelta, Turn: turnIdx, Text: chunk.Text})
 		case port.ChunkReasoningItem:
-			// The opaque encrypted_content replay blob. Stored on Message.Reasoning
-			// and sent back verbatim next turn for stateless reasoning continuity.
-			// The provider emits at most one per turn; concatenation is harmless if
-			// it ever splits. It is observable OUTPUT (it anchors TTFT) but not a
-			// streamed token, so it never counts toward the inter-token gap series.
+			// The opaque reasoning replay blob. Stored on Message.Reasoning and sent
+			// back verbatim next turn for stateless reasoning continuity. It is
+			// observable OUTPUT (it anchors TTFT) but not a streamed token, so it
+			// never counts toward the inter-token gap series.
+			//
+			// An adapter emits ONE per turn: where the provider's replay unit is a
+			// LIST (several OpenAI reasoning items, several Anthropic thinking
+			// blocks), the adapter packs the ordered list into its own opaque
+			// envelope and flushes it at the terminal event. The accumulation here
+			// is therefore a degenerate case, and MUST NOT be relied on to assemble
+			// a multi-part payload: the fold below keeps only the last item id, so a
+			// per-item id would be lost — which is exactly how concatenated OpenAI
+			// blobs came to be replayed under the wrong id and rejected
+			// (invalid_encrypted_content). Structure belongs in the adapter's
+			// envelope, never in this concatenation.
 			noteFirstOutput()
 			reasoningBlob += chunk.Text
 			if chunk.ReasoningItemID != "" {

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -22,14 +23,17 @@ import (
 // Message.ReasoningItemID, replay serialised id:"" and strict gateways 400'd
 // on turn 2+ (see HANDOVER-reasoning-item-id-replay.md). This test fails on that
 // old behavior and passes now.
+//
+// The id now rides INSIDE the packed reasoning envelope (reasoning.go) rather
+// than on port.Chunk.ReasoningItemID, because a turn may carry several items and
+// each blob only verifies under its own id. The pairing asserted here is the
+// same one; only where it is written down moved.
 func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 	chunks := decodeFixture(t, "reasoning_item_id_mixed.sse")
 
-	// (a) The reasoning replay-blob chunk (ChunkReasoningItem) carries the
-	// reasoning item's OWN id "rs_123" — the id the loop stamps onto
-	// Message.ReasoningItemID for verbatim replay. Under the pre-fix code this
-	// chunk was emitted with ReasoningItemID="" (item.ID was dropped), so this
-	// assertion discriminates: an empty (or "msg_abc") id fails it.
+	// (a) The reasoning replay chunk pairs the blob with the reasoning item's OWN
+	// id "rs_123" — not the message item's "msg_abc", and not empty. Under the
+	// pre-fix code item.ID was dropped entirely, so this assertion discriminates.
 	var reasoningItemChunk *port.Chunk
 	for i := range chunks {
 		if chunks[i].Kind == port.ChunkReasoningItem {
@@ -39,12 +43,16 @@ func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 	if reasoningItemChunk == nil {
 		t.Fatalf("no ChunkReasoningItem in stream; chunks=%+v", chunks)
 	}
-	if reasoningItemChunk.ReasoningItemID != "rs_123" {
-		t.Errorf("ChunkReasoningItem.ReasoningItemID = %q, want %q (must be the reasoning item's own id, not the message item's and not empty)",
-			reasoningItemChunk.ReasoningItemID, "rs_123")
+	items := unpackReasoningItems(reasoningItemChunk.Text, "")
+	if len(items) != 1 {
+		t.Fatalf("unpacked %d reasoning items, want 1; packed=%q", len(items), reasoningItemChunk.Text)
 	}
-	if reasoningItemChunk.Text != "ENCRYPTED_RS_123" {
-		t.Errorf("ChunkReasoningItem.Text = %q, want %q (the encrypted_content replay blob)", reasoningItemChunk.Text, "ENCRYPTED_RS_123")
+	if items[0].ID != "rs_123" {
+		t.Errorf("reasoning item id = %q, want %q (must be the reasoning item's own id, not the message item's and not empty)",
+			items[0].ID, "rs_123")
+	}
+	if items[0].Blob != "ENCRYPTED_RS_123" {
+		t.Errorf("reasoning item blob = %q, want %q (the encrypted_content replay blob)", items[0].Blob, "ENCRYPTED_RS_123")
 	}
 
 	// (b) The assistant TEXT chunks must NOT carry the reasoning item id — the
@@ -60,24 +68,24 @@ func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 		}
 	}
 
-	// (c) The final converted assistant message — replicating the loop's
-	// last-non-empty-wins threading of ChunkReasoningItem.ReasoningItemID onto
-	// Message.ReasoningItemID (engine/agent/loop.go) — must carry BOTH the
-	// reasoning blob AND "rs_123". Under the pre-fix code the blob threaded
-	// through (Reasoning was already accumulated) but ReasoningItemID stayed
-	// empty, so this asserts the id half specifically (the empty-id case is the
-	// bug). It also asserts the id is NOT the message item's id, which would
-	// mean the reasoning was attributed to the wrong boundary.
+	// (c) The final converted assistant message — as the loop folds it — must
+	// replay the blob under "rs_123". Asserting this through assistantItems (the
+	// real replay path) rather than the Message field directly keeps the test on
+	// the behaviour that matters: what goes on the wire. Under the pre-fix code
+	// the blob threaded through but the id was lost, serialising `"id":""`.
 	msg := aggregateAssistantMessage(chunks)
-	if msg.Reasoning != "ENCRYPTED_RS_123" {
-		t.Errorf("Message.Reasoning = %q, want %q (the replay blob)", msg.Reasoning, "ENCRYPTED_RS_123")
-	}
-	if msg.ReasoningItemID != "rs_123" {
-		t.Errorf("Message.ReasoningItemID = %q, want %q (reasoning attributed to the reasoning item, not the message item and not empty)",
-			msg.ReasoningItemID, "rs_123")
-	}
 	if msg.Text != "The answer is 42." {
 		t.Errorf("Message.Text = %q, want %q", msg.Text, "The answer is 42.")
+	}
+	var replayed []reasoningItem
+	for _, it := range assistantItems(msg) {
+		if it.OfReasoning != nil {
+			replayed = append(replayed, reasoningItem{ID: it.OfReasoning.ID, Blob: it.OfReasoning.EncryptedContent.Value})
+		}
+	}
+	want := []reasoningItem{{ID: "rs_123", Blob: "ENCRYPTED_RS_123"}}
+	if !reflect.DeepEqual(replayed, want) {
+		t.Errorf("replayed reasoning items = %+v, want %+v (blob replayed under the reasoning item's own id)", replayed, want)
 	}
 }
 

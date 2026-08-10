@@ -9,6 +9,7 @@ import (
 	"iter"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"sync"
@@ -17,11 +18,97 @@ import (
 	"time"
 
 	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"golang.org/x/net/http2"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	openaiadapter "github.com/stacklok/mecatl/provider/openai"
 )
+
+func TestEncryptedReasoningFallbackFailureIsNotReplayedByOuterResilience(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"invalid_encrypted_content","message":"Encrypted content could not be verified or decrypted"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":"server_error","message":"cleaned fallback unavailable"}}`)
+	}))
+	defer srv.Close()
+
+	inner := openaiadapter.New(
+		openaiadapter.WithAPIKey("test-key"),
+		openaiadapter.WithBaseURL(srv.URL+"/v1"),
+		openaiadapter.WithRequestOption(option.WithMaxRetries(0)),
+	)
+	wrapped := Wrap(inner, Config{
+		MaxAttempts:      4,
+		BreakerThreshold: 1,
+		BreakerCooldown:  time.Hour,
+		// The provider's exhausted internal-repair budget must outrank even an
+		// operator classifier that would otherwise retry every error.
+		Classifier: func(error) bool { return true },
+	})
+	assistant := session.NewAssistantMessage("", "opaque-blob", nil)
+	assistant.ReasoningItemID = "rs_bad"
+	req := port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}}
+
+	seq, err := wrapped.Stream(context.Background(), req)
+	if seq != nil || err == nil {
+		t.Fatalf("Stream = (%v, %v), want terminal establishment error", seq, err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 2 {
+		t.Fatalf("HTTP request count = %d, want exactly 2 despite MaxAttempts=4", got)
+	}
+	var permanent port.PermanentError
+	if errors.As(err, &permanent) {
+		t.Fatalf("error = %T %v, must not claim a cleaned 503 is permanent", err, err)
+	}
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("error cause = %T %v, want unwrap-visible OpenAI 503", err, err)
+	}
+
+	// Non-retryable is a request replay decision, not a provider-health rewrite:
+	// the unwrap-visible cleaned 503 still opens the breaker at threshold one.
+	if _, secondErr := wrapped.Stream(context.Background(), req); secondErr == nil {
+		t.Fatal("second Stream error = nil, want open breaker")
+	} else {
+		var breakerErr *BreakerError
+		if !errors.As(secondErr, &breakerErr) {
+			t.Fatalf("second Stream error = %T %v, want BreakerError", secondErr, secondErr)
+		}
+	}
+	if got := atomic.LoadInt32(&requests); got != 2 {
+		t.Fatalf("HTTP request count after breaker rejection = %d, want 2", got)
+	}
+}
+
+type explicitNoRetryTestError struct{ err error }
+
+func (e *explicitNoRetryTestError) Error() string { return e.err.Error() }
+func (e *explicitNoRetryTestError) Unwrap() error { return e.err }
+func (*explicitNoRetryTestError) Retryable() bool { return false }
+
+func TestExplicitNoRetryDecisionIsNotPromotedToPermanentMidStream(t *testing.T) {
+	inner := &oai.Error{StatusCode: http.StatusServiceUnavailable, Message: "temporary"}
+	err := &explicitNoRetryTestError{err: inner}
+	p := &resilientProvider{cfg: Config{Classifier: func(error) bool { return false }}}
+
+	got := p.asPermanent(err)
+	if got != err {
+		t.Fatalf("asPermanent returned %T %v, want original explicit-decision error", got, got)
+	}
+	var permanent port.PermanentError
+	if errors.As(got, &permanent) {
+		t.Fatal("explicit no-retry decision was incorrectly promoted to port.PermanentError")
+	}
+}
 
 // fakeProvider is a programmable port.LLMProvider for tests. Each call to Stream
 // consumes the next entry in steps; if steps is exhausted the last entry is

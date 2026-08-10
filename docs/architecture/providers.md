@@ -28,27 +28,45 @@
   SDK's parameter map (`Strict: true`; empty schema → empty object).
 - `Messages` → the input item array via `buildInput`: system/user/assistant text
   become message items; tool messages become `function_call_output` items keyed
-  by `call_id`. An assistant turn expands (`assistantItems`) in the order
-  **reasoning item → function_call item(s) → text message**.
+  by `call_id`. An assistant turn expands (`assistantItems`) with its **reasoning
+  items INTERLEAVED with its function_call items in the model's original emission
+  order** (rs_a → fc_1 → rs_b → fc_2 …), then the text message. `session.Message`
+  holds reasoning and tool calls in two fields with no relative order, so each
+  packed reasoning entry records how many calls preceded it and the adapter
+  rebuilds the sequence — the stateless-replay rule is to pass prior output items
+  back untouched.
 - `Store: false` plus `Include: [reasoning.encrypted_content]` so reasoning
-  survives across turns statelessly. `Message.Reasoning` is carried verbatim as
-  the reasoning item's `EncryptedContent`.
+  survives across turns statelessly. A turn may carry SEVERAL reasoning items,
+  each with `encrypted_content` bound to its own `rs_…` item id, so the adapter
+  packs the ordered `(id, blob)` list into the opaque `Message.Reasoning` STRING
+  (`reasoning.go`) — the same envelope discipline as the anthropic adapter — and
+  replays one input item per entry, each under its own id. Fusing the blobs
+  under a single id is what the provider rejects as `invalid_encrypted_content`;
+  see [ADR 0101](../adr/0101-openai-reasoning-multiplicity.md).
+- A rejected replay (`invalid_encrypted_content`) is REPAIRED once per request,
+  pre-commit only: `Stream` retries with `withoutEncryptedReasoning` — the
+  reasoning envelopes removed, visible history, tool calls/results, phase markers
+  and function-call item ids all kept. A failed repair is terminal for that
+  Stream (`Retryable() == false`, honoured by `llmresilience`) so the outer
+  wrapper cannot replay the pair and spend the repair twice.
 
 **SSE → Chunk translation** (`stream.go`, `translate` — a pure function driven
 directly from recorded fixtures by `decodeSSE` in tests):
 - `response.output_text.delta` → `ChunkText`
 - `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` →
   `ChunkReasoning` (the DISPLAY summary)
-- `response.output_item.done` (reasoning) → `ChunkReasoningItem` (the
-  `encrypted_content` REPLAY blob — distinct from the display summary; the two
-  must never be conflated)
+- `response.output_item.done` (reasoning) → BUFFERED into `streamState.reasoning`
+  as an `(item id, encrypted_content)` pair. The REPLAY blob is distinct from the
+  display summary; the two must never be conflated.
 - `response.output_item.done` (message) → `ChunkPhase` (the opaque phase
   marker, stored on `Message.ProviderPhase` and replayed verbatim on the
   assistant message item — issue #46)
 - `response.output_item.done` (function_call) → `ChunkToolCall` (acts on the
   assembled `.done` payload, not concatenated deltas)
-- `response.completed` → `ChunkUsage` then `ChunkDone(end_turn)` (cached tokens
-  map into `Usage.CacheReadTokens`)
+- `response.completed` → the packed `ChunkReasoningItem` (the turn's buffered
+  reasoning items, flushed here because only now is the full ordered list known),
+  then `ChunkUsage` and `ChunkDone(end_turn)` (cached tokens map into
+  `Usage.CacheReadTokens`)
 - `response.incomplete` → `ChunkUsage` then `ChunkDone(error)`
 - `response.failed` / `error` → a non-nil stream **error** carrying the
   provider's message verbatim (so the real reason reaches the terminal
