@@ -794,15 +794,19 @@ type Service struct {
 	// decision #5): a connected client (e.g. the embedded server's mecatui) holds
 	// open a per-session merged stream over the session's runs via Subscribe, and
 	// PublishSessionEvent fans events to every subscriber for that session ID.
-	// Guarded by subMu (a SEPARATE mutex from s.mu — a PublishSessionEvent in a
-	// delivery-run goroutine must not contend with the run/registry hot path).
+	// Guarded by subMu (a SEPARATE RWMutex from s.mu — a PublishSessionEvent in a
+	// delivery-run goroutine must not contend with the run/registry hot path). A
+	// publisher holds RLock through its non-blocking sends, so unsubscribe and Close
+	// can close only after every active publisher has finished with the channel.
 	// A subscriber is a non-blocking channel; on a full channel the event is dropped
 	// (drain-to-discard — a dead client never wedges the delivery run). Cleaned up
 	// by the subscriber's returned unsubscribe func; all remaining subscriptions are
-	// drained at Close.
-	subMu         sync.Mutex
-	subscriptions map[session.SessionID]map[int64]chan session.Event
-	subNextID     int64
+	// closed at Close. subscriptionsClosed permanently rejects new registrations
+	// after shutdown begins.
+	subMu               sync.RWMutex
+	subscriptions       map[session.SessionID]map[int64]chan session.Event
+	subNextID           int64
+	subscriptionsClosed bool
 }
 
 // heldLease is one process-held session lease plus the cancel that stops its
@@ -1682,25 +1686,17 @@ func (s *Service) Close() {
 	// linger past the Service.
 	s.sessionWorkspaces = make(map[session.SessionID]tool.Workspace)
 	// Close all per-session event subscriptions so subscriber goroutines can exit
-	// cleanly. Snapshot + clear under the sub lock, then close outside (close
-	// requires no locks). A channel closed here may ALSO be closed by a concurrent
-	// unsub() — that is the unsub()'s sync.Once's problem, not ours; we close only
-	// the channels that were still registered at snapshot time.
+	// cleanly. Close owns both shutdown and channel closure while holding subMu: a
+	// publisher holds subMu.RLock through its send, so no send can race close.
 	s.subMu.Lock()
-	var subChs []chan session.Event
+	s.subscriptionsClosed = true
 	for _, m := range s.subscriptions {
 		for _, ch := range m {
-			subChs = append(subChs, ch)
+			close(ch)
 		}
 	}
 	s.subscriptions = make(map[session.SessionID]map[int64]chan session.Event)
 	s.subMu.Unlock()
-	for _, ch := range subChs {
-		func() {
-			defer func() { _ = recover() }() // tolerate a concurrent unsub() close
-			close(ch)
-		}()
-	}
 	// Snapshot the held-lease ids so we can stop renewers + release each outside
 	// the guard (releaseLease re-takes s.mu).
 	leasedIDs := make([]session.SessionID, 0, len(s.heldLeases))
@@ -3673,6 +3669,11 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 func (s *Service) Subscribe(id session.SessionID) (<-chan session.Event, func()) {
 	ch := make(chan session.Event, 64)
 	s.subMu.Lock()
+	if s.subscriptionsClosed {
+		close(ch)
+		s.subMu.Unlock()
+		return ch, func() {}
+	}
 	s.subNextID++
 	subID := s.subNextID
 	if s.subscriptions[id] == nil {
@@ -3685,14 +3686,14 @@ func (s *Service) Subscribe(id session.SessionID) (<-chan session.Event, func())
 	unsub := func() {
 		unsubOnce.Do(func() {
 			s.subMu.Lock()
-			if m, ok := s.subscriptions[id]; ok {
+			defer s.subMu.Unlock()
+			if m, ok := s.subscriptions[id]; ok && m[subID] == ch {
 				delete(m, subID)
 				if len(m) == 0 {
 					delete(s.subscriptions, id)
 				}
+				close(ch)
 			}
-			s.subMu.Unlock()
-			close(ch)
 		})
 	}
 	return ch, unsub
@@ -3706,21 +3707,9 @@ func (s *Service) Subscribe(id session.SessionID) (<-chan session.Event, func())
 // proto type. The loop stays storage-agnostic — it never calls this; the relay or
 // the delivery driver (deliverFireResult) publishes.
 func (s *Service) PublishSessionEvent(id session.SessionID, ev session.Event) {
-	s.subMu.Lock()
-	subs := s.subscriptions[id]
-	// Snapshot the subscriber channels under the lock so we can iterate them
-	// without holding the lock (non-blocking sends on each).
-	if len(subs) == 0 {
-		s.subMu.Unlock()
-		return
-	}
-	chs := make([]chan session.Event, 0, len(subs))
-	for _, ch := range subs {
-		chs = append(chs, ch)
-	}
-	s.subMu.Unlock()
-
-	for _, ch := range chs {
+	s.subMu.RLock()
+	defer s.subMu.RUnlock()
+	for _, ch := range s.subscriptions[id] {
 		select {
 		case ch <- ev:
 		default:
