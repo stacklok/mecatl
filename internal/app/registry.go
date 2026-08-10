@@ -688,7 +688,7 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 		openaicodex.BaseURL,
 		openai.WithRequestOption(policy.Options()...),
 	)
-	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy, cfg.BuildVersion)}
+	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}
 	return entry, nil
 }
 

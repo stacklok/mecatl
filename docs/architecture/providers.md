@@ -137,6 +137,11 @@ never invents subscription entitlements. After a success, the process-local
 last-known-good list may remain visible across refresh failures, but inference
 still reports the current credential/service error. Opaque entitled slugs are
 preserved; embedded OpenAI metadata may only enrich a matching entitled slug.
+The private endpoint treats `client_version` as a protocol-compatibility gate,
+not merely client identity: malformed values return HTTP 400 and semver values
+below its current compatibility floor return a successful empty inventory. The
+lister therefore sends the live-probe-verified compatibility value `1.0.0`;
+honest client identity remains in `originator: mecatl` and `User-Agent: mecatl`.
 When no model is configured and Codex is the sole/default provider, a bounded
 startup discovery selects the first entitled slug or fails honestly.
 

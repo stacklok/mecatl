@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	maxModelsResponseBytes = 1 << 20
-	maxModelIDRunes        = 256
-	maxModelNameRunes      = 512
+	maxModelsResponseBytes   = 1 << 20
+	maxModelIDRunes          = 256
+	maxModelNameRunes        = 512
+	codexModelsClientVersion = "1.0.0"
 )
 
 // Model is the package-owned projection of one picker-visible Codex
@@ -41,13 +42,9 @@ type Lister struct {
 // NewLister derives its HTTP path from the same immutable RequestPolicy used
 // by inference. A separate client supplies the bounded listing timeout while
 // retaining the policy's transport and redirect refusal.
-func NewLister(policy RequestPolicy, clientVersion string) *Lister {
-	clientVersion = strings.TrimSpace(clientVersion)
-	if clientVersion == "" {
-		clientVersion = "dev"
-	}
+func NewLister(policy RequestPolicy) *Lister {
 	return &Lister{
-		clientVersion: clientVersion,
+		clientVersion: codexModelsClientVersion,
 		client: &http.Client{
 			Timeout:       modelhttp.DefaultTimeout,
 			CheckRedirect: policy.client.CheckRedirect,

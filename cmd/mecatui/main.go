@@ -555,7 +555,6 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:       cfg.workspace,
 		Model:           cfg.model,
-		BuildVersion:    buildinfo.Current(),
 		DefaultProvider: cfg.defaultProvider,
 		DefaultModel:    cfg.defaultModel,
 		// defaultProviderFlagSet lets CLI out-rank the operator-global settings.yaml

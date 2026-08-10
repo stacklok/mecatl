@@ -54,7 +54,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
-	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
 )
@@ -1010,7 +1009,6 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 	out := app.Config{
 		Workspace:                     cfg.workspace,
 		Model:                         cfg.model,
-		BuildVersion:                  buildinfo.Current(),
 		DefaultProvider:               cfg.defaultProvider,
 		DefaultModel:                  cfg.defaultModel,
 		DefaultProviderFlagSet:        cfg.defaultProviderFlagSet,

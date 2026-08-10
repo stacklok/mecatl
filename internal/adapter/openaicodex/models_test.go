@@ -41,14 +41,14 @@ func TestCodexModelsRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lister := NewLister(policy, "v1.2.3+dirty")
+	lister := NewLister(policy)
 	if _, err := lister.ListModels(context.Background()); err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
 	if got == nil {
 		t.Fatal("models request was not sent")
 	}
-	wantURL := BaseURL + "/models?client_version=v1.2.3%2Bdirty"
+	wantURL := BaseURL + "/models?client_version=1.0.0"
 	if got.Method != http.MethodGet || got.URL.String() != wantURL {
 		t.Fatalf("request = %s %s, want GET %s", got.Method, got.URL, wantURL)
 	}
@@ -75,7 +75,7 @@ func TestCodexModelsBoundsAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := NewLister(policy, "dev").client.Timeout; got != 5*time.Second {
+		if got := NewLister(policy).client.Timeout; got != 5*time.Second {
 			t.Fatalf("models client timeout = %v, want 5s", got)
 		}
 	})
@@ -87,7 +87,7 @@ func TestCodexModelsBoundsAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = NewLister(policy, "dev").ListModels(context.Background())
+		_, err = NewLister(policy).ListModels(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "cap") {
 			t.Fatalf("oversized response error = %v", err)
 		}
@@ -103,7 +103,7 @@ func TestCodexModelsBoundsAndCancellation(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err = NewLister(policy, "dev").ListModels(ctx)
+		_, err = NewLister(policy).ListModels(ctx)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancellation error = %v, want context.Canceled", err)
 		}
@@ -121,7 +121,7 @@ func TestCodexModelsBoundsAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = NewLister(policy, "dev").ListModels(context.Background())
+		_, err = NewLister(policy).ListModels(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "redirect refused") {
 			t.Fatalf("redirect error = %v", err)
 		}
@@ -148,7 +148,7 @@ func TestCodexModelsEntitlementProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := NewLister(policy, "dev").ListModels(context.Background())
+	got, err := NewLister(policy).ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}

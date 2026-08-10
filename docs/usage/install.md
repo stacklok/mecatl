@@ -12,10 +12,10 @@ Build the binaries into `bin/`:
 
 ```console
 $ task build
-go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecated ./cmd/mecated
-go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecademo ./cmd/mecademo
-go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecatequi ./cmd/mecatequi
-go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecak8s ./cmd/mecak8s
+go build -o bin/mecated ./cmd/mecated
+go build -o bin/mecademo ./cmd/mecademo
+go build -o bin/mecatequi ./cmd/mecatequi
+go build -o bin/mecak8s ./cmd/mecak8s
 go build -ldflags "-X github.com/stacklok/mecatl/internal/buildinfo.Version=..." -o bin/mecatui ./cmd/mecatui
 ```
 

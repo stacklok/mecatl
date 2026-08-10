@@ -13,8 +13,8 @@
 # Build:   KO_DOCKER_REPO=ko.local ko build --local ./cmd/mecated   (or `task ko:build`)
 # Publish: KO_DOCKER_REPO=<registry> ko build --push ./cmd/mecated  (or `task ko:publish`)
 #
-# Every real command root uses the shared internal/buildinfo.Version identity.
-# VERSION is supplied by the release workflow and the Taskfile's local ko tasks.
+# mecatui renders the shared internal/buildinfo.Version identity. VERSION is
+# supplied by the release workflow and the Taskfile's mecatui ko tasks.
 
 defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7899b94303580859d396b52b67bc84ea7345
 
@@ -34,7 +34,6 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/stacklok/mecatl/internal/buildinfo.Version={{.Env.VERSION}}
   # mecak8s (ADR 0048): the storage-free k8s-native agent binary. Same distroless
   # base + build flags as mecated — it is a thin peer of mecated that composes
   # app.Build with k8s-native defaults (Redis store + k8s lease + drain gate).
@@ -46,7 +45,6 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/stacklok/mecatl/internal/buildinfo.Version={{.Env.VERSION}}
   # mecatui (issue #302): the optional Bubble Tea TUI binary. It overrides the
   # distroless base with the brood-box wolfi base (see baseImageOverrides above —
   # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml

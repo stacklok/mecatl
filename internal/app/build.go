@@ -120,12 +120,8 @@ const (
 // the fields they need. Sink and ToolCallRecorder are optional (nil installs no
 // telemetry — the engine nil-guards both).
 type Config struct {
-	Workspace string
-	Model     string
-	// BuildVersion is the shared binary build identity sent as the Codex models
-	// client_version. Command roots source it from internal/buildinfo; empty is
-	// normalized to the honest development value "dev" by the adapter.
-	BuildVersion  string
+	Workspace     string
+	Model         string
 	UseOpenAI     bool
 	OpenAIBaseURL string
 	OpenAIKey     string

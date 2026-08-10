@@ -3638,7 +3638,12 @@ cross-provider and strips private blobs. No `port.LLMRequest`, proto field, engi
 API, or persistence schema was added.
 
 The Codex lister owns its different `{models:[...]}` wire shape and fixed request
-policy but publishes the same `modelEntry` list. Its inventory is LIVE-ONLY:
+policy but publishes the same `modelEntry` list. Live testing established that
+the backend treats `client_version` as a protocol-compatibility gate: a malformed
+build identity returns HTTP 400, while a valid but below-floor mecatl version
+returns HTTP 200 with an empty inventory. The lister therefore sends the explicit
+probe-verified compatibility value `1.0.0`; `originator: mecatl` and
+`User-Agent: mecatl` remain the honest product identity. Its inventory is LIVE-ONLY:
 embedded OpenAI rows may enrich only an already-entitled matching slug, never add
 one. Before first success, error/empty produces no inventory; after success,
 `liveOutcomeStore` may return process-local last-known-good rows on refresh failure.

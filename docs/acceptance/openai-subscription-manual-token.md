@@ -439,15 +439,16 @@ precedents](../adr/0064-toolhive-llm-gateway-provider.md) without classifying th
 credential-backed Codex provider as an intent-only gateway.
 
 Create the Codex models decoder/lister in `internal/adapter/openaicodex`. It
-GETs `/backend-api/codex/models?client_version=<version>` using the same
+GETs `/backend-api/codex/models?client_version=1.0.0` using the same
 credential/request policy as inference, preserves server order, and maps only
 picker-visible entries. The official Codex source treats ChatGPT mode separately
 from API support and selects the first picker-visible/highest-priority available
 model, so do not filter subscription models by an API-only support flag.
 
-Add one shared build-version source used by every command root; do not borrow
-mecatui's private `version` variable. Development builds send an honest `dev`
-value.
+Treat `client_version` as the private endpoint's protocol-compatibility gate,
+not product identity: live verification showed malformed values return HTTP 400
+and valid below-floor versions return an empty inventory. Keep product identity
+honest in `originator: mecatl` and `User-Agent: mecatl`.
 
 Extract a narrow stdlib-only `internal/adapter/modelhttp` helper only for the
 behavior materially shared by all raw listers: context-aware GET execution,
@@ -816,8 +817,8 @@ Findings: the candidate adds the native Codex entitlement lister through the
   models, and fails closed for unauthorized, unreachable, or empty discovery.
   A narrow stdlib-only modelhttp helper now shares only bounded GET mechanics;
   each adapter retains its protocol JSON, headers, redirect policy, and control/
-  bidi sanitization. One internal/buildinfo value supplies an honest `dev`
-  default and is stamped into every Taskfile command-root build. Initial review
+  bidi sanitization. The private endpoint's protocol compatibility value is
+  intentionally independent of mecatui's display-only build identity. Initial review
   found two non-bootstrap registry tests accidentally entered discovery, the
   model projection used a fabricated image field instead of the recorded wire
   vocabulary, and slugs were silently normalized. The repair makes those tests
@@ -975,7 +976,7 @@ Findings: the living provider architecture now records `openai-codex` as an
   stamping of the deleted `cmd/mecatui` `main.version`, command tests consulting
   the developer's conventional `auth.yaml`, unrelated Go 1.26 formatter churn,
   and three operator-documentation inaccuracies. The uncommitted final repair
-  stamps every applicable ko command through `internal/buildinfo.Version`, makes
+  stamps mecatui through its display-only `internal/buildinfo.Version`, makes
   all four command-package suites use an empty temporary HOME/XDG config root,
   restores every unrelated generated/e2e file byte-for-byte from `origin/main`
   while retaining the generated `provider_status` comments, and corrects the
