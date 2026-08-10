@@ -160,12 +160,25 @@ func TestOpenAICodexResponsesFixtures(t *testing.T) {
 			body:     readCodexFixture(t, "..", "..", "provider", "openai", "testdata", "reasoning_turn.sse"),
 			messages: []session.Message{session.NewUserMessage("reason")},
 			assert: func(t *testing.T, chunks []port.Chunk, _ *codexCapturedRequest) {
-				assertCodexChunkKinds(t, chunks, port.ChunkReasoning, port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkText, port.ChunkUsage, port.ChunkDone)
-				wantText := []string{"Let me think", " about this.", "ENCRYPTED_BLOB", "Answer."}
+				assertCodexChunkKinds(t, chunks, port.ChunkReasoning, port.ChunkReasoning, port.ChunkText, port.ChunkReasoningItem, port.ChunkUsage, port.ChunkDone)
+				wantText := []string{"Let me think", " about this.", "Answer."}
 				for i, want := range wantText {
 					if chunks[i].Text != want {
 						t.Fatalf("reasoning fixture chunk %d text = %q, want %q", i, chunks[i].Text, want)
 					}
+				}
+				var envelope struct {
+					Version int `json:"v"`
+					Items   []struct {
+						ID   string `json:"i"`
+						Blob string `json:"e"`
+					} `json:"items"`
+				}
+				if err := json.Unmarshal([]byte(chunks[3].Text), &envelope); err != nil {
+					t.Fatalf("decode reasoning envelope: %v", err)
+				}
+				if envelope.Version != 1 || len(envelope.Items) != 1 || envelope.Items[0].ID != "rs_1" || envelope.Items[0].Blob != "ENCRYPTED_BLOB" {
+					t.Fatalf("reasoning envelope = %+v, want v1 rs_1/ENCRYPTED_BLOB", envelope)
 				}
 				assertCodexUsageAndDone(t, chunks[4], chunks[5], 100, 50, 80, 40)
 			},
