@@ -49,6 +49,7 @@ func TestApplyMapsAllSixFields(t *testing.T) {
 	t.Setenv(envOpenAIKey, "sk-openai")
 	t.Setenv(envOpenRouterKey, "sk-openrouter")
 	t.Setenv(envAnthropicKey, "sk-anthropic")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
@@ -83,6 +84,11 @@ func TestApplyEmptyEnvLeavesEmptyFields(t *testing.T) {
 	t.Setenv(envOpenAIKey, "")
 	t.Setenv(envOpenRouterKey, "")
 	t.Setenv(envAnthropicKey, "")
+	// Point XDG_CONFIG_HOME at an empty temp dir so this test is hermetic against
+	// whatever the machine running it happens to have at ~/.config/mecatl/auth.yaml
+	// (Apply/Resolve now consult it too — an operator auth.yaml on the dev box must
+	// not make "no credentials configured" flip to "has credentials").
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})

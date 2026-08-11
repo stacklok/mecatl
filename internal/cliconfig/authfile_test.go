@@ -120,11 +120,11 @@ providers:
 }
 
 // TestApplyMissingConventionalAuthFileIsSilent proves the common case — no
-// auth.yaml exists yet, no --auth-file flag passed — produces no warning at
-// all, matching every other "empty = auto, absent = skip" convention in this
-// codebase (soul-file, skills-dir, ...).
+// auth.yaml exists yet, but an environment credential is present, so the missing
+// conventional file produces no warning.
 func TestApplyMissingConventionalAuthFileIsSilent(t *testing.T) {
 	clearProviderEnv(t)
+	t.Setenv(envOpenAIKey, "sk-from-env")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // real dir, but no mecatl/auth.yaml inside it
 
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
@@ -138,8 +138,23 @@ func TestApplyMissingConventionalAuthFileIsSilent(t *testing.T) {
 	if keys.AuthFileWarning != "" {
 		t.Errorf("AuthFileWarning = %q, want empty (a missing conventional file is not an error)", keys.AuthFileWarning)
 	}
-	if keys.Any() {
-		t.Error("Any() should be false: no env, no file")
+	if !keys.Any() || cfg.OpenAIKey != "sk-from-env" {
+		t.Errorf("environment credential should remain usable: keys=%+v cfg.OpenAIKey=%q", keys, cfg.OpenAIKey)
+	}
+}
+
+func TestApplyMissingConventionalAuthFileIsSilentWithoutEnv(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	pf := RegisterProviderFlags(fs, ProviderFlagHelp{})
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	keys := pf.Apply(&app.Config{})
+	if keys.AuthFileWarning != "" {
+		t.Fatalf("missing conventional auth file should be silent in shared resolution: %q", keys.AuthFileWarning)
 	}
 }
 

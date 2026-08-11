@@ -107,21 +107,39 @@ func RegisterProviderFlags(fs *flag.FlagSet, help ProviderFlagHelp) *ProviderFla
 	return pf
 }
 
-// Apply reads the three provider-credential environment variables, then fills any
-// still-empty credential from an auth.yaml credentials file (the explicit --auth-file
-// path, or the conventional $XDG_CONFIG_HOME/mecatl/auth.yaml default), and writes all
-// six app.Config values (3 keys + 3 base URLs) onto cfg. It is safe to call exactly
-// once after fs has been parsed. It returns the resolved keys so a caller that needs to
-// make a presence decision (mecated flips UseOpenAI on a present key; mecatui's "no
-// provider at all" guard) can read them without re-querying the environment — but it
-// NEVER logs them. A non-empty ResolvedKeys.AuthFileWarning should be surfaced by the
-// caller (cmd/ mains: slog.Warn) — see loadAuthFile for when it fires.
+// Apply resolves credentials (including file I/O) and writes all provider fields.
+// Callers that already resolved credentials at an earlier parse boundary should
+// use ApplyResolved to avoid a second file read.
 func (pf *ProviderFlags) Apply(cfg *app.Config) ResolvedKeys {
+	keys := pf.Resolve()
+	pf.ApplyResolved(cfg, keys)
+	return keys
+}
+
+// ApplyResolved writes an already-resolved credential set and the provider base
+// URLs onto cfg. The keys are secret-shaped and are never logged here.
+func (pf *ProviderFlags) ApplyResolved(cfg *app.Config, keys ResolvedKeys) {
+	cfg.OpenAIKey = keys.OpenAI
+	cfg.OpenRouterKey = keys.OpenRouter
+	cfg.AnthropicKey = keys.Anthropic
+	cfg.OpenCodeKey = keys.OpenCode
+	if pf != nil {
+		cfg.OpenAIBaseURL = *pf.openAIBaseURL
+		cfg.OpenRouterBaseURL = *pf.openRouterBaseURL
+		cfg.AnthropicBaseURL = *pf.anthropicBaseURL
+		cfg.OpenCodeBaseURL = *pf.openCodeBaseURL
+	}
+}
+
+// Resolve reads provider credentials from the environment and then auth.yaml.
+// It performs file I/O at this resolution boundary; callers should retain the
+// returned value when applying the same configuration rather than calling Resolve
+// again. Four providers are supported: anthropic, openai, openrouter, and opencode.
+// Environment values always win over file values. The values are SECRET-shaped;
+// callers must not log or print them.
+func (pf *ProviderFlags) Resolve() ResolvedKeys {
 	keys := ReadProviderKeys()
 
-	// A nil receiver (a config built WITHOUT RegisterProviderFlags — e.g. a test that
-	// constructs the cmd config struct directly) has no --auth-file flag to read, so it
-	// falls through to the conventional default path exactly like an unset flag would.
 	explicitPath := ""
 	if pf != nil {
 		explicitPath = *pf.authFile
@@ -132,39 +150,31 @@ func (pf *ProviderFlags) Apply(cfg *app.Config) ResolvedKeys {
 	}
 	af, warning := authfile.Load(path, explicitPath != "", xdgconfig.OSEnv, knownAuthProviders)
 	keys.AuthFileWarning = warning
-	// The environment always wins: cmp.Or keeps a credential already present and
-	// falls back to the file only when the environment left it empty, so a
-	// deployment that only ever used env vars sees byte-identical behavior
-	// whether or not an auth.yaml happens to exist.
 	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
-
-	cfg.OpenAIKey = keys.OpenAI
-	cfg.OpenRouterKey = keys.OpenRouter
-	cfg.AnthropicKey = keys.Anthropic
-	cfg.OpenCodeKey = keys.OpenCode
-	// A nil receiver (a config built WITHOUT RegisterProviderFlags — e.g. a test that
-	// constructs the cmd config struct directly) applies the env/auth-file keys but
-	// leaves the base URLs at their zero value, exactly as the pre-extraction inline
-	// code did when the base-url flags were never set. This keeps embeddedConfig/
-	// appConfig safe to call on a hand-built config.
-	if pf != nil {
-		cfg.OpenAIBaseURL = *pf.openAIBaseURL
-		cfg.OpenRouterBaseURL = *pf.openRouterBaseURL
-		cfg.AnthropicBaseURL = *pf.anthropicBaseURL
-		cfg.OpenCodeBaseURL = *pf.openCodeBaseURL
-	}
 	return keys
 }
 
-// ReadProviderKeys reads the three provider credentials from the environment. It is the
-// SINGLE definition of which env vars hold which credential — both Apply and any caller
-// that must make a credential-presence decision BEFORE an app.Config exists (e.g.
-// mecatui's "no provider configured" startup guard) read through it, so the var names
-// can never diverge between the guard path and the wiring path. The values are
-// SECRET-shaped; callers must not log or print them.
+// AuthFilePath reports the path Resolve would inspect and whether it came from
+// --auth-file. It exposes path provenance without exposing credentials so a
+// command-specific startup policy can decide how to present a conventional
+// missing-file result.
+func (pf *ProviderFlags) AuthFilePath() (path string, explicit bool) {
+	if pf != nil && *pf.authFile != "" {
+		return *pf.authFile, true
+	}
+	return authfile.DefaultPath(xdgconfig.OSEnv), false
+}
+
+// ReadProviderKeys reads provider credentials from the environment alone
+// (no auth.yaml). It is the SINGLE definition of which env vars hold which credential —
+// Resolve reads through it before layering the credentials file on top, so the var
+// names can never diverge between the two. A caller that must account for auth.yaml
+// (e.g. a presence/"is any provider configured" decision) should call
+// ProviderFlags.Resolve instead. The values are SECRET-shaped; callers must not log or
+// print them.
 func ReadProviderKeys() ResolvedKeys {
 	return ResolvedKeys{
 		OpenAI:     os.Getenv(envOpenAIKey),
@@ -185,7 +195,7 @@ type ResolvedKeys struct {
 	OpenCode   string
 	// AuthFileWarning is non-empty when the auth.yaml credentials file (the explicit
 	// --auth-file path, or the conventional default) could not be read or parsed
-	// cleanly. It is set only by Apply (ReadProviderKeys alone never touches the file).
+	// cleanly. It is set by Resolve/Apply (ReadProviderKeys alone never touches the file).
 	// Never fatal — Apply always falls back to whatever was resolved from the
 	// environment — but a caller should log it (cmd/ mains: slog.Warn) so a typo in
 	// auth.yaml doesn't fail silently. Not secret-shaped: it names the file path and the

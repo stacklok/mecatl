@@ -104,6 +104,9 @@ func run(argv []string) error {
 		return err
 	}
 	cfg.connectAddress = res.address
+	if cfg.providerKeys.AuthFileWarning != "" {
+		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
+	}
 	if err := cfg.validate(); err != nil {
 		return err
 	}
@@ -676,14 +679,14 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// NopDiagnostics.
 		Diagnostics: diag,
 	}
-	// Apply the shared provider credentials + base URLs (cliconfig). mecatui's
-	// UseOpenAI is "an OpenAI key is present" (it has no --openai flag), preserved here
-	// off the resolved key.
-	keys := cfg.providerFlags.Apply(&out)
-	out.UseOpenAI = keys.OpenAI != ""
-	if keys.AuthFileWarning != "" {
-		slog.Warn(keys.AuthFileWarning)
+	// Apply the credentials resolved at parse time. Reusing the result keeps
+	// startup validation and embedded composition on one auth-file read.
+	keys := cfg.providerKeys
+	if !cfg.providerKeysResolved {
+		keys = cfg.providerFlags.Resolve()
 	}
+	cfg.providerFlags.ApplyResolved(&out, keys)
+	out.UseOpenAI = keys.OpenAI != ""
 	cfg.toolhiveLLMFlags.Apply(&out)
 	return out
 }
