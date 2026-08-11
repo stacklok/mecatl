@@ -2,8 +2,8 @@
 id: 09-subagent-resume-owner-check
 title: Enforce ownership on Subagent resume
 blocked_by: [01-ownership-core]
-status: pending
-branch: ""
+status: in-progress
+branch: "plan-caller-separation/09-subagent-resume-owner-check"
 worktree: ""
 issue: "368"
 retries: 0
