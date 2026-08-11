@@ -45,6 +45,22 @@ A tool call doesn't dump its full JSON arguments into your terminal by default �
 
 A Subagent card adds delegation visibility: while the child runs, its collapsed line names the child's **live current tool**, and `ctrl+t` shows a Team-format trace — tool chips with bounded previews of the child's args/results and capped message lines. The `ctrl+a` agents overlay gives Subagent and Parallel runs the same bounded-preview traces in their focus panes; the task board, findings, dispositions, and context meter stay Team-only. These previews are capped, control-byte-scrubbed, and client-only — see [Subagents, teams, and parallel](subagents-teams-parallel.md#watching-a-delegation-in-mecatui--bounded-previews).
 
+## Remapping keys
+
+Every mecatui action is rebindable — and the `?` help overlay always shows your **live** bindings, so a remap is reflected in the help you see, not just in the keys that fire. Two override surfaces exist, and they merge: the repeatable `--keymap Action=chord[,chord2]` CLI flag wins per action over the `keymap:` map in `~/.config/mecatl/settings.yaml`:
+
+```yaml
+keymap:
+  Agents: ctrl+f12
+  Effort: ctrl+f5
+```
+
+The classic use case is **getting readline-style editing back in the prompt**. By default `ctrl+a` opens the agents overlay and `ctrl+e` opens the effort picker — which means the usual line-start / line-end chords never reach the input box. The prompt input is a standard readline-style editor with its own fixed editing keys (word jumps on `alt+f`/`alt+b`, `ctrl+w` delete-word, `ctrl+k`/`ctrl+u` kill-line, `home`/`end`, and `ctrl+a`/`ctrl+e` for line start/end); those editing keys are the input widget's own and can't be rebound. But remapping the mecatui actions off those chords — as in the YAML above — frees `ctrl+a` and `ctrl+e` to reach the input as line-start / line-end again.
+
+Rules, in plain language: action names must match the documented set exactly; a **global** action (one that fires at the main prompt) must be a modified or special chord — never a bare letter that would swallow your typing — while keys that only act inside an overlay or the permission modal may be bare; two actions in the same scope can't share a chord; the deny key can't collide with allow/always-allow/submit/cancel; and the send key must differ from the newline key. An invalid override fails startup with a clear `keymap:` error.
+
+Settings are read **once at startup** — restart mecatui to apply a change (live reload is a planned follow-up). For the full action table, the input widget's editing keys, and the exact validation rules, see the [`docs/tui.md` Remapping keys reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#remapping-keys).
+
 ## What's next
 
 - [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md) — the full mecatui reference: every keybinding, the command palette, the context meter, diff and reasoning panels, and the state-file layout behind model/workspace picks.

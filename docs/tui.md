@@ -698,6 +698,122 @@ wheel) — and greys out any whose feature the connected server has not enabled
 definitions (`caps.agents`), it also notes that `/agents` browses the definition
 inventory.
 
+### Remapping keys
+
+Every action in mecatui's keymap is rebindable. Two override surfaces exist, and
+they resolve to the same map — the **CLI flag wins per action** when both name it:
+
+- **`~/.config/mecatl/settings.yaml`** (operator-tier, shared with `mecated`) —
+  a `keymap:` map of action name → comma-separated chord string:
+
+  ```yaml
+  keymap:
+    Agents: ctrl+f12
+    Effort: ctrl+f5,ctrl+f6
+  ```
+
+- **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
+  rebinds one action and overrides the YAML entry for that action.
+
+Settings are read **once at startup** — restart mecatui to apply a change (live
+reload is a planned follow-up, issue #456).
+
+#### The action map
+
+The rebindable actions (names are the `keyMap` struct field names, matched
+exactly). **Scope** is `global` (live at the main prompt / idle) or `overlay`
+(consulted only while a specific overlay owns the keyboard — so bare letters are
+safe there). Actions marked *(approval)* are the permission-modal keys.
+
+| Action | Default chord(s) | Scope | What it does |
+|---|---|---|---|
+| `Submit` | `enter` | global | send the prompt; while a run streams, queue a follow-up |
+| `Newline` | `shift+enter`, `ctrl+j` | global | newline in the input |
+| `Cancel` | `esc` | global | cancel the running turn / clear staged input & queue |
+| `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
+| `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
+| `Quit` | `ctrl+c` | global | graceful quit (double-press; first press clears the input or arms) |
+| `Allow` | `a`, `y`, `enter` | *(approval)* | allow the pending tool call once |
+| `AllowAlways` | `w` | *(approval)* | always allow this exact call (session-scoped; main-agent asks only) |
+| `Deny` | `d`, `n`, `esc` | *(approval)* | deny the pending tool call |
+| `ScrollU` | `pgup` | global | scroll the conversation up |
+| `ScrollD` | `pgdown` | global | scroll the conversation down |
+| `ScrollTop` | `home` | global | jump the conversation to the top |
+| `ScrollBottom` | `end` | global | jump to the bottom (resumes auto-follow) |
+| `ModeSwitch` | `alt+m` | global | cycle permission mode (default / plan / accept-edits) |
+| `MCPPanel` | `ctrl+o` | global | MCP inventory panel |
+| `Resources` | `ctrl+r` | global | MCP resources picker |
+| `Prompts` | `ctrl+p` | global | MCP prompts picker |
+| `Agents` | `ctrl+a` | global | unified agents overlay (subagents / parallel / teams) |
+| `ExpandTools` | `ctrl+t` | global | expand/collapse tool-card details & reasoning summaries |
+| `Help` | `?` | global | this help overlay (on an empty prompt) |
+| `Effort` | `ctrl+e` | global | reasoning-effort picker |
+| `Up` | `up`, `k` | overlay | move the cursor up |
+| `Down` | `down`, `j` | overlay | move the cursor down |
+| `Choose` | `enter` | overlay | select the cursor row |
+| `Close` | `esc` | overlay | close the overlay |
+| `Refresh` | `r` | overlay | re-issue the overlay's primary fetch (MCP panel re-probe) |
+| `Tasks` | `t` | overlay | agents overlay: flip the Teams tab to the task board |
+| `Findings` | `f` | overlay | agents overlay: flip the Teams tab to the findings ledger |
+| `JumpTop` | `home`, `g` | overlay | jump to the first roster row |
+| `JumpEnd` | `end`, `G` | overlay | jump to the last roster row |
+| `NextTab` | `tab` | overlay | agents overlay: switch tab |
+| `CancelChild` | `x` | overlay | agents overlay: cancel the selected running child |
+| `SetGlobalDefault` | `ctrl+g` | overlay¹ (`/models` picker) | set the cursor row as the client global default |
+
+¹ `SetGlobalDefault` is consulted only inside the `/models` picker, but it is in
+**neither** of the validator's collision scopes (`globalOpen` /
+`overlayInternal`) — so its chord is not collision-checked against the other
+actions. Keep it `ctrl`-modified (the default `ctrl+g`): a bare `g` would be
+swallowed by the picker's filter input and by `ScrollTop`/`JumpTop`.
+
+#### What the override cannot reach — the textarea's own editing keys
+
+The prompt input is the bubbles `textarea` widget, which ships its **own**
+keymap (`textarea.DefaultKeyMap`) that mecatui does NOT expose to `--keymap` —
+these are not actions in the table above and cannot be rebound:
+
+| Chord(s) | Edit |
+|---|---|
+| `right` / `ctrl+f`, `left` / `ctrl+b` | character forward / backward |
+| `alt+right` / `alt+f`, `alt+left` / `alt+b` | word forward / backward |
+| `down` / `ctrl+n`, `up` / `ctrl+p` | next / previous line |
+| `home` / `ctrl+a`, `end` / `ctrl+e` | line start / line end |
+| `alt+backspace` / `ctrl+w`, `alt+delete` / `alt+d` | delete word backward / forward |
+| `ctrl+k`, `ctrl+u` | kill to line end / line start |
+| `backspace` / `ctrl+h`, `delete` / `ctrl+d` | delete character backward / forward |
+| `enter` / `ctrl+m` | insert newline (mecatui intercepts `enter` as Submit first) |
+| `ctrl+v` | paste (mecatui intercepts `ctrl+v` as Paste first) |
+| `alt+<` / `ctrl+home`, `alt+>` / `ctrl+end` | input begin / end |
+| `alt+c`, `alt+l`, `alt+u` | capitalize / lowercase / uppercase word forward |
+| `ctrl+t` | transpose characters (mecatui intercepts `ctrl+t` as ExpandTools first) |
+
+The important interaction: **remapping a mecatui action off a chord frees that
+chord to reach the textarea.** With the defaults, `ctrl+a` opens the agents
+overlay and `ctrl+e` opens the effort picker — so the readline line-start /
+line-end chords never reach the input. Rebind the actions away
+(`keymap: {Agents: ctrl+f12, Effort: ctrl+f5}`) and `ctrl+a` / `ctrl+e` start
+jumping the cursor to the line start / end instead. The `?` help overlay and the
+welcome card always show the **live** bindings.
+
+#### Validation rules
+
+An invalid override fails startup with a `keymap:` error. The rules
+(`keymap.Parse` + `keymap.Validate`):
+
+- **Unknown actions are rejected** — names must match the action table exactly.
+- **Empty chords are rejected**; duplicates within one action are deduped.
+- **Bare printable runes are rejected on global actions** — a global-scope
+  action must be a modified or special chord (`ctrl+x`, `alt+m`, `f5`, `home`,
+  `tab`, …), never a bare letter that would swallow prose input. (Overlay-scope
+  actions — and the approval keys — may be bare: they only fire while a modal or
+  overlay owns the keyboard.)
+- **No collisions within a scope**: two global actions may not share a chord,
+  and two overlay actions may not share one either.
+- **Approval consistency**: `Deny` may not share a chord with `Allow`,
+  `AllowAlways`, `Submit`, or `Cancel`.
+- **`Submit` ≠ `Newline`**: the send key and the newline key must be distinct.
+
 **Scrollback and auto-follow.** The conversation viewport **auto-follows** the
 bottom (tails streaming output) until you scroll up — with `pgup`, `home`, or the
 mouse wheel. While scrolled up the header shows a muted **`↑ NN%`** position cue,

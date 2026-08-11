@@ -77,7 +77,7 @@ func (m Model) View() tea.View {
 func (m Model) renderBody() string {
 	switch {
 	case m.showHelp:
-		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.agentsKeyMarking(), m.jumpKeyMarking())
+		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpKeyMarkings())
 	case m.phase == phaseAwaitingApproval:
 		if isPlanAsk(m.ask.Tool) {
 			// A plan ask fills the conversation region with a dedicated SCROLLABLE

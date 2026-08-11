@@ -115,5 +115,159 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 // m_helpBody renders just the help body for caps (no centering), for content
 // assertions. Uses the default keys since the tests don't wire custom keymaps.
 func m_helpBody(caps client.Capabilities) string {
-	return helpBody(aztec(), caps, "ctrl+a", "home/end")
+	return helpBody(aztec(), caps, defaultHelpKeys())
+}
+
+// TestHelpReflectsKeyOverride proves the help overlay reads the LIVE bindings:
+// EVERY rebindable row in the help body must lead with its overridden chord,
+// and the replaced default chord must not still label that row. The test builds
+// the keymap via applyKeyOverrides directly (bypassing the validator), so the
+// sentinel chords only need to be distinct, not validator-legal.
+func TestHelpReflectsKeyOverride(t *testing.T) {
+	// Every rebindable action that appears as a help-body row, overridden to a
+	// distinct sentinel chord. The scroll pair uses one sentinel per half so the
+	// "<up>/<down>" join is exercised.
+	overrides := map[string][]string{
+		"Submit":      {"ctrl+f1"},
+		"Newline":     {"ctrl+f2"},
+		"Paste":       {"ctrl+f3"},
+		"Cancel":      {"ctrl+f4"},
+		"Effort":      {"ctrl+f5"},
+		"MCPPanel":    {"ctrl+f6"},
+		"Resources":   {"ctrl+f7"},
+		"Prompts":     {"ctrl+f8"},
+		"Agents":      {"ctrl+f9"},
+		"ModeSwitch":  {"ctrl+f10"},
+		"ExpandTools": {"ctrl+f11"},
+		"Help":        {"ctrl+f12"},
+		"Quit":        {"ctrl+f13"},
+		"ScrollU":     {"ctrl+f14"},
+		"ScrollD":     {"ctrl+f15"},
+		"Close":       {"ctrl+f16"},
+	}
+	km := applyKeyOverrides(defaultKeys(), overrides)
+	body := stripANSIstr(helpBody(aztec(), allOnCaps(), keyMarkings(km)))
+
+	// Each row is matched by its unique action text; want is the exact leading
+	// chord column; absent is the default chord that must no longer label it.
+	rows := []struct {
+		name   string
+		match  string
+		want   string
+		absent string
+		occurs int // rows whose action text appears on this many lines
+	}{
+		{name: "Submit", match: "send the prompt", want: "ctrl+f1", absent: "enter", occurs: 1},
+		{name: "Submit queued", match: "queue a follow-up", want: "ctrl+f1", absent: "enter", occurs: 1},
+		{name: "Newline", match: "newline", want: "ctrl+f2", absent: "shift+enter", occurs: 1},
+		{name: "Paste", match: "paste a clipboard image", want: "ctrl+f3", absent: "ctrl+v", occurs: 1},
+		{name: "Cancel turn", match: "cancel the running turn", want: "ctrl+f4", absent: "esc", occurs: 1},
+		{name: "Cancel staged", match: "clear staged input / queue", want: "ctrl+f4", absent: "esc", occurs: 1},
+		{name: "MCPPanel", match: "MCP inventory", want: "ctrl+f6", absent: "ctrl+o", occurs: 1},
+		{name: "Resources", match: "MCP resources", want: "ctrl+f7", absent: "ctrl+r", occurs: 1},
+		{name: "Prompts", match: "MCP prompts", want: "ctrl+f8", absent: "ctrl+p", occurs: 1},
+		{name: "Agents", match: "agents overlay", want: "ctrl+f9", absent: "ctrl+a", occurs: 1},
+		{name: "Effort", match: "reasoning-effort picker", want: "ctrl+f5", absent: "ctrl+e", occurs: 1},
+		{name: "ModeSwitch", match: "cycle permission mode", want: "ctrl+f10", absent: "alt+m", occurs: 1},
+		{name: "ExpandTools", match: "expand/collapse details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
+		{name: "Help", match: "this help (on an empty prompt)", want: "ctrl+f12", absent: "?", occurs: 1},
+		{name: "Quit", match: "quit (press twice", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},
+		{name: "Scroll", match: "scroll the conversation", want: "ctrl+f14/ctrl+f15", absent: "pgup", occurs: 1},
+		{name: "Close hint", match: "to close", want: "ctrl+f16 or ctrl+f12", absent: "esc or ?", occurs: 1},
+	}
+
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			found := 0
+			for _, line := range strings.Split(body, "\n") {
+				trim := strings.TrimSpace(line)
+				if !strings.Contains(trim, row.match) {
+					continue
+				}
+				found++
+				if !strings.HasPrefix(trim, row.want) {
+					t.Errorf("%s row should lead with the overridden %q chord: %q", row.name, row.want, trim)
+				}
+				if strings.Contains(trim, row.absent) {
+					t.Errorf("%s row still shows the default %q after override: %q", row.name, row.absent, trim)
+				}
+			}
+			if found != row.occurs {
+				t.Errorf("%s: matched %d lines on %q, want %d", row.name, found, row.match, row.occurs)
+			}
+		})
+	}
+}
+
+// TestHelpKeyOverrideEndToEnd closes the New()→View() wiring seam: overrides
+// carried on Deps.KeyOverrides must reach the rendered help overlay when it is
+// opened through the real update path (the "?" keypress).
+func TestHelpKeyOverrideEndToEnd(t *testing.T) {
+	recv := &fakeRecver{gate: make(chan struct{})}
+	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: allOnCaps()}
+	m := New(Deps{
+		Session:     conv,
+		Conv:        conv,
+		Theme:       aztec(),
+		Server:      "127.0.0.1:8080",
+		Workspace:   "/workspace",
+		Mode:        "default",
+		Model:       "mock-model",
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+		KeyOverrides: map[string][]string{
+			"Effort":   {"ctrl+f5"},
+			"MCPPanel": {"ctrl+f6"},
+		},
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
+	)
+	m.conv.addUser("hello")
+	m.refreshView()
+	m = applyAll(m, qmark())
+	if !m.showHelp {
+		t.Fatal("help overlay did not open on '?' with empty input")
+	}
+
+	view := stripANSIstr(m.View().Content)
+	var effortRow, mcpRow string
+	for _, line := range strings.Split(view, "\n") {
+		trim := strings.TrimSpace(line)
+		switch {
+		case strings.Contains(trim, "reasoning-effort picker"):
+			effortRow = trim
+		case strings.Contains(trim, "MCP inventory"):
+			mcpRow = trim
+		}
+	}
+	// The rows render inside the centred card's border, so the chord is not at
+	// column 0 — assert the row carries the override chord and not the default.
+	if !strings.Contains(effortRow, "ctrl+f5") {
+		t.Errorf("effort row should carry the overridden ctrl+f5 via Deps.KeyOverrides: %q", effortRow)
+	}
+	if strings.Contains(effortRow, "ctrl+e") {
+		t.Errorf("effort row still shows the default ctrl+e: %q", effortRow)
+	}
+	if !strings.Contains(mcpRow, "ctrl+f6") {
+		t.Errorf("MCP-inventory row should carry the overridden ctrl+f6 via Deps.KeyOverrides: %q", mcpRow)
+	}
+	if strings.Contains(mcpRow, "ctrl+o") {
+		t.Errorf("MCP-inventory row still shows the default ctrl+o: %q", mcpRow)
+	}
+}
+
+// TestKeyMarkingsEmptyBindingFallsBack pins the firstKey fallback contract: a
+// binding overridden to an EMPTY chord list (reachable only by bypassing the
+// validator, which rejects empty chords) must render the row's DEFAULT marking,
+// never a blank key column.
+func TestKeyMarkingsEmptyBindingFallsBack(t *testing.T) {
+	km := applyKeyOverrides(defaultKeys(), map[string][]string{"Submit": {}})
+	if keys := km.Submit.Keys(); len(keys) != 0 {
+		t.Fatalf("precondition: Submit override to empty chords should yield an empty binding, got %v", keys)
+	}
+	if got := keyMarkings(km).submit; got != "enter" {
+		t.Errorf("empty Submit binding should fall back to the default marking %q, got %q", "enter", got)
+	}
 }

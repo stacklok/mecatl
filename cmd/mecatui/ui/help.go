@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
@@ -39,16 +41,16 @@ const helpKeyWidth = 22
 // and agents overlays use. Every availability decision reads the relayed caps
 // (not a ui-local guess), so the same overlay honestly reflects an embedded
 // default (mcp/commands/skills off) and an external mecated with everything on.
-// agentsKey and jumpKey reflect the LIVE key bindings so a rebinding propagates here.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, agentsKey, jumpKey string) string {
-	return centerCard(th, helpBody(th, caps, agentsKey, jumpKey), width, height)
+// hk carries the LIVE key markings so a rebinding propagates here.
+func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, hk helpKeys) string {
+	return centerCard(th, helpBody(th, caps, hk), width, height)
 }
 
 // helpBody builds the overlay's text: a title, grouped chord sections (each row
 // caps-annotated), the skills clarification, and the close hint.
-// agentsKey and jumpKey are the LIVE key markings from the model's keyMap,
-// so a rebinding propagates here.
-func helpBody(th theme.Theme, caps client.Capabilities, agentsKey, jumpKey string) string {
+// hk carries the LIVE key markings from the model's keyMap, so a rebinding
+// propagates here.
+func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	muted := th.Style("muted")
 	var b strings.Builder
 
@@ -56,42 +58,42 @@ func helpBody(th theme.Theme, caps client.Capabilities, agentsKey, jumpKey strin
 
 	b.WriteString(muted.Render("Prompting") + "\n")
 	writeHelpRows(&b, th, []helpRow{
-		{key: "enter", action: "send the prompt"},
-		{key: "shift+enter", action: "newline (also ctrl+j)"},
+		{key: hk.submit, action: "send the prompt"},
+		{key: hk.newlineFirst, action: "newline" + hk.newlineAlso},
 		{key: "/", action: "slash-command palette (built-ins always; workspace commands when enabled)"},
 		{key: "@", action: "attach a file: image/audio inlines as media (when supported), else inlines text"},
-		{key: "ctrl+v", action: "paste a clipboard image as an attachment (when supported), else paste text"},
-		{key: "esc", action: "cancel the running turn"},
+		{key: hk.paste, action: "paste a clipboard image as an attachment (when supported), else paste text"},
+		{key: hk.cancel, action: "cancel the running turn"},
 	})
 
 	b.WriteString("\n" + muted.Render("While a run is streaming") + "\n")
 	writeHelpRows(&b, th, []helpRow{
-		{key: "enter", action: "queue a follow-up (sends when the turn ends)"},
-		{key: "esc", action: "clear staged input / queue, else cancel run"},
+		{key: hk.submit, action: "queue a follow-up (sends when the turn ends)"},
+		{key: hk.cancel, action: "clear staged input / queue, else cancel run"},
 	})
 
 	b.WriteString("\n" + muted.Render("Inspect & control") + "\n")
 	writeHelpRows(&b, th, []helpRow{
-		{key: "ctrl+o", action: "MCP inventory", available: caps.MCP, gated: true},
-		{key: "ctrl+r", action: "MCP resources", available: caps.MCP, gated: true},
-		{key: "ctrl+p", action: "MCP prompts", available: caps.MCP, gated: true},
-		{key: agentsKey, action: "agents overlay (subagents / parallel / teams · tab to switch)"},
-		{key: "ctrl+e", action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
+		{key: hk.mcpPanel, action: "MCP inventory", available: caps.MCP, gated: true},
+		{key: hk.resources, action: "MCP resources", available: caps.MCP, gated: true},
+		{key: hk.prompts, action: "MCP prompts", available: caps.MCP, gated: true},
+		{key: hk.agents, action: "agents overlay (subagents / parallel / teams · tab to switch)"},
+		{key: hk.effort, action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
 		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
 		{key: "/sessions", action: "open a stored session (read-only transcript)"},
-		{key: "alt+m", action: "cycle permission mode (default / plan / accept-edits)"},
-		{key: "ctrl+t", action: "expand/collapse details"},
+		{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
+		{key: hk.expandTools, action: "expand/collapse details"},
 	})
 
 	b.WriteString("\n" + muted.Render("General") + "\n")
 	writeHelpRows(&b, th, []helpRow{
-		{key: platform.ScrollKeysMarking(), action: "scroll the conversation (a ↑NN% header cue shows while scrolled up)"},
-		{key: jumpKey, action: "jump to top / bottom (end resumes auto-follow)"},
+		{key: hk.scroll, action: "scroll the conversation (a ↑NN% header cue shows while scrolled up)"},
+		{key: hk.jump, action: "jump to top / bottom (end resumes auto-follow)"},
 		{key: "wheel", action: "mouse-wheel scroll (alt screen only)"},
 		{key: "drag", action: "select text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · esc clears"},
 		{key: "middle-click", action: "paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)"},
-		{key: "?", action: "this help (on an empty prompt)"},
-		{key: "ctrl+c", action: "quit (press twice; first press clears the prompt or arms, again within 3s exits)"},
+		{key: hk.help, action: "this help (on an empty prompt)"},
+		{key: hk.quit, action: "quit (press twice; first press clears the prompt or arms, again within 3s exits)"},
 	})
 
 	// The skills clarification. Skills always ACTIVATE automatically (the model
@@ -139,34 +141,104 @@ func helpBody(th theme.Theme, caps client.Capabilities, agentsKey, jumpKey strin
 	b.WriteString("\n" + muted.Render("↑ input · ↓ output · ⊕ cache write") + "\n")
 	b.WriteString(muted.Render("cache N% — share of input tokens served from cache") + "\n")
 
-	b.WriteString("\n" + muted.Render("esc or ? to close"))
+	// Close hint. Sourced LIVE from the Close/Help bindings (the two keys that
+	// actually dismiss this overlay — see the m.showHelp gate in update.go), NOT a
+	// hardcoded "esc or ?": an operator can remap either, and a stale hint would
+	// lie about how to close. With default keys it renders exactly "esc or ?".
+	b.WriteString("\n" + muted.Render(hk.close+" to close"))
 	return b.String()
 }
 
-// jumpKeyMarking returns the live scroll-top/scroll-bottom key marking from the
-// keyMap (first keys joined with "/"), so a rebinding propagates here.
-func (m Model) jumpKeyMarking() string {
-	top := m.keys.ScrollTop.Keys()
-	bot := m.keys.ScrollBottom.Keys()
-	// Both have at least one key by construction (the default binding).
-	topKey := "home"
-	botKey := "end"
-	if len(top) > 0 {
-		topKey = top[0]
-	}
-	if len(bot) > 0 {
-		botKey = bot[0]
-	}
-	return topKey + "/" + botKey
+// helpKeys is the set of pre-computed chord markings helpBody renders for the
+// REBINDABLE rows — one field per rebindable action that appears in the help
+// body. Keeping the renderer string-driven (not keyMap-driven) means the body
+// builder stays pure, and the welcome card reuses the same struct for its
+// live affordance rows. With DEFAULT keys every field resolves to exactly the
+// literal it replaced, so the goldens stay byte-identical.
+type helpKeys struct {
+	submit       string // Submit — send the prompt / queue a follow-up
+	newlineFirst string // Newline — first chord of the binding
+	newlineAlso  string // Newline — static " (also X)" suffix for remaining chords ("" when none)
+	paste        string // Paste
+	cancel       string // Cancel — cancel the running turn / clear staged input & queue
+	quit         string // Quit
+	help         string // Help — this overlay
+	mcpPanel     string // MCPPanel
+	resources    string // Resources
+	prompts      string // Prompts
+	agents       string // Agents
+	effort       string // Effort
+	modeSwitch   string // ModeSwitch
+	expandTools  string // ExpandTools
+	scroll       string // ScrollU/ScrollD — platform-adaptive on the default, "<up>/<down>" once remapped
+	jump         string // ScrollTop/ScrollBottom joined as "home/end"
+	close        string // Close/Help joined as "esc or ?" — the keys that dismiss this overlay
 }
 
-// agentsKeyMarking returns the current agents overlay key (first key in binding) for help/affordance labels.
-func (m Model) agentsKeyMarking() string {
-	keys := m.keys.Agents.Keys()
-	if len(keys) > 0 {
+// firstKey returns the first chord of b, or def when the binding is empty
+// (by construction a default binding always has at least one key).
+func firstKey(b key.Binding, def string) string {
+	if keys := b.Keys(); len(keys) > 0 {
 		return keys[0]
 	}
-	return "ctrl+a"
+	return def
+}
+
+// helpKeyMarkings builds the help-body key markings from the model's LIVE
+// keyMap, so a rebinding propagates into the "?" overlay.
+func (m Model) helpKeyMarkings() helpKeys { return keyMarkings(m.keys) }
+
+// defaultHelpKeys builds the help markings from the DEFAULT bindings — the
+// honest fixture for tests that don't wire custom keymaps.
+func defaultHelpKeys() helpKeys { return keyMarkings(defaultKeys()) }
+
+// keyMarkings derives the help-body key markings from km: each rebindable row
+// shows the binding's first chord; the scroll pair joins ScrollTop/ScrollBottom
+// as "home/end"; the newline row keeps its static " (also …)" suffix for any
+// remaining chords.
+func keyMarkings(km keyMap) helpKeys {
+	hk := helpKeys{
+		submit:      firstKey(km.Submit, "enter"),
+		paste:       firstKey(km.Paste, "ctrl+v"),
+		cancel:      firstKey(km.Cancel, "esc"),
+		quit:        firstKey(km.Quit, "ctrl+c"),
+		help:        firstKey(km.Help, "?"),
+		mcpPanel:    firstKey(km.MCPPanel, "ctrl+o"),
+		resources:   firstKey(km.Resources, "ctrl+r"),
+		prompts:     firstKey(km.Prompts, "ctrl+p"),
+		agents:      firstKey(km.Agents, "ctrl+a"),
+		effort:      firstKey(km.Effort, "ctrl+e"),
+		modeSwitch:  firstKey(km.ModeSwitch, "alt+m"),
+		expandTools: firstKey(km.ExpandTools, "ctrl+t"),
+		scroll:      scrollMarking(km),
+		jump:        firstKey(km.ScrollTop, "home") + "/" + firstKey(km.ScrollBottom, "end"),
+		close:       firstKey(km.Close, "esc") + " or " + firstKey(km.Help, "?"),
+	}
+	nl := km.Newline.Keys()
+	if len(nl) > 0 {
+		hk.newlineFirst = nl[0]
+		if len(nl) > 1 {
+			hk.newlineAlso = " (also " + strings.Join(nl[1:], ", ") + ")"
+		}
+	} else {
+		hk.newlineFirst = "shift+enter"
+		hk.newlineAlso = " (also ctrl+j)"
+	}
+	return hk
+}
+
+// scrollMarking renders the ScrollU/ScrollD row. While the pair still holds the
+// DEFAULT pgup/pgdown chords it keeps the platform-adaptive marking
+// (platform.ScrollKeysMarking — "fn+↑/fn+↓ (pgup/pgdn)" on macOS, "pgup/pgdn"
+// elsewhere), so the default help body stays byte-identical; once either half is
+// remapped the platform gesture no longer applies, so the row shows the live
+// "<scrollU>/<scrollD>" chords instead.
+func scrollMarking(km keyMap) string {
+	up, down := km.ScrollU.Keys(), km.ScrollD.Keys()
+	if len(up) == 1 && up[0] == "pgup" && len(down) == 1 && down[0] == "pgdown" {
+		return platform.ScrollKeysMarking()
+	}
+	return firstKey(km.ScrollU, "pgup") + "/" + firstKey(km.ScrollD, "pgdown")
 }
 
 // writeHelpRows renders a group of chord rows. An available (or ungated) row uses
@@ -174,8 +246,8 @@ func (m Model) agentsKeyMarking() string {
 // notEnabledTag so its disabledness reads at a glance.
 func writeHelpRows(b *strings.Builder, th theme.Theme, rows []helpRow) {
 	for _, r := range rows {
-		key := r.key + strings.Repeat(" ", max(0, helpKeyWidth-len(r.key)))
-		line := "  " + key + r.action
+		keyCol := r.key + strings.Repeat(" ", max(0, helpKeyWidth-len(r.key)))
+		line := "  " + keyCol + r.action
 		if r.gated && !r.available {
 			b.WriteString(th.Style("muted").Render(line+"  "+notEnabledTag) + "\n")
 		} else {
@@ -226,7 +298,7 @@ func (m Model) legacyZeroStateBody() string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Welcome to mecatui") + "\n\n")
 	b.WriteString(th.Style("toolArgs").Render("  Type a request below and press enter.") + "\n\n")
-	writeHelpRows(&b, th, zeroStateRows(m.agentsKeyMarking()))
+	writeHelpRows(&b, th, zeroStateRows(m.helpKeyMarkings()))
 	if note := m.zeroStateMemoryNote(); note != "" {
 		b.WriteString("\n" + note + "\n")
 	}
@@ -238,7 +310,7 @@ func (m Model) legacyZeroStateBody() string {
 // the legacy card so the rows stay byte-equivalent in semantics.
 func (m Model) zeroStateAffordanceRows() []string {
 	var b strings.Builder
-	writeHelpRows(&b, m.deps.Theme, zeroStateRows(m.agentsKeyMarking()))
+	writeHelpRows(&b, m.deps.Theme, zeroStateRows(m.helpKeyMarkings()))
 	return strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 }
 
@@ -279,17 +351,19 @@ func (m Model) zeroStateModelName() string {
 	return m.deps.Model
 }
 
-// zeroStateRows is the affordance list on the welcome card. Every row is now
-// UNCONDITIONAL — "?" / "/" (built-in commands always exist) / "ctrl+t" were always
-// always-on, and the agents key (default "ctrl+a") reflects the LIVE binding so a
-// rebinding propagates here. It takes no caps argument; the caps-conditional
-// welcome content (the memory note) lives in renderZeroState. Rows are rendered
-// ungated (no [not enabled] tags on the welcome card — it advertises only what's on).
-func zeroStateRows(agentsKey string) []helpRow {
+// zeroStateRows is the affordance list on the welcome card. Every row is
+// UNCONDITIONAL — "/" (built-in commands always exist) plus the help / agents /
+// details rows, whose keys come from hk so a rebinding propagates here (with
+// DEFAULT keys each resolves to exactly the historical literal — "?", "ctrl+a",
+// "ctrl+t" — so the zerostate goldens stay byte-identical). It takes no caps
+// argument; the caps-conditional welcome content (the memory note) lives in
+// renderZeroState. Rows are rendered ungated (no [not enabled] tags on the
+// welcome card — it advertises only what's on).
+func zeroStateRows(hk helpKeys) []helpRow {
 	return []helpRow{
-		{key: "?", action: "keys & features"},
+		{key: hk.help, action: "keys & features"},
 		{key: "/", action: "slash commands"},
-		{key: agentsKey, action: "agents (when running)"},
-		{key: "ctrl+t", action: "details"},
+		{key: hk.agents, action: "agents (when running)"},
+		{key: hk.expandTools, action: "details"},
 	}
 }
