@@ -29,7 +29,7 @@ can demonstrate rather than a package-level implementation task.
   core/application seams and keeps concrete server/proto/adapter types out of
   `engine/agent`.
 
-## In scope — 5 scenarios, in implementation order
+## In scope — 6 scenarios, in implementation order
 
 ### Scenario 1 — OIDC activates owner isolation without fabricating a caller
 
@@ -194,6 +194,43 @@ and model-facing path.
   become caller-owned bypasses.
   - verify: `TestCallerSeparation_Scenario5_ExemptionsAreExplicitAndNarrow`
 
+---
+
+### Scenario 6 — schedule creation is collision-free across owners
+
+A live-cluster probe (real OIDC callers against a real kind deployment) found that
+`CreateSchedule`'s collision guard checks the schedule store's globally-keyed `Name`
+before the create-time owner is resolved, so a name already used by a *different*
+owner is rejected with a distinguishing "already exists" error instead of the
+absence-style behavior every other create/collision path in this plan already
+guarantees. Schedule names are a caller-chosen, human-readable key exactly like a
+memory key (`docs/acceptance/caller-separation.md` Scenario 2's memory partitioning),
+not a system-generated identifier like a session ID or team ID — the fix is to give
+schedules the same owner-namespaced-key treatment memory already has, not to add a
+second, differently-shaped refusal. `port.ScheduleStore` and both backends
+(`redisstore`, `jsonlstore`) keep taking an opaque `name string`; the owner-derived
+physical key is computed once, in composition (`internal/adapter/server/schedule_manager.go`),
+mirroring `memory.CallerStore`'s owner-digest scheme. This is a breaking, no-migration
+change consistent with this plan's existing ownerless-historical-data posture.
+
+**Acceptance:**
+- AC6.1: A create using a schedule name already used by a *different* owner succeeds
+  and creates the caller's own independent schedule; it does not overwrite, adopt, or
+  block on the other owner's use of that name, and the two schedules are independently
+  loadable, updatable, and deletable by their respective owners.
+  - verify: `TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide`
+- AC6.2: A create using a schedule name already used by the *same* owner is still
+  rejected as a same-owner collision, unchanged from today's behavior.
+  - verify: `TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected`
+- AC6.3: No create response, error, or timing distinguishes "this name is already used
+  by a different owner" from "this name is available" — a caller cannot learn that
+  another caller already has a schedule with a given name.
+  - verify: `TestCallerSeparation_Scenario6_CollisionProbeDoesNotLeakOtherOwner`
+- AC6.4: With no verifier wired (ownerless/non-OIDC deployment), schedule creation and
+  same-name collision detection remain byte-identical to today: a single flat
+  namespace, unaffected by the owner-prefixed key change.
+  - verify: `TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged`
+
 ## Out of scope
 
 | Item | Defer-to | ADR / decision |
@@ -222,6 +259,8 @@ concrete task split.
 - `TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked`
 - `TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess`
 - `TestCallerSeparation_Scenario5_UnclassifiedAccessFailsGuard`
+- `TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide`
+- `TestCallerSeparation_Scenario6_CollisionProbeDoesNotLeakOtherOwner`
 
 ## Definition of done
 
