@@ -108,6 +108,10 @@ func (t *InspectMemberTool) Execute(ctx context.Context, call session.ToolCall, 
 
 	id := MemberSessionID(teamID, member)
 	sess, err := t.store.Load(ctx, id)
+	if err == nil && !callerOwnsTranscript(ctx, sess) {
+		err = port.ErrSessionNotFound
+		sess = nil
+	}
 	switch {
 	case errors.Is(err, port.ErrSessionNotFound) || (err == nil && sess == nil):
 		// Genuine not-found: a model-addressable miss the parent can reason about.
@@ -123,6 +127,11 @@ func (t *InspectMemberTool) Execute(ctx context.Context, call session.ToolCall, 
 	}
 	return session.NewToolResult(call.ID, renderInspectTranscript(
 		fmt.Sprintf("Transcript of member %q in team %q:", member, teamID), sess)), nil
+}
+
+func callerOwnsTranscript(ctx context.Context, sess *session.Session) bool {
+	caller := session.PrincipalFromContext(ctx)
+	return caller == nil || (sess != nil && sess.Owner != nil && sess.Owner.SameIdentity(caller))
 }
 
 // renderInspectTranscript renders the BOUNDED trailing tail of a session's

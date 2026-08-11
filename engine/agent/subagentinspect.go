@@ -115,6 +115,10 @@ func (t *InspectSubagentTool) Execute(ctx context.Context, call session.ToolCall
 	}
 
 	sess, err := t.store.Load(ctx, session.SessionID(id))
+	if err == nil && !callerOwnsTranscript(ctx, sess) {
+		err = port.ErrSessionNotFound
+		sess = nil
+	}
 	switch {
 	case errors.Is(err, port.ErrSessionNotFound) || (err == nil && sess == nil):
 		// Genuine not-found: a model-addressable miss the parent can reason about.

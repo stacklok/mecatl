@@ -3122,6 +3122,11 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // follow-up (additive, out of the Phase 2 gate) — see docs/adr/0027-cloud-native.md
 // Phase 2.
 func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict) (*agent.Run, error) {
+	// Authorize before reading the in-memory registry: a mismatch must be
+	// indistinguishable from a missing handle and cannot signal a live run.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
 	// Fast path (lock-free): a live registered run resolves the ask over its channel.
 	if run, ok := s.LookupRun(id); ok {
 		run.Approve(askID, verdict)
@@ -3243,6 +3248,11 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 // cancel the passed ctx once it stops draining, or the run can wedge behind a
 // dead relay (mirrors the run.Cancel() the live relays call on disconnect).
 func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string) (<-chan session.Event, error) {
+	// Authorize before reading the in-memory registry. A foreign caller must not
+	// learn that a run exists or trigger any live-run side effect.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
 	// (1) A live run means an approve-mid-run: reject. The operator must use the
 	// Converse ResumeApproval frame for a live run, not this atomic RPC.
 	if _, ok := s.LookupRun(id); ok {
@@ -3392,6 +3402,11 @@ func planVerdictForMode(m session.PermissionMode) (verdict session.ApprovalVerdi
 // Approve: ErrNotFound when the session is unknown, ErrNoActiveRun when it
 // exists only in the store with no live run.
 func (s *Service) Cancel(ctx context.Context, id session.SessionID) error {
+	// Authorize before reading the in-memory registry: cancellation is a live
+	// signal and a foreign request must be absence-equivalent.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return err
+	}
 	run, ok := s.LookupRun(id)
 	if ok {
 		run.Cancel()
@@ -3408,6 +3423,11 @@ func (s *Service) Cancel(ctx context.Context, id session.SessionID) error {
 // already finished) yields ErrChildNotFound (HTTP 404; the stream-frame path
 // ignores that race by design instead).
 func (s *Service) CancelChild(ctx context.Context, id session.SessionID, childID string) error {
+	// The parent session owns the live child registry; reject a foreign caller
+	// before probing it or sending a child cancellation.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return err
+	}
 	run, ok := s.LookupRun(id)
 	if ok {
 		if !run.CancelChild(childID) {
@@ -3444,6 +3464,11 @@ func (s *Service) noActiveRun(ctx context.Context, id session.SessionID) error {
 // exited; the state write happened-before the event the caller observed). The
 // flag is a server-layer atomic, never read by the engine loop.
 func (s *Service) Persist(ctx context.Context, id session.SessionID) {
+	// A relay persists a run on behalf of its request caller. Authorize before
+	// consulting the live registry so a foreign persist is a true no-op.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return
+	}
 	s.mu.Lock()
 	st, ok := s.runs[id]
 	s.mu.Unlock()
