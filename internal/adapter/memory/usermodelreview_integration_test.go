@@ -58,11 +58,12 @@ func completedSessionWithTranscript(id session.SessionID) *session.Session {
 //   - R10: the user's terminal session is never reopened/re-run (its State stays
 //     completed, and the store is never asked to Save it by the reviewer).
 func TestUserModelReviewerWritesFactAndNeverReopens(t *testing.T) {
-	// Real user-model store in a temp dir + the RememberUser tool over it.
-	store, err := memory.New(t.TempDir())
+	// Real caller-partitioned user-model store in a temp dir + the RememberUser tool over it.
+	baseStore, err := memory.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("memory.New: %v", err)
 	}
+	store := memory.NewCallerStore(baseStore, false)
 	var rememberUser tool.Tool
 	for _, tl := range memory.NewUserModelTools(store) {
 		if tl.Spec().Name == memory.RememberUserToolName {
@@ -88,15 +89,21 @@ func TestUserModelReviewerWritesFactAndNeverReopens(t *testing.T) {
 	childEngine := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 
 	userSessID := session.SessionID("user-session-1")
-	fakeStore := &fakeReviewStore{sess: completedSessionWithTranscript(userSessID)}
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+	userSess := completedSessionWithTranscript(userSessID)
+	if err := userSess.RestoreLabels(owner, ""); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	fakeStore := &fakeReviewStore{sess: userSess}
 
 	reviewer := agent.NewUserModelReviewer(fakeStore, childEngine)
 	if err := reviewer.Review(context.Background(), string(userSessID)); err != nil {
 		t.Fatalf("Review: %v", err)
 	}
 
-	// (a) The fact landed in the user-model store under the enforced "user/" prefix.
-	got, ok, err := store.Recall(context.Background(), "user/comm-style")
+	// (a) The fact landed in Alice's user-model namespace under the enforced "user/" prefix.
+	aliceCtx := session.WithPrincipal(context.Background(), owner)
+	got, ok, err := store.Recall(aliceCtx, "user/comm-style")
 	if err != nil {
 		t.Fatalf("Recall: %v", err)
 	}

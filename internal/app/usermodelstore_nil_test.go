@@ -1,9 +1,14 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // TestBuildUserModelStoreDisabledReturnsNilInterface guards the typed-nil
@@ -34,4 +39,29 @@ func TestBuildUserModelStoreDisabledReturnsNilInterface(t *testing.T) {
 			t.Fatalf("buildUserModelStore(UserModelDir=regular file) = %#v, want a nil interface value", got)
 		}
 	})
+}
+
+func TestBuildCatalogOwnershipEnforcedRejectsRemoteMemoryDriver(t *testing.T) {
+	_, _, _, _, _, err := buildCatalog(context.Background(), Config{
+		MemoryStoreURL:    "grpc://memory.example",
+		OwnershipEnforced: true,
+	}, nil, nil, nil, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "local MemoryDir") {
+		t.Fatalf("buildCatalog remote memory driver error = %v, want local-memory rejection", err)
+	}
+}
+
+func TestBuildUserModelStoreOwnershipEnforcedPartitionsCallers(t *testing.T) {
+	store := buildUserModelStore(Config{UserModelDir: t.TempDir(), OwnershipEnforced: true})
+	if store == nil {
+		t.Fatal("buildUserModelStore returned nil")
+	}
+	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "alice"})
+	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "bob"})
+	if err := store.RememberEntry(alice, tool.MemoryEntry{Key: "user/preference", Value: "alice"}); err != nil {
+		t.Fatalf("Alice RememberEntry: %v", err)
+	}
+	if _, ok, err := store.Recall(bob, "user/preference"); err != nil || ok {
+		t.Fatalf("Bob Recall = (%t, %v), want absent", ok, err)
+	}
 }

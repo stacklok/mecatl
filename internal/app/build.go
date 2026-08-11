@@ -3118,6 +3118,9 @@ func buildUserModelStore(cfg Config) tool.MemoryStore {
 		return nil
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, "user model ENABLED (cross-project operator FACTS)", "dir", dir)
+	if cfg.OwnershipEnforced {
+		return memory.NewCallerStore(store, false)
+	}
 	return store
 }
 
@@ -4118,6 +4121,10 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	var memStore tool.MemoryStore
 	var memDriverClose func()
 	if cfg.MemoryStoreURL != "" {
+		if cfg.OwnershipEnforced {
+			mcpClose()
+			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("caller-partitioned memory requires local MemoryDir; remote memory drivers do not carry a caller namespace")
+		}
 		conn, closeFn, err := cfg.drivers().dial(cfg, cfg.MemoryStoreURL)
 		if err != nil {
 			// FATAL, not fail-soft: the driver URL is an EXPLICIT operator
@@ -4137,8 +4144,13 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 			cfg.diag().Log(ctx, port.LevelWarn, "could not open memory store; memory tools disabled", "dir", cfg.MemoryDir, "err", err)
 		} else {
 			memStore = st
+			if cfg.OwnershipEnforced {
+				memStore = memory.NewCallerStore(st, true)
+			}
 			cfg.diag().Log(ctx, port.LevelInfo, "memory tools ENABLED (Remember/Recall/SearchMemory); permission: allow (built-in default, overridable to ask/deny via settings)", "dir", cfg.MemoryDir)
-			startMemoryConsolidation(ctx, cfg, st, provider)
+			if !cfg.OwnershipEnforced {
+				startMemoryConsolidation(ctx, cfg, st, provider)
+			}
 		}
 	} else {
 		cfg.diag().Log(ctx, port.LevelInfo, "memory tools DISABLED (memory dir empty)")
@@ -4157,7 +4169,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	userModelStore := buildUserModelStore(cfg)
 	if userModelStore != nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model tools ENABLED (RememberUser/RecallUser/SearchUserModel; cross-project); permission: allow (built-in default, overridable to ask/deny via settings)")
-		startUserModelConsolidation(ctx, cfg, userModelStore, provider)
+		if !cfg.OwnershipEnforced {
+			startUserModelConsolidation(ctx, cfg, userModelStore, provider)
+		}
 	}
 
 	// The skills seam (Phase C1): FS snapshot or remote driver, resolved once.

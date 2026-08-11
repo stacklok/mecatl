@@ -2541,6 +2541,7 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	if err != nil {
 		return nil, err
 	}
+	ctx = memory.WithWorkspace(ctx, sess.Workspace)
 	run := engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts})
 	s.register(id, run, sess)
 	return run, nil
@@ -3197,6 +3198,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
+	ctx = memory.WithWorkspace(ctx, sess.Workspace)
 	run := engine.ResumeApproval(ctx, sess, env, askID, verdict)
 	s.register(id, run, sess)
 	return run, nil

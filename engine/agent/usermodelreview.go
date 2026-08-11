@@ -90,6 +90,14 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 	if err != nil {
 		return fmt.Errorf("usermodel review: load session %q: %w", sessionID, err)
 	}
+	// The legacy caller's ambient ctx may carry no principal at all (e.g. a
+	// composition-level trigger outside any authenticated request), so stamp the
+	// AUTHORITATIVE owner off the loaded session record rather than trusting
+	// whatever (if anything) ctx already carries. Observe's ctx needs no such
+	// stamp: it is the SAME ctx threaded from Engine.Run, which the request-edge
+	// middleware already bound the caller's principal onto (authn.go) before the
+	// run — see reviewMessages.
+	ctx = session.WithPrincipal(ctx, sess.Owner)
 	return r.reviewMessages(ctx, sessionID, sess.Workspace, sess.Conversation.Messages)
 }
 
@@ -120,6 +128,10 @@ func (r *UserModelReviewer) reviewMessages(ctx context.Context, sessionID, works
 		r.engine.now(),
 	)
 
+	// ctx already carries the caller's principal here: Review stamps it explicitly
+	// off the loaded session's Owner before reaching this shared path, and
+	// Observe's ctx is the same one Engine.Run's request-edge middleware already
+	// bound it onto — see the callers above.
 	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel"}, noopWorkspace{root: workspace}, nil)
 	run := r.engine.Run(ctx, child, reviewEnv, RunRequest{Text: reviewPrompt(transcript)})
 	// Drain the child entirely (auto-denying any ask — the extraction child is
