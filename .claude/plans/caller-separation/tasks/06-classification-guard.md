@@ -2,7 +2,7 @@
 id: 06-classification-guard
 title: Guard application boundaries and reconcile documentation
 blocked_by: [02-persisted-resources, 03-memory-isolation, 04-live-model-paths, 05-system-and-deployment]
-status: in-progress
+status: done
 branch: "plan-caller-separation/06-classification-guard"
 worktree: ""
 issue: "368"
