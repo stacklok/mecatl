@@ -2,8 +2,8 @@
 id: 04-live-model-paths
 title: Enforce caller ownership for live and model-facing operations
 blocked_by: [01-ownership-core, 02-persisted-resources]
-status: pending
-branch: ""
+status: done
+branch: "plan-caller-separation/04-live-model-paths"
 worktree: ""
 issue: "368"
 retries: 0
