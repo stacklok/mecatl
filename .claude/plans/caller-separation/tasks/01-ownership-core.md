@@ -2,12 +2,12 @@
 id: 01-ownership-core
 title: Shared verified-owner decision and atomic creation
 blocked_by: []
-status: pending
-branch: ""
+status: done
+branch: "plan-caller-separation/01-ownership-core"
 worktree: ""
 issue: "368"
 retries: 1
-last_error: "worker exhausted its tool budget before implementation"
+last_error: ""
 accumulator: acc/caller-separation
 ---
 
