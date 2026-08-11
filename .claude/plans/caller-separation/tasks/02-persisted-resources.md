@@ -2,8 +2,8 @@
 id: 02-persisted-resources
 title: Persisted session schedule team and derived-resource enforcement
 blocked_by: [01-ownership-core]
-status: pending
-branch: ""
+status: done
+branch: "plan-caller-separation/02-persisted-resources"
 worktree: ""
 issue: "368"
 retries: 0
