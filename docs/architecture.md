@@ -693,3 +693,66 @@ log is written (`internal/adapter/server/service.go` (`appendEvent`), plus the
 `run.Events()` itself and is not a wire relay). The loop never sets it — it stays
 storage- and identity-agnostic, exactly as it does for `port.EventLog`. `Actor` is
 an annotation on log lines; the **session owner** is the identity of record.
+
+## Caller ownership enforcement
+
+Caller ownership ([ADR 0102](adr/0102-caller-ownership-enforcement.md), issue
+#368) turns the attribution [ADR 0100](adr/0100-caller-identity-threading.md)
+introduced into isolation: with an OIDC verifier wired, a caller reaches only
+its own sessions, schedules, teams, memory, event streams, and live runs. A
+refusal is indistinguishable from absence at every layer — no response ever
+reveals another caller's owner, existence, or policy reason.
+
+**One decision function, applied on every request.** `Service.ownsResource`
+(`internal/adapter/server/ownership.go`) is the sole comparison: `owner != nil
+&& owner.SameIdentity(session.PrincipalFromContext(ctx))`, gated on
+`Config.OwnershipEnforced` (true only once a verifier is wired). Two thin
+wrappers apply it to the two owner shapes the store layer holds —
+`authorizeSession` (a `*session.Session`) and `authorizeSchedule` (a
+`*session.Principal`) — both mapping a mismatch or absence to the SAME
+not-found sentinel a genuinely missing id would return
+(`internal/adapter/server/ownership.go`). Every session/schedule/team verb
+re-runs this decision itself rather than trusting an earlier check in the same
+request: a passed run-entry authorization is not a standing grant. Caller-
+partitioned memory (`internal/adapter/memory.CallerStore`) makes the same
+decision a different way — it derives its storage namespace directly from
+`session.PrincipalFromContext(ctx)` on every call, so an absent principal is
+rejected rather than falling back to a shared bucket. User-model memory
+(`RememberUser`/`RecallUser`/`SearchUserModel`) and project memory
+(`Remember`/`Recall`/`SearchMemory`/`Forget`) are separate kinds — their
+backing stores stay distinct even where logical keys collide.
+
+**The classification guard (ADR 0102 decision 2).**
+`internal/adapter/server/classification.go` inventories every designated
+application-facade, in-memory-registry/event-relay, cache/index, and
+model-tool access boundary and resolves each to exactly one
+`ClassificationEntry` — `caller-owned` (re-runs the decision itself),
+`derived` (resolves ownership by construction, through an id a caller can
+only obtain from an already-classified caller-owned call), `shared-
+infrastructure` (a classified, narrow, non-caller-identified operation — a
+system-principal root or a process-wide catalog read), or `exempt` (a
+structurally caller-free composition-time accessor). A shared-
+infrastructure/exempt entry MUST carry a concrete, reviewable rationale — a
+short or blanket-bypass-sounding one fails validation — so an exemption can
+never quietly become a caller-owned bypass. `TestInvariant_owned_access_is_
+classified` (`internal/adapter/server/classification_test.go`) drives the
+guard over the real `*server.Service` and `memory.CallerStore` method sets
+(via reflection — an exported method with no table entry fails the test by
+name), the registered `internal/syscaller.Roots`, and the fixed
+`ModelToolBoundaries` registry, so a new owned access path cannot ship
+unclassified.
+
+**System principals are scoped, not a universal bypass (decision 5).** Every
+`internal/syscaller.Root` (the childgc sweeper, both dream consolidators, the
+scheduler, the JWKS refresh) is classified `shared-infrastructure` with the
+narrow operation it may perform — never a blanket grant. A system principal
+is denied by every caller-owned boundary exactly like any other non-matching
+identity: the scheduler's tick loop fires a due schedule under the schedule's
+OWN durable owner (the created work stays Alice's, never the scheduler's),
+but the scheduler's own principal cannot `GetSession`/`GetSchedule` a caller's
+resource directly.
+
+**The raw driver boundary remains explicitly trusted infrastructure**
+(decision 6) until [ADR 0103](adr/0103-driver-caller-ownership.md) lands — see
+`deploy/README.md` for the concrete NetworkPolicy/mTLS/Unix-socket boundary a
+deployment must select and prove.

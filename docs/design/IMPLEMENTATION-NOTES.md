@@ -4470,6 +4470,85 @@ the remote tool offers none (it saves the context budget, not the remote-hop
 bandwidth). See ADR 0063 for the rejected alternatives (persist-to-scratch + `jq(1)`,
 hand-rolled JSON-path, shell-out to `jq(1)`, a general `QueryJson` tool).
 
+## Caller ownership classification guard (`internal/adapter/server/classification.go`, issue #368, ADR 0102 decision 2)
+
+The per-kind ownership table `internal/adapter/server/ownership.go` decides is
+mechanically inventoried, not left to a future implementer's memory. Four
+kinds (`AccessKind`): `KindCallerOwned` (the boundary re-runs
+`ownsResource`/`authorizeSession`/`authorizeSchedule`, or an equivalent
+per-kind check, on every call), `KindDerived` (no independent decision — the
+boundary operates on an id a caller can only obtain from an
+ALREADY-classified caller-owned call, e.g. the id `CreateSession` just
+returned, or an id `Cancel`/`EndSession` already authorized before reaching
+it), `KindSharedInfrastructure` (a classified, narrow, non-caller-identified
+operation — a system-principal root or a process-wide catalog/config read,
+the same for every caller by design), and `KindExempt` (a structurally
+caller-free composition-time wiring setter/accessor or a workspace-path-
+scoped read under the pre-existing project-trust gate). Every
+`ClassificationEntry{Kind, Rationale}` carries a MANDATORY `Rationale`;
+`validate()` rejects an empty one, a shared-infrastructure/exempt rationale
+under `minReviewableRationale` (24 runes — caller-owned/derived entries are
+exempt from the floor, since their rationale is usually a short, precise
+pointer to an existing decision), or one containing a `blanketBypassPhrases`
+match ("always allow", "no check needed", …) — so an exemption cannot become
+a silent caller-owned bypass (AC5.3).
+
+Four classified surfaces, each with its own table and a `Classify*` driver,
+concatenated by `ClassifyAllBoundaries` (the single entry point
+`TestInvariant_owned_access_is_classified` drives, in
+`internal/adapter/server/classification_test.go`):
+
+- **`serviceAccessTable`** — every EXPORTED `*server.Service` method (the
+  application-facade, in-memory-registry, and event-relay boundary),
+  enumerated via `reflect.Type.NumMethod`/`Method` (which report only
+  exported methods for a non-interface type, from any package — exactly the
+  gRPC/HTTP/ACP/mecatui-reachable surface). A name ending `ForTest` is
+  excluded (`export_test.go`'s established test-only-seam convention; it
+  exists only in test binaries and carries no real decision). Classifying
+  this table surfaced a genuine gap: `CleanupTeam` ignored its `ctx` and was
+  the one team verb with no ownership check (every sibling —
+  `SpawnTeammate`/`SendTeammateMessage`/`CancelTeammate`/`RunTeam`/`ListTeam`
+  — already authorizes via the shared `lookupTeam`); fixed in the same
+  change (`internal/adapter/server/team.go`), pinned by
+  `TestCallerSeparation_Scenario5_CleanupTeamIsOwnerChecked`.
+- **`callerStoreAccessTable`** — every exported `memory.CallerStore` method
+  (the cache/index boundary for caller-partitioned user-model/project
+  memory): all six are `KindCallerOwned` by construction (`scoped()` derives
+  the namespace from `session.PrincipalFromContext(ctx)` on every call, never
+  falling back to a shared bucket on an absent principal).
+- **`systemAccessTable`** — every registered `internal/syscaller.Root`
+  (mirroring that package's own `Roots` registry discipline): each is
+  `KindSharedInfrastructure` with the ONE narrow operation it may perform.
+  None may be `KindCallerOwned` — a system principal is denied by every
+  caller-owned boundary exactly like any other non-matching identity
+  (`TestCallerSeparation_Scenario4_SystemPrincipalIsNotUniversalBypass`); the
+  guard's own exemption test additionally asserts no `systemAccessTable`
+  entry claims `KindCallerOwned` (decision 5, no universal bypass).
+- **`modelToolAccessTable`** over the explicit `ModelToolBoundaries` registry
+  — the model-facing tool names that reach a caller-owned/shared decision
+  DIRECTLY rather than only through `*Service`: project memory
+  (`Remember`/`Recall`/`SearchMemory` — `Forget` is a `CallerStore`
+  capability with no registered model-facing tool today, so it is not
+  listed), user-model memory (`RememberUser`/`RecallUser`/
+  `SearchUserModel`), and child/team observability/delegation
+  (`InspectSubagent`/`InspectMember`/`SubagentStatus`/`Team`). This is a
+  deliberately NARROW, hand-maintained list (like `syscaller.Roots`), not a
+  reflection over the whole tool catalog — tools unrelated to caller
+  ownership (`Read`, `Bash`, `WebSearch`, …) are out of scope by design.
+
+`classifyNames(surface, table, boundaries)` is the shared comparison every
+`Classify*` driver and the AC5.2 fixture test
+(`TestCallerSeparation_Scenario5_UnclassifiedAccessFailsGuard`) call: every
+name in `boundaries` must resolve to a valid table entry (else
+"unclassified access boundary"), and every table key not present in
+`boundaries` is reported as a "stale classification table entry" (AC5.1's
+"stale table entry" half) — a renamed/removed method leaves a dangling row
+the guard also catches, not just a new unclassified one.
+
+See [ADR 0102](../adr/0102-caller-ownership-enforcement.md) and
+[`docs/architecture.md`](../architecture.md)'s "Caller ownership enforcement"
+section for the narrative and the per-kind decision the table classifies.
+
 ## Composition — `internal/app/` (multi-provider — see `MULTI-PROVIDER.md`)
 
 The single shared assembly of provider + catalog + policy + engine into a `server.Service`

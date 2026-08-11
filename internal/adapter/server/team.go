@@ -421,11 +421,11 @@ func (s *Service) ListTeam(ctx context.Context, teamID string) ([]team.Member, [
 // is teamRunning is NOT dropped — deleting it out from under the in-flight RunTeam
 // would orphan the live supervisor — so it returns ErrTeamRunning
 // (FailedPrecondition) instead. It returns ErrNotFound for an unknown team.
-func (s *Service) CleanupTeam(_ context.Context, teamID string) error {
+func (s *Service) CleanupTeam(ctx context.Context, teamID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ts, ok := s.teams[teamID]
-	if !ok {
+	if !ok || !s.ownsResource(ctx, ts.owner) {
 		return fmt.Errorf("%w: %q", ErrTeamNotFound, teamID)
 	}
 	if ts.phase == teamRunning {
