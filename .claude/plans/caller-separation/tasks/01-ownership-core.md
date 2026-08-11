@@ -2,7 +2,7 @@
 id: 01-ownership-core
 title: Shared verified-owner decision and atomic creation
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "368"
