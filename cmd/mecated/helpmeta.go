@@ -131,6 +131,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"mock":                  {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm":          {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm-base-url": {group: groupProvider, common: false, acp: acpInclude},
+	"toolhive-llm-mode":     {group: groupProvider, common: false, acp: acpInclude},
 	"reasoning-effort":      {group: groupProvider, common: false, acp: acpInclude},
 	"no-prompt-cache":       {group: groupProvider, common: false, acp: acpInclude},
 	"anthropic-cache-ttl":   {group: groupProvider, common: false, acp: acpInclude},

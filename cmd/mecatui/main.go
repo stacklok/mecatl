@@ -99,6 +99,14 @@ func run(argv []string) error {
 		return &usageErrorTrailer{err: res.err}
 	}
 
+	// `mecatui login` (issue #265) is CLI-only: it runs the interactive ToolHive
+	// LLM OIDC browser flow in-process and exits — no TUI, no server, no session.
+	// Branch it BEFORE parseTransportFlags (login shares no transport flags) and
+	// BEFORE the baseline-slog/alt-screen setup (it runs in the normal buffer).
+	if res.mode == modeLogin {
+		return runLogin(res.remaining)
+	}
+
 	fs, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining)
 	if err != nil {
 		return err

@@ -32,6 +32,11 @@ type transportMode string
 const (
 	modeLocal   transportMode = "local"
 	modeConnect transportMode = "connect"
+	// modeLogin (issue #265) is the CLI-only `mecatui login` subcommand: it runs
+	// the interactive ToolHive LLM OIDC browser flow in-process (no session, no
+	// server). It is a peer of connect (a leading command word) but owns no
+	// transport — run() branches it BEFORE any TUI/server construction.
+	modeLogin transportMode = "login"
 )
 
 // transportResolution is the result of classifying argv[1:]. mode + remaining
@@ -93,6 +98,13 @@ func resolveTransportMode(argv []string) transportResolution {
 		}
 	}
 
+	// `mecatui login` (issue #265): CLI-only interactive ToolHive LLM OIDC login.
+	// No ADDRESS, no transport — run() branches it before any TUI/server. The
+	// flag tail (--skip-browser, --help) passes through to parseLoginFlags.
+	if first == "login" {
+		return transportResolution{mode: modeLogin, remaining: args[2:]}
+	}
+
 	// A leading flag (starts with '-') is the bare embedded invocation: `mecatui
 	// --workspace …`. Fall through to the embedded transport path.
 	if strings.HasPrefix(first, "-") {
@@ -132,16 +144,17 @@ func stripLeading(argv []string, n int) []string {
 func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui <command> [flags]\n\n")
 	_, _ = fmt.Fprintf(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback\n")
-	_, _ = fmt.Fprintf(out, "probe) — the canonical default. The one subcommand dials a remote server:\n\n")
+	_, _ = fmt.Fprintf(out, "probe) — the canonical default. The subcommands:\n\n")
 	_, _ = fmt.Fprintf(out, "Commands:\n")
 	_, _ = fmt.Fprintf(out, "  connect ADDRESS   dial a running mecated at ADDRESS (host:port); never probe/embed\n")
+	_, _ = fmt.Fprintf(out, "  login             run the interactive ToolHive LLM OIDC browser flow (in-process, no session)\n")
 	_, _ = fmt.Fprintf(out, "\nRun 'mecatui --help' for the bare-mode common flags, 'mecatui <command> --help'\n")
 	_, _ = fmt.Fprintf(out, "for command-specific flags, and '--help-all' on either for the exhaustive reference.\n")
 }
 
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  connect ADDRESS   dial a running mecated at ADDRESS\n\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help' or 'mecatui connect --help'", arg)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  connect ADDRESS   dial a running mecated at ADDRESS\n  login             run the interactive ToolHive LLM OIDC browser flow\n\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help' or 'mecatui connect --help'", arg)
 }
 
 // connectUsageError builds the error message for a bare/flag-first `connect`

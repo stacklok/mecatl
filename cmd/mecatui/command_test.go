@@ -126,7 +126,31 @@ func TestResolveUnknownCommandFailsClosed(t *testing.T) {
 	}
 }
 
-// --- Requirement 1: no-probe / no-embed mode selection (parse path) ---------
+// TestResolveLoginCommand is AC #8 (issue #265): `mecatui login` resolves to
+// the login transport mode (CLI-only, no ADDRESS), passing the flag tail
+// through. It is the smoke pin that the subcommand parses; the actual OIDC
+// flow is manual-verified (AC #8).
+func TestResolveLoginCommand(t *testing.T) {
+	res := resolveTransportMode([]string{"mecatui", "login", "--skip-browser"})
+	if res.err != nil {
+		t.Fatalf("login must resolve: %v", res.err)
+	}
+	if res.mode != modeLogin {
+		t.Errorf("mode = %q, want %q", res.mode, modeLogin)
+	}
+	if len(res.remaining) != 1 || res.remaining[0] != "--skip-browser" {
+		t.Errorf("remaining = %v, want [--skip-browser]", res.remaining)
+	}
+
+	// `mecatui login --help` should ALSO resolve (help passes through).
+	resHelp := resolveTransportMode([]string{"mecatui", "login", "--help"})
+	if resHelp.err != nil {
+		t.Fatalf("login --help must resolve: %v", resHelp.err)
+	}
+	if resHelp.mode != modeLogin {
+		t.Errorf("login --help mode = %q, want %q", resHelp.mode, modeLogin)
+	}
+}
 
 // parseTransportFlagsTest is a helper that runs the REAL parse seam with a
 // discard writer and returns the FlagSet + config + error (mirroring the

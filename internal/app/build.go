@@ -71,6 +71,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/internal/adapter/tokenizer"
+	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
@@ -210,6 +211,19 @@ type Config struct {
 	// off-host path. No environment-variable twin (R4.2): a base URL this
 	// security-sensitive is a deliberate, visible flag, never an ambient var.
 	ToolhiveLLMBaseURL string
+	// ToolhiveLLMMode (issue #265) selects the toolhive provider's routing:
+	// "auto" (the default) picks direct when the ToolHive config's OIDC trio
+	// (gateway_url + issuer + client_id) is configured, else falls back to the
+	// loopback proxy (today's byte-identical behaviour when OIDC is absent);
+	// "proxy" forces the loopback reverse proxy regardless of OIDC; "direct"
+	// forces the real gateway_url with an in-process OIDC token, and fails
+	// Build (validateToolhiveLLMMode) when OIDC is not configured. The empty
+	// value is "auto" so a hand-built Config / test that never set the flag
+	// stays byte-identical to the pre-#265 default. An explicit
+	// --toolhive-llm-base-url override is ALWAYS proxy mode (it is a loopback
+	// address; direct derives its base URL from the config's gateway_url), so
+	// this flag is ignored on the override path.
+	ToolhiveLLMMode string
 
 	// Context management: the compaction strategy ("heuristic"|"cascade") and the
 	// token counter ("heuristic"|"tiktoken"). Empty means "heuristic".
@@ -1202,6 +1216,22 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// (validateToolhiveBaseURL is v1's loopback-only security gate, R5.1/R5.2).
 	if err := validateToolhiveBaseURL(cfg); err != nil {
 		return nil, err
+	}
+	// ToolHive LLM direct mode (issue #265): --toolhive-llm-mode direct is a
+	// hard ask — it must fail fast with an actionable error (naming the
+	// missing fields) when the ToolHive config has no OIDC trio, rather than
+	// silently falling back to a loopback proxy that has no token to inject.
+	// Runs after validateToolhiveBaseURL (which clears the explicit-override
+	// path) and BEFORE buildProviderRegistry so the error precedes any entry.
+	if err := validateToolhiveLLMMode(cfg); err != nil {
+		return nil, err
+	}
+	// F9: warn on unknown --toolhive-llm-mode values so an operator who
+	// mistypes "dirct" doesn't silently get the auto fallback.
+	if cfg.ToolhiveLLMMode != "" && !validToolhiveLLMMode(cfg.ToolhiveLLMMode) {
+		cfg.diag().Log(context.Background(), port.LevelWarn,
+			"unknown --toolhive-llm-mode value, treating as auto",
+			"mode", cfg.ToolhiveLLMMode)
 	}
 
 	// Operator-YAML models.default_provider (Wave 2b): an operator's settings.yaml
@@ -3714,6 +3744,62 @@ func validateToolhiveBaseURL(cfg Config) error {
 				"flag is the sanctioned path)", cfg.ToolhiveLLMBaseURL)
 	}
 	return nil
+}
+
+// validateToolhiveLLMMode enforces the direct-mode preconditions (issue #265):
+// --toolhive-llm-mode direct is a HARD ask that the ToolHive config carry the
+// OIDC trio (gateway_url + issuer + client_id, llm.Config.IsConfigured). It
+// fails fast with an actionable error naming the remediation when the trio is
+// absent — never a silent fallback to the loopback proxy (the operator asked
+// for direct and would be surprised by a loopback that has no token to inject).
+// It is a no-op for "auto" (the default — resolveToolhiveIntent's own
+// auto-fallback applies) and "proxy" (forces the loopback path regardless).
+// It runs AFTER validateToolhiveBaseURL (which clears the explicit-override
+// path — an explicit override is ALWAYS proxy mode, so direct + override is
+// impossible here) and BEFORE buildProviderRegistry.
+func validateToolhiveLLMMode(cfg Config) error {
+	if cfg.ToolhiveLLMMode != "direct" {
+		return nil
+	}
+	// An explicit --toolhive-llm-base-url forces proxy mode (the override is a
+	// loopback address; direct derives its base URL from the config's
+	// gateway_url). The two are contradictory; resolveToolhiveIntent would
+	// take the override path and ignore the mode, so surface the conflict
+	// rather than silently picking one.
+	if cfg.ToolhiveLLMBaseURL != "" {
+		return fmt.Errorf(
+			"--toolhive-llm-mode direct is incompatible with --toolhive-llm-base-url (the base-url override is a loopback PROXY address; direct mode derives its base URL from the config's gateway_url) — drop one or use --toolhive-llm-mode proxy")
+	}
+	if !cfg.ToolhiveLLM {
+		return errors.New("--toolhive-llm-mode direct requires --toolhive-llm (the ToolHive LLM gateway auto-detect is disabled)")
+	}
+	// Resolve the SAME config path resolveToolhiveIntent uses (the test seam
+	// when set, else the platform user-config dir + DefaultConfigRelPath) and
+	// read the OIDC trio via toolhivellm.OIDCConfigured.
+	path := cfg.toolhiveConfigPath
+	if path == "" {
+		if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+			path = filepath.Join(dir, toolhivellm.DefaultConfigRelPath)
+		}
+	}
+	if !toolhivellm.OIDCConfigured(path) {
+		return fmt.Errorf(
+			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup` (or `mecatui login`), or use --toolhive-llm-mode auto/proxy")
+	}
+	return nil
+}
+
+// validToolhiveLLMMode reports whether mode is a known --toolhive-llm-mode
+// value (the empty string / "auto" / "proxy" / "direct"). Unknown values are
+// silently treated as auto by resolveToolhiveIntent; the caller WARNs in Build
+// so an operator who mistypes a value sees the diagnostic rather than a silent
+// fallback.
+func validToolhiveLLMMode(mode string) bool {
+	switch mode {
+	case "", "auto", "proxy", "direct":
+		return true
+	}
+	return false
 }
 
 // (Config.DefaultProvider/DefaultModel — --default-provider/--default-model,

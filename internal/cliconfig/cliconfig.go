@@ -232,6 +232,8 @@ func (h ProviderFlagHelp) withDefaults() ProviderFlagHelp {
 type ToolhiveLLMFlagHelp struct {
 	Enable  string
 	BaseURL string
+	// Mode is the per-main help for --toolhive-llm-mode (issue #265).
+	Mode string
 }
 
 // DefaultToolhiveLLMFlagHelp is the shared wording every consumer starts from.
@@ -245,17 +247,23 @@ var DefaultToolhiveLLMFlagHelp = ToolhiveLLMFlagHelp{
 		"--toolhive (MCP workload discovery). Set =false on shared hosts",
 	BaseURL: "explicit ToolHive LLM proxy base URL (must resolve to loopback); skips the config-file " +
 		"auto-detect but keeps the startup probe",
+	Mode: "ToolHive LLM routing mode: \"auto\" (default; direct when the OIDC trio is configured, else the " +
+		"loopback proxy), \"proxy\" (force the loopback reverse proxy), or \"direct\" (talk to the real " +
+		"gateway_url with an in-process OIDC token; fails when OIDC is not configured). The explicit " +
+		"--toolhive-llm-base-url override is always proxy mode",
 }
 
 // ToolhiveLLMFlags holds the values bound by RegisterToolhiveLLMFlags.
 type ToolhiveLLMFlags struct {
 	enable  *bool
 	baseURL *string
+	mode    *string
 }
 
-// RegisterToolhiveLLMFlags registers --toolhive-llm (default true) and
-// --toolhive-llm-base-url (default "") on fs. A zero ToolhiveLLMFlagHelp field
-// falls back to DefaultToolhiveLLMFlagHelp, mirroring RegisterProviderFlags.
+// RegisterToolhiveLLMFlags registers --toolhive-llm (default true),
+// --toolhive-llm-base-url (default ""), and --toolhive-llm-mode (default
+// "auto") on fs. A zero ToolhiveLLMFlagHelp field falls back to
+// DefaultToolhiveLLMFlagHelp, mirroring RegisterProviderFlags.
 func RegisterToolhiveLLMFlags(fs *flag.FlagSet, help ToolhiveLLMFlagHelp) *ToolhiveLLMFlags {
 	if help.Enable == "" {
 		help.Enable = DefaultToolhiveLLMFlagHelp.Enable
@@ -263,25 +271,30 @@ func RegisterToolhiveLLMFlags(fs *flag.FlagSet, help ToolhiveLLMFlagHelp) *Toolh
 	if help.BaseURL == "" {
 		help.BaseURL = DefaultToolhiveLLMFlagHelp.BaseURL
 	}
-	tf := &ToolhiveLLMFlags{enable: new(bool), baseURL: new(string)}
+	if help.Mode == "" {
+		help.Mode = DefaultToolhiveLLMFlagHelp.Mode
+	}
+	tf := &ToolhiveLLMFlags{enable: new(bool), baseURL: new(string), mode: new(string)}
 	fs.BoolVar(tf.enable, "toolhive-llm", true, help.Enable)
 	fs.StringVar(tf.baseURL, "toolhive-llm-base-url", "", help.BaseURL)
+	fs.StringVar(tf.mode, "toolhive-llm-mode", "auto", help.Mode)
 	return tf
 }
 
-// Apply writes the two resolved values onto cfg. A nil receiver (a config
+// Apply writes the three resolved values onto cfg. A nil receiver (a config
 // built WITHOUT RegisterToolhiveLLMFlags — e.g. a test that constructs the
-// cmd config struct directly) leaves both app.Config fields at their zero
-// value (ToolhiveLLM=false, ToolhiveLLMBaseURL=""), mirroring
-// ProviderFlags.Apply's nil-receiver discipline — so app.Config's
-// byte-identical-when-unset invariant holds for a caller that never wires
-// this flag set.
+// cmd config struct directly) leaves the app.Config fields at their zero
+// value (ToolhiveLLM=false, ToolhiveLLMBaseURL="", ToolhiveLLMMode=""), so
+// app.Config's byte-identical-when-unset invariant holds for a caller that
+// never wires this flag set (ToolhiveLLMMode="" resolves to "auto" in
+// resolveToolhiveIntent, the pre-#265 default).
 func (tf *ToolhiveLLMFlags) Apply(cfg *app.Config) {
 	if tf == nil {
 		return
 	}
 	cfg.ToolhiveLLM = *tf.enable
 	cfg.ToolhiveLLMBaseURL = *tf.baseURL
+	cfg.ToolhiveLLMMode = *tf.mode
 }
 
 // KeyValueList is a repeatable "key=value" flag.Value collecting into a

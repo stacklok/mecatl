@@ -94,6 +94,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"no-bash":               {group: groupProvider, common: false, local: true, connect: false},
 	"toolhive-llm":          {group: groupProvider, common: false, local: true, connect: false},
 	"toolhive-llm-base-url": {group: groupProvider, common: false, local: true, connect: false},
+	"toolhive-llm-mode":     {group: groupProvider, common: false, local: true, connect: false},
 	"reasoning-effort":      {group: groupProvider, common: false, local: true, connect: false},
 	"no-prompt-cache":       {group: groupProvider, common: false, local: true, connect: false},
 	"anthropic-cache-ttl":   {group: groupProvider, common: false, local: true, connect: false},

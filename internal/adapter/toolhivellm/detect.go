@@ -1,11 +1,11 @@
-// Package toolhivellm is the ONLY ToolHive-aware code in mecatl (issue #262):
+// Package toolhivellm is the ToolHive-aware code in mecatl (issue #262 + #265):
 // it detects, by reading ToolHive's OWN on-disk config file, whether a ToolHive
 // LLM gateway proxy is set up for this user — and, if so, what LOOPBACK port it
-// listens on. It never imports a ToolHive Go package (there is no dependency on
-// ToolHive's module graph) and never talks to the network itself; the actual
-// live-listing HTTP call is made by the protocol-generic
-// internal/adapter/openaicompat.Lister, which this package merely feeds a
-// hardcoded loopback base URL.
+// listens on — and (issue #265, tokensource.go) builds an in-process OIDC token
+// source so the `toolhive` provider can talk DIRECTLY to the real gateway_url
+// with no local proxy hop. The actual live-listing HTTP call is made by the
+// protocol-generic internal/adapter/openaicompat.Lister, which this package
+// merely feeds a hardcoded loopback base URL.
 //
 // # What this reads
 //
@@ -42,8 +42,13 @@
 // # Layering
 //
 // Stdlib + go.yaml.in/yaml/v3 ONLY. No domain, no port, no internal/app, no
-// other adapter, and — the one invariant this whole package exists to hold —
-// NO ToolHive Go import, ever.
+// other adapter. The ONE invariant this file (detect.go) holds: NO ToolHive Go
+// import, ever — the OIDC/token-source half lives in tokensource.go, the sole
+// file in this package (and one of two in the tree, alongside
+// internal/adapter/mcp/source/toolhive.go) allowed to import
+// github.com/stacklok/toolhive. This detector never decodes the oidc/auth
+// subtree (the wire struct below has no field for them); the OIDC-presence
+// check reads toolhive's own config over in tokensource.go.
 package toolhivellm
 
 import (

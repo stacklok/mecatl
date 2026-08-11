@@ -97,6 +97,28 @@ func writeToolhiveConfig(t *testing.T, gatewayURL string) string {
 	return path
 }
 
+// writeToolhiveConfigWithOIDC writes a ToolHive config.yaml fixture carrying
+// the OIDC trio (gateway_url + issuer + client_id) in addition to the proxy
+// block. The OIDC subtree is what toolhivellm.OIDCConfigured (tokensource.go,
+// over toolhive's own config read) keys on for direct-mode selection;
+// DetectConfig ignores it (detect.go's wireConfig has no field for oidc), so
+// the SAME fixture is a valid detect for both the proxy and direct paths.
+func writeToolhiveConfigWithOIDC(t *testing.T, gatewayURL, issuer, clientID string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	body := "llm:\n" +
+		"  gateway_url: " + gatewayURL + "\n" +
+		"  proxy:\n    listen_port: 14000\n" +
+		"  oidc:\n" +
+		"    issuer: " + issuer + "\n" +
+		"    client_id: " + clientID + "\n"
+	if err := writeFileT(t, path, body); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+	return path
+}
+
 // (1) intent + probe-ok ⇒ entry registered, lister wired, intentDriven, baseURL loopback.
 func TestToolhiveIntent_ProbeOK_Registered(t *testing.T) {
 	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
@@ -742,7 +764,7 @@ func TestProbeToolhive_Unauthorized_Warns(t *testing.T) {
 // entirely, even when a valid config file is present (the shared-host opt-out).
 func TestResolveToolhiveIntent_Disabled(t *testing.T) {
 	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
-	_, _, _, ok := resolveToolhiveIntent(Config{ToolhiveLLM: false, toolhiveConfigPath: cfgPath})
+	_, ok := resolveToolhiveIntent(Config{ToolhiveLLM: false, toolhiveConfigPath: cfgPath})
 	if ok {
 		t.Fatal("expected no intent when ToolhiveLLM is false")
 	}
@@ -771,12 +793,12 @@ func TestResolveToolhiveIntent_DefaultPathUsesPlatformUserConfigDir(t *testing.T
 		t.Fatalf("write config fixture: %v", err)
 	}
 
-	_, gatewayURL, _, ok := resolveToolhiveIntent(Config{ToolhiveLLM: true})
+	intent, ok := resolveToolhiveIntent(Config{ToolhiveLLM: true})
 	if !ok {
 		t.Fatal("expected the default (empty toolhiveConfigPath) resolution to find the config via os.UserConfigDir()")
 	}
-	if gatewayURL != "https://upstream.example/gw" {
-		t.Errorf("gatewayURL = %q, want https://upstream.example/gw", gatewayURL)
+	if intent.gatewayURL != "https://upstream.example/gw" {
+		t.Errorf("gatewayURL = %q, want https://upstream.example/gw", intent.gatewayURL)
 	}
 }
 

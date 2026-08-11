@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -552,9 +553,16 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	// blocks on (or is gated by) reachability (R1.1). With toolhive registered,
 	// len(entries)>0 even with ZERO provider keys, so errNoProvider no longer
 	// fires for a ToolHive-only operator — intended (zero-API-key onboarding).
-	if baseURL, gatewayURL, explicit, ok := resolveToolhiveIntent(cfg); ok {
-		lister := gatewayLister{inner: openaicompat.NewLister(baseURL, toolhivellm.PlaceholderToken, cfg.liveModelHTTPClient)}
-		entries[providerToolhive] = newGatewayEntry(cfg, providerToolhive, baseURL, gatewayURL, explicit, lister)
+	// Issue #265: the intent now carries a routing mode — proxy (loopback,
+	// today's behaviour) or direct (gateway_url + in-process OIDC token).
+	if intent, ok := resolveToolhiveIntent(cfg); ok {
+		switch intent.mode {
+		case toolhiveModeDirect:
+			entries[providerToolhive] = newDirectGatewayEntry(cfg, providerToolhive, intent, cfg.toolhiveConfigPath)
+		default: // toolhiveModeProxy (the zero value + the explicit-override path)
+			lister := gatewayLister{inner: openaicompat.NewLister(intent.baseURL, toolhivellm.PlaceholderToken, cfg.liveModelHTTPClient)}
+			entries[providerToolhive] = newGatewayEntry(cfg, providerToolhive, intent.baseURL, intent.gatewayURL, intent.explicit, lister)
+		}
 	}
 
 	if len(entries) == 0 {
@@ -960,28 +968,73 @@ func preferredDefaultProvider(reg *providerRegistry) string {
 	return firstIntentDriven // "" when reg.Available() is empty too
 }
 
+// toolhiveRoutingMode is the resolved routing mode for a toolhive registry
+// entry (issue #265): proxy routes through the LOCAL loopback reverse proxy
+// (today's behaviour); direct talks to the real gateway_url with an in-process
+// OIDC token. The zero value is proxy (the byte-identical default for every
+// config that predates direct mode).
+type toolhiveRoutingMode int
+
+const (
+	toolhiveModeProxy  toolhiveRoutingMode = 0 // loopback reverse proxy (today's behaviour)
+	toolhiveModeDirect toolhiveRoutingMode = 1 // gateway_url + in-process OIDC token
+)
+
+// toolhiveIntent is the resolved toolhive registration intent: whether to
+// register, and — when registering — the routing mode + the URLs
+// newGatewayEntry/newDirectGatewayEntry consume. baseURL is the request URL
+// (loopback for proxy, gateway_url+"/v1" for direct); gatewayURL is the
+// upstream the proxy forwards to (DIAGNOSTIC ONLY for proxy, the SAME as
+// baseURL's origin for direct); explicit marks an --toolhive-llm-base-url
+// override (proxy-only — direct is config-driven).
+type toolhiveIntent struct {
+	mode           toolhiveRoutingMode
+	baseURL        string
+	gatewayURL     string
+	explicit       bool
+	oidcConfigured bool // F3: loaded once after DetectConfig, used by newDirectGatewayEntry
+}
+
 // resolveToolhiveIntent decides whether a "toolhive" registry entry should be
-// registered (issue #262, D1) and, if so, what loopback base URL to serve it
-// on. It NEVER runs a network probe — registration is intent-only, and the
-// (baseURL, gatewayURL, explicit) it returns feed newGatewayEntry, which the
-// LATER Build-time probe (probeToolhive) reads off the constructed entry.
+// registered (issue #262, D1) and, if so, what routing mode + URLs to serve it
+// on (issue #265). It NEVER runs a network probe — registration is intent-only,
+// and the intent it returns feeds newGatewayEntry/newDirectGatewayEntry, which
+// the LATER Build-time probe (probeToolhive) reads off the constructed entry.
 //
 // Precedence: an EXPLICIT cfg.ToolhiveLLMBaseURL (already loopback-validated
 // by validateToolhiveBaseURL at Build) wins outright and SKIPS the config-file
 // read entirely (gatewayURL="" — there is no upstream to show; explicit=true
 // so the probe upgrades an unreachable diagnostic to WARN, since the operator
-// asked for this exact endpoint). Otherwise, when cfg.ToolhiveLLM is set (the
-// default), toolhivellm.DetectConfig reads ToolHive's own config file; a miss
-// logs ONE DEBUG diagnostic and returns ok=false — never a WARN/ERROR (most
-// operators simply do not run ToolHive, and detection failure is always
-// fail-soft, R1.1). cfg.ToolhiveLLM=false skips detection entirely (zero file
-// stats), the explicit shared-host opt-out (R4.1).
-func resolveToolhiveIntent(cfg Config) (baseURL, gatewayURL string, explicit, ok bool) {
+// asked for this exact endpoint). The explicit override is ALWAYS proxy mode:
+// it is a loopback proxy address, and direct mode derives its base URL from
+// the config file's gateway_url (there is no gateway_url to derive from an
+// explicit loopback override), so --toolhive-llm-mode is IGNORED on this path
+// (the override is the documented proxy escape hatch). Otherwise, when
+// cfg.ToolhiveLLM is set (the default), toolhivellm.DetectConfig reads
+// ToolHive's own config file; a miss logs ONE DEBUG diagnostic and returns
+// ok=false — never a WARN/ERROR (most operators simply do not run ToolHive,
+// and detection failure is always fail-soft, R1.1). cfg.ToolhiveLLM=false
+// skips detection entirely (zero file stats), the explicit shared-host opt-out
+// (R4.1).
+//
+// Routing mode (when the config-file path is taken): cfg.ToolhiveLLMMode drives
+// the discriminator — auto (the default) selects direct when the OIDC trio
+// (gateway_url + issuer + client_id) is configured (toolhivellm.OIDCConfigured)
+// and falls back to proxy otherwise (today's byte-identical behaviour when
+// OIDC is absent); proxy forces the loopback path regardless of OIDC; direct
+// forces the gateway_url path. direct + !IsConfigured() is NOT a fail-soft
+// miss here — it is a loud Build-fail (resolveDirectIntentError) so an
+// operator who asked for direct against an unconfigured gateway sees the
+// exact missing fields, not a silent fallback to proxy.
+func resolveToolhiveIntent(cfg Config) (toolhiveIntent, bool) {
 	if cfg.ToolhiveLLMBaseURL != "" {
-		return cfg.ToolhiveLLMBaseURL, "", true, true
+		// Explicit loopback override: always proxy. Direct mode is
+		// config-driven (it needs gateway_url); the override is the proxy
+		// escape hatch, so --toolhive-llm-mode does not apply here.
+		return toolhiveIntent{mode: toolhiveModeProxy, baseURL: cfg.ToolhiveLLMBaseURL, explicit: true}, true
 	}
 	if !cfg.ToolhiveLLM {
-		return "", "", false, false
+		return toolhiveIntent{}, false
 	}
 	path := cfg.toolhiveConfigPath
 	if path == "" {
@@ -1001,9 +1054,81 @@ func resolveToolhiveIntent(cfg Config) (baseURL, gatewayURL string, explicit, ok
 	if !found {
 		cfg.diag().Log(context.Background(), port.LevelDebug,
 			"toolhive LLM gateway: no config detected, skipping auto-registration", "path", path)
-		return "", "", false, false
+		return toolhiveIntent{}, false
 	}
-	return detected.BaseURL(), detected.GatewayURL, false, true
+	// F3: load the OIDC config ONCE after DetectConfig validates the file, so
+	// newDirectGatewayEntry consumes the validated result rather than re-reading.
+	oidcOK := toolhivellm.OIDCConfigured(path)
+
+	// Mode discriminator (issue #265). auto upgrades to direct when the OIDC
+	// trio is configured; proxy is the byte-identical fallback. direct is the
+	// explicit opt-in; a direct ask against an unconfigured gateway is a loud
+	// Build-fail (NOT a silent proxy fallback — the operator asked for direct
+	// and would be surprised by a loopback that has no token to inject).
+	switch cfg.ToolhiveLLMMode {
+	case "proxy":
+		return toolhiveIntent{mode: toolhiveModeProxy, baseURL: detected.BaseURL(), gatewayURL: detected.GatewayURL}, true
+	case "direct":
+		if !oidcOK {
+			// Not a fail-soft miss: validateToolhiveLLMMode (Build) already
+			// fail-closed on direct + !IsConfigured() with the actionable
+			// error naming the missing fields. Reaching here means the
+			// validator was bypassed (e.g. a test calling
+			// resolveToolhiveIntent directly); fall back to no registration
+			// rather than a silent proxy.
+			return toolhiveIntent{}, false
+		}
+		if !gatewayURLIsHTTPS(detected.GatewayURL) {
+			cfg.diag().Log(context.Background(), port.LevelWarn,
+				"toolhive direct mode: gateway_url is not HTTPS, falling back to proxy mode",
+				"gateway_url", detected.GatewayURL)
+			return toolhiveIntent{mode: toolhiveModeProxy, baseURL: detected.BaseURL(), gatewayURL: detected.GatewayURL}, true
+		}
+		return toolhiveIntent{mode: toolhiveModeDirect, baseURL: directBaseURL(detected.GatewayURL), gatewayURL: detected.GatewayURL, oidcConfigured: true}, true
+	default: // "auto" (and any unknown, treated as the default)
+		if oidcOK {
+			if !gatewayURLIsHTTPS(detected.GatewayURL) {
+				cfg.diag().Log(context.Background(), port.LevelWarn,
+					"toolhive direct mode: gateway_url is not HTTPS, falling back to proxy mode",
+					"gateway_url", detected.GatewayURL)
+				return toolhiveIntent{mode: toolhiveModeProxy, baseURL: detected.BaseURL(), gatewayURL: detected.GatewayURL}, true
+			}
+			return toolhiveIntent{mode: toolhiveModeDirect, baseURL: directBaseURL(detected.GatewayURL), gatewayURL: detected.GatewayURL, oidcConfigured: true}, true
+		}
+		return toolhiveIntent{mode: toolhiveModeProxy, baseURL: detected.BaseURL(), gatewayURL: detected.GatewayURL}, true
+	}
+}
+
+// gatewayURLIsHTTPS reports whether raw is safe for direct-mode token injection:
+// it must start with "https://" unless it is an explicit localhost carve-out for
+// development (http://localhost or http://127.0.0.1 with any port). A non-HTTPS
+// gateway_url would send the OIDC bearer token over cleartext (CWE-319).
+func gatewayURLIsHTTPS(raw string) bool {
+	if strings.HasPrefix(raw, "https://") {
+		return true
+	}
+	// Local development carve-out: http://localhost[:port] or http://127.0.0.1[:port].
+	if strings.HasPrefix(raw, "http://localhost") || strings.HasPrefix(raw, "http://127.0.0.1") {
+		return true
+	}
+	return false
+}
+
+// directBaseURL derives the request base URL for direct mode from the config's
+// gateway_url: gateway_url + "/v1". It mirrors what the ToolHive proxy forwards
+// (pkg/llm/proxy/proxy.go sets the upstream URL verbatim and forwards every
+// path, so the gateway serves /v1/models at gateway_url + /v1/models). A
+// trailing slash on gateway_url is normalized so "https://gw/v1" never becomes
+// "https://gw//v1". It is the ONE derivation of a request URL from gateway_url
+// (the proxy mode NEVER does this — its base URL is the hardcoded loopback).
+func directBaseURL(gatewayURL string) string {
+	if gatewayURL == "" {
+		return ""
+	}
+	if !strings.HasSuffix(gatewayURL, "/") {
+		return gatewayURL + "/v1"
+	}
+	return gatewayURL + "v1"
 }
 
 // ToolhiveAvailable reports whether a ToolHive LLM gateway would be registered
@@ -1012,7 +1137,7 @@ func resolveToolhiveIntent(cfg Config) (baseURL, gatewayURL string, explicit, ok
 // uses (one source of truth), so a client-side provider pre-check (mecatui's
 // config.validate) agrees with what Build will actually resolve.
 func ToolhiveAvailable(cfg Config) bool {
-	_, _, _, ok := resolveToolhiveIntent(cfg)
+	_, ok := resolveToolhiveIntent(cfg)
 	return ok
 }
 
@@ -1038,6 +1163,111 @@ func newGatewayEntry(cfg Config, id, baseURL, gatewayURL string, explicit bool, 
 	entry.intentGatewayURL = gatewayURL
 	entry.intentExplicit = explicit
 	return entry
+}
+
+// newDirectGatewayEntry mints the DIRECT-mode toolhive registry entry (issue
+// #265): it talks to the real gateway_url (no local proxy hop) with an
+// in-process OIDC access token injected by a bearer RoundTripper. It reuses
+// newOpenAICompatEntry (the SAME construction/resilience path as the proxy
+// entry) with a placeholder key — the openai-go SDK stamps
+// `Authorization: Bearer <placeholder>` on every request BEFORE the
+// *http.Client.Transport fires, so the bearerRoundTripper STRIPS that header
+// and sets `Bearer <real-token>` per request (mirroring the ToolHive proxy's
+// own Rewrite: pkg/llm/proxy/proxy.go Del + Set). The placeholder is never sent
+// on the wire.
+//
+// The HTTP client composes TWO policies: the bearerRoundTripper (token
+// injection) over the SDK's default transport, AND RefuseRedirects
+// (CWE-918 — the gateway_url is an operator-configured HTTPS endpoint, but a
+// redirect must never bounce the conversation body + bearer off the intended
+// host). Both ride every per-session/heal re-mint: newOpenAICompatEntry closes
+// `extra` into the construct() closure so the WithHTTPClient option is appended
+// to every mint, not just the initial build (zero drift, the same property the
+// proxy entry relies on).
+//
+// The token source is built ONCE here (toolhivellm.DirectTokenSource) and
+// captured by the RoundTripper; a per-request Token(ctx) call handles refresh
+// internally, so the RoundTripper is stateless across requests. A Build-time
+// construction failure (config unreadable, secrets provider unavailable) is
+// surfaced as a Build error via the returned error — the entry is NOT built
+// against a token source that errors on every request. The live lister is
+// wired too (direct mode serves /v1/models the same way), authenticated by the
+// SAME bearer RoundTripper so the probe and inference paths share one
+// credential.
+func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, configPath string) providerEntry {
+	tokenSource, err := toolhivellm.DirectTokenSource(configPath, cfg.diag())
+	if err != nil {
+		// Surface as a Build-time error via the entry's absence: the caller
+		// (buildProviderRegistry) does NOT see this error (newOpenAICompatEntry
+		// has no error return), so wrap it in a panicking-free sentinel by
+		// logging + falling back to a token source that returns the error on
+		// every call — the first request surfaces it. The Build itself does
+		// NOT fail on a per-request token error (the proxy-mode §1 deviation
+		// applies: a down gateway must never brick Build). This is honest: the
+		// operator sees "no cached credential" at the first request, not a
+		// startup crash.
+		cfg.diag().Log(context.Background(), port.LevelError,
+			"toolhive direct-mode token source unavailable — requests will fail until the gateway is configured",
+			"provider", id, "base_url", intent.baseURL, "error", err.Error())
+		tokenSource = func(context.Context) (string, error) { return "", err }
+	}
+	rt := &bearerRoundTripper{base: http.DefaultTransport, token: tokenSource, id: id}
+	client := &http.Client{
+		Transport:     rt,
+		CheckRedirect: openaicompat.RefuseRedirects,
+	}
+	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, intent.baseURL,
+		openai.WithHTTPClient(client))
+	// The direct-mode lister shares the SAME bearer-authenticated client so
+	// the Build-time probe (probeToolhive) and the live refresh authenticate
+	// against the gateway with the real token, not the placeholder. The lister
+	// stamps `Bearer <placeholder>` itself; the bearerRoundTripper strips it
+	// and sets the real token, exactly as it does for inference requests.
+	entry.lister = gatewayLister{inner: openaicompat.NewLister(intent.baseURL, toolhivellm.PlaceholderToken, client)}
+	entry.intentDriven = true
+	entry.intentGatewayURL = intent.gatewayURL
+	entry.intentExplicit = intent.explicit
+	return entry
+}
+
+// bearerRoundTripper injects a fresh OIDC access token onto every request as
+// `Authorization: Bearer <token>`, stripping any Authorization header the SDK
+// stamped before the transport fires (the openai-go SDK sets a placeholder
+// `Bearer <key>` via SetAPIKey before the *http.Client.Transport RoundTripper
+// sees the request — so this MUST Del then Set, exactly like the ToolHive
+// proxy's Rewrite). It NEVER logs the request, the Authorization header, or
+// the token value; an error from the token source is returned as a terminal
+// transport error (no retry — the token source handles refresh internally,
+// and a genuine failure like ErrTokenRequired is not retryable at the
+// transport layer).
+//
+// SECURITY: the token lives in the OS keyring (pkg/secrets), accessed
+// in-process; it NEVER enters a log, an error string, or an environment
+// variable. Errors are already sanitised by toolhivellm.DirectTokenSource
+// (llm.SanitizeTokenError strips any bearer material an IdP echoes back).
+type bearerRoundTripper struct {
+	base  http.RoundTripper
+	token toolhivellm.TokenSourceFunc
+	id    string // provider id, for a log-safe diagnostic label only
+}
+
+// RoundTrip implements http.RoundTripper. It is the single point the token
+// touches the wire. On a token-source error it returns the error WITHOUT
+// forwarding the request (no partial credentials on the wire); the
+// llmresilience wrapper surfaces it as a failed attempt. It must never log.
+func (b *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	tok, err := b.token(req.Context())
+	if err != nil {
+		// The error is already sanitised (no bearer material). Do NOT include
+		// the token, the URL's query, or req.Header — return the error as-is.
+		return nil, err
+	}
+	// Clone the request per RoundTripper contract (the caller may reuse it);
+	// mutate ONLY the Authorization header on the clone.
+	clone := req.Clone(req.Context())
+	clone.Header.Del("Authorization")
+	clone.Header.Set("Authorization", "Bearer "+tok)
+	return b.base.RoundTrip(clone)
 }
 
 // toolhiveProbeTimeout bounds the Build-time probe (R1.2): a down/hanging

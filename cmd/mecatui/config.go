@@ -342,6 +342,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.ToolhiveLLMFlagHelp{
 		Enable:  "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Enable,
 		BaseURL: "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.BaseURL,
+		Mode:    "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Mode,
 	})
 	fs.BoolVar(&cfg.mock, "mock", false, "embedded server only: use the canned offline mock provider instead of OpenAI (no network)")
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "embedded server only: disable the Bash tool (shell-less mode)")
