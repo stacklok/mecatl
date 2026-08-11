@@ -166,6 +166,10 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	})
 
 	t.Run("project tier posture is ignored (stays strict)", func(t *testing.T) {
+		// No explicit operator file is wired in this subtest, so the CONVENTIONAL
+		// user-global settings.yaml is the only operator-tier posture source — isolate
+		// it or the developer's real ~/.config/mecatl/settings.yaml leaks in.
+		isolateUserConfig(t)
 		// A project-tier .mecatl/settings.yaml carrying posture: yolo in the workspace.
 		ws := t.TempDir()
 		mkdirProjectSettings(t, ws, "posture: yolo\n")

@@ -29,6 +29,19 @@ func withTrustEnv(t *testing.T, env xdgconfig.ResolveEnv) {
 	t.Cleanup(func() { trustEnv = prev })
 }
 
+// isolateUserConfig points the real-env user-config resolution (xdgconfig.OSEnv)
+// at an empty temp dir for the duration of a test, so a test that exercises the
+// CONVENTIONAL user-global settings.yaml read (permconfig.New{Conventional:true},
+// or app.Build with PermissionsConventional) never sees the developer's real
+// ~/.config/mecatl/settings.yaml. Sets both XDG_CONFIG_HOME and HOME (UserConfigDir
+// falls back to ~/.config when XDG_CONFIG_HOME is unset). t.Setenv forbids
+// t.Parallel, which none of these tests use.
+func isolateUserConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+}
+
 // trustSettingsEnv returns an injected env whose user-global settings.yaml returns
 // the given bytes, with $XDG_CONFIG_HOME pointed at configDir.
 func trustSettingsEnv(configDir string, settings []byte) xdgconfig.ResolveEnv {
@@ -207,6 +220,10 @@ func TestNonDeclaredDropsSoul(t *testing.T) {
 // the fold collapses to the SAME effective bool regardless of where trust came
 // from, so neither source can be a Deny-overriding back door.
 func TestResolveTrustMonotonicPositiveDenyHonoured(t *testing.T) {
+	// The permconfig.New{Conventional:true} below reads the CONVENTIONAL user-global
+	// settings.yaml via xdgconfig.OSEnv (separate from the trustEnv seam above) —
+	// isolate it or the developer's real ~/.config allow rules leak into the fold.
+	isolateUserConfig(t)
 	cases := []struct {
 		name       string
 		wantSource TrustSource
@@ -412,6 +429,10 @@ func TestResolveTrustDeclaredBeatsRemembered(t *testing.T) {
 // remembered-trusted workspace still honours a project DENY — remembered trust, like
 // flag/declared, grants ADMISSION only and never overrides a Deny.
 func TestResolveTrustRememberedMonotonicDenyHonoured(t *testing.T) {
+	// permconfig.New{Conventional:true} below reads the CONVENTIONAL user-global
+	// settings.yaml via xdgconfig.OSEnv — isolate it or the developer's real
+	// ~/.config allow rules leak into the fold.
+	isolateUserConfig(t)
 	ws := realWS(t)
 	writeAnchorSurface(t, ws, "persona")
 	cfg := t.TempDir()
