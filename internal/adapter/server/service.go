@@ -1050,10 +1050,11 @@ func NewService(cfg Config) (*Service, error) {
 		svc.schedMgr.setModelsPointer(&svc.models)
 	} else {
 		svc.schedMgr = NewScheduleManager(ScheduleManagerConfig{
-			Store:       cfg.Store,
-			Now:         cfg.Now,
-			Models:      &svc.models,
-			Diagnostics: cfg.Diagnostics,
+			Store:             cfg.Store,
+			Now:               cfg.Now,
+			Models:            &svc.models,
+			Diagnostics:       cfg.Diagnostics,
+			OwnershipEnforced: cfg.OwnershipEnforced,
 		})
 	}
 	if cfg.Scheduler != nil && svc.schedMgr != nil {

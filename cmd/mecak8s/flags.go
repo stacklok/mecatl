@@ -455,16 +455,23 @@ func parseFlags(argv []string) (config, error) {
 // byte-identical no-metrics posture), non-nil when --otlp-* is set.
 func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config {
 	out := app.Config{
-		Workspace:                     cfg.workspace,
-		Model:                         cfg.model,
-		DefaultProvider:               cfg.defaultProvider,
-		DefaultModel:                  cfg.defaultModel,
-		DefaultProviderFlagSet:        cfg.defaultProviderFlagSet,
-		UseOpenAI:                     cfg.useOpenAI,
-		UseMock:                       cfg.useMock,
-		Shell:                         cfg.shell,
-		NoBash:                        cfg.noBash,
-		RedisURL:                      cfg.redisURL,
+		Workspace:              cfg.workspace,
+		Model:                  cfg.model,
+		DefaultProvider:        cfg.defaultProvider,
+		DefaultModel:           cfg.defaultModel,
+		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
+		UseOpenAI:              cfg.useOpenAI,
+		UseMock:                cfg.useMock,
+		Shell:                  cfg.shell,
+		NoBash:                 cfg.noBash,
+		RedisURL:               cfg.redisURL,
+		// OwnershipEnforced mirrors cmd/mecated's wiring: the OIDC verifier being
+		// enabled IS the caller-isolation on-switch (ADR 0102). Without this line
+		// mecak8s attributes ownership correctly but never enforces it — every
+		// caller-owned application boundary silently falls back to its
+		// ownerless-compatibility path, and deploy/mecak8s-oidc's isolation claim
+		// does not hold for this binary.
+		OwnershipEnforced:             cfg.oidc.Enabled(),
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
 		SessionLeaseTTL:               cfg.sessionLeaseTTL,
 		SessionLeaseRenewInterval:     cfg.sessionLeaseRenewInterval,

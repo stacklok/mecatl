@@ -87,7 +87,7 @@ func callerSeparationFixture(t *testing.T) (*server.Service, *memstore.Store, *m
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
 		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:             func() time.Time { return time.Unix(0, 0) }, OwnershipEnforced: true,
 	})
@@ -218,5 +218,144 @@ func TestCallerSeparation_Scenario2_EventStreamsResolveParentOwner(t *testing.T)
 	}
 	if _, err := svc.StreamSessionEvents(alice, sess.ID); err != nil {
 		t.Fatalf("Alice event stream: %v", err)
+	}
+}
+
+// TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide pins
+// AC6.1: a schedule name already used by a DIFFERENT owner is not a collision
+// at all — the create-seam namespaces the store-facing key by verified owner
+// (issue #368, ADR-0102 decision 1), so two owners may use the identical
+// literal name, each independently loadable/updatable/deletable.
+func TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide(t *testing.T) {
+	svc, _, _, alice, bob := callerSeparationFixture(t)
+
+	if _, err := svc.CreateSchedule(alice, callerSchedule("shared-name")); err != nil {
+		t.Fatalf("Alice CreateSchedule: %v", err)
+	}
+	if _, err := svc.CreateSchedule(bob, callerSchedule("shared-name")); err != nil {
+		t.Fatalf("Bob CreateSchedule (same name, different owner) = %v, want success (no collision)", err)
+	}
+
+	aliceSched, err := svc.GetSchedule(alice, "shared-name")
+	if err != nil {
+		t.Fatalf("Alice GetSchedule: %v", err)
+	}
+	if aliceSched.Spec.Name != "shared-name" || aliceSched.Spec.Owner == nil || !aliceSched.Spec.Owner.SameIdentity(session.PrincipalFromContext(alice)) {
+		t.Fatalf("Alice schedule = %+v, want literal name + Alice owner", aliceSched.Spec)
+	}
+	bobSched, err := svc.GetSchedule(bob, "shared-name")
+	if err != nil {
+		t.Fatalf("Bob GetSchedule: %v", err)
+	}
+	if bobSched.Spec.Name != "shared-name" || bobSched.Spec.Owner == nil || !bobSched.Spec.Owner.SameIdentity(session.PrincipalFromContext(bob)) {
+		t.Fatalf("Bob schedule = %+v, want literal name + Bob owner", bobSched.Spec)
+	}
+
+	// Independently updatable: updating Bob's does not touch Alice's.
+	bobUpdate := callerSchedule("shared-name")
+	bobUpdate.Prompt = "bob's updated prompt"
+	if _, err := svc.UpdateSchedule(bob, bobUpdate); err != nil {
+		t.Fatalf("Bob UpdateSchedule: %v", err)
+	}
+	aliceAfterBobUpdate, err := svc.GetSchedule(alice, "shared-name")
+	if err != nil {
+		t.Fatalf("Alice GetSchedule after Bob's update: %v", err)
+	}
+	if aliceAfterBobUpdate.Spec.Prompt != "do work" {
+		t.Fatalf("Alice schedule prompt = %q after Bob's update, want unaffected %q", aliceAfterBobUpdate.Spec.Prompt, "do work")
+	}
+
+	// Independently deletable: deleting Bob's leaves Alice's intact.
+	if err := svc.DeleteSchedule(bob, "shared-name"); err != nil {
+		t.Fatalf("Bob DeleteSchedule: %v", err)
+	}
+	if _, err := svc.GetSchedule(bob, "shared-name"); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("Bob GetSchedule after delete = %v, want ErrScheduleNotFound", err)
+	}
+	if _, err := svc.GetSchedule(alice, "shared-name"); err != nil {
+		t.Fatalf("Alice GetSchedule after Bob's delete: %v, want Alice's schedule still present", err)
+	}
+}
+
+// TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected pins AC6.2: a
+// create using a name already used by the SAME owner is still rejected,
+// unchanged from today's behavior — only the CROSS-owner case changed.
+func TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected(t *testing.T) {
+	svc, _, _, alice, _ := callerSeparationFixture(t)
+
+	if _, err := svc.CreateSchedule(alice, callerSchedule("dup")); err != nil {
+		t.Fatalf("first CreateSchedule: %v", err)
+	}
+	if _, err := svc.CreateSchedule(alice, callerSchedule("dup")); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("same-owner duplicate CreateSchedule = %v, want ErrInvalidArgument", err)
+	}
+}
+
+// TestCallerSeparation_Scenario6_CollisionProbeDoesNotLeakOtherOwner pins
+// AC6.3: creating under a name already used by a DIFFERENT owner is
+// indistinguishable from creating under a name nobody has used — the ONLY way
+// to make a cross-owner name-reuse probe truly non-leaking is for it not to
+// conflict at all, so both cases succeed identically.
+func TestCallerSeparation_Scenario6_CollisionProbeDoesNotLeakOtherOwner(t *testing.T) {
+	svc, _, _, alice, bob := callerSeparationFixture(t)
+
+	if _, err := svc.CreateSchedule(alice, callerSchedule("probe-name")); err != nil {
+		t.Fatalf("Alice CreateSchedule: %v", err)
+	}
+
+	// Bob probing a name Alice already owns and a name nobody has ever used
+	// both succeed, with the same shape of result — no error, no field, no
+	// distinguishing signal that "probe-name" was already taken by someone
+	// else.
+	collision, collisionErr := svc.CreateSchedule(bob, callerSchedule("probe-name"))
+	fresh, freshErr := svc.CreateSchedule(bob, callerSchedule("never-used-name"))
+	if collisionErr != nil || freshErr != nil {
+		t.Fatalf("collision err = %v, fresh err = %v; want both nil (no distinguishing failure)", collisionErr, freshErr)
+	}
+	if collision.Spec.Name != "probe-name" || fresh.Spec.Name != "never-used-name" {
+		t.Fatalf("returned literal names = %q, %q; want the caller-supplied names echoed back unprefixed", collision.Spec.Name, fresh.Spec.Name)
+	}
+	if collision.Spec.Owner == nil || !collision.Spec.Owner.SameIdentity(session.PrincipalFromContext(bob)) {
+		t.Fatalf("collision-probe schedule owner = %+v, want Bob", collision.Spec.Owner)
+	}
+}
+
+// TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged pins AC6.4: with
+// no verifier wired (OwnershipEnforced=false), schedule creation and same-name
+// collision detection stay byte-identical to today — a single flat namespace,
+// where the store-facing physical key is exactly the literal caller-supplied
+// name (no owner prefix at all).
+func TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged(t *testing.T) {
+	sessions := memstore.New()
+	schedules := memschedulestore.New()
+	svc, err := server.NewService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:  sessions, EventLog: memstore.NewEventLog(),
+		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:             func() time.Time { return time.Unix(0, 0) },
+		// OwnershipEnforced left false: the byte-identical no-verifier posture.
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	ctx := context.Background()
+
+	if _, err := svc.CreateSchedule(ctx, callerSchedule("flat-name")); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	// The physical key is EXACTLY the literal name — no owner prefix.
+	stored, err := schedules.Load(ctx, "flat-name")
+	if err != nil {
+		t.Fatalf("direct store Load(%q): %v (the physical key must equal the literal name)", "flat-name", err)
+	}
+	if stored.Spec.Name != "flat-name" {
+		t.Fatalf("stored Spec.Name = %q, want the unprefixed literal %q", stored.Spec.Name, "flat-name")
+	}
+
+	// A second create under the same name is still rejected — one flat
+	// namespace, no owner to disambiguate.
+	if _, err := svc.CreateSchedule(ctx, callerSchedule("flat-name")); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("duplicate CreateSchedule = %v, want ErrInvalidArgument (single flat namespace)", err)
 	}
 }

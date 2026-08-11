@@ -2746,9 +2746,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, fmt.Errorf("resolve schedule store for tool: %w", err)
 	}
 	scheduleMgr := server.NewScheduleManager(server.ScheduleManagerConfig{
-		Store:         store,
-		ScheduleStore: toolSchedStore,
-		Diagnostics:   cfg.diag(),
+		Store:             store,
+		ScheduleStore:     toolSchedStore,
+		Diagnostics:       cfg.diag(),
+		OwnershipEnforced: cfg.OwnershipEnforced,
 	})
 	scheduleManagerFactory := func() port.ScheduleManager {
 		if scheduleMgr == nil {
