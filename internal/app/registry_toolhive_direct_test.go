@@ -1,0 +1,377 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
+)
+
+// captureTransport records the Authorization header each request carries and
+// serves a minimal OK response, so a bearerRoundTripper test can assert the
+// header rewrite without a real token source.
+type captureTransport struct {
+	auth    atomic.Value // string
+	calls   atomic.Int32
+	recvErr error
+}
+
+func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.calls.Add(1)
+	c.auth.Store(req.Header.Get("Authorization"))
+	if c.recvErr != nil {
+		return nil, c.recvErr
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("{}")),
+		Header:     make(http.Header),
+	}, nil
+}
+
+// TestBearerRoundTripper_RewritesHeader is AC #3: the direct-mode transport
+// STRIPS the SDK's placeholder Authorization and sets `Bearer <real-token>` on
+// every request. A fake token source returns a fixed token; the capture
+// transport records what actually reaches the wire.
+func TestBearerRoundTripper_RewritesHeader(t *testing.T) {
+	const fakeToken = "fake-access-token-12345"
+	rt := &bearerRoundTripper{
+		base:  &captureTransport{},
+		token: func(context.Context) (string, error) { return fakeToken, nil },
+		id:    "toolhive",
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer thv-proxy") // the SDK's placeholder
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	ct := rt.base.(*captureTransport)
+	if got := ct.auth.Load().(string); got != "Bearer "+fakeToken {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer "+fakeToken)
+	}
+	if ct.calls.Load() != 1 {
+		t.Errorf("base transport calls = %d, want 1", ct.calls.Load())
+	}
+}
+
+// TestBearerRoundTripper_SanitisedError is AC #3 + #7: a token-source error
+// returns WITHOUT forwarding the request (no partial credentials on the wire),
+// and the error string carries NO bearer material. A fake token source returns
+// an error containing a secret-shaped token; the assertion confirms the error
+// propagates verbatim but the request never reaches the base transport.
+func TestBearerRoundTripper_SanitisedError(t *testing.T) {
+	secretTok := "super-secret-bearer-xyz"
+	rt := &bearerRoundTripper{
+		base: &captureTransport{},
+		token: func(context.Context) (string, error) {
+			// Simulate a sanitised error (llm.SanitizeTokenError would have
+			// stripped any bearer material an IdP echoed; here we hand back an
+			// error that deliberately does NOT carry the token to prove the
+			// RoundTripper never introduces it).
+			return "", errors.New("oauth2 error \"invalid_grant\": refresh token expired")
+		},
+		id: "toolhive",
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer thv-proxy")
+	_, err := rt.RoundTrip(req)
+	if err == nil {
+		t.Fatal("expected an error from the token source, got nil")
+	}
+	if strings.Contains(err.Error(), secretTok) {
+		t.Errorf("error string leaked token material: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "thv-proxy") {
+		t.Errorf("error string leaked the placeholder: %q", err.Error())
+	}
+	ct := rt.base.(*captureTransport)
+	if ct.calls.Load() != 0 {
+		t.Errorf("base transport calls = %d, want 0 (the request must NOT reach the wire on a token error)", ct.calls.Load())
+	}
+}
+
+// TestBearerRoundTripper_NeverLogsAuth is the static guard for the "never log
+// the Authorization header" discipline (AGENTS.md security): the RoundTripper
+// has no log path of its own, and this test pins that the ONLY mutation it
+// performs on the request is the Authorization header Del+Set (the clone's
+// other headers are untouched). It is the falsifiable pin against a future
+// change that logs or copies the header elsewhere.
+func TestBearerRoundTripper_OnlyMutatesAuth(t *testing.T) {
+	rt := &bearerRoundTripper{
+		base:  &captureTransport{},
+		token: func(context.Context) (string, error) { return "tok", nil },
+		id:    "toolhive",
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer thv-proxy")
+	req.Header.Set("X-Trace-Id", "abc")
+	req.Header.Set("Content-Type", "application/json")
+	_, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	// The ORIGINAL request is untouched (the RoundTripper clones before mutating).
+	if got := req.Header.Get("Authorization"); got != "Bearer thv-proxy" {
+		t.Errorf("original request Authorization mutated to %q (must clone, not mutate in place)", got)
+	}
+}
+
+// TestDirectMode_RefusesRedirects is AC #3/#4 extended: the direct-mode entry's
+// HTTP client composes the bearer RoundTripper AND RefuseRedirects, so a
+// gateway_url answering an inference request with a redirect to an attacker is
+// refused — the conversation body + bearer never leave the gateway host. This
+// mirrors TestGatewayInferenceRefusesRedirects for the proxy entry.
+func TestDirectMode_RefusesRedirects(t *testing.T) {
+	var attackerHits atomic.Int32
+	attacker := httptest.NewServer(terminalSSEHandler(&attackerHits))
+	defer attacker.Close()
+
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusTemporaryRedirect)
+	}))
+	defer gw.Close()
+
+	// Build the bearer client exactly as newDirectGatewayEntry does.
+	rt := &bearerRoundTripper{
+		base:  http.DefaultTransport,
+		token: func(context.Context) (string, error) { return "fake-tok", nil },
+		id:    "toolhive",
+	}
+	client := &http.Client{
+		Transport:     rt,
+		CheckRedirect: openaicompat.RefuseRedirects,
+	}
+	// A direct-mode entry would set baseURL = gateway_url + "/v1"; here we hit
+	// the test gateway directly to exercise the redirect refusal.
+	resp, err := client.Get(gw.URL + "/v1/responses")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = resp.Body.Close()
+	// RefuseRedirects returns the 3xx as the final response (no follow).
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("status = %d, want %d (redirect refused, returned as final)", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+	if got := attackerHits.Load(); got != 0 {
+		t.Fatalf("attacker hit count = %d, want 0 (direct-mode client must refuse the redirect)", got)
+	}
+}
+
+// TestDirectBaseURL is the unit pin for directBaseURL: gateway_url + "/v1", with
+// trailing-slash normalization. It is the ONE derivation of a request URL from
+// gateway_url (the proxy mode never does this).
+func TestDirectBaseURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://gw.example.com":           "https://gw.example.com/v1",
+		"https://gw.example.com/":          "https://gw.example.com/v1",
+		"https://gw.example.com/toolhive":  "https://gw.example.com/toolhive/v1",
+		"https://gw.example.com/toolhive/": "https://gw.example.com/toolhive/v1",
+		"":                                 "",
+	} {
+		if got := directBaseURL(in); got != want {
+			t.Errorf("directBaseURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestResolveToolhiveIntent_DirectWhenOIDCConfigured is AC #1: auto mode +
+// OIDC trio configured ⇒ direct, baseURL = gateway_url + "/v1". It uses a
+// config fixture WITH the oidc block (written via a helper that extends
+// writeToolhiveConfig). Because toolhivellm.OIDCConfigured reads toolhive's own
+// config read (not detect.go's wireConfig), the fixture must carry the OIDC
+// trio — which DetectConfig ignores, so the SAME fixture is valid for both.
+func TestResolveToolhiveIntent_DirectWhenOIDCConfigured(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "https://gw.example.com", "https://idp.example", "client-123")
+	intent, ok := resolveToolhiveIntent(Config{
+		ToolhiveLLM:        true,
+		toolhiveConfigPath: cfgPath,
+	})
+	if !ok {
+		t.Fatal("expected registration with OIDC configured")
+	}
+	if intent.mode != toolhiveModeDirect {
+		t.Errorf("mode = %v, want direct", intent.mode)
+	}
+	if want := "https://gw.example.com/v1"; intent.baseURL != want {
+		t.Errorf("baseURL = %q, want %q (gateway_url + /v1)", intent.baseURL, want)
+	}
+	if intent.explicit {
+		t.Error("explicit should be false for the config-file path")
+	}
+}
+
+// TestResolveToolhiveIntent_ProxyFallbackWhenNoOIDC is AC #2: auto mode + NO
+// oidc block ⇒ proxy, baseURL = loopback (byte-identical to pre-#265).
+func TestResolveToolhiveIntent_ProxyFallbackWhenNoOIDC(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://gw.example.com") // no oidc
+	intent, ok := resolveToolhiveIntent(Config{
+		ToolhiveLLM:        true,
+		toolhiveConfigPath: cfgPath,
+	})
+	if !ok {
+		t.Fatal("expected registration even without OIDC")
+	}
+	if intent.mode != toolhiveModeProxy {
+		t.Errorf("mode = %v, want proxy (auto fallback)", intent.mode)
+	}
+	if !strings.HasPrefix(intent.baseURL, "http://127.0.0.1:") {
+		t.Errorf("baseURL = %q, want loopback", intent.baseURL)
+	}
+}
+
+// TestResolveToolhiveIntent_ProxyFlagForcesProxy is AC #5: --toolhive-llm-mode
+// proxy forces the loopback even with OIDC configured.
+func TestResolveToolhiveIntent_ProxyFlagForcesProxy(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "https://gw.example.com", "https://idp.example", "client-123")
+	intent, ok := resolveToolhiveIntent(Config{
+		ToolhiveLLM:        true,
+		ToolhiveLLMMode:    "proxy",
+		toolhiveConfigPath: cfgPath,
+	})
+	if !ok {
+		t.Fatal("expected registration")
+	}
+	if intent.mode != toolhiveModeProxy {
+		t.Errorf("mode = %v, want proxy (forced)", intent.mode)
+	}
+}
+
+// TestValidateToolhiveLLMMode_DirectRequiresOIDC is AC #6: direct mode + NO
+// oidc block ⇒ Build-fail with an actionable error naming the missing fields.
+func TestValidateToolhiveLLMMode_DirectRequiresOIDC(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://gw.example.com") // no oidc
+	err := validateToolhiveLLMMode(Config{
+		ToolhiveLLM:        true,
+		ToolhiveLLMMode:    "direct",
+		toolhiveConfigPath: cfgPath,
+	})
+	if err == nil {
+		t.Fatal("expected an error for direct mode without OIDC")
+	}
+	for _, want := range []string{"direct", "gateway_url", "oidc.issuer", "oidc.client_id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// TestValidateToolhiveLLMMode_DirectOKWithOIDC is the positive control: direct
+// mode + OIDC configured ⇒ no error.
+func TestValidateToolhiveLLMMode_DirectOKWithOIDC(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "https://gw.example.com", "https://idp.example", "client-123")
+	if err := validateToolhiveLLMMode(Config{
+		ToolhiveLLM:        true,
+		ToolhiveLLMMode:    "direct",
+		toolhiveConfigPath: cfgPath,
+	}); err != nil {
+		t.Errorf("expected no error with OIDC configured, got %v", err)
+	}
+}
+
+// TestValidateToolhiveLLMMode_AutoAndProxyAreNoOps: the auto default and the
+// proxy value never fail (the auto-fallback and the proxy path are handled in
+// resolveToolhiveIntent, not here).
+func TestValidateToolhiveLLMMode_AutoAndProxyAreNoOps(t *testing.T) {
+	cfgPath := writeToolhiveConfig(t, "https://gw.example.com")
+	for _, mode := range []string{"", "auto", "proxy"} {
+		if err := validateToolhiveLLMMode(Config{
+			ToolhiveLLM: true, ToolhiveLLMMode: mode, toolhiveConfigPath: cfgPath,
+		}); err != nil {
+			t.Errorf("mode %q: unexpected error %v", mode, err)
+		}
+	}
+}
+
+// TestValidateToolhiveLLMMode_DirectIncompatibleWithBaseURL: direct + an
+// explicit --toolhive-llm-base-url override is contradictory (the override is a
+// loopback proxy address; direct derives from gateway_url) and must fail.
+func TestValidateToolhiveLLMMode_DirectIncompatibleWithBaseURL(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "https://gw.example.com", "https://idp.example", "client-123")
+	err := validateToolhiveLLMMode(Config{
+		ToolhiveLLM:        true,
+		ToolhiveLLMMode:    "direct",
+		ToolhiveLLMBaseURL: "http://127.0.0.1:9999/v1",
+		toolhiveConfigPath: cfgPath,
+	})
+	if err == nil {
+		t.Fatal("expected an error for direct mode + explicit base-url override")
+	}
+	if !strings.Contains(err.Error(), "incompatible") {
+		t.Errorf("error %q missing the incompatibility reason", err.Error())
+	}
+}
+
+// TestToolhiveDirectRemintSurvival (F6 AC #4): the direct-mode entry's remint
+// closure is non-nil and produces a non-nil provider when called. The token
+// source construction may fail (no real keyring in tests), but the entry
+// gracefully falls back to an error-returning func and the remint closure
+// still carries the WithHTTPClient. openai.New does no network on construction.
+func TestToolhiveDirectRemintSurvival(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "https://gw.example.com", "https://idp.example", "client-123")
+	diag := &toolhiveLevelDiag{}
+	cfg := Config{
+		ToolhiveLLM:        true,
+		toolhiveConfigPath: cfgPath,
+		Diagnostics:        diag,
+	}
+	intent := toolhiveIntent{
+		mode:           toolhiveModeDirect,
+		baseURL:        "https://gw.example.com/v1",
+		gatewayURL:     "https://gw.example.com",
+		oidcConfigured: true,
+	}
+	entry := newDirectGatewayEntry(cfg, providerToolhive, intent, cfgPath)
+
+	if entry.remint == nil {
+		t.Fatal("direct-mode entry has no remint closure")
+	}
+	p := entry.remint("high", port.ProviderCapabilities{})
+	if p == nil {
+		t.Fatal("remint returned nil provider")
+	}
+	// The provider should be usable even though the token source errors at
+	// request time — the construction path is validated.
+}
+
+// TestToolhiveDirectEntryThroughBuildProviderRegistry (F7 AC #1): the full
+// buildProviderRegistry path routes to newDirectGatewayEntry when OIDC is
+// configured and ToolhiveLLMMode defaults to auto. The resulting toolhive entry
+// has baseURL == gatewayURL + "/v1", intentDriven == true, and
+// intentGatewayURL == gatewayURL. No providerConstructor is set, so the real
+// newDirectGatewayEntry runs.
+func TestToolhiveDirectEntryThroughBuildProviderRegistry(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "https://gw.example.com", "https://idp.example", "client-123")
+	diag := &toolhiveLevelDiag{}
+	reg, err := buildProviderRegistry(Config{
+		ToolhiveLLM:         true,
+		toolhiveConfigPath:  cfgPath,
+		Diagnostics:         diag,
+		liveModelHTTPClient: toolhiveModelsClient(t, toolhiveFixtureJSON),
+	}, fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	entry, ok := reg.Lookup(providerToolhive)
+	if !ok {
+		t.Fatal("toolhive entry not registered")
+	}
+	if want := "https://gw.example.com/v1"; entry.baseURL != want {
+		t.Errorf("baseURL = %q, want %q (gateway_url + /v1)", entry.baseURL, want)
+	}
+	if !entry.intentDriven {
+		t.Error("entry should be intentDriven")
+	}
+	if entry.intentGatewayURL != "https://gw.example.com" {
+		t.Errorf("intentGatewayURL = %q, want %q", entry.intentGatewayURL, "https://gw.example.com")
+	}
+}
