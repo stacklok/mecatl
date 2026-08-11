@@ -2,7 +2,7 @@
 id: 08-live-subscription-owner-check
 title: Enforce ownership on the live event subscription
 blocked_by: [01-ownership-core]
-status: in-progress
+status: done
 branch: "plan-caller-separation/08-live-subscription-owner-check"
 worktree: ""
 issue: "368"
