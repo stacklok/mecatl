@@ -134,6 +134,13 @@ coverage required by issue #368 and [ADR-0102](../adr/0102-caller-ownership-enfo
   after the owner's run completes make no mutation and remain indistinguishable from
   absent handles.
   - verify: `TestCallerSeparation_Scenario3_ForeignLiveRunReplayIsNotFound`
+- AC3.6: Bob cannot open Alice's live event subscription (the gRPC `StreamSessionLive`
+  feed); the refusal is absence-shaped and registers no subscriber, so no event
+  Alice's run produces is ever fanned to him. Alice can open her own. Found by an
+  adversarial pass over this plan: `Service.Subscribe` took no context and made no
+  ownership decision at all — its only caller is the untrusted wire handler, not a
+  trusted in-process embed as its stale doc comment claimed.
+  - verify: `TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked`
 
 ---
 
@@ -257,6 +264,7 @@ concrete task split.
 - `TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped`
 - `TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked`
 - `TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked`
+- `TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked`
 - `TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess`
 - `TestCallerSeparation_Scenario5_UnclassifiedAccessFailsGuard`
 - `TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide`
