@@ -123,8 +123,13 @@ coverage required by issue #368 and [ADR-0102](../adr/0102-caller-ownership-enfo
   its response and unchanged target state match a missing handle.
   - verify: `TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked`
 - AC3.3: A model given another caller's subagent or team handle cannot inspect its
-  transcript or act on it through an agent-facing tool.
+  transcript or act on it through an agent-facing tool. Found by an adversarial pass
+  to be implemented at half strength: `InspectSubagent`/`InspectMember` correctly
+  authorized inspection, but the Subagent tool's `resume: <agentId>` argument — the
+  "act on it" half — loaded a persisted child session by id with no ownership check
+  at all.
   - verify: `TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked`
+  - verify: `TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked`
 - AC3.4: The real Remember, Recall, search, and forget memory-tool paths keep Alice's
   and Bob's same-key user/project memory isolated; a foreign read is absent and a
   foreign write or delete cannot alter the owner's value.
