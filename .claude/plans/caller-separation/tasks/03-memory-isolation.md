@@ -2,8 +2,8 @@
 id: 03-memory-isolation
 title: Partition user-model and project memory
 blocked_by: [01-ownership-core]
-status: pending
-branch: ""
+status: done
+branch: "plan-caller-separation/03-memory-isolation"
 worktree: ""
 issue: "368"
 retries: 0
