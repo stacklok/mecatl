@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // resolveTransportMode is a PURE seam (no os.Args, no os.Exit, no I/O), so
@@ -265,23 +266,28 @@ func TestMecatuiUnreadableAuthFileWarningSurvivesValidation(t *testing.T) {
 }
 
 func TestWrapAuthFileWarningFitsRenderedWidth(t *testing.T) {
-	warning := "auth file /" + strings.Repeat("nested/", 40) + "auth.yaml: does not match the expected schema (providers.<name>.api_key) — check indentation and field names"
+	warning := "auth file /" + strings.Repeat("nested/", 40) + "auth.yaml: does not match the expected schema (providers.<name>.api_key) — check 👩🏽‍💻 indentation and field names"
 	const renderedWidth = 100
 	const prefix = "mecatui: WARNING: "
 	wrapped := wrapAuthFileWarning(warning)
-	if !utf8.ValidString(wrapped) {
-		t.Fatal("wrapped warning is not valid UTF-8")
+	rendered := prefix + wrapped
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		t.Fatal("warning should wrap onto continuation lines")
 	}
-	for i, line := range strings.Split(wrapped, "\n") {
-		var rendered string
-		if i == 0 {
-			rendered = prefix + line
-		} else {
-			rendered = line
+	if !strings.HasPrefix(lines[0], prefix) {
+		t.Fatalf("first rendered line = %q, want prefix %q", lines[0], prefix)
+	}
+	for i, line := range lines {
+		if i > 0 && !strings.HasPrefix(line, "  ") {
+			t.Errorf("continuation line %d = %q, want two-space indentation", i, line)
 		}
-		if utf8.RuneCountInString(rendered) > renderedWidth {
-			t.Errorf("rendered warning line %d has width %d > %d: %q", i, utf8.RuneCountInString(rendered), renderedWidth, rendered)
+		if width := ansi.StringWidth(line); width > renderedWidth {
+			t.Errorf("rendered warning line %d has width %d > %d: %q", i, width, renderedWidth, line)
 		}
+	}
+	if !strings.Contains(rendered, "👩🏽‍💻") {
+		t.Error("wrapped warning lost grapheme text")
 	}
 }
 

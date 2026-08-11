@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -533,51 +534,13 @@ func conventionalAuthFileWarning(c config, keys cliconfig.ResolvedKeys) string {
 // value-free warning returned by the auth-file adapter. The rendered prefix and
 // continuation indentation are included in the width budget.
 func wrapAuthFileWarning(warning string) string {
-	const (
-		renderedWidth = 100
-		prefix        = "mecatui: WARNING: "
-		continuation  = "  "
-	)
-	firstWidth := renderedWidth - utf8.RuneCountInString(prefix)
-	continuationWidth := renderedWidth - utf8.RuneCountInString(continuation)
-	var out []string
-	for _, paragraph := range strings.Split(warning, "\n") {
-		words := strings.Fields(paragraph)
-		if len(words) == 0 {
-			continue
-		}
-		lineWidth := firstWidth
-		if len(out) > 0 {
-			lineWidth = continuationWidth
-		}
-		var line string
-		for _, word := range words {
-			wordRunes := []rune(word)
-			for len(wordRunes) > 0 {
-				if line != "" {
-					if utf8.RuneCountInString(line)+1+len(wordRunes) <= lineWidth {
-						line += " " + string(wordRunes)
-						wordRunes = nil
-						continue
-					}
-					out = append(out, line)
-					lineWidth = continuationWidth
-				}
-				n := min(len(wordRunes), lineWidth)
-				line = string(wordRunes[:n])
-				wordRunes = wordRunes[n:]
-				if len(wordRunes) > 0 {
-					out = append(out, line)
-					line = ""
-					lineWidth = continuationWidth
-				}
-			}
-		}
-		if line != "" {
-			out = append(out, line)
-		}
+	const wrapWidth = 80
+	wrapped := ansi.Wrap(warning, wrapWidth, "")
+	lines := strings.Split(wrapped, "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = "  " + lines[i]
 	}
-	return strings.Join(out, "\n"+continuation)
+	return strings.Join(lines, "\n")
 }
 
 // transportUsage returns the fs.Usage closure for the resolved transport mode:
