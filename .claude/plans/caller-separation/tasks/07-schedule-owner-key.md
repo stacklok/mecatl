@@ -2,8 +2,8 @@
 id: 07-schedule-owner-key
 title: Owner-namespace the schedule creation key
 blocked_by: [01-ownership-core, 02-persisted-resources]
-status: pending
-branch: ""
+status: in-progress
+branch: "plan-caller-separation/07-schedule-owner-key"
 worktree: ""
 issue: "368"
 retries: 0
