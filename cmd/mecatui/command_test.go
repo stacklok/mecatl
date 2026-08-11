@@ -203,6 +203,12 @@ func TestMecatuiAuthFileOnlyParse(t *testing.T) {
 	if cfg.anthropicKey != "sk-ant-file-only" {
 		t.Errorf("anthropic key = %q, want auth-file credential", cfg.anthropicKey)
 	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate auth-file credential: %v", err)
+	}
+	if embedded := embeddedConfig(cfg, nil); embedded.AnthropicKey != cfg.anthropicKey {
+		t.Errorf("embedded AnthropicKey = %q, want resolved auth-file credential", embedded.AnthropicKey)
+	}
 	if cfg.providerKeys.AuthFileWarning != "" {
 		t.Errorf("valid auth file warning = %q", cfg.providerKeys.AuthFileWarning)
 	}
@@ -215,7 +221,7 @@ func TestMecatuiExplicitAuthFileWarningSurvivesValidation(t *testing.T) {
 	t.Setenv("OPENCODE_API_KEY", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
-	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", missing})
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, []string{"--workspace", "/abs", "--auth-file", missing, "--toolhive-llm=false"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -224,6 +230,55 @@ func TestMecatuiExplicitAuthFileWarningSurvivesValidation(t *testing.T) {
 	}
 	if err := cfg.validate(); err == nil {
 		t.Fatal("missing provider should still fail local startup validation")
+	}
+}
+
+func TestRunPrintsExplicitAuthFileWarningBeforeProviderValidation(t *testing.T) {
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	missing := filepath.Join(t.TempDir(), "missing-auth.yaml")
+	args := []string{"mecatui", "--workspace", t.TempDir(), "--auth-file", missing, "--toolhive-llm=false"}
+
+	_, cfg, err := parseTransportFlags(modeLocal, io.Discard, args[1:])
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.providerKeys.AuthFileWarning == "" {
+		t.Fatal("explicit missing auth file should produce a startup warning")
+	}
+
+	stderr := os.Stderr
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.Stderr = stderr
+		_ = write.Close()
+		_ = read.Close()
+	})
+	output := &syncBuffer{}
+	drained := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(output, read)
+		close(drained)
+	}()
+	os.Stderr = write
+	runErr := run(args)
+	os.Stderr = stderr
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-drained
+
+	if runErr == nil || !strings.Contains(runErr.Error(), "no LLM provider configured") {
+		t.Fatalf("run error = %v, want no-provider validation failure", runErr)
+	}
+	want := "mecatui: WARNING: " + wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning) + "\n"
+	if got := output.String(); got != want {
+		t.Errorf("startup stderr = %q, want %q", got, want)
 	}
 }
 
