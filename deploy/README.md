@@ -101,8 +101,11 @@ static base), `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`,
 ## Caller identity (OIDC) — the opt-in overlay
 
 `deploy/mecak8s-oidc/` is a kustomize overlay over `deploy/mecak8s/` that turns
-on **caller identity**: a real IdP authenticates each caller, and every session
-and schedule records the verified `(issuer, subject)` that owns it.
+on **caller identity and ownership isolation**: a real IdP authenticates each
+caller, and every new session and schedule records the verified `(issuer,
+subject)` that owns it. With the verifier enabled, callers can access only their
+own records; historical ownerless records are deliberately unavailable rather
+than adopted.
 
 ```sh
 # Use a registry your target cluster can pull from; ko.local is not sufficient.
@@ -117,9 +120,21 @@ deployment), and `--oidc-max-jwks-staleness=1h`. The base deploys with identity
 **off**, byte-identically to a mecatl without it, so nothing changes for existing
 users of these manifests.
 
-**This is attribution, not isolation.** It records who acted; it refuses nothing.
-Any authenticated caller can still list and act on any session — per-caller
-access control is separate, later work. Do not deploy it as a tenancy boundary.
+**This is an isolation cutover, not an ownerless-data migration.** Before
+applying the overlay, inventory and back up ownerless sessions and schedules
+from the configured stores: they remain available only to a deployment without
+the verifier. The scheduler intentionally skips ownerless schedules after the
+cutover, so it neither adopts nor retries historical work. Disabling the
+verifier restores only the existing ownerless compatibility behavior; it does
+not assign historical records to a caller.
+
+**Raw drivers are trusted infrastructure.** The overlay includes
+`raw-driver-networkpolicy.yaml`, which permits ingress to pods labelled
+`app.kubernetes.io/component: raw-driver` only from the mecak8s agent pod.
+Tenant workloads must not use that label and must reach the authenticated public
+service instead. Until remote drivers receive caller claims (ADR 0103), deploy a
+raw driver with that label and its listener on TCP 9090 in the same namespace;
+do not expose it through a Service, Ingress, or tenant NetworkPolicy.
 
 **Point it at a real external IdP over HTTPS.** That is the only shape that works
 with the token validator's security defaults intact: it refuses an `http://`

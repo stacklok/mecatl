@@ -42,6 +42,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   never fabricates anonymous identity or derives the `system` grant, and keeps
   JWT/OIDC dependencies out of the engine. New exported functions: Added (a
   minor bump).
+- **`session.(*Principal).SameIdentity`** (issue #368,
+  [ADR 0102](../docs/adr/0102-caller-ownership-enforcement.md)) — compares the
+  immutable `(Issuer, Subject)` owner identity without treating presentation or
+  grant metadata as authority. Ownership enforcement uses this single
+  projection for callers, resource owners, and explicitly classified system
+  actors. A new exported method: Added (a minor bump).
 
 - **Caller-identity labels on the session aggregate** (issue #367,
   [ADR 0100](../docs/adr/0100-caller-identity-threading.md)) — the joint

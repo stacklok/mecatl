@@ -46,11 +46,13 @@ func (s *NamespacedStore) trim(entries []tool.MemoryEntry) []tool.MemoryEntry {
 	return out
 }
 
+// RememberEntry stores entry under this namespace.
 func (s *NamespacedStore) RememberEntry(ctx context.Context, entry tool.MemoryEntry) error {
 	entry.Key = s.key(entry.Key)
 	return s.store.RememberEntry(ctx, entry)
 }
 
+// Recall retrieves key from this namespace.
 func (s *NamespacedStore) Recall(ctx context.Context, key string) (tool.MemoryEntry, bool, error) {
 	entry, ok, err := s.store.Recall(ctx, s.key(key))
 	if ok {
@@ -59,6 +61,7 @@ func (s *NamespacedStore) Recall(ctx context.Context, key string) (tool.MemoryEn
 	return entry, ok, err
 }
 
+// List returns namespace entries matching prefix.
 func (s *NamespacedStore) List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error) {
 	entries, err := s.store.List(ctx, s.key(prefix))
 	if err != nil {
@@ -67,6 +70,7 @@ func (s *NamespacedStore) List(ctx context.Context, prefix string) ([]tool.Memor
 	return s.trim(entries), nil
 }
 
+// Index returns namespace entries without their values.
 func (s *NamespacedStore) Index(ctx context.Context) ([]tool.MemoryEntry, error) {
 	entries, err := s.List(ctx, "")
 	if err != nil {
@@ -79,6 +83,7 @@ func (s *NamespacedStore) Index(ctx context.Context) ([]tool.MemoryEntry, error)
 	return entries, nil
 }
 
+// Search ranks entries within this namespace.
 func (s *NamespacedStore) Search(ctx context.Context, query string, limit int) ([]tool.MemoryEntry, error) {
 	// The backing store's ranked Search cannot safely filter after ranking: entries
 	// in another namespace could consume the requested page. Rank this namespace's
@@ -90,6 +95,7 @@ func (s *NamespacedStore) Search(ctx context.Context, query string, limit int) (
 	return bm25Rank(entries, query, limit), nil
 }
 
+// Forget removes key from this namespace.
 func (s *NamespacedStore) Forget(ctx context.Context, key string) error {
 	return s.store.Forget(ctx, s.key(key))
 }
@@ -112,6 +118,8 @@ type CallerStore struct {
 
 var _ tool.MemoryStore = (*CallerStore)(nil)
 
+// NewCallerStore returns a store partitioned by verified caller and, when
+// project is true, by workspace.
 func NewCallerStore(store tool.MemoryStore, project bool) *CallerStore {
 	if store == nil {
 		panic("memory: NewCallerStore requires a non-nil MemoryStore")
@@ -136,6 +144,7 @@ func (s *CallerStore) scoped(ctx context.Context) (*NamespacedStore, error) {
 	return NewNamespacedStore(s.store, fmt.Sprintf("caller/%x", digest[:])), nil
 }
 
+// RememberEntry stores entry in the verified caller's namespace.
 func (s *CallerStore) RememberEntry(ctx context.Context, entry tool.MemoryEntry) error {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -144,6 +153,7 @@ func (s *CallerStore) RememberEntry(ctx context.Context, entry tool.MemoryEntry)
 	return store.RememberEntry(ctx, entry)
 }
 
+// Recall retrieves key from the verified caller's namespace.
 func (s *CallerStore) Recall(ctx context.Context, key string) (tool.MemoryEntry, bool, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -152,6 +162,7 @@ func (s *CallerStore) Recall(ctx context.Context, key string) (tool.MemoryEntry,
 	return store.Recall(ctx, key)
 }
 
+// List returns verified caller entries matching prefix.
 func (s *CallerStore) List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -160,6 +171,7 @@ func (s *CallerStore) List(ctx context.Context, prefix string) ([]tool.MemoryEnt
 	return store.List(ctx, prefix)
 }
 
+// Index returns verified caller entries without their values.
 func (s *CallerStore) Index(ctx context.Context) ([]tool.MemoryEntry, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -168,6 +180,7 @@ func (s *CallerStore) Index(ctx context.Context) ([]tool.MemoryEntry, error) {
 	return store.Index(ctx)
 }
 
+// Search ranks entries in the verified caller's namespace.
 func (s *CallerStore) Search(ctx context.Context, query string, limit int) ([]tool.MemoryEntry, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -176,6 +189,7 @@ func (s *CallerStore) Search(ctx context.Context, query string, limit int) ([]to
 	return store.Search(ctx, query, limit)
 }
 
+// Forget removes key from the verified caller's namespace.
 func (s *CallerStore) Forget(ctx context.Context, key string) error {
 	store, err := s.scoped(ctx)
 	if err != nil {

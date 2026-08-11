@@ -15,12 +15,13 @@
 # e2e fixtures ONLY and is deliberately absent here — a published example must
 # not ship SSRF relaxation.
 #
-# No NetworkPolicy patch is needed: the base egress already allows DNS plus TCP
-# 443 to any destination IP, which is exactly what an external IdP requires.
+# The raw-driver NetworkPolicy is intentionally part of this overlay.  Until
+# ADR 0103's caller propagation exists, a raw driver is trusted shared
+# infrastructure: only the mecak8s agent workload may reach it.  Tenant pods
+# must use the authenticated public service, not a raw driver endpoint.
 #
-# ATTRIBUTION, NOT ISOLATION: this records who acted. It refuses nothing. Any
-# authenticated caller can still act on any session — per-caller access control
-# is a later, separate piece of work. Do not deploy this as a tenancy boundary.
+# CALLER OWNERSHIP: the OIDC verifier records the caller and server-side
+# ownership checks isolate caller-owned resources. It is not merely attribution.
 #
 # The production validator is toolhive-core/authn v0.0.39. A bad OIDC
 # configuration still fails closed at startup rather than serving unauthenticated.
@@ -29,6 +30,7 @@ kind: Kustomization
 
 resources:
   - ../mecak8s
+  - raw-driver-networkpolicy.yaml
 
 patches:
   - path: agent-oidc-args.yaml

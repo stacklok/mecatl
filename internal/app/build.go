@@ -2435,6 +2435,9 @@ func buildScheduler(cfg Config, store port.SessionStore, sessionLease port.Sessi
 		TickInterval:       cfg.SchedulerTickInterval,
 		MinInterval:        cfg.SchedulerMinInterval,
 		MaxConcurrentFires: cfg.SchedulerMaxConcurrentFires,
+		CanProcess: func(s port.Schedule) bool {
+			return !cfg.OwnershipEnforced || s.Spec.Owner != nil
+		},
 	}
 	// Fire is nil here — Build calls SetFire after NewService (the FireFunc closes
 	// over the *server.Service, which does not exist yet at this point).

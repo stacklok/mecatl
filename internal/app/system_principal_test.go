@@ -36,6 +36,14 @@ type starter struct {
 	run   func(ctx context.Context, t *testing.T, seen observe)
 }
 
+// TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess pins
+// AC4.2 through the registered-root conformance driver below. It exercises the
+// real child GC and both consolidators at their port boundary; the registry
+// equality assertion prevents a new unclassified worker from escaping the set.
+func TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess(t *testing.T) {
+	TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t)
+}
+
 // TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem pins AC2.2: every
 // internal goroutine root runs under an EXPLICIT system principal, never an
 // absent one (ADR 0100 decision 7).

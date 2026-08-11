@@ -103,6 +103,11 @@ type Config struct {
 	// Fire is the composition-supplied run-entry callback. Composition wires
 	// this in Phase 1f; for Phase 1e's unit tests a stub records fires. Required.
 	Fire FireFunc
+	// CanProcess admits only schedules this scheduler may touch. A nil function
+	// preserves the compatibility path. OIDC composition supplies a predicate that
+	// excludes ownerless pre-cutover schedules before Claim, so a background worker
+	// cannot adopt, fire, or repeatedly mutate an inaccessible resource.
+	CanProcess func(port.Schedule) bool
 	// Clock supplies `now` for the tick loop and Claim. Required.
 	Clock port.Clock
 	// Diagnostics is the operational logging seam. A nil value is treated as
@@ -913,6 +918,9 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(s.cfg.MaxConcurrentFires)
 	for _, sched := range due {
+		if s.cfg.CanProcess != nil && !s.cfg.CanProcess(sched) {
+			continue
+		}
 		sched := sched
 		g.Go(func() error {
 			s.fireOne(gctx, sched, now)
