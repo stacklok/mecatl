@@ -176,6 +176,11 @@ type Config struct {
 	Engine *agent.Engine
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
+	// OwnershipEnforced is true only when the request edge has a verifier wired.
+	// Its zero value preserves the ownerless compatibility path. When enabled,
+	// create retries compare the verified issuer/subject pair before exposing an
+	// existing caller-selected ID.
+	OwnershipEnforced bool
 	// Workspaces builds a Workspace for a session root. Required.
 	Workspaces WorkspaceFactory
 	// CommandRunner is the MAIN session's bound command runner (issue #462). It is
@@ -1311,6 +1316,29 @@ func seedCarryover(sess *session.Session, snap []session.Message) error {
 	return nil
 }
 
+// createRequest is the immutable caller-controlled shape a retried explicit ID
+// must match. It deliberately excludes the owner: that comes only from the
+// verified context and is checked separately.
+type createRequest struct {
+	workspace string
+	mode      session.PermissionMode
+	limits    session.Limits
+	selector  ProviderSelector
+	profile   SessionProfile
+	sourceID  session.SessionID
+}
+
+func (r createRequest) matches(sess *session.Session) bool {
+	return r.sourceID == "" && sess.Workspace == r.workspace && sess.Mode == r.mode &&
+		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
+		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
+		sess.Profile == string(r.profile)
+}
+
+func sameCreateOwner(a, b *session.Principal) bool {
+	return (a == nil && b == nil) || a.SameIdentity(b)
+}
+
 // reserveSessionID validates a caller-chosen session id (WithSessionID, ADR 0059
 // decision #7 Phase-2) against THREE collision sources and reserves it for the
 // duration of the create, returning a release func the caller MUST defer:
@@ -1328,7 +1356,7 @@ func seedCarryover(sess *session.Session, snap []session.Message) error {
 // fault the reservation is released before returning the error. Once the session
 // is registered (per-session) or persisted (shared) the durable collision sources
 // take over, so the reservation only needs to live for the create.
-func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID) (release func(), err error) {
+func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, owner *session.Principal, request createRequest) (existing *session.Session, release func(), err error) {
 	s.mu.Lock()
 	_, liveEngine := s.sessionEngines[id]
 	_, reserved := s.reservedIDs[id]
@@ -1336,7 +1364,7 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID) (r
 		s.mu.Unlock()
 		// Accurate for BOTH cases: a live per-session engine (liveEngine) OR a
 		// concurrent in-flight create holding the id (reserved).
-		return nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
+		return nil, nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
 	}
 	s.reservedIDs[id] = struct{}{}
 	s.mu.Unlock()
@@ -1350,12 +1378,21 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID) (r
 	// silently pass, so it is propagated.
 	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
 		release()
-		return nil, fmt.Errorf("%w: session id %q already exists", ErrInvalidArgument, id)
+		if !s.cfg.OwnershipEnforced {
+			return nil, nil, fmt.Errorf("%w: session id %q already exists", ErrInvalidArgument, id)
+		}
+		if sameCreateOwner(existing.Owner, owner) {
+			if request.matches(existing) {
+				return existing, nil, nil
+			}
+			return nil, nil, fmt.Errorf("%w: session id %q was retried with a different request", ErrInvalidArgument, id)
+		}
+		return nil, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
 		release()
-		return nil, fmt.Errorf("server: probe session id %q: %w", id, lerr)
+		return nil, nil, fmt.Errorf("server: probe session id %q: %w", id, lerr)
 	}
-	return release, nil
+	return nil, release, nil
 }
 
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
@@ -1383,6 +1420,10 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// the unset caps. A zero field means "unset", not "explicitly unlimited".
 	limits = limits.WithDefaults(s.cfg.DefaultLimits)
 
+	// The owner stamped on the new session: the explicit WithOwner injection, else
+	// the verified principal on the context, else nil (the ownerless no-auth path).
+	owner := resolveOwner(ctx, opts)
+
 	// Resolve the session id: the caller's override (WithSessionID, ADR 0059
 	// decision #7 Phase-2) wins; otherwise the Service's NewID generator mints a
 	// fresh one (the byte-identical pre-Phase-2 path). WithSessionID with an EMPTY
@@ -1395,9 +1436,13 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if opts.id == "" {
 			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
 		}
-		release, err := s.reserveSessionID(ctx, opts.id)
+		request := createRequest{workspace: workspace, mode: mode, limits: limits, selector: sel, profile: profile, sourceID: opts.sourceSessionID}
+		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
 		if err != nil {
 			return nil, err
+		}
+		if existing != nil {
+			return existing, nil
 		}
 		defer release()
 		mintID = func() session.SessionID { return opts.id }
@@ -1415,10 +1460,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// DefaultResolvedModel inside validateCarryover); a SAME-provider carryover
 	// replays the history verbatim, a CROSS-provider carryover strips the
 	// provider-private blobs (session.StripProviderState).
-	// The owner stamped on the new session: the explicit WithOwner injection, else
-	// the verified principal on the context, else nil (the ownerless no-auth path).
-	// A carryover fork replaces it with the SOURCE's owner below.
-	owner := resolveOwner(ctx, opts)
+	// A carryover fork replaces the context owner with the source's owner below.
 
 	var carrySnap []session.Message
 	if opts.sourceSessionID != "" {

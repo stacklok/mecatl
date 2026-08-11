@@ -144,3 +144,29 @@ func TestPrincipalGrantTypesAreTheThreeValues(t *testing.T) {
 		}
 	}
 }
+
+// TestADR_0102_VerifiedIssuerSubjectPairIsOwnerIdentity pins ADR 0102 decision
+// 1: ownership is the exact verifier-emitted issuer/subject pair. Display and
+// grant metadata do not select an owner, and issuer text is never normalized.
+func TestADR_0102_VerifiedIssuerSubjectPairIsOwnerIdentity(t *testing.T) {
+	t.Parallel()
+
+	owner := &session.Principal{Issuer: "https://issuer.example/realm", Subject: "same", GrantType: session.GrantTypeUser, Name: "Alice"}
+	for _, tc := range []struct {
+		name string
+		got  *session.Principal
+		want bool
+	}{
+		{"same verified pair ignores display and grant", &session.Principal{Issuer: owner.Issuer, Subject: owner.Subject, GrantType: session.GrantTypeClientCredentials, Name: "forged display"}, true},
+		{"same subject different issuer", &session.Principal{Issuer: "https://other.example/realm", Subject: owner.Subject, GrantType: owner.GrantType, Name: owner.Name}, false},
+		{"alternate issuer spelling", &session.Principal{Issuer: "https://issuer.example/realm/", Subject: owner.Subject, GrantType: owner.GrantType, Name: owner.Name}, false},
+		{"different subject", &session.Principal{Issuer: owner.Issuer, Subject: "other", GrantType: owner.GrantType, Name: owner.Name}, false},
+		{"absent principal", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := owner.SameIdentity(tc.got); got != tc.want {
+				t.Fatalf("SameIdentity(%+v) = %v, want %v", tc.got, got, tc.want)
+			}
+		})
+	}
+}

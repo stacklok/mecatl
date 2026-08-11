@@ -133,6 +133,14 @@ func claimString(claims map[string]any, key string) string {
 	return value
 }
 
+// SameIdentity reports whether p and other carry the same verified owner
+// identity. Ownership is the exact (Issuer, Subject) pair: metadata such as
+// GrantType and Name is deliberately excluded, and issuer spelling is not
+// normalized. An absent principal never identifies an owner.
+func (p *Principal) SameIdentity(other *Principal) bool {
+	return p != nil && other != nil && p.Issuer == other.Issuer && p.Subject == other.Subject
+}
+
 // Authority is Track C's placeholder label on the Session aggregate. It is
 // INERT in the caller-identity plan: nothing reads or writes it beyond the
 // snapshot round-trip. It ships now so the contended engine/api/*.txt

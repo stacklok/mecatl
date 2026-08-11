@@ -142,6 +142,10 @@ type Config struct {
 	RedisURL string
 	Shell    string
 	NoBash   bool
+	// OwnershipEnforced enables application caller isolation when the command edge
+	// has configured the fail-closed OIDC verifier. Its zero value preserves
+	// existing ownerless deployments and hand-built test configurations.
+	OwnershipEnforced bool
 
 	// DefaultProvider/DefaultModel are the SERVER-CONFIGURED deployment-wide
 	// default (issue #21; --default-provider / --default-model — the wire's
@@ -1495,10 +1499,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	commandLister := buildCommandLister(cfg, mcpProvider)
 
 	svcCfg := server.Config{
-		Engine:           engine,
-		Store:            store,
-		Workspaces:       osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots),
-		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
+		Engine:            engine,
+		Store:             store,
+		OwnershipEnforced: cfg.OwnershipEnforced,
+		Workspaces:        osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots),
+		DefaultWorkspace:  cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// CommandRunner (issue #462): the MAIN session's bound runner — the
 		// Environment seam hands it to Tool.Execute so Bash observes the session
 		// namespace. nil when Bash is disabled (the catalog omits Bash and the
