@@ -400,9 +400,10 @@ var modelToolAccessTable = map[string]ClassificationEntry{
 	// resuming child/team session's own owner check (engine/agent/teaminspect.go,
 	// subagentinspect.go, subagentstatus.go), which SameIdentity-matches the
 	// run's caller.
-	"InspectSubagent": {KindCallerOwned, "resumes a persisted child session; teaminspect/subagentinspect authorize via sess.Owner.SameIdentity(caller) before returning its transcript"},
-	"InspectMember":   {KindCallerOwned, "resumes a persisted team-member session; authorizes via sess.Owner.SameIdentity(caller) before returning its transcript"},
+	"InspectSubagent": {KindCallerOwned, "reads a persisted child session's transcript; teaminspect/subagentinspect authorize via sess.Owner.SameIdentity(caller) before returning it"},
+	"InspectMember":   {KindCallerOwned, "reads a persisted team-member session's transcript; authorizes via sess.Owner.SameIdentity(caller) before returning it"},
 	"SubagentStatus":  {KindCallerOwned, "reads the run-scoped background-child registry (parentCaps.children), which only ever holds children this SAME run's caller spawned"},
+	"Subagent":        {KindCallerOwned, "a resume: <agentId> load authorizes the persisted child via sess.Owner.SameIdentity(caller) before recovering or re-persisting it (issue #368 task 09)"},
 	"Team":            {KindCallerOwned, "the in-loop Team tool inherits the run's OWN authorized session; RunTeam's gRPC entry point is separately classified above via lookupTeam"},
 }
 
@@ -418,7 +419,7 @@ var modelToolAccessTable = map[string]ClassificationEntry{
 var ModelToolBoundaries = []string{
 	"Remember", "Recall", "SearchMemory",
 	"RememberUser", "RecallUser", "SearchUserModel",
-	"InspectSubagent", "InspectMember", "SubagentStatus", "Team",
+	"InspectSubagent", "InspectMember", "SubagentStatus", "Subagent", "Team",
 }
 
 // ClassifyServiceBoundaries walks every exported *Service method (the

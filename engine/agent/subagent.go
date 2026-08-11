@@ -192,6 +192,12 @@ func (c parentCaps) inheritOwner(child *session.Session) {
 	// owner; a fresh child has no owner, and a resumed child already carries this
 	// same one. Either way the persisted owner stands — the write is write-once by
 	// construction and must never overwrite.
+	//
+	// "a resumed child already carries this same one" is now an enforced invariant,
+	// not merely an assumption: resolveResumeSession's callerOwnsTranscript check
+	// (issue #368) refuses a resume whose loaded owner differs from the caller
+	// before this is ever reached, so the DIFFERENT-owner error case above is
+	// unreachable via the resume path.
 	_ = child.RestoreLabels(c.owner, "")
 }
 
@@ -3755,6 +3761,15 @@ func (t *SubagentTool) releaseChildID(childID session.SessionID) {
 // (ok=false) on a load failure or non-resumable state.
 func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.ToolCallID, id session.SessionID, args subagentArgs) (*session.Session, session.ToolResult, bool) {
 	loaded, err := t.store.Load(ctx, id)
+	if err == nil && !callerOwnsTranscript(ctx, loaded) {
+		// A foreign owner's session is treated as absent, not refused: a
+		// distinguishing error would itself leak that the id exists under
+		// another owner (this plan's "a refusal is indistinguishable from
+		// absence" principle), and a model steered to probe ids could use
+		// the distinction as an oracle.
+		err = port.ErrSessionNotFound
+		loaded = nil
+	}
 	switch {
 	case errors.Is(err, port.ErrSessionNotFound) || (err == nil && loaded == nil):
 		return nil, session.NewToolError(callID,

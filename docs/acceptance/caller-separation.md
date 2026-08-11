@@ -303,6 +303,17 @@ concrete task split.
   referenced preserved fork before it reads it. Availability/DoS only — no
   confidentiality break, since a caller can only ever reference a fork path it
   legitimately obtained. Tracked as a separate follow-up, not blocking this plan.
+- **The scheduler fire path has a ctx-vs-session-owner divergence, found while fixing
+  the Subagent resume ownership gap (task 09).** A scheduled fire runs under the
+  system principal on ctx (`syscaller.Context`) while the fire session's owner is the
+  schedule's real owner (`server.WithOwner(fireSessionOwner(...))`,
+  `internal/adapter/scheduler_fire.go`). Under a ctx-based ownership check, a scheduled
+  run resuming its OWN schedule's child (via `InspectSubagent`/`InspectMember`/
+  Subagent `resume:`) would be refused as absent — fail-closed degradation, not a new
+  hole, but a real usability gap. The clean fix is one line at the composition seam
+  (`ctx = session.WithPrincipal(ctx, sess.Owner)`, mirroring what
+  `usermodelreview.go` already does) that would repair all these tools at once. Not
+  fixed in this plan.
 
 ## Exit criteria
 
