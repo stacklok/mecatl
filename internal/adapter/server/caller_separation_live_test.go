@@ -239,3 +239,43 @@ func TestCallerSeparation_Scenario3_ForeignLiveRunReplayIsNotFound(t *testing.T)
 		t.Fatalf("foreign Cancel after completion = %v, want ErrNotFound", err)
 	}
 }
+
+// TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked pins AC3.6:
+// Bob cannot open Alice's live event subscription (the gRPC StreamSessionLive
+// feed) — the refusal is absence-shaped and registers no subscriber, so no
+// event Alice's run produces is ever fanned to him. Alice can open her own.
+func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked(t *testing.T) {
+	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
+	sess, err := svc.CreateSession(aliceCtx, "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ch, unsub, err := svc.Subscribe(bobCtx, sess.ID); !errors.Is(err, server.ErrNotFound) {
+		if unsub != nil {
+			unsub()
+		}
+		t.Fatalf("foreign Subscribe = (%v, %v), want ErrNotFound", ch, err)
+	}
+
+	aliceCh, aliceUnsub, err := svc.Subscribe(aliceCtx, sess.ID)
+	if err != nil {
+		t.Fatalf("owner Subscribe: %v", err)
+	}
+	defer aliceUnsub()
+
+	// The behavioral half: Bob's refused Subscribe must have registered NO
+	// subscriber at all. Publish on Alice's session and confirm the only
+	// channel that ever sees it is Alice's own.
+	probe := session.Event{Type: session.EvNoProgress, Text: "owner-checked-live-probe"}
+	svc.PublishSessionEvent(sess.ID, probe)
+
+	select {
+	case got, ok := <-aliceCh:
+		if !ok || got.Text != probe.Text {
+			t.Fatalf("Alice's subscription = (%+v, %v), want the probe event", got, ok)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Alice's subscription never received the probe event")
+	}
+}

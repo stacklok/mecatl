@@ -51,7 +51,10 @@ func TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive(t *testing.T) {
 	svc.FinishRun(sess.ID, run)
 
 	// Subscribe to the origin session.
-	sub, unsub := svc.Subscribe(sess.ID)
+	sub, unsub, err := svc.Subscribe(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer unsub()
 
 	// Collect events from the subscriber in a goroutine.
@@ -150,7 +153,10 @@ func TestFireDelivery_Scenario5_TUIRendersRecordedNoteNotRaw(t *testing.T) {
 	}
 	svc.FinishRun(sess.ID, run)
 
-	sub, unsub := svc.Subscribe(sess.ID)
+	sub, unsub, err := svc.Subscribe(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer unsub()
 
 	var (
@@ -246,7 +252,10 @@ func TestFireDelivery_Scenario6_DeadClientDrainsWithoutWedgingHelper(t *testing.
 	svc.FinishRun(sess.ID, run)
 
 	// Subscribe, then immediately unsubscribe (dead client).
-	sub, unsub := svc.Subscribe(sess.ID)
+	sub, unsub, err := svc.Subscribe(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 
 	// Drain any events that were buffered during subscription setup, then close.
 	done := make(chan struct{})

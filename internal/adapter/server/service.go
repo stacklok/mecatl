@@ -4182,11 +4182,17 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 // and closes the channel exactly once so the subscriber goroutine can exit
 // cleanly.
 //
-// Subscribe is the entry point for the in-process embedded server path (Wave 2,
-// ADR 0075 decision #5): the mecatui embed calls it when the user opens a
-// session's live view, and unsubscribes when the view loses focus / the TUI
-// exits. A wire-transport analogue (gRPC server-streaming, Wave 3) is task 08.
-func (s *Service) Subscribe(id session.SessionID) (<-chan session.Event, func()) {
+// Subscribe's sole entry point is the gRPC StreamSessionLive wire handler — an
+// UNTRUSTED boundary, not a trusted in-process caller. When OwnershipEnforced
+// is set it authorizes via GetSession (issue #368) before registering a
+// subscriber, so a caller who cannot load the session cannot observe its live
+// events either; the check mirrors StreamSessionEvents exactly.
+func (s *Service) Subscribe(ctx context.Context, id session.SessionID) (<-chan session.Event, func(), error) {
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSession(ctx, id); err != nil {
+			return nil, nil, err
+		}
+	}
 	ch := make(chan session.Event, 64)
 	s.subMu.Lock()
 	if s.subscriptionsClosed {
@@ -4216,7 +4222,7 @@ func (s *Service) Subscribe(id session.SessionID) (<-chan session.Event, func())
 			}
 		})
 	}
-	return ch, unsub
+	return ch, unsub, nil
 }
 
 // PublishSessionEvent fans the event to every subscriber registered for the given

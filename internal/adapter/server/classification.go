@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,6 +11,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
+
+// contextType is the reflect.Type of context.Context, used by
+// requireCallerOwnedContext to check a KindCallerOwned method's first
+// parameter.
+var contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 
 // AccessKind is one of the four classifications ADR 0102 decision 2 requires
 // for every designated application object-touching boundary.
@@ -180,6 +186,35 @@ func exportedMethodNames(t reflect.Type) []string {
 	return names
 }
 
+// requireCallerOwnedContext walks every table entry classified KindCallerOwned
+// and fails if the underlying method on t has no leading context.Context
+// parameter (after the receiver) — such a method cannot possibly consult a
+// caller's principal, so KindCallerOwned would be a contradiction (issue #368
+// task 08: this is exactly the pre-fix shape of Service.Subscribe, which
+// claimed no classification error yet took no ctx at all). It does not verify
+// the method actually USES the ctx — that stays a human-reviewed judgment
+// call.
+func requireCallerOwnedContext(surface string, t reflect.Type, table map[string]ClassificationEntry) []error {
+	var errs []error
+	for name, entry := range table {
+		if entry.Kind != KindCallerOwned {
+			continue
+		}
+		m, ok := t.MethodByName(name)
+		if !ok {
+			// Not a real method on this type (e.g. a stale/unrelated table
+			// entry) — classifyNames already reports that separately.
+			continue
+		}
+		// m.Type is the method expression: In(0) is the receiver, In(1) would
+		// be the first real parameter.
+		if m.Type.NumIn() < 2 || m.Type.In(1) != contextType {
+			errs = append(errs, fmt.Errorf("%s: %q is classified caller-owned but its first parameter is not context.Context — it cannot consult a caller's principal", surface, name))
+		}
+	}
+	return errs
+}
+
 // serviceAccessTable classifies every exported *Service method — the
 // application-facade, in-memory-registry, and event-relay boundaries ADR 0102
 // decision 2 names. See AccessKind's doc comment for what each kind means.
@@ -200,6 +235,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"EndSession":                {KindCallerOwned, "authorizes via GetSession before CloseSession"},
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"StreamSessionEvents":       {KindCallerOwned, "event log/live stream resolves through the owning session's authorizeSession check"},
+	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
 	// --- caller-owned: live run verbs ---
 	"StartRun":        {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
@@ -238,8 +274,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"LookupRun":            {KindDerived, "in-memory run registry read; every caller-facing entry point (Cancel, Persist, Approve*, MaybeAutoApprovePlan) authorizes the session FIRST and only then consults this"},
 	"IsLive":               {KindDerived, "same in-flight registry as LookupRun; consumed by the composition-owned child-GC liveness predicate, not a caller-facing verb"},
 	"FinishRun":            {KindDerived, "deregisters an id the wire adapter already finished draining from its own authorized run"},
-	"Subscribe":            {KindDerived, "live event fan-out keyed on an id the in-process embed caller (mecatui) already obtained from an authorized session open"},
-	"PublishSessionEvent":  {KindDerived, "publishes to subscribers already registered via the (derived) Subscribe for this id"},
+	"PublishSessionEvent":  {KindDerived, "publishes to subscribers already registered via the (caller-owned) Subscribe for this id; PublishSessionEvent itself takes no ctx and makes no independent decision"},
 	"AppendRunEvent":       {KindDerived, "durable-append passthrough to the single appendEvent chokepoint for an id the in-process caller (the scheduler fire loop) already owns via its own run"},
 	"RecoverNotice":        {KindDerived, "pops a notice keyed by id that only the relay's own immediately-preceding, already-authorized StartRunContent call could have set"},
 	"SetSessionWorkspace":  {KindDerived, "called only with the id CreateSession* just returned to the same caller (internal/adapter/acp)"},
@@ -390,15 +425,21 @@ var ModelToolBoundaries = []string{
 // application-facade, in-memory-registry, and event-relay boundary) and
 // reports one error per unclassified, misclassified, or stale entry.
 func ClassifyServiceBoundaries() []error {
-	names := exportedMethodNames(reflect.TypeOf(&Service{}))
-	return classifyNames("server.Service", serviceAccessTable, names).Errors()
+	t := reflect.TypeOf(&Service{})
+	names := exportedMethodNames(t)
+	errs := classifyNames("server.Service", serviceAccessTable, names).Errors()
+	errs = append(errs, requireCallerOwnedContext("server.Service", t, serviceAccessTable)...)
+	return errs
 }
 
 // ClassifyCallerStoreBoundaries walks every exported memory.CallerStore
 // method (the cache/index boundary for caller-partitioned memory).
 func ClassifyCallerStoreBoundaries() []error {
-	names := exportedMethodNames(reflect.TypeOf(&memory.CallerStore{}))
-	return classifyNames("memory.CallerStore", callerStoreAccessTable, names).Errors()
+	t := reflect.TypeOf(&memory.CallerStore{})
+	names := exportedMethodNames(t)
+	errs := classifyNames("memory.CallerStore", callerStoreAccessTable, names).Errors()
+	errs = append(errs, requireCallerOwnedContext("memory.CallerStore", t, callerStoreAccessTable)...)
+	return errs
 }
 
 // ClassifySystemBoundaries walks every registered internal/syscaller.Root

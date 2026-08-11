@@ -444,7 +444,10 @@ func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}
 	id := session.SessionID(req.GetSessionId())
-	ch, unsub := h.svc.Subscribe(id)
+	ch, unsub, err := h.svc.Subscribe(stream.Context(), id)
+	if err != nil {
+		return toStatus(err)
+	}
 	defer unsub()
 	ctx := stream.Context()
 	for {

@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -316,7 +319,157 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	}
 }
 
+// TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerCheckedOverGRPC pins
+// AC3.6 at the wire boundary: the gRPC StreamSessionLive handler now threads
+// stream.Context() into Service.Subscribe, so a foreign caller's stream is
+// refused NotFound and never receives the session owner's live events, while
+// the owner's own stream receives them normally.
+func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerCheckedOverGRPC(t *testing.T) {
+	svc := newLiveSubscriptionServiceOwnershipEnforced(t)
+	aliceCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
+	sess, err := svc.CreateSessionWithProfile(aliceCtx, "/tmp/live-sub-owner-test", session.ModeDefault, session.Limits{},
+		server.ProviderSelector{}, server.ProfileDefault)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	cl, cleanup := dialLiveSubscriptionGRPCWithTestAuth(t, svc)
+	defer cleanup()
+
+	// Bob's stream must be refused NotFound and receive nothing.
+	bobCtx := metadata.AppendToOutgoingContext(context.Background(), testSubjectMetadataKey, "bob")
+	bobStream, err := cl.StreamSessionLive(bobCtx, &mecatlv1.StreamSessionLiveRequest{SessionId: string(sess.ID)})
+	if err != nil {
+		t.Fatalf("StreamSessionLive (bob): %v", err)
+	}
+	if _, rerr := bobStream.Recv(); status.Code(rerr) != codes.NotFound {
+		t.Fatalf("bob's StreamSessionLive.Recv = %v, want codes.NotFound", rerr)
+	}
+
+	// Alice's own stream succeeds and receives the probe event.
+	aliceStreamCtx := metadata.AppendToOutgoingContext(context.Background(), testSubjectMetadataKey, "alice")
+	aliceStream, err := cl.StreamSessionLive(aliceStreamCtx, &mecatlv1.StreamSessionLiveRequest{SessionId: string(sess.ID)})
+	if err != nil {
+		t.Fatalf("StreamSessionLive (alice): %v", err)
+	}
+	var (
+		mu  sync.Mutex
+		evs []*mecatlv1.Event
+		wg  sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			ev, rerr := aliceStream.Recv()
+			if rerr != nil {
+				return
+			}
+			mu.Lock()
+			evs = append(evs, ev)
+			mu.Unlock()
+		}
+	}()
+	if !probeLiveSubscription(svc, sess.ID, &mu, &evs, 3*time.Second) {
+		mu.Lock()
+		t.Fatalf("alice's StreamSessionLive probe did not arrive within 3s; got %d events: %v", len(evs), liveEventTypes(evs))
+	}
+}
+
 // --- helpers ---
+
+// testSubjectMetadataKey is the outgoing gRPC metadata key the test-local
+// auth interceptor (testPrincipalStreamInterceptor) reads to mint a
+// session.Principal for the stream context — a stand-in for real OIDC
+// verification, since the production principalStream in authn.go is
+// unexported.
+const testSubjectMetadataKey = "x-test-subject"
+
+// testPrincipalStreamInterceptor mints a session.Principal from the
+// x-test-subject incoming metadata key and installs it on the stream's
+// context, mirroring authn.go's principalStream (unexported, so this is a
+// small test-local equivalent) closely enough to exercise
+// Service.Subscribe's ctx-gated ownership check end-to-end over gRPC.
+func testPrincipalStreamInterceptor() grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		ctx := ss.Context()
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if subs := md.Get(testSubjectMetadataKey); len(subs) > 0 && subs[0] != "" {
+				p := &session.Principal{Issuer: "https://idp.example", Subject: subs[0], GrantType: session.GrantTypeUser}
+				ctx = session.WithPrincipal(ctx, p)
+			}
+		}
+		return handler(srv, testPrincipalStream{ServerStream: ss, ctx: ctx})
+	}
+}
+
+// testPrincipalStream overrides a ServerStream's Context, mirroring authn.go's
+// unexported principalStream.
+type testPrincipalStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s testPrincipalStream) Context() context.Context { return s.ctx }
+
+// newLiveSubscriptionServiceOwnershipEnforced mirrors newLiveSubscriptionService
+// but sets OwnershipEnforced so Service.Subscribe's ctx-gated GetSession check
+// is live.
+func newLiveSubscriptionServiceOwnershipEnforced(t *testing.T, turns ...mockllm.Turn) *server.Service {
+	t.Helper()
+	storeDir := t.TempDir()
+	store, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	llm := mockllm.New(turns...)
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "test-model",
+		Store:   store,
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:              engine,
+		Store:               store,
+		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:                 time.Now,
+		DefaultCapabilities: llm.Capabilities(),
+		EventLog:            store,
+		Diagnostics:         port.NopDiagnostics{},
+		OwnershipEnforced:   true,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	return svc
+}
+
+// dialLiveSubscriptionGRPCWithTestAuth mirrors dialLiveSubscriptionGRPC but
+// installs testPrincipalStreamInterceptor so a caller can carry a principal on
+// stream.Context() via the x-test-subject outgoing metadata key.
+func dialLiveSubscriptionGRPCWithTestAuth(t *testing.T, svc *server.Service) (mecatlv1.HarnessServiceClient, func()) {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer(grpc.StreamInterceptor(testPrincipalStreamInterceptor()))
+	mecatlv1.RegisterHarnessServiceServer(gs, server.NewHarnessServer(svc))
+	go func() { _ = gs.Serve(lis) }()
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return mecatlv1.NewHarnessServiceClient(conn), func() {
+		_ = conn.Close()
+		gs.Stop()
+		_ = lis.Close()
+	}
+}
 
 // warmupLiveConn forces the lazy gRPC connection to establish by issuing a quick
 // unary GetSession before the server-streaming live subscription is opened. The
