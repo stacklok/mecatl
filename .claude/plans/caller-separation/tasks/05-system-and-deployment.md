@@ -2,8 +2,8 @@
 id: 05-system-and-deployment
 title: Scope system workers and prove driver isolation
 blocked_by: [01-ownership-core, 02-persisted-resources, 03-memory-isolation]
-status: pending
-branch: ""
+status: done
+branch: "plan-caller-separation/05-system-and-deployment"
 worktree: ""
 issue: "368"
 retries: 0
