@@ -127,6 +127,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0100 — Caller identity: accept a principal, thread it everywhere, record the owner](./0100-caller-identity-threading.md) *(agent-identity Track A; audit-trail phase)*
 - [0101 — Bound cached JWKS staleness](./0101-bounded-jwks-staleness.md)
 - [0103 — Ship reusable OIDC caller identity as an opt-in module](./0103-oidc-authn-module.md)
+- [0102 — Enforce caller ownership at every application access path](./0102-caller-ownership-enforcement.md) *(agent-identity Track A; application isolation; NUMBER COLLIDES with 0102-toolhive-direct-mode.md from origin/main — renumber on merge)*
+- [0103 — Enforce caller ownership at remote driver boundaries](./0103-driver-caller-ownership.md) *(B-lite follow-up to application isolation; NUMBER COLLIDES with 0103-oidc-authn-module.md above — renumber on merge)*
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)

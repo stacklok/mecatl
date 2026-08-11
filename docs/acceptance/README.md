@@ -71,6 +71,14 @@ when the code that satisfies the plan has landed.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
+- [Caller identity — deployment verification](caller-identity-e2e.md) — prove the
+  threaded identity survives a real IdP, a real cluster and a real restart: an
+  opt-in k8s overlay, the validator-construction assertions a fake cannot reach,
+  and owner-survives-failover / IdP-down-is-503 in kind. Status: draft.
+- [Caller separation](caller-separation.md) — enforce OIDC caller isolation over
+  application sessions, schedules, teams, memory, event streams, live runs, and
+  model-facing object access; remote-driver enforcement is deferred to #452. Status:
+  draft.
 
 ## See also
 
