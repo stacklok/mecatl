@@ -1955,7 +1955,7 @@ func (s *Service) StorageReady(ctx context.Context) bool {
 // GetSession returns the persisted session under id, or ErrNotFound.
 func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
-	if err != nil {
+	if err != nil || s.authorizeSession(ctx, sess) != nil {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	return sess, nil
@@ -1975,6 +1975,9 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode session.PermissionMode) (*session.Session, error) {
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
+	}
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
 	}
 	// Prefer the live session the engine drives (if registered) so the change is
 	// observed by the same object; otherwise operate on the stored snapshot.
@@ -4597,6 +4600,11 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 	if s.cfg.EventLog == nil {
 		return nil, ErrNoEventLog
 	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSession(ctx, id); err != nil {
+			return nil, err
+		}
+	}
 	return s.cfg.EventLog.Read(ctx, id), nil
 }
 
@@ -4637,7 +4645,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 	// FAST PATH: a store that implements MetaLister enumerates picker metadata
 	// cheaply (last-line read, no conversation unmarshal).
 	if ml, ok := s.cfg.Store.(port.MetaLister); ok {
-		return listSessionsMeta(ctx, ml)
+		return s.listSessionsMeta(ctx, ml)
 	}
 	ps, ok := s.cfg.Store.(port.PrunableStore)
 	if !ok {
@@ -4652,11 +4660,20 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 	}
 	out := make([]SessionSummary, 0, len(rows))
 	for _, r := range rows {
+		if s.cfg.OwnershipEnforced {
+			sess, lerr := s.cfg.Store.Load(ctx, r.ID)
+			if lerr != nil || !s.ownsResource(ctx, sess.Owner) {
+				continue
+			}
+		}
 		summary := SessionSummary{
 			SessionID:      string(r.ID),
 			ModifiedAtUnix: r.ModifiedAt.Unix(),
 		}
 		if sess, lerr := s.cfg.Store.Load(ctx, r.ID); lerr == nil && sess != nil {
+			if !s.ownsResource(ctx, sess.Owner) {
+				continue
+			}
 			summary.State = string(sess.State)
 			summary.Turns = sess.Counters.Turns
 			summary.CreatedAtUnix = sess.CreatedAt.Unix()
@@ -4681,7 +4698,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 // listSessionsMeta builds the SessionSummary slice from a MetaLister's cheap
 // metadata projection (no conversation unmarshal). It is the fast-path
 // implementation of ListSessions for stores that implement port.MetaLister.
-func listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]SessionSummary, error) {
+func (s *Service) listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]SessionSummary, error) {
 	rows, err := ml.MetaList(ctx)
 	if err != nil {
 		if errors.Is(err, port.ErrPruneUnsupported) {
@@ -4691,6 +4708,12 @@ func listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]SessionSummary
 	}
 	out := make([]SessionSummary, 0, len(rows))
 	for _, r := range rows {
+		if s.cfg.OwnershipEnforced {
+			sess, lerr := s.cfg.Store.Load(ctx, r.ID)
+			if lerr != nil || !s.ownsResource(ctx, sess.Owner) {
+				continue
+			}
+		}
 		summary := SessionSummary{
 			SessionID:      string(r.ID),
 			ModifiedAtUnix: r.ModifiedAt.Unix(),

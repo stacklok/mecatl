@@ -89,6 +89,7 @@ type teamState struct {
 	team  *team.Team
 	sup   *agent.Supervisor
 	base  string
+	owner *session.Principal
 	phase teamPhase
 
 	// run serialises a SpawnTeammate (AddMember writes the supervisor's member maps)
@@ -213,17 +214,17 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 		s.mu.Unlock()
 		return "", nil, fmt.Errorf("%w: %d", ErrTooManyTeams, s.cfg.MaxTeams)
 	}
-	s.teams[id] = &teamState{team: t, sup: sup, base: workspace}
+	s.teams[id] = &teamState{team: t, sup: sup, base: workspace, owner: session.PrincipalFromContext(ctx).Clone()}
 	s.mu.Unlock()
 	return id, t.Members(), nil
 }
 
 // lookupTeam returns the registered team state for id, or ErrNotFound.
-func (s *Service) lookupTeam(id string) (*teamState, error) {
+func (s *Service) lookupTeam(ctx context.Context, id string) (*teamState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ts, ok := s.teams[id]
-	if !ok {
+	if !ok || !s.ownsResource(ctx, ts.owner) {
 		return nil, fmt.Errorf("%w: %q", ErrTeamNotFound, id)
 	}
 	return ts, nil
@@ -234,7 +235,7 @@ func (s *Service) lookupTeam(id string) (*teamState, error) {
 // ErrTeamRunning once the team has started running: AddMember mutates the
 // Supervisor's unsynchronised member maps, which the in-flight RunTeam is reading.
 func (s *Service) SpawnTeammate(ctx context.Context, teamID string, spec agent.MemberSpec) (team.Member, error) {
-	ts, err := s.lookupTeam(teamID)
+	ts, err := s.lookupTeam(ctx, teamID)
 	if err != nil {
 		return team.Member{}, err
 	}
@@ -304,8 +305,8 @@ func classifyAddMemberErr(err error) error {
 // identity (team.OperatorSender); a non-empty from is authenticated by team.Send,
 // which rejects any value that is neither a current member nor the operator
 // (ErrUnknownSender → InvalidArgument) so the wire path cannot forge a sender.
-func (s *Service) SendTeammateMessage(_ context.Context, teamID, from, to, body string) error {
-	ts, err := s.lookupTeam(teamID)
+func (s *Service) SendTeammateMessage(ctx context.Context, teamID, from, to, body string) error {
+	ts, err := s.lookupTeam(ctx, teamID)
 	if err != nil {
 		return err
 	}
@@ -338,8 +339,8 @@ func (s *Service) SendTeammateMessage(_ context.Context, teamID, from, to, body 
 // already-stopped-but-PRESENT member is likewise an honest no-op (nil success);
 // only an unknown member name returns ErrChildNotFound. A team that is not
 // running (teamCreated / teamDone) returns ErrTeamNotRunning.
-func (s *Service) CancelTeammate(_ context.Context, teamID, member string) error {
-	ts, err := s.lookupTeam(teamID)
+func (s *Service) CancelTeammate(ctx context.Context, teamID, member string) error {
+	ts, err := s.lookupTeam(ctx, teamID)
 	if err != nil {
 		return err
 	}
@@ -371,7 +372,7 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	if s.draining.Load() {
 		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrUnavailable, teamID)
 	}
-	ts, err := s.lookupTeam(teamID)
+	ts, err := s.lookupTeam(ctx, teamID)
 	if err != nil {
 		return agent.TeamOutcome{}, err
 	}
@@ -406,8 +407,8 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 
 // ListTeam returns the team roster, the shared task list, and whether the team
 // has reached quiescence.
-func (s *Service) ListTeam(_ context.Context, teamID string) ([]team.Member, []team.Task, bool, error) {
-	ts, err := s.lookupTeam(teamID)
+func (s *Service) ListTeam(ctx context.Context, teamID string) ([]team.Member, []team.Task, bool, error) {
+	ts, err := s.lookupTeam(ctx, teamID)
 	if err != nil {
 		return nil, nil, false, err
 	}

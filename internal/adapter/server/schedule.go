@@ -40,22 +40,41 @@ func (s *Service) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	return mgr.CreateSchedule(ctx, spec)
 }
 
-// GetSchedule delegates to the embedded scheduleManager.
+// GetSchedule returns an owned schedule by name. A mismatch deliberately has
+// the same port-level not-found result as an absent schedule.
 func (s *Service) GetSchedule(ctx context.Context, name string) (port.Schedule, error) {
 	mgr := s.schedMgr
 	if mgr == nil {
 		return port.Schedule{}, ErrNoScheduleStore
 	}
-	return mgr.GetSchedule(ctx, name)
+	sched, err := mgr.GetSchedule(ctx, name)
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	if err := s.authorizeSchedule(ctx, sched.Spec.Owner); err != nil {
+		return port.Schedule{}, err
+	}
+	return sched, nil
 }
 
-// ListSchedules delegates to the embedded scheduleManager.
+// ListSchedules filters before returning the collection so an ownerless or
+// foreign record cannot affect caller-visible list metadata.
 func (s *Service) ListSchedules(ctx context.Context) ([]port.Schedule, error) {
 	mgr := s.schedMgr
 	if mgr == nil {
 		return nil, ErrNoScheduleStore
 	}
-	return mgr.ListSchedules(ctx)
+	schedules, err := mgr.ListSchedules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]port.Schedule, 0, len(schedules))
+	for _, sched := range schedules {
+		if s.ownsResource(ctx, sched.Spec.Owner) {
+			out = append(out, sched)
+		}
+	}
+	return out, nil
 }
 
 // UpdateSchedule delegates to the embedded scheduleManager. The manager
@@ -66,6 +85,11 @@ func (s *Service) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (p
 	if mgr == nil {
 		return port.Schedule{}, ErrNoScheduleStore
 	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, spec.Name); err != nil {
+			return port.Schedule{}, err
+		}
+	}
 	return mgr.UpdateSchedule(ctx, spec)
 }
 
@@ -75,6 +99,11 @@ func (s *Service) DeleteSchedule(ctx context.Context, name string) error {
 	mgr := s.schedMgr
 	if mgr == nil {
 		return ErrNoScheduleStore
+	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, name); err != nil {
+			return err
+		}
 	}
 	return mgr.DeleteSchedule(ctx, name)
 }
@@ -87,6 +116,11 @@ func (s *Service) PauseSchedule(ctx context.Context, name string) error {
 	if mgr == nil {
 		return ErrNoScheduleStore
 	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, name); err != nil {
+			return err
+		}
+	}
 	return mgr.PauseSchedule(ctx, name)
 }
 
@@ -95,6 +129,11 @@ func (s *Service) ResumeSchedule(ctx context.Context, name string) error {
 	mgr := s.schedMgr
 	if mgr == nil {
 		return ErrNoScheduleStore
+	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, name); err != nil {
+			return err
+		}
 	}
 	return mgr.ResumeSchedule(ctx, name)
 }
@@ -107,7 +146,16 @@ func (s *Service) GetFire(ctx context.Context, fireID string) (port.ScheduleFire
 	if mgr == nil {
 		return port.ScheduleFire{}, ErrNoScheduleStore
 	}
-	return mgr.GetFire(ctx, fireID)
+	fire, err := mgr.GetFire(ctx, fireID)
+	if err != nil {
+		return port.ScheduleFire{}, err
+	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, fire.ScheduleName); err != nil {
+			return port.ScheduleFire{}, err
+		}
+	}
+	return fire, nil
 }
 
 // ListFires delegates to the embedded scheduleManager.
@@ -115,6 +163,11 @@ func (s *Service) ListFires(ctx context.Context, scheduleName string) ([]port.Sc
 	mgr := s.schedMgr
 	if mgr == nil {
 		return nil, ErrNoScheduleStore
+	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, scheduleName); err != nil {
+			return nil, err
+		}
 	}
 	return mgr.ListFires(ctx, scheduleName)
 }
@@ -129,6 +182,11 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 	mgr := s.schedMgr
 	if mgr == nil {
 		return port.ScheduleFire{}, ErrNoScheduleStore
+	}
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSchedule(ctx, name); err != nil {
+			return port.ScheduleFire{}, err
+		}
 	}
 	return mgr.FireNow(ctx, name)
 }
