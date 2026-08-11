@@ -18,9 +18,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 )
@@ -35,6 +38,8 @@ import (
 //
 // It returns an error (surfaced by main) on any failure; a successful login
 // prints the fresh access token to stdout (mirrors `thv llm token`) and exits 0.
+// SIGINT/SIGTERM while parked on the OIDC callback cancels the flow and exits 0
+// with a "login cancelled" note on stderr — a deliberate ctrl-C is not a failure.
 func runLogin(args []string) error {
 	fs := flag.NewFlagSet("mecatui login", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -55,6 +60,22 @@ func runLogin(args []string) error {
 		return err
 	}
 
-	ctx := context.Background()
-	return toolhivellm.RunInteractiveLogin(ctx, "" /* default config path */, skipBrowser, nil /* diag: stderr fallback */)
+	// The flow PARKS waiting for the OIDC callback — it opens a browser (or, with
+	// --skip-browser, prints a URL the operator carries to another machine) and
+	// blocks on a local listener, which can be minutes over SSH. Bind SIGINT/SIGTERM
+	// so ctrl-C unwinds that wait (the callback listener + any in-flight IdP
+	// exchange close on ctx) instead of the process dying under them.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := toolhivellm.RunInteractiveLogin(ctx, "" /* default config path */, skipBrowser, nil /* diag: stderr fallback */)
+	// A cancelled login is an operator action, not a failure: report it plainly
+	// rather than as an error trailer. RunInteractiveLogin routes its error through
+	// the same sanitiser as the direct path, which passes context sentinels through
+	// UNWRAPPED, so errors.Is sees the cancel here.
+	if errors.Is(err, context.Canceled) {
+		fmt.Fprintln(os.Stderr, "login cancelled")
+		return nil
+	}
+	return err
 }

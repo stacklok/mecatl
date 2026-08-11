@@ -64,23 +64,25 @@ func TestBearerRoundTripper_RewritesHeader(t *testing.T) {
 	}
 }
 
-// TestBearerRoundTripper_SanitisedError is AC #3 + #7: a token-source error
-// returns WITHOUT forwarding the request (no partial credentials on the wire),
-// and the error string carries NO bearer material. A fake token source returns
-// an error containing a secret-shaped token; the assertion confirms the error
-// propagates verbatim but the request never reaches the base transport.
+// TestBearerRoundTripper_SanitisedError is AC #3 + #7. Two properties, both
+// falsifiable:
+//
+//   - the request NEVER reaches the base transport on a token-source error, so no
+//     request goes out unauthenticated or with the SDK's placeholder;
+//   - the error reaches the caller UNWRAPPED (errors.Is identity), because
+//     llmresilience classifies retry-vs-cancel with errors.Is — a RoundTripper
+//     that re-wrapped or restringified it would break that.
+//
+// It deliberately does NOT assert "the error contains no secret": the
+// RoundTripper returns whatever the token source hands it, so such an assertion
+// would only test the fake. Sanitisation is the token source's job and is pinned
+// where it lives, in toolhivellm.TestSanitizeTokenError_StripsBearer.
 func TestBearerRoundTripper_SanitisedError(t *testing.T) {
-	secretTok := "super-secret-bearer-xyz"
+	tokErr := errors.New("oauth2 error \"invalid_grant\": refresh token expired")
 	rt := &bearerRoundTripper{
-		base: &captureTransport{},
-		token: func(context.Context) (string, error) {
-			// Simulate a sanitised error (llm.SanitizeTokenError would have
-			// stripped any bearer material an IdP echoed; here we hand back an
-			// error that deliberately does NOT carry the token to prove the
-			// RoundTripper never introduces it).
-			return "", errors.New("oauth2 error \"invalid_grant\": refresh token expired")
-		},
-		id: "toolhive",
+		base:  &captureTransport{},
+		token: func(context.Context) (string, error) { return "", tokErr },
+		id:    "toolhive",
 	}
 	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer thv-proxy")
@@ -88,8 +90,8 @@ func TestBearerRoundTripper_SanitisedError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error from the token source, got nil")
 	}
-	if strings.Contains(err.Error(), secretTok) {
-		t.Errorf("error string leaked token material: %q", err.Error())
+	if !errors.Is(err, tokErr) {
+		t.Errorf("error = %v, want the token-source error unwrapped (errors.Is classification must survive)", err)
 	}
 	if strings.Contains(err.Error(), "thv-proxy") {
 		t.Errorf("error string leaked the placeholder: %q", err.Error())
@@ -100,7 +102,7 @@ func TestBearerRoundTripper_SanitisedError(t *testing.T) {
 	}
 }
 
-// TestBearerRoundTripper_NeverLogsAuth is the static guard for the "never log
+// TestBearerRoundTripper_OnlyMutatesAuth is the static guard for the "never log
 // the Authorization header" discipline (AGENTS.md security): the RoundTripper
 // has no log path of its own, and this test pins that the ONLY mutation it
 // performs on the request is the Authorization header Del+Set (the clone's
@@ -177,10 +179,65 @@ func TestDirectBaseURL(t *testing.T) {
 		"https://gw.example.com/toolhive":  "https://gw.example.com/toolhive/v1",
 		"https://gw.example.com/toolhive/": "https://gw.example.com/toolhive/v1",
 		"":                                 "",
+		// A query must survive on the QUERY, not be concatenated into: string
+		// concatenation produced "https://gw.example.com?x=1/v1", swallowing the
+		// path segment into the query value.
+		"https://gw.example.com?x=1": "https://gw.example.com/v1?x=1",
 	} {
 		if got := directBaseURL(in); got != want {
 			t.Errorf("directBaseURL(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestGatewayURLIsHTTPS is the pin for the direct-mode cleartext gate: only
+// https, or http to a LOOPBACK HOST, may carry the injected OIDC bearer
+// (CWE-319). The load-bearing cases are the near-miss hosts —
+// "http://localhost.attacker.com" and "http://127.0.0.1.nip.io" are publicly
+// resolvable names that a string-PREFIX carve-out approves, which is how a
+// bearer would end up on the wire in cleartext to an attacker-controlled host.
+// A host comparison rejects them; a prefix test does not, so this table fails
+// if the gate ever regresses to HasPrefix.
+func TestGatewayURLIsHTTPS(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://gw.example.com":        true,
+		"https://gw.example.com:8443":   true,
+		"HTTPS://gw.example.com":        true, // scheme is case-insensitive (RFC 3986)
+		"http://localhost":              true, // local-dev carve-out
+		"http://localhost:14000":        true,
+		"http://127.0.0.1:14000":        true,
+		"http://[::1]:14000":            true,
+		"http://localhost.attacker.com": false, // prefix-match bypass
+		"http://127.0.0.1.nip.io":       false, // prefix-match bypass
+		"http://gw.example.com":         false, // plain cleartext
+		"ftp://gw.example.com":          false, // wrong scheme
+		"":                              false, // no scheme
+		"://":                           false, // unparseable ⇒ fail closed
+	} {
+		if got := gatewayURLIsHTTPS(raw); got != want {
+			t.Errorf("gatewayURLIsHTTPS(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
+// TestResolveToolhiveIntent_DirectFallsBackOnCleartextHost is the behavioural
+// half of the gate: a gateway_url whose host merely LOOKS loopback resolves to
+// PROXY mode (with the WARN), never direct — so no bearer is minted for it.
+func TestResolveToolhiveIntent_DirectFallsBackOnCleartextHost(t *testing.T) {
+	cfgPath := writeToolhiveConfigWithOIDC(t, "http://localhost.attacker.com", "https://idp.example", "client-123")
+	intent, ok := resolveToolhiveIntent(Config{
+		ToolhiveLLM:        true,
+		toolhiveConfigPath: cfgPath,
+		Diagnostics:        &toolhiveLevelDiag{},
+	})
+	if !ok {
+		t.Fatal("expected registration")
+	}
+	if intent.mode != toolhiveModeProxy {
+		t.Errorf("mode = %v, want proxy (cleartext non-loopback host must not go direct)", intent.mode)
+	}
+	if !strings.HasPrefix(intent.baseURL, "http://127.0.0.1:") {
+		t.Errorf("baseURL = %q, want the loopback proxy", intent.baseURL)
 	}
 }
 

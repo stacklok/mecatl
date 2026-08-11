@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1100,16 +1101,32 @@ func resolveToolhiveIntent(cfg Config) (toolhiveIntent, bool) {
 }
 
 // gatewayURLIsHTTPS reports whether raw is safe for direct-mode token injection:
-// it must start with "https://" unless it is an explicit localhost carve-out for
-// development (http://localhost or http://127.0.0.1 with any port). A non-HTTPS
-// gateway_url would send the OIDC bearer token over cleartext (CWE-319).
+// the scheme must be https unless the HOST itself is loopback (localhost,
+// 127.0.0.1 or ::1, any port) — the explicit local-development carve-out. A
+// non-HTTPS gateway_url would send the OIDC bearer token over cleartext
+// (CWE-319).
+//
+// It compares the parsed HOST, never a string prefix: "http://localhost" is a
+// prefix of the publicly-resolvable "http://localhost.attacker.com", so a
+// prefix test would approve cleartext bearer traffic to an attacker-controlled
+// host — the exact thing this gate exists to forbid. The scheme is lowercased
+// before comparison because a URI scheme is case-insensitive (RFC 3986 §3.1),
+// so "HTTPS://gw" must not silently downgrade to proxy mode. url.Hostname()
+// strips the port and the IPv6 brackets, so "[::1]:8080" needs no special case.
+// An unparseable gateway_url fails CLOSED (proxy fallback).
 func gatewayURLIsHTTPS(raw string) bool {
-	if strings.HasPrefix(raw, "https://") {
-		return true
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
 	}
-	// Local development carve-out: http://localhost[:port] or http://127.0.0.1[:port].
-	if strings.HasPrefix(raw, "http://localhost") || strings.HasPrefix(raw, "http://127.0.0.1") {
+	switch strings.ToLower(u.Scheme) {
+	case "https":
 		return true
+	case "http":
+		switch u.Hostname() {
+		case "localhost", "127.0.0.1", "::1":
+			return true
+		}
 	}
 	return false
 }
@@ -1121,14 +1138,23 @@ func gatewayURLIsHTTPS(raw string) bool {
 // trailing slash on gateway_url is normalized so "https://gw/v1" never becomes
 // "https://gw//v1". It is the ONE derivation of a request URL from gateway_url
 // (the proxy mode NEVER does this — its base URL is the hardcoded loopback).
+//
+// It joins through net/url rather than concatenating strings: concatenation
+// appends the segment to whatever the string ends with, so a gateway_url
+// carrying a query or fragment ("https://gw?x=1") produced the nonsense
+// "https://gw?x=1/v1", with the segment swallowed into the query value. JoinPath
+// appends to the PATH and leaves the query where it belongs. An unparseable
+// gateway_url yields "" (the same contract as the empty input); in practice
+// gatewayURLIsHTTPS has already rejected it and forced proxy mode.
 func directBaseURL(gatewayURL string) string {
 	if gatewayURL == "" {
 		return ""
 	}
-	if !strings.HasSuffix(gatewayURL, "/") {
-		return gatewayURL + "/v1"
+	joined, err := url.JoinPath(gatewayURL, "v1")
+	if err != nil {
+		return ""
 	}
-	return gatewayURL + "v1"
+	return joined
 }
 
 // ToolhiveAvailable reports whether a ToolHive LLM gateway would be registered
@@ -1187,25 +1213,26 @@ func newGatewayEntry(cfg Config, id, baseURL, gatewayURL string, explicit bool, 
 //
 // The token source is built ONCE here (toolhivellm.DirectTokenSource) and
 // captured by the RoundTripper; a per-request Token(ctx) call handles refresh
-// internally, so the RoundTripper is stateless across requests. A Build-time
-// construction failure (config unreadable, secrets provider unavailable) is
-// surfaced as a Build error via the returned error — the entry is NOT built
-// against a token source that errors on every request. The live lister is
+// internally, so the RoundTripper is stateless across requests. A construction
+// failure (config unreadable, secrets provider unavailable) does NOT fail Build:
+// it logs ERROR once and installs a token source that returns the cause on every
+// request, so the operator learns the reason at the first request instead of a
+// startup crash (the proxy-mode §1 deviation — a down gateway must never brick
+// Build — applies here too). The live lister is
 // wired too (direct mode serves /v1/models the same way), authenticated by the
 // SAME bearer RoundTripper so the probe and inference paths share one
 // credential.
 func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, configPath string) providerEntry {
 	tokenSource, err := toolhivellm.DirectTokenSource(configPath, cfg.diag())
 	if err != nil {
-		// Surface as a Build-time error via the entry's absence: the caller
-		// (buildProviderRegistry) does NOT see this error (newOpenAICompatEntry
-		// has no error return), so wrap it in a panicking-free sentinel by
-		// logging + falling back to a token source that returns the error on
-		// every call — the first request surfaces it. The Build itself does
-		// NOT fail on a per-request token error (the proxy-mode §1 deviation
-		// applies: a down gateway must never brick Build). This is honest: the
-		// operator sees "no cached credential" at the first request, not a
-		// startup crash.
+		// Deliberately NOT a Build failure. The caller
+		// (buildProviderRegistry) cannot see this error anyway
+		// (newOpenAICompatEntry has no error return), and the proxy-mode §1
+		// deviation applies here too: a down or unconfigured gateway must never
+		// brick Build. So log the cause ONCE at ERROR and install a token source
+		// that returns it on every call — the operator reads "no cached
+		// credential" at the first request rather than eating a startup crash,
+		// and every other provider in the registry stays usable.
 		cfg.diag().Log(context.Background(), port.LevelError,
 			"toolhive direct-mode token source unavailable — requests will fail until the gateway is configured",
 			"provider", id, "base_url", intent.baseURL, "error", err.Error())

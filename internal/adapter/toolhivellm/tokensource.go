@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/stacklok/toolhive/pkg/auth/secrets"
@@ -57,20 +58,62 @@ type TokenSourceFunc func(ctx context.Context) (string, error)
 // non-interactive token source returns llm.ErrTokenRequired (no cached
 // credential and the browser flow is disabled). It names BOTH remediations so
 // a headless operator sees the exact next step, mirroring errToolhiveNoModels.
+// It is a remediation HINT naming the next operator action, not a hardcoded
+// credential — it carries no secret.
 //
-// the next operator action, not a hardcoded credential — it carries no secret.
-//
-//nolint:gosec // G101 false positive: this is a remediation HINT string naming
+//nolint:gosec // G101 false positive: see above.
 const ErrTokenRequiredHint = "no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui login`) to log in, or use `--toolhive-llm-mode proxy`"
 
-// loadLLMConfig reads the ToolHive LLM config block. configPath == "" resolves
-// to toolhive's own default config path (NewDefaultProvider, the singleton the
-// `thv` CLI itself uses); a non-empty configPath loads from that exact file so
-// a test fixture never touches the real home directory. It is the shared read
-// for both the OIDC-presence check and the token-source construction.
+// resolveConfigPath turns a possibly-empty configPath into a CONCRETE file
+// path. A non-empty configPath (the test-fixture seam) passes through
+// unchanged; the empty default resolves the SAME way the detector's caller does
+// — os.UserConfigDir() + DefaultConfigRelPath — so the token source reads the
+// exact file resolveToolhiveIntent detected, not a second, independently-derived
+// one (toolhive's own default resolution goes through xdg.ConfigFile, which can
+// diverge; the validator would then pass on file A while the token source loaded
+// file B).
+//
+// It exists for a second, harder reason: toolhive's default-path entry point
+// (config.NewDefaultProvider().GetConfig() → getSingletonConfig) calls
+// os.Exit(1) when the load fails, which would kill mecated/mecatui mid-Build
+// with no mecatl diagnostic and no fail-soft. Resolving the path HERE keeps
+// every read on config.LoadOrCreateConfigWithPath, which returns an error.
+// NEVER reintroduce the empty-path branch into loadLLMConfig.
+func resolveConfigPath(configPath string) (string, error) {
+	if configPath != "" {
+		return configPath, nil
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve toolhive config path: %w", err)
+	}
+	if dir == "" {
+		return "", errors.New("resolve toolhive config path: no user config dir")
+	}
+	return filepath.Join(dir, DefaultConfigRelPath), nil
+}
+
+// loadLLMConfig reads the ToolHive LLM config block from configPath, which MUST
+// already be concrete (resolveConfigPath). It is the shared read for both the
+// OIDC-presence check and the token-source construction.
+//
+// It STATS FIRST and returns an error for a missing file rather than letting
+// config.LoadOrCreateConfigWithPath run: the LoadOrCREATE half writes a default
+// config.yaml to disk when the path does not exist, so without this guard the
+// read-only-sounding OIDCConfigured predicate — reached from
+// validateToolhiveLLMMode at Build — would CREATE the operator's ToolHive config
+// as a side effect of checking whether it exists, on a host with no ToolHive
+// install at all. mecatl never writes another tool's config except through the
+// deliberate tokenRefUpdater rotation persist. Every caller already fails closed
+// on the error (OIDCConfigured → false → proxy fallback; DirectTokenSource and
+// RunInteractiveLogin → surfaced error), so refusing to create loses nothing.
 func loadLLMConfig(configPath string) (llm.Config, error) {
-	if configPath == "" {
-		return config.NewDefaultProvider().GetConfig().LLM, nil
+	if _, err := os.Stat(configPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return llm.Config{}, fmt.Errorf(
+				"no toolhive config at %q — run `thv llm config set` to create one (gateway_url, oidc.issuer, oidc.client_id)", configPath)
+		}
+		return llm.Config{}, fmt.Errorf("stat toolhive config %q: %w", configPath, err)
 	}
 	cfg, err := config.LoadOrCreateConfigWithPath(configPath)
 	if err != nil {
@@ -81,9 +124,10 @@ func loadLLMConfig(configPath string) (llm.Config, error) {
 
 // tokenRefUpdater returns the config-persistence callback for a rotated
 // refresh-token reference: it writes ONLY the secret key + expiry (never the
-// token value) back to the config file. configPath == "" persists via the
-// default path (UpdateConfig); a non-empty path persists to THAT file
-// (UpdateConfigAtPath) so a test fixture never mutates the operator's real
+// token value) back to the config file. configPath is the CONCRETE path
+// resolveConfigPath produced (a test fixture's, or the resolved default), and it
+// persists to THAT file via UpdateConfigAtPath — so the write lands in the same
+// file the read came from, and a test fixture never mutates the operator's real
 // config. A persist failure is logged via diag when non-nil, or to stderr as a
 // fallback (the CLI-only RunInteractiveLogin path). It is a best-effort write,
 // never a hard failure (a rotated refresh token is still valid for the current
@@ -96,13 +140,7 @@ func tokenRefUpdater(configPath string, diag port.Diagnostics) llm.TokenRefUpdat
 			c.LLM.OIDC.CachedTokenExpiry = expiry
 			return nil
 		}
-		var err error
-		if configPath == "" {
-			err = config.UpdateConfig(update)
-		} else {
-			err = config.UpdateConfigAtPath(configPath, update)
-		}
-		if err != nil {
+		if err := config.UpdateConfigAtPath(configPath, update); err != nil {
 			// Best-effort: the rotation is still valid in-memory for this
 			// process; persisting only saves the NEXT process from re-login.
 			if diag != nil {
@@ -122,7 +160,11 @@ func tokenRefUpdater(configPath string, diag port.Diagnostics) llm.TokenRefUpdat
 // missing/malformed config falls back to proxy mode (today's behaviour), never
 // silently routes to a gateway with no credential.
 func OIDCConfigured(configPath string) bool {
-	llmCfg, err := loadLLMConfig(configPath)
+	path, err := resolveConfigPath(configPath)
+	if err != nil {
+		return false
+	}
+	llmCfg, err := loadLLMConfig(path)
 	if err != nil {
 		return false
 	}
@@ -155,14 +197,22 @@ func buildTokenSource(llmCfg llm.Config, configPath string, interactive, skipBro
 // via llm.SanitizeTokenError so no bearer material an OIDC IdP echoes back in a
 // RetrieveError body ever reaches a log or an error string. Returns an error
 // (never a panicking nil func) when the config cannot be read or the secrets
-// provider is unavailable, so Build fails fast with an actionable cause rather
-// than constructing a provider that errors on every request.
+// provider is unavailable, so the caller sees an actionable cause at
+// construction time and never holds a nil TokenSourceFunc. What the caller DOES
+// with that error is its own call: newDirectGatewayEntry deliberately keeps
+// building (logging ERROR and installing a token source that returns the cause
+// on every request) rather than failing Build, because an unreachable or
+// unconfigured gateway must never brick startup.
 func DirectTokenSource(configPath string, diag port.Diagnostics) (TokenSourceFunc, error) {
-	llmCfg, err := loadLLMConfig(configPath)
+	path, err := resolveConfigPath(configPath)
 	if err != nil {
 		return nil, err
 	}
-	ts, err := buildTokenSource(llmCfg, configPath, false /* interactive */, false /* skipBrowser */, diag)
+	llmCfg, err := loadLLMConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	ts, err := buildTokenSource(llmCfg, path, false /* interactive */, false /* skipBrowser */, diag)
 	if err != nil {
 		return nil, err
 	}
@@ -176,12 +226,26 @@ func DirectTokenSource(configPath string, diag port.Diagnostics) (TokenSourceFun
 }
 
 // sanitizeTokenError maps a raw token-source error to a log-safe error.
-// ErrTokenRequired → ErrTokenRequiredHint (naming BOTH remediations);
-// everything else → llm.SanitizeTokenError(err) (strips bearer material).
-// Exported for testing (the direct-mapping unit test, F5 AC #7).
+// A CONTEXT error passes through UNWRAPPED; ErrTokenRequired → ErrTokenRequiredHint
+// (naming BOTH remediations) with the sentinel still WRAPPED; everything else →
+// llm.SanitizeTokenError(err) (strips bearer material an IdP echoed back in an
+// *oauth2.RetrieveError body).
+//
+// The context arm is load-bearing, not defensive: this error is what
+// bearerRoundTripper.RoundTrip hands to llmresilience, which classifies
+// retry-vs-cancel purely with errors.Is(err, context.Canceled) /
+// context.DeadlineExceeded. Flattening the chain to errors.New made a ctrl-C or
+// client disconnect during an IdP refresh arrive as an opaque generic error — the
+// run reported failed instead of cancelled, and the attempt eligible for a retry
+// against the IdP. A ctx error carries no bearer material (it is a stdlib
+// sentinel), so returning it verbatim leaks nothing. For the same errors.Is
+// reason ErrTokenRequired is now %w-wrapped rather than replaced.
 func sanitizeTokenError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	if errors.Is(err, llm.ErrTokenRequired) {
-		return errors.New(ErrTokenRequiredHint)
+		return fmt.Errorf("%s: %w", ErrTokenRequiredHint, err)
 	}
 	return errors.New(llm.SanitizeTokenError(err))
 }
@@ -195,14 +259,18 @@ func sanitizeTokenError(err error) error {
 // subsequent non-interactive DirectTokenSource call finds the credential
 // without re-login.
 func RunInteractiveLogin(ctx context.Context, configPath string, skipBrowser bool, diag port.Diagnostics) error {
-	llmCfg, err := loadLLMConfig(configPath)
+	path, err := resolveConfigPath(configPath)
+	if err != nil {
+		return err
+	}
+	llmCfg, err := loadLLMConfig(path)
 	if err != nil {
 		return err
 	}
 	if !llmCfg.IsConfigured() {
 		return errors.New("ToolHive LLM gateway is not configured — run `thv llm config set` first (gateway_url, oidc.issuer, oidc.client_id)")
 	}
-	ts, err := buildTokenSource(llmCfg, configPath, true /* interactive */, skipBrowser, diag)
+	ts, err := buildTokenSource(llmCfg, path, true /* interactive */, skipBrowser, diag)
 	if err != nil {
 		return err
 	}
@@ -210,7 +278,10 @@ func RunInteractiveLogin(ctx context.Context, configPath string, skipBrowser boo
 	// the point (mirrors `thv llm token`). It is never logged.
 	tok, err := ts.Token(ctx)
 	if err != nil {
-		return errors.New(llm.SanitizeTokenError(err))
+		// Same sanitiser as the direct path (ONE policy), so a ctrl-C during the
+		// browser wait still surfaces as context.Canceled rather than an opaque
+		// generic error.
+		return sanitizeTokenError(err)
 	}
 	fmt.Println(tok)
 	return nil
