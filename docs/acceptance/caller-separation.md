@@ -284,6 +284,12 @@ concrete task split.
   migration path in this plan.
 - **Driver B-lite has no migration.** Enforced driver mode will treat records without
   registry ownership as absent, per ADR-0103.
+- **The preserved-fork LRU (`engine/agent/forkreaper.go`) is one unpartitioned,
+  process-wide cache (cap 8), found by an adversarial pass over this plan.** A
+  high-volume caller's Parallel winners can evict a low-volume caller's still-
+  referenced preserved fork before it reads it. Availability/DoS only — no
+  confidentiality break, since a caller can only ever reference a fork path it
+  legitimately obtained. Tracked as a separate follow-up, not blocking this plan.
 
 ## Exit criteria
 
