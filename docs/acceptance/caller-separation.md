@@ -1,7 +1,7 @@
 # Caller separation — acceptance plan
 
 **Phase:** capability — application caller isolation
-**Status:** draft, 2026-08-11. Synthesized from issue #368 and the caller-identity spike.
+**Status:** in-progress, 2026-08-11. Synthesized from issue #368 and the caller-identity spike.
 **Issue:** [stacklok/mecatl#368](https://github.com/stacklok/mecatl/issues/368).
 **ADR:** [ADR-0102](../adr/0102-caller-ownership-enforcement.md) — the shared application ownership decision and the trusted-driver boundary.
 **Accumulator branch:** `acc/caller-separation` (stacked from
