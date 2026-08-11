@@ -170,6 +170,33 @@ itself. See `docs/adr/0064-toolhive-llm-gateway-provider.md` for the full design
 `internal/adapter/openaicompat` / `internal/adapter/toolhivellm` for the two-layer leaf
 split (protocol-generic lister + the one ToolHive-aware config reader).
 
+**DIRECT mode (issue #265, ADR 0102).** The gateway entry can also talk DIRECTLY to the
+real `gateway_url` with no local proxy hop: mecatl imports ToolHive as a Go library (one
+file, `internal/adapter/toolhivellm/tokensource.go`, the package's sole toolhive-importing
+file alongside the stdlib-only `detect*.go`) and builds an in-process OIDC token source
+— the SAME `llm.NewTokenSource` `thv llm token` uses — so the bearer is minted and
+refreshed in-process. The token rides a custom `http.RoundTripper` inside the
+`*http.Client` passed to `openai.WithHTTPClient` (`bearerRoundTripper` in
+`internal/app/registry.go`), which strips the SDK's placeholder `Authorization` header
+and sets `Bearer <real-token>` per request — mirroring the ToolHive proxy's own `Rewrite`.
+The `WithHTTPClient` option rides every per-session/heal re-mint (the
+`newOpenAICompatEntry` closure appends it to every `construct()` call), so the token
+injection cannot drift off a re-minted adapter. A new `--toolhive-llm-mode
+auto|proxy|direct` flag (default `auto`) drives the routing in
+`resolveToolhiveIntent`: `auto` selects direct when the OIDC trio
+(`gateway_url`+`issuer`+`client_id`) is configured AND the `gateway_url` is HTTPS
+(`http://localhost`/`http://127.0.0.1` carve-out; a non-HTTPS gateway would send the
+bearer over cleartext), else falls back to the loopback proxy with a WARN; `proxy`
+forces the loopback path; `direct` forces the gateway path and Build-fails when OIDC
+is absent. The direct base URL is derived (`gateway_url + "/v1"`), never hand-set. The
+token never enters a log, an error string, or an env var (OS keyring; only its
+reference is persisted; errors are sanitised via `llm.SanitizeTokenError`). `mecatui
+login` runs the interactive OIDC flow in-process; a headless `mecated` cache-miss
+surfaces an actionable error naming `thv llm setup` / `mecatui login` /
+`--toolhive-llm-mode proxy`. `tls_skip_verify` is NOT honored in direct mode (upstream
+gap) — a self-signed gateway must use `--toolhive-llm-mode proxy`. See
+`docs/adr/0102-toolhive-direct-mode.md` for the full design.
+
 **Per-session routing (`sessionEngineFactory`).** `CreateSession` carries an OPTIONAL
 `provider_id`/`model_id` selector, expressed at the server boundary as the NEUTRAL
 `server.ProviderSelector` (the server adapter imports neither the registry nor the

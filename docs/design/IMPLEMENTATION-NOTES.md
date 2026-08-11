@@ -3692,6 +3692,87 @@ discipline). It feeds the UNCHANGED `preferredDefaultProvider` ladder as an
 explicit operator override — it does NOT lower the precedence of key-driven
 providers. See ADR 0064 D9.
 
+**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0102).** The gateway
+entry can also talk DIRECTLY to the real `gateway_url` with no local proxy hop. The
+ToolHive Go import that ADR 0064 D8 said would never exist now lives in ONE file —
+`internal/adapter/toolhivellm/tokensource.go` (the package's sole toolhive-importing
+file alongside the stdlib-only `detect*.go`; the detector's
+"tls_skip_verify/oidc never decoded" invariant, pinned by
+`TestDetectConfig_TLSSkipVerifyNeverDecoded`, is untouched — the OIDC-presence check
+`toolhivellm.OIDCConfigured` lives in `tokensource.go` over toolhive's own config read).
+`tokensource.go` builds the SAME in-process OIDC token source `thv llm token` and the
+ToolHive proxy use (`llm.NewTokenSource`): system secrets provider →
+`secrets.NewScopedProvider(p, secrets.ScopeLLM)` → config-persisting
+`tokenRefUpdater` (writes ONLY the refresh-token REFERENCE
+`CachedRefreshTokenRef`/`CachedTokenExpiry`, never the token value) →
+`llm.NewTokenSource`. The composition-facing closure `toolhivellm.TokenSourceFunc`
+(`func(ctx) (token, error)`) is the ONE seam the registry holds; tests inject a fake.
+`DirectTokenSource` is the non-interactive variant (a genuine cache miss returns
+`llm.ErrTokenRequired` — surfaced with `toolhivellm.ErrTokenRequiredHint`; it NEVER
+silently launches a browser from a headless daemon); `RunInteractiveLogin` is the
+interactive variant (`mecatui login`). Errors are sanitised via
+`llm.SanitizeTokenError` (strips any bearer material an IdP echoes back) before they
+cross any boundary.
+
+The token rides a custom `http.RoundTripper` inside the `*http.Client` passed to
+`openai.WithHTTPClient` — NOT a `port.LLMProvider` decorator. `bearerRoundTripper`
+(`internal/app/registry.go`) strips the openai-go SDK's placeholder `Authorization`
+header (the SDK's `SetAPIKey` stamps `Bearer <key>` before `*http.Client.Transport`
+fires) and sets `Bearer <real-token>`, mirroring the ToolHive proxy's `Rewrite`
+(`pkg/llm/proxy/proxy.go` <!-- lint:not-a-citation: path inside the toolhive dependency, not a repo file -->: `Del` then `Set`). The HTTP client composes TWO policies:
+`bearerRoundTripper` over the SDK default transport, AND
+`openaicompat.RefuseRedirects` (CWE-918). `newDirectGatewayEntry` passes both via
+`openai.WithHTTPClient`, and `newOpenAICompatEntry` closes `extra` into `construct()`
+so the option rides the default build AND every per-session/heal `remintEntry` re-mint
+(zero drift, the same property the proxy entry relies on for redirect refusal). The
+token NEVER enters a log, an error string, or an env var (OS keyring; only its
+reference is persisted); the `RoundTripper` must never log the Authorization header —
+and by construction it does not.
+
+A new `--toolhive-llm-mode auto|proxy|direct` flag (default `auto`, registered by
+`cliconfig.RegisterToolhiveLLMFlags` on all four mains) drives the routing in
+`resolveToolhiveIntent` (`internal/app/registry.go`): `auto` selects direct when
+`toolhivellm.OIDCConfigured` reports the OIDC trio present AND `gatewayURLIsHTTPS`
+(`https://`, or `http://localhost`/`http://127.0.0.1` as a dev carve-out — a non-HTTPS
+gateway would send the bearer over cleartext, CWE-319), else falls back to proxy with
+a WARN (byte-identical to pre-#265 when OIDC is absent); `proxy` forces the loopback
+path (the escape hatch for a misconfigured OIDC block or a self-signed cert); `direct`
+forces the gateway path. The direct base URL is DERIVED via `directBaseURL`
+(`gateway_url + "/v1"`, mirroring what the ToolHive proxy forwards), never hand-set —
+there is no `--toolhive-llm-direct-base-url` (it would duplicate the security-sensitive
+`--toolhive-llm-base-url` surface for zero gain). An explicit `--toolhive-llm-base-url`
+ALWAYS forces proxy (it is a loopback address; direct derives from the config's
+`gateway_url`), so `--toolhive-llm-mode` is IGNORED on that path and
+`validateToolhiveLLMMode` (`internal/app/build.go`) rejects `direct` +
+`--toolhive-llm-base-url` as contradictory. `direct` + `!IsConfigured()` is a loud
+Build-fail (never a silent proxy fallback): `validateToolhiveLLMMode` runs AFTER
+`validateToolhiveBaseURL` and BEFORE `buildProviderRegistry`, naming the missing
+fields and the remediation (`thv llm config set` + `thv llm setup` /
+`mecatui login`, or `--toolhive-llm-mode auto/proxy`).
+
+`mecatui login` (`cmd/mecatui/login.go`) is a NEW CLI-only subcommand running the
+interactive OIDC browser flow in-process — NOT a session, NOT a transport. It writes
+the refresh-token reference to ToolHive's own config so a subsequent non-interactive
+direct-mode provider finds the credential without re-login. A `--skip-browser` flag
+prints the authorization URL for headless/SSH/CI. It runs in the normal buffer (no alt
+screen) over the default config path. A headless `mecated` cache-miss surfaces
+`toolhivellm.ErrTokenRequiredHint` (naming both `thv llm setup` and `mecatui login`
+plus the `--toolhive-llm-mode proxy` escape hatch), mirroring the existing
+`errToolhiveNoModels` actionable-error pattern — never a silent browser popup from a
+daemon.
+
+`tls_skip_verify` is NOT honored in direct mode (upstream gap:
+`pkg/auth/oauth/oidc.go` <!-- lint:not-a-citation: path inside the toolhive dependency, not a repo file --> builds its own OIDC-discovery `http.Client` with no
+`InsecureSkipVerify` plumbing). A self-signed gateway must use
+`--toolhive-llm-mode proxy` (which DOES honor it). The limitation is documented in the
+ADR + `docs/usage.md` + `user-docs/` with the one-line remediation; a future ToolHive
+bump that closes the gap removes it with a one-line code change. The toolhive dep is
+bumped v0.31.0 → v0.40.0 — the EARLIEST release with `pkg/llm.NewTokenSource`,
+avoiding an `mcpsdk` v1.7.0 goroutine leak present at v0.42.0+ that would regress
+`task test`'s goleak gate. The `engine/` module stays clean (no toolhive import; the
+depguard allowlist scopes `github.com/stacklok/toolhive/*` to `tokensource.go` ONLY;
+`task test:engine-standalone` `GOWORK=off` is the CI gate).
+
 ### `openai` tool schemas — NON-STRICT (shared by openai + openrouter)
 
 `openai.buildTools` sends function tools **non-strict** (`FunctionToolParam.Strict` left unset

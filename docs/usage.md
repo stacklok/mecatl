@@ -257,13 +257,79 @@ session:
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--toolhive-llm` | `true` | Auto-detect a locally-running ToolHive LLM proxy by reading ToolHive's own config file and probing `127.0.0.1`; registers it as provider id `toolhive`. Pass `=false` on a shared host where you don't want this. |
-| `--toolhive-llm-base-url` | `""` | An EXPLICIT proxy base URL (must resolve to loopback — `127.0.0.0/8`, `[::1]`, or `localhost`). Skips the config-file auto-detect entirely but keeps the startup probe. No environment-variable twin (this is a deliberate, visible flag). |
+| `--toolhive-llm-base-url` | `""` | An EXPLICIT proxy base URL (must resolve to loopback — `127.0.0.0/8`, `[::1]`, or `localhost`). Skips the config-file auto-detect entirely but keeps the startup probe. No environment-variable twin (this is a deliberate, visible flag). ALWAYS forces proxy mode — direct mode derives its base URL from the config's `gateway_url`, so this override and `--toolhive-llm-mode direct` are contradictory (Build rejects the combination). |
+| `--toolhive-llm-mode` | `auto` | How the `toolhive` provider routes to the gateway. `auto` (default): talk to the real `gateway_url` DIRECTLY when the OIDC trio (`gateway_url` + `issuer` + `client_id`) is configured AND `gateway_url` is HTTPS, else fall back to the loopback proxy (today's behaviour). `proxy`: force the loopback reverse proxy. `direct`: force direct-to-gateway (Build-fails if OIDC is not configured). See [Direct mode](#direct-mode) below. |
 
 Registration happens on **detected intent alone** — the proxy does not need to be
 running yet, and a later restart with the proxy temporarily down never bricks the
 session: mecatl always knows about the "toolhive" provider once ToolHive's config
 says it should exist, and a down proxy just means a request-time connection error
 (exactly like any other transient provider outage) instead of a rejected session.
+
+### Direct mode
+
+In addition to the loopback proxy path, the `toolhive` provider can talk DIRECTLY to
+the real `gateway_url` with no local proxy hop. mecatl imports ToolHive as a Go
+library and builds the OIDC token source in-process (the same `llm.NewTokenSource`
+`thv llm token` uses), so the bearer is minted and refreshed without spawning a
+subprocess and without `thv llm proxy` running. See
+[ADR 0102](adr/0102-toolhive-direct-mode.md) for the full design.
+
+`--toolhive-llm-mode` selects the routing:
+
+| Mode | When it's used | Base URL |
+| --- | --- | --- |
+| `auto` (default) | Direct when the OIDC trio (`gateway_url` + `issuer` + `client_id`) is configured AND `gateway_url` is HTTPS; otherwise the loopback proxy (today's behaviour). | `gateway_url + "/v1"` when direct, `http://127.0.0.1:<port>/v1` when proxy. |
+| `proxy` | Always the loopback reverse proxy. The escape hatch for a misconfigured OIDC block or a self-signed gateway cert. | `http://127.0.0.1:<port>/v1` (or an explicit `--toolhive-llm-base-url`). |
+| `direct` | Always direct-to-gateway. Build fails fast if OIDC is not configured, naming the missing fields and the remediation — never a silent fallback to proxy. | `gateway_url + "/v1"`. |
+
+The HTTPS gate is a security invariant, not a preference: a non-HTTPS `gateway_url`
+would send the OIDC bearer token over cleartext (CWE-319). The `auto` and `direct`
+arms fall back to proxy (or Build-fail, respectively) when `gateway_url` is not
+`https://` — except the `http://localhost` / `http://127.0.0.1` dev carve-out.
+
+#### Logging in (direct mode)
+
+Direct mode needs a cached OIDC credential. Get one with either of:
+
+```sh
+# Option A: mecatui runs the interactive OIDC browser flow in-process (no separate thv binary).
+mecatui login
+# Headless / SSH / CI: print the authorization URL instead of opening a browser.
+mecatui login --skip-browser
+
+# Option B: the ToolHive CLI itself.
+thv llm setup
+```
+
+Both write a refresh-token REFERENCE (never the token value) to ToolHive's own config,
+so a subsequent non-interactive direct-mode session reuses the credential without
+re-login. `mecatui login` is a CLI-only operation — it does NOT start a session or
+connect to a server.
+
+#### Headless remediation
+
+`mecated` is headless by definition, so a direct-mode cache-miss (no cached
+credential) surfaces a terminal error rather than launching a browser:
+
+```
+no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui login`) to log in, or use `--toolhive-llm-mode proxy`
+```
+
+The error names all three remediations. Pick whichever fits the deployment:
+`thv llm setup` / `mecatui login` to obtain a credential, or
+`--toolhive-llm-mode proxy` to fall back to the loopback proxy (which holds the
+credential itself).
+
+#### Self-signed gateway certificates (use proxy mode)
+
+Direct mode does NOT honor `tls_skip_verify` from the ToolHive config — this is an
+upstream ToolHive gap (the OIDC-discovery client and the token source have no
+`InsecureSkipVerify` plumbing), not a mecatl choice. If your gateway uses a
+self-signed certificate, use `--toolhive-llm-mode proxy`, which DOES honor
+`tls_skip_verify`. The limitation surfaces as an opaque TLS error at the first
+request, never a silent failure; a future ToolHive bump that closes the gap removes
+it with a one-line code change.
 
 ### Making the gateway your default persistently
 

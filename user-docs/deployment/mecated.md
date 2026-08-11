@@ -201,6 +201,33 @@ tells you when it's available but not your default, so you can opt in with `/mod
 have. On a host other operators also use, pass `--toolhive-llm=false` — a per-user
 ToolHive config detected by one operator's process shouldn't surprise another.
 
+There are two routing modes for how the `toolhive` provider reaches the gateway,
+selected by `--toolhive-llm-mode` (default `auto`):
+
+- **Proxy mode** (the original path): mecatl talks to a local reverse proxy
+  (`thv llm proxy`, loopback `127.0.0.1:<port>/v1`) that holds the credential and
+  forwards to the real `gateway_url`. The proxy must be running.
+- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`): mecatl
+  imports ToolHive as a library and talks DIRECTLY to the real `gateway_url` — no local
+  proxy hop, no subprocess. The OIDC bearer token is minted and refreshed in-process
+  by a per-request HTTP RoundTripper. Get the credential once with
+  `mecatui login` (in-process interactive OIDC flow; add `--skip-browser` for
+  headless/SSH/CI) or `thv llm setup`. Direct mode needs the OIDC trio
+  (`gateway_url` + `issuer` + `client_id`) configured AND an HTTPS `gateway_url`
+  (`http://localhost`/`http://127.0.0.1` are the dev carve-out); `auto` falls back to
+  proxy when either is absent, `direct` Build-fails fast with the remediation.
+
+`mecated` is headless, so a direct-mode cache-miss surfaces a terminal error
+(naming `thv llm setup` / `mecatui login` / `--toolhive-llm-mode proxy`) rather than
+launching a browser — run `mecatui login` (or `thv llm setup`) to obtain the
+credential, or `--toolhive-llm-mode proxy` to fall back. If your gateway uses a
+self-signed certificate, use `--toolhive-llm-mode proxy` — direct mode does not honor
+`tls_skip_verify` (an upstream ToolHive gap), and proxy mode does.
+
+See the [ToolHive LLM gateway reference](https://github.com/stacklok/mecatl/blob/main/docs/usage.md#toolhive-llm-gateway)
+for the full flag table, the `mecatui login` walkthrough, and the troubleshooting
+table.
+
 Two things worth knowing before you rely on it:
 
 - **The proxy has to actually be reachable.** `/models` names the exact fix when it isn't:

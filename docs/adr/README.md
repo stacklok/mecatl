@@ -79,6 +79,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
 - [0064 — Auto-detect the ToolHive LLM gateway proxy as a native provider](./0064-toolhive-llm-gateway-provider.md)
+- [0102 — ToolHive LLM gateway DIRECT mode (in-process OIDC token injection)](./0102-toolhive-direct-mode.md)
 - [0067 — OpenAI Chat Completions adapter (OpenCode Go provider)](./0067-openai-chat-completions-adapter.md)
 - [0068 — Change reasoning effort via conversation fork (keep the transcript)](./0068-effort-change-via-fork.md)
 - [0071 — Seamless model switch: always keep the conversation](./0071-seamless-model-switch.md)
