@@ -269,27 +269,49 @@ For the scripted version of exactly this (plus the case above), see `task e2e:k8
 
 ---
 
-## Multi-user: caller identity (opt-in)
+## Multi-user: caller identity and ownership isolation (opt-in)
 
 By default mecak8s has no user concept: one shared deployment, no subjects, and
-whoever can reach the API is "the caller". Caller identity changes that — a real
-IdP authenticates each request, and every session and schedule records the
-verified `(issuer, subject)` that owns it.
+whoever can reach the API is "the caller". This overlay changes that — a real
+IdP authenticates each request, every session/schedule/team/memory entry records
+the verified `(issuer, subject)` that owns it, and **application access is now
+enforced per caller** (issue [#368](https://github.com/stacklok/mecatl/issues/368),
+[ADR-0102](https://github.com/stacklok/mecatl/blob/main/docs/adr/0102-caller-ownership-enforcement.md)). Earlier releases
+of this doc described this overlay as attribution-only ("records who acted,
+refuses nothing") — that is no longer true; read the rest of this section for
+what changed and what is still explicitly out of scope.
 
 ### Read this before you enable it
 
-**This is attribution, not a tenancy boundary.** It records who acted. It refuses
-nothing. Specifically, with identity on and two callers sharing a deployment:
+**This is an isolation cutover, not merely attribution.** With identity on, a
+caller reaches only the sessions, schedules, teams, and memory entries whose
+verified `(issuer, subject)` owner matches them:
 
-- either caller can prompt, cancel, fork or delete **the other's** sessions
-- either caller can **approve the other's pending permission ask**, which is a
-  human authorising a tool call
-- all sessions run in the **same pod filesystem at the same workspace path**, so
-  one caller's files are readable by the other's session
-- listing is unfiltered: everyone sees everyone's sessions and their owners
+- a caller cannot prompt, cancel, fork, resume, or delete **another caller's**
+  session, schedule, team, or persisted subagent — a foreign attempt is refused
+  and looks **identical to that resource not existing at all** (never a
+  distinguishing "forbidden" response, so a caller can't even learn something
+  exists under someone else's name)
+- listing sessions, schedules, teams, and schedule fires is **scoped to the
+  caller's own resources** — no more "everyone sees everyone's rows"
+- live event streams and durable event-log reads resolve through the same
+  owner check, so a caller cannot watch another caller's run in progress
+- two callers may use identical logical keys — the same memory key, the same
+  schedule name — without collision or cross-talk; each caller's copy is
+  independently stored and independently visible
 
-If you need callers separated from each other, this is not that feature and
-deploying it as one would be a mistake. Per-caller access control is later work.
+**What this overlay does NOT change:** all sessions still run in the **same pod
+filesystem**, so a workspace path is not itself a security boundary — isolate
+callers' workspaces yourselves if that matters for your deployment. A raw
+gRPC/HTTP driver process (a remote `SessionStore`/`MemoryStore` backend) remains
+explicitly **trusted infrastructure**, not caller-enforced, until
+[ADR-0103](https://github.com/stacklok/mecatl/blob/main/docs/adr/0103-driver-caller-ownership.md) (issue
+[#452](https://github.com/stacklok/mecatl/issues/452)) lands — see
+`raw-driver-networkpolicy.yaml` below. And a session/schedule created **before**
+you turned identity on has no owner: once enforcement is on, every ownerless
+record becomes permanently unavailable to every caller (never adopted by the
+first reader) — there is no migration path, so back up or export anything you
+need from an ownerless deployment before flipping this on.
 
 ### Validator and bounded signing-key cache
 
@@ -332,6 +354,14 @@ check that stops a `jwks_uri` aimed at cloud instance metadata
 (`169.254.169.254`). An **in-cluster** IdP needs a flag that relaxes both, which
 exists for our end-to-end tests only and is deliberately absent from these
 manifests.
+
+The overlay also applies `raw-driver-networkpolicy.yaml`, scoping ingress to any
+pod labelled `app.kubernetes.io/component: raw-driver` to the mecak8s agent pod
+only. This exists because a raw gRPC/HTTP driver (a remote `SessionStore`/
+`MemoryStore` backend) is trusted infrastructure, not caller-enforced, until
+ADR-0103 lands — if you run one, give it that label and keep it off any Service,
+Ingress, or tenant-facing NetworkPolicy. A tenant workload must reach mecak8s
+through the authenticated public Service, never a raw driver endpoint directly.
 
 No `NetworkPolicy` change is needed for an external IdP: the base egress already
 allows DNS and TCP 443 to any destination. An in-cluster IdP on another port
@@ -405,14 +435,19 @@ of the token's `name` claim**, which your IdP may change later. Match on
 An owner is written **once**, at session creation, from the verified token and
 never from the request body. Children (subagents, parallel branches, team members,
 scheduled fires) inherit their parent's owner; a fork inherits the **source's**
-owner. Nothing backfills: sessions created before you enabled identity stay
-unowned and render as such.
+owner (and refuses if the caller doesn't own that source). Nothing backfills:
+sessions created before you enabled identity stay ownerless — and once
+enforcement is on, an ownerless session is unavailable to every caller, not
+merely unattributed.
 
 ### Who *did* something, versus who owns it
 
-These are different questions and the answers routinely differ, because any
-authenticated caller can act on any session. If Bob prompts Alice's session, the
-session still belongs to Alice and each durable event records **Bob** as the actor.
+These are different questions, and internal system work is the routine case
+where the answers differ: a schedule fires under the **scheduler's own explicit
+system identity** as actor, while the created run keeps the schedule's real
+owner. Ownership answers "whose is this"; actor answers "who (or what) acted on
+it" — a system principal never substitutes for, or launders into, the resource
+owner.
 
 That per-event actor is written only to the **durable event log** — it is not on
 any API response, gRPC or HTTP. Today the only way to read it is out of the store
@@ -447,7 +482,9 @@ Stated plainly so it is not inferred:
 
 | | |
 |---|---|
-| **Isolation** | None. Any authenticated caller reaches any session and any workspace file. |
+| **Filesystem isolation** | None. All sessions run in the same pod filesystem at the same workspace path — application-level ownership enforcement does not sandbox the workspace. |
+| **Raw driver enforcement** | None yet. A remote `SessionStore`/`MemoryStore` driver process is trusted infrastructure (deployment-boundary only — see `raw-driver-networkpolicy.yaml` above), not caller-enforced, until ADR-0103 (issue #452) lands. |
+| **Historical data migration** | None. Enabling identity makes every pre-existing ownerless session/schedule/team/memory entry permanently unavailable to every caller — there is no adoption-by-first-reader and no migration path. Export or back up anything you need first. |
 | **Signing-key revocation** | Bounded, not immediate: with the default `--oidc-max-jwks-staleness=1h`, a last-good JWKS may remain trusted for up to one hour during an IdP outage; then validation fails 503 until refresh succeeds. `0` deliberately restores unbounded exposure. This is **not per-token revocation**: an otherwise valid token remains accepted until expiry. |
 | **Rate limiting / quotas** | mecak8s registers no rate-limit flags at all; a pod is assumed to sit behind a Service or mesh. One caller can exhaust the shared Redis, lease namespace and provider budget. |
 | **Store confidentiality** | `--redis-url` takes a bare `host:port`: no password, no TLS. Conversations and owner labels sit in plaintext, protected only by the NetworkPolicy. |
