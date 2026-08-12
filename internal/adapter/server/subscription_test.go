@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -311,7 +312,9 @@ func TestSubscriptionFullBufferPublishDoesNotBlock(t *testing.T) {
 
 func runSubscriptionHelper(t *testing.T, env, testName string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Generous: this bounds a HANG, not the helper's runtime. A -race helper on a
+	// 2-core CI runner is an order of magnitude slower than a dev laptop.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+testName+"$")
@@ -396,6 +399,10 @@ func TestSubscriptionConcurrentPublishAndUnsubscribeHelper(t *testing.T) {
 					return
 				default:
 					svc.PublishSessionEvent(id, session.Event{})
+					// Yield: an unthrottled publish loop starves the churners on a
+					// low-core CI runner under -race, and the point of this test is
+					// concurrency, not publish throughput.
+					runtime.Gosched()
 				}
 			}
 		}()
@@ -509,6 +516,7 @@ func TestSubscriptionCloseOverlapsPublishHelper(t *testing.T) {
 					return
 				default:
 					svc.PublishSessionEvent(id, session.Event{})
+					runtime.Gosched() // see the churn helper: don't starve the other side
 				}
 			}
 		}()
