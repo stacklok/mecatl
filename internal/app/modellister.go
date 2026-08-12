@@ -421,13 +421,27 @@ func projectModelEntry(reg *providerRegistry, providerID string, m modelEntry) *
 	if name == "" {
 		name = m.ID // display falls back to the id
 	}
+	contextLimit := m.ContextLimit
+	if reg != nil {
+		// The picker uses the SAME precedence core as engines and session echoes.
+		// At projection time meta already contains this seed/live row; a genuinely
+		// unknown value takes the same conservative floor as the engine.
+		if resolved, known := reg.resolveWindowCore(Config{
+			ContextWindowOverride: reg.contextWindowOverride,
+			contextWindows:        reg.contextWindows,
+		}, providerID, m.ID); known {
+			contextLimit = resolved
+		} else {
+			contextLimit = defaultContextWindowTokens
+		}
+	}
 	return &mecatlv1.ModelInfo{
 		Id:           m.ID,
 		ProviderId:   providerID,
 		DisplayName:  name,
 		Image:        modelAdapterCaps(reg, providerID).Image && hasImageModality(m.InputModalities),
 		Reasoning:    m.Reasoning,
-		ContextLimit: int64(m.ContextLimit),
+		ContextLimit: int64(contextLimit),
 	}
 }
 

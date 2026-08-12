@@ -5603,7 +5603,12 @@ The fix:
   compaction (preserving the old "zero disables"). `engine/agent` imports no adapter — the
   closure is stdlib, built only in composition.
 - **`reg.windowResolver(cfg, providerID, model)` (`internal/app/livemeta.go`)** is the ONE
-  place the **override → live → catalog → 128k-floor** precedence lives. It is threaded
+  place the **global CLI override → exact operator-configured provider/model → live →
+  catalog → 128k-floor** precedence lives. `models.context_windows` is parsed strictly
+  by `internal/adapter/permconfig/schema.go`, is operator-tier only (project values are
+  stripped with a WARN), and is consulted against the final model ID after alias/slot
+  routing — never fuzzily or across providers. The configured and live values share the
+  same 2,000,000-token sane upper bound. The resolver is threaded
   onto EVERY engine: the shared engine (`baseEngineDeps`), per-session selector engines
   (`sessionEngineFactory`), and child engines (`childEngineDepsForProvider`,
   `childWindowFor`, `childWindowResolver`). `engineDepsForProvider` takes a `windowFn
@@ -5613,8 +5618,8 @@ The fix:
   injected `Config.ResolveContextWindow`, which is the SAME `reg.windowResolver` wrapped
   to `int64`. The `sessionEngine`/`SessionEngineResult` `ContextWindow` scalar is GONE —
   identity (`providerID`/`modelID`) is stored, the window is resolved at echo time. So the
-  echo and the running engine read one source and are byte-identical including the operator
-  `--context-window-override`.
+  echo, running engine, and `ListModels.context_limit` read the same resolution core and
+  are byte-identical including operator YAML and the global `--context-window-override`.
 
 A post-`Build` live `Swap` therefore self-corrects the SAME shared/selector engine on the
 next turn with **no rehydration and no rebuild** — `defaultSessionNeedsLiveWindow` is

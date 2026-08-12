@@ -220,6 +220,13 @@ type providerRegistry struct {
 	// floor. Never nil for a registry built by buildProviderRegistry; nil-tolerant
 	// reads (liveMetaStore.lookup) keep a hand-built test registry safe.
 	meta *liveMetaStore
+	// contextWindows is the operator-tier exact provider/model override map. It is
+	// immutable after Build and read by the picker projection as well as resolvers.
+	contextWindows map[string]map[string]int
+	// contextWindowOverride is the process-wide CLI escape hatch mirrored from Config.
+	// Keeping it beside contextWindows lets model-list projection use the same resolver
+	// as engines and echoes instead of growing a second precedence implementation.
+	contextWindowOverride int
 	// outcomes is the composition-owned live-LISTING outcome store (issue #262,
 	// D3 + surfacing): last-known-good snapshots (process-lifetime) plus the
 	// per-provider status (ok/unreachable/unauthorized/empty) the v1

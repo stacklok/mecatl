@@ -195,3 +195,7 @@
 #     # CLI kill-switch --subagent-model-router=false also sets it (the two OR together).
 #     # Default false ⇒ the router is enabled whenever categories are present.
 #     disabled: false
+#   # ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID →
+#   # total context token override map. It is intentionally not a selector map: aliases
+#   # and slots are resolved before this lookup, and project values are ignored.
+#   context_windows: {}

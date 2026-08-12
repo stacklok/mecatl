@@ -545,6 +545,11 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 			"models: IGNORING project-tier models.subagent (operator-tier only — the child-default model is an operator decision; set it in your user-global settings.yaml or pass --subagent-model)",
 			"file", file, "root", ws.Root())
 	}
+	if len(block.ContextWindows) > 0 {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models: IGNORING project-tier models.context_windows (operator-tier only — set context windows in your user-global settings.yaml)",
+			"file", file, "root", ws.Root())
+	}
 
 	// (2) Opt-in by operator allowlist, then trust-gated.
 	op := r.operatorModels

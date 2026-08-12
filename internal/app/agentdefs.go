@@ -162,7 +162,12 @@ func resolveChildProvider(cfg Config, provReg *providerRegistry, def agents.Agen
 // provReg (direct-call test paths) returns the override-or-128k floor resolver.
 func childWindowFor(cfg Config, provReg *providerRegistry, providerID, model string) func() int {
 	if provReg == nil {
-		return childWindowResolver(cfg)
+		return func() int {
+			if cfg.ContextWindowOverride > 0 {
+				return cfg.ContextWindowOverride
+			}
+			return defaultContextWindowTokens
+		}
 	}
 	return provReg.windowResolver(cfg, providerID, model)
 }

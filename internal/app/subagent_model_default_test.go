@@ -196,7 +196,13 @@ func TestParallelJudgeStaysOnParentModel(t *testing.T) {
 	prov := observedProvider(&models, &mu, mockllm.TextTurn("winner: 1"))
 	cfg := Config{Model: "parent-model", SubagentModel: "cheap-model-1.0"}
 
-	judge := buildParallelJudgeEngine(modelCfgFor(cfg, "parent-model"), prov)
+	reg := regForTest(prov, providerOpenAI, "parent-model")
+	reg.contextWindows = map[string]map[string]int{providerOpenAI: {"parent-model": 333_000}}
+	cfg.contextWindows = reg.contextWindows
+	judge := buildParallelJudgeEngine(modelCfgFor(cfg, "parent-model"), reg, providerOpenAI, prov)
+	if got := judge.ContextWindow(); got != 333_000 {
+		t.Fatalf("judge ContextWindow = %d, want exact configured window 333000", got)
+	}
 	drainEngine(t, judge)
 	mu.Lock()
 	defer mu.Unlock()

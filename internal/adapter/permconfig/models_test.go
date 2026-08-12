@@ -21,6 +21,83 @@ models:
     fast: gpt-4o
 `
 
+func TestContextWindowsStrictValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+		want       string
+	}{
+		{"context windows scalar", "models:\n  context_windows: nope\n", "models.context_windows"},
+		{"context windows list", "models:\n  context_windows: []\n", "models.context_windows"},
+		{"context windows null", "models:\n  context_windows: null\n", "models.context_windows"},
+		{"provider scalar", "models:\n  context_windows:\n    openai: nope\n", "models.context_windows.openai"},
+		{"provider list", "models:\n  context_windows:\n    openai: []\n", "models.context_windows.openai"},
+		{"provider null", "models:\n  context_windows:\n    openai: null\n", "models.context_windows.openai"},
+		{"non-string provider key", "models:\n  context_windows:\n    7:\n      model: 1\n", "provider key must be a string"},
+		{"non-string model key", "models:\n  context_windows:\n    openai:\n      7: 1\n", "model key must be a string"},
+		{"duplicate provider", "models:\n  context_windows:\n    openai:\n      one: 1\n    openai:\n      two: 2\n", "duplicate provider"},
+		{"duplicate model", "models:\n  context_windows:\n    openai:\n      model: 1\n      model: 2\n", "duplicate model"},
+		{"empty provider", "models:\n  context_windows:\n    \"\":\n      model: 1\n", "provider key"},
+		{"empty model", "models:\n  context_windows:\n    openai:\n      \"\": 1\n", "openai."},
+		{"zero", "models:\n  context_windows:\n    openai:\n      model: 0\n", "openai.model"},
+		{"negative", "models:\n  context_windows:\n    openai:\n      model: -1\n", "openai.model"},
+		{"not integer", "models:\n  context_windows:\n    openai:\n      model: nope\n", "models.context_windows.openai.model"},
+		{"model list leaf", "models:\n  context_windows:\n    openai:\n      model: []\n", "models.context_windows.openai.model"},
+		{"model mapping leaf", "models:\n  context_windows:\n    openai:\n      model: {}\n", "models.context_windows.openai.model"},
+		{"model null leaf", "models:\n  context_windows:\n    openai:\n      model: null\n", "models.context_windows.openai.model"},
+		{"over cap", "models:\n  context_windows:\n    openai:\n      model: 2000001\n", "models.context_windows.openai.model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseYAML([]byte(tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parseYAML error = %v, want path containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestContextWindowsBoundaryValuesAccepted(t *testing.T) {
+	yamlCfg := "models:\n  context_windows:\n    openai:\n      minimum: 1\n      maximum: 2000000\n"
+	cfg, err := parseYAML([]byte(yamlCfg))
+	if err != nil {
+		t.Fatalf("parseYAML: %v", err)
+	}
+	if got := cfg.Models.ContextWindows["openai"]["minimum"]; got != 1 {
+		t.Fatalf("minimum = %d, want 1", got)
+	}
+	if got := cfg.Models.ContextWindows["openai"]["maximum"]; got != MaxContextWindowTokens {
+		t.Fatalf("maximum = %d, want %d", got, MaxContextWindowTokens)
+	}
+}
+
+func TestOperatorContextWindowsHonouredAndProjectIgnored(t *testing.T) {
+	const operatorYAML = "models:\n  allowlist: [allowed]\n  context_windows:\n    openai:\n      shared-model: 321000\n"
+	const projectYAML = "models:\n  default: allowed\n  context_windows:\n    openai:\n      shared-model: 999000\n"
+
+	var buf bytes.Buffer
+	diag := slogdiag.New(&buf, false, port.LevelDebug)
+	ws := &countingWS{Workspace: memfs.NewWorkspace("/repo")}
+	ws.seed(t, projectFileMecatl, projectYAML)
+	r := newWithEnv(Options{
+		Conventional: true, TrustProject: true,
+		ExplicitFiles: []string{"/etc/mecatl/models.yaml"}, Diagnostics: diag,
+	}, envWithExplicit("/etc/mecatl/models.yaml", operatorYAML))
+	_ = r.Resolve(context.Background(), ws)
+
+	if got := r.OperatorModelPolicy().ContextWindows["openai"]["shared-model"]; got != 321000 {
+		t.Fatalf("operator context window = %d, want 321000", got)
+	}
+	project := r.ProjectModelBindings(ws)
+	if project == nil || project.Default != "allowed" {
+		t.Fatalf("trusted project binding was not retained: %+v", project)
+	}
+	if project.ContextWindows != nil {
+		t.Fatalf("project context-window map must be stripped, got %+v", project.ContextWindows)
+	}
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.context_windows") {
+		t.Fatalf("dedicated project context_windows warning missing: %s", log)
+	}
+}
+
 // TestOperatorModelsFromCLIHonoured pins that an OPERATOR-TIER (CLI explicit)
 // models: block is honoured and parsed faithfully (ADR 0030).
 func TestOperatorModelsFromCLIHonoured(t *testing.T) {

@@ -44,7 +44,7 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Providers — OpenAI adapter & multi-provider](architecture/providers.md)**
 - **[The API surface](architecture/api-surface.md)**
 - **[Observability, persistence & reliability](architecture/observability.md)**
-- **[Context management & the compaction cascade](architecture/context-and-compaction.md)**
+- **[Context management & the compaction cascade](architecture/context-and-compaction.md)** — token counting, compaction, and the shared configured/live/catalog context-window resolver.
 - **[Memory — cross-session recall & consolidation](architecture/memory.md)**
 - **[Parallelism — fork-join](architecture/parallelism.md)**
 - **[Extensibility — MCP, tools & progressive disclosure](architecture/extensibility.md)**

@@ -2,6 +2,8 @@ package app
 
 import (
 	"sync/atomic"
+
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
 // liveMetaStore is the COMPOSITION-OWNED, race-free cache of per-(provider,model)
@@ -221,8 +223,8 @@ func (s *liveMetaStore) mergeSwap(fresh map[string][]modelEntry) map[string][]mo
 // legitimate live value is never clipped; only an absurd one is. The catalog and
 // default paths are already bounded — this bounds ONLY the live path.
 const (
-	maxLiveContextLimit = 2_000_000 // ~2× the largest real Claude context window
-	maxLiveOutputLimit  = 512_000   // ~4× the largest real Claude output ceiling
+	maxLiveContextLimit = permconfig.MaxContextWindowTokens // ~2× the largest real Claude context window
+	maxLiveOutputLimit  = 512_000                           // ~4× the largest real Claude output ceiling
 )
 
 // clampLive bounds a positive live value to [1, limit]. A value already in range is
@@ -292,8 +294,8 @@ func (s *liveMetaStore) knownWindow(providerID, modelID string) (int, bool) {
 
 // resolveWindowCore is the SHARED precedence core both context-window resolvers read,
 // so the engine resolver (windowResolver) and the echo resolver (echoWindowResolver)
-// CANNOT drift on anything but the terminal unknown branch. It applies override →
-// live → catalog and reports the value plus whether it is KNOWN AT A REAL VALUE:
+// CANNOT drift on anything but the terminal unknown branch. It applies global CLI
+// override → exact operator configuration → live → catalog and reports the value plus whether it is KNOWN AT A REAL VALUE:
 //   - the --context-window-override always wins and is reported known;
 //   - else reg.meta.knownWindow (live entry when present-&->0, else the embedded
 //     catalog when >0), resolved LIVE on every call so a post-construction live Swap
@@ -305,6 +307,11 @@ func (s *liveMetaStore) knownWindow(providerID, modelID string) (int, bool) {
 func (reg *providerRegistry) resolveWindowCore(cfg Config, providerID, model string) (value int, knownAtRealValue bool) {
 	if cfg.ContextWindowOverride > 0 {
 		return cfg.ContextWindowOverride, true
+	}
+	if models := cfg.contextWindows[providerID]; models != nil {
+		if window, ok := models[model]; ok {
+			return window, true
+		}
 	}
 	return reg.meta.knownWindow(providerID, model)
 }

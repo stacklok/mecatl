@@ -40,6 +40,11 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
+// MaxContextWindowTokens is the sane upper bound for configured and live model
+// context windows. It is deliberately shared with composition's live metadata
+// validation so either source cannot disable compaction with an absurd value.
+const MaxContextWindowTokens = 2_000_000
+
 // Config is the on-disk `.mecatl/settings.yaml` (or user-global settings.yaml)
 // schema for file-based permissions. It is intentionally a small mirror of the
 // Claude-Code permissions shape so a user familiar with one can read the other.
@@ -170,6 +175,70 @@ type ModelsSection struct {
 	// router ON unless `disabled: true` (or the CLI kill-switch) forces it off — the
 	// guardrails-parity enable model, replacing 0031's flag-to-enable.
 	Router *RouterSection `yaml:"router"`
+	// ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID
+	// → total context token override map. It is intentionally not a selector map:
+	// aliases and slots are resolved before this lookup, and project values are ignored.
+	ContextWindows ContextWindows `yaml:"context_windows"`
+}
+
+// ContextWindows is the operator-owned exact provider → final model → token map.
+// Its custom decoder keeps type/range failures attributable to the precise entry;
+// yaml's generic nested-map error otherwise reports only a line number.
+type ContextWindows map[string]map[string]int
+
+// UnmarshalYAML decodes and validates each configured context window with its full path.
+func (c *ContextWindows) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("models.context_windows: must be a mapping")
+	}
+	out := make(ContextWindows, len(node.Content)/2)
+	for i := 0; i < len(node.Content); i += 2 {
+		providerNode := node.Content[i]
+		if providerNode.Kind != yaml.ScalarNode || providerNode.Tag != "!!str" {
+			return fmt.Errorf("models.context_windows: provider key must be a string")
+		}
+		provider := providerNode.Value
+		if strings.TrimSpace(provider) == "" {
+			return fmt.Errorf("models.context_windows: provider key must not be empty")
+		}
+		if _, duplicate := out[provider]; duplicate {
+			return fmt.Errorf("models.context_windows.%s: duplicate provider key", provider)
+		}
+		modelsNode := node.Content[i+1]
+		if modelsNode.Kind != yaml.MappingNode {
+			return fmt.Errorf("models.context_windows.%s: must be a model-to-token mapping", provider)
+		}
+		models := make(map[string]int, len(modelsNode.Content)/2)
+		for j := 0; j < len(modelsNode.Content); j += 2 {
+			modelNode := modelsNode.Content[j]
+			if modelNode.Kind != yaml.ScalarNode || modelNode.Tag != "!!str" {
+				return fmt.Errorf("models.context_windows.%s: model key must be a string", provider)
+			}
+			model := modelNode.Value
+			path := fmt.Sprintf("models.context_windows.%s.%s", provider, model)
+			if strings.TrimSpace(model) == "" {
+				return fmt.Errorf("%s: model key must not be empty", path)
+			}
+			if _, duplicate := models[model]; duplicate {
+				return fmt.Errorf("%s: duplicate model key", path)
+			}
+			valueNode := modelsNode.Content[j+1]
+			if valueNode.Kind != yaml.ScalarNode || valueNode.Tag != "!!int" {
+				return fmt.Errorf("%s: context window must be an integer", path)
+			}
+			var tokens int
+			if err := valueNode.Decode(&tokens); err != nil {
+				return fmt.Errorf("%s: context window must be a runtime-representable integer: %w", path, err)
+			}
+			if tokens <= 0 || tokens > MaxContextWindowTokens {
+				return fmt.Errorf("%s: context window must be between 1 and %d tokens", path, MaxContextWindowTokens)
+			}
+			models[model] = tokens
+		}
+		out[provider] = models
+	}
+	*c = out
+	return nil
 }
 
 // RouterSection is the `models.router:` operator-tier subtree (ADR 0031): the semantic
@@ -253,6 +322,7 @@ func (m *ModelsSection) strictFields() map[string]any {
 		"default_provider": &m.DefaultProvider,
 		"allowlist":        &m.Allowlist,
 		"router":           &m.Router,
+		"context_windows":  &m.ContextWindows,
 	}
 }
 
@@ -260,6 +330,13 @@ func (m *ModelsSection) strictFields() map[string]any {
 // inside the models subtree is a parse error — a typo like `slotz:` or `aliasez:`
 // must not silently drop a whole binding map. Same rationale as GuardrailsSection.
 func (m *ModelsSection) UnmarshalYAML(node *yaml.Node) error {
+	if node != nil && node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "context_windows" && node.Content[i+1].Tag == "!!null" {
+				return fmt.Errorf("models.context_windows: must be a mapping")
+			}
+		}
+	}
 	return decodeStrictMapping(node, "models", m.strictFields())
 }
 

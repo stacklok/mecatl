@@ -227,7 +227,7 @@ func TestChildDepsClearAskAdjudicator(t *testing.T) {
 	if forProvider.ChildAskReviewer != nil || forProvider.ChildAskReviewMaxDenies != 0 {
 		t.Fatalf("childEngineDepsForProvider must clear the adjudicator (no nesting)")
 	}
-	plain := childEngineDeps(cfg, "task", provider, tool.NewCatalog(), "m", pc, hookexec.New(nil))
+	plain := childEngineDeps(cfg, "task", provider, tool.NewCatalog(), "m", fixedDefaultWindow, pc, hookexec.New(nil))
 	if plain.ChildAskReviewer != nil {
 		t.Fatalf("childEngineDeps must not carry the adjudicator")
 	}

@@ -114,6 +114,7 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 | `models.router.categories[].model` | `string` | `(empty)` | Model is the model selector (alias / slot / concrete id) a task classified into this category is minted on, resolved through the operator-merged alias map. |
 | `models.router.default-category` | `string` | `(empty)` | DefaultCategory is the category the classifier is told to choose when none clearly fits (advisory to the classifier; the real safety net is the fail-soft inherit). |
 | `models.router.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (ADR 0042, mirroring GuardrailsSection.Disabled): per ADR 0042 a non-empty taxonomy ENABLES the router, so `disabled: true` is the "taxonomy defined but temporarily off" override. The CLI kill-switch --subagent-model-router=false also sets it (the two OR together). Default false ⇒ the router is enabled whenever categories are present. |
+| `models.context_windows` | `map[string]map[string]int` | `(absent)` | ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID → total context token override map. It is intentionally not a selector map: aliases and slots are resolved before this lookup, and project values are ignored. |
 
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 

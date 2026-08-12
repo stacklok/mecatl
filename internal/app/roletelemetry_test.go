@@ -157,7 +157,7 @@ func TestChildEngineDepsRoleScopedTelemetryWhenScoperSet(t *testing.T) {
 	// The DEFAULT-provider child shape (childEngineDeps: parallel-judge and the
 	// usermodel-review child) is wired equivalently — the two builders must not
 	// drift (the same posture rule as the Clock inheritance test).
-	defDeps := childEngineDeps(cfg, "usermodel-review", provider, tool.NewCatalog(), cfg.Model, promptConfig(cfg, ""), nil)
+	defDeps := childEngineDeps(cfg, "usermodel-review", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
 	sink, ok := defDeps.Sink.(*fakeScopedSink)
 	if !ok || sink.family != "usermodel" {
 		t.Errorf("childEngineDeps(usermodel-review) Sink = %T/%+v, want the scoper's sink with family usermodel", defDeps.Sink, defDeps.Sink)
@@ -187,7 +187,7 @@ func TestChildEngineDepsNilTelemetryWhenNoScoper(t *testing.T) {
 		t.Errorf("childEngineDepsForProvider Deps.ToolCallRecorder = %T, want nil without a scoper", deps.ToolCallRecorder)
 	}
 
-	defDeps := childEngineDeps(cfg, "parallel-judge", provider, tool.NewCatalog(), cfg.Model, promptConfig(cfg, ""), nil)
+	defDeps := childEngineDeps(cfg, "parallel-judge", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
 	if defDeps.Sink != nil || defDeps.ToolCallRecorder != nil {
 		t.Errorf("childEngineDeps Sink/ToolCallRecorder = %T/%T, want nil/nil without a scoper", defDeps.Sink, defDeps.ToolCallRecorder)
 	}
@@ -270,7 +270,7 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 	parentCat.MustRegister(task)
 	// Role "" routes the parent through the SAME scoper onto the "main" family —
 	// the uniform-label property the cmd wiring establishes with WithRole(RoleMain).
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, ws, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, osfsWSForTest(t, ws), agent.RunRequest{Text: "go"})

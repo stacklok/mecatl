@@ -148,6 +148,8 @@ type config struct {
 	// the idle gap between chunks after the first.
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
+	// contextWindowOverride mirrors mecated's embedded-server-only escape hatch.
+	contextWindowOverride int
 
 	// Provider-side prompt caching (ADR 0100), embedded server only. Mirrors
 	// mecated's --no-prompt-cache / --anthropic-cache-ttl, mapped onto
@@ -361,6 +363,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "embedded server only: disable the Bash tool (shell-less mode)")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "embedded server only: per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables; large-context reasoning models can take a long time to first token")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "embedded server only: max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
+	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "embedded server only: override the model's context window in tokens for BOTH the compaction trigger (compaction fires at 80% of it) AND the footer context-meter denominator echoed to clients. Set this to the model's ACTUAL window when a model under-reports its window or sits behind a proxy that does. 0 (default) keeps the configured/live/catalogued/128k resolution unchanged. A small value (below a few thousand tokens) forces the agent to compact on nearly every turn — degraded, only useful for stress-testing compaction.")
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "embedded server only: disable provider-side prompt caching (ADR 0100): every adapter's cache dialect degrades to None, reproducing the pre-caching wire exactly. Caching is ON by default")
 	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "embedded server only: TTL stamped on every Anthropic ephemeral cache_control breakpoint: \"5m\" or \"1h\". Empty (default) omits the ttl field — the API's own 5m default applies. Any other value is ignored with a WARN")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "embedded server only: honour a discovered PROJECT's ALLOW rules AND its project-scoped soul (.mecatl/soul.md) (its deny/ask rules are always honoured regardless). Default OFF (the safe stance, unified with mecated): an untrusted repo's permission grants and project soul are ignored. TRUST BOUNDARY: enabling this lets a checked-in .mecatl/settings.yaml auto-approve tool calls and a checked-in project soul steer the model — only pass it for a repo you trust")
