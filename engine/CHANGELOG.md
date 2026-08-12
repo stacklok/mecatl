@@ -35,6 +35,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
     relays the slug onto for clients. Advisory + metadata-only, a string
     passthrough on the wire (no proto enum). Both are Added (a minor bump).
 
+- **`agent.NewInspectMemberToolWithOwnership` and
+  `agent.NewInspectSubagentToolWithOwnership`** — construct persisted-transcript
+  inspection tools with the verified request edge's ownership policy. When enabled,
+  access requires the full `(Issuer, Subject)` identity pair; when disabled, the
+  legacy no-verifier behavior is retained. New exported functions: Added (a minor
+  bump).
+
 - **`session.PrincipalFromClaims` and `session.GrantTypeFromClaims`**
   ([ADR 0103](../docs/adr/0103-oidc-authn-module.md)) — stdlib-only projection
   helpers for embedders that verify credentials outside the engine. Projection

@@ -100,7 +100,9 @@ func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
 func NewInspectMemberTool(store port.SessionStore) tool.Tool
+func NewInspectMemberToolWithOwnership(store port.SessionStore, ownershipEnforced bool) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool
+func NewInspectSubagentToolWithOwnership(store port.SessionStore, ownershipEnforced bool) tool.Tool
 func NewLRUForkReaper(capacity int) *LRUForkReaper
 func NewParallelTool(childEngine *Engine, forker tool.EnvironmentForker, opts ...ParallelOption) tool.Tool
 func NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager) tool.Tool

@@ -45,6 +45,9 @@ type InspectSubagentTool struct {
 	// until such a deployment exists (and note such an override ALSO de-scopes those ids
 	// from the composition layer's child-session GC).
 	allowedPrefixes []string
+	// ownershipEnforced is supplied by the verified-caller request edge. When false,
+	// legacy deployments without a verifier retain their historical access behavior.
+	ownershipEnforced bool
 }
 
 // inspectSubagentArgs is the model-supplied argument payload.
@@ -57,16 +60,27 @@ type inspectSubagentArgs struct {
 // inspectSubagentSchema is the JSON schema the model sees for the tool's arguments.
 var inspectSubagentSchema = json.RawMessage(`{"type":"object","properties":{"agent_id":{"type":"string","description":"The child agent's id, exactly as shown on the 'agentId:' line of a Subagent tool result OR the 'branch id:' line of a Parallel tool result."}},"required":["agent_id"]}`)
 
-// NewInspectSubagentTool constructs the InspectSubagent tool over a session store. store
-// must be non-nil; NewInspectSubagentTool panics otherwise (a composition-root
-// programming error — the tool has nothing to read without a store).
+// NewInspectSubagentTool constructs the legacy-compatible InspectSubagent tool over a
+// session store. Without a verified-caller request edge, ownership enforcement stays
+// disabled.
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool {
+	return NewInspectSubagentToolWithOwnership(store, false)
+}
+
+// NewInspectSubagentToolWithOwnership constructs InspectSubagent with the request
+// edge's ownership policy. When enforcement is enabled, only the owner with the same
+// (Issuer, Subject) pair may read a persisted child transcript.
+func NewInspectSubagentToolWithOwnership(store port.SessionStore, ownershipEnforced bool) tool.Tool {
 	if store == nil {
 		panic("agent: NewInspectSubagentTool requires a non-nil session store")
 	}
 	// Family-aware allow-list: a Subagent agentId OR a Parallel branch id (issue #30).
 	// team- stays excluded — InspectMember owns it.
-	return &InspectSubagentTool{store: store, allowedPrefixes: []string{SubagentSessionPrefix, ParallelSessionPrefix}}
+	return &InspectSubagentTool{
+		store:             store,
+		allowedPrefixes:   []string{SubagentSessionPrefix, ParallelSessionPrefix},
+		ownershipEnforced: ownershipEnforced,
+	}
 }
 
 // Spec returns the model-facing specification for the InspectSubagent tool.
@@ -115,7 +129,7 @@ func (t *InspectSubagentTool) Execute(ctx context.Context, call session.ToolCall
 	}
 
 	sess, err := t.store.Load(ctx, session.SessionID(id))
-	if err == nil && !callerOwnsTranscript(ctx, sess) {
+	if err == nil && !callerOwnsTranscriptWhenEnforced(ctx, sess, t.ownershipEnforced) {
 		err = port.ErrSessionNotFound
 		sess = nil
 	}

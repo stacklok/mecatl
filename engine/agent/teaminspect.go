@@ -42,6 +42,9 @@ type InspectMemberTool struct {
 	// store reads member sessions by id. Injected by the composition root; the tool
 	// consumes the port.SessionStore interface, never a concrete adapter.
 	store port.SessionStore
+	// ownershipEnforced is supplied by the verified-caller request edge. When false,
+	// legacy deployments without a verifier retain their historical access behavior.
+	ownershipEnforced bool
 }
 
 // inspectMemberArgs is the model-supplied argument payload.
@@ -62,14 +65,21 @@ var inspectMemberSchema = json.RawMessage(`{
   "required": ["team_id", "member"]
 }`)
 
-// NewInspectMemberTool constructs the InspectMember tool over a session store. store
-// must be non-nil; NewInspectMemberTool panics otherwise (a composition-root
-// programming error — the tool has nothing to read without a store).
+// NewInspectMemberTool constructs the legacy-compatible InspectMember tool over a
+// session store. Without a verified-caller request edge, ownership enforcement stays
+// disabled.
 func NewInspectMemberTool(store port.SessionStore) tool.Tool {
+	return NewInspectMemberToolWithOwnership(store, false)
+}
+
+// NewInspectMemberToolWithOwnership constructs InspectMember with the request edge's
+// ownership policy. When enforcement is enabled, only the owner with the same
+// (Issuer, Subject) pair may read a persisted member transcript.
+func NewInspectMemberToolWithOwnership(store port.SessionStore, ownershipEnforced bool) tool.Tool {
 	if store == nil {
 		panic("agent: NewInspectMemberTool requires a non-nil session store")
 	}
-	return &InspectMemberTool{store: store}
+	return &InspectMemberTool{store: store, ownershipEnforced: ownershipEnforced}
 }
 
 // Spec returns the model-facing specification for the InspectMember tool.
@@ -108,7 +118,7 @@ func (t *InspectMemberTool) Execute(ctx context.Context, call session.ToolCall, 
 
 	id := MemberSessionID(teamID, member)
 	sess, err := t.store.Load(ctx, id)
-	if err == nil && !callerOwnsTranscript(ctx, sess) {
+	if err == nil && !callerOwnsTranscriptWhenEnforced(ctx, sess, t.ownershipEnforced) {
 		err = port.ErrSessionNotFound
 		sess = nil
 	}
@@ -129,9 +139,26 @@ func (t *InspectMemberTool) Execute(ctx context.Context, call session.ToolCall, 
 		fmt.Sprintf("Transcript of member %q in team %q:", member, teamID), sess)), nil
 }
 
+// callerOwnsTranscript retains the legacy child-resume ownership behavior: when no
+// caller is present, the caller is the in-process parent rather than an untrusted
+// request edge. Inspect tools use callerOwnsTranscriptWhenEnforced below instead.
 func callerOwnsTranscript(ctx context.Context, sess *session.Session) bool {
 	caller := session.PrincipalFromContext(ctx)
 	return caller == nil || (sess != nil && sess.Owner != nil && sess.Owner.SameIdentity(caller))
+}
+
+// callerOwnsTranscriptWhenEnforced is the shared persisted-inspection predicate. The
+// caller may read every transcript only when the verified request edge has not enabled
+// ownership; otherwise an owner and caller must have the same (Issuer, Subject) identity.
+func callerOwnsTranscriptWhenEnforced(ctx context.Context, sess *session.Session, ownershipEnforced bool) bool {
+	if !ownershipEnforced {
+		// Unenforced deployments keep the legacy predicate's behavior verbatim: a
+		// present-but-foreign verified caller is still denied (this must not be
+		// MORE permissive than callerOwnsTranscript, or an identity-recorded-but-
+		// not-enforced deployment silently loses the check it already had).
+		return callerOwnsTranscript(ctx, sess)
+	}
+	return sess != nil && sess.Owner != nil && sess.Owner.SameIdentity(session.PrincipalFromContext(ctx))
 }
 
 // renderInspectTranscript renders the BOUNDED trailing tail of a session's

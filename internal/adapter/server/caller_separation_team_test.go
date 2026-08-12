@@ -17,12 +17,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestCallerSeparation_Scenario5_CleanupTeamIsOwnerChecked pins the ADR 0102
-// gap the classification exercise surfaced: CleanupTeam ignored its ctx and
-// so was the one team verb without an ownership check (every sibling —
-// SpawnTeammate/SendTeammateMessage/CancelTeammate/RunTeam/ListTeam — already
-// authorizes via lookupTeam). Bob must not be able to drop Alice's team.
-func TestCallerSeparation_Scenario5_CleanupTeamIsOwnerChecked(t *testing.T) {
+// TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked pins the ADR 0102
+// live-team boundaries: lookup, run, and cleanup are all absence-shaped for a foreign
+// caller, while the owner retains each operation.
+func TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked(t *testing.T) {
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
 		cat := tool.NewCatalog()
@@ -52,11 +50,20 @@ func TestCallerSeparation_Scenario5_CleanupTeamIsOwnerChecked(t *testing.T) {
 		t.Fatalf("CreateTeam: %v", err)
 	}
 
+	if _, _, _, err := svc.ListTeam(bob, teamID); !errors.Is(err, server.ErrTeamNotFound) {
+		t.Fatalf("Bob ListTeam = %v, want ErrTeamNotFound", err)
+	}
+	if _, err := svc.RunTeam(bob, teamID, nil); !errors.Is(err, server.ErrTeamNotFound) {
+		t.Fatalf("Bob RunTeam = %v, want ErrTeamNotFound", err)
+	}
 	if err := svc.CleanupTeam(bob, teamID); !errors.Is(err, server.ErrTeamNotFound) {
 		t.Fatalf("Bob CleanupTeam = %v, want ErrTeamNotFound", err)
 	}
 	if _, _, _, err := svc.ListTeam(alice, teamID); err != nil {
-		t.Fatalf("team survived Bob's denied cleanup, but Alice cannot list it: %v", err)
+		t.Fatalf("team survived Bob's denied lookup and cleanup, but Alice cannot list it: %v", err)
+	}
+	if _, err := svc.RunTeam(alice, teamID, nil); err != nil {
+		t.Fatalf("Alice RunTeam: %v", err)
 	}
 	if err := svc.CleanupTeam(alice, teamID); err != nil {
 		t.Fatalf("Alice CleanupTeam: %v", err)

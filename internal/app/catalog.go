@@ -297,7 +297,7 @@ func registerSubagentTrio(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// session store the Subagent tool persists children to (ids verbatim from the
 	// result's agentId trailer). Registered unconditionally wherever Subagent is —
 	// unlike InspectMember it is not gated on EnableTeams.
-	cat.MustRegister(agent.NewInspectSubagentTool(store))
+	cat.MustRegister(agent.NewInspectSubagentToolWithOwnership(store, cfg.OwnershipEnforced))
 	// The LIVE this-run child status / background-result collection tool: reads the
 	// parent run's child registry via parentCaps (no store), the sole body channel
 	// for `background: true` Subagent children. Registered wherever Subagent is
@@ -422,7 +422,7 @@ func registerTeamTools(ctx context.Context, cfg Config, cat *tool.Catalog, reg *
 		agent.WithTeamToolStore(store),
 		agent.WithTeamToolTokenBudget(cfg.MaxTeamTokens),
 	))
-	cat.MustRegister(agent.NewInspectMemberTool(store))
+	cat.MustRegister(agent.NewInspectMemberToolWithOwnership(store, cfg.OwnershipEnforced))
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Team tool ENABLED (in-process coordinating subagents; mutate-serial, ASK)")
 	}

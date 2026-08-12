@@ -179,7 +179,7 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 	if err := store.Save(context.Background(), child); err != nil {
 		t.Fatal(err)
 	}
-	inspect := agent.NewInspectSubagentTool(store)
+	inspect := agent.NewInspectSubagentToolWithOwnership(store, true)
 	member := session.New(agent.MemberSessionID("team-alice", "researcher"), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	if err := member.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, ""); err != nil {
 		t.Fatal(err)
@@ -206,7 +206,7 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 	if !res.IsError || strings.Contains(res.Content, "ALICE SECRET") || !strings.Contains(res.Content, "no transcript") {
 		t.Fatalf("foreign subagent inspect = %+v, want the ordinary absent-handle result", res)
 	}
-	inspectMember := agent.NewInspectMemberTool(store)
+	inspectMember := agent.NewInspectMemberToolWithOwnership(store, true)
 	ownerTeamRes, err := inspectMember.Execute(aliceCtx, session.NewToolCall("owner-inspect-team", "InspectMember", json.RawMessage(`{"team_id":"team-alice","member":"researcher"}`)), memfs.NewWorkspace("/ws"))
 	if err != nil {
 		t.Fatal(err)

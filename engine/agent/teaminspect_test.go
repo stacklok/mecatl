@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // TestInspectMemberPullsOneMemberOnly asserts requirement E: the InspectMember tool
@@ -70,6 +72,57 @@ func TestInspectMemberReadOnly(t *testing.T) {
 	ro, ok := inspect.(interface{ ReadOnly() bool })
 	if !ok || !ro.ReadOnly() {
 		t.Fatalf("InspectMember must report ReadOnly()==true")
+	}
+}
+
+// TestInspectMemberOwnershipPolicy keeps transcript access aligned with the request
+// edge: verified callers are isolated by the full (Issuer, Subject) identity pair.
+// The no-verifier compatibility path (a genuinely absent principal, e.g. no OIDC
+// wired) stays permissive, but a VERIFIED foreign caller is denied even when the
+// tool was constructed without ownership enforcement — the legacy constructor must
+// not be MORE permissive than the predicate it is backward-compatible with.
+func TestInspectMemberOwnershipPolicy(t *testing.T) {
+	store := memstore.New()
+	member := seedMemberSession(t, agent.MemberSessionID("team-a", "worker"), "task", "OWNER SECRET")
+	owner := &session.Principal{Issuer: "https://issuer-a.example", Subject: "same-subject", GrantType: session.GrantTypeUser}
+	if err := member.RestoreLabels(owner, ""); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := store.Save(context.Background(), member); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	call := session.NewToolCall("inspect", "InspectMember", json.RawMessage(`{"team_id":"team-a","member":"worker"}`))
+	ownerCtx := session.WithPrincipal(context.Background(), owner)
+	foreignCtx := session.WithPrincipal(context.Background(), &session.Principal{
+		Issuer: "https://issuer-b.example", Subject: "same-subject", GrantType: session.GrantTypeUser,
+	})
+
+	for _, tc := range []struct {
+		name     string
+		tool     tool.Tool
+		ctx      context.Context
+		wantText bool
+	}{
+		{"enforced owner", agent.NewInspectMemberToolWithOwnership(store, true), ownerCtx, true},
+		{"enforced foreign issuer", agent.NewInspectMemberToolWithOwnership(store, true), foreignCtx, false},
+		{"legacy compatibility: no verifier configured", agent.NewInspectMemberTool(store), context.Background(), true},
+		{"legacy compatibility: verified foreign caller still denied", agent.NewInspectMemberTool(store), foreignCtx, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := tc.tool.Execute(tc.ctx, call, nil)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if tc.wantText {
+				if res.IsError || !strings.Contains(res.Content, "OWNER SECRET") {
+					t.Fatalf("result = %+v, want owner transcript", res)
+				}
+				return
+			}
+			if !res.IsError || strings.Contains(res.Content, "OWNER SECRET") || !strings.Contains(res.Content, "no transcript") {
+				t.Fatalf("result = %+v, want absence-shaped denial", res)
+			}
+		})
 	}
 }
 
