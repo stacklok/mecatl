@@ -741,10 +741,13 @@ inventory.
 
 ### Remapping keys
 
-Every action in mecatui's keymap is rebindable. Two override surfaces exist, and
-they resolve to the same map — the **CLI flag wins per action** when both name it:
+Every action in mecatui's keymap is rebindable. Three override layers exist,
+and they resolve to the same map **per action** — a higher layer rebinds only
+the actions it names. Precedence, lowest to highest: the legacy server file
+< the client file < the **CLI flag wins**:
 
-- **`~/.config/mecatl/settings.yaml`** (operator-tier, shared with `mecated`) —
+- **`~/.config/mecatui/settings.yaml`** (client-owned, mecatui's own settings
+  file, strictly parsed — an unknown top-level key is a startup error) —
   a `keymap:` map of action name → comma-separated chord string:
 
   ```yaml
@@ -755,6 +758,11 @@ they resolve to the same map — the **CLI flag wins per action** when both name
 
 - **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
   rebinds one action and overrides the YAML entry for that action.
+
+  The `keymap:` setting was migrated from `~/.config/mecatl/settings.yaml`
+  (the server-shared operator file) — the legacy location still works but is
+  **deprecated** (a startup warning names the new home), and the client file
+  wins on conflict.
 
 Settings are read **once at startup** — restart mecatui to apply a change (live
 reload is a planned follow-up, issue #456).
