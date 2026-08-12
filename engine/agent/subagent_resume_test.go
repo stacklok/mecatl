@@ -692,7 +692,7 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	// Collect BOTH Subagent tool results in order.
 	var subResults []*session.ToolResult

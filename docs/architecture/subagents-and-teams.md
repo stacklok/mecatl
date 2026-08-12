@@ -39,7 +39,12 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
    resuming it `read-write` must not claim its edits are still in place. Resume runs on the
    **default explorer engine only** (rejected with `agent`/`model`); an in-flight guard
    rejects a concurrent run on the same id.
-3. Runs the child via the injected `childEngine.Run(ctx, child, runWS, prompt)`.
+3. Runs the child via the injected
+   `childEngine.Run(ctx, child, runWS, RunRequest{Text: prompt, ...})`. The
+   request also carries every per-run override — notably the tighten-only
+   `MaxRunTokensOverride` and the structured-output `ExtraTools` overlay — so
+   retries and salvage drives copy the base request and replace only `Text`
+   rather than dropping run-scoped controls.
 4. **Drains the child's entire Event stream inside `Execute`**
    (`drainChildObserved` — the single redaction chokepoint all three delegation
    families share), relaying only the REDACTED, bounded-preview
@@ -95,7 +100,7 @@ neither `agent` nor `model` pins one, a def-less child runs on the global
 `--subagent-model` default (the analogue of `CLAUDE_CODE_SUBAGENT_MODEL`; a concrete
 id or a `--model-alias` name, resolved same-provider; precedence `def.Model >
 --subagent-model > parent model`, empty inheriting the parent's). None of
-these widen `port.LLMRequest` — they are `subagentArgs`/`RunOptions`/factory concerns.
+these widen `port.LLMRequest` — they are `subagentArgs`/`RunRequest`/factory concerns.
 
 **Background, SubagentStatus & per-child cancel (`docs/adr/0015-background-subagents.md`).**
 `background: true` DETACHES the child, RUN-scoped: the call returns an immediate

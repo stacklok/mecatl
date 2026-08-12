@@ -324,7 +324,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 	engine := agent.NewEngine(deps) // headless: Interactive false
 
 	sess := session.New("e2e-ask-reviewer", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	run := engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "inspect the tree")
+	run := engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "inspect the tree"})
 
 	deadline := time.After(15 * time.Second)
 	var last *session.ResultPayload

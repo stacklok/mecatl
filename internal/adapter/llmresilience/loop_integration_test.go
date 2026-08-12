@@ -123,7 +123,7 @@ func TestEstablishErrorTerminatesStopError(t *testing.T) {
 	})
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := lastResult(t, drain(r))
 	if res.Stop != session.StopError {
@@ -180,7 +180,7 @@ func TestStreamRateLimitErrorIsRetried(t *testing.T) {
 	})
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := lastResult(t, drain(r))
 	// The run must succeed, not fail.
@@ -271,7 +271,7 @@ func TestFirstChunkErrorTerminatesStopError(t *testing.T) {
 	})
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := lastResult(t, drain(r))
 	if res.Stop != session.StopError {
@@ -338,7 +338,7 @@ func TestLoopPreCommitReasoningErrorRetriedAndSucceeds(t *testing.T) {
 	})
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := lastResult(t, drain(r))
 	if res.Stop == session.StopError {

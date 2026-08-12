@@ -28,7 +28,7 @@ func TestTurnEndZeroUsageFallsBackToCounter(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate the large repo")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate the large repo"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -88,7 +88,7 @@ func TestTurnEndNonZeroUsageNotOverwritten(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "do a thing")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do a thing"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)

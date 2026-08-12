@@ -2278,7 +2278,7 @@ func (s *Service) StartRun(ctx context.Context, id session.SessionID, text strin
 // may be "" when parts carries the content; at least one of text/parts must be
 // non-empty (else ErrInvalidArgument). StartRun delegates here with nil parts.
 // The media passes through to the engine untouched — command expansion and the
-// UserPromptSubmit hook operate on the TEXT only (see Engine.RunContent). All
+// UserPromptSubmit hook operate on the TEXT only (see Engine.Run). All
 // other behaviour (workspace/engine selection, registration, drain contract) is
 // identical to StartRun.
 //
@@ -2328,7 +2328,7 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	if err != nil {
 		return nil, err
 	}
-	run := engine.RunContent(ctx, sess, ws, text, parts)
+	run := engine.Run(ctx, sess, ws, agent.RunRequest{Text: text, Parts: parts})
 	s.register(id, run, sess)
 	return run, nil
 }

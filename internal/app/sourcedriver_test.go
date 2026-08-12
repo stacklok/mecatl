@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -734,7 +735,7 @@ func TestSessionEngineCommandExpanderUsesStashedDriverSource(t *testing.T) {
 		}
 		sess := session.New(session.SessionID(fmt.Sprintf("cmd-sess-%d", i)), session.ModeDefault, "/ws",
 			session.Limits{MaxTurns: 3}, time.Now())
-		drainRun(res.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "/driver-cmd fix-it", nil))
+		drainRun(res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "/driver-cmd fix-it", Parts: nil}))
 		expanded := false
 		for _, m := range sess.Conversation.Messages {
 			if m.Role == session.RoleUser && m.Text == "DRIVER says fix-it" {

@@ -105,7 +105,7 @@ func TestCompactionReplaceRejectedEmitsWarn(t *testing.T) {
 	sess := session.New("sess-replace", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	original := append([]session.Message(nil), sess.Conversation.Messages...)
 
-	// Bind the run-scoped diag the way RunContent does, then call maybeCompact.
+	// Bind the run-scoped diag the way Engine.Run does, then call maybeCompact.
 	r := &Run{diag: e.bindRunDiag(sess.ID)}
 	compacted := e.maybeCompact(context.Background(), r, sess, 0)
 

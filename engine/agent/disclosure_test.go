@@ -71,7 +71,7 @@ func TestProgressiveToolsOffSendsFullSpecs(t *testing.T) {
 	cat := catalogWith(t, discTool{name: "Mcp"})
 	e := newEngine(agent.Deps{LLM: prov, Catalog: cat}) // ProgressiveTools defaults false
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
 
 	if _, ok := cat.Lookup(tool.ToolSearchName); ok {
 		t.Fatalf("ToolSearch must NOT be registered when ProgressiveTools is off")
@@ -93,7 +93,7 @@ func TestProgressiveToolsOnSendsAdvertisedAndToolSearch(t *testing.T) {
 	cat := catalogWith(t, discTool{name: "Mcp"})
 	e := newEngine(agent.Deps{LLM: prov, Catalog: cat, ProgressiveTools: true})
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
 
 	// ToolSearch must be registered and advertised.
 	if _, ok := cat.Lookup(tool.ToolSearchName); !ok {

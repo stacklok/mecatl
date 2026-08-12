@@ -1469,7 +1469,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
-	run := m.engine.Run(driveCtx, m.sess, m.ws, prompt)
+	run := m.engine.Run(driveCtx, m.sess, m.ws, RunRequest{Text: prompt})
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role
 		// carries), the uniform ask-ownership/cancel handle (A6): a CancelChild for

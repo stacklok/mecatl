@@ -437,7 +437,7 @@ func runSubagentAgent(t *testing.T, _ *mockllm.Provider, engines map[string]*age
 	})
 	r := e.Run(context.Background(),
 		session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)),
-		memfs.NewWorkspace("/ws"), "go")
+		memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var last string
 	for ev := range r.Events() {
@@ -666,7 +666,7 @@ func runFactorySubagentTurn(t *testing.T, factory server.SessionEngineFactory, s
 	}
 	defer func() { _ = res.Close() }()
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	r := res.Engine.RunContent(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil)
+	r := res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var last string
 	for ev := range r.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.Content != "" {

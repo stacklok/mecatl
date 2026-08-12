@@ -762,7 +762,7 @@ func TestRouterBreakerOpensAfterConsecutiveMisses(t *testing.T) {
 			return "", "", session.Usage{}, RouterMissBadVerdict, false
 		},
 	})
-	// Build a Run carrying the breaker (RunContentWith arms it when the router is wired),
+	// Build a Run carrying the breaker (Engine.Run arms it when the router is wired),
 	// then derive the production routeTask via parentCaps.
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)

@@ -103,7 +103,7 @@ func TestPreToolUseHookBlocks(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, write), Hooks: hooks})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drain(r)
 

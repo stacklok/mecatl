@@ -28,7 +28,7 @@ import (
 // with a FRESH engine.
 func driveToAwaiting(t *testing.T, e *agent.Engine, sess *session.Session, ws tool.Workspace, prompt string) (askID string, restored *session.Session) {
 	t.Helper()
-	r := e.Run(context.Background(), sess, ws, prompt)
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: prompt})
 	var snap sessnap.Snapshot
 	var snapErr error
 	for ev := range r.Events() {
@@ -378,16 +378,16 @@ func TestPendingAskCarriesGatedCallID(t *testing.T) {
 		Catalog: catalogWith(t, write),
 		Policy:  policy,
 	})
-	ask := captureFirstAsk(t, e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	ask := captureFirstAsk(t, e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 	if ask.Call != "w1" {
 		t.Fatalf("PendingAsk.Call = %q, want the gated ToolCall.ID %q", ask.Call, "w1")
 	}
 }
 
-// TestRunOptionsAskIDDiscriminatorReplacesSerial (#117/ADR-0044, T5 positive
+// TestRunRequestAskIDDiscriminatorReplacesSerial (#117/ADR-0044, T5 positive
 // case): a host-supplied colon-free discriminator REPLACES the "r<serial>"
 // trailing askID component, making the askID reconstructable across processes.
-func TestRunOptionsAskIDDiscriminatorReplacesSerial(t *testing.T) {
+func TestRunRequestAskIDDiscriminatorReplacesSerial(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
 	sess := session.New("s-disc-ok", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	write := &fakeTool{name: "Write", readOnly: false,
@@ -399,8 +399,8 @@ func TestRunOptionsAskIDDiscriminatorReplacesSerial(t *testing.T) {
 		Catalog: catalogWith(t, write),
 		Policy:  policy,
 	})
-	r := e.RunContentWith(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil,
-		agent.RunOptions{AskIDDiscriminator: "run-42"})
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"),
+		agent.RunRequest{Text: "go", AskIDDiscriminator: "run-42"})
 	ask := captureFirstAsk(t, r)
 	if !strings.HasSuffix(ask.AskID, ":run-42") {
 		t.Fatalf("askID = %q, want it to end with the host discriminator %q", ask.AskID, ":run-42")
@@ -412,7 +412,7 @@ func TestRunOptionsAskIDDiscriminatorReplacesSerial(t *testing.T) {
 
 // TestAskIDDiscriminatorReconstructableAcrossRuns (#117/ADR-0044) proves the
 // END-TO-END property the feature exists for: two INDEPENDENT runs (two separate
-// RunContentWith→startRun→authorize→newAskID chains) over the SAME session id with
+// Engine.Run→startRun→authorize→newAskID chains) over the SAME session id with
 // the SAME AskIDDiscriminator and the SAME scripted tool-call mint a byte-IDENTICAL
 // emitted PendingAsk.AskID — what a restarted/second process reconstructs from
 // persisted state. This is stronger than the newAskID unit test: it exercises the
@@ -434,8 +434,8 @@ func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
 			Catalog: catalogWith(t, write),
 			Policy:  policy,
 		})
-		r := e.RunContentWith(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil,
-			agent.RunOptions{AskIDDiscriminator: discriminator})
+		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"),
+			agent.RunRequest{Text: "go", AskIDDiscriminator: discriminator})
 		return captureFirstAsk(t, r).AskID
 	}
 	first := mint()
@@ -448,11 +448,11 @@ func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
 	}
 }
 
-// TestRunOptionsAskIDDiscriminatorColonFallsBack (#117/ADR-0044, T5 negative
+// TestRunRequestAskIDDiscriminatorColonFallsBack (#117/ADR-0044, T5 negative
 // case): a colon-containing discriminator is IGNORED (it would make the askID
 // grammar ambiguous) and the run falls back to the process-global "r<serial>"
 // component — the minted askID must NOT embed the rejected value.
-func TestRunOptionsAskIDDiscriminatorColonFallsBack(t *testing.T) {
+func TestRunRequestAskIDDiscriminatorColonFallsBack(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
 	sess := session.New("s-disc-colon", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	write := &fakeTool{name: "Write", readOnly: false,
@@ -466,8 +466,8 @@ func TestRunOptionsAskIDDiscriminatorColonFallsBack(t *testing.T) {
 		Policy:      policy,
 		Diagnostics: diag,
 	})
-	r := e.RunContentWith(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil,
-		agent.RunOptions{AskIDDiscriminator: "a:b"})
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"),
+		agent.RunRequest{Text: "go", AskIDDiscriminator: "a:b"})
 	ask := captureFirstAsk(t, r)
 	if strings.Contains(ask.AskID, ":a:b") {
 		t.Fatalf("a colon-containing discriminator must be IGNORED, but askID embedded it: %q", ask.AskID)

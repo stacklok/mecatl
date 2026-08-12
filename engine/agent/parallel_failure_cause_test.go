@@ -36,7 +36,7 @@ func TestParallelFailedBranchReportsCauseNotLastChatLine(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := firstToolResult(t, drain(r))
 	if !strings.Contains(res.Content, "branch-1 [FAILED]") {
@@ -79,7 +79,7 @@ func TestParallelFailedBranchWithNoTextReportsCause(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := firstToolResult(t, drain(r))
 	if !strings.Contains(res.Content, causeText) {
@@ -114,7 +114,7 @@ func TestParallelSucceededBranchSummaryIsNeutralised(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	res := firstToolResult(t, drain(r))
 	// Positive control FIRST: the harness's own section header must be in the report, or the

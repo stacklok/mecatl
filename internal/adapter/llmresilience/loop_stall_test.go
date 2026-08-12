@@ -56,7 +56,7 @@ func TestLoopMidStreamStallTerminatesAsError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	type drained struct {
 		evs []session.Event

@@ -82,7 +82,7 @@ func BenchmarkSingleSessionLong(b *testing.B) {
 	for b.Loop() {
 		llm.Reset()
 		sess := scenarioSession("perf-single", limits)
-		r := e.Run(context.Background(), sess, scenarioWorkspace(), "inspect every file then summarise")
+		r := e.Run(context.Background(), sess, scenarioWorkspace(), agent.RunRequest{Text: "inspect every file then summarise"})
 		sinkInt = drain(r)
 		lastSess = sess
 	}

@@ -86,7 +86,7 @@ func TestParentDiscoversTeamIDFromResultAndInspects(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "fix it"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix it"}))
 
 	// 1. The Team ToolResult must SURFACE the team id (the discovery contract).
 	teamBody, teamErr, ok := toolResultForName(evs, "Team")
@@ -156,7 +156,7 @@ func TestLeadEmptySynthesisThenNudgedProducesReport(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "fix it"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix it"}))
 
 	body, isErr, ok := toolResultForName(evs, "Team")
 	if !ok || isErr {

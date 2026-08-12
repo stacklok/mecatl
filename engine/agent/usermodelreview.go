@@ -107,7 +107,7 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 		r.engine.now(),
 	)
 
-	run := r.engine.Run(ctx, child, noopWorkspace{root: sess.Workspace}, reviewPrompt(transcript))
+	run := r.engine.Run(ctx, child, noopWorkspace{root: sess.Workspace}, RunRequest{Text: reviewPrompt(transcript)})
 	// Drain the child entirely (auto-denying any ask — the extraction child is
 	// non-interactive). We discard the summary text; the user-model writes are the
 	// only durable effect.

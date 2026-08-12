@@ -129,7 +129,7 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 		j.engine.now(),
 	)
 
-	run := j.engine.Run(ctx, sess, judgeWorkspace{}, buildJudgePrompt(candidates, criteria))
+	run := j.engine.Run(ctx, sess, judgeWorkspace{}, RunRequest{Text: buildJudgePrompt(candidates, criteria)})
 	// The judge child is tool-less and non-interactive; the zero childPosture (headless
 	// auto-deny) is correct — it can never raise a Bash ask.
 	final, stop := drainChild(run, childPosture{role: "judge"})

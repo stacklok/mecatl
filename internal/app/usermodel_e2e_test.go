@@ -116,7 +116,7 @@ func TestUserModelE2E(t *testing.T) {
 	})
 
 	sess := session.New("sB", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
-	run := eng.Run(ctx, sess, memfs.NewWorkspace("/ws"), "hello")
+	run := eng.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hello"})
 	for ev := range run.Events() {
 		_ = ev
 	}

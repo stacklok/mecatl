@@ -297,7 +297,7 @@ func TestCancelChildReachesTeamMember(t *testing.T) {
 		mockllm.TextTurn("parent: got the report"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, teamTool)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotMember := make(chan string, 1)
 	var cancelOK bool

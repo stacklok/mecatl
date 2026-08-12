@@ -60,7 +60,7 @@ func TestBuildRequestNilPromptBuilderIsByteIdenticalToDefault(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 
 	got, ok := firstReq()
@@ -118,7 +118,7 @@ func TestBuildRequestHostPromptBuilderOwnsSystemPrompt(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "draft the weekly update")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "draft the weekly update"})
 	drain(r)
 
 	got, ok := firstReq()
@@ -181,7 +181,7 @@ func TestPromptBuilderHostCanStillUseInventoryAndEnv(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 
 	got, ok := firstReq()
@@ -253,7 +253,7 @@ func TestPromptBuilderDoesNotRouteThroughCompactionSummarizer(t *testing.T) {
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // ~250 tokens >> threshold of 8
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), bigPrompt)
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: bigPrompt})
 	drain(r)
 
 	mu.Lock()
@@ -336,7 +336,7 @@ func TestPromptBuilderAppliesEveryTurn(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "look at a.go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "look at a.go"})
 	drain(r)
 
 	mu.Lock()
@@ -376,7 +376,7 @@ func TestPromptBuilderEmptyLayeredIsHonoredNotBackfilled(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 
 	got, ok := firstReq()

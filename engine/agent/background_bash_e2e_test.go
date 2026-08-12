@@ -195,7 +195,7 @@ func TestBackgroundBashHappyPath(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		// Release the job only once the RUNNING poll's result has been recorded:
@@ -290,7 +290,7 @@ func TestBackgroundBashCancel(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
@@ -339,7 +339,7 @@ func TestBackgroundBashRunEndDrain(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// The pending nudge fired EXACTLY ONCE, the bash clause naming the job id.
@@ -386,7 +386,7 @@ func TestBackgroundBashPermissionGate(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawBashAsk bool
 	evs := drainObserving(t, r, func(ev session.Event) {
@@ -435,7 +435,7 @@ func TestBackgroundBashForegroundParity(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 

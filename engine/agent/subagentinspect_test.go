@@ -277,7 +277,7 @@ func TestParentDiscoversAgentIDFromResultAndInspects(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	// 1. The Subagent result must surface the agentId (the discovery contract).
 	subBody, subErr, ok := toolResultForName(evs, "Subagent")

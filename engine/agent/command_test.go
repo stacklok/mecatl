@@ -30,7 +30,7 @@ func TestCommandExpanderExpandsRecordedPrompt(t *testing.T) {
 		CommandExpander: prompt.NewDirCommandExpander(),
 	})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, ws, "/review foo.go")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "/review foo.go"})
 	drain(r)
 
 	var found bool
@@ -58,7 +58,7 @@ func TestCommandExpanderLeavesNonCommandUnchanged(t *testing.T) {
 		CommandExpander: prompt.NewDirCommandExpander(),
 	})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, ws, "hello there")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hello there"})
 	drain(r)
 
 	var found bool
@@ -84,7 +84,7 @@ func TestDefaultExpanderUnchanged(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, ws, "/review foo.go")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "/review foo.go"})
 	drain(r)
 
 	// With the default NoopExpander, the raw "/review foo.go" must be recorded

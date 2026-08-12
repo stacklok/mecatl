@@ -33,7 +33,7 @@ func driveWrite(t *testing.T, policy *permpolicy.Policy, sess *session.Session, 
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			asks++

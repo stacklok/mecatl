@@ -70,7 +70,7 @@ func TestBackgroundSubagentCauseSurvivesPostSealEmitRace(t *testing.T) {
 	e := NewEngine(Deps{LLM: parentLLM, Catalog: cat, Policy: allow, Model: "parent-model"})
 
 	sess := session.New("bg-cause-race", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), RunRequest{Text: "go"})
 	holder.run = r
 	close(holder.ready)
 
@@ -190,7 +190,7 @@ func TestForegroundSubagentCauseAlsoPersistedOnSnapshot(t *testing.T) {
 	e := NewEngine(Deps{LLM: parentLLM, Catalog: cat, Policy: allow, Model: "parent-model"})
 
 	sess := session.New("fg-cause-snap", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), RunRequest{Text: "go"})
 
 	var endCause string
 	deadline := time.After(15 * time.Second)

@@ -129,7 +129,7 @@ func TestParallelJoinsAllBranches(t *testing.T) {
 		mockllm.TextTurn("parent joined the branches"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var parentResults []*session.ToolResult
@@ -197,7 +197,7 @@ func TestParallelFailingBranchDoesNotKillOthers(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	res := firstToolResult(t, evs)
@@ -258,7 +258,7 @@ func TestParallelRunsInParallel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		drain(r)
 		close(done)
 	}()
@@ -306,7 +306,7 @@ func TestParallelConcurrencyCapBounded(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	drain(r)
 
 	mu.Lock()
@@ -378,7 +378,7 @@ func TestParallelParentCancelPropagates(t *testing.T) {
 
 	done := make(chan []session.Event, 1)
 	go func() {
-		r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		done <- drain(r)
 	}()
 

@@ -90,7 +90,7 @@ func TestAdjudicatorAllowRunsHeadlessSubagentCommand(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task),
 		ChildAskReviewer: stub, Diagnostics: diag}) // headless
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 2 || !strings.Contains(got[0], "cat $(zap)") {
@@ -150,7 +150,7 @@ func TestAdjudicatorAllowRunsTeamMemberCommand(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, tt), ChildAskReviewer: stub}) // headless
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	if got := leadBash.ran(); len(got) != 1 || !strings.Contains(got[0], "cat $(zap)") {
@@ -184,7 +184,7 @@ func TestAdjudicatorDenyCarriesReviewedMessage(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task),
 		ChildAskReviewer: stub, Diagnostics: diag})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -237,7 +237,7 @@ func TestAdjudicatorErrorFallsBackToPlainAutoDeny(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task), ChildAskReviewer: stub, Diagnostics: diag})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -288,7 +288,7 @@ func TestAdjudicatorBreakerOpensAfterConsecutiveDenies(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task),
 		ChildAskReviewer: stub, ChildAskReviewMaxDenies: 2, Diagnostics: diag})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := stub.count(); got != 2 {
@@ -332,7 +332,7 @@ func TestAdjudicatorAbstainDoesNotCountTowardBreaker(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task),
 		ChildAskReviewer: stub, ChildAskReviewMaxDenies: 2})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := stub.count(); got != 4 {
@@ -361,7 +361,7 @@ func TestAdjudicatorAllowResetsBreaker(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task),
 		ChildAskReviewer: stub, ChildAskReviewMaxDenies: 2})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := stub.count(); got != 4 {
@@ -396,7 +396,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 		task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 		stub := &scriptedAdjudicator{script: []adjOutcome{allow("would have allowed")}}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		_ = drainWithTimeout(t, r)
 
 		if stub.count() != 0 {
@@ -427,7 +427,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 		task := agent.NewSubagentTool(child)
 		stub := &scriptedAdjudicator{}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		_ = drainWithTimeout(t, r)
 
 		if stub.count() != 0 || len(bash.ran()) != 0 {
@@ -446,7 +446,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 		task := agent.NewSubagentTool(child)
 		stub := &scriptedAdjudicator{}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		_ = drainWithTimeout(t, r)
 
 		if stub.count() != 0 {
@@ -467,7 +467,7 @@ func TestAdjudicatorConfiguredRulesStillWin(t *testing.T) {
 		task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
 		stub := &scriptedAdjudicator{}
 		e := newEngine(agent.Deps{LLM: mockllm.New(parentTurns()...), Catalog: catalogWith(t, task), ChildAskReviewer: stub})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		_ = drainWithTimeout(t, r)
 
 		if stub.count() != 0 {
@@ -492,7 +492,7 @@ func TestAdjudicatorNotConsultedWhenInteractive(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task), ChildAskReviewer: stub})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawAsk bool
 	_ = drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
@@ -530,7 +530,7 @@ func TestAdjudicatorIsolationBitThreaded(t *testing.T) {
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task), ChildAskReviewer: stub})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		_ = drainWithTimeout(t, r)
 		stub.mu.Lock()
 		defer stub.mu.Unlock()

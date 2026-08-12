@@ -54,7 +54,7 @@ func BenchmarkBuildRequest(b *testing.B) {
 	_ = sess.RecordAssistant(session.NewAssistantMessage("on it", "", nil))
 	_ = sess.RecordUserPrompt("now summarise", nil)
 
-	// A zero-value Run carries empty RunOptions (no per-run ExtraTools) — the legacy
+	// A zero-value Run carries an empty RunRequest (no per-run ExtraTools) — the legacy
 	// run shape buildRequest sees on the common path. diag is Nop-safe via the engine.
 	r := &Run{diag: e.deps.Diagnostics}
 

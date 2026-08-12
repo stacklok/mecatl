@@ -48,7 +48,7 @@ func TestSearchMemoryToolThroughLoop(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "find the test runner pref")
+	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "find the test runner pref"})
 	evs := drain(r)
 
 	// (a) The SearchMemory tool call must be emitted.

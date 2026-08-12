@@ -148,9 +148,9 @@ func TestCancelUnwedgesStalledTeamRun(t *testing.T) {
 	sess := session.New("wedge-parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ws := memfs.NewWorkspace("/ws")
 
-	// Construct the Run by hand (mirroring RunContentWith) so the events channel
+	// Construct the Run by hand (mirroring Engine.Run) so the events channel
 	// gets a SMALL test cap — the wedge would otherwise need 64+ buffered parent
-	// events to manifest. Keep this in sync with RunContentWith.
+	// events to manifest. Keep this in sync with Engine.Run.
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Run{
 		events:    make(chan session.Event, 4),
@@ -174,7 +174,7 @@ func TestCancelUnwedgesStalledTeamRun(t *testing.T) {
 
 	driveDone := make(chan struct{})
 	go func() {
-		// Mirror RunContentWith's goroutine: cancel, seal, close(events) — LIFO —
+		// Mirror Engine.Run's goroutine: cancel, seal, close(events) — LIFO —
 		// then signal the test.
 		defer close(driveDone)
 		defer close(r.events)

@@ -720,7 +720,7 @@ bad-verdict from unknown-category.
 
 The per-RUN breaker `modelRouterBreaker` (default `defaultModelRouterMaxMisses`=3) mirrors
 `askReviewBreaker` exactly: its mutex serialises classifications within a run AND guards the
-consecutive-miss count; armed in `RunContentWith` iff `Deps.SubagentModelRouter != nil` (the new
+consecutive-miss count; armed in `Engine.Run` iff `Deps.SubagentModelRouter != nil` (the new
 `Deps` field + `Run.router`). The closure lives in `Engine.parentCaps` (next to `adjudicate`): it
 holds the mutex across the whole classification, skips on an open breaker or a fired `hardAbort`,
 notes misses (one-time breaker-opened INFO via `r.diag`), resets on a success, and emits the
@@ -958,7 +958,7 @@ holds it from CreateTeam), so the only roster projection site is the in-process 
 **Subagent structured output (`output_schema` + `SubmitResult` + bounded validation-retry).** When
 `subagentArgs.OutputSchema` (a model-authored JSON schema) is present, the child is given a synthetic
 `SubmitResult` tool (`engine/agent/structuredoutput.go`) whose PARAMETERS ARE that schema,
-injected run-scoped via the new `RunOptions.ExtraTools` (never registered into the shared catalog,
+injected run-scoped via `RunRequest.ExtraTools` (never registered into the shared catalog,
 so concurrent runs of the same engine never see it). The child prompt is augmented to "call
 SubmitResult to deliver" — NO `tool_choice` forcing (incompatible with Anthropic thinking + the
 OpenAI reasoning path). `SubmitResult.Execute` validates the submitted payload against the schema
@@ -967,7 +967,7 @@ boolean/null/properties/required/items/enum, FAIL-OPEN on any unsupported keywor
 the SINGLE structured-output validation choke point, DISTINCT from `ValidateMediaParts`) and records
 the payload + validity onto the per-run tool struct. On a validation miss (or a child that never
 called SubmitResult) the Subagent tool re-injects a model-visible correction prompt and re-drives the
-SAME child session (`session.Reopen` + `Engine.RunContentWith`) up to `defaultStructuredOutputRetries`
+SAME child session (`session.Reopen` + `Engine.Run`) up to `defaultStructuredOutputRetries`
 (2), then gives up with the new `session.StopStructuredOutput` CLEAN terminal. The retry is a
 SEPARATE bounded loop owned by `driveChild` — NOT a change to the hot shared `finishTurnNoTools`
 (decision D2). The validated payload becomes the result text; exhaustion is rendered as a
@@ -976,11 +976,11 @@ schema) = today's free-text behaviour. PER-ATTEMPT vs CROSS-ATTEMPT limits: each
 re-drive `Reopen()`s the child, RESETTING its `Counters`, so per-call `MaxTurns`/`MaxToolCalls`
 (and `WithChildLimits`) bound EACH attempt — up to `(1+defaultStructuredOutputRetries)×` across the
 call (bounded, not a runaway); the cross-attempt brake is the TOKEN budget, which `driveChild` SUMS
-across drives and re-passes (the `runOpts` override) to each `RunContentWith`. Guards:
+across drives and re-passes (the `runReq` override) to each `Engine.Run`. Guards:
 `session.TestValidateJSONSubset`, `agent.TestSubagentStructuredOutputHappyPath/RetryCorrects/
 ExhaustionFails/FreeTextUnchanged`, `agent.TestDriveChildStructuredPlainTextExhaustsToCleanTerminal`
 (plain-text-never-SubmitResult exhaustion → StopStructuredOutput, child COMPLETED + Reopen-recoverable),
-`agent.TestSubmitResultOverlayWinsAndIsAdvertised` (RunOptions overlay-first + advertised once).
+`agent.TestSubmitResultOverlayWinsAndIsAdvertised` (RunRequest overlay-first + advertised once).
 
 **References convention (D5b) + read-only explorer catalog extraction.** The DEFAULT explorer
 child's Role appends `explorerReferencesInstruction` (via `explorerPromptConfig`, the single site)
@@ -1323,7 +1323,7 @@ session keeps its STORED Limits; the per-call `max_turns`/`max_tool_calls` only 
 Interrupt/Recover all reset Counters via `resetToIdle`, so each bound applies afresh); the per-call token budget (`max_run_tokens`,
 the preferred arg; `max_tokens` the deprecated alias for the same budget — `resolveMaxRunTokens` folds the
 two and REJECTS differing positive values with a model-visible error, accepts same-value) rides the same
-`RunOptions.MaxRunTokensOverride`. An IN-FLIGHT GUARD (`tryAcquireChildID`/`releaseChildID` over a
+`RunRequest.MaxRunTokensOverride`. An IN-FLIGHT GUARD (`tryAcquireChildID`/`releaseChildID` over a
 mutex-guarded `inFlight` set) registers EVERY child id (fresh AND resume) BEFORE acquiring the
 concurrency slot and rejects a SECOND concurrent run on the SAME id with a model-visible "already
 running" error — NOT a wait: two runs over one unlocked `Session` aggregate is a data race (correctness),
@@ -1388,7 +1388,7 @@ catalog never contains Subagent). Composes with background/output_schema/limits/
 
 **Per-child cancel — the child-run registry + `CancelChild` (BACKGROUND-SUBAGENTS I1).** The parent
 `agent.Run` now owns a `childRunRegistry` (`childregistry.go`) alongside `childAsks`, created
-UNCONDITIONALLY in `RunContentWith` (cancel arrives only on interactive surfaces, but the registry's
+UNCONDITIONALLY in `Engine.Run` (cancel arrives only on interactive surfaces, but the registry's
 bookkeeping must work headless too) — one flat map keyed by the child SESSION id (the `agentId:`
 trailer / overlay ChildID / store key: the single handle convention; family prefixes disjoint by the
 existing convention). The registry is handed to spawning tools DIRECTLY as `parentCaps.children`
@@ -1419,7 +1419,7 @@ the child's surfaced askIDs, invokes `cancel()` OUTSIDE the registry lock, then 
 racing late approval falls through to the parent's own registry and dies as an unknown-ask no-op.
 askIDs additionally carry a trailing ":<discriminator>" SUFFIX (`newAskID`; the leading "<sessionID>:"
 prefix isChildAsk consumes is untouched). The discriminator is the host-supplied
-`RunOptions.AskIDDiscriminator` when set (a durable, cross-process-reconstructable value, colon-free —
+`RunRequest.AskIDDiscriminator` when set (a durable, cross-process-reconstructable value, colon-free —
 ADR-0044, #117) else the process-global "r<runSerial>" fallback resolved once in `startRun`. Without a
 disjoint per-RUN suffix, cancel-a-parked-ask → `resume` the same child id in the same run (Counters
 reset) → the provider re-mints the same call id → the new ask would COLLIDE with the retracted one and
@@ -1474,7 +1474,7 @@ before seal ⇒ before the terminal `EvResult`). Exactly-once is two atomic gate
 snapshot+clear, and `childAskRouter.unregister` now returning a BOOL (locked check-and-delete — the
 answered-vs-pending gate: route() already removed an answered ask's entry, so false means
 do-not-retract; a stale already-answered id emits nothing). The gate is bound onto the registry by
-`RunContentWith` (`unregisterAsk` = `Run.unregisterChildAsk`; nil on unbound unit-test registries ⇒
+`Engine.Run` (`unregisterAsk` = `Run.unregisterChildAsk`; nil on unbound unit-test registries ⇒
 retracts skipped, never a panic; a headless/child run's router is nil ⇒ gate false ⇒ no retract —
 nothing was ever surfaced). `Run.CancelChild` shares the loop via `retractAsksVia` (explicit gate, so
 the pinned unregister-BEFORE-emit ordering holds on manually-built Runs too), and a just-answered ask
@@ -1874,14 +1874,14 @@ budget. `resolveMaxRunTokens(args)` collects the positive value from each and RE
 model-visible error ("set only one of max_run_tokens or the deprecated max_tokens …") when both are present with
 DIFFERENT positive values (same-value is accepted; only-one-set uses that one; neither = inherited/unlimited).
 The conflict guard fires in `run()` alongside `validateFork` (a model-visible `session.NewToolError`, so the
-child never starts); `buildSubagentRunOptions` then reads the resolved value into `RunOptions.MaxRunTokensOverride`
-carried into `Engine.RunContentWith`, so a per-call budget bounds the SHARED child engine WITHOUT minting a fresh
+child never starts); `buildSubagentRunRequest` then reads the resolved value into `RunRequest.MaxRunTokensOverride`
+carried into `Engine.Run`, so a per-call budget bounds the SHARED child engine WITHOUT minting a fresh
 engine. `effectiveMaxRunTokens` folds it TIGHTEN-ONLY with `Deps.MaxRunTokens` (the lower non-zero value wins),
 so a per-call budget can make the child stricter than the operator default, never looser. A budget-stopped child
 ends `StopBudget` (clean terminal) → a success-with-note Subagent result, not an error. **Default is OFF**
-(neither alias set ⇒ inherited/unlimited budget). The `RunOptions` override is the cleaner of the two R4 options
-(it generalises and works on the shared engine); `RunContent`/`Run` delegate to `RunContentWith` with a zero
-`RunOptions` (legacy run, unchanged). Guards: `agent.TestSubagentMaxRunTokensAliasResolvesToOverride`,
+(neither alias set ⇒ inherited/unlimited budget). The `RunRequest` override field is the cleaner of the two R4 options
+(it generalises and works on the shared engine); a call with no override fields set is the legacy run
+(unchanged). Guards: `agent.TestSubagentMaxRunTokensAliasResolvesToOverride`,
 `agent.TestSubagentMaxTokensDeprecatedAliasStillWorks`, `agent.TestSubagentMaxRunTokensConflictRejected`,
 `agent.TestSubagentMaxRunTokensSameValueAccepted`, `agent.TestSubagentBudgetUnsetByDefault`,
 `agent.TestSubagentMaxRunTokensTightenOnlyCannotLoosen`.
@@ -1972,7 +1972,7 @@ base — `copyTree`'s discipline). On ANY error the overlay resets the worktree 
 AND returns a non-empty advisory (`degradedOverlayAdvisory`). The failure is SURFACED, not silent:
 `tool.WorkspaceForker.Fork` now returns an OPTIONAL generic degraded-fork advisory (empty on a
 clean tree / successful overlay / non-overlay path), and `SubagentTool` PREPENDS it to the child
-LLM's prompt (in `buildSubagentRunOptions`, composing with the resume-staleness note) so a
+LLM's prompt (in `buildSubagentRunRequest`, composing with the resume-staleness note) so a
 read-only explorer reasons honestly ("the diff looks clean but the operator has uncommitted work I
 cannot see") instead of mis-reporting "nothing to review". The Parallel branch (force-copy, never
 degrades) discards it; the team read-only-member path (`forkOrWrap`) discards it too — a
@@ -5027,7 +5027,7 @@ ledger row 5).
 - **Engine: `engine/agent/loop.go` (`ResumeApproval`) →
   `engine/agent/dispatch.go` (`driveFromAwaiting`).** `ResumeApproval` mints the Run
   through the SAME construction preamble as a prompt run — factored into
-  `engine/agent/loop.go` (`startRun`), shared by `RunContentWith` (→ `drive`) and
+  `engine/agent/loop.go` (`startRun`), shared by `Engine.Run` (→ `drive`) and
   `ResumeApproval` (→ `driveFromAwaiting`) so the events/asks/cancel/ctx/hardAbort/
   serial/diag/children/router setup cannot drift. `driveFromAwaiting` continues
   through the SHARED `engine/agent/loop.go` (`runLoop`) — the `for {` loop body

@@ -132,7 +132,7 @@ func TestChildAskRouterRoutesVerdict(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	// Approve the FIRST surfaced parent EvPermissionAsk using its askID (the child's own
 	// askID). The router on the parent run routes it to the child.
@@ -168,7 +168,7 @@ func TestSurfacedAskRedaction(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var surfaced *session.PendingAsk
 	var sawChildText bool
@@ -230,7 +230,7 @@ func TestIsolatedSubagentAutoApprovesWorktreeSafe(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)}) // Interactive=false
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drain(r)
 
 	if got := bash.ran(); len(got) != 1 {
@@ -258,7 +258,7 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task), Diagnostics: diag})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// The child must NOT have executed the denied command.

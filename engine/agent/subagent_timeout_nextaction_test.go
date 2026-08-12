@@ -168,7 +168,7 @@ func TestBackgroundSubagentTimeoutAdvertisesResume(t *testing.T) {
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool())
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	collected := resultByCallID(evs)["p2"]

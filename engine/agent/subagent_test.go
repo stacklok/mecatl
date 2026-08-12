@@ -106,7 +106,7 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// Collect every ToolResult the PARENT observed.
@@ -275,7 +275,7 @@ func TestSubagentGoalClampedSymmetrically(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var goal string
@@ -319,7 +319,7 @@ func TestSubagentStartCarriesResolvedModel(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var found bool
@@ -377,7 +377,7 @@ func TestSubagentConcurrentAttribution(t *testing.T) {
 		mockllm.TextTurn("both done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// Expected tool name per parent call id.
@@ -468,7 +468,7 @@ func TestSubagentChildScopeExcludesSubagentAndMutators(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var results []*session.ToolResult
@@ -503,7 +503,7 @@ func TestSubagentParentCancelPropagates(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
 	ctx, cancel := context.WithCancel(context.Background())
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	// Wait for the child's stream to start, then cancel the parent.
 	<-blocking.started
@@ -537,7 +537,7 @@ func TestSubagentStopHookFires(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	drain(r)
 
 	if !hook.saw(governance.PhaseSubagentStop) {
@@ -576,7 +576,7 @@ func TestSubagentAutoDeniesAsk(t *testing.T) {
 
 	done := make(chan []session.Event, 1)
 	go func() {
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		done <- drain(r)
 	}()
 
@@ -711,7 +711,7 @@ func runSubagentOnce(t *testing.T, task tool.Tool, parentWS tool.Workspace, prom
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), parentWS, "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), parentWS, agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	var got *session.ToolResult
 	for _, ev := range evs {

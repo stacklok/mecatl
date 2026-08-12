@@ -11,7 +11,7 @@ import (
 )
 
 // submitResultTool is the synthetic deliverable tool a structured-output Subagent child is
-// given (run-scoped — injected via RunOptions.ExtraTools, NEVER registered into the
+// given (run-scoped — injected via RunRequest.ExtraTools, NEVER registered into the
 // shared catalog). Its parameters ARE the model-authored output schema; when the child
 // calls it, Execute validates the submitted payload against that schema (the single
 // session.ValidateJSON choke point) and RECORDS the payload + validity onto this

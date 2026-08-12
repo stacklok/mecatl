@@ -789,8 +789,8 @@ type SubagentTool struct {
 // per-child turn/tool budget across the whole call. That is BOUNDED (a small constant
 // multiplier), not a runaway. The cross-attempt ceiling is the TOKEN budget
 // (Deps.MaxRunTokens / the per-call max_tokens override): driveChild SUMS usage across
-// every drive (usage = usage.Add(u)) and RE-PASSES the same runOpts (carrying the
-// tighten-only override) to each RunContentWith, so the token budget genuinely
+// every drive (usage = usage.Add(u)) and RE-PASSES the same runReq (carrying the
+// tighten-only override) to each Engine.Run, so the token budget genuinely
 // accumulates across attempts and is the real cross-attempt brake.
 const defaultStructuredOutputRetries = 2
 
@@ -830,7 +830,7 @@ const salvageWrapUpPrompt = "You have reached your budget and must stop now. " +
 const recoveredDigestPrefix = "[recovered the subagent's last output below — treat as partial]"
 
 // submitResultToolName is the catalog name of the synthetic deliverable tool a
-// structured-output child is given. It is run-scoped (RunOptions.ExtraTools), never
+// structured-output child is given. It is run-scoped (RunRequest.ExtraTools), never
 // registered into any shared catalog.
 const submitResultToolName = "SubmitResult"
 
@@ -895,7 +895,7 @@ const resumeWritableFreshNote = "[harness note: your conversation has been resum
 
 // resumePosture is the (writable × editsSurvived) pair the resumed child's harness note is
 // a function of. It is a struct rather than two more bool parameters because
-// buildSubagentRunOptions already carries `resuming`, and three adjacent bools at a call
+// buildSubagentRunRequest already carries `resuming`, and three adjacent bools at a call
 // site is precisely the transposition trip-wire this file's other TRIP-WIRE comments exist
 // to avoid.
 type resumePosture struct {
@@ -1737,10 +1737,10 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 	return legacyVal, false, runVal, legacyVal
 }
 
-// buildSubagentRunOptions assembles the per-call RunOptions, the synthetic SubmitResult
+// buildSubagentRunRequest assembles the per-call RunRequest, the synthetic SubmitResult
 // tool, and the effective child prompt for one Subagent run:
 //   - Per-call token ceiling (R4): a Run-scoped TIGHTEN-ONLY MaxRunTokens override carried
-//     via RunContentWith, bounding the SHARED child engine WITHOUT minting a fresh engine.
+//     via Engine.Run, bounding the SHARED child engine WITHOUT minting a fresh engine.
 //     0 ⇒ inherit the engine's operator-default budget; it folds tighten-only in the loop.
 //   - Resume note: on RESUME the effective prompt is prefixed with the honest harness note
 //     BEFORE the structured-output wrap, so it rides inside the structured prompt too. WHICH
@@ -1754,8 +1754,8 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 //     tool (run-scoped — never registered into the shared catalog) whose parameters ARE the
 //     schema is created and the prompt is wrapped to instruct the child to call it. Omitted
 //     ⇒ today's free-text path.
-func buildSubagentRunOptions(args subagentArgs, resuming bool, posture resumePosture, forkAdvisory string) (RunOptions, *submitResultTool, string) {
-	var runOpts RunOptions
+func buildSubagentRunRequest(args subagentArgs, resuming bool, posture resumePosture, forkAdvisory string) (RunRequest, *submitResultTool, string) {
+	var runReq RunRequest
 	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
 	// rejected earlier in run() as a model-visible error, so here we only need the
 	// resolved positive value (0 = inherit/unlimited).
@@ -1770,7 +1770,7 @@ func buildSubagentRunOptions(args subagentArgs, resuming bool, posture resumePos
 		if v < MinSubagentRunTokens {
 			v = MinSubagentRunTokens
 		}
-		runOpts.MaxRunTokensOverride = v
+		runReq.MaxRunTokensOverride = v
 	}
 	prompt := args.Prompt
 	if resuming {
@@ -1785,12 +1785,12 @@ func buildSubagentRunOptions(args subagentArgs, resuming bool, posture resumePos
 	var submit *submitResultTool
 	if len(args.OutputSchema) > 0 && strings.TrimSpace(string(args.OutputSchema)) != "" {
 		submit = newSubmitResultTool(args.OutputSchema)
-		runOpts.ExtraTools = []tool.Tool{submit}
+		runReq.ExtraTools = []tool.Tool{submit}
 		// Wrap the (possibly staleness-noted) prompt so a resumed structured-output child
 		// still sees the staleness note inside the structured-output instruction.
 		prompt = structuredOutputPrompt(prompt, args.OutputSchema)
 	}
-	return runOpts, submit, prompt
+	return runReq, submit, prompt
 }
 
 // resumeSupported reports whether this deployment can serve a `resume:` call at all —
@@ -2364,11 +2364,11 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 		}})
 	}
 
-	// Build the run options (per-call token ceiling), the synthetic SubmitResult tool (when
+	// Build the run request (per-call token ceiling), the synthetic SubmitResult tool (when
 	// structured output is requested), and the effective prompt (with the degraded-fork
 	// advisory + the mode-appropriate resume note prepended BEFORE the structured-output
-	// wrap). See buildSubagentRunOptions.
-	runOpts, submit, prompt := buildSubagentRunOptions(args, resuming,
+	// wrap). See buildSubagentRunRequest.
+	runReq, submit, prompt := buildSubagentRunRequest(args, resuming,
 		resumePosture{writable: writable, editsSurvived: editsSurvived}, forkAdvisory)
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
@@ -2394,7 +2394,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// the redacted subagent.* metadata. The structured-output retry loop re-drives the
 	// SAME child session (Reopen) with a correction prompt on a validation miss; the
 	// free-text path runs exactly one drive.
-	final, stop, cause, usage, toolCount := driveChild(ctx, engine, child, runWS, prompt, runOpts, emit, call, childID, posture, submit, args.OutputSchema)
+	final, stop, cause, usage, toolCount := driveChild(ctx, engine, child, runWS, prompt, runReq, emit, call, childID, posture, submit, args.OutputSchema)
 	terminalStop = stop
 
 	// Persist the terminal failure CAUSE on the child snapshot (issue #332): the
@@ -2685,13 +2685,13 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	// A zero resumePosture (writable=false, editsSurvived=false) unconditionally:
 	// mode:"read-write"+background is rejected in validateMode, so a background child is
 	// always the read-only forked kind and gets the fresh-checkout resume note.
-	runOpts, submit, prompt := buildSubagentRunOptions(b.args, b.resuming, resumePosture{}, forkAdvisory)
+	runReq, submit, prompt := buildSubagentRunRequest(b.args, b.resuming, resumePosture{}, forkAdvisory)
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
 
 	start := b.engine.now()
-	final, st, cause, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runOpts, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
+	final, st, cause, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runReq, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
 	stop = st
 
 	// Persist the terminal failure CAUSE on the child snapshot BEFORE persistChild
@@ -3093,7 +3093,7 @@ func subagentTimeoutNote(writable, resumable bool) string {
 // the time-budget stop and even the no-summary floor all name one (ADR 0070's
 // model-visible-affordance rule). The reason recorded for leaving it bare was that "a
 // resume would need the same `output_schema` passed again", which is not an obstacle:
-// validateResume rejects only `agent`/`model`, buildSubagentRunOptions builds the submit
+// validateResume rejects only `agent`/`model`, buildSubagentRunRequest builds the submit
 // tool from args.OutputSchema unconditionally, and the schema is the PARENT's own argument
 // — re-passing it costs one field. The real (weaker) argument is that a child which failed
 // validation through its whole correction budget may fail again, so the resume is offered
@@ -3366,7 +3366,7 @@ func renderSubagentTrailer(childID session.SessionID, body string) string {
 // three delegation-event families carry in engine/session/event.go, where a FOURTH family
 // is the extraction point.
 //
-// FREE-TEXT path (submit == nil): exactly one RunContentWith drive — byte-identical to
+// FREE-TEXT path (submit == nil): exactly one Engine.Run drive — byte-identical to
 // the prior engine.Run(...) behaviour.
 //
 // STRUCTURED path (submit != nil): drive the child; if it called SubmitResult with a
@@ -3376,7 +3376,7 @@ func renderSubagentTrailer(childID session.SessionID, body string) string {
 // StopStructuredOutput. The retry is a SEPARATE bounded loop owned here (NOT a change
 // to finishTurnNoTools — that hot shared path stays Subagent-agnostic, decision D2), and
 // uses NO tool_choice forcing (incompatible with the reasoning paths).
-func driveChild(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, prompt string, runOpts RunOptions, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture, submit *submitResultTool, schema json.RawMessage) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
+func driveChild(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, prompt string, runReq RunRequest, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture, submit *submitResultTool, schema json.RawMessage) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
 	drivePrompt := prompt
 	// attempts = 1 (initial) + defaultStructuredOutputRetries corrections, but only the
 	// structured path retries; the free-text path runs once.
@@ -3391,13 +3391,18 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		// NOTE: Reopen() RESETS Counters, so the per-call MaxTurns/MaxToolCalls bound EACH
 		// attempt independently (≤(1+defaultStructuredOutputRetries)× across the call —
 		// bounded). The cross-attempt ceiling is the TOKEN budget: usage is summed below
-		// and runOpts (carrying the tighten-only override) is re-passed to every drive.
+		// and runReq (carrying the tighten-only override) is re-passed to every drive.
 		if attempt > 0 {
 			if err := child.Reopen(); err != nil {
 				return finalText, stop, cause, usage, toolCount
 			}
 		}
-		run := engine.RunContentWith(ctx, child, runWS, drivePrompt, nil, runOpts)
+		// Copy the base run-scoped request (MaxRunTokensOverride + ExtraTools) and set
+		// ONLY the Text for this drive, so no run-scoped field can be dropped across the
+		// structured-output retry loop or the free-text salvage re-drive.
+		driveReq := runReq
+		driveReq.Text = drivePrompt
+		run := engine.Run(ctx, child, runWS, driveReq)
 		text, st, c, u, tc := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 		finalText, stop, cause = text, st, c
 		usage = usage.Add(u)
@@ -3407,7 +3412,7 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		// ended on an empty terminal (turn/tool-call limit, token budget, no-progress, or
 		// an empty clean end) without producing any text (issue #48 / #152).
 		if submit == nil {
-			finalText, usage = salvageEmptyStop(ctx, engine, child, runWS, finalText, stop, usage, runOpts, emit, call, childID, posture)
+			finalText, usage = salvageEmptyStop(ctx, engine, child, runWS, finalText, stop, usage, runReq, emit, call, childID, posture)
 			// Last-resort digest: if the bounded salvage drive ALSO produced nothing
 			// (e.g. the model emitted another empty/reasoning-only turn), recover the
 			// child's last non-empty assistant text from its own history so the parent
@@ -3522,7 +3527,7 @@ func digestChildActivity(child *session.Session) string {
 //     Limits to MaxTurns=1 (restored on return, so a resumed child keeps its real
 //     limits). The wrap-up prompt forbids further tool use; the one-turn cap is the
 //     enforcement so a salvage can never loop or fetch.
-//   - Re-passes the run's existing runOpts so the salvage drive carries the same
+//   - Re-passes the run's existing runReq so the salvage drive carries the same
 //     tighten-only token ceiling (MaxRunTokensOverride / Deps.MaxRunTokens) the original
 //     drive used. The hard MaxTurns=1 cap is the real brake: the salvage is at most one
 //     extra model call, so it can never loop or fetch its way past a budget.
@@ -3533,7 +3538,7 @@ func digestChildActivity(child *session.Session) string {
 // stopped: ended without a final summary]" note. If the wrap-up errors or yields
 // nothing, the caller's last-resort digest (digestChildActivity) runs next, and only
 // then the empty placeholder stands.
-func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, finalText string, stop session.StopReason, usage session.Usage, runOpts RunOptions, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture) (string, session.Usage) {
+func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, finalText string, stop session.StopReason, usage session.Usage, runReq RunRequest, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture) (string, session.Usage) {
 	if !isEmptyTerminalStop(stop) {
 		return finalText, usage
 	}
@@ -3574,7 +3579,11 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	child.Limits.MaxTurns = 1
 	defer func() { child.Limits = savedLimits }()
 
-	run := engine.RunContentWith(ctx, child, runWS, salvageWrapUpPrompt, nil, runOpts)
+	// Copy the base run-scoped request and set ONLY the salvage prompt as Text, so the
+	// tighten-only MaxRunTokensOverride and run-scoped ExtraTools survive the salvage drive.
+	salvageReq := runReq
+	salvageReq.Text = salvageWrapUpPrompt
+	run := engine.Run(ctx, child, runWS, salvageReq)
 	text, _, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 	// Sum the salvage turn's usage (mirror the structured-output usage accumulation);
 	// the caller's usage already excludes this drive, so there is no double-count.

@@ -83,7 +83,7 @@ func TestConfiguredChildAskSurfacedNotAutoApproved(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawAsk bool
 	var ranBeforeAsk bool
@@ -139,7 +139,7 @@ func TestConfiguredChildAskHeadlessAutoDenyMessage(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task), Diagnostics: diag}) // headless
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -197,7 +197,7 @@ func TestFlooredConfiguredAllowExecutesWithoutSurfacing(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)}) // headless
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 1 || !strings.Contains(got[0], "go generate $(ls)") {
@@ -235,7 +235,7 @@ func TestAdversarialConfiguredAllowHiddenInnerStillGated(t *testing.T) {
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		_ = drainWithTimeout(t, r)
 		if got := bash.ran(); len(got) != 0 {
 			t.Fatalf("a configured outer allow must NOT auto-run a hidden non-read-only inner; ran=%v", got)
@@ -254,7 +254,7 @@ func TestAdversarialConfiguredAllowHiddenInnerStillGated(t *testing.T) {
 			mockllm.TextTurn("parent done"),
 		)
 		e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		var sawAsk bool
 		_ = drainApproving(r, session.VerdictDeny, func(ev session.Event) {
 			if ev.Type == session.EvPermissionAsk {
@@ -292,7 +292,7 @@ func TestAdversarialSubagentAllowGitPushStillGated(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -324,7 +324,7 @@ func TestBareFloorChildSubstitutionAskStillSurfaces(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawAsk, ranBeforeAsk bool
 	_ = drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
@@ -364,7 +364,7 @@ func TestAdversarialSubagentAllowGitPushSurfacesWhenInteractive(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawAsk bool
 	_ = drainApproving(r, session.VerdictDeny, func(ev session.Event) {
@@ -405,7 +405,7 @@ func TestCancelChildWhileParkedOnConfiguredAsk(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	askCh := make(chan string, 1)
 	var childID string
@@ -493,7 +493,7 @@ func TestTeamMemberConfiguredAskSurfaces(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, tt)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawAsk, ranBeforeAsk bool
 	evs := drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
@@ -551,7 +551,7 @@ func TestChildAskYoloNonSubstitutionAutoApproves(t *testing.T) {
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)}) // headless
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		evs := drainWithTimeout(t, r)
 
 		if got := bash.ran(); len(got) != 1 || !strings.Contains(got[0], "python3 script.py") {
@@ -578,7 +578,7 @@ func TestChildAskYoloNonSubstitutionAutoApproves(t *testing.T) {
 			mockllm.TextTurn("parent done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)}) // headless
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 		evs := drainWithTimeout(t, r)
 
 		if got := bash.ran(); len(got) != 0 {

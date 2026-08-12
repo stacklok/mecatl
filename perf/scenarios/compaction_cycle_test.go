@@ -81,7 +81,7 @@ func BenchmarkCompactionCycle(b *testing.B) {
 	for b.Loop() {
 		llm.Reset()
 		sess := scenarioSession("perf-compaction", limits)
-		r := e.Run(context.Background(), sess, scenarioWorkspace(), "keep going")
+		r := e.Run(context.Background(), sess, scenarioWorkspace(), agent.RunRequest{Text: "keep going"})
 		sinkInt = drain(r)
 		lastSess = sess
 	}

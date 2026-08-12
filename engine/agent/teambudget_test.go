@@ -415,7 +415,7 @@ func TestTeamToolTokenBudgetReportsStop(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate forever")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate forever"})
 	evs := drain(r)
 
 	// --- the Team ToolResult: budget header AND the Team id line -----------
@@ -518,7 +518,7 @@ func TestTeamToolTokenBudgetTightenOnly(t *testing.T) {
 			)
 			e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 			sess := newSession(t, session.Limits{})
-			r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+			r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 			evs := drain(r)
 
 			var summary string
@@ -674,7 +674,7 @@ func TestTeamToolTokenBudgetTier1ForcedHeader(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "do one round")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do one round"})
 	evs := drain(r)
 
 	var summary string

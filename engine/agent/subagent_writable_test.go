@@ -122,7 +122,7 @@ func TestSubagentWritableDirectWriteE2E(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), ws, "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), ws, agent.RunRequest{Text: "go"})
 
 	var sawChildContent bool
 	for _, ev := range drain(r) {
@@ -347,7 +347,7 @@ func TestSubagentWritableNotIsolatedSkipsA2(t *testing.T) {
 	)
 	// newEngine ⇒ Interactive=false (headless): an unresolved ask auto-denies.
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -529,7 +529,7 @@ func runWritableForkWithParent(t *testing.T, task tool.Tool) session.ToolResult 
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	for _, ev := range drain(r) {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			return *ev.ToolResult

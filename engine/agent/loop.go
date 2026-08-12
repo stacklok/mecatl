@@ -405,7 +405,7 @@ func NewEngine(deps Deps) *Engine {
 	}
 	// Ask-review breaker threshold: <=0 (unset) → the safety-net default. Only
 	// consulted when a ChildAskReviewer is wired, but normalised unconditionally
-	// so the breaker construction in RunContentWith never sees a zero max.
+	// so the breaker construction in Engine.Run never sees a zero max.
 	if deps.ChildAskReviewMaxDenies <= 0 {
 		deps.ChildAskReviewMaxDenies = DefaultAskReviewMaxDenies
 	}
@@ -528,7 +528,7 @@ type Run struct {
 	hardAbort     chan struct{}
 	hardAbortOnce sync.Once
 	// serial is this Run's process-unique discriminator (minted from runSerial in
-	// RunContentWith), suffixed into every askID (newAskID) so two RUNS of the SAME
+	// Engine.Run), suffixed into every askID (newAskID) so two RUNS of the SAME
 	// session can never re-mint the same askID. Without it, cancel-a-parked-ask →
 	// resume the same child id in the same parent run → Counters reset → the
 	// provider re-mints the same call id → the new ask's id COLLIDES with the
@@ -537,14 +537,14 @@ type Run struct {
 	// only read after, so it needs no synchronisation.
 	serial int64
 	// askDiscriminator is the resolved trailing askID component for this run:
-	// opts.AskIDDiscriminator when the host supplied a valid (non-empty,
+	// req.AskIDDiscriminator when the host supplied a valid (non-empty,
 	// colon-free) value, else the process-global "r<serial>" fallback. Resolved
-	// once in startRun. See newAskID + RunOptions.AskIDDiscriminator + ADR-0044.
+	// once in startRun. See newAskID + RunRequest.AskIDDiscriminator + ADR-0044.
 	askDiscriminator string
-	// ctx is the run's context, captured at RunContent. Engine.emit forwards it
+	// ctx is the run's context, captured at Engine.Run. Engine.emit forwards it
 	// to the injected EventSink so telemetry adapters can read a trace span from
 	// it and correlate spans/metrics to the originating request. Each run (including
-	// child/subagent/fork runs, which enter through their own Run/RunContent call)
+	// child/subagent/fork runs, which enter through their own Engine.Run call)
 	// captures its OWN ctx, so a child's emits correlate to the child, not the
 	// parent. It is set once before the run goroutine starts and only read after,
 	// so it needs no synchronisation.
@@ -552,7 +552,7 @@ type Run struct {
 	// diag is the run-scoped operational-logging seam: deps.Diagnostics bound to
 	// this run's session id (and, for a child engine, its agent role) via With, so
 	// every line emitted through it carries the correlation keys. It is bound ONCE
-	// per run in RunContent — NOT at engine construction, because the engine is
+	// per run in Engine.Run — NOT at engine construction, because the engine is
 	// built before the session id exists and is often SHARED across sessions. It is
 	// Nop-safe: deps.Diagnostics is never nil post-NewEngine, and With on
 	// NopDiagnostics returns NopDiagnostics. It is set before the run goroutine
@@ -566,7 +566,7 @@ type Run struct {
 	// router itself is concurrency-safe for the cross-goroutine register/route.
 	childAsks *childAskRouter
 	// askReview is this run's ask-review circuit breaker, created in
-	// RunContentWith only when the engine carries a ChildAskReviewer (the
+	// Engine.Run only when the engine carries a ChildAskReviewer (the
 	// headless-review opt-in) — the askReview-non-nil ⇔ reviewer-wired pairing is
 	// what the parentCaps closure keys on. Its mutex also SERIALIZES reviews within
 	// the run (deterministic consecutive-failure semantics; bounded concurrent
@@ -574,7 +574,7 @@ type Run struct {
 	// Set before the run goroutine starts and only read after.
 	askReview *askReviewBreaker
 	// router is this run's model-router circuit breaker (ADR 0031), created in
-	// RunContentWith only when the engine carries a SubagentModelRouter — the
+	// Engine.Run only when the engine carries a SubagentModelRouter — the
 	// router-non-nil ⇔ router-wired pairing the parentCaps closure keys on. Its mutex
 	// SERIALIZES classifications within the run (deterministic consecutive-miss
 	// semantics; bounded concurrent classifier spend under a Subagent fan-out). nil on
@@ -585,19 +585,20 @@ type Run struct {
 	// delegation families: Subagent children, Parallel branches, team members),
 	// keyed by child session id.
 	// Unlike childAsks (interactive-only) it is created UNCONDITIONALLY in
-	// RunContentWith: cancel arrives over the wire only on interactive surfaces, but
+	// Engine.Run: cancel arrives over the wire only on interactive surfaces, but
 	// the registry also carries headless bookkeeping, and it is a mutex + map. It is
 	// set before the run goroutine starts and only read after; the registry itself
 	// is concurrency-safe.
 	children *childRunRegistry
-	// opts are the per-RUN overrides supplied at RunContentWith: a TIGHTEN-ONLY token
-	// ceiling and a set of run-scoped EXTRA tools (e.g. the synthetic SubmitResult tool
-	// for a structured-output Subagent child). They are read-only after the goroutine starts
+	// req are the per-RUN request parameters supplied at Engine.Run (the user prompt
+	// PLUS the run-scoped overrides: a TIGHTEN-ONLY token ceiling and a set of
+	// run-scoped EXTRA tools, e.g. the synthetic SubmitResult tool for a
+	// structured-output Subagent child). They are read-only after the goroutine starts
 	// and are NEVER folded into the shared Engine.deps — that is the whole point: a
 	// per-call override must not mutate the shared child engine (the "Provider is FIXED
 	// per session" / no-clone-swap discipline applied to run-scoped knobs). The zero
-	// value is the legacy run (no override, no extras), so Run/RunContent are unchanged.
-	opts RunOptions
+	// value of the override fields is the legacy run (no override, no extras).
+	req RunRequest
 	// planApprovedTarget is the permission mode a plan-approval Allow verdict will
 	// flip the session into at the terminal boundary: AllowOnce → ModeDefault,
 	// AllowAlways → ModeAccept. It is RUN-SCOPED (zero/"" = no approval pending),
@@ -659,12 +660,21 @@ var childSerial atomic.Int64
 // terminal.
 var ErrNotAwaiting = errors.New("agent: session is not awaiting the given approval")
 
-// RunOptions are per-RUN overrides a caller threads into RunContentWith. They are
-// run-scoped: they live on the Run, never on the shared Engine.Deps, so a per-call
-// knob (a tighter token ceiling, a synthetic deliverable tool) works on a SHARED child
-// engine WITHOUT minting a fresh engine or mutating the engine other concurrent runs
-// share. The zero value is the legacy run (Run/RunContent build it).
-type RunOptions struct {
+// RunRequest is the single request shape a caller threads into Engine.Run. It carries
+// the user prompt (text and/or non-text media parts) PLUS the run-scoped overrides that
+// live on the Run, never on the shared Engine.Deps, so a per-call knob (a tighter token
+// ceiling, a synthetic deliverable tool) works on a SHARED child engine WITHOUT minting a
+// fresh engine or mutating the engine other concurrent runs share. The zero value of the
+// override fields is the legacy run (no override, no extras).
+type RunRequest struct {
+	// Text is the (possibly empty) text of the user prompt. Command expansion and the
+	// UserPromptSubmit hook operate on Text only; the media Parts pass through untouched
+	// and are recorded verbatim on the user message. Text may be empty when Parts
+	// carries the content.
+	Text string
+	// Parts carries non-text media (image/audio) alongside Text. nil for a text-only
+	// prompt. The media passes through to the engine untouched.
+	Parts []session.Content
 	// MaxRunTokensOverride, when > 0, is a per-run TIGHTEN-ONLY override of the engine's
 	// Deps.MaxRunTokens budget: the effective ceiling for THIS run is the lower of the
 	// two non-zero values (a per-call ceiling may make the run stricter than the operator
@@ -695,13 +705,13 @@ type RunOptions struct {
 	// is logged) rather than minting an ambiguous id. Empty (the zero value) keeps
 	// the legacy "r<serial>" behavior with no change — mecatui, tests, and
 	// in-memory hosts pass nothing and are unaffected. A durable host (e.g. a downstream consumer)
-	// passes its own RunID. Same opt-in RunOptions seam pattern as
+	// passes its own RunID. Same opt-in RunRequest seam pattern as
 	// MaxRunTokensOverride/ExtraTools. See ADR-0044.
 	//
 	// FOOTGUN GUARD: after startRun the RESOLVED value (this when valid, else the
 	// "r<serial>" fallback) lives on Run.askDiscriminator. askID minting (newAskID,
 	// in authorize) MUST read r.askDiscriminator — NEVER this raw, un-validated
-	// r.opts.AskIDDiscriminator, which may be empty or colon-bearing and would
+	// r.req.AskIDDiscriminator, which may be empty or colon-bearing and would
 	// bypass the colon/empty fallback.
 	AskIDDiscriminator string
 }
@@ -819,7 +829,7 @@ func (r *Run) CancelChild(childID string) bool {
 		cancel()
 	}
 	// The explicit-gate variant (rather than the registry's bound gate) so the
-	// ordering holds even on a Run built outside RunContentWith (unit tests); in
+	// ordering holds even on a Run built outside Engine.Run (unit tests); in
 	// production the bound gate IS this method.
 	r.children.retractAsksVia(r.unregisterChildAsk, askIDs)
 	return true
@@ -828,39 +838,27 @@ func (r *Run) CancelChild(childID string) bool {
 // unregisterChildAsk is the answered-vs-pending retraction gate: it drops askID
 // from this run's childAskRouter and reports whether an entry was actually
 // removed (false ⇒ the verdict was already routed, or this run never surfaces —
-// do NOT retract). RunContentWith binds it onto the child-run registry so the
+// do NOT retract). Engine.Run binds it onto the child-run registry so the
 // child-terminal retraction (markDoneResult) and the drain's abandoned sweep
 // consult the SAME gate Run.CancelChild does.
 func (r *Run) unregisterChildAsk(askID string) bool {
 	return r.childAsks != nil && r.childAsks.unregister(askID)
 }
 
-// Run starts processing userText against sess in a background goroutine and
-// returns immediately with a Run handle. The loop runs until it produces a
-// terminal result Event, then closes the Events channel. ws is the session-scoped
-// workspace tools execute against. It is the text-only entry; for a multimodal
-// prompt use RunContent.
-func (e *Engine) Run(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string) *Run {
-	return e.RunContent(ctx, sess, ws, userText, nil)
-}
-
-// RunContent is the multimodal sibling of Run: it processes userText PLUS
-// non-text media parts (image/audio) against sess. userText may be empty when
-// parts carries the content. Command expansion and the UserPromptSubmit hook
-// operate on the TEXT only; the media parts pass through untouched and are
-// recorded verbatim on the user message. Run delegates here with nil parts.
-func (e *Engine) RunContent(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content) *Run {
-	return e.RunContentWith(ctx, sess, ws, userText, parts, RunOptions{})
-}
-
-// RunContentWith is RunContent plus per-RUN overrides (RunOptions): a tighten-only
-// token ceiling and run-scoped extra tools. It is the seam a per-call Subagent knob uses
-// to bound or augment a SHARED child engine for one delegation without minting a fresh
-// engine or mutating the engine other runs share. RunContent delegates here with a
-// zero RunOptions (the legacy run).
-func (e *Engine) RunContentWith(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content, opts RunOptions) *Run {
-	return e.startRun(ctx, sess, opts, func(ctx context.Context, r *Run) {
-		e.drive(ctx, r, sess, ws, userText, parts)
+// Run is the single normal entry point: it starts processing req.Text and/or
+// req.Parts against sess in a background goroutine and returns immediately with a Run
+// handle. The loop runs until it produces a terminal result Event, then closes the
+// Events channel. ws is the session-scoped workspace tools execute against.
+//
+// req carries the user prompt (text and/or non-text media parts) plus the run-scoped
+// overrides (a tighten-only token ceiling and run-scoped extra tools). The zero value of
+// the override fields is the legacy run (no override, no extras). For a text-only prompt
+// set only req.Text; for a multimodal prompt set req.Parts (and req.Text, which may be
+// empty). Command expansion and the UserPromptSubmit hook operate on the TEXT only; the
+// media parts pass through untouched and are recorded verbatim on the user message.
+func (e *Engine) Run(ctx context.Context, sess *session.Session, ws tool.Workspace, req RunRequest) *Run {
+	return e.startRun(ctx, sess, req, func(ctx context.Context, r *Run) {
+		e.drive(ctx, r, sess, ws, req.Text, req.Parts)
 	})
 }
 
@@ -869,7 +867,7 @@ func (e *Engine) RunContentWith(ctx context.Context, sess *session.Session, ws t
 // StateAwaiting (typically loaded fresh from a snapshot after the process that
 // parked the ask died), applies verdict to the pending tool call, closes out any
 // unanswered sibling calls on the same trailing assistant message, then continues
-// the loop to completion. It mirrors RunContentWith's Run-construction preamble
+// the loop to completion. It mirrors Engine.Run's Run-construction preamble
 // exactly (same events/asks/cancel/ctx/hardAbort/serial/diag/children/router
 // discipline) but launches driveFromAwaiting instead of drive.
 //
@@ -890,7 +888,7 @@ func (e *Engine) RunContentWith(ctx context.Context, sess *session.Session, ws t
 // terminal — it never silently completes. The pending tool executes EXACTLY ONCE on
 // the allow path and NOT AT ALL on a precondition failure or a deny.
 func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, ws tool.Workspace, askID string, verdict session.ApprovalVerdict) *Run {
-	return e.startRun(ctx, sess, RunOptions{}, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{}, func(ctx context.Context, r *Run) {
 		e.driveFromAwaiting(ctx, r, sess, ws, askID, verdict)
 	})
 }
@@ -899,16 +897,16 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, ws t
 // registry, run-scoped diagnostics, interactive child-ask router, ask-review
 // breaker, child-run registry) and launches body in the run goroutine under the
 // LIFO seal/close discipline. It is the single Run-construction site shared by
-// RunContentWith (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
+// Engine.Run (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
 // entry seams cannot drift in their concurrency setup.
-func (e *Engine) startRun(ctx context.Context, sess *session.Session, opts RunOptions, body func(context.Context, *Run)) *Run {
+func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
 	r := &Run{
 		events:    make(chan session.Event, 64),
 		asks:      newAskRegistry(),
 		cancel:    cancel,
 		ctx:       ctx,
-		opts:      opts,
+		req:       req,
 		hardAbort: make(chan struct{}),
 		serial:    runSerial.Add(1),
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
@@ -931,7 +929,7 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, opts RunOp
 	// askID grammar ambiguous, so it is rejected (fall back) with a WARN rather
 	// than minted — sanitizing by stripping could collapse two distinct host ids
 	// onto one askID and re-open the CWE-863 replay collision.
-	if d := opts.AskIDDiscriminator; d != "" && !strings.Contains(d, ":") {
+	if d := req.AskIDDiscriminator; d != "" && !strings.Contains(d, ":") {
 		r.askDiscriminator = d
 	} else {
 		if d != "" {
@@ -1481,13 +1479,13 @@ func (e *Engine) drainPendingDelivery(ctx context.Context, r *Run, sess *session
 }
 
 // effectiveMaxRunTokens folds the engine's Deps.MaxRunTokens with the run's optional
-// per-call override (RunOptions.MaxRunTokensOverride), TIGHTEN-ONLY: when both are
+// per-call override (RunRequest.MaxRunTokensOverride), TIGHTEN-ONLY: when both are
 // positive the lower wins (a per-call ceiling can make the run stricter, never looser);
 // when only one is positive that one applies; 0+0 means no budget. It is the single
 // fold both the budget check and any future budget-reading site must use.
 func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	base := e.deps.MaxRunTokens
-	over := r.opts.MaxRunTokensOverride
+	over := r.req.MaxRunTokensOverride
 	switch {
 	case base > 0 && over > 0:
 		if over < base {
@@ -1503,7 +1501,7 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 
 // budgetExhausted reports whether the session's CUMULATIVE usage has crossed the
 // effective loop-level token ceiling (Deps.MaxRunTokens folded with the run's
-// tighten-only RunOptions override). A non-positive effective ceiling (the default)
+// tighten-only RunRequest override). A non-positive effective ceiling (the default)
 // disables the budget and always returns false.
 //
 // It reads the AGGREGATE's cumulative Usage (the value RecordUsage accumulates and
@@ -1521,7 +1519,7 @@ func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 // the single resolution point dispatch uses so the overlay and the advertised specs
 // (buildRequest) never disagree.
 func (e *Engine) lookupTool(r *Run, name string) (tool.Tool, bool) {
-	for _, t := range r.opts.ExtraTools {
+	for _, t := range r.req.ExtraTools {
 		if t.Spec().Name == name {
 			return t, true
 		}
@@ -1886,13 +1884,13 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	} else {
 		cfg.Tools = e.deps.Catalog.Specs(sess.Mode)
 	}
-	// Run-scoped extra tools (RunOptions.ExtraTools) are advertised this run only,
+	// Run-scoped extra tools (RunRequest.ExtraTools) are advertised this run only,
 	// after the catalog specs, so a structured-output SubmitResult (or any per-run
 	// tool) is visible to the model without being registered into the shared catalog.
 	// A name already present in cfg.Tools is REPLACED by the extra's spec (the overlay
 	// wins, matching lookupTool's overlay-first resolution) so the advertised set and
 	// the dispatch resolution never disagree.
-	for _, xt := range r.opts.ExtraTools {
+	for _, xt := range r.req.ExtraTools {
 		spec := xt.Spec()
 		replaced := false
 		for i := range cfg.Tools {

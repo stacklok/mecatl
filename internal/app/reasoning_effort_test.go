@@ -248,7 +248,7 @@ func TestFactoryRemintsOnEffortDiffersFromDefault(t *testing.T) {
 	}
 	// The turn runs on the re-minted provider.
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	got := drainRun(res.Engine.RunContent(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi", nil))
+	got := drainRun(res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 	if got != "REMINTED:high" {
 		t.Errorf("turn ran on %q, want the re-minted provider (REMINTED:high)", got)
 	}
@@ -357,7 +357,7 @@ func TestFactoryDefaultPathNoRemint(t *testing.T) {
 		t.Errorf("echoed ReasoningEffort = %q, want empty (unset)", res.ReasoningEffort)
 	}
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	got := drainRun(res.Engine.RunContent(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi", nil))
+	got := drainRun(res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 	if got != "DEFAULT-REPLY" {
 		t.Errorf("turn ran on %q, want the shared default provider (DEFAULT-REPLY)", got)
 	}

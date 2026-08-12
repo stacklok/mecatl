@@ -101,7 +101,7 @@ func TestCancelChildMidDrive(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelOK bool
@@ -165,7 +165,7 @@ func TestCancelChildWhileParkedOnAsk(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	type askInfo struct{ askID, childID string }
 	askCh := make(chan askInfo, 1)
@@ -247,7 +247,7 @@ func TestChildTimeoutRetractsSurfacedAskMidRun(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var askID string
 	var retracts []string
@@ -313,7 +313,7 @@ func TestCancelChildAfterDoneAndUnknownNoOp(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	if got := lastResult(t, evs); got.Stop == session.StopError {
@@ -350,7 +350,7 @@ func TestCancelChildPersistResumeRoundTrip(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	go func() {
@@ -411,7 +411,7 @@ func TestCancelChildNaturalCompletionRace(t *testing.T) {
 			mockllm.TextTurn("parent: done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 		started := make(chan struct{}, 1)
 		done := make(chan struct{})
@@ -476,7 +476,7 @@ func TestParentRunCancelNoClientNoteOnStream(t *testing.T) {
 		mockllm.TextTurn("parent: never reached"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	go func() {
 		<-park.started
@@ -526,7 +526,7 @@ func TestResumeWithinRunReRegistersAndIsCancellable(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var cancelOK bool
 	var cancelDone sync.WaitGroup
@@ -596,7 +596,7 @@ func TestStaleVerdictAfterCancelResumeDoesNotResolveNewAsk(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var oldAskID, newAskID string
 	asks := 0

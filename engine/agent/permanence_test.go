@@ -35,7 +35,7 @@ func TestRunPermanentProviderErrorMarkedOnResult(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "test"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "test"}))
 	res := lastResult(t, evs)
 
 	if res.Stop != session.StopError {
@@ -63,7 +63,7 @@ func TestRunTransientErrorNotPermanent(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "test"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "test"}))
 	res := lastResult(t, evs)
 
 	if res.Stop != session.StopError {
@@ -88,7 +88,7 @@ func TestRunCleanStopNotPermanent(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "test"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "test"}))
 	res := lastResult(t, evs)
 
 	if res.Stop == session.StopError {
@@ -111,7 +111,7 @@ func TestRunChunkDoneStopErrorNotPermanent(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "test"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "test"}))
 	res := lastResult(t, evs)
 
 	if res.Stop != session.StopError {

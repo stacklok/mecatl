@@ -90,7 +90,7 @@ func TestSharedMergerSerializesAcrossReadParallelBatch(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drain(r)
 
 	if detector.overlap.Load() {

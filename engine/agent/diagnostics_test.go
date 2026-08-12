@@ -152,7 +152,7 @@ func TestRunDiagnosticsCarrySessionKey(t *testing.T) {
 		Diagnostics: diag,
 	})
 	sess := session.New("sess-A", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "edit a.go"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	records := diag.snapshot()
 	if len(records) == 0 {
@@ -189,7 +189,7 @@ func TestChildRunDiagnosticsCarryAgentRole(t *testing.T) {
 		Role:        "member:explorer",
 	})
 	sess := session.New("sess-child", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "edit a.go"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	records := diag.snapshot()
 	if len(records) == 0 {
@@ -248,7 +248,7 @@ func (denyThenDoneProvider) Stream(_ context.Context, req port.LLMRequest) (iter
 // captured line ever carries the OTHER run's session id. This is the test that
 // catches a regression to construction-time binding — a single shared engine bound
 // once at construction could only ever stamp ONE session id, so a second run on it
-// would mis-tag (or panic). The per-run With binding in RunContent is what makes
+// would mis-tag (or panic). The per-run With binding in Engine.Run is what makes
 // this hold.
 //
 // It runs the reuse BOTH sequentially (the minimum that catches construction-time
@@ -275,7 +275,7 @@ func TestRunDiagnosticsNoCrossTag(t *testing.T) {
 		sessY := session.New("sess-Y", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 
 		drive := func(s *session.Session) {
-			drain(eng.Run(context.Background(), s, memfs.NewWorkspace("/ws"), "edit a.go"))
+			drain(eng.Run(context.Background(), s, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "edit a.go"}))
 		}
 		if concurrent {
 			var wg sync.WaitGroup
@@ -331,7 +331,7 @@ func TestCompactionFailureEmitsWarn(t *testing.T) {
 	})
 	sess := session.New("sess-compact", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // far over the threshold
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), bigPrompt))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: bigPrompt}))
 
 	// The run still completes cleanly (uncompacted): no compaction event, clean stop.
 	if containsType(evs, session.EvCompaction) {
@@ -378,7 +378,7 @@ func TestPolicyDenyEmitsInfo(t *testing.T) {
 		Diagnostics: denyDiag,
 	})
 	sess := session.New("sess-deny", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "edit a.go"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	rec, ok := findMsg(denyDiag.snapshot(), "denied by policy")
 	if !ok {
@@ -420,7 +420,7 @@ func TestPolicyDenyEmitsInfo(t *testing.T) {
 		Diagnostics: allowDiag,
 	})
 	sess2 := session.New("sess-allow", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	drain(e2.Run(context.Background(), sess2, memfs.NewWorkspace("/ws"), "edit a.go"))
+	drain(e2.Run(context.Background(), sess2, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	if len(allowDiag.snapshot()) != 0 {
 		t.Fatalf("allow-all run emitted %d diagnostics lines, want 0 (allow/ask must not double-log)", len(allowDiag.snapshot()))

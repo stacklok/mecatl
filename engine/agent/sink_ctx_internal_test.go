@@ -65,10 +65,10 @@ func TestEngineEmitForwardsRunCtxToSink(t *testing.T) {
 	})
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 
-	// RunContent wraps ctx in context.WithCancel but PRESERVES values, so the
+	// Engine.Run wraps ctx in context.WithCancel but PRESERVES values, so the
 	// marker must survive into the sink if the run forwards its own ctx.
 	ctx := context.WithValue(context.Background(), ctxMarkerKey{}, "from-request")
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), RunRequest{Text: "go"})
 	for range r.Events() { //nolint:revive // drain to completion
 	}
 

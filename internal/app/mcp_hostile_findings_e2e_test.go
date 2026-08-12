@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
@@ -127,7 +128,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 20}, time.Now())
-	run := res.Engine.RunContent(context.Background(), sess, memfs.NewWorkspace("/ws"), "go", nil)
+	run := res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 
 	results := make(map[string]session.ToolResult)
 	for ev := range run.Events() {

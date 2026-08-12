@@ -45,7 +45,7 @@ func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (stri
 	// A tool-less in-memory session under the zero (headless) child posture: the
 	// checker scores text and calls no tools, so judgeWorkspace{} keeps it isolated
 	// and its own (non-existent) asks auto-deny — no nesting, no surfacing.
-	run := engine.Run(ctx, sess, judgeWorkspace{}, prompt)
+	run := engine.Run(ctx, sess, judgeWorkspace{}, RunRequest{Text: prompt})
 	final, stop := drainChild(run, childPosture{role: "guardrail-checker"})
 	if stop == session.StopError || stop == session.StopCancelled {
 		return "", fmt.Errorf("guardrail checker run did not complete (stop %q)", stop)

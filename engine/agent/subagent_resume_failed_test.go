@@ -250,7 +250,7 @@ func TestParentResumesFailedSubagentByTrailerID(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, subTool)})
-	evs := drain(e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	var results []*session.ToolResult
 	for _, ev := range evs {

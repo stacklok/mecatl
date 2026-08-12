@@ -92,7 +92,7 @@ func driveGuardrailAsk(t *testing.T, hooks *hookApprovalStub, interactive bool, 
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks, Interactive: interactive})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	for ev := range r.Events() {
 		evs = append(evs, ev)
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ask == nil {
@@ -201,7 +201,7 @@ func TestGuardrailAskPostApprovalIgnored(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: stub, Interactive: true})
-	evs := drain(e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 	for _, ev := range evs {
 		if ev.Type == session.EvPermissionAsk {
 			t.Fatal("a PostToolUse AskApproval must NOT surface a permission ask (PreToolUse-only scope)")
@@ -240,7 +240,7 @@ func TestGuardrailAskAllowAlwaysArmsWaiver(t *testing.T) {
 	llm1 := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
 	sess := newSession(t, session.Limits{})
 	e1 := newEngine(agent.Deps{LLM: llm1, Catalog: cat1, Hooks: learner, Interactive: true})
-	r1 := e1.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r1 := e1.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	var firstAsk bool
 	for ev := range r1.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -270,7 +270,7 @@ func TestGuardrailAskAllowAlwaysArmsWaiver(t *testing.T) {
 	cat2 := catalogWith(t, bashGuardTool(&ran2))
 	llm2 := mockllm.New(mockllm.ToolCallTurn(toolCall("c2", "Bash", `{"command":"gh pr merge"}`)), mockllm.TextTurn("done"))
 	e2 := newEngine(agent.Deps{LLM: llm2, Catalog: cat2, Hooks: learner, Interactive: true})
-	r2 := e2.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r2 := e2.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	var secondAsk bool
 	for ev := range r2.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -298,7 +298,7 @@ func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: stub, Interactive: true})
 
 	// Drive to the awaiting ask, snapshot, then cancel (process death).
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	var askID string
 	var snap sessnap.Snapshot
 	var snapErr error
@@ -361,7 +361,7 @@ func TestGuardrailAskResumeAllowAlwaysDoesNotReArm(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: learner, Interactive: true})
 
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	var askID string
 	var snap sessnap.Snapshot
 	for ev := range r.Events() {
@@ -413,7 +413,7 @@ func TestGuardrailAskResumePolicyAskRefinedBlockFailsSafe(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: stub, Policy: policy, Interactive: true})
 
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	var askID string
 	var snap sessnap.Snapshot
 	for ev := range r.Events() {

@@ -1101,7 +1101,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	// child's goroutine outlives its dispatch slot and may emit subagent.tool/end
 	// while the loop is terminating — safeEmit makes a post-seal emit a silent
 	// no-op (never a send-on-closed-channel panic) and an in-drain emit a
-	// give-up-at-seal send (Run.emitOrAbort, bound in RunContentWith), which
+	// give-up-at-seal send (Run.emitOrAbort, bound in Engine.Run), which
 	// still sequences + sink-mirrors a delivered event exactly like e.emit.
 	emit := func(ev session.Event) {
 		ev.Turn = turnIdx
@@ -1131,7 +1131,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 
 // parentCaps builds the parent-capability bundle threaded into a subagent-spawning
 // tool (childCapableTool). It exposes the parent run's interactivity (a non-nil router
-// ⇔ an interactive engine installed one in RunContent) plus the register-then-emit
+// ⇔ an interactive engine installed one in Engine.Run) plus the register-then-emit
 // surface seam: surfaceAsk registers the child Run in this parent's router and then
 // emits a REDACTED parent EvPermissionAsk for the child's ask, so the existing client
 // approval UI + ResumeApproval→Run.Approve routing resolve it and the verdict routes
@@ -1173,7 +1173,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// branch only. The breaker mutex is held across the whole Review, deliberately
 	// SERIALIZING reviews within the run (deterministic consecutive-failure
 	// semantics; a concurrent child fan-out cannot multiply reviewer spend). The
-	// askReview-non-nil pairing is guaranteed by RunContentWith (created iff the
+	// askReview-non-nil pairing is guaranteed by Engine.Run (created iff the
 	// reviewer is wired); the double check is belt-and-braces for a Run built
 	// outside it (unit tests).
 	if e.deps.ChildAskReviewer != nil && r.askReview != nil {
@@ -1225,7 +1225,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// classification, SERIALIZING classifications within the run (deterministic
 	// consecutive-miss semantics; a concurrent Subagent fan-out cannot multiply
 	// classifier spend). The router-non-nil ⇔ breaker pairing is guaranteed by
-	// RunContentWith (the breaker is created iff the router is wired); the double check
+	// Engine.Run (the breaker is created iff the router is wired); the double check
 	// is belt-and-braces for a Run built outside it (unit tests). FAIL-SOFT throughout:
 	// any miss (classifier failure, unknown category, breaker open) returns ok=false and
 	// the caller inherits the default explorer model.
@@ -1592,7 +1592,7 @@ func ptr(v session.ToolResult) *session.ToolResult {
 // the namespace) — don't change the PREFIX without updating that consumer.
 //
 // The trailing discriminator component is a SUFFIX (so the consumed prefix
-// contract is untouched): it is the host-supplied RunOptions.AskIDDiscriminator
+// contract is untouched): it is the host-supplied RunRequest.AskIDDiscriminator
 // when set (a durable, cross-process-reconstructable value — ADR-0044), else the
 // process-global "r<serial>" fallback resolved in startRun. Either way it makes
 // two RUNS of the same session mint disjoint askIDs: without it, cancel a parked
@@ -1601,7 +1601,7 @@ func ptr(v session.ToolResult) *session.ToolResult {
 // ResumeApproval for the RETRACTED ask resolve the NEW one (CWE-863). The serial
 // guarantees disjointness automatically; a host-supplied discriminator inherits
 // the SAME guarantee via the host contract (unique-per-attempt AND
-// stable-per-attempt-across-processes — see RunOptions.AskIDDiscriminator), so a
+// stable-per-attempt-across-processes — see RunRequest.AskIDDiscriminator), so a
 // replayed old verdict dies as an unknown-ask no-op.
 func newAskID(id session.SessionID, n int, callID session.ToolCallID, discriminator string) string {
 	return fmt.Sprintf("%s:%d:%s:%s", id, n, callID, discriminator)

@@ -67,7 +67,7 @@ func BenchmarkRunReadOnlyTurn(b *testing.B) {
 		// script so each iteration replays the same scripted turns.
 		llm.Reset()
 		sess := benchSession()
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "look at a.go")
+		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "look at a.go"})
 		sinkEvents = drain(r)
 	}
 }
@@ -108,7 +108,7 @@ func BenchmarkRunReadParallelTurn(b *testing.B) {
 		// BenchmarkRunReadOnlyTurn: a session is a one-shot state machine.
 		llm.Reset()
 		sess := benchSession()
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "read four files")
+		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "read four files"})
 		sinkEvents = drain(r)
 	}
 }
@@ -144,7 +144,7 @@ func BenchmarkRunMutatingTurn(b *testing.B) {
 		// BenchmarkRunReadOnlyTurn: a session is a one-shot state machine.
 		llm.Reset()
 		sess := benchSession()
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "write a.go")
+		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "write a.go"})
 		sinkEvents = drain(r)
 	}
 }

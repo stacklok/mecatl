@@ -72,7 +72,7 @@ func RunScenario(ctx context.Context, provider port.LLMProvider, model string) (
 		time.Now(),
 	)
 
-	run := engine.Run(ctx, sess, ws, "Read greeting.txt and then save a note, then summarize.")
+	run := engine.Run(ctx, sess, ws, agent.RunRequest{Text: "Read greeting.txt and then save a note, then summarize."})
 
 	var events []session.Event
 	for ev := range run.Events() {
@@ -293,7 +293,7 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 		time.Now(),
 	)
 	run := engine.Run(ctx, sess, memfs.NewWorkspace(demoWorkspaceRoot),
-		"Verify the greeting in the background, then report.")
+		agent.RunRequest{Text: "Verify the greeting in the background, then report."})
 
 	var events []session.Event
 	for ev := range run.Events() {

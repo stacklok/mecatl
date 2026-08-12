@@ -419,7 +419,7 @@ func TestParentDiscoversBranchIDFromResultAndInspects(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	// 1. The Parallel result must surface a discoverable branch id.
 	parBody, parErr, ok := toolResultForName(evs, "Parallel")

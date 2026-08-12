@@ -62,7 +62,7 @@ func runBackgroundSubagents(ctx context.Context) int {
 
 	sess := scenarioSession("perf-background",
 		session.Limits{MaxTurns: 8, MaxToolCalls: backgroundChildren + 8, MaxConsecutiveFailures: 3})
-	r := engine.Run(ctx, sess, scenarioWorkspace(), "verify every slice in the background, then report")
+	r := engine.Run(ctx, sess, scenarioWorkspace(), agent.RunRequest{Text: "verify every slice in the background, then report"})
 	return drain(r)
 }
 

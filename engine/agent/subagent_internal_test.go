@@ -53,7 +53,7 @@ func TestSurfaceAskAttribution(t *testing.T) {
 				children:  newChildRunRegistry(),
 			}
 			// The surfaced ask now rides the registry's guarded emit (A4c); bind it
-			// to this run's channel the way RunContentWith does.
+			// to this run's channel the way Engine.Run does.
 			r.children.emit = func(ev session.Event) { r.emitOrAbort(ev, r.children.emitAbort) }
 			caps := e.parentCaps(r, nil, 0)
 			if caps.surfaceAsk == nil {
@@ -148,60 +148,60 @@ func TestTightenTeamTokenBudget(t *testing.T) {
 	}
 }
 
-// TestBuildSubagentRunOptionsFloor is the focused unit test for the per-call token budget
-// floor: buildSubagentRunOptions must clamp a positive value below MinSubagentRunTokens up
+// TestBuildSubagentRunRequestFloor is the focused unit test for the per-call token budget
+// floor: buildSubagentRunRequest must clamp a positive value below MinSubagentRunTokens up
 // to MinSubagentRunTokens, pass through values at or above the floor unchanged, and leave
 // a zero/absent budget as zero (inherit/unlimited — never raised to the floor).
-func TestBuildSubagentRunOptionsFloor(t *testing.T) {
+func TestBuildSubagentRunRequestFloor(t *testing.T) {
 	ptr := func(n int) *int { return &n }
 
 	tests := []struct {
-		name     string
-		args     subagentArgs
-		wantOpts int // want MaxRunTokensOverride; 0 = unset (inherit)
+		name         string
+		args         subagentArgs
+		wantOverride int // want MaxRunTokensOverride; 0 = unset (inherit)
 	}{
 		{
-			name:     "below floor is raised to MinSubagentRunTokens",
-			args:     subagentArgs{Prompt: "p", MaxRunTokens: ptr(6_000)},
-			wantOpts: MinSubagentRunTokens,
+			name:         "below floor is raised to MinSubagentRunTokens",
+			args:         subagentArgs{Prompt: "p", MaxRunTokens: ptr(6_000)},
+			wantOverride: MinSubagentRunTokens,
 		},
 		{
-			name:     "value of 1 is raised to MinSubagentRunTokens",
-			args:     subagentArgs{Prompt: "p", MaxRunTokens: ptr(1)},
-			wantOpts: MinSubagentRunTokens,
+			name:         "value of 1 is raised to MinSubagentRunTokens",
+			args:         subagentArgs{Prompt: "p", MaxRunTokens: ptr(1)},
+			wantOverride: MinSubagentRunTokens,
 		},
 		{
-			name:     "exact floor value passes through unchanged",
-			args:     subagentArgs{Prompt: "p", MaxRunTokens: ptr(MinSubagentRunTokens)},
-			wantOpts: MinSubagentRunTokens,
+			name:         "exact floor value passes through unchanged",
+			args:         subagentArgs{Prompt: "p", MaxRunTokens: ptr(MinSubagentRunTokens)},
+			wantOverride: MinSubagentRunTokens,
 		},
 		{
-			name:     "above floor passes through unchanged",
-			args:     subagentArgs{Prompt: "p", MaxRunTokens: ptr(MinSubagentRunTokens + 10_000)},
-			wantOpts: MinSubagentRunTokens + 10_000,
+			name:         "above floor passes through unchanged",
+			args:         subagentArgs{Prompt: "p", MaxRunTokens: ptr(MinSubagentRunTokens + 10_000)},
+			wantOverride: MinSubagentRunTokens + 10_000,
 		},
 		{
-			name:     "zero is unset (inherit) — not raised to floor",
-			args:     subagentArgs{Prompt: "p", MaxRunTokens: ptr(0)},
-			wantOpts: 0,
+			name:         "zero is unset (inherit) — not raised to floor",
+			args:         subagentArgs{Prompt: "p", MaxRunTokens: ptr(0)},
+			wantOverride: 0,
 		},
 		{
-			name:     "nil is unset (inherit) — not raised to floor",
-			args:     subagentArgs{Prompt: "p"},
-			wantOpts: 0,
+			name:         "nil is unset (inherit) — not raised to floor",
+			args:         subagentArgs{Prompt: "p"},
+			wantOverride: 0,
 		},
 		{
-			name:     "deprecated max_tokens below floor is also raised",
-			args:     subagentArgs{Prompt: "p", MaxTokens: ptr(100)},
-			wantOpts: MinSubagentRunTokens,
+			name:         "deprecated max_tokens below floor is also raised",
+			args:         subagentArgs{Prompt: "p", MaxTokens: ptr(100)},
+			wantOverride: MinSubagentRunTokens,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			opts, _, _ := buildSubagentRunOptions(tc.args, false, resumePosture{}, "")
-			if opts.MaxRunTokensOverride != tc.wantOpts {
-				t.Fatalf("buildSubagentRunOptions(%+v) MaxRunTokensOverride = %d, want %d",
-					tc.args, opts.MaxRunTokensOverride, tc.wantOpts)
+			req, _, _ := buildSubagentRunRequest(tc.args, false, resumePosture{}, "")
+			if req.MaxRunTokensOverride != tc.wantOverride {
+				t.Fatalf("buildSubagentRunRequest(%+v) MaxRunTokensOverride = %d, want %d",
+					tc.args, req.MaxRunTokensOverride, tc.wantOverride)
 			}
 		})
 	}
@@ -248,7 +248,7 @@ func TestDriveChildStructuredPlainTextExhaustsToCleanTerminal(t *testing.T) {
 	call := session.NewToolCall("c1", subagentToolName, nil)
 
 	_, stop, _, _, _ := driveChild(context.Background(), engine, child, ws,
-		"profile someone", RunOptions{ExtraTools: []tool.Tool{submit}},
+		"profile someone", RunRequest{ExtraTools: []tool.Tool{submit}},
 		nil, call, childID, childPosture{}, submit, schema)
 
 	if stop != session.StopStructuredOutput {
@@ -273,7 +273,99 @@ func TestDriveChildStructuredPlainTextExhaustsToCleanTerminal(t *testing.T) {
 	}
 }
 
-// TestSubmitResultOverlayWinsAndIsAdvertised is the focused RunOptions overlay test (QA
+// TestDriveChildStructuredRetryPreservesMaxRunTokensOverride pins the RunRequest
+// copy in driveChild's structured-output retry loop. Each plain-text attempt spends
+// 150 tokens without calling SubmitResult. The per-call 250-token ceiling must survive
+// the correction re-drives, so the third attempt stops at its first boundary after two
+// model calls. Reconstructing the retry request from scratch drops the override, consumes
+// the third scripted turn, and ends StopStructuredOutput instead.
+func TestDriveChildStructuredRetryPreservesMaxRunTokensOverride(t *testing.T) {
+	const budget = 250
+	attempt := func(text string) mockllm.Turn {
+		return mockllm.ChunksTurn(
+			mockllm.TextChunk(text),
+			mockllm.UsageChunk(session.Usage{InputTokens: 90, OutputTokens: 60}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		)
+	}
+	llm := mockllm.New(attempt("miss one"), attempt("miss two"), attempt("must not run"))
+	engine := NewEngine(Deps{
+		LLM:     llm,
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "child-model",
+	})
+	ws := memfs.NewWorkspace("/ws")
+	childID := session.SessionID("subagent-budget-copy")
+	child := session.New(childID, session.ModeDefault, ws.Root(), session.Limits{}, time.Now())
+	schema := json.RawMessage(`{"type":"object","required":["answer"]}`)
+	submit := newSubmitResultTool(schema)
+	call := session.NewToolCall("c-budget-copy", subagentToolName, nil)
+
+	_, stop, _, usage, _ := driveChild(context.Background(), engine, child, ws,
+		"return structured output",
+		RunRequest{MaxRunTokensOverride: budget, ExtraTools: []tool.Tool{submit}},
+		nil, call, childID, childPosture{}, submit, schema)
+
+	if stop != session.StopBudget {
+		t.Fatalf("driveChild stop = %q, want %q (retry must preserve the per-call ceiling)", stop, session.StopBudget)
+	}
+	if got := llm.Calls(); got != 2 {
+		t.Fatalf("child made %d model calls, want 2 (third retry must stop at the preserved budget)", got)
+	}
+	if got := usage.TotalTokens(); got != 300 {
+		t.Fatalf("driveChild usage = %d, want 300 accumulated across two attempts", got)
+	}
+}
+
+// TestSalvageEmptyStopPreservesMaxRunTokensOverride pins the same request-copy
+// discipline on the free-text salvage path. The working turn reaches MaxTurns after
+// spending above the per-call ceiling. Because non-budget stops deliberately preserve
+// session usage, the salvage request must retain that ceiling and stop before consuming
+// its scripted summary. Rebuilding the salvage request without the override runs it.
+func TestSalvageEmptyStopPreservesMaxRunTokensOverride(t *testing.T) {
+	const budget = 250
+	llm := mockllm.New(
+		mockllm.ChunksTurn(
+			mockllm.ToolCallChunk(session.NewToolCall("k1", "Read", json.RawMessage(`{}`))),
+			mockllm.UsageChunk(session.Usage{InputTokens: 180, OutputTokens: 120}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+		mockllm.TextTurn("SALVAGE MUST NOT RUN"),
+	)
+	readTool := &fakeOverlayTool{name: "Read", schema: json.RawMessage(`{"type":"object"}`)}
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(readTool)
+	engine := NewEngine(Deps{
+		LLM:     llm,
+		Catalog: catalog,
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "child-model",
+	})
+	ws := memfs.NewWorkspace("/ws")
+	childID := session.SessionID("subagent-salvage-budget-copy")
+	child := session.New(childID, session.ModeDefault, ws.Root(), session.Limits{MaxTurns: 1}, time.Now())
+	call := session.NewToolCall("c-salvage-copy", subagentToolName, nil)
+
+	final, stop, _, usage, _ := driveChild(context.Background(), engine, child, ws,
+		"investigate", RunRequest{MaxRunTokensOverride: budget},
+		nil, call, childID, childPosture{}, nil, nil)
+
+	if stop != session.StopMaxTurns {
+		t.Fatalf("driveChild stop = %q, want %q", stop, session.StopMaxTurns)
+	}
+	if got := llm.Calls(); got != 1 {
+		t.Fatalf("child made %d model calls, want 1 (salvage must retain the spent per-call ceiling)", got)
+	}
+	if strings.Contains(final, "SALVAGE MUST NOT RUN") {
+		t.Fatalf("salvage ran after dropping the per-call override: %q", final)
+	}
+	if got := usage.TotalTokens(); got != 300 {
+		t.Fatalf("driveChild usage = %d, want 300 from the working turn only", got)
+	}
+}
+
+// TestSubmitResultOverlayWinsAndIsAdvertised is the focused RunRequest overlay test (QA
 // SHOULD #6): a run-scoped ExtraTool whose name COLLIDES with a catalog tool of the same
 // name must (a) win via lookupTool (overlay-first resolution) and (b) be advertised by
 // buildRequest with the OVERLAY's spec, so the advertised set and dispatch resolution
@@ -292,7 +384,7 @@ func TestSubmitResultOverlayWinsAndIsAdvertised(t *testing.T) {
 
 	overlaySchema := json.RawMessage(`{"type":"object","title":"OVERLAY"}`)
 	submit := newSubmitResultTool(overlaySchema)
-	r := &Run{opts: RunOptions{ExtraTools: []tool.Tool{submit}}, diag: engine.deps.Diagnostics}
+	r := &Run{req: RunRequest{ExtraTools: []tool.Tool{submit}}, diag: engine.deps.Diagnostics}
 
 	// (a) lookupTool resolves the OVERLAY, not the catalog decoy.
 	got, ok := engine.lookupTool(r, submitResultToolName)

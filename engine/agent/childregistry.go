@@ -165,7 +165,7 @@ type childRunRegistry struct {
 	// aborts and releases emitMu rather than deadlocking seal. Run.emitOrAbort
 	// selects on it alongside the send.
 	emitAbort chan struct{}
-	// emit publishes an event toward the parent Run's stream. RunContentWith binds
+	// emit publishes an event toward the parent Run's stream. Engine.Run binds
 	// it to Run.emitOrAbort (+ the sink mirror): a BLOCKING send (loop-style
 	// backpressure; a cancelled run's in-flight child events still reach the
 	// draining consumer) that gives up only when emitAbort closes (seal), so a
@@ -175,7 +175,7 @@ type childRunRegistry struct {
 	// silently drops.
 	emit func(session.Event)
 	// unregisterAsk is the ANSWERED-vs-PENDING gate for ask retraction: bound by
-	// RunContentWith (alongside emit) to Run.unregisterChildAsk (the parent run's
+	// Engine.Run (alongside emit) to Run.unregisterChildAsk (the parent run's
 	// childAskRouter.unregister), it reports whether the askID was still
 	// registered (pending) and removed. route() deletes an answered ask's entry,
 	// so false means the verdict already resolved the ask (or it never surfaced)
@@ -763,7 +763,7 @@ func snapshotAsksLocked(e *childEntry) []string {
 // route() already deletes an answered ask's, so a stale already-answered id
 // fails the gate and emits nothing (no spurious retract racing a just-delivered
 // verdict). An UNBOUND registry (nil unregisterAsk — unit tests that never ran
-// RunContentWith) skips the retracts entirely, never panics. NO registry lock
+// Engine.Run) skips the retracts entirely, never panics. NO registry lock
 // is held here — the mu-never-across-a-send rule; see retractAsksVia for the
 // {sealed-check, unregister, emit} atomic section and its lock order. Each
 // retract is a guarded send that gives up on emitAbort/hardAbort like every
@@ -775,7 +775,7 @@ func (g *childRunRegistry) retractAsks(askIDs []string) {
 // retractAsksVia is retractAsks' core with an EXPLICIT gate: Run.CancelChild
 // passes its own Run.unregisterChildAsk method value so the unregister-BEFORE-
 // emit ordering holds even on a Run whose registry was built outside
-// RunContentWith (the binding and the method are the same function in
+// Engine.Run (the binding and the method are the same function in
 // production). A nil gate skips entirely (do-not-retract, fail-safe); a nil
 // EMIT likewise leaves the gate unconsumed — an unbound registry must not eat
 // the router entry it can never announce.

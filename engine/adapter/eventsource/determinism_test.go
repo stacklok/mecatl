@@ -77,7 +77,7 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 
 	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), "look at a.go")
+	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "look at a.go"})
 
 	// Mimic the relay: append EVERY observed event to the durable log in order.
 	for ev := range r.Events() {

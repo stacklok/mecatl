@@ -58,7 +58,7 @@ func TestWebSearchModelFacingE2E(t *testing.T) {
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ws := memfs.NewWorkspace("/ws")
 
-	r := e.Run(context.Background(), sess, ws, "find the go 1.26 release notes")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "find the go 1.26 release notes"})
 	var evs []session.Event
 	for ev := range r.Events() {
 		evs = append(evs, ev)

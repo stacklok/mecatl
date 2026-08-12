@@ -112,7 +112,7 @@ func TestTeamToolFormsTeamAndIsolatesContent(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "fix the bug")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix the bug"})
 	evs := drain(r)
 
 	// --- team.start: roster the model formed -------------------------------
@@ -322,7 +322,7 @@ func TestTeamToolStreamsTaskSnapshots(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "fix the bug")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix the bug"})
 	evs := drain(r)
 
 	// Collect the task-snapshot projections (the first-class team.tasks event).
@@ -398,7 +398,7 @@ func TestTeamFindingsProjectedOnChangeAndOnEnd(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var snapshots [][]session.TeamFindingSnapshot
@@ -486,7 +486,7 @@ func teamResultContent(t *testing.T, leadSynthesis string) string {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate the auth path")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate the auth path"})
 	evs := drain(r)
 
 	var results []*session.ToolResult
@@ -599,7 +599,7 @@ func TestTeamEndCarriesMemberDispositions(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var end *session.TeamPayload
@@ -661,7 +661,7 @@ func TestTeamFindingsBodyClamped(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "g"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "g"}))
 
 	for _, ev := range evs {
 		if ev.Type == session.EvTeamFindings && len(ev.Team.Findings) > 0 {
@@ -695,7 +695,7 @@ func TestMemberSessionIDRoundTripsTeamToolPath(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"}))
 
 	// Capture the EXACT published team id off EvTeamStart — the value a parent (or a
 	// human) would feed back into InspectMember.
@@ -951,7 +951,7 @@ func TestTeamMemberResultCarriesCauseOnStopError(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var resultCauses []string
@@ -1016,7 +1016,7 @@ func TestTeamMemberResultNoCauseOnCleanStop(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	for _, ev := range evs {
@@ -1051,7 +1051,7 @@ func TestTeamRetriedMemberSurfacesCauseEachFailedRound(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var resultCauses []string

@@ -14,9 +14,7 @@
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, ws tool.Workspace, askID string, verdict session.ApprovalVerdict) *Run
-    method func (*Engine).Run(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string) *Run
-    method func (*Engine).RunContent(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content) *Run
-    method func (*Engine).RunContentWith(ctx context.Context, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content, opts RunOptions) *Run
+    method func (*Engine).Run(ctx context.Context, sess *session.Session, ws tool.Workspace, req RunRequest) *Run
     method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
     method func (*InspectMemberTool).ReadOnly() bool
     method func (*InspectMemberTool).Spec() tool.ToolSpec
@@ -216,7 +214,7 @@ type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
 type Run struct{}
-type RunOptions struct{MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
+type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
 type SessionOriginScheduleManager struct{}

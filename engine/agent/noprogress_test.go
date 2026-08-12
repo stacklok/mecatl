@@ -64,7 +64,7 @@ func TestNoProgressTurnNudgesThenProgresses(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "do the task"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "do the task"}))
 
 	// The run did NOT terminate at the empty turn: all three scripted turns ran.
 	if got := llm.Calls(); got != 3 {
@@ -107,7 +107,7 @@ func TestNoProgressReasoningOnlyPreservesBlob(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "go"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 2 {
 		t.Fatalf("model calls = %d, want 2 (reasoning-only turn must be nudged)", got)
@@ -143,7 +143,7 @@ func TestNoProgressBoundedThenTerminatesClearly(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "go"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "go"}))
 
 	// Exactly cap+1 model calls: the initial turn plus one per nudge, then give up.
 	if got := llm.Calls(); got != nudgeBudget+1 {
@@ -209,7 +209,7 @@ func TestEmptyTurnWithTerminalStopNotNudged(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: 2})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 1 {
 		t.Fatalf("model calls = %d, want 1 (a real terminal stop must NOT be nudged)", got)
@@ -243,7 +243,7 @@ func TestEmptyTurnWithNonErrorTerminalStopSurfaced(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: 2})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 1 {
 		t.Fatalf("model calls = %d, want 1 (a non-benign stop must NOT be nudged)", got)
@@ -271,7 +271,7 @@ func TestWhitespaceOnlyTextIsNoProgress(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: 2})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	if !containsType(evs, session.EvNoProgress) {
 		t.Fatalf("whitespace-only text must be treated as no-progress (nudged); types=%v", typesOf(evs))
@@ -299,7 +299,7 @@ func TestEmptyTextWithToolCallNotNudged(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, read), MaxNoProgressNudges: 2})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	if containsType(evs, session.EvNoProgress) {
 		t.Fatalf("a turn WITH a tool call must never enter the no-progress path; types=%v", typesOf(evs))
@@ -318,7 +318,7 @@ func TestNoProgressReopenRecoverable(t *testing.T) {
 	llm := mockllm.New(mockllm.EmptyTurn(), mockllm.EmptyTurn(), mockllm.EmptyTurn())
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: 2})
 	sess := newSession(t, session.Limits{})
-	_ = drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	_ = drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 	if sess.State != session.StateCompleted {
 		t.Fatalf("state = %q, want completed", sess.State)
 	}
@@ -334,7 +334,7 @@ func TestMeaningfulTextStillTerminatesImmediately(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hello"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hello"}))
 
 	if got := llm.Calls(); got != 1 {
 		t.Fatalf("model calls = %d, want 1 (a real answer must terminate immediately)", got)
@@ -354,7 +354,7 @@ func TestNoProgressDisabledTerminatesImmediately(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: -1})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 1 {
 		t.Fatalf("model calls = %d, want 1 (nudging disabled)", got)
@@ -378,7 +378,7 @@ func TestNoProgressBoundedByMaxTurns(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: 99})
 	sess := newSession(t, session.Limits{MaxTurns: 2})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got > 2 {
 		t.Fatalf("model calls = %d, want <= 2 (MaxTurns bounds the nudge loop)", got)
@@ -406,7 +406,7 @@ func TestUnknownToolEmitsCardBeforeResult(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, read)})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	var cardIdx, resultIdx = -1, -1
 	for i, ev := range evs {
@@ -464,7 +464,7 @@ func TestGraduatedNudgeGentleThenExtractive(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "go"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 3 {
 		t.Fatalf("model calls = %d, want 3 (initial + gentle nudge + extractive nudge, then give up)", got)
@@ -515,7 +515,7 @@ func TestGraduatedNudgeRescue(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "go"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 3 {
 		t.Fatalf("model calls = %d, want 3 (the extractive nudge gets one more turn, which answers)", got)
@@ -553,7 +553,7 @@ func TestGraduatedNudgeCapOneIsExtractive(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "go"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "go"}))
 
 	if got := llm.Calls(); got != 2 {
 		t.Fatalf("model calls = %d, want 2 (initial + one extractive nudge, then give up)", got)
@@ -578,7 +578,7 @@ func TestGraduatedNudgeFinalAdvisoryText(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), MaxNoProgressNudges: 2})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	var gentle, final, terminal, other int
 	for _, ev := range evs {

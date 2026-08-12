@@ -244,7 +244,7 @@ func TestFullCycle(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	r := e.Run(context.Background(), sess, ws, "look at a.go")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "look at a.go"})
 	evs := drain(r)
 
 	if logger.calls != 1 {
@@ -312,7 +312,7 @@ func TestNilDiagnosticsRunsWithoutPanic(t *testing.T) {
 		Model:   "test-model",
 	})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "look at a.go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "look at a.go"})
 	evs := drain(r)
 
 	res := lastResult(t, evs)
@@ -344,7 +344,7 @@ func TestReasoningAndTurnEnd(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// reasoning.delta must be emitted, carrying the human-readable SUMMARY text
@@ -460,7 +460,7 @@ func TestPhaseThreadedOntoAssistantMessage(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drain(r)
 
 	var asst *session.Message
@@ -505,7 +505,7 @@ func TestReasoningItemIDThreadedOntoAssistantMessage(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	_ = drain(r)
 
 	var asst *session.Message
@@ -531,7 +531,7 @@ func TestReasoningItemIDThreadedOntoAssistantMessage(t *testing.T) {
 func TestTurnEndNoClock(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("hi"))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)}) // no Clock
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	if !containsType(evs, session.EvTurnEnd) {
@@ -576,7 +576,7 @@ func TestReadParallel(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	// Both bodies must enter before either is released → proves overlap.
 	<-bodies
@@ -610,7 +610,7 @@ func TestMutateSerial(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	drain(r)
 
 	if tracker.max() != 1 {
@@ -636,7 +636,7 @@ func TestPermissionApprove(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var ask *session.PendingAsk
 	var collected []session.Event
@@ -676,7 +676,7 @@ func TestPermissionDeny(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var denyResult *session.ToolResult
 	// Track the order of the c1 events: the card (EvToolCall) must open BEFORE the
@@ -734,7 +734,7 @@ func TestCancelMidStream(t *testing.T) {
 
 	e := newEngine(agent.Deps{LLM: blocking, Catalog: catalogWith(t)})
 	ctx := context.Background()
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	// Wait until the provider is streaming, then cancel.
 	<-blocking.started
@@ -792,7 +792,7 @@ func TestCancelMidToolThenResumeSucceeds(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	r := e.Run(context.Background(), sess, ws, "look at a.go")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "look at a.go"})
 	<-toolStarted
 	r.Cancel()
 	res := lastResult(t, drain(r))
@@ -822,7 +822,7 @@ func TestCancelMidToolThenResumeSucceeds(t *testing.T) {
 		),
 	)
 	e2 := newEngine(agent.Deps{LLM: llm2, Catalog: catalogWith(t, read)})
-	r2 := e2.Run(context.Background(), sess, ws, "second prompt")
+	r2 := e2.Run(context.Background(), sess, ws, agent.RunRequest{Text: "second prompt"})
 	res2 := lastResult(t, drain(r2))
 	if res2.Stop != session.StopEndTurn {
 		t.Fatalf("turn-2 stop = %q, want end_turn (not the cancelled wedge)", res2.Stop)
@@ -874,7 +874,7 @@ func TestCancelAwaitingApprovalThenResumeSucceeds(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	r := e.Run(context.Background(), sess, ws, "write a")
+	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "write a"})
 
 	// Drain events; when the run pauses on the ask, cancel WHILE awaiting (do not
 	// Approve/Deny). The cancel unblocks await() down the cancelled=true branch.
@@ -930,7 +930,7 @@ func TestCancelAwaitingApprovalThenResumeSucceeds(t *testing.T) {
 		),
 	)
 	e2 := newEngine(agent.Deps{LLM: llm2, Catalog: cat, Policy: policy})
-	r2 := e2.Run(context.Background(), sess, ws, "second prompt")
+	r2 := e2.Run(context.Background(), sess, ws, agent.RunRequest{Text: "second prompt"})
 	res2 := lastResult(t, drain(r2))
 	if res2.Stop != session.StopEndTurn {
 		t.Fatalf("turn-2 stop = %q, want end_turn (not the cancelled wedge)", res2.Stop)
@@ -972,7 +972,7 @@ func TestStopMaxTurns(t *testing.T) {
 	llm := mockllm.New(turns...)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, read)})
 	sess := newSession(t, session.Limits{MaxTurns: 3})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	res := lastResult(t, drain(r))
 	if res.Stop != session.StopMaxTurns {
 		t.Fatalf("stop = %q, want max_turns", res.Stop)
@@ -991,7 +991,7 @@ func TestStopMaxToolCalls(t *testing.T) {
 	llm := mockllm.New(turns...)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, read)})
 	sess := newSession(t, session.Limits{MaxToolCalls: 2})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	res := lastResult(t, drain(r))
 	if res.Stop != session.StopMaxToolCalls {
 		t.Fatalf("stop = %q, want max_tool_calls", res.Stop)
@@ -1010,7 +1010,7 @@ func TestStopMaxConsecutiveFailures(t *testing.T) {
 	llm := mockllm.New(turns...)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, failing)})
 	sess := newSession(t, session.Limits{MaxConsecutiveFailures: 2})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	res := lastResult(t, drain(r))
 	if res.Stop != session.StopMaxConsecutiveFailures {
 		t.Fatalf("stop = %q, want max_consecutive_failures", res.Stop)
@@ -1055,7 +1055,7 @@ func TestPreToolUseHookMutatesArgs(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, rec), Hooks: hooks})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var rewriteEv bool
 	for ev := range r.Events() {
@@ -1084,7 +1084,7 @@ func TestPreToolUseHookMutationMalformedIgnored(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, rec), Hooks: hooks})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var ignoredEv bool
 	for ev := range r.Events() {
@@ -1110,7 +1110,7 @@ func TestPreToolUseHookNoMutationKeepsArgs(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, rec), Hooks: hooks})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	drain(r)
 
 	if got := rec.args(); got != `{"path":"original.txt"}` {
@@ -1158,7 +1158,7 @@ func TestPostToolUseHookMutatesResult(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	logger := &recordingLogger{}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks, ToolCallRecorder: logger})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	evRes := toolResultEvent(evs)
@@ -1203,7 +1203,7 @@ func TestPostToolUseHookBlockLeavesResultUnchanged(t *testing.T) {
 	)
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	recRes := recordedToolResult(sess)
 	if recRes == nil || recRes.Content != "original output" || recRes.IsError {
@@ -1236,7 +1236,7 @@ func TestPostToolUseHookMutationMalformedIgnored(t *testing.T) {
 	)
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	recRes := recordedToolResult(sess)
 	if recRes == nil || recRes.Content != "original output" {
@@ -1267,7 +1267,7 @@ func TestPostToolUseHookNoMutationKeepsResult(t *testing.T) {
 	)
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	recRes := recordedToolResult(sess)
 	if recRes == nil || recRes.Content != "original output" || recRes.IsError {
@@ -1300,7 +1300,7 @@ func TestPostToolUseHookSeesPartsProjection(t *testing.T) {
 	)
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	in := hooks.input()
 	if in == nil {
@@ -1337,7 +1337,7 @@ func TestPostToolUseHookPartsEmptyUsesContent(t *testing.T) {
 	)
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	in := hooks.input()
 	if in == nil {
@@ -1385,7 +1385,7 @@ func TestAdvisoryHookEmitsEvHookAndLeavesResultUnchanged(t *testing.T) {
 	)
 	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// 1. An EvHook with HookAdvisory was emitted.
@@ -1430,7 +1430,7 @@ func TestUnknownToolError(t *testing.T) {
 		mockllm.TextTurn("recovered"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	res := lastResult(t, evs)
 	if res.Stop != session.StopEndTurn {
@@ -1452,7 +1452,7 @@ func TestSessionInitEmittedOncePerRunBeforeFirstTurn(t *testing.T) {
 			return session.NewToolResult(in.ID, "ok"), nil
 		}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, read)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// Exactly one session.init.

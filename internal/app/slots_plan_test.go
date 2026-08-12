@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -289,7 +290,7 @@ func TestPlanModeEngineSystemPromptContainsPlanApprovalContract(t *testing.T) {
 
 	// Drive a one-turn run to trigger buildRequest → prompt.Build → captured system.
 	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{MaxTurns: 1}, time.Now())
-	run := plan.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "plan a task", nil)
+	run := plan.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan a task", Parts: nil})
 	for range run.Events() {
 	}
 	if !invoked {
@@ -342,7 +343,7 @@ func TestDefaultModeEngineSystemPromptLacksPlanApprovalContract(t *testing.T) {
 	defer func() { _ = defEng.Close() }()
 
 	sess := session.New("s2", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
-	run := defEng.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "do something", nil)
+	run := defEng.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do something", Parts: nil})
 	for range run.Events() {
 	}
 	if capturedSystem == "" {

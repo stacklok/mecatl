@@ -216,7 +216,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, "go")
+	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
 
 	var sawSubagentResult bool
 	for ev := range run.Events() {
@@ -321,7 +321,7 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, "go")
+	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
@@ -393,7 +393,7 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, "go")
+	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		_ = ev // drain to completion; the child's lack of Bash is asserted via the probe
 	}
@@ -448,7 +448,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 6}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, "go")
+	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)

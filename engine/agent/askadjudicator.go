@@ -227,7 +227,7 @@ func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewReques
 		askReviewLimits,
 		a.engine.now(),
 	)
-	run := a.engine.Run(ctx, sess, judgeWorkspace{}, buildAskReviewPrompt(a.policy, req))
+	run := a.engine.Run(ctx, sess, judgeWorkspace{}, RunRequest{Text: buildAskReviewPrompt(a.policy, req)})
 	// Zero-capability posture: the reviewer is non-interactive and its own asks
 	// (it is tool-less, so none should exist) auto-deny — no nesting, no surfacing.
 	final, stop := drainChild(run, childPosture{role: "ask-reviewer"})

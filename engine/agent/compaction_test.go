@@ -860,7 +860,7 @@ func TestCompactionThroughLoopNeverOrphans(t *testing.T) {
 	})
 
 	sess := session.New("s-compact", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate the files")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate the files"})
 
 	var sawCompaction bool
 	for ev := range r.Events() {
@@ -945,7 +945,7 @@ func TestCarryoverSeededCompactsOnTurn0(t *testing.T) {
 		CompactionRatio: 0.8,
 	})
 
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "continue the task")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "continue the task"})
 	var sawCompaction bool
 	for ev := range r.Events() {
 		if ev.Type == session.EvCompaction {
@@ -1025,7 +1025,7 @@ func TestNilContextWindowDisablesCompaction(t *testing.T) {
 		t.Fatalf("nil-resolver ContextWindow() = %d, want 0 (disabled)", got)
 	}
 	sess := session.New("s-nilwin", session.ModeDefault, "/ws", session.Limits{MaxTurns: 2}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
 	for ev := range r.Events() {
 		if ev.Type == session.EvCompaction {
 			t.Fatalf("compaction fired with a nil ContextWindow resolver (must be disabled)")
@@ -1072,7 +1072,7 @@ func TestCompactionEmitsNonDestructiveArchive(t *testing.T) {
 	})
 
 	sess := session.New("s-archive", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "investigate the files")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate the files"})
 
 	compactions, archives := 0, 0
 	lastWasCompaction := false
@@ -1226,7 +1226,7 @@ func TestCompactionThroughLoopAbortsToOriginal(t *testing.T) {
 
 			sess := session.New("s-abort", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 			bigPrompt := strings.Repeat("word ", 200)
-			r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), bigPrompt)
+			r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: bigPrompt})
 
 			var sawCompaction, sawArchive bool
 			for ev := range r.Events() {
@@ -1303,7 +1303,7 @@ func TestCompactionTriggersAtThreshold(t *testing.T) {
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // ~250 tokens >> threshold of 8
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), bigPrompt)
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: bigPrompt})
 
 	var sawCompaction bool
 	for ev := range r.Events() {
@@ -1351,7 +1351,7 @@ func TestCompactionTriggerUsesInjectedCounter(t *testing.T) {
 			CompactionRatio: 0.8, // threshold = 80
 		})
 		sess := session.New("s", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "hi")
+		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
 		for range r.Events() {
 		}
 		return rc.called > 0, tc.calls

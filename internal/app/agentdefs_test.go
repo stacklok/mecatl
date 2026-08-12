@@ -351,7 +351,7 @@ func TestBuildAgentSubagentEnginesResolvedModelOnRequest(t *testing.T) {
 	})
 	r := e.Run(context.Background(),
 		session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)),
-		memfs.NewWorkspace("/ws"), "go")
+		memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	for range r.Events() {
 	}
 	if got := rec.lastModel(); got != "cheap-id" {

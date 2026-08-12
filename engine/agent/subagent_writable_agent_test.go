@@ -248,7 +248,7 @@ func TestSubagentWritableAgentNotIsolatedSkipsA2(t *testing.T) {
 	)
 	// newEngine ⇒ Interactive=false (headless): an unresolved ask auto-denies.
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {

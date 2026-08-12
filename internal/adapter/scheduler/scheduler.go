@@ -14,7 +14,7 @@
 // `internal/adapter/server.Service`, the loop NEVER imports `engine/agent` or
 // `internal/adapter/server`. The FireFunc seam is how composition injects the
 // run-entry funnel (Service.CreateSessionWithProfile + Service.StartRunContent
-// with subagent-grade RunOptions) in Phase 1f. A unit test supplies a stub
+// with subagent-grade RunRequest) in Phase 1f. A unit test supplies a stub
 // FireFunc that records fires.
 //
 // The loop reads `now` from an injected `port.Clock` (deterministic tests) and
@@ -41,7 +41,7 @@ import (
 // FireFunc is the composition-supplied callback a scheduler invokes for each
 // claimed fire. It mints a fresh session (the "sched--" top-level session per
 // fire, via Service.CreateSessionWithProfile + Service.StartRunContent with
-// subagent-grade RunOptions), drives it to terminal, and returns the fire
+// subagent-grade RunRequest), drives it to terminal, and returns the fire
 // record (stop reason + err). The scheduler records the fire outcome via
 // ScheduleStore.RecordFire. A non-nil error from FireFunc is recorded as a
 // failed fire (StopError); the at-most-once Claim already advanced

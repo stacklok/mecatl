@@ -172,7 +172,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	})
 	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), "think")
+	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "think"})
 	for ev := range r.Events() {
 		if err := log.Append(ctx, sessID, ev); err != nil {
 			t.Fatalf("append: %v", err)
@@ -354,7 +354,7 @@ func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {
 	})
 	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), "do work")
+	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do work"})
 	sawArchive := false
 	for ev := range r.Events() {
 		if ev.Type == session.EvCompactionArchive {

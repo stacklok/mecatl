@@ -14,9 +14,9 @@
 `NewEngine`, which supplies network-free defaults for every optional seam:
 `Compactor`→`HeuristicCompactor{}`, `CompactionRatio`→`0.8`,
 `TokenCounter`→`HeuristicTokenCounter{}`, `Instructions`→`prompt.RootAssembler{}`,
-`CommandExpander`→`prompt.NoopExpander{}`. `Engine.Run(ctx, sess, ws, userText)`
-returns a `*Run` handle immediately and drives the loop in a background
-goroutine; the `Run` exposes:
+`CommandExpander`→`prompt.NoopExpander{}`.
+`Engine.Run(ctx, sess, ws, RunRequest{Text: userText})` returns a `*Run` handle
+immediately and drives the loop in a background goroutine; the `Run` exposes:
 - `Events() <-chan session.Event` — the primary surface, closed exactly once
   when the run terminates.
 - `Approve(askID string, v session.ApprovalVerdict)` — resolves a
@@ -72,7 +72,7 @@ accumulated `session.Usage` (input + output; cache tokens excluded). Crossing
 it ends the run cleanly with `StopBudget` (a NON-error terminal → `completed`,
 Reopen-recoverable, mirroring `StopNoProgress`). Every child engine — Subagent,
 Parallel branch, team member, lead synthesis — inherits it; a per-call override
-(`RunOptions.MaxRunTokensOverride`, the Subagent `max_run_tokens` arg — `max_tokens`
+(`RunRequest.MaxRunTokensOverride`, the Subagent `max_run_tokens` arg — `max_tokens`
 is the deprecated alias for the same budget) may only
 **tighten** it. The team-aggregate counterpart is `--max-team-tokens` ([parallelism](parallelism.md)).
 

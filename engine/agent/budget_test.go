@@ -68,7 +68,7 @@ func TestBudgetTerminatesRunawayCleanly(t *testing.T) {
 	sess := newSession(t, session.Limits{}) // no turn/tool limits: the budget is the only brake
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "run forever"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "run forever"}))
 
 	res := lastResult(t, evs)
 	if res.Stop != session.StopBudget {
@@ -102,7 +102,7 @@ func TestBudgetDisabledByZero(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, loopTool()), MaxRunTokens: 0})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	res := lastResult(t, evs)
 	if res.Stop != session.StopEndTurn || res.Text != "done" {
@@ -129,7 +129,7 @@ func TestBudgetBoundaryCheckCompletesInFlightTurn(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, loopTool()), MaxRunTokens: budget})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "go"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
 
 	// Exactly ONE model call: the in-flight turn completed, the budget stopped before turn 2.
 	if got := llm.Calls(); got != 1 {
@@ -247,7 +247,7 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 	sess := newSession(t, session.Limits{}) // no turn/tool limits: the budget is the only brake
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, "delegate forever"))
+	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "delegate forever"}))
 
 	res := lastResult(t, evs)
 	if res.Stop != session.StopBudget {
@@ -305,7 +305,7 @@ func TestBudgetReadsCumulativeAggregate(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	sess.Usage = session.Usage{InputTokens: 300, OutputTokens: 100} // 400 >= 350
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "continue"))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "continue"}))
 
 	res := lastResult(t, evs)
 	if res.Stop != session.StopBudget {

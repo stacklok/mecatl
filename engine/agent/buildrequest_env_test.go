@@ -61,7 +61,7 @@ func TestBuildRequestThreadsVolatileEnvAndPlanReminder(t *testing.T) {
 
 	// A session in PLAN mode so buildRequest appends the plan-mode reminder.
 	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "make a plan")
+	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "make a plan"})
 	drain(r)
 
 	mu.Lock()

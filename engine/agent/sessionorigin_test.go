@@ -184,7 +184,7 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 
 	sess := session.New(originID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	// Run the engine to trigger the tool call and capture the system prompt.
-	run := eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), "create a schedule")
+	run := eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "create a schedule"})
 	drain(run)
 
 	if capturedSystem == "" {

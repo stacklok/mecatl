@@ -192,7 +192,7 @@ func TestCancelParallelBranchJoinAll(t *testing.T) {
 	}}
 	childEngine := childEngineWith(prov, catalogWith(t, park))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "all", []string{"fast one", "PARK two", "fast three"})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelOK bool
@@ -262,7 +262,7 @@ func TestCancelParallelBranchJoinFirstWinnerNeverCancelled(t *testing.T) {
 	}}
 	childEngine := childEngineWith(prov, catalogWith(t, park, gate))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "first", []string{"PARK one", "GATE two"})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	branch0Ended := make(chan struct{})
@@ -327,7 +327,7 @@ func TestCancelParallelBranchJudgeExcluded(t *testing.T) {
 	childEngine := childEngineWith(prov, catalogWith(t, park))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "judge",
 		[]string{"PARK one", "fast two"}, agent.WithParallelJudge(judge))
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelDone sync.WaitGroup
@@ -387,7 +387,7 @@ func TestCancelParallelBranchJudgeOnlySuccessCancelled(t *testing.T) {
 	mf := &memForker{failOnLabel: "branch-2"}
 	e := parallelEngineFor(t, childEngine, mf, "judge",
 		[]string{"PARK one", "doomed two"}, agent.WithParallelJudge(judge))
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelDone sync.WaitGroup
@@ -442,7 +442,7 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 	childEngine := childEngineWith(prov, catalogWith(t, park1, park2))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "all",
 		[]string{"PARK-A one", "PARK-B two"}, agent.WithParallelConcurrency(1))
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 
 	var cancelDone sync.WaitGroup
 	cancelDone.Add(1)

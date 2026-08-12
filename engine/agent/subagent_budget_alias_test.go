@@ -43,7 +43,7 @@ func budgetTrippingChild(t *testing.T, perTurn, turns, operatorBudget int) *agen
 
 // TestSubagentMaxRunTokensAliasResolvesToOverride proves the PREFERRED max_run_tokens alias
 // caps the child exactly as the deprecated max_tokens does: a per-call budget above the
-// floor (minSubagentRunTokens) rides RunOptions.MaxRunTokensOverride into the loop brake
+// floor (minSubagentRunTokens) rides RunRequest.MaxRunTokensOverride into the loop brake
 // and trips StopBudget. The child engine has NO operator budget so only the per-call
 // override stops it.
 //
@@ -263,7 +263,7 @@ func TestSubagentMaxRunTokensTightenOnlyCannotLoosen(t *testing.T) {
 
 // TestSubagentRunTokensFloorRaisesSmallBudget is the PRIMARY regression guard for the
 // footgun fix: a per-call max_run_tokens BELOW the minSubagentRunTokens floor (e.g. 6 000)
-// is silently raised to minSubagentRunTokens (25 000). This proves buildSubagentRunOptions
+// is silently raised to minSubagentRunTokens (25 000). This proves buildSubagentRunRequest
 // clamps the override up so the child can complete at least one useful turn even when the
 // model picks an impractically small value.
 //
