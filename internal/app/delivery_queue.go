@@ -416,7 +416,8 @@ func (q *FileDeliveryQueue) writeLedgerLocked(origin session.SessionID, delivere
 }
 
 // deliveryPath / ledgerPath map an origin session id to a filename-safe path
-// under the queue's dir (the safeName discipline, mirroring jsonlstore).
+// under the queue's dir (the safeName discipline, mirroring jsonlstore's
+// legacySafeName).
 func (q *FileDeliveryQueue) deliveryPath(id session.SessionID) string {
 	return filepath.Join(q.dir, deliverySafeName(id)+deliveryFileSuffix)
 }
@@ -507,7 +508,11 @@ func deliveryWriteAtomic(path string, b []byte) error {
 
 // deliverySafeName maps a SessionID to a filename-safe token so it cannot
 // traverse out of the dir. Any rune that is not alphanumeric, '-', '_' or '.'
-// becomes '_'; a leading '.' is neutralized. Mirrors jsonlstore.safeName.
+// becomes '_'; a leading '.' is neutralized. A local copy of the same
+// sanitizer as jsonlstore.legacySafeName and flocklease.safeName — deliberately
+// NOT extracted into a shared helper (this is composition code, the other two
+// are adapters, and each has its own encoding requirements), so it is not
+// meant to be kept in lockstep with either.
 func deliverySafeName(id session.SessionID) string {
 	s := string(id)
 	if s == "" {
