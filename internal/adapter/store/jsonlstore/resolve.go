@@ -72,6 +72,14 @@ func (k sessionKind) suffix() string {
 // invisible while a sidecar still exists — a leak no future sweep can find.
 var familyOrder = []sessionKind{kindTools, kindEvents, kindSnapshot}
 
+// sidecarKinds is familyOrder without the snapshot — the files a caller must
+// remove or move BEFORE it touches the snapshot. It is spelled out rather than
+// sliced off familyOrder (`familyOrder[:len(familyOrder)-1]`), because a slice
+// expression would silently depend on the snapshot staying LAST: reordering the
+// familyOrder literal would then invert the very order its comment calls
+// load-bearing, with no compile error and no failing test.
+var sidecarKinds = []sessionKind{kindTools, kindEvents}
+
 // sessionResolver owns canonical and legacy paths, ownership checks, and
 // write-time migration. Store.mu serializes migration and writes.
 type sessionResolver struct {
@@ -220,9 +228,18 @@ func legacyLineOwnedBy(line []byte, id session.SessionID) (bool, error) {
 }
 
 // legacySnapshot returns the legacy snapshot line only when its own latest
-// embedded id equals id. A (nil, false, nil) result means the legacy family is
-// absent OR belongs to a different session that the lossy stem collided with —
-// both are "not ours", and callers must treat them identically.
+// embedded id equals id. There are THREE outcomes, and the third must never be
+// folded into the other two:
+//
+//   - (line, true, nil)  — the legacy family is ours; the line is its snapshot.
+//   - (nil, false, nil)  — absent, OR owned by a different session that the
+//     lossy stem collided with. Callers treat these two identically: a clean
+//     not-found for reads, a clean no-op for migration.
+//   - (nil, false, err)  — we could not TELL (unreadable, empty, undecodable).
+//     This is an infrastructure error and callers MUST propagate it. Treating
+//     it as "not ours" would fail OPEN on the ownership proof that keeps one
+//     session's data from being served for another — do not simplify a caller
+//     to `if !ok { return nil }`.
 func (r sessionResolver) legacySnapshot(id session.SessionID) ([]byte, bool, error) {
 	line, err := readSnapshotLine(r.legacyPath(id, kindSnapshot))
 	if err != nil || line == nil {

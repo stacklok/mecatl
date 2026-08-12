@@ -508,11 +508,12 @@ func deliveryWriteAtomic(path string, b []byte) error {
 
 // deliverySafeName maps a SessionID to a filename-safe token so it cannot
 // traverse out of the dir. Any rune that is not alphanumeric, '-', '_' or '.'
-// becomes '_'; a leading '.' is neutralized. A local copy of the same
-// sanitizer as jsonlstore.legacySafeName and flocklease.safeName — deliberately
-// NOT extracted into a shared helper (this is composition code, the other two
-// are adapters, and each has its own encoding requirements), so it is not
-// meant to be kept in lockstep with either.
+// becomes '_'; a leading '.' is neutralized. This is byte-for-byte the same
+// transform as jsonlstore.legacySafeName, kept as a local copy rather than
+// shared: neither the queue's nor the store's naming needs to change in step
+// with the other. Note flocklease.safeName is NOT the same sanitizer — it
+// excludes '.', caps the prefix at 40 runes, and appends a SHA-256 suffix so
+// its encoding is injective, which a lease requires and these two do not.
 func deliverySafeName(id session.SessionID) string {
 	s := string(id)
 	if s == "" {

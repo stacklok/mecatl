@@ -226,8 +226,7 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	if err != nil {
 		return err
 	}
-	sidecars := familyOrder[:len(familyOrder)-1] // {kindTools, kindEvents}
-	for _, kind := range sidecars {
+	for _, kind := range sidecarKinds {
 		if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
 			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
 		}
