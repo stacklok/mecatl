@@ -556,7 +556,7 @@ jobs:
       # records the tag. findings.json + junit.xml land in matlatl-out/.
       - name: matlatl docs gate (strict)
         id: matlatl
-        uses: stacklok/matlatl@f3d9023edbe131db3fe92f0dc30794e1b24aa93a # v0.0.7
+        uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
         with:
           strict: "true"
 

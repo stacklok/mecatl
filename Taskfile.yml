@@ -759,7 +759,7 @@ tasks:
       # Pinned to a matlatl release; --title MUST match the README H1 ("mecatl")
       # and the freshness gate in .github/workflows/ci.yml. Never hand-edit
       # llms.txt — regenerate. (A private-module fetch needs GOPRIVATE set.)
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.7 index . --llms --title "mecatl" > llms.txt
+      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 index . --llms --title "mecatl" > llms.txt
 
   docs:configref:
     desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
@@ -775,7 +775,7 @@ tasks:
   docs:check:
     desc: Gate doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.7 check . --strict
+      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 check . --strict
 
   docs:model:
     desc: Re-render & validate the modelith domain model (edit the .yaml, never the .md)
