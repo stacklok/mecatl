@@ -21,9 +21,6 @@ includes:
 
 vars:
   PKG: github.com/stacklok/mecatl
-  BUILD_VERSION:
-    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-  BUILD_LDFLAGS: '-X {{.PKG}}/internal/buildinfo.Version={{.BUILD_VERSION}}'
 
 tasks:
   default:
@@ -43,8 +40,8 @@ tasks:
       # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
       - go build -o bin/mecak8s ./cmd/mecak8s
-      # mecatui renders the build identity on its welcome surface.
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
+      # mecatui stamps its build version into the welcome splash via -X main.version.
+      - go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
@@ -63,7 +60,8 @@ tasks:
     desc: Install mecated and mecatui into GOBIN/GOPATH/bin
     cmds:
       - go install ./cmd/mecated
-      - go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecatui
+      # mecatui stamps its build version into the welcome splash via -X main.version.
+      - go install -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" ./cmd/mecatui
 
   test:golden:
     desc: Refresh mecatui View/teatest golden files (-update) then re-run them

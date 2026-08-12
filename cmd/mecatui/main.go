@@ -43,7 +43,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
-	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -230,7 +229,7 @@ func run(argv []string) error {
 		Mode:      cfg.mode,
 		Ctx:       ctx,
 		// Build version for the welcome splash (ldflags-set; "dev" by default).
-		Version: buildinfo.Current(),
+		Version: version,
 		// Suppress the rich welcome splash under --no-banner, --quiet, or a
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
 		// only the flag). The plain prompt hint is still shown in all three cases.

@@ -13,8 +13,8 @@
 # Build:   KO_DOCKER_REPO=ko.local ko build --local ./cmd/mecated   (or `task ko:build`)
 # Publish: KO_DOCKER_REPO=<registry> ko build --push ./cmd/mecated  (or `task ko:publish`)
 #
-# mecatui renders the shared internal/buildinfo.Version identity. VERSION is
-# supplied by the release workflow and the Taskfile's mecatui ko tasks.
+# mecated has no version stamping vars in cmd/mecated/main.go, so no -X ldflags are set
+# here (add them under `ldflags` if/when a version package lands).
 
 defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7899b94303580859d396b52b67bc84ea7345
 
@@ -49,7 +49,7 @@ builds:
   # distroless base with the brood-box wolfi base (see baseImageOverrides above —
   # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml
   # brood-box manifest alongside the binary. The build version is stamped into
-  # the welcome splash through the shared internal/buildinfo.Version, sourced
+  # the welcome splash via -X main.version (cmd/mecatui/version.go), sourced
   # from the VERSION env var via ko's {{.Env.VERSION}} template expansion.
   - id: mecatui
     main: ./cmd/mecatui
@@ -59,4 +59,4 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/stacklok/mecatl/internal/buildinfo.Version={{.Env.VERSION}}
+      - -X main.version={{.Env.VERSION}}
