@@ -365,7 +365,7 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	},
 	syscaller.RootScheduler: {
 		KindSharedInfrastructure,
-		"tick/fire/delivery/reconcile loop: fires a due schedule under the schedule's OWN durable owner (the fired session keeps Alice's owner, decision 5); the scheduler's own principal is denied on every caller-owned read (GetSession, GetSchedule, …) exactly like any foreign caller",
+		"tick/fire/delivery/reconcile loop: keeps scheduler context for claims, bookkeeping, diagnostics, and event attribution; only run-entry calls for an already-captured schedule owner receive that owner context, so no general system bypass or impersonation path exists",
 	},
 	syscaller.RootJWKSRefresh: {
 		KindSharedInfrastructure,

@@ -158,11 +158,12 @@ universal bypass. The posture ladder remains unrelated to ownership
 ([ADR-0102](../adr/0102-caller-ownership-enforcement.md)).
 
 **Acceptance:**
-- AC4.1: A due schedule owned by Alice fires under the scheduler's explicit system
-  principal while the created work retains Alice's durable schedule owner. Its durable
-  lifecycle/run events name the scheduler as actor without substituting that identity for
-  the resource owner or exposing either actor attribution on the client wire.
-  - verify: `TestCallerSeparation_Scenario4_SchedulerActorAndOwnerRemainDistinct`
+- AC4.1: A due schedule owned by Alice runs from the scheduler's explicit system
+  context, while only the fire session's run-entry calls use the schedule's captured
+  owner context. Claim/record bookkeeping, diagnostics, and durable lifecycle/run-event
+  attribution remain system-owned; the created work retains Alice's durable schedule
+  owner without exposing either attribution on the client wire.
+  - verify: `TestMakeFireFuncUsesScheduleOwnerForRunEntry`
 - AC4.2: Child GC and each memory/dream consolidator complete their explicitly
   classified shared-infrastructure operation under their registered system principal.
   - verify: `TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess`
@@ -303,17 +304,13 @@ concrete task split.
   referenced preserved fork before it reads it. Availability/DoS only — no
   confidentiality break, since a caller can only ever reference a fork path it
   legitimately obtained. Tracked as a separate follow-up, not blocking this plan.
-- **The scheduler fire path has a ctx-vs-session-owner divergence, found while fixing
-  the Subagent resume ownership gap (task 09).** A scheduled fire runs under the
-  system principal on ctx (`syscaller.Context`) while the fire session's owner is the
-  schedule's real owner (`server.WithOwner(fireSessionOwner(...))`,
-  `internal/adapter/scheduler_fire.go`). Under a ctx-based ownership check, a scheduled
-  run resuming its OWN schedule's child (via `InspectSubagent`/`InspectMember`/
-  Subagent `resume:`) would be refused as absent — fail-closed degradation, not a new
-  hole, but a real usability gap. The clean fix is one line at the composition seam
-  (`ctx = session.WithPrincipal(ctx, sess.Owner)`, mirroring what
-  `usermodelreview.go` already does) that would repair all these tools at once. Not
-  fixed in this plan.
+- **The scheduler's owner-context bridge is intentionally narrow.** The tick loop keeps
+  its `mecatl:internal/scheduler` context for claims, records, diagnostics, and event
+  attribution. Once a fire session is created, composition derives the captured schedule
+  owner only for authorization-sensitive run-entry reads, starts, and watchdog cancel;
+  an ownerless schedule therefore remains fail-closed when ownership is enforced. The
+  physical owner namespace is similarly retained only by `ScheduleStore`: generated fire
+  IDs, delivery notes, lifecycle events, and metric labels use the literal schedule name.
 
 ## Exit criteria
 

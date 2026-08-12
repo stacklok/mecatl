@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -299,6 +300,29 @@ func (m *scheduleManager) ownerScheduleNamespace(ctx context.Context) string {
 // same-owner reuse of a name always maps to the SAME physical key (AC6.2).
 func (m *scheduleManager) physicalScheduleName(ctx context.Context, name string) string {
 	return m.ownerScheduleNamespace(ctx) + name
+}
+
+// LiteralScheduleName removes the ownership namespace from a store-facing
+// schedule key. It is the sole physical-to-presentation translation: scheduler
+// callbacks retain physical keys for ScheduleStore operations but use this value
+// in model/client-facing IDs, lifecycle events, and metrics. Unnamespaced keys
+// preserve the ownership-disabled compatibility path unchanged.
+func LiteralScheduleName(name string) string {
+	if strings.HasPrefix(name, scheduleOwnerlessNamespace) {
+		return strings.TrimPrefix(name, scheduleOwnerlessNamespace)
+	}
+	const ownerPrefix = "schedule/"
+	if !strings.HasPrefix(name, ownerPrefix) {
+		return name
+	}
+	rest := strings.TrimPrefix(name, ownerPrefix)
+	if len(rest) < sha256.Size*2+1 || rest[sha256.Size*2] != '\x00' {
+		return name
+	}
+	if _, err := hex.DecodeString(rest[:sha256.Size*2]); err != nil {
+		return name
+	}
+	return rest[sha256.Size*2+1:]
 }
 
 // scheduleNotFoundErr normalizes a ScheduleStore not-found error to name the

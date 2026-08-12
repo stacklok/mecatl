@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // TestSchedulerFire is the Phase 1f user-reachable gate (issue #189): a full
@@ -145,6 +148,125 @@ func TestSchedulerFire(t *testing.T) {
 		t.Errorf("fire session state = %q, want completed", sess.State)
 	}
 	_ = filepath.Separator // keep filepath import (store dir layoutagnostic)
+}
+
+// TestMakeFireFuncUsesScheduleOwnerForRunEntry pins the narrow ownership bridge:
+// scheduler bookkeeping remains a system call, but the session run-entry uses the
+// owner captured on the already-claimed schedule. The physical store key must not
+// cross into the minted, caller-visible fire/session identifier.
+func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
+	store, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	llm := mockllm.New(mockllm.TextTurn("completed by the owner"))
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "test-model",
+		Store:   store,
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:              engine,
+		Store:               store,
+		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:                 time.Now,
+		DefaultCapabilities: llm.Capabilities(),
+		EventLog:            store,
+		Diagnostics:         port.NopDiagnostics{},
+		OwnershipEnforced:   true,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	literal := "owned-fire"
+	digest := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	physical := fmt.Sprintf("schedule/%x\x00%s", digest[:], literal)
+	fire := makeFireFunc(svc, store.ScheduleStore(), defaultFireTimeout, nil)
+	result, err := fire(syscaller.Context(context.Background(), syscaller.RootScheduler), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      physical,
+			Prompt:    "say done",
+			Workspace: t.TempDir(),
+			Mode:      session.ModePlan,
+			Owner:     owner,
+		},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("fire: %v", err)
+	}
+	if result.Stop != session.StopEndTurn {
+		t.Fatalf("fire stop = %q, want successful owner-authorized run", result.Stop)
+	}
+	if strings.Contains(result.ID, fmt.Sprintf("%x", digest[:])) || strings.ContainsRune(result.ID, '\x00') {
+		t.Fatalf("fire id leaked physical schedule key: %q", result.ID)
+	}
+	if !strings.Contains(result.ID, literal) {
+		t.Fatalf("fire id = %q, want literal schedule name %q", result.ID, literal)
+	}
+}
+
+// TestFireFailedUsesLiteralScheduleNameOnCreateFailure pins the fireFailed
+// fallback (a create-time failure, before a session/fireID exists): its minted
+// fire id must use the LITERAL schedule name, never the owner-namespaced
+// physical key — the same invariant TestMakeFireFuncUsesScheduleOwnerForRunEntry
+// pins for the success path, here for the create-failure path fireFailed owns.
+func TestFireFailedUsesLiteralScheduleNameOnCreateFailure(t *testing.T) {
+	store, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(),
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "test-model",
+		Store:   store,
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:            engine,
+		Store:             store,
+		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:               time.Now,
+		EventLog:          store,
+		Diagnostics:       port.NopDiagnostics{},
+		OwnershipEnforced: true,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	literal := "will-fail-to-create"
+	digest := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	physical := fmt.Sprintf("schedule/%x\x00%s", digest[:], literal)
+	fire := makeFireFunc(svc, store.ScheduleStore(), defaultFireTimeout, nil)
+	// An empty Workspace makes CreateSessionWithProfile fail (default profile
+	// requires one) before any session exists, driving fireFailed's sessID=""
+	// fallback (internal/app/scheduler_fire.go's newFireID(...) fallback branch).
+	result, err := fire(syscaller.Context(context.Background(), syscaller.RootScheduler), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:      physical,
+			Prompt:    "say done",
+			Workspace: "",
+			Owner:     owner,
+		},
+	}, time.Now())
+	if err == nil {
+		t.Fatalf("fire: want a create-time failure, got success: %+v", result)
+	}
+	if result.Stop != session.StopError {
+		t.Fatalf("fire stop = %q, want StopError", result.Stop)
+	}
+	if strings.Contains(result.ID, fmt.Sprintf("%x", digest[:])) || strings.ContainsRune(result.ID, '\x00') {
+		t.Fatalf("fireFailed's fire id leaked physical schedule key: %q", result.ID)
+	}
+	if !strings.Contains(result.ID, literal) {
+		t.Fatalf("fireFailed's fire id = %q, want literal schedule name %q", result.ID, literal)
+	}
 }
 
 // TestMakeFireFuncReleasesSessionLease is the F-1 regression test (PR #211

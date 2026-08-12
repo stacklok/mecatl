@@ -29,7 +29,7 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 		if diag == nil {
 			diag = port.NopDiagnostics{}
 		}
-		note := renderFireStarted(sched.Spec.Name, fire.ID)
+		note := renderFireStarted(server.LiteralScheduleName(sched.Spec.Name), fire.ID)
 
 		// Enqueue to the durable per-session queue (the session-scoped exactly-once
 		// ledger). A nil queue (the no-delivery posture) is a no-op drop.
@@ -44,7 +44,8 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 		}
 
 		// State-aware delivery. Determine the origin's state via GetSession.
-		originSess, err := svc.GetSession(ctx, origin)
+		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
+		originSess, err := svc.GetSession(ownerCtx, origin)
 		if err != nil {
 			diag.Log(ctx, port.LevelWarn, "delivery: origin session not found (degrading to pull-only)",
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
@@ -60,7 +61,7 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 			return
 		}
 		// idle/completed/cancelled/failed: drive a delivery run.
-		run, err := svc.StartRunContent(ctx, origin, note, nil)
+		run, err := svc.StartRunContent(ownerCtx, origin, note, nil)
 		if err != nil {
 			diag.Log(ctx, port.LevelWarn, "delivery: drive run failed (start notice stays pull-able)",
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
@@ -121,8 +122,9 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		// Render the note. The final text is extracted from the fire session's
 		// conversation (the last assistant text); a fire with no assistant text
 		// (an empty terminal) still renders a note carrying the stop reason.
-		finalText := fireFinalText(svc, fire)
-		note := renderFireDelivery(sched.Spec.Name, fire.ID, fire.Stop, finalText)
+		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
+		finalText := fireFinalText(ownerCtx, svc, fire)
+		note := renderFireDelivery(server.LiteralScheduleName(sched.Spec.Name), fire.ID, fire.Stop, finalText)
 
 		// Enqueue to the durable per-session queue (the session-scoped exactly-once
 		// ledger). A nil queue (the no-delivery posture) is a no-op drop — the
@@ -142,7 +144,7 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		// State-aware delivery. Determine the origin's state via GetSession
 		// (read-only snapshot load — NOT loadAndReopen, which would drive a
 		// terminal state to idle prematurely for the awaiting/busy cases).
-		originSess, err := svc.GetSession(ctx, origin)
+		originSess, err := svc.GetSession(ownerCtx, origin)
 		if err != nil {
 			// Origin not found (deleted) — degrade to pull-only with a WARN. The
 			// note stays pending in the queue (it will drain if the origin is ever
@@ -187,7 +189,7 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		// Not pre-marking keeps the common path single-recorded. A drive failure
 		// WARNs and never fails the fire; the note stays pending and drains on a
 		// later run-entry (the durable queue is the recovery).
-		run, err := svc.StartRunContent(ctx, origin, note, nil)
+		run, err := svc.StartRunContent(ownerCtx, origin, note, nil)
 		if err != nil {
 			diag.Log(ctx, port.LevelWarn, "delivery: drive run failed (fire result stays pull-able)",
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "err", err.Error())
@@ -223,11 +225,11 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 // terminal — StopBudget/StopNoProgress/etc.) returns "" so renderFireDelivery
 // renders a note carrying the stop reason (never a silent blank). A load
 // failure returns "" (degrade to the stop-reason-only note).
-func fireFinalText(svc *server.Service, fire port.ScheduleFire) string {
+func fireFinalText(ctx context.Context, svc *server.Service, fire port.ScheduleFire) string {
 	if fire.SessionID == "" {
 		return ""
 	}
-	sess, err := svc.GetSession(context.Background(), fire.SessionID)
+	sess, err := svc.GetSession(ctx, fire.SessionID)
 	if err != nil || sess == nil || sess.Conversation == nil {
 		return ""
 	}

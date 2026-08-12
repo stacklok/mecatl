@@ -676,15 +676,17 @@ cross-project maintenance service independently enabled by an explicit positive
 completed-trajectory observation and cannot suppress that schedule. `FireNow` is
 deliberately **not** wrapped — a manual fire keeps its requester's identity.
 
-**Sessions and schedules record an owner.** `CreateSession` stamps the owner from
-the context principal, **write-once and never from the request body**
-(`internal/adapter/server/service.go` (`resolveOwner`)); children and forks
-inherit it from the source. It persists as the additive `owner` snapshot field
-(`engine/adapter/sessnap/sessnap.go` (`Snapshot`)) and surfaces display-only on
-both listing paths (`SessionSummary.Owner`, `port.SessionMeta.Owner`) — no
-filtering. `port.ScheduleSpec.Owner` (`engine/port/schedule.go`) is captured at
-**create**, not at fire time, so a scheduled `sched--` session runs as the human
-who asked for it rather than as the scheduler's system principal.
+**Schedules record an owner at creation; fire authorization stays narrow.**
+`CreateSession` stamps the owner from the context principal, **write-once and never
+from the request body** (`internal/adapter/server/service.go` (`resolveOwner`));
+children and forks inherit it from the source. It persists as the additive `owner`
+snapshot field (`engine/adapter/sessnap/sessnap.go` (`Snapshot`)) and surfaces
+display-only on both listing paths (`SessionSummary.Owner`, `port.SessionMeta.Owner`)
+— no filtering. The schedule captures that owner at **create**, and the scheduler
+retains its system context for storage bookkeeping and log attribution. Only after it
+creates a fire session does composition derive the captured owner for the
+authorization-sensitive fire run entry and watchdog cancel; an ownerless schedule is
+consequently denied there when ownership is enforced.
 
 **The event log's `Actor` is log-only.** `session.Event.Actor`
 (`engine/session/event.go`) is stamped at the relay, in the one place the durable
@@ -747,10 +749,11 @@ unclassified.
 scheduler, the JWKS refresh) is classified `shared-infrastructure` with the
 narrow operation it may perform — never a blanket grant. A system principal
 is denied by every caller-owned boundary exactly like any other non-matching
-identity: the scheduler's tick loop fires a due schedule under the schedule's
-OWN durable owner (the created work stays Alice's, never the scheduler's),
-but the scheduler's own principal cannot `GetSession`/`GetSchedule` a caller's
-resource directly.
+identity: the scheduler's tick loop retains its system principal for claims,
+records, diagnostics, and event attribution, then derives the already-captured
+schedule owner only for the fire session's authorization-sensitive run-entry
+calls. The created work remains Alice's, the scheduler has no general caller-owned
+access, and ownerless schedules fail closed when ownership is enforced.
 
 **The raw driver boundary remains explicitly trusted infrastructure**
 (decision 6) until [ADR 0103](adr/0103-driver-caller-ownership.md) lands — see

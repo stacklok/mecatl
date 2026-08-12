@@ -45,6 +45,13 @@ const (
 // live network call, deferred); an unknown model surfaces as StopError.
 func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
+		// The scheduler passes the physical store key so RecordFire* remains in the
+		// correct owner namespace. server.LiteralScheduleName is a total, self-
+		// guarding reverse mapping (identity on any non-namespaced/flat key), so it
+		// is safe to call unconditionally rather than gating on whether ownership is
+		// enforced — used only for values exposed in a session/fire id or
+		// model-facing prompt.
+		literalName := server.LiteralScheduleName(sched.Spec.Name)
 		sel := server.ProviderSelector{
 			ProviderID: sched.Spec.Selector.ProviderID,
 			ModelID:    sched.Spec.Selector.ModelID,
@@ -82,7 +89,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// (before CreateSessionWithProfile) and passing it as the WithSessionID
 		// override means the fire's persisted session carries the sched-- family
 		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
-		fireID := newFireID(sched.Spec.Name, now)
+		fireID := newFireID(literalName, now)
 		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)))
@@ -115,7 +122,8 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// in the scheduler ignores CarryContext (the crashed fire's context is
 		// untrusted AND incomplete); this gate is on CarryContext + a real prior
 		// session id (not the pending sentinel, not empty).
-		prompt := carriedContextPrompt(ctx, svc, sched)
+		ownerCtx := schedulerOwnerContext(ctx, sess.Owner)
+		prompt := carriedContextPrompt(ownerCtx, svc, sched)
 
 		// Issue #386 — the in-flight scheduled-fire state: RecordFireStart flips
 		// LastFireSessionID off the "pending" sentinel to the REAL session id and
@@ -166,13 +174,13 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 				// run.Cancel(); a not-found/already-finished run is a nil-safe
 				// no-op (the watchdog only arms for a deadline, so a stale fire
 				// after a clean completion is harmless — Stop already ran).
-				_ = svc.Cancel(context.Background(), sess.ID)
+				_ = svc.Cancel(context.WithoutCancel(ownerCtx), sess.ID)
 			})
 			stopTimer = func() { timer.Stop() }
 		}
 		defer stopTimer()
 
-		run, err := svc.StartRunContent(ctx, sess.ID, prompt, sched.Spec.Parts)
+		run, err := svc.StartRunContent(ownerCtx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
@@ -260,6 +268,18 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 	}
 }
 
+// schedulerOwnerContext replaces the scheduler system identity only for operations
+// that act on a session owned by the schedule's captured caller. Scheduler store
+// bookkeeping, diagnostics, and event attribution retain the outer system context.
+// An ownerless schedule deliberately keeps that system context and therefore fails
+// closed at caller-owned service boundaries when ownership enforcement is enabled.
+func schedulerOwnerContext(ctx context.Context, owner *session.Principal) context.Context {
+	if owner == nil {
+		return ctx
+	}
+	return session.WithPrincipal(ctx, owner)
+}
+
 // fireSessionOwner projects the SCHEDULE's captured owner (ADR 0100 decision 6)
 // onto the fire session's owner: the same (issuer, subject) identity, with
 // GrantType client_credentials — a fire is automated, not interactive, and the
@@ -327,7 +347,7 @@ func sanitizeFireIDName(name string) string {
 func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) port.ScheduleFire {
 	id := sessID
 	if id == "" {
-		id = newFireID(sched.Spec.Name, now)
+		id = newFireID(server.LiteralScheduleName(sched.Spec.Name), now)
 	}
 	return port.ScheduleFire{
 		ID:           id,
