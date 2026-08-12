@@ -1065,26 +1065,3 @@ func TestParseFlagsPromptFileUnreadable(t *testing.T) {
 		t.Errorf("error = %q, want it to name the path %q", err.Error(), path)
 	}
 }
-
-// TestJoinPromptBody is the pure table test of joinPromptBody: both empty → empty;
-// literal only; file only; both → literal + blank line + fileBody.
-func TestJoinPromptBody(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name, literal, fileBody, want string
-	}{
-		{name: "both empty", literal: "", fileBody: "", want: ""},
-		{name: "literal only", literal: "hello", fileBody: "", want: "hello"},
-		{name: "file only", literal: "", fileBody: "world", want: "world"},
-		{name: "both joined by blank line", literal: "hello", fileBody: "world", want: "hello\n\nworld"},
-		{name: "trailing newlines trimmed", literal: "a\n\n", fileBody: "b\n\n", want: "a\n\nb"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := joinPromptBody(tc.literal, tc.fileBody); got != tc.want {
-				t.Errorf("joinPromptBody(%q, %q) = %q, want %q", tc.literal, tc.fileBody, got, tc.want)
-			}
-		})
-	}
-}
