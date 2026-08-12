@@ -317,12 +317,12 @@ type ToolCallRecorder interface {
 
 `queued` is the coordinated-omission measure: the gap between when a call entered dispatch and when its execution actually began. For a read-only call that ran immediately, `queued` is near-zero. For a mutating call held behind a permission ask or behind an in-progress read batch, `queued` is the real wait. Both durations are zero when no `Clock` is injected.
 
-The `jsonlstore.Store` implements `port.ToolCallRecorder` alongside `port.SessionStore` and `port.EventLog`. It writes one JSON record per `ToolCall` invocation to `<dir>/<id>.tools.jsonl`. The `.tools.jsonl` file is parallel to, not a superset of, the `.events.jsonl` event log:
+The `jsonlstore.Store` implements `port.ToolCallRecorder` alongside `port.SessionStore` and `port.EventLog`. It writes one JSON record per `ToolCall` invocation to a `.tools.jsonl` sidecar in the session's family directory (`<store-dir>/sid-v1/`; see [Session store](./session-store.md) for the layout and why the filename is not the session id). The `.tools.jsonl` file is parallel to, not a superset of, the `.events.jsonl` event log:
 
 | File | What it captures |
 |---|---|
-| `<id>.tools.jsonl` | Structured per-tool audit: args, queue/exec timing |
-| `<id>.events.jsonl` | Relayed run stream: reasoning, ask/verdict pairs, delegation lifecycle |
+| `*.tools.jsonl` | Structured per-tool audit: args, queue/exec timing |
+| `*.events.jsonl` | Relayed run stream: reasoning, ask/verdict pairs, delegation lifecycle |
 
 Neither subsumes the other. Wire a `ToolCallRecorder` when you need structured latency/audit data per tool call that is separate from the model's event stream.
 
