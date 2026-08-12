@@ -93,7 +93,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0071 — Seamless model switch: always keep the conversation](./0071-seamless-model-switch.md)
 - [0083 — Routing reason on delegation-start events](./0083-routing-reason-on-delegation-start.md)
 - [0093 — Ship the real LLM provider adapters as opt-in Go modules under provider/](./0093-provider-modules.md)
-- [0102 — OpenAI subscription with a manual access token](./0102-openai-subscription-manual-token.md)
+- [0103 — OpenAI subscription with a manual access token](./0103-openai-subscription-manual-token.md)
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)

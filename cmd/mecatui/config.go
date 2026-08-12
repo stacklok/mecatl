@@ -631,7 +631,7 @@ func (c config) validate() error {
 		c.toolhiveLLMFlags.Apply(&probe)
 		if !app.ToolhiveAvailable(probe) {
 			return errors.New("no LLM provider configured — mecatui has nothing to talk to: " +
-				"to host an embedded server put providers.<name>.api_key or providers.openai-codex.oauth in ~/.config/mecatl/auth.yaml, " +
+				"to host an embedded server put providers.<name>.api_key or providers.openai-codex.oauth in --auth-file (default ~/.config/mecatl/auth.yaml), " +
 				"or set one of ANTHROPIC_API_KEY (Claude), OPENAI_API_KEY, OPENROUTER_API_KEY (one key, many models — a good first choice), " +
 				"or OPENCODE_API_KEY (OpenCode Go); " +
 				"for a compatible/proxy endpoint add " +

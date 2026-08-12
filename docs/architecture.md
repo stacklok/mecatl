@@ -124,7 +124,7 @@ the Codex credential/header/model-inventory policy around the existing
 `provider/openai.Provider`, so request building, stateless replay, successful SSE
 translation, resilience, tools, and the provider-neutral engine port remain
 single-sourced. See [the provider chapter](architecture/providers.md#experimental-openai-codex-subscription-provider)
-and [ADR 0102](adr/0102-openai-subscription-manual-token.md).
+and [ADR 0103](adr/0103-openai-subscription-manual-token.md).
 
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and

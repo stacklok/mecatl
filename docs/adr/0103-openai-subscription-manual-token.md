@@ -1,4 +1,4 @@
-# ADR 0102 — OpenAI subscription with a manual access token
+# ADR 0103 — OpenAI subscription with a manual access token
 
 - Status: Accepted
 - Date: 2026-08-05
@@ -17,7 +17,7 @@ key would hide the different trust boundary and could select models that the
 subscription does not actually entitle the account to use.
 
 The backend is private and experimental. Its compatibility with a third-party client
-is therefore a gate, not an assumption. A one-shot manual probe must demonstrate that
+was therefore treated as a gate, not an assumption. A one-shot manual probe demonstrated that
 the service accepts an honest mecatl originator for model discovery, text generation,
 and a function-tool round trip. If the service rejects an unknown originator, work
 must stop; mecatl will not claim to be Codex CLI or copy its client-identifying
@@ -79,15 +79,14 @@ subscription OAuth custody to its storage-free, managed-service posture would co
 with ADR 0048. A future Kubernetes integration may accept an explicitly mounted Secret
 or external secret provider under a separate deployment decision.
 
-The compatibility record beside this ADR is intentionally structural. Its strict,
+The retained compatibility record beside this ADR is intentionally structural. Its strict,
 fixed vocabulary records only endpoint status classes, counts, booleans, and whether
 required models/Responses shapes were present. It also distinguishes live observations
 from offline status-driven error classification. Unknown envelope fields, event or item
 types, usage keys, or actionable events stop the gate instead of being copied into the
 record. It never records an access token, account identifier, request or response ID,
-prompt/user content, provider string, or raw response body. The manual probe source is
-`internal/adapter/openai/manualprobe/main.go` and is never run
-by an automated test.
+prompt/user content, provider string, or raw response body. The one-shot probe source
+was intentionally not retained after the compatibility gate passed.
 
 The passing probe emits three allowlist-sanitized SSE fixtures for offline translator
 and replay work. Every identifier, function name/argument, and text value in them is a
@@ -135,7 +134,7 @@ path yet.
 
 ## See also
 
-- [Sanitized compatibility record](./0102-openai-subscription-contract.json)
+- [Sanitized compatibility record](./0103-openai-subscription-contract.json)
 - [ADR 0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [OpenAI Codex repository](https://github.com/openai/codex)
 - [OpenAI authentication overview](https://platform.openai.com/docs/api-reference/authentication)
