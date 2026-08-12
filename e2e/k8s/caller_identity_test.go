@@ -393,8 +393,16 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 			}
 		})
 
-		// Story 3 — "I can see who owns what."
-		ginkgo.It("shows the owner on the list row over plain HTTP", func() {
+		// Story 3 — "I can see who owns what, and only what's mine."
+		//
+		// FLIPPED for issue #368 (caller separation): this phase used to ship
+		// attribution with no isolation, and this spec asserted exactly that
+		// (Bob's list containing Alice's session) so the absence of scoping could
+		// not be mistaken for a bug. #368 landed application-wide ownership
+		// enforcement (ADR-0102) — a caller's list now contains only that
+		// caller's own rows (AC2.3). Do not delete this spec; it is the
+		// regression pin for that scoping.
+		ginkgo.It("shows the owner on the list row over plain HTTP, scoped to the caller's own sessions", func() {
 			ctx := ginkgoSuiteCtx()
 			addr, stop := portForward(agentPods[0])
 			defer stop()
@@ -405,21 +413,31 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 			bobSub, name := sessionOwner(ctx, addr, bob, bobSess)
 			gomega.Expect(name).To(gomega.Equal("bob"))
 
-			// Bob's listing shows ALICE's session too: attribution, NOT isolation.
-			// Asserted so the absence of scoping cannot be mistaken for a bug. When #368
-			// lands this becomes a scoping test — FLIP it, do not delete it.
 			_, aliceSess := createSessionAs(ctx, addr, alice)
 			aliceSub, aliceName := sessionOwner(ctx, addr, alice, aliceSess)
 			gomega.Expect(aliceName).To(gomega.Equal("alice"))
 			gomega.Expect(bobSub).NotTo(gomega.Equal(aliceSub),
 				"two different callers produced the same subject — identity is not per-caller")
-			gomega.Expect(listSessionIDs(ctx, addr, bob)).To(gomega.ContainElement(aliceSess),
-				"bob's session list omitted alice's session — this phase ships NO isolation, "+
-					"so scoping here is a behaviour change, not a fix")
+
+			gomega.Expect(listSessionIDs(ctx, addr, bob)).To(gomega.ContainElement(bobSess),
+				"bob's own session list omitted his own session")
+			gomega.Expect(listSessionIDs(ctx, addr, bob)).NotTo(gomega.ContainElement(aliceSess),
+				"bob's session list included alice's session — issue #368 ownership enforcement is not scoping lists")
+			gomega.Expect(listSessionIDs(ctx, addr, alice)).To(gomega.ContainElement(aliceSess),
+				"alice's own session list omitted her own session")
 		})
 
-		// Story 4 — "I can tell who did something, even when it wasn't the owner."
-		ginkgo.It("records the acting caller as the actor, not the session's owner", func() {
+		// Story 4 — "Nobody but me can act on my session, and the audit trail
+		// still names the actor correctly on the operations I do allow."
+		//
+		// FLIPPED for issue #368: this phase used to permit Bob to prompt Alice's
+		// session (recording him as actor, her as owner — attribution without
+		// isolation) and this spec asserted exactly that. #368 landed enforcement:
+		// a foreign prompt is now refused, absence-shaped (AC3.1). The
+		// actor-vs-owner distinction this spec also pins (ADR-0100 decision 7)
+		// remains real and is now re-asserted on ALICE's own action instead, so
+		// this spec keeps covering both properties rather than losing one.
+		ginkgo.It("refuses a foreign caller and records the acting caller as the actor on the owner's own run", func() {
 			ctx := ginkgoSuiteCtx()
 			addr, stop := portForward(agentPods[0])
 			defer stop()
@@ -430,27 +448,27 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 			gomega.Expect(ownerName).To(gomega.Equal("alice"))
 			gomega.Expect(aliceSubject).NotTo(gomega.BeEmpty())
 
-			// Permitted: this phase ships no isolation. When #368 lands, FLIP this to
-			// expect a refusal — do not delete the spec.
-			gomega.Expect(promptAs(ctx, addr, aliceSess, bob, "bob acting on alice's session")).
-				To(gomega.Equal(http.StatusOK),
-					"bob was refused on alice's session — this phase ships NO isolation, so a "+
-						"refusal is a behaviour change, not a fix")
+			// Bob acting on Alice's session is now refused, absence-shaped (a 404,
+			// not a distinguishing 403 — AC2.4/AC3.1's "indistinguishable from
+			// missing" contract).
+			bobStatus := promptAs(ctx, addr, aliceSess, bob, "bob acting on alice's session")
+			gomega.Expect(bobStatus).To(gomega.Equal(http.StatusNotFound),
+				"bob was NOT refused on alice's session — issue #368 ownership enforcement regressed")
 
 			ownerSub, ownerName := sessionOwner(ctx, addr, alice, aliceSess)
 			gomega.Expect(ownerName).To(gomega.Equal("alice"),
-				"acting on a session re-owned it — ownership laundering")
+				"a refused foreign prompt still changed the owner — ownership laundering")
 			gomega.Expect(ownerSub).To(gomega.Equal(aliceSubject))
 
-			// The ship-blocker both reviews found: owner answers "whose is this", actor
-			// answers "who did this", and here they differ.
+			// Alice's OWN prompt still succeeds and is attributed to her — the
+			// owner/actor distinction (ADR-0100 decision 7) still holds on the
+			// path that's still allowed.
+			gomega.Expect(promptAs(ctx, addr, aliceSess, alice, "alice acting on her own session")).
+				To(gomega.Equal(http.StatusOK), "alice was refused on her own session")
 			gomega.Eventually(func() []string {
 				return eventActors(aliceSess)
-			}, 90*time.Second, 3*time.Second).ShouldNot(gomega.BeEmpty(),
-				"no durable event recorded an actor at all")
-			actors := eventActors(aliceSess)
-			gomega.Expect(actors).NotTo(gomega.ContainElement(aliceSubject),
-				"an event on the run BOB drove was attributed to ALICE — the audit trail names the wrong caller")
+			}, 90*time.Second, 3*time.Second).Should(gomega.ContainElement(aliceSubject),
+				"no durable event recorded alice as actor on her own run")
 		})
 
 		// Story 6 — "My session is still mine after the pod that took it dies."
