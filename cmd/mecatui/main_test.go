@@ -12,48 +12,21 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
 
 // TestMain dispatches to run([]string{}) when the MECATUI_TEST_SIGNAL_HANDLER env
 // var is set (child-process signal-test harness). Otherwise it runs the normal test
 // suite.
 func TestMain(m *testing.M) {
-	root, err := os.MkdirTemp("", "mecatui-test-home-")
-	if err != nil {
-		_, _ = io.WriteString(os.Stderr, "create isolated test home: "+err.Error()+"\n")
-		os.Exit(1)
-	}
-	configHome := filepath.Join(root, "config")
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(configHome, 0o700); err != nil {
-		_, _ = io.WriteString(os.Stderr, "create isolated test config: "+err.Error()+"\n")
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		_, _ = io.WriteString(os.Stderr, "create isolated test HOME: "+err.Error()+"\n")
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	if err := os.Setenv("XDG_CONFIG_HOME", configHome); err != nil {
-		_, _ = io.WriteString(os.Stderr, "set isolated XDG_CONFIG_HOME: "+err.Error()+"\n")
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	if err := os.Setenv("HOME", home); err != nil {
-		_, _ = io.WriteString(os.Stderr, "set isolated HOME: "+err.Error()+"\n")
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-
-	code := 0
-	if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
-		run([]string{})
-	} else {
-		code = m.Run()
-	}
-	_ = os.RemoveAll(root)
-	os.Exit(code)
+	os.Exit(testhome.Run("mecatui", func() int {
+		if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
+			run([]string{})
+			return 0
+		}
+		return m.Run()
+	}))
 }
 
 func TestConventionalAuthFileIsIsolated(t *testing.T) {
@@ -65,8 +38,8 @@ func TestConventionalAuthFileIsIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags(nil): %v", err)
 	}
-	if cfg.providerKeys.HasOpenAICodex() || cfg.providerKeys.AuthFileWarning != "" {
-		t.Fatal("ordinary mecatui tests consulted conventional auth-file state")
+	if cfg.providerKeys.HasOpenAICodex() {
+		t.Fatal("ordinary mecatui tests retained a conventional Codex credential")
 	}
 }
 

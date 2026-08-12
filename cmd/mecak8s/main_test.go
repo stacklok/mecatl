@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,18 +18,13 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
-
-func k8sTestCodexToken(expires time.Time, accountID string) string {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	payload := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q}}`, expires.Unix(), accountID)
-	return header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString([]byte("signature"))
-}
 
 func TestMecak8sRejectsOpenAICodexCredential(t *testing.T) {
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	path := filepath.Join(t.TempDir(), "auth.yaml")
-	body := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-k8s\n      expires_at: %s\n", k8sTestCodexToken(expires, "acct-k8s"), expires.Format(time.RFC3339))
+	body := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-k8s\n      expires_at: %s\n", codextest.Token(expires, "acct-k8s"), expires.Format(time.RFC3339))
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

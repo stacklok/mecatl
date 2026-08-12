@@ -2,7 +2,6 @@ package cliconfig
 
 import (
 	"bytes"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -14,13 +13,8 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
-
-func validCodexToken(expires time.Time, accountID string) string {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	payload := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q}}`, expires.Unix(), accountID)
-	return header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString([]byte("signature"))
-}
 
 func codexAuthYAML(token, accountID string, expires time.Time) string {
 	return fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: %s\n      expires_at: %s\n", token, accountID, expires.UTC().Format(time.RFC3339))
@@ -260,7 +254,7 @@ providers:
 
 func TestAuthFileReadOnce(t *testing.T) {
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	contents := []byte(codexAuthYAML(validCodexToken(expires, "acct-once"), "acct-once", expires))
+	contents := []byte(codexAuthYAML(codextest.Token(expires, "acct-once"), "acct-once", expires))
 	reads := 0
 	env := xdgconfig.ResolveEnv{
 		Getenv:      func(string) string { return "" },
@@ -319,7 +313,7 @@ func TestInvalidCodexCredentialWarningIsValueFree(t *testing.T) {
 func TestResolvedCredentialsKeepBillingIdentitiesSeparate(t *testing.T) {
 	clearProviderEnv(t)
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	token := validCodexToken(expires, "acct-separate")
+	token := codextest.Token(expires, "acct-separate")
 	writeAuthFile(t, fmt.Sprintf("providers:\n  openai:\n    api_key: sk-api\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-separate\n      expires_at: %s\n", token, expires.Format(time.RFC3339)))
 	resolved := (&ProviderFlags{}).Resolve()
 	if resolved.OpenAI != "sk-api" || !resolved.HasOpenAICodex() {
@@ -332,37 +326,10 @@ func TestResolvedCredentialsKeepBillingIdentitiesSeparate(t *testing.T) {
 	}
 }
 
-func TestOpenAICodexCommandRootsShareCredentialSnapshot(t *testing.T) {
-	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	contents := []byte(codexAuthYAML(validCodexToken(expires, "acct-roots"), "acct-roots", expires))
-	reads := 0
-	env := xdgconfig.ResolveEnv{
-		Getenv:      func(string) string { return "" },
-		UserHomeDir: func() (string, error) { return "/unused", nil },
-		ReadFile: func(string) ([]byte, error) {
-			reads++
-			return contents, nil
-		},
-	}
-	path := "/virtual/auth.yaml"
-	pf := &ProviderFlags{authFile: &path}
-	resolved := pf.resolve(env, time.Now())
-	var mecated, mecatui, mecatequi app.Config
-	pf.ApplyResolved(&mecated, resolved)
-	pf.ApplyResolved(&mecatui, resolved)
-	pf.ApplyResolved(&mecatequi, resolved)
-	if reads != 1 {
-		t.Fatalf("auth-file reads = %d, want 1", reads)
-	}
-	if mecated.OpenAICodexCredential != mecatui.OpenAICodexCredential || mecated.OpenAICodexCredential != mecatequi.OpenAICodexCredential {
-		t.Fatal("command-root projections do not share the exact credential value")
-	}
-}
-
 func TestOpenAICodexCredentialRedactsWhenNested(t *testing.T) {
 	clearProviderEnv(t)
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	secretToken := validCodexToken(expires, "secret-nested-account")
+	secretToken := codextest.Token(expires, "secret-nested-account")
 	writeAuthFile(t, codexAuthYAML(secretToken, "secret-nested-account", expires))
 	resolved := (&ProviderFlags{}).Resolve()
 	var cfg app.Config

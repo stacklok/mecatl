@@ -2,44 +2,15 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
 
 func TestMain(m *testing.M) {
-	root, err := os.MkdirTemp("", "mecak8s-test-home-")
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create isolated test home: %v\n", err)
-		os.Exit(1)
-	}
-	configHome := filepath.Join(root, "config")
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(configHome, 0o700); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create isolated test config: %v\n", err)
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create isolated test HOME: %v\n", err)
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	if err := os.Setenv("XDG_CONFIG_HOME", configHome); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "set isolated XDG_CONFIG_HOME: %v\n", err)
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-	if err := os.Setenv("HOME", home); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "set isolated HOME: %v\n", err)
-		_ = os.RemoveAll(root)
-		os.Exit(1)
-	}
-
-	code := m.Run()
-	_ = os.RemoveAll(root)
-	os.Exit(code)
+	os.Exit(testhome.Run("mecak8s", m.Run))
 }
 
 func TestConventionalAuthFileIsIsolated(t *testing.T) {

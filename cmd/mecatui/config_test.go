@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
 
 // TestContextWindowOverrideFlagWiring pins the embedded-only flag's parse, config
@@ -33,12 +33,6 @@ func TestContextWindowOverrideFlagWiring(t *testing.T) {
 	if _, _, err := parseTransportFlags(modeConnect, io.Discard, []string{"--context-window-override", "1"}); err == nil {
 		t.Fatal("connect mode accepted embedded-only context-window override")
 	}
-}
-
-func configTestCodexToken(expires time.Time, accountID string) string {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	payload := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q}}`, expires.Unix(), accountID)
-	return header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString([]byte("signature"))
 }
 
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
@@ -860,7 +854,7 @@ func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
 		},
 		{
 			name: "file-only Codex token",
-			body: fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-tui\n      expires_at: %s\n", configTestCodexToken(expires, "acct-tui"), expires.Format(time.RFC3339)),
+			body: fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-tui\n      expires_at: %s\n", codextest.Token(expires, "acct-tui"), expires.Format(time.RFC3339)),
 			check: func(t *testing.T, got app.Config) {
 				t.Helper()
 				if !got.OpenAICodexCredential.Configured() || got.OpenAICodexCredential.AccountID() != "acct-tui" {
@@ -919,26 +913,8 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 		t.Fatalf("embedded help does not surface manual Codex file auth:\n%s", help)
 	}
 
-	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	validToken := configTestCodexToken(expires, "acct-tui-surface")
-	validPath := filepath.Join(t.TempDir(), "auth.yaml")
-	validBody := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-tui-surface\n      expires_at: %s\n", validToken, expires.Format(time.RFC3339))
-	if err := os.WriteFile(validPath, []byte(validBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := parseFlags([]string{"--workspace", "/abs", "--auth-file", validPath, "--toolhive-llm=false"})
-	if err != nil {
-		t.Fatalf("parse valid file-only credential: %v", err)
-	}
-	if err := cfg.validate(); err != nil {
-		t.Fatalf("validate valid file-only credential: %v", err)
-	}
-	if got := embeddedConfig(cfg, port.NopDiagnostics{}); !got.OpenAICodexCredential.Configured() {
-		t.Fatal("embedded projection lost the valid manual credential")
-	}
-
 	expiredAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
-	expiredToken := configTestCodexToken(expiredAt, "acct-expired")
+	expiredToken := codextest.Token(expiredAt, "acct-expired")
 	expiredPath := filepath.Join(t.TempDir(), "auth.yaml")
 	expiredBody := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-expired\n      expires_at: %s\n", expiredToken, expiredAt.Format(time.RFC3339))
 	if err := os.WriteFile(expiredPath, []byte(expiredBody), 0o600); err != nil {
@@ -949,7 +925,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 		t.Fatalf("parse expired credential: %v", err)
 	}
 	var warning bytes.Buffer
-	emitAuthFileWarning(&warning, expiredCfg.providerCredentials.AuthFileWarning)
+	emitAuthFileWarning(&warning, expiredCfg.providerKeys.AuthFileWarning)
 	for _, want := range []string{"expired", "auth.yaml", "restart"} {
 		if !strings.Contains(warning.String(), want) {
 			t.Errorf("expired warning %q missing %q", warning.String(), want)

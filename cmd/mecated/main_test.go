@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,20 +23,15 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
-
-func mecatedTestCodexToken(expires time.Time, accountID string) string {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	payload := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":%q}}`, expires.Unix(), accountID)
-	return header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString([]byte("signature"))
-}
 
 func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
 		t.Setenv(envName, "")
 	}
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	token := mecatedTestCodexToken(expires, "acct-mecated")
+	token := codextest.Token(expires, "acct-mecated")
 	path := filepath.Join(t.TempDir(), "auth.yaml")
 	body := fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-mecated\n      expires_at: %s\n", token, expires.Format(time.RFC3339))
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
