@@ -151,18 +151,11 @@ func (r sessionResolver) loadSnapshot(id session.SessionID) ([]byte, error) {
 	if err != nil || present {
 		return line, err
 	}
-	line, err = readSnapshotLine(r.legacyPath(id, kindSnapshot))
+	line, ok, err := r.legacySnapshot(id)
 	if err != nil {
 		return nil, err
 	}
-	if line == nil {
-		return nil, sessionNotFound(id)
-	}
-	owned, err := legacyLineOwnedBy(line, id)
-	if err != nil {
-		return nil, err
-	}
-	if !owned {
+	if !ok {
 		return nil, sessionNotFound(id)
 	}
 	return line, nil
@@ -178,19 +171,9 @@ func (r sessionResolver) prepareWrite(id session.SessionID) error {
 	if err != nil || present {
 		return err
 	}
-	line, err := readSnapshotLine(r.legacyPath(id, kindSnapshot))
-	if err != nil {
+	line, ok, err := r.legacySnapshot(id)
+	if err != nil || !ok {
 		return err
-	}
-	if line == nil {
-		return nil
-	}
-	owned, err := legacyLineOwnedBy(line, id)
-	if err != nil {
-		return err
-	}
-	if !owned {
-		return nil
 	}
 	if _, err := sessnap.Unmarshal(line); err != nil {
 		return err
@@ -216,19 +199,9 @@ func (r sessionResolver) readablePath(id session.SessionID, kind sessionKind) (s
 	if snapshotPresent {
 		return "", false, nil
 	}
-	line, err := readSnapshotLine(r.legacyPath(id, kindSnapshot))
-	if err != nil {
+	_, ok, err := r.legacySnapshot(id)
+	if err != nil || !ok {
 		return "", false, err
-	}
-	if line == nil {
-		return "", false, nil
-	}
-	owned, err := legacyLineOwnedBy(line, id)
-	if err != nil {
-		return "", false, err
-	}
-	if !owned {
-		return "", false, nil
 	}
 	legacy := r.legacyPath(id, kind)
 	present, err = pathExists(legacy)
@@ -243,12 +216,25 @@ func legacyLineOwnedBy(line []byte, id session.SessionID) (bool, error) {
 	return embedded == id, nil
 }
 
-func (r sessionResolver) legacyOwned(id session.SessionID) (bool, error) {
+// legacySnapshot returns the legacy snapshot line only when its own latest
+// embedded id equals id. A (nil, false, nil) result means the legacy family is
+// absent OR belongs to a different session that the lossy stem collided with —
+// both are "not ours", and callers must treat them identically.
+func (r sessionResolver) legacySnapshot(id session.SessionID) ([]byte, bool, error) {
 	line, err := readSnapshotLine(r.legacyPath(id, kindSnapshot))
 	if err != nil || line == nil {
-		return false, err
+		return nil, false, err
 	}
-	return legacyLineOwnedBy(line, id)
+	owned, err := legacyLineOwnedBy(line, id)
+	if err != nil || !owned {
+		return nil, false, err
+	}
+	return line, true, nil
+}
+
+func (r sessionResolver) legacyOwned(id session.SessionID) (bool, error) {
+	_, ok, err := r.legacySnapshot(id)
+	return ok, err
 }
 
 type snapshotFile struct {
