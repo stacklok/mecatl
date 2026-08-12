@@ -8,12 +8,27 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+// TestSidecarKindsIsFamilyOrderWithoutSnapshot pins the relationship both vars'
+// doc comments assert but nothing else enforces: sidecarKinds must be exactly
+// familyOrder minus the trailing snapshot. A fourth file kind added to one and
+// not the other compiles, passes every other test, and then silently orphans a
+// file (Delete skips it, so List can never see it again) or strands one
+// (migrateLegacyFamily leaves it behind in the legacy namespace). It also pins
+// snapshot-last, which is otherwise asserted only in prose.
+func TestSidecarKindsIsFamilyOrderWithoutSnapshot(t *testing.T) {
+	want := append(slices.Clone(sidecarKinds), kindSnapshot)
+	if !slices.Equal(familyOrder, want) {
+		t.Fatalf("familyOrder = %v, want sidecarKinds + kindSnapshot = %v", familyOrder, want)
+	}
+}
 
 func TestSessionTokenRoundTripAndAlphabet(t *testing.T) {
 	ids := []session.SessionID{

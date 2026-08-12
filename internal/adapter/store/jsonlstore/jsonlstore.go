@@ -187,8 +187,19 @@ type eventLogRecord struct {
 // COST: ids are decoded from each session file's latest snapshot line rather
 // than from filenames (a filename is not invertible back to the id, and now
 // there are two directories — canonical and legacy — to reconcile), so List
-// is O(total store bytes) in the worst case — acceptable for a retention
-// sweep on a startup/hourly cadence, NOT a hot path.
+// costs one directory read per dir plus one TAIL read per snapshot file
+// (readLastLine's lastLineSeekWindow, NOT a full scan; the ownership check
+// compares the already-read line and issues no extra syscall). A single
+// snapshot line larger than that window degrades to a full scan of that one
+// file. Fine for a retention sweep on a startup/hourly cadence, NOT a hot
+// path.
+//
+// List enumerates ONLY *.session.jsonl files, which is what makes the
+// sidecars-before-snapshot removal order load-bearing (see familyOrder in
+// resolve.go): a .tools.jsonl or .events.jsonl sidecar without its session
+// file is invisible here and can never be swept. A pre-existing orphan is
+// accepted as unreachable; Delete's ordering prevents this store from
+// creating new ones.
 func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -214,7 +225,9 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 // the legacy snapshot's embedded id proves it belongs to this session —
 // legacy sidecars before the legacy snapshot. A legacy family that fails
 // ownership (mismatch or absent) is left untouched; that mismatch and
-// absence are both idempotent success.
+// absence are both idempotent success. A canonical snapshot that cannot be
+// read or validated is the THIRD outcome: it aborts the call before any
+// removal — an error, not idempotent success.
 func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
