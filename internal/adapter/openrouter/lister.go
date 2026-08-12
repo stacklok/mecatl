@@ -41,10 +41,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
+	"time"
 
-	"github.com/stacklok/mecatl/internal/adapter/modelhttp"
 	"github.com/stacklok/mecatl/internal/adapter/modeltext"
 )
 
@@ -58,6 +59,11 @@ const (
 	// body cannot OOM the process (CWE-770). 4 MiB comfortably holds the live
 	// catalog (336 models, well under 1 MiB) with ample headroom.
 	maxResponseBytes = 4 << 20
+
+	// defaultTimeout bounds the whole fetch when no client timeout is otherwise
+	// configured (the injected client may carry its own; the ctx deadline also
+	// applies). A live catalog fetch that hangs must not stall the caller.
+	defaultTimeout = 5 * time.Second
 
 	// maxIDRunes / maxNameRunes bound a SINGLE model's id and display name. The
 	// 4 MiB whole-response cap above does not stop ONE hostile entry with a
@@ -102,7 +108,9 @@ type Lister struct {
 // default client with defaultTimeout (so production wiring may pass nil and tests
 // inject a mock transport).
 func NewLister(client *http.Client) *Lister {
-	client = modelhttp.DefaultClient(client, nil)
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	}
 	return &Lister{httpClient: client}
 }
 
@@ -135,12 +143,28 @@ type wireModel struct {
 // error returns a non-nil error (the composition layer then falls back to the
 // embedded catalog). It NEVER panics.
 func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
-	body, err := modelhttp.Get(ctx, l.httpClient, openRouterModelsURL, "openrouter", maxResponseBytes, func(req *http.Request) {
-		// KEYLESS: no Authorization header (CWE-200). Accept JSON explicitly.
-		req.Header.Set("Accept", "application/json")
-	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterModelsURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("openrouter: build request: %w", err)
+	}
+	// KEYLESS: no Authorization header (CWE-200). Accept JSON explicitly.
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := l.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openrouter: fetch models: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("openrouter: unexpected status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("openrouter: read body: %w", err)
+	}
+	if len(body) > maxResponseBytes {
+		return nil, fmt.Errorf("openrouter: response exceeds %d-byte cap", maxResponseBytes)
 	}
 
 	var wire wireResponse

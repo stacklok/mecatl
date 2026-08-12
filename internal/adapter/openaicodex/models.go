@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/internal/adapter/modelhttp"
 	"github.com/stacklok/mecatl/internal/adapter/modeltext"
 )
 
@@ -19,6 +20,7 @@ const (
 	maxModelIDRunes          = 256
 	maxModelNameRunes        = 512
 	codexModelsClientVersion = "1.0.0"
+	modelsTimeout            = 5 * time.Second
 )
 
 // Model is the package-owned projection of one picker-visible Codex
@@ -47,7 +49,7 @@ func NewLister(policy RequestPolicy) *Lister {
 	return &Lister{
 		clientVersion: codexModelsClientVersion,
 		client: &http.Client{
-			Timeout:       modelhttp.DefaultTimeout,
+			Timeout:       modelsTimeout,
 			CheckRedirect: policy.HTTPClient().CheckRedirect,
 			Transport:     policy,
 		},
@@ -73,14 +75,27 @@ type modelsWireModel struct {
 // ListModels returns picker-visible entitlements in server order.
 func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 	query := url.Values{"client_version": []string{l.clientVersion}}
-	body, err := modelhttp.Get(ctx, l.client, BaseURL+"/models?"+query.Encode(), "openai-codex", maxModelsResponseBytes, func(req *http.Request) {
-		// net/http.NewRequest copies URL.Host into Request.Host. The immutable
-		// policy forbids host overrides, so clear the optional override field;
-		// the transport still routes through URL.Host.
-		req.Host = ""
-	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, BaseURL+"/models?"+query.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("openai-codex: build models request: %w", err)
+	}
+	// The immutable policy forbids host overrides. Keep the optional override
+	// field empty; the transport still routes through URL.Host.
+	req.Host = ""
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai-codex: fetch models: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("openai-codex: unexpected models status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxModelsResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("openai-codex: read models body: %w", err)
+	}
+	if len(body) > maxModelsResponseBytes {
+		return nil, fmt.Errorf("openai-codex: models response exceeds %d-byte cap", maxModelsResponseBytes)
 	}
 	var envelope modelsEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {

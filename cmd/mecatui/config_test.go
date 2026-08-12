@@ -797,21 +797,16 @@ func TestValidateWorkspaceRequired(t *testing.T) {
 }
 
 // TestValidateEmbeddedProviderRequired asserts that the bare (embedded) path
-// needs a resolvable provider (OpenAI key or --mock), and that connect mode or a
-// provider satisfies the check.
+// needs a resolvable provider, and that the error points to concise next steps
+// rather than enumerating every supported provider and flag.
 func TestValidateEmbeddedProviderRequired(t *testing.T) {
-	// Bare mode, no key, no mock -> error (cannot host an embedded server). The copy
-	// must be self-explanatory: every accepted key, the endpoint base-URL overrides,
-	// the --mock + 'mecatui connect' escape hatches, and the docs pointer.
+	// Bare mode, no credential and no mock cannot host an embedded server.
 	if err := (config{workspace: "/abs", mode: "default", transportMode: modeLocal}).validate(); err == nil {
 		t.Error("expected an error when embedding with no provider")
 	} else {
 		msg := err.Error()
 		for _, want := range []string{
-			"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY",
-			"--auth-file", "openai-codex",
-			"--openai-base-url", "--anthropic-base-url", "--openrouter-base-url", "--opencode-base-url",
-			"--mock", "mecatui connect ADDRESS", "docs/usage.md",
+			"no LLM provider", "--auth-file", "ToolHive", "--mock", "connect", "docs/usage.md",
 		} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("validate() error %q does not mention %q", msg, want)
@@ -914,8 +909,8 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 		t.Setenv(envName, "")
 	}
 	help := helpRenderOut(t, modeLocal, []string{"--help"})
-	if !hasFlagHeader(help, "auth-file") || !strings.Contains(help, "openai-codex") {
-		t.Fatalf("embedded help does not surface manual Codex file auth:\n%s", help)
+	if !hasFlagHeader(help, "auth-file") || !strings.Contains(help, "provider credentials YAML") {
+		t.Fatalf("embedded help does not surface provider file auth:\n%s", help)
 	}
 
 	expiredAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)

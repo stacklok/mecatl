@@ -878,11 +878,9 @@ func (m Model) modelsRowBudget() int {
 }
 
 // modelsDisabledNote is the empty-state copy when model selection is NOT available
-// on the connected server (caps.ModelSelection == false / zero providers), with
-// the remedy — aligned with the zero-keys actionable copy.
+// on the connected server (caps.ModelSelection == false / zero providers).
 const modelsDisabledNote = "Model selection is not available on this server.\n" +
-	"Embedded: configure openai-codex OAuth in --auth-file, then relaunch.\n" +
-	"Alternatively, set OPENAI_API_KEY or OPENROUTER_API_KEY and restart."
+	"Configure a provider on the server, then reconnect."
 
 // modelsErrorHint is the next-action line rendered beneath a raw ListModels
 // RPC error (review UX finding: a bare "✗ list models: <error>" was a dead

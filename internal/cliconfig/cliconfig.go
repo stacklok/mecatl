@@ -67,8 +67,7 @@ var DefaultProviderFlagHelp = ProviderFlagHelp{
 	OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 	AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	OpenCodeBaseURL:   "override the OpenCode Go API base URL (default https://opencode.ai/zen/go/v1; key from OPENCODE_API_KEY)",
-	AuthFile: "path to a YAML credentials file (providers.<name>.api_key for anthropic/openai/openrouter/opencode, or providers.openai-codex.oauth for a manual ChatGPT Codex token); " +
-		"overrides the conventional default $XDG_CONFIG_HOME/mecatl/auth.yaml (usually ~/.config/mecatl/auth.yaml, a settings.yaml sibling). A credential already present in the environment always wins over this file for that provider",
+	AuthFile:          "provider credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); environment credentials take precedence",
 }
 
 // ProviderFlags holds the values bound by RegisterProviderFlags. The base-URL fields

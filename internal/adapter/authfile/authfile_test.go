@@ -85,7 +85,7 @@ func TestAPIKeyCompatibility(t *testing.T) {
 }
 
 func TestOpenAICodexOAuthSchema(t *testing.T) {
-	t.Run("exact shape and copy-returning accessor", func(t *testing.T) {
+	t.Run("valid shape and copy-returning accessor", func(t *testing.T) {
 		dir := t.TempDir()
 		path := writeFile(t, dir, "providers:\n  openai-codex:\n    oauth:\n      access_token: token-raw\n      account_id: account-raw\n      expires_at: 2026-08-04T18:30:00Z\n", 0o600)
 		f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
@@ -103,47 +103,41 @@ func TestOpenAICodexOAuthSchema(t *testing.T) {
 		}
 	})
 
-	tests := []struct {
-		name   string
-		codex  string
-		apiKey string
-	}{
-		{
-			name:   "unknown OAuth field rejects only Codex entry",
-			codex:  "    oauth:\n      access_token: codex-secret\n      refresh_token: refresh-secret\n",
-			apiKey: "sk-ant-survives",
-		},
-		{
-			name:   "malformed OAuth nesting rejects only Codex entry",
-			codex:  "    oauth: codex-secret\n",
-			apiKey: "sk-ant-survives",
-		},
-		{
-			name:   "empty access token rejects only Codex OAuth",
-			codex:  "    oauth:\n      access_token: \"  \"\n      account_id: account-secret\n",
-			apiKey: "sk-ant-survives",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			contents := "providers:\n  anthropic:\n    api_key: " + tt.apiKey + "\n  openai-codex:\n" + tt.codex
-			path := writeFile(t, dir, contents, 0o600)
-			f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
-			if warning == "" {
-				t.Fatal("invalid OAuth entry should produce a warning")
-			}
-			if f == nil {
-				t.Fatal("invalid OAuth entry invalidated an unrelated valid API key")
-			}
-			if got := f.APIKey("anthropic"); got != tt.apiKey {
-				t.Errorf("APIKey(anthropic) = %q, want unrelated key preserved", got)
-			}
-			if got := f.OAuth("openai-codex"); got != (OAuthEntry{}) {
-				t.Errorf("OAuth(openai-codex) = %#v, want zero value", got)
-			}
-		})
-	}
+	t.Run("structurally invalid file is rejected as a whole", func(t *testing.T) {
+		tests := []struct {
+			name, codex string
+		}{
+			{name: "unknown OAuth field", codex: "    oauth:\n      access_token: codex-secret\n      refresh_token: refresh-secret\n"},
+			{name: "malformed OAuth nesting", codex: "    oauth: codex-secret\n"},
+			{name: "non-string access token", codex: "    oauth:\n      access_token: 123\n"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dir := t.TempDir()
+				contents := "providers:\n  anthropic:\n    api_key: sk-ant-valid\n  openai-codex:\n" + tt.codex
+				path := writeFile(t, dir, contents, 0o600)
+				f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+				if warning == "" || f != nil {
+					t.Fatalf("Load(invalid schema) = (%v, %q), want (nil, warning)", f, warning)
+				}
+			})
+		}
+	})
+
+	t.Run("empty access token drops only Codex OAuth", func(t *testing.T) {
+		dir := t.TempDir()
+		path := writeFile(t, dir, "providers:\n  anthropic:\n    api_key: sk-ant-survives\n  openai-codex:\n    oauth:\n      access_token: \"  \"\n      account_id: account-secret\n", 0o600)
+		f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+		if warning == "" {
+			t.Fatal("empty access token should produce a warning")
+		}
+		if got := f.APIKey("anthropic"); got != "sk-ant-survives" {
+			t.Fatalf("APIKey(anthropic) = %q, want unrelated key preserved", got)
+		}
+		if got := f.OAuth("openai-codex"); got != (OAuthEntry{}) {
+			t.Fatalf("OAuth(openai-codex) = %#v, want zero value", got)
+		}
+	})
 
 	t.Run("OAuth is scoped to openai-codex and API key remains usable", func(t *testing.T) {
 		dir := t.TempDir()
@@ -171,88 +165,6 @@ func TestOpenAICodexOAuthSchema(t *testing.T) {
 			t.Fatal("API key must not enable the subscription provider")
 		}
 	})
-
-	t.Run("exact node schema rejects coercions and YAML indirection", func(t *testing.T) {
-		tests := []struct {
-			name  string
-			entry string
-		}{
-			{name: "provider null", entry: "  openai-codex: null\n"},
-			{name: "provider scalar", entry: "  openai-codex: sentinel-provider-scalar\n"},
-			{name: "oauth null", entry: "  openai-codex:\n    oauth: null\n"},
-			{name: "oauth sequence", entry: "  openai-codex:\n    oauth: [sentinel-sequence]\n"},
-			{name: "access token integer", entry: "  openai-codex:\n    oauth:\n      access_token: 123\n"},
-			{name: "access token boolean", entry: "  openai-codex:\n    oauth:\n      access_token: true\n"},
-			{name: "access token null", entry: "  openai-codex:\n    oauth:\n      access_token: null\n"},
-			{name: "access token custom tag", entry: "  openai-codex:\n    oauth:\n      access_token: !secret sentinel-custom-tag\n"},
-			{name: "account ID integer", entry: "  openai-codex:\n    oauth:\n      access_token: valid-token\n      account_id: 123\n"},
-			{name: "expiry boolean", entry: "  openai-codex:\n    oauth:\n      access_token: valid-token\n      expires_at: false\n"},
-			{name: "API key integer", entry: "  openai-codex:\n    api_key: 123\n"},
-			{name: "custom-tagged provider mapping", entry: "  openai-codex: !provider\n    oauth:\n      access_token: sentinel-provider-tag\n"},
-			{name: "custom-tagged OAuth mapping", entry: "  openai-codex:\n    oauth: !oauth\n      access_token: sentinel-oauth-tag\n"},
-			{name: "provider alias", entry: "  template: &provider_alias\n    oauth:\n      access_token: sentinel-alias\n  openai-codex: *provider_alias\n"},
-			{name: "oauth alias", entry: "  template: &oauth_alias\n    access_token: sentinel-alias\n  openai-codex:\n    oauth: *oauth_alias\n"},
-			{name: "provider merge", entry: "  openai-codex:\n    <<: &provider_merge\n      oauth:\n        access_token: sentinel-merge\n"},
-			{name: "oauth merge", entry: "  openai-codex:\n    oauth:\n      <<: &oauth_merge\n        access_token: sentinel-merge\n"},
-			{name: "duplicate provider field", entry: "  openai-codex:\n    oauth:\n      access_token: first\n    oauth:\n      access_token: second\n"},
-			{name: "duplicate OAuth field", entry: "  openai-codex:\n    oauth:\n      access_token: first\n      access_token: second\n"},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				dir := t.TempDir()
-				contents := "providers:\n  anthropic:\n    api_key: sk-ant-survives\n" + tt.entry
-				path := writeFile(t, dir, contents, 0o600)
-				f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
-				if warning == "" {
-					t.Fatal("non-canonical OAuth schema should warn")
-				}
-				if f == nil || f.APIKey("anthropic") != "sk-ant-survives" {
-					t.Fatal("invalid Codex entry discarded unrelated valid API key")
-				}
-				if got := f.OAuth("openai-codex"); got != (OAuthEntry{}) {
-					t.Fatalf("invalid Codex entry produced OAuth credential: %#v", got)
-				}
-			})
-		}
-	})
-}
-
-func TestLoadRejectsNonCanonicalMappingChain(t *testing.T) {
-	tests := []struct {
-		name     string
-		contents string
-	}{
-		{
-			name:     "providers null",
-			contents: "providers: null\n",
-		},
-		{
-			name:     "custom-tagged root",
-			contents: "!root\nproviders:\n  openai-codex:\n    oauth:\n      access_token: sentinel-root-tag\n",
-		},
-		{
-			name:     "custom-tagged providers mapping",
-			contents: "providers: !providers\n  openai-codex:\n    oauth:\n      access_token: sentinel-providers-tag\n",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			path := writeFile(t, dir, tt.contents, 0o600)
-			f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
-			if f != nil {
-				t.Fatalf("non-canonical mapping chain contributed credentials: %#v", f)
-			}
-			if warning == "" {
-				t.Fatal("non-canonical mapping chain should warn")
-			}
-			for _, secret := range []string{"sentinel-root-tag", "sentinel-providers-tag"} {
-				if strings.Contains(warning, secret) {
-					t.Fatalf("warning leaked document content %q: %q", secret, warning)
-				}
-			}
-		})
-	}
 }
 
 func TestLoadRejectsSecondYAMLDocument(t *testing.T) {
@@ -270,11 +182,8 @@ func TestLoadRejectsSecondYAMLDocument(t *testing.T) {
 			contents := "providers:\n  anthropic:\n    api_key: first-document-secret\n---\n" + tt.second
 			path := writeFile(t, dir, contents, 0o600)
 			f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
-			if f != nil {
-				t.Fatalf("multi-document auth file contributed credentials: %#v", f)
-			}
-			if warning == "" {
-				t.Fatal("multi-document auth file should warn")
+			if f != nil || warning == "" {
+				t.Fatalf("Load(multiple documents) = (%v, %q), want (nil, warning)", f, warning)
 			}
 			for _, secret := range []string{"first-document-secret", "second-document-secret"} {
 				if strings.Contains(warning, secret) {

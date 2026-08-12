@@ -630,15 +630,7 @@ func (c config) validate() error {
 		var probe app.Config
 		c.toolhiveLLMFlags.Apply(&probe)
 		if !app.ToolhiveAvailable(probe) {
-			return errors.New("no LLM provider configured — mecatui has nothing to talk to: " +
-				"to host an embedded server put providers.<name>.api_key or providers.openai-codex.oauth in --auth-file (default ~/.config/mecatl/auth.yaml), " +
-				"or set one of ANTHROPIC_API_KEY (Claude), OPENAI_API_KEY, OPENROUTER_API_KEY (one key, many models — a good first choice), " +
-				"or OPENCODE_API_KEY (OpenCode Go); " +
-				"for a compatible/proxy endpoint add " +
-				"--openai-base-url / --anthropic-base-url / --openrouter-base-url / --opencode-base-url with the matching key; " +
-				"for a ToolHive LLM gateway proxy make sure it is running (or pass --toolhive-llm-base-url); " +
-				"to try it offline with no key pass --mock; or run 'mecatui connect ADDRESS' against an already-running mecated; " +
-				"see docs/usage.md for provider setup")
+			return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see docs/usage.md")
 		}
 	}
 	// Operator posture: refuse an allow-all tier (auto or yolo) when running

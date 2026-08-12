@@ -265,7 +265,7 @@ func parseFlags(argv []string) (config, error) {
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
 	// use, so mecak8s shares the three-mains wiring.
 	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{
-		AuthFile: "path to a YAML credentials file for API-key providers; providers.openai-codex.oauth is unsupported by mecak8s — use mecated/mecatui/mecatequi, pending an external-secret design",
+		AuthFile: "provider credentials YAML path (API-key providers only; Codex OAuth is unsupported)",
 	})
 	// ToolHive LLM gateway (issue #262): a k8s pod naturally has no ToolHive
 	// config file, so this is inert unless an operator mounts one or passes
@@ -438,7 +438,7 @@ func parseFlags(argv []string) (config, error) {
 	}
 	cfg.providerCredentials = cfg.providerFlags.Resolve()
 	if cfg.providerCredentials.HasOpenAICodex() {
-		return config{}, errors.New("mecak8s: providers.openai-codex.oauth credentials are unsupported; use mecated, embedded mecatui, or mecatequi (k8s external-secret delivery is deferred)")
+		return config{}, errors.New("mecak8s: openai-codex OAuth is unsupported; use an API-key provider or mecated/mecatui")
 	}
 
 	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves
