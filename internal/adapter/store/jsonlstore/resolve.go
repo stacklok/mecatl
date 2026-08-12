@@ -135,8 +135,57 @@ func readSnapshotLine(path string) ([]byte, error) {
 	return last, nil
 }
 
-// canonicalSnapshot validates both physical ownership and the complete latest
-// snapshot. A present canonical file is authoritative even when invalid.
+// canonicalOwnership reports whether this session's canonical family exists,
+// and fails closed ONLY when the stored snapshot POSITIVELY proves the file
+// belongs to another id. It is the ownership question, deliberately separated
+// from snapshot VALIDITY, which only loadSnapshot needs.
+//
+// The distinction is the whole point. Two states used to be conflated:
+//
+//   - The latest line is TORN or the file is empty — what a crash mid-appendLine
+//     leaves, and routine. Ownership is UNPROVEN, not disproven: the path token
+//     is injective, so the family is ours whatever the bytes say. Proceed.
+//     Treating this as a hard failure is what made one torn line break three
+//     unrelated operations — Delete returned an error having removed nothing,
+//     violating port.PrunableStore's idempotence and leaving the session
+//     permanently unprunable (List skips undecodable files, so nothing ever
+//     surfaced it again); EventLog.Read failed for a byte-perfect events file;
+//     and every Save/Append/ToolCall failed even though appending a fresh
+//     snapshot is precisely what heals the file, Load being last-line-wins.
+//   - The embedded id DECODES and differs — reachable only by hand-copying or
+//     editing a file into the canonical namespace, since the token is
+//     injective. Ownership is disproven, so fail closed everywhere including
+//     Delete, which must not destroy another session's data.
+//
+// The read is a TAIL read (readLastLine's window), never a full scan: this runs
+// on every Save, Append and ToolCall, and a snapshot file grows as
+// turns x conversation size, so a full scan per appended event was quadratic in
+// run length while holding Store.mu.
+func (r sessionResolver) canonicalOwnership(id session.SessionID) (bool, error) {
+	path := r.canonicalPath(id, kindSnapshot)
+	present, err := pathExists(path)
+	if err != nil || !present {
+		return false, err
+	}
+	last, err := readLastLine(path)
+	if err != nil || last == nil {
+		return true, nil // present, ownership unproven — ours by path
+	}
+	embedded, err := snapshotIDFromLine(last)
+	if err != nil {
+		return true, nil // undecodable line — same reasoning
+	}
+	if embedded != id {
+		return true, fmt.Errorf("jsonlstore: canonical session id mismatch: stored %q, requested %q", embedded, id)
+	}
+	return true, nil
+}
+
+// canonicalSnapshot reads the latest canonical snapshot line for a READER. It
+// keeps the embedded-id integrity check (the token is injective, so a mismatch
+// means the file was tampered with or hand-copied, not that it belongs to
+// another session) and leaves the full sessnap decode to Store.Load, which
+// unmarshals the same bytes anyway.
 func (r sessionResolver) canonicalSnapshot(id session.SessionID) ([]byte, bool, error) {
 	line, err := readSnapshotLine(r.canonicalPath(id, kindSnapshot))
 	if err != nil || line == nil {
@@ -148,9 +197,6 @@ func (r sessionResolver) canonicalSnapshot(id session.SessionID) ([]byte, bool, 
 	}
 	if embedded != id {
 		return nil, true, fmt.Errorf("jsonlstore: canonical session id mismatch: stored %q, requested %q", embedded, id)
-	}
-	if _, err := sessnap.Unmarshal(line); err != nil {
-		return nil, true, err
 	}
 	return line, true, nil
 }
@@ -172,13 +218,19 @@ func (r sessionResolver) loadSnapshot(id session.SessionID) ([]byte, error) {
 	return line, nil
 }
 
-// prepareWrite validates canonical ownership or migrates one verified legacy
-// family. Absent and mismatched legacy snapshots never authorize sidecars.
+// prepareWrite confirms the canonical family exists, or migrates one verified
+// legacy family forward. Absent and mismatched legacy snapshots never authorize
+// sidecars.
+//
+// It checks canonical PRESENCE, not snapshot validity: baseline Save did not
+// read the snapshot at all before appending, and a torn latest line must not
+// make a session unwritable — appending a fresh snapshot after it is precisely
+// what restores the session, since Load takes the last line.
 func (r sessionResolver) prepareWrite(id session.SessionID) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
-	_, present, err := r.canonicalSnapshot(id)
+	present, err := r.canonicalOwnership(id)
 	if err != nil || present {
 		return err
 	}
@@ -193,9 +245,12 @@ func (r sessionResolver) prepareWrite(id session.SessionID) error {
 }
 
 // readablePath resolves a sidecar without modifying storage. A canonical
-// snapshot, when present, must validate before any canonical sidecar is read.
+// snapshot's PRESENCE decides whether legacy fallback is allowed; its validity
+// is irrelevant here — a sidecar (the durable event log especially) must stay
+// readable when the snapshot beside it is torn, since the log exists to survive
+// exactly the crash that tore it.
 func (r sessionResolver) readablePath(id session.SessionID, kind sessionKind) (string, bool, error) {
-	_, snapshotPresent, err := r.canonicalSnapshot(id)
+	snapshotPresent, err := r.canonicalOwnership(id)
 	if err != nil {
 		return "", false, err
 	}

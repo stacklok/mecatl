@@ -225,13 +225,19 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 // the legacy snapshot's embedded id proves it belongs to this session —
 // legacy sidecars before the legacy snapshot. A legacy family that fails
 // ownership (mismatch or absent) is left untouched; that mismatch and
-// absence are both idempotent success. A canonical snapshot that cannot be
-// read or validated is the THIRD outcome: it aborts the call before any
-// removal — an error, not idempotent success.
+// absence are both idempotent success.
+//
+// The canonical family is removed on PRESENCE alone, never on the snapshot
+// parsing: the token is injective, so the file is ours whatever it contains,
+// and gating removal on validity made a torn snapshot line permanently
+// unprunable — every retention sweep re-failed on it while List, which skips
+// undecodable files, never surfaced it. port.PrunableStore requires that a
+// Delete either remove or be idempotent success, so an unreadable snapshot
+// must not be a third outcome.
 func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	_, canonicalOwned, err := st.resolver.canonicalSnapshot(id)
+	canonicalOwned, err := st.resolver.canonicalOwnership(id)
 	if err != nil {
 		return err
 	}
@@ -414,12 +420,41 @@ func (st *Store) ScheduleStore() port.ScheduleStore {
 
 // appendLine appends b followed by a newline to the file at path, opening it
 // for append (creating it if needed). Each line is a complete JSON record.
+//
+// TORN-TAIL REPAIR. A write is one unsynced Write of record+'\n', so a crash,
+// SIGKILL or ENOSPC partway through leaves a truncated final line with NO
+// terminating newline. Appending straight onto that would GLUE the next record
+// to the fragment, so one interrupted write would corrupt the following record
+// too — turning a damaged tail into a permanently unreadable file, and (for the
+// snapshot) destroying the very append that would otherwise have repaired it,
+// since Load is last-line-wins. So: if the file is non-empty and does not end
+// in '\n', emit a leading newline first. The fragment then stands as its own
+// line, where scanLastNonBlankLine and readLastLine both look PAST it to the
+// record just written. Damage stays bounded to the one interrupted record.
 func appendLine(path string, b []byte) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // path is sanitized
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644) //nolint:gosec // path is sanitized
 	if err != nil {
 		return fmt.Errorf("jsonlstore: open for append: %w", err)
 	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	rec := make([]byte, 0, len(b)+2)
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("jsonlstore: stat for append: %w", err)
+	}
+	if size := info.Size(); size > 0 {
+		var tail [1]byte
+		if _, err := f.ReadAt(tail[:], size-1); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("jsonlstore: read tail for append: %w", err)
+		}
+		if tail[0] != '\n' {
+			rec = append(rec, '\n')
+		}
+	}
+	rec = append(rec, b...)
+	rec = append(rec, '\n')
+	if _, err := f.Write(rec); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("jsonlstore: append: %w", err)
 	}

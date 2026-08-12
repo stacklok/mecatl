@@ -665,6 +665,154 @@ func TestDeleteRemovesCanonicalAndMatchingLegacyFamilies(t *testing.T) {
 	}
 }
 
+// TestAppendLineRepairsTornTail pins appendLine's two branches directly: a file
+// ending in '\n' is appended to verbatim, and one ending mid-record gets a
+// separating newline so the fragment cannot swallow the next record. Without it
+// a single interrupted write corrupts the FOLLOWING record too, in any of the
+// three per-session files.
+func TestAppendLineRepairsTornTail(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		existing string
+		want     string
+	}{
+		{"clean tail", "{\"a\":1}\n", "{\"a\":1}\n{\"b\":2}\n"},
+		{"torn tail", "{\"a\":1}\n{\"partial", "{\"a\":1}\n{\"partial\n{\"b\":2}\n"},
+		{"empty file", "", "{\"b\":2}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "x.jsonl")
+			if tc.existing != "" {
+				writeBytes(t, path, []byte(tc.existing))
+			}
+			if err := appendLine(path, []byte("{\"b\":2}")); err != nil {
+				t.Fatalf("appendLine: %v", err)
+			}
+			assertBytes(t, path, []byte(tc.want))
+		})
+	}
+}
+
+// tornCanonicalFamily writes a canonical family whose snapshot ends in a
+// truncated JSON line — what a crash mid-appendLine leaves behind. The line
+// BEFORE it is a complete, valid snapshot, which is what makes the whole class
+// so unpleasant: the data is fine and only the tail is damaged.
+func tornCanonicalFamily(t *testing.T, st *Store, id session.SessionID) (events []byte) {
+	t.Helper()
+	good := append(snapshotLine(t, id, "before-the-crash"), '\n')
+	writeBytes(t, st.resolver.canonicalPath(id, kindSnapshot),
+		append(good, []byte(`{"id":"`+string(id)+`","stat`)...))
+	events = append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 7}), '\n')
+	writeBytes(t, st.resolver.canonicalPath(id, kindEvents), events)
+	writeBytes(t, st.resolver.canonicalPath(id, kindTools), []byte("{\"tool\":\"Read\"}\n"))
+	return events
+}
+
+// TestDeleteTornCanonicalSnapshotIsIdempotentSuccess pins port.PrunableStore's
+// idempotence against a torn snapshot. Gating removal on the snapshot PARSING
+// made such a session permanently unprunable: every retention sweep re-failed
+// identically, and List skips undecodable files so nothing ever surfaced it
+// again — an invisible, unreclaimable disk leak from one interrupted write.
+func TestDeleteTornCanonicalSnapshotIsIdempotentSuccess(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("torn-delete")
+	tornCanonicalFamily(t, st, id)
+
+	if err := st.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete on torn canonical snapshot = %v; want nil (idempotent success)", err)
+	}
+	for _, kind := range familyOrder {
+		assertMissing(t, st.resolver.canonicalPath(id, kind))
+	}
+	if err := st.Delete(context.Background(), id); err != nil {
+		t.Fatalf("second Delete = %v; want nil", err)
+	}
+}
+
+// TestEventLogReadSurvivesTornCanonicalSnapshot pins that a sidecar does not
+// depend on the validity of the snapshot beside it. The durable event log exists
+// to survive the crash that tears the snapshot, so coupling the two lost the log
+// exactly when it was most needed (ADR 0038 rehydration, ADR 0027 3b approval
+// replay both read it back).
+func TestEventLogReadSurvivesTornCanonicalSnapshot(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("torn-events")
+	tornCanonicalFamily(t, st, id)
+
+	got := collectEvents(t, st, id) // fails the test on any yielded error
+	if len(got) != 1 || got[0].Seq != 7 {
+		t.Fatalf("Read = %+v; want the one recorded event (seq 7)", got)
+	}
+}
+
+// TestSaveHealsTornCanonicalSnapshot pins that a torn tail does not brick the
+// session for writes. Load is last-line-wins, so appending a fresh snapshot IS
+// the repair; refusing the write left the session permanently unwritable while
+// the fix was one append away. Baseline Save never read the snapshot at all.
+func TestSaveHealsTornCanonicalSnapshot(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("torn-save")
+	tornCanonicalFamily(t, st, id)
+
+	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0).UTC())
+	sess.SetTitle("after-the-repair")
+	if err := st.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save over torn canonical snapshot = %v; want nil", err)
+	}
+	loaded, err := st.Load(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Load after heal = %v; want the appended snapshot", err)
+	}
+	if loaded.Title != "after-the-repair" {
+		t.Fatalf("Load title = %q; want the freshly appended snapshot", loaded.Title)
+	}
+}
+
+// TestCorruptLegacySnapshotIsErrorNotNotOurs pins the fail-CLOSED half of the
+// legacy ownership proof at the two call sites that had no coverage: the write
+// path and the sidecar-read path. An undecodable legacy snapshot means "cannot
+// tell", never "not ours" — folding the two together would authorise a
+// migration, or a sidecar read, on a family whose ownership was never proven.
+func TestCorruptLegacySnapshotIsErrorNotNotOurs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content []byte
+	}{
+		{"undecodable", []byte("{not-json\n")},
+		{"empty", nil},
+		{"no id field", []byte("{\"state\":\"idle\"}\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newInternalStore(t)
+			id := session.SessionID("legacy-corrupt")
+			legacySnap := st.resolver.legacyPath(id, kindSnapshot)
+			writeBytes(t, legacySnap, tc.content)
+			legacyEvents := append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 3}), '\n')
+			writeBytes(t, st.resolver.legacyPath(id, kindEvents), legacyEvents)
+
+			// prepareWrite, via Save: must refuse and migrate nothing.
+			err := st.Save(context.Background(), session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0)))
+			if err == nil {
+				t.Fatal("Save proceeded on an unprovable legacy family; want an error")
+			}
+			assertMissing(t, st.resolver.canonicalPath(id, kindSnapshot))
+			assertBytes(t, legacySnap, tc.content)
+
+			// readablePath, via Read: must surface the error, not an empty stream.
+			sawErr := false
+			for _, rErr := range st.Read(context.Background(), id) {
+				if rErr != nil {
+					sawErr = true
+				}
+			}
+			if !sawErr {
+				t.Fatal("Read returned an empty stream for an unprovable legacy family; want an error")
+			}
+			assertBytes(t, st.resolver.legacyPath(id, kindEvents), legacyEvents)
+		})
+	}
+}
+
 func eventRecordLine(t *testing.T, ev session.Event) []byte {
 	t.Helper()
 	evJSON, err := json.Marshal(ev)
