@@ -54,6 +54,13 @@ const maxTokenPrefix = 40
 // A collision would mean two sessions sharing one family. At 128 bits that is
 // unreachable in practice, and canonicalOwnership fails CLOSED on an embedded-id
 // mismatch, so even then no session is ever served another's data.
+//
+// The sessionTokenPrefix is redundant with the sid-v1 DIRECTORY the file lives
+// in, and that is a deliberate, reviewed decision — it has been proposed for
+// removal twice. It is kept so a token identifies its own scheme when it appears
+// away from its directory: in a WARN, an operator's `find` output, a support
+// bundle, a backup listing. The cost is 7 filename bytes out of a 255-byte
+// budget that this encoding leaves 161 bytes of headroom in.
 func encodeSessionToken(id session.SessionID) string {
 	sum := sha256.Sum256([]byte(id))
 	var b strings.Builder
