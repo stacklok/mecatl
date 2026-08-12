@@ -206,22 +206,6 @@ func TestListModels_PerFieldTruncation(t *testing.T) {
 	}
 }
 
-// TestTruncateRunes covers the rune-aware boundary: an under-cap string is
-// unchanged; a multi-byte string is cut on a rune boundary (never mid-byte).
-func TestTruncateRunes(t *testing.T) {
-	if got := truncateRunes("short", 256); got != "short" {
-		t.Errorf("under-cap string altered: %q", got)
-	}
-	multi := "日本語テス" // 5 runes
-	got := truncateRunes(multi, 3)
-	if len([]rune(got)) != 3 {
-		t.Errorf("rune length = %d, want 3", len([]rune(got)))
-	}
-	if got != "日本語" {
-		t.Errorf("truncation split a rune or wrong prefix: %q", got)
-	}
-}
-
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {

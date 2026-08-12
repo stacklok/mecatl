@@ -1317,7 +1317,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// does NOT lower the precedence of key-driven providers. No-op when absent.
 	cfg = foldOperatorDefaultProvider(cfg)
 
-	reg, provider, err := buildProvider(cfg)
+	reg, provider, err := buildProvider(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1715,10 +1715,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 
 	// LIVE model listing: Build seeded svcCfg.Models with the EMBEDDED snapshot
-	// synchronously above (so the ModelSelection cap is honest from t=0 and Build
-	// NEVER touches the network). Now kick a SINGLE background refresh that fetches
-	// each available provider's live catalog (only providers WITH a lister actually
-	// fetch — openrouter today) and atomically SWAPS the merged result into the
+	// synchronously above (so the ModelSelection cap is honest from t=0). A default
+	// Codex provider without an explicit model may already have performed its one
+	// bounded entitlement lookup; that result is reused below. Now kick a SINGLE
+	// background refresh that fetches each remaining available provider's live
+	// catalog and atomically SWAPS the merged result into the
 	// service via SetModels. The refresh is owned by COMPOSITION (it holds the
 	// registry + listers); the service just stores the projected proto slice. It is
 	// cancelled by Close so a shutdown mid-fetch does not leak the goroutine (the
@@ -2233,8 +2234,8 @@ func catalogContextWindow(providerID, modelID string) int {
 // consumer (buildEngine's shared engine, child/fork/team/dream/reviewer engines)
 // keeps receiving the single default provider exactly as before — one construction,
 // no second env probe.
-func buildProvider(cfg Config) (*providerRegistry, port.LLMProvider, error) {
-	reg, err := buildProviderRegistry(cfg, cfg.envDetector)
+func buildProvider(ctx context.Context, cfg Config) (*providerRegistry, port.LLMProvider, error) {
+	reg, err := buildProviderRegistryContext(ctx, cfg, cfg.envDetector)
 	if err != nil {
 		return nil, nil, err
 	}

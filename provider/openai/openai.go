@@ -86,6 +86,7 @@ type config struct {
 	effort         string
 	caps           *port.ProviderCapabilities
 	extra          []option.RequestOption
+	httpClient     *http.Client
 	cacheDialect   CacheDialect
 	providerPrefs  func(model string) *OpenRouterProviderPreferences
 	metadataHeader bool
@@ -134,17 +135,26 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 	}
 }
 
-// WithHTTPClient sets the *http.Client the SDK issues requests through (e.g. a
-// redirect-refusing client for a loopback gateway endpoint, CWE-918). nil is
-// ignored (SDK default). NOTE for callers: do NOT set Client.Timeout here — a
-// streaming turn runs for minutes; establishment/idle bounds live in
-// llmresilience, not the transport's blanket deadline.
+// WithHTTPClient sets the final *http.Client the SDK issues requests through
+// (e.g. a redirect-refusing or policy-guarded client). It is deliberately
+// applied after arbitrary WithRequestOption values, so a late generic SDK
+// option cannot replace and bypass a security transport. nil is ignored (SDK
+// default). NOTE for callers: do NOT set Client.Timeout here — a streaming turn
+// runs for minutes; establishment/idle bounds live in llmresilience, not the
+// transport's blanket deadline.
 func WithHTTPClient(c *http.Client) Option {
 	return func(cfg *config) {
 		if c != nil {
-			cfg.extra = append(cfg.extra, option.WithHTTPClient(c))
+			cfg.httpClient = c
 		}
 	}
+}
+
+// WithMaxRetries configures the openai-go retry loop. Composition uses zero
+// when llmresilience is the sole retry owner or when a dynamic credential
+// source must not be called multiple times inside one outer attempt.
+func WithMaxRetries(retries int) Option {
+	return func(c *config) { c.extra = append(c.extra, option.WithMaxRetries(retries)) }
 }
 
 // WithRequestOption threads an arbitrary openai-go request option through to the
@@ -216,6 +226,10 @@ func New(opts ...Option) *Provider {
 		reqOpts = append(reqOpts, option.WithBaseURL(c.baseURL))
 	}
 	reqOpts = append(reqOpts, c.extra...)
+	if c.httpClient != nil {
+		// LAST: a generic request option must not bypass a guarded transport.
+		reqOpts = append(reqOpts, option.WithHTTPClient(c.httpClient))
+	}
 
 	client := oai.NewClient(reqOpts...)
 	return &Provider{

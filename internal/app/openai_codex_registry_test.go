@@ -57,6 +57,13 @@ func codexRegistryConfig(t *testing.T) Config {
 	}
 }
 
+func codexPolicyOptions(policy openaicodex.RequestPolicy) []openaiadapter.Option {
+	return []openaiadapter.Option{
+		openaiadapter.WithHTTPClient(policy.HTTPClient()),
+		openaiadapter.WithMaxRetries(0),
+	}
+}
+
 // TestRegistryOpenAICodexAvailability pins the billing-identity boundary: the
 // manual token and the OpenAI API key independently enable their own provider.
 func TestRegistryOpenAICodexAvailability(t *testing.T) {
@@ -114,9 +121,9 @@ func TestRegistryOpenAICodexAvailability(t *testing.T) {
 	})
 }
 
-// TestADR_0102_OpenAICodexDefaultPrecedence locks the accepted ADR's provider
+// TestADR_0103_OpenAICodexDefaultPrecedence locks the accepted ADR's provider
 // ladder without relying on map iteration or accidental alphabetic order.
-func TestADR_0102_OpenAICodexDefaultPrecedence(t *testing.T) {
+func TestADR_0103_OpenAICodexDefaultPrecedence(t *testing.T) {
 	constructor := func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("offline"))
 	}
@@ -235,8 +242,8 @@ func TestOpenAICodexOptionsSurviveEveryRemint(t *testing.T) {
 		t.Fatalf("NewRequestPolicy: %v", err)
 	}
 	initial := newOpenAICompatEntry(
-		Config{}, providerOpenAICodex, credential.AccessToken(), openaicodex.BaseURL,
-		openaiadapter.WithRequestOption(policy.Options()...),
+		Config{}, providerOpenAICodex, "policy-owned", openaicodex.BaseURL,
+		codexPolicyOptions(policy)...,
 	)
 	streamCodexTestRequest(t, initial.provider) // initial construct
 
@@ -293,8 +300,8 @@ func TestOpenAICodexRequestBodyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequestPolicy: %v", err)
 	}
-	codex := newOpenAICompatEntry(sharedConfig, providerOpenAICodex, credential.AccessToken(), openaicodex.BaseURL,
-		openaiadapter.WithRequestOption(policy.Options()...))
+	codex := newOpenAICompatEntry(sharedConfig, providerOpenAICodex, "policy-owned", openaicodex.BaseURL,
+		codexPolicyOptions(policy)...)
 
 	streamCodexTestRequest(t, openAI.provider)
 	streamCodexTestRequest(t, codex.provider)
@@ -385,7 +392,7 @@ func codexModelsConfig(t *testing.T, transport http.RoundTripper) Config {
 	return cfg
 }
 
-func TestADR_0102_OpenAICodexNeverFallsBackToAPIInventory(t *testing.T) {
+func TestADR_0103_OpenAICodexNeverFallsBackToAPIInventory(t *testing.T) {
 	if embedded := embeddedModels(providerOpenAICodex); len(embedded) != 0 {
 		t.Fatalf("openai-codex embedded inventory = %#v, want empty", embedded)
 	}
@@ -471,6 +478,32 @@ func TestOpenAICodexDefaultBootstrap(t *testing.T) {
 		}
 		if transport.callCount() != 1 {
 			t.Fatalf("bootstrap calls = %d, want 1", transport.callCount())
+		}
+		byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+		if got := byProvider[providerOpenAICodex]; len(got) != 2 || got[0].ID != "server-first" {
+			t.Fatalf("initial live snapshot = %#v, want bootstrapped entitlements", got)
+		}
+		if transport.callCount() != 1 {
+			t.Fatalf("bootstrap plus initial refresh calls = %d, want 1", transport.callCount())
+		}
+	})
+
+	t.Run("caller cancellation stops discovery", func(t *testing.T) {
+		calls := 0
+		cfg := codexRegistryConfig(t)
+		cfg.Model = ""
+		cfg.openAICodexTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return nil, errors.New("unexpected wire call")
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := buildProviderRegistryContext(ctx, cfg, fakeEnv(nil))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("bootstrap error = %v, want context.Canceled", err)
+		}
+		if calls != 0 {
+			t.Fatalf("cancelled bootstrap made %d wire calls, want 0", calls)
 		}
 	})
 

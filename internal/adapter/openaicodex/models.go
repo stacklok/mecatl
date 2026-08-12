@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/internal/adapter/modelhttp"
+	"github.com/stacklok/mecatl/internal/adapter/modeltext"
 )
 
 const (
@@ -40,25 +41,17 @@ type Lister struct {
 }
 
 // NewLister derives its HTTP path from the same immutable RequestPolicy used
-// by inference. A separate client supplies the bounded listing timeout while
-// retaining the policy's transport and redirect refusal.
+// by inference. A separate client supplies the bounded listing timeout over
+// the exact same final transport; inference itself has no blanket timeout.
 func NewLister(policy RequestPolicy) *Lister {
 	return &Lister{
 		clientVersion: codexModelsClientVersion,
 		client: &http.Client{
 			Timeout:       modelhttp.DefaultTimeout,
-			CheckRedirect: policy.client.CheckRedirect,
-			Transport:     policyRoundTripper{policy: policy},
+			CheckRedirect: policy.HTTPClient().CheckRedirect,
+			Transport:     policy,
 		},
 	}
-}
-
-type policyRoundTripper struct{ policy RequestPolicy }
-
-func (t policyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	return t.policy.middleware(req, func(next *http.Request) (*http.Response, error) {
-		return t.policy.client.Transport.RoundTrip(next)
-	})
 }
 
 type modelsEnvelope struct {
@@ -111,7 +104,7 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 		}
 		models = append(models, Model{
 			ID:                   wire.Slug,
-			DisplayName:          truncateModelField(stripModelControls(wire.DisplayName), maxModelNameRunes),
+			DisplayName:          modeltext.TruncateRunes(modeltext.StripControls(wire.DisplayName), maxModelNameRunes),
 			ContextLimit:         contextLimit,
 			InputModalities:      modalities,
 			InputModalitiesKnown: wire.InputModalities != nil,
@@ -131,30 +124,6 @@ func validModelID(value string) bool {
 	return value != "" &&
 		utf8.RuneCountInString(value) <= maxModelIDRunes &&
 		strings.TrimSpace(value) == value &&
-		stripModelControls(value) == value &&
+		modeltext.StripControls(value) == value &&
 		!strings.ContainsRune(value, unicode.ReplacementChar)
-}
-
-func stripModelControls(value string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
-			return -1
-		case r == 0x2028 || r == 0x2029 || unicode.Is(unicode.Bidi_Control, r):
-			return -1
-		default:
-			return r
-		}
-	}, value)
-}
-
-func truncateModelField(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }

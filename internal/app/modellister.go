@@ -552,6 +552,12 @@ func liveModelSnapshot(ctx context.Context, d port.Diagnostics, reg *providerReg
 		if pid == providerMock {
 			continue // the mock never advertises selectable models
 		}
+		if models, ok := reg.bootstrapModels[pid]; ok {
+			// Default discovery already fetched this exact live entitlement snapshot
+			// synchronously. Publish it without a duplicate back-to-back request.
+			byProvider[pid] = models
+			continue
+		}
 		byProvider[pid] = resolveProviderModels(ctx, d, reg, pid)
 	}
 	return byProvider

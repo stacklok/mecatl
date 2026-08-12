@@ -1,13 +1,12 @@
 package openaicodex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
-
-	"github.com/openai/openai-go/v3/option"
 )
 
 const (
@@ -20,12 +19,15 @@ const (
 
 var errInvalidRequestPolicy = errors.New("openai-codex: invalid request policy")
 
-// RequestPolicy owns the exact endpoint, headers, request-time expiry check,
-// redirect refusal, and SDK retry setting shared by inference and model listing.
+// RequestPolicy is the final HTTP transport shared by inference and model
+// listing. It owns the exact endpoint, headers, request-time expiry check,
+// redirect refusal, and bounded authentication errors. SDK retry configuration
+// remains at the provider construction boundary because a transport cannot
+// disable an SDK retry loop.
 type RequestPolicy struct {
 	credential Credential
 	now        func() time.Time
-	client     *http.Client
+	base       http.RoundTripper
 }
 
 // NewRequestPolicy creates an immutable policy. transport is an offline-test
@@ -41,44 +43,52 @@ func NewRequestPolicy(credential Credential, now func() time.Time, transport htt
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	return RequestPolicy{
-		credential: credential,
-		now:        now,
-		client: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
-	}, nil
+	return RequestPolicy{credential: credential, now: now, base: transport}, nil
 }
 
-// Options returns the OpenAI SDK construction options. These are intended to
-// ride provider/openai.WithRequestOption so the existing Responses
-// implementation remains the sole LLM adapter.
-func (p RequestPolicy) Options() []option.RequestOption {
-	return []option.RequestOption{
-		option.WithAPIKey(p.credential.accessToken),
-		option.WithBaseURL(BaseURL),
-		option.WithHTTPClient(p.client),
-		option.WithMaxRetries(0),
-		option.WithMiddleware(p.middleware),
+// HTTPClient returns an inference-safe client over this policy. It deliberately
+// has no blanket timeout because a streaming response may run for minutes. The
+// lister builds its own bounded client over the same immutable transport.
+func (p RequestPolicy) HTTPClient() *http.Client {
+	return &http.Client{
+		Transport: p,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 }
 
-func (p RequestPolicy) middleware(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-	if err := p.credential.Validate(p.now()); err != nil {
+// RoundTrip validates and clones req before placing credential material on the
+// clone at the final network boundary. The caller's request remains untouched.
+func (p RequestPolicy) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone, err := p.authorizedRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.base.RoundTrip(clone)
+	return normalizePolicyResponse(clone.Context(), resp, err)
+}
+
+func (p RequestPolicy) authorizedRequest(req *http.Request) (*http.Request, error) {
+	if req == nil {
+		return nil, errors.New("openai-codex: refused endpoint override")
+	}
+	if err := req.Context().Err(); err != nil {
 		return nil, err
 	}
 	if !allowedRequest(req) {
 		return nil, errors.New("openai-codex: refused endpoint override")
 	}
+	if err := p.credential.Validate(p.now()); err != nil {
+		return nil, err
+	}
+	clone := req.Clone(req.Context())
 
 	// Rebuild the endpoint's complete header set from owned constants. Copying
 	// even apparently harmless SDK headers would let OPENAI_CUSTOM_HEADERS or a
 	// late request option smuggle arbitrary values through the policy.
 	clean := make(http.Header)
-	if req.URL.Path == "/backend-api/codex/responses" {
+	if clone.URL.Path == "/backend-api/codex/responses" {
 		clean.Set("Accept", "text/event-stream")
 		clean.Set("Content-Type", "application/json")
 	} else {
@@ -92,34 +102,37 @@ func (p RequestPolicy) middleware(req *http.Request, next option.MiddlewareNext)
 	}
 	clean.Set("originator", "mecatl")
 	clean.Set("User-Agent", UserAgent)
-	req.Header = clean
+	clone.Header = clean
+	return clone, nil
+}
 
-	resp, err := next(req)
-	if contextErr := req.Context().Err(); contextErr != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
+func normalizePolicyResponse(ctx context.Context, resp *http.Response, err error) (*http.Response, error) {
+	if contextErr := ctx.Err(); contextErr != nil {
+		closePolicyResponse(resp)
 		return nil, contextErr
 	}
 	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
+		closePolicyResponse(resp)
 		return nil, err
 	}
 	if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-		if resp.Body != nil {
-			_ = resp.Body.Close()
-		}
+		closePolicyResponse(resp)
 		return nil, &StatusError{status: resp.StatusCode}
 	}
 	if resp != nil && resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		if resp.Body != nil {
-			_ = resp.Body.Close()
-		}
+		closePolicyResponse(resp)
 		return nil, errors.New("openai-codex: redirect refused")
 	}
+	if resp == nil {
+		return nil, errors.New("openai-codex: empty transport response")
+	}
 	return resp, nil
+}
+
+func closePolicyResponse(resp *http.Response) {
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 }
 
 func allowedRequest(req *http.Request) bool {

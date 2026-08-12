@@ -244,6 +244,11 @@ type providerRegistry struct {
 	// /models-open refresh). nil-tolerant like meta (a hand-built test
 	// registry that never sets it behaves as a permanently-empty store).
 	outcomes *liveOutcomeStore
+	// bootstrapModels carries a synchronous default-discovery result into the
+	// one-shot initial live publish. It is immutable after construction and is
+	// consumed only by liveModelSnapshot; on-demand refreshes still hit the
+	// entitlement endpoint normally.
+	bootstrapModels map[string][]modelEntry
 	// defaultModelAutoSelected is true when defaultModel was AUTO-SELECTED (a
 	// first-listed heal/probe pick, issue #262 review finding 7/R2.4) rather
 	// than operator-configured (--model/--default-model). Set ONLY at the two
@@ -470,13 +475,16 @@ var errNoProvider = errors.New(
 // not selected. Startup logging emits one line per available provider with the
 // provider id and base URL ONLY — NEVER the key (CWE-200; S5 verifies).
 func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, error) {
-	if detect == nil {
-		detect = osGetenv
-	}
+	return buildProviderRegistryContext(context.Background(), cfg, detect)
+}
+
+func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDetector) (*providerRegistry, error) {
+	ctx = providerRegistryContext(ctx)
+	detect = providerRegistryDetector(detect)
 
 	// UseMock short-circuit: a single synthetic entry, offline, regardless of env.
 	if cfg.UseMock || cfg.MockProvider != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "LLM provider: mock (canned, offline) — for smoke tests only")
+		cfg.diag().Log(ctx, port.LevelWarn, "LLM provider: mock (canned, offline) — for smoke tests only")
 		mock := port.LLMProvider(mockllm.New(
 			mockllm.TextTurn("Mock provider: no real model is configured. Set OPENAI_API_KEY for live use."),
 		))
@@ -618,7 +626,7 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	// Seed the live-metadata store from the embedded catalog for every available
 	// provider — the t=0 floor every resolver reads before the background live swap.
 	meta.seedFromCatalog(reg.Available())
-	if err := bootstrapOpenAICodexDefault(reg, cfg); err != nil {
+	if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
 		return nil, err
 	}
 	// T7 post-assembly fixup: stamp each real adapter entry's shared .provider
@@ -653,6 +661,20 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 	return reg, nil
 }
 
+func providerRegistryContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func providerRegistryDetector(detect envDetector) envDetector {
+	if detect == nil {
+		return osGetenv
+	}
+	return detect
+}
+
 // newOpenAICodexEntry returns an unavailable zero entry when no manual token is
 // configured. A configured token is revalidated at registry construction because
 // it can expire after the command root's one-time snapshot resolution. The request
@@ -684,9 +706,10 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 	entry := newOpenAICompatEntry(
 		cfg,
 		providerOpenAICodex,
-		cfg.OpenAICodexCredential.AccessToken(),
+		"policy-owned",
 		openaicodex.BaseURL,
-		openai.WithRequestOption(policy.Options()...),
+		openai.WithHTTPClient(policy.HTTPClient()),
+		openai.WithMaxRetries(0),
 	)
 	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}
 	return entry, nil
@@ -699,7 +722,7 @@ const openAICodexBootstrapTimeout = 5 * time.Second
 // Explicit models and a different preferred provider bypass it entirely. The
 // selected row is written through the same outcome/meta facts later background
 // refreshes use, before the registry remints the default provider.
-func bootstrapOpenAICodexDefault(reg *providerRegistry, cfg Config) error {
+func bootstrapOpenAICodexDefault(parent context.Context, reg *providerRegistry, cfg Config) error {
 	if reg == nil || reg.defaultID != providerOpenAICodex || reg.defaultModel != "" {
 		return nil
 	}
@@ -707,7 +730,7 @@ func bootstrapOpenAICodexDefault(reg *providerRegistry, cfg Config) error {
 	if !ok || entry.lister == nil {
 		return errors.New("openai-codex: default model discovery is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), openAICodexBootstrapTimeout)
+	ctx, cancel := context.WithTimeout(parent, openAICodexBootstrapTimeout)
 	defer cancel()
 	models, err := entry.lister.ListModels(ctx)
 	if err != nil {
@@ -724,6 +747,7 @@ func bootstrapOpenAICodexDefault(reg *providerRegistry, cfg Config) error {
 	}
 	reg.defaultModel = models[0].ID
 	reg.defaultModelAutoSelected = true
+	reg.bootstrapModels = map[string][]modelEntry{providerOpenAICodex: models}
 	reg.meta.mergeSwap(map[string][]modelEntry{providerOpenAICodex: models})
 	cfg.diag().Log(ctx, port.LevelInfo, "openai-codex default model auto-selected from account entitlements",
 		"provider", providerOpenAICodex, "model", reg.defaultModel)
@@ -1362,13 +1386,14 @@ func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, configP
 			"provider", id, "base_url", intent.baseURL, "error", err.Error())
 		tokenSource = func(context.Context) (string, error) { return "", err }
 	}
-	rt := &bearerRoundTripper{base: http.DefaultTransport, token: tokenSource, id: id}
+	rt := &bearerRoundTripper{base: http.DefaultTransport, token: tokenSource}
 	client := &http.Client{
 		Transport:     rt,
 		CheckRedirect: openaicompat.RefuseRedirects,
 	}
 	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, intent.baseURL,
-		openai.WithHTTPClient(client))
+		openai.WithHTTPClient(client),
+		openai.WithMaxRetries(0))
 	// The direct-mode lister shares the SAME bearer-authenticated client so
 	// the Build-time probe (probeToolhive) and the live refresh authenticate
 	// against the gateway with the real token, not the placeholder. The lister
@@ -1399,7 +1424,6 @@ func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, configP
 type bearerRoundTripper struct {
 	base  http.RoundTripper
 	token toolhivellm.TokenSourceFunc
-	id    string // provider id, for a log-safe diagnostic label only
 }
 
 // RoundTrip implements http.RoundTripper. It is the single point the token

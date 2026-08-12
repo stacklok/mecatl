@@ -45,6 +45,7 @@ import (
 	"slices"
 
 	"github.com/stacklok/mecatl/internal/adapter/modelhttp"
+	"github.com/stacklok/mecatl/internal/adapter/modeltext"
 )
 
 const (
@@ -153,8 +154,8 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 			continue // defensive: skip a malformed entry with no id
 		}
 		out = append(out, Model{
-			ID:              truncateRunes(w.ID, maxIDRunes),
-			DisplayName:     truncateRunes(w.Name, maxNameRunes),
+			ID:              modeltext.TruncateRunes(w.ID, maxIDRunes),
+			DisplayName:     modeltext.TruncateRunes(w.Name, maxNameRunes),
 			ContextLimit:    w.ContextLength,
 			OutputLimit:     w.TopProvider.MaxCompletionTokens,
 			InputModalities: append([]string(nil), w.Architecture.InputModalities...),
@@ -163,17 +164,4 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 		})
 	}
 	return out, nil
-}
-
-// truncateRunes caps s to at most n runes (never splitting a multi-byte rune). A
-// string already within the cap is returned unchanged.
-func truncateRunes(s string, n int) string {
-	if len(s) <= n { // fast path: byte length <= n ⇒ rune count <= n
-		return s
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
 }

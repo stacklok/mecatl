@@ -1621,6 +1621,42 @@ func collectStreamError(t *testing.T, p *Provider, req port.LLMRequest) error {
 	return streamErr
 }
 
+type testRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f testRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestHTTPClientIsFinalAfterGenericRequestOptions(t *testing.T) {
+	var guardedCalls, bypassCalls int
+	guarded := &http.Client{Transport: testRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		guardedCalls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader(
+				"event: response.completed\n" +
+					`data: {"type":"response.completed","sequence_number":0,"response":{"status":"completed"}}` + "\n\n")),
+			Request: req,
+		}, nil
+	})}
+	bypass := &http.Client{Transport: testRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		bypassCalls++
+		return nil, errors.New("guard bypassed")
+	})}
+	provider := New(
+		WithAPIKey("test-key"),
+		WithBaseURL("https://example.invalid/v1"),
+		WithHTTPClient(guarded),
+		WithRequestOption(option.WithHTTPClient(bypass)),
+		WithMaxRetries(0),
+	)
+	if err := collectStreamError(t, provider, port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hello")}}); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if guardedCalls != 1 || bypassCalls != 0 {
+		t.Fatalf("guarded/bypass calls = %d/%d, want 1/0", guardedCalls, bypassCalls)
+	}
+}
+
 func countInputType(items []map[string]any, kind string) int {
 	var count int
 	for _, item := range items {

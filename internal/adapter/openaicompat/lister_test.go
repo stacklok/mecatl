@@ -298,42 +298,3 @@ func TestListModels_PerFieldTruncation(t *testing.T) {
 		t.Errorf("name rune length = %d, want truncated to %d", got, maxNameRunes)
 	}
 }
-
-func TestTruncateRunes(t *testing.T) {
-	if got := truncateRunes("short", 256); got != "short" {
-		t.Errorf("under-cap string altered: %q", got)
-	}
-	multi := "日本語テス" // 5 runes
-	got := truncateRunes(multi, 3)
-	if len([]rune(got)) != 3 {
-		t.Errorf("rune length = %d, want 3", len([]rune(got)))
-	}
-	if got != "日本語" {
-		t.Errorf("truncation split a rune or wrong prefix: %q", got)
-	}
-}
-
-func TestStripControl(t *testing.T) {
-	if got := stripControl("clean"); got != "clean" {
-		t.Errorf("clean string altered: %q", got)
-	}
-	if got := stripControl("a\x00b\x1bc\x7fd"); got != "abcd" {
-		t.Errorf("stripControl(%q) = %q, want %q", "a\x00b\x1bc\x7fd", got, "abcd")
-	}
-	// C1 control range (0x80-0x9F, e.g. U+009B CSI — a terminal-escape
-	// equivalent reachable via a valid UTF-8 rune, not just the 0x1B lead-in).
-	c1 := "a" + string(rune(0x9b)) + "b" + string(rune(0x80)) + "c" + string(rune(0x9f)) + "d"
-	if got := stripControl(c1); got != "abcd" {
-		t.Errorf("stripControl(%q) = %q, want %q (C1 range not stripped)", c1, got, "abcd")
-	}
-	// Bidi_Control (CWE-116): U+202E (RIGHT-TO-LEFT OVERRIDE) can visually
-	// reorder a picker row's rendered text without changing its bytes.
-	if got := stripControl("a\u202eb"); got != "ab" {
-		t.Errorf("stripControl(%q) = %q, want %q (U+202E bidi override not stripped)", "a\u202eb", got, "ab")
-	}
-	// Unicode line/paragraph separators (U+2028/U+2029) — a log-injection/
-	// line-splitting equivalent of \n outside the C0 range.
-	if got := stripControl("a b c"); got != "abc" {
-		t.Errorf("stripControl(%q) = %q, want %q (U+2028/U+2029 not stripped)", "a b c", got, "abc")
-	}
-}

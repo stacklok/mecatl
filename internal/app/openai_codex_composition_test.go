@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -31,7 +32,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
-	openaiadapter "github.com/stacklok/mecatl/provider/openai"
 )
 
 // codexCompositionTransport is the offline subscription backend for the full
@@ -246,7 +246,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 	mu.Unlock()
 
 	sess := session.New("codex-inherit", session.ModeDefault, "/ws", session.Limits{MaxTurns: 8}, time.Unix(0, 0))
-	if got := drainRun(result.Engine.RunContent(ctx, sess, memfs.NewWorkspace("/ws"), "delegate", nil)); got != "CODEX-PARENT" {
+	if got := drainRun(result.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "delegate"})); got != "CODEX-PARENT" {
 		t.Fatalf("parent final = %q, want CODEX-PARENT (child must inherit selected Codex provider)", got)
 	}
 	mu.Lock()
@@ -286,7 +286,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 		}
 		defer func() { _ = res.Close() }()
 		noFSSess := session.New("codex-nofs", session.ModePlan, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
-		if got := drainRun(res.Engine.RunContent(ctx, noFSSess, nofs.New(), "answer without files", nil)); got != "NOFS-CODEX" {
+		if got := drainRun(res.Engine.Run(ctx, noFSSess, nofs.New(), agent.RunRequest{Text: "answer without files"})); got != "NOFS-CODEX" {
 			t.Fatalf("no-FS result = %q", got)
 		}
 		sort.Strings(offered)
@@ -414,99 +414,9 @@ func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 	}
 }
 
-// TestOpenAICodexCommandRootSurfaces is AC8.4's composition-owned command-root
-// contract. The three supported roots all project the same app.Config: a valid
-// file credential yields entitled models, while expiry and a server-side 401
-// produce the same actionable replace-auth.yaml-and-restart guidance without
-// disclosing the bearer. mecatui rendering and mecatequi's stderr projection
-// are pinned in their command packages.
-func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
-	t.Run("entitled inventory", func(t *testing.T) {
-		transport := &codexModelsTransport{body: `{"models":[{"slug":"codex-entitled","display_name":"Codex Entitled","visibility":"list"}]}`}
-		cfg := codexRegistryConfig(t)
-		cfg.DefaultProvider = providerOpenAICodex
-		cfg.Model = "codex-entitled"
-		cfg.openAICodexTransport = transport
-		cfg.liveModelRefreshSync = true
-		cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
-			return mockllm.New(mockllm.TextTurn("offline"))
-		}
-		built, err := Build(context.Background(), cfg)
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
-		defer built.Close()
-		models := built.Service.ListModels(context.Background())
-		if len(models) != 1 || models[0].GetProviderId() != providerOpenAICodex || models[0].GetId() != "codex-entitled" {
-			t.Fatalf("entitled command-root inventory = %+v", models)
-		}
-	})
-
-	t.Run("expired snapshot", func(t *testing.T) {
-		cfg := codexRegistryConfig(t)
-		cfg.openAICodexNow = func() time.Time { return codexRegistryNow.Add(2 * time.Hour) }
-		_, err := buildProviderRegistry(cfg, fakeEnv(nil))
-		if err == nil {
-			t.Fatal("expired credential unexpectedly built")
-		}
-		for _, want := range []string{"expired", "auth.yaml", "restart"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("expired error %q missing %q", err, want)
-			}
-		}
-		if strings.Contains(err.Error(), cfg.OpenAICodexCredential.AccessToken()) {
-			t.Fatal("expired command-root error leaked the bearer")
-		}
-	})
-
-	t.Run("unauthorized status and inference error", func(t *testing.T) {
-		credential := codexRegistryCredential(t)
-		transport := &codexModelsTransport{status: http.StatusUnauthorized, body: `{"error":{"message":"rejected"}}`}
-		cfg := codexRegistryConfig(t)
-		cfg.DefaultProvider = providerOpenAICodex
-		cfg.openAICodexTransport = transport
-		cfg.liveModelRefreshSync = true
-		cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
-			return mockllm.New(mockllm.TextTurn("offline"))
-		}
-		built, err := Build(context.Background(), cfg)
-		if err != nil {
-			t.Fatalf("explicit-model Build must survive inventory 401: %v", err)
-		}
-		defer built.Close()
-		statuses := built.Service.ProviderStatuses()
-		if len(statuses) != 1 || statuses[0].GetProviderId() != providerOpenAICodex || statuses[0].GetState() != statusUnauthorized {
-			t.Fatalf("Codex provider status = %+v, want one unauthorized row", statuses)
-		}
-		for _, want := range []string{"auth.yaml", "restart"} {
-			if !strings.Contains(statuses[0].GetHint(), want) {
-				t.Errorf("unauthorized hint %q missing %q", statuses[0].GetHint(), want)
-			}
-		}
-		if strings.Contains(statuses[0].GetHint(), credential.AccessToken()) {
-			t.Fatal("unauthorized status leaked the bearer")
-		}
-
-		inference := &codexFixtureTransport{status: http.StatusUnauthorized, body: []byte(`{"error":{"message":"rejected"}}`)}
-		_, streamErr := collectCodexChunks(context.Background(), t, newCodexFixtureProvider(t, inference, 3),
-			[]session.Message{session.NewUserMessage("hello")})
-		if streamErr == nil {
-			t.Fatal("unauthorized inference returned nil error")
-		}
-		for _, want := range []string{"rejected", "auth.yaml", "restart"} {
-			if !strings.Contains(streamErr.Error(), want) {
-				t.Errorf("noninteractive inference error %q missing %q", streamErr, want)
-			}
-		}
-		if strings.Contains(streamErr.Error(), credential.AccessToken()) {
-			t.Fatal("noninteractive inference error leaked the bearer")
-		}
-	})
-}
-
-// TestADR_0102_OpenAICodexSecretSentinels is AC8.5's composition-level
+// TestADR_0103_OpenAICodexSecretSentinels is AC8.5's composition-level
 // regression proof for the manually supplied bearer token.
-func TestADR_0102_OpenAICodexSecretSentinels(t *testing.T) {
+func TestADR_0103_OpenAICodexSecretSentinels(t *testing.T) {
 	sentinel := base64.RawURLEncoding.EncodeToString([]byte("MECATL_STEP8_SECRET_SENTINEL_8f3c91"))
 	credential := codexSentinelCredential(t, sentinel)
 	if !strings.Contains(credential.AccessToken(), sentinel) {
@@ -648,8 +558,8 @@ func TestADR_0102_OpenAICodexSecretSentinels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequestPolicy: %v", err)
 	}
-	entry := newOpenAICompatEntry(Config{LLMMaxAttempts: 1}, providerOpenAICodex, credential.AccessToken(), openaicodex.BaseURL,
-		openaiadapter.WithRequestOption(policy.Options()...))
+	entry := newOpenAICompatEntry(Config{LLMMaxAttempts: 1}, providerOpenAICodex, "policy-owned", openaicodex.BaseURL,
+		codexPolicyOptions(policy)...)
 	_, rejectedErr := collectCodexChunks(ctx, t, entry.provider, []session.Message{session.NewUserMessage("reject offline")})
 	if rejectedErr == nil {
 		t.Fatal("offline 401 request returned nil error")

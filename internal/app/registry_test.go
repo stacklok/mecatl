@@ -186,7 +186,7 @@ func TestNoKeyInStartupLogs(t *testing.T) {
 // TestRegistryZeroKeysViaBuildProvider: the same zero-keys error surfaces through
 // the buildProvider shim (the Build call site).
 func TestRegistryZeroKeysViaBuildProvider(t *testing.T) {
-	_, _, err := buildProvider(Config{envDetector: fakeEnv(nil)})
+	_, _, err := buildProvider(context.Background(), Config{envDetector: fakeEnv(nil)})
 	if !errors.Is(err, errNoProvider) {
 		t.Fatalf("buildProvider zero-keys error = %v, want errNoProvider", err)
 	}
@@ -370,7 +370,7 @@ func TestBuildProviderOpenRouterDefaultModel(t *testing.T) {
 			return mockllmImageProvider()
 		},
 	}
-	reg, _, err := buildProvider(cfg)
+	reg, _, err := buildProvider(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("buildProvider: %v", err)
 	}

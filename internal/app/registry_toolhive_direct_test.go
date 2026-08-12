@@ -45,7 +45,6 @@ func TestBearerRoundTripper_RewritesHeader(t *testing.T) {
 	rt := &bearerRoundTripper{
 		base:  &captureTransport{},
 		token: func(context.Context) (string, error) { return fakeToken, nil },
-		id:    "toolhive",
 	}
 	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer thv-proxy") // the SDK's placeholder
@@ -82,7 +81,6 @@ func TestBearerRoundTripper_SanitisedError(t *testing.T) {
 	rt := &bearerRoundTripper{
 		base:  &captureTransport{},
 		token: func(context.Context) (string, error) { return "", tokErr },
-		id:    "toolhive",
 	}
 	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer thv-proxy")
@@ -112,7 +110,6 @@ func TestBearerRoundTripper_OnlyMutatesAuth(t *testing.T) {
 	rt := &bearerRoundTripper{
 		base:  &captureTransport{},
 		token: func(context.Context) (string, error) { return "tok", nil },
-		id:    "toolhive",
 	}
 	req, _ := http.NewRequest(http.MethodGet, "https://gw.example/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer thv-proxy")
@@ -147,7 +144,6 @@ func TestDirectMode_RefusesRedirects(t *testing.T) {
 	rt := &bearerRoundTripper{
 		base:  http.DefaultTransport,
 		token: func(context.Context) (string, error) { return "fake-tok", nil },
-		id:    "toolhive",
 	}
 	client := &http.Client{
 		Transport:     rt,

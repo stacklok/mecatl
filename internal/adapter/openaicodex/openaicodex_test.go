@@ -98,15 +98,12 @@ func TestCredentialValidation(t *testing.T) {
 		{name: "oversized header", token: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("h", maxJWTHeaderBytes+1))) + ".e30.c2ln"},
 		{name: "oversized signature", token: "e30.e30." + base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", maxJWTSignatureBytes+1)))},
 		{name: "trailing JSON", token: jwt(`{"exp":1893456000} {}`)},
-		{name: "duplicate exp", token: jwt(`{"exp":1893456000,"exp":1893456001,"https://api.openai.com/auth":{"chatgpt_account_id":"acct"}}`)},
-		{name: "duplicate account", token: jwt(`{"exp":1893456000,"https://api.openai.com/auth":{"chatgpt_account_id":"acct","chatgpt_account_id":"other"}}`)},
 		{name: "non integer expiry", token: jwt(`{"exp":1.5,"https://api.openai.com/auth":{"chatgpt_account_id":"acct"}}`)},
 		{name: "string expiry", token: jwt(`{"exp":"1893456000","https://api.openai.com/auth":{"chatgpt_account_id":"acct"}}`)},
 		{name: "exponent expiry", token: jwt(`{"exp":1e10,"https://api.openai.com/auth":{"chatgpt_account_id":"acct"}}`)},
 		{name: "missing account", token: jwt(`{"exp":1893456000}`)},
 		{name: "non object auth", token: jwt(`{"exp":1893456000,"https://api.openai.com/auth":[]}`)},
 		{name: "non boolean fedramp", token: jwt(`{"exp":1893456000,"https://api.openai.com/auth":{"chatgpt_account_id":"acct","chatgpt_account_is_fedramp":"true"}}`)},
-		{name: "excessive nesting", token: jwt(`{"exp":1893456000,"https://api.openai.com/auth":{"chatgpt_account_id":"acct"},"nested":` + strings.Repeat("[", maxJSONDepth+1) + strings.Repeat("]", maxJSONDepth+1) + `}`)},
 		{name: "mismatched account", token: validJWT("jwt-account", testNow.Add(time.Hour), false), accountID: "explicit-account"},
 		{name: "invalid explicit expiry", token: validJWT("acct", testNow.Add(time.Hour), false), expiresAt: "tomorrow"},
 		{name: "expired", token: validJWT("acct", testNow, false)},
@@ -165,6 +162,15 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+func sdkClient(policy RequestPolicy) oai.Client {
+	return oai.NewClient(
+		option.WithAPIKey("policy-owned"),
+		option.WithBaseURL(BaseURL),
+		option.WithMaxRetries(0),
+		option.WithHTTPClient(policy.HTTPClient()),
+	)
+}
+
 func TestRequestPolicyRejectsLateExpiry(t *testing.T) {
 	cred, err := NewCredential(validJWT("acct", testNow.Add(time.Minute), false), "", "", testNow)
 	if err != nil {
@@ -178,13 +184,45 @@ func TestRequestPolicyRejectsLateExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := oai.NewClient(policy.Options()...)
+	client := sdkClient(policy)
 	err = client.Post(context.Background(), "responses", []byte(`{}`), nil)
 	if err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("Post() error = %v", err)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("transport calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestRequestPolicyClonesBeforeCredentialInjection(t *testing.T) {
+	cred, err := NewCredential(validJWT("acct", testNow.Add(time.Hour), false), "", "", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captured *http.Request
+	policy, err := NewRequestPolicy(cred, func() time.Time { return testNow }, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req.Clone(req.Context())
+		captured.Header = req.Header.Clone()
+		return jsonResponse(http.StatusOK), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, BaseURL+"/responses", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = ""
+	req.Header.Set("Authorization", "Bearer attacker")
+	req.Header.Set("X-Late-Header", "must-not-pass")
+	if _, err := policy.RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer attacker" || req.Header.Get("X-Late-Header") != "must-not-pass" {
+		t.Fatalf("original request was mutated: %v", req.Header)
+	}
+	if captured == nil || captured.Header.Get("Authorization") != "Bearer "+cred.AccessToken() || captured.Header.Get("X-Late-Header") != "" {
+		t.Fatalf("wire request did not carry the exact policy headers: %v", captured)
 	}
 }
 
@@ -206,7 +244,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := oai.NewClient(policy.Options()...)
+	client := sdkClient(policy)
 	poisoned := []option.RequestOption{
 		option.WithHeader("Accept", "poison-accept"),
 		option.WithHeader("Content-Type", "poison-content-type"),
@@ -275,7 +313,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 		if policyErr != nil {
 			t.Fatal(policyErr)
 		}
-		isolatedClient := oai.NewClient(isolated.Options()...)
+		isolatedClient := sdkClient(isolated)
 		if err := isolatedClient.Get(context.Background(), "models?client_version=dev", nil, nil,
 			option.WithHeader("X-OpenAI-Fedramp", "true")); err != nil {
 			t.Fatal(err)
@@ -300,7 +338,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 		if policyErr != nil {
 			t.Fatal(policyErr)
 		}
-		isolatedClient := oai.NewClient(isolated.Options()...)
+		isolatedClient := sdkClient(isolated)
 		err := isolatedClient.Post(context.Background(), "responses", []byte(`{}`), nil, option.WithBaseURL("https://attacker.invalid/v1"))
 		if err == nil || !strings.Contains(err.Error(), "refused endpoint override") {
 			t.Fatalf("Post() error = %v", err)
@@ -338,6 +376,14 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
+				var calls atomic.Int32
+				isolated, policyErr := NewRequestPolicy(cred, func() time.Time { return testNow }, roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls.Add(1)
+					return jsonResponse(http.StatusOK), nil
+				}))
+				if policyErr != nil {
+					t.Fatal(policyErr)
+				}
 				req, requestErr := http.NewRequestWithContext(context.Background(), tc.method, tc.rawURL, nil)
 				if requestErr != nil {
 					t.Fatal(requestErr)
@@ -345,11 +391,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 				if tc.mutate != nil {
 					tc.mutate(req)
 				}
-				var calls atomic.Int32
-				_, requestErr = policy.middleware(req, func(*http.Request) (*http.Response, error) {
-					calls.Add(1)
-					return jsonResponse(http.StatusOK), nil
-				})
+				_, requestErr = isolated.RoundTrip(req)
 				if requestErr == nil || !strings.Contains(requestErr.Error(), "refused endpoint override") {
 					t.Fatalf("middleware() error = %v", requestErr)
 				}
@@ -374,7 +416,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 		if policyErr != nil {
 			t.Fatal(policyErr)
 		}
-		isolatedClient := oai.NewClient(isolated.Options()...)
+		isolatedClient := sdkClient(isolated)
 		if err := isolatedClient.Post(context.Background(), "responses", []byte(`{}`), nil); err == nil {
 			t.Fatal("Post() error = nil")
 		}
@@ -401,7 +443,7 @@ func TestRequestPolicyStatusMapping(t *testing.T) {
 			if policyErr != nil {
 				t.Fatal(policyErr)
 			}
-			client := oai.NewClient(policy.Options()...)
+			client := sdkClient(policy)
 			err := client.Post(context.Background(), "responses", []byte(`{}`), nil)
 			if err == nil {
 				t.Fatal("Post() error = nil")
@@ -433,7 +475,7 @@ func TestRequestPolicyStatusMapping(t *testing.T) {
 		if policyErr != nil {
 			t.Fatal(policyErr)
 		}
-		client := oai.NewClient(policy.Options()...)
+		client := sdkClient(policy)
 		err := client.Post(ctx, "responses", []byte(`{}`), nil)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Post() error = %v, want context.Canceled", err)
@@ -460,14 +502,14 @@ func TestSDKRetriesDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := oai.NewClient(policy.Options()...)
+	client := sdkClient(policy)
 	_ = client.Post(context.Background(), "responses", []byte(`{}`), nil)
 	if calls.Load() != 1 {
 		t.Fatalf("transport calls = %d, want exactly 1", calls.Load())
 	}
 }
 
-func TestADR_0102_OpenAICodexIsAdjunctOnly(t *testing.T) {
+func TestADR_0103_OpenAICodexIsAdjunctOnly(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

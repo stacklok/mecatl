@@ -19,7 +19,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
-	openaiadapter "github.com/stacklok/mecatl/provider/openai"
 )
 
 type codexFixtureTransport struct {
@@ -67,9 +66,9 @@ func newCodexFixtureProvider(t *testing.T, transport http.RoundTripper, maxAttem
 	entry := newOpenAICompatEntry(
 		Config{LLMMaxAttempts: maxAttempts},
 		providerOpenAICodex,
-		credential.AccessToken(),
+		"policy-owned",
 		openaicodex.BaseURL,
-		openaiadapter.WithRequestOption(policy.Options()...),
+		codexPolicyOptions(policy)...,
 	)
 	return entry.provider
 }
