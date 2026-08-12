@@ -27,12 +27,11 @@ point is that it stays open". The remaining forces:
 
 - The submit path is not trivial. `submitPrompt` owns the bare-slash-command intercept,
   large-paste placeholder expansion, `@`-mention media/text expansion, the per-prompt media
-  caps, and four loud-reject early returns. A seed that reimplemented any of that would
+  caps, and three loud-reject early returns. A seed that reimplemented any of that would
   drift from typed input.
-- A session can bind more than once per process. `/models` restarts onto a new session,
-  `/clear` rebinds, and a `connect`-time create whose saved model the server rejects binds
-  via a zero-selection retry (the connect-fallback arm, issue #41). "On session ready" is
-  therefore not "once".
+- A session can bind more than once per process. `/models` restarts onto a new session, and
+  a `connect`-time create whose saved model the server rejects binds via a zero-selection
+  retry (the connect-fallback arm, issue #41). "On session ready" is therefore not "once".
 - `mecatequi` already had a `joinPromptBody` for the literal-plus-file join, and it had no
   test.
 
@@ -59,9 +58,11 @@ special-cased:
 
 **The seed fires exactly once, enforced structurally.** `Model.pendingInitialPrompt` is
 seeded from `Deps.InitialPrompt` at construction and consumed at one site, which clears the
-field *before* calling `submitPrompt`. A `/models` restart, a `/clear`, or a connect-fallback
-rebind re-enters `applySessionReady` with the field already empty. `ui.New` is called once
-per process, so there is no path that re-seeds it. A whitespace-only seed is a no-op via a
+field *before* calling `submitPrompt`. Both re-bind paths — a `/models` restart and the
+connect-fallback rebind — re-enter `applySessionReady` with the field already empty. (`/clear`
+is not one of them: it resets the conversation on the *same* session via `resetSession` and
+never reaches this seam.) `ui.New` is called once per process, so there is no path that
+re-seeds it. A whitespace-only seed is a no-op via a
 `TrimSpace` gate, so `-p ""` and `-p "  "` behave alike.
 
 **`--prompt-file` is read at flag-parse time and fails fast.** An unreadable path is a

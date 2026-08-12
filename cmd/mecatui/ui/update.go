@@ -358,7 +358,9 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// clear the pending field, and submit via the identical typed-prompt path so
 	// the behavior is byte-identical to the operator pressing enter. The pending
 	// field is cleared BEFORE submitPrompt runs (defense-in-depth against re-fire
-	// on a /models restart or /clear, both of which funnel back through here).
+	// on a /models restart or the connect-fallback rebind, the two paths that
+	// funnel back through here — /clear is NOT one: runClear resets the same
+	// session via resetSession and never reaches this seam).
 	// A "/"-prefixed seed (e.g. -p /clear) is intercepted by submitPrompt's
 	// built-in intercept — documented behavior.
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {

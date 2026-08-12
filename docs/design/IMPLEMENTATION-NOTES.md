@@ -2954,7 +2954,7 @@ binds and then stays interactive. Print-and-exit is deliberately absent — that
 screen, no overlays, no approval modal). The seed rides the IDENTICAL typed-prompt path:
 `applySessionReady` (`cmd/mecatui/ui/update.go`) — the ONE seam both bind arms funnel through
 — sets the textarea value and calls `submitPrompt`, so the bare-slash intercept, paste
-placeholder expansion, `@`-mention media/text expansion, the per-prompt caps, and all four
+placeholder expansion, `@`-mention media/text expansion, the per-prompt caps, and all three
 loud-reject early returns apply to a seed exactly as to typed input. Two accepted
 consequences of that, NOT special-cased (special-casing either would break the property the
 design rests on): a `/`-prefixed seed (`-p /clear`) is intercepted locally and never reaches
@@ -2963,10 +2963,11 @@ expansion.
 
 **Fires exactly ONCE, structurally.** `Model.pendingInitialPrompt` is seeded from
 `Deps.InitialPrompt` at construction and consumed at ONE site, which clears the field BEFORE
-calling `submitPrompt`. A `/models` restart, a `/clear`, and the connect-fallback rebind (the
-server-rejected-selector → zero-selection-retry arm, issue #41) all re-enter
+calling `submitPrompt`. BOTH re-bind paths — a `/models` restart and the connect-fallback
+rebind (the server-rejected-selector → zero-selection-retry arm, issue #41) — re-enter
 `applySessionReady` with the field already empty; `ui.New` runs once per process, so nothing
-re-seeds it. A whitespace-only seed is a no-op (`TrimSpace` gate). CAVEAT: `applySessionReady`
+re-seeds it. `/clear` is NOT a third path: `runClear` (`cmd/mecatui/ui/builtins.go`) resets the
+conversation on the SAME session via `resetSession` and never reaches this seam. A whitespace-only seed is a no-op (`TrimSpace` gate). CAVEAT: `applySessionReady`
 can now START A RUN, and its one wrapping caller (the `connectFallbackMsg` arm) keeps mutating
 the returned model afterwards — so a seeded fallback's loud rejected-model warning overwrites
 the run status. Cosmetic today (nothing reads the fields cleared after the run opens), but the

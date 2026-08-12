@@ -877,7 +877,7 @@ func TestSeedPromptWhitespaceOnlyIsNoop(t *testing.T) {
 		simpleRunScript("should-not-run"), "   ")
 	tm := teatest.NewTestModel(t, pd.model, teatest.WithInitialTermSize(100, 30))
 
-	// The seed is whitespace-only; the TrimSpace gate at update.go:364 must skip
+	// The seed is whitespace-only; applySessionReady's TrimSpace gate must skip
 	// the submit. Wait for idle to confirm the connect settled without a run.
 	pd.prog.wait(t, phaseIdle, 3*time.Second)
 
