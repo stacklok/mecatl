@@ -371,6 +371,10 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 		KindSharedInfrastructure,
 		"background JWKS key refresh for the token validator; touches no session/schedule/team/memory record at all",
 	},
+	syscaller.RootModelCatalogRefresh: {
+		KindSharedInfrastructure,
+		"one-shot startup live-model-catalog fetch and swap; reads provider APIs and publishes a process-wide model registry snapshot, identical for every caller, touching no session/schedule/team/memory record at all",
+	},
 }
 
 // modelToolAccessTable classifies the model-facing tool families that reach a

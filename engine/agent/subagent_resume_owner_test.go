@@ -105,7 +105,7 @@ func runResumeAttempt(t *testing.T, task tool.Tool, childID session.SessionID, b
 	if caller != nil {
 		ctx = session.WithPrincipal(ctx, caller)
 	}
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), "go")
+	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	res := resultByCallID(evs)[session.ToolCallID("rc")]
 	if res == nil {
@@ -152,7 +152,7 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 			if err := seedSess.RestoreLabels(resumeOwnerAlice, ""); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
-			r := seedParent.Run(context.Background(), seedSess, memfs.NewWorkspace("/ws"), "go")
+			r := seedParent.Run(context.Background(), seedSess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 			drainObserving(t, r, nil)
 
 			childID := session.SessionID("subagent-p1")

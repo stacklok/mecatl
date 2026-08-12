@@ -4198,7 +4198,7 @@ func (s *Service) Subscribe(ctx context.Context, id session.SessionID) (<-chan s
 	if s.subscriptionsClosed {
 		close(ch)
 		s.subMu.Unlock()
-		return ch, func() {}
+		return ch, func() {}, nil
 	}
 	s.subNextID++
 	subID := s.subNextID
