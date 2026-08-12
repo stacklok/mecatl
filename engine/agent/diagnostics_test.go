@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"strings"
 	"sync"
@@ -354,6 +355,87 @@ func TestCompactionFailureEmitsWarn(t *testing.T) {
 	}
 	if got, _ := attrString(rec, "session"); got != "sess-compact" {
 		t.Fatalf("compaction-failure line session = %q, want %q", got, "sess-compact")
+	}
+}
+
+// failingSaveStore is a port.SessionStore whose Save always fails, counting the
+// attempts so a test can assert the WARN is sticky rather than per-save.
+type failingSaveStore struct {
+	err      error
+	attempts int
+}
+
+func (s *failingSaveStore) Save(context.Context, *session.Session) error {
+	s.attempts++
+	return s.err
+}
+
+func (*failingSaveStore) Load(_ context.Context, id session.SessionID) (*session.Session, error) {
+	return nil, fmt.Errorf("%w: %q", port.ErrSessionNotFound, id)
+}
+
+// TestSaveFailureEmitsOneCorrelatedWarn pins the diagnostic that makes a
+// persistence failure visible at all. Engine.save used to discard its error, so a
+// session the store could not persist — a child whose provider-supplied id the
+// store could not name, for instance — vanished with NO line anywhere, and resume
+// / InspectSubagent / its event log all silently stopped working.
+//
+// Two properties, both load-bearing: the line carries the session correlation (a
+// child's failure must be attributable), and it fires exactly ONCE per run even
+// though save is called on every turn — a broken store is broken for every save,
+// and an unconditional log would bury the run in near-identical lines.
+func TestSaveFailureEmitsOneCorrelatedWarn(t *testing.T) {
+	diag := newCapturingDiag()
+	boom := errors.New("store boom")
+	store := &failingSaveStore{err: boom}
+	// A tool call then a text turn, so the run saves more than once (dispatch
+	// persists after the tool result, and the terminal path persists again) —
+	// otherwise "sticky" is indistinguishable from "logged once because it only
+	// happened once".
+	noop := &fakeTool{name: "Noop", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	e := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(toolCall("c1", "Noop", `{}`)),
+			mockllm.TextTurn("done"),
+		),
+		Catalog:     catalogWith(t, noop),
+		Policy:      allowAll(),
+		Model:       "m",
+		Store:       store,
+		Diagnostics: diag,
+	})
+	sess := session.New("sess-save-fail", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+
+	// A failed persist must not abort an otherwise-fine run.
+	if res := lastResult(t, evs); res.Stop != session.StopEndTurn {
+		t.Fatalf("stop = %q, want end_turn (a failed persist must not abort the run)", res.Stop)
+	}
+	if store.attempts < 2 {
+		t.Fatalf("store.Save attempted %d times; the test needs multiple saves to prove stickiness", store.attempts)
+	}
+
+	var warns []diagRecord
+	for _, rec := range diag.snapshot() {
+		if strings.Contains(rec.msg, "session persistence failed") {
+			warns = append(warns, rec)
+		}
+	}
+	if len(warns) != 1 {
+		t.Fatalf("got %d persistence WARN lines across %d Save attempts, want exactly 1 (sticky per run)",
+			len(warns), store.attempts)
+	}
+	if warns[0].level != port.LevelWarn {
+		t.Fatalf("persistence line level = %v, want LevelWarn", warns[0].level)
+	}
+	if errv, ok := warns[0].attrs["error"]; !ok || errv != boom {
+		t.Fatalf("persistence line missing error=%v; attrs=%v", boom, warns[0].attrs)
+	}
+	if got, _ := attrString(warns[0], "session"); got != "sess-save-fail" {
+		t.Fatalf("persistence line session = %q, want %q", got, "sess-save-fail")
 	}
 }
 

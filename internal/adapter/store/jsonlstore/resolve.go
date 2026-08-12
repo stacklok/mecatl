@@ -1,14 +1,17 @@
 package jsonlstore
 
 import (
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -21,24 +24,56 @@ const (
 	sessionTokenPrefix = "sid-v1-"
 )
 
-func encodeSessionToken(id session.SessionID) string {
-	return sessionTokenPrefix + base64.RawURLEncoding.EncodeToString([]byte(id))
-}
+// maxTokenPrefix bounds the readable half of a session token. The hash half is
+// what makes the token injective, so the prefix exists purely so an operator can
+// eyeball a store directory; truncating it loses nothing.
+const maxTokenPrefix = 40
 
-func decodeSessionToken(token string) (session.SessionID, error) {
-	if !strings.HasPrefix(token, sessionTokenPrefix) {
-		return "", fmt.Errorf("jsonlstore: not a session token: %q", token)
+// encodeSessionToken maps an opaque session id to a filename-safe stem that is
+// BOUNDED and injective, but deliberately NOT reversible:
+//
+//	sid-v1-<up to 40 sanitized chars>-<32 hex chars of SHA-256>
+//
+// so the longest filename is 7 + 40 + 1 + 32 + len(".session.jsonl") = 94 bytes
+// for an id of ANY length. That constant bound is the point. The previous
+// encoding was Raw URL-base64 of the whole id, which inflates 4/3 with no cap
+// and so imposed a 175-byte ceiling on session ids (down from 241 under the old
+// lossy scheme): past that, every filesystem call returned ENAMETOOLONG, which
+// is not os.IsNotExist, so a pre-existing session in that band became
+// permanently unwritable after an upgrade and a long provider-supplied child id
+// was silently never persisted at all.
+//
+// Reversibility bought nothing. Its only consumer was a cross-check in
+// scanSnapshotDir, which reads the logical id out of the file's own contents
+// anyway and merely needs to confirm the stem belongs to it — re-encoding
+// forward proves that exactly as well, which is why decodeSessionToken is gone
+// along with the non-canonical-alias hazard that a reversible codec creates.
+// The operator workflow in docs/usage/troubleshooting.md already recovers ids
+// from file contents and explicitly warns against inferring them from names.
+//
+// A collision would mean two sessions sharing one family. At 128 bits that is
+// unreachable in practice, and canonicalOwnership fails CLOSED on an embedded-id
+// mismatch, so even then no session is ever served another's data.
+func encodeSessionToken(id session.SessionID) string {
+	sum := sha256.Sum256([]byte(id))
+	var b strings.Builder
+	for _, r := range string(id) {
+		if b.Len() >= maxTokenPrefix {
+			break
+		}
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
 	}
-	encoded := strings.TrimPrefix(token, sessionTokenPrefix)
-	b, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if err != nil {
-		return "", fmt.Errorf("jsonlstore: decode session token %q: %w", token, err)
+	prefix := b.String()
+	if prefix == "" {
+		prefix = "id" // an id of only unsanitizable runes, or the empty id
 	}
-	id := session.SessionID(b)
-	if encodeSessionToken(id) != token {
-		return "", fmt.Errorf("jsonlstore: non-canonical session token %q", token)
-	}
-	return id, nil
+	return sessionTokenPrefix + prefix + "-" + hex.EncodeToString(sum[:16])
 }
 
 func validateSessionID(id session.SessionID) error {
@@ -282,6 +317,18 @@ func legacyLineOwnedBy(line []byte, id session.SessionID) (bool, error) {
 	return embedded == id, nil
 }
 
+// nameTooLong reports whether err is the filesystem refusing a path component
+// as over-long. For a LEGACY probe that is equivalent to absence and must be
+// treated as such: legacySafeName is 1:1 with the id, so if the id is too long
+// to name, the pre-rewrite scheme could never have created that file either —
+// there is nothing there to find. Returning the raw error instead re-imposed the
+// very ceiling the bounded canonical token removed, because prepareWrite probes
+// for a legacy family on every write regardless of the id's length. Caught by
+// storeconformance's long-id case, not by any jsonlstore test.
+func nameTooLong(err error) bool {
+	return errors.Is(err, syscall.ENAMETOOLONG)
+}
+
 // legacySnapshot returns the legacy snapshot line only when its own latest
 // embedded id equals id. There are THREE outcomes, and the third must never be
 // folded into the other two:
@@ -297,6 +344,9 @@ func legacyLineOwnedBy(line []byte, id session.SessionID) (bool, error) {
 //     to `if !ok { return nil }`.
 func (r sessionResolver) legacySnapshot(id session.SessionID) ([]byte, bool, error) {
 	line, err := readSnapshotLine(r.legacyPath(id, kindSnapshot))
+	if nameTooLong(err) {
+		return nil, false, nil // unnameable under the 1:1 legacy scheme ⇒ absent
+	}
 	if err != nil || line == nil {
 		return nil, false, err
 	}
@@ -343,21 +393,22 @@ func scanSnapshotDir(dir string, canonical bool, byID map[session.SessionID]snap
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), sessionFileSuffix) {
 			continue
 		}
-		var tokenID session.SessionID
-		if canonical {
-			stem := strings.TrimSuffix(entry.Name(), sessionFileSuffix)
-			tokenID, err = decodeSessionToken(stem)
-			if err != nil {
-				continue
-			}
-		}
 		path := filepath.Join(dir, entry.Name())
 		last, err := readLastLine(path)
 		if err != nil {
 			continue
 		}
 		id, err := snapshotIDFromLine(last)
-		if err != nil || canonical && tokenID != id {
+		if err != nil {
+			continue
+		}
+		// The logical id always comes from the file's own contents. For a
+		// canonical entry, confirm the physical stem belongs to that id by
+		// re-encoding FORWARD — the token is injective, so this is exactly as
+		// strong as decoding the stem would be, and it needs no reversible codec.
+		// A stem that does not match (hand-planted, or written by an older
+		// encoding) is skipped rather than trusted.
+		if canonical && strings.TrimSuffix(entry.Name(), sessionFileSuffix) != encodeSessionToken(id) {
 			continue
 		}
 		info, err := entry.Info()

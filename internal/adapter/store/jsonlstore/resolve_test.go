@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +32,11 @@ func TestSidecarKindsIsFamilyOrderWithoutSnapshot(t *testing.T) {
 	}
 }
 
-func TestSessionTokenRoundTripAndAlphabet(t *testing.T) {
+// TestSessionTokenIsInjectiveAndAlphabetSafe pins what the token must actually
+// guarantee: filename-safe, and distinct ids never share a stem. It deliberately
+// does NOT assert reversibility — the stem is not decodable, and nothing needs it
+// to be (scanSnapshotDir re-encodes forward instead).
+func TestSessionTokenIsInjectiveAndAlphabetSafe(t *testing.T) {
 	ids := []session.SessionID{
 		"a/b",
 		"a_b",
@@ -38,20 +44,17 @@ func TestSessionTokenRoundTripAndAlphabet(t *testing.T) {
 		`back\slash`,
 		"雪だるま☃",
 		"",
+		// Same first 40 sanitized runes, differing only in the tail: the prefix
+		// truncates identically, so ONLY the hash suffix keeps these apart.
+		session.SessionID(strings.Repeat("x", 60) + "-alpha"),
+		session.SessionID(strings.Repeat("x", 60) + "-beta"),
 	}
-	valid := regexp.MustCompile(`^sid-v1-[-_A-Za-z0-9]*$`)
+	valid := regexp.MustCompile(`^sid-v1-[-_A-Za-z0-9]+$`)
 	seen := make(map[string]session.SessionID, len(ids))
 	for _, id := range ids {
 		token := encodeSessionToken(id)
 		if !valid.MatchString(token) {
 			t.Errorf("encodeSessionToken(%q) = %q, contains a filename-unsafe byte", id, token)
-		}
-		got, err := decodeSessionToken(token)
-		if err != nil {
-			t.Fatalf("decodeSessionToken(%q): %v", token, err)
-		}
-		if string(got) != string(id) {
-			t.Errorf("round trip = %q, want byte-exact %q", got, id)
 		}
 		if prior, ok := seen[token]; ok {
 			t.Fatalf("token collision: %q and %q both encoded as %q", prior, id, token)
@@ -61,17 +64,26 @@ func TestSessionTokenRoundTripAndAlphabet(t *testing.T) {
 	if encodeSessionToken("a/b") == encodeSessionToken("a_b") {
 		t.Fatal("formerly-colliding ids a/b and a_b still collide")
 	}
-	if _, err := decodeSessionToken("legacy-name"); err == nil {
-		t.Fatal("decodeSessionToken accepted an unversioned token")
-	}
-	for _, alias := range []string{"sid-v1-Zh", "sid-v1-Zg="} {
-		if _, err := decodeSessionToken(alias); err == nil {
-			t.Errorf("decodeSessionToken accepted non-canonical alias %q", alias)
+}
+
+// TestSessionTokenLengthIsBoundedForAnyID is the regression pin for the ceiling
+// this codec replaced. The old Raw-base64 token inflated 4/3 with no cap, so an
+// id past 175 bytes produced a filename over NAME_MAX and every filesystem call
+// returned ENAMETOOLONG. The property to hold is a CONSTANT bound, so assert the
+// bound rather than the arithmetic.
+func TestSessionTokenLengthIsBoundedForAnyID(t *testing.T) {
+	const nameMax = 255
+	for _, n := range []int{0, 1, 40, 175, 176, 241, 1024, 100_000} {
+		id := session.SessionID(strings.Repeat("界", n)) // 3 bytes per rune
+		longest := len(encodeSessionToken(id)) + len(sessionFileSuffix)
+		if longest > nameMax {
+			t.Fatalf("id of %d runes -> filename of %d bytes, over NAME_MAX %d", n, longest, nameMax)
 		}
-	}
-	longID := session.SessionID(string(bytes.Repeat([]byte("界"), 200)))
-	if got, err := decodeSessionToken(encodeSessionToken(longID)); err != nil || got != longID {
-		t.Fatalf("long token was truncated: id bytes=%d got=%d err=%v", len(longID), len(got), err)
+		// 7 (prefix) + 40 (capped readable half) + 1 + 32 (hash) + 14 (suffix).
+		// Short ids come out shorter; nothing may ever come out longer.
+		if longest > 94 {
+			t.Errorf("id of %d runes -> filename of %d bytes, want at most 94", n, longest)
+		}
 	}
 }
 
@@ -87,7 +99,12 @@ func TestScheduleNamingRemainsLegacy(t *testing.T) {
 func TestCanonicalAndLegacyNamespacesAreDisjoint(t *testing.T) {
 	st := newInternalStore(t)
 	canonicalID := session.SessionID("x")
-	legacyID := session.SessionID("sid-v1-eA") // legacy stem equals x's canonical token
+	// A legacy id whose LOSSY stem is byte-identical to canonicalID's canonical
+	// token — the physical-name alias this test guards against. DERIVED from the
+	// canonical name rather than hardcoded, so the fixture keeps aliasing (and
+	// keeps testing something) if the token encoding ever changes again.
+	legacyID := session.SessionID(strings.TrimSuffix(
+		filepath.Base(st.resolver.canonicalPath(canonicalID, kindSnapshot)), sessionFileSuffix))
 	if filepath.Base(st.resolver.canonicalPath(canonicalID, kindSnapshot)) != filepath.Base(st.resolver.legacyPath(legacyID, kindSnapshot)) {
 		t.Fatal("fixture no longer exercises the historical physical-name alias")
 	}
@@ -662,6 +679,41 @@ func TestDeleteRemovesCanonicalAndMatchingLegacyFamilies(t *testing.T) {
 	for _, kind := range []sessionKind{kindSnapshot, kindTools, kindEvents} {
 		assertMissing(t, st.resolver.canonicalPath(id, kind))
 		assertMissing(t, st.resolver.legacyPath(id, kind))
+	}
+}
+
+// TestLongLegacyIDMigratesForward is the regression pin for the ceiling from the
+// pre-existing-session direction. A 241-byte id was the maximum the old 1:1
+// lossy scheme could name, so such families exist in deployed stores. Under the
+// base64 token their canonical name exceeded NAME_MAX, so prepareWrite's very
+// first stat returned ENAMETOOLONG — not os.IsNotExist, hence a hard error —
+// and the session became permanently unwritable on upgrade, migration included.
+func TestLongLegacyIDMigratesForward(t *testing.T) {
+	for _, n := range []int{175, 176, 241} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			st := newInternalStore(t)
+			id := session.SessionID(strings.Repeat("L", n))
+			writeBytes(t, st.resolver.legacyPath(id, kindSnapshot), append(snapshotLine(t, id, "legacy"), '\n'))
+			writeBytes(t, st.resolver.legacyPath(id, kindEvents),
+				append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 1}), '\n'))
+
+			sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0).UTC())
+			sess.SetTitle("migrated")
+			if err := st.Save(context.Background(), sess); err != nil {
+				t.Fatalf("Save of a %d-byte legacy id = %v; want the family migrated forward", n, err)
+			}
+			loaded, err := st.Load(context.Background(), id)
+			if err != nil || loaded.Title != "migrated" {
+				t.Fatalf("Load = %v, %v; want the migrated-then-appended snapshot", loaded, err)
+			}
+			if got := collectEvents(t, st, id); len(got) != 1 {
+				t.Fatalf("event log = %+v; want the migrated event", got)
+			}
+			assertMissing(t, st.resolver.legacyPath(id, kindSnapshot))
+			if err := st.Delete(context.Background(), id); err != nil {
+				t.Fatalf("Delete of a %d-byte id = %v; want nil", n, err)
+			}
+		})
 	}
 }
 

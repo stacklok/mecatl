@@ -3,7 +3,8 @@ package jsonlstore_test
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -31,8 +32,36 @@ func newStore(t *testing.T) (*jsonlstore.Store, string) {
 // TestNewCreatesDirAt0700 pins the privacy posture (issue #79): the store holds
 // raw conversation transcripts in plaintext, so New creates a not-yet-existing
 // store dir owner-only (mode 0700).
+// canonicalFamilyPath re-derives the on-disk family stem INDEPENDENTLY of the
+// production encoder. It is a deliberate second implementation: calling
+// jsonlstore's own encodeSessionToken would make every layout assertion in this
+// file vacuous (the test would agree with the code by construction, however
+// wrong both were). Keep it hand-written, and if it ever disagrees with the
+// package, decide which one is right rather than deleting this.
+//
+// The scheme: "sid-v1-" + up to 40 sanitized chars of the id (anything outside
+// [A-Za-z0-9-_] becomes '_', "id" when nothing survives) + "-" + 32 hex chars
+// of SHA-256 over the whole id.
 func canonicalFamilyPath(dir string, id session.SessionID, suffix string) string {
-	token := "sid-v1-" + base64.RawURLEncoding.EncodeToString([]byte(id))
+	var b strings.Builder
+	for _, r := range string(id) {
+		if b.Len() >= 40 {
+			break
+		}
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	prefix := b.String()
+	if prefix == "" {
+		prefix = "id"
+	}
+	sum := sha256.Sum256([]byte(id))
+	token := "sid-v1-" + prefix + "-" + hex.EncodeToString(sum[:16])
 	return filepath.Join(dir, "sid-v1", token+suffix)
 }
 
