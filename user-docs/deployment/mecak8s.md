@@ -274,12 +274,10 @@ For the scripted version of exactly this (plus the case above), see `task e2e:k8
 By default mecak8s has no user concept: one shared deployment, no subjects, and
 whoever can reach the API is "the caller". This overlay changes that — a real
 IdP authenticates each request, every session/schedule/team/memory entry records
-the verified `(issuer, subject)` that owns it, and **application access is now
-enforced per caller** (issue [#368](https://github.com/stacklok/mecatl/issues/368),
-[ADR-0102](https://github.com/stacklok/mecatl/blob/main/docs/adr/0102-caller-ownership-enforcement.md)). Earlier releases
-of this doc described this overlay as attribution-only ("records who acted,
-refuses nothing") — that is no longer true; read the rest of this section for
-what changed and what is still explicitly out of scope.
+the verified `(issuer, subject)` that owns it, and **application access is
+enforced per caller** (see
+[ADR-0102](https://github.com/stacklok/mecatl/blob/main/docs/adr/0102-caller-ownership-enforcement.md)
+for the full design).
 
 ### Read this before you enable it
 
@@ -304,10 +302,9 @@ verified `(issuer, subject)` owner matches them:
 filesystem**, so a workspace path is not itself a security boundary — isolate
 callers' workspaces yourselves if that matters for your deployment. A raw
 gRPC/HTTP driver process (a remote `SessionStore`/`MemoryStore` backend) remains
-explicitly **trusted infrastructure**, not caller-enforced, until
-[ADR-0103](https://github.com/stacklok/mecatl/blob/main/docs/adr/0103-driver-caller-ownership.md) (issue
-[#452](https://github.com/stacklok/mecatl/issues/452)) lands — see
-`raw-driver-networkpolicy.yaml` below. And a session/schedule created **before**
+explicitly **trusted infrastructure**, not caller-enforced (see
+[ADR-0103](https://github.com/stacklok/mecatl/blob/main/docs/adr/0103-driver-caller-ownership.md)) —
+see `raw-driver-networkpolicy.yaml` below. And a session/schedule created **before**
 you turned identity on has no owner: once enforcement is on, every ownerless
 record becomes permanently unavailable to every caller (never adopted by the
 first reader) — there is no migration path, so back up or export anything you
@@ -483,7 +480,7 @@ Stated plainly so it is not inferred:
 | | |
 |---|---|
 | **Filesystem isolation** | None. All sessions run in the same pod filesystem at the same workspace path — application-level ownership enforcement does not sandbox the workspace. |
-| **Raw driver enforcement** | None yet. A remote `SessionStore`/`MemoryStore` driver process is trusted infrastructure (deployment-boundary only — see `raw-driver-networkpolicy.yaml` above), not caller-enforced, until ADR-0103 (issue #452) lands. |
+| **Raw driver enforcement** | None yet. A remote `SessionStore`/`MemoryStore` driver process is trusted infrastructure (deployment-boundary only — see `raw-driver-networkpolicy.yaml` above), not caller-enforced. |
 | **Historical data migration** | None. Enabling identity makes every pre-existing ownerless session/schedule/team/memory entry permanently unavailable to every caller — there is no adoption-by-first-reader and no migration path. Export or back up anything you need first. |
 | **Signing-key revocation** | Bounded, not immediate: with the default `--oidc-max-jwks-staleness=1h`, a last-good JWKS may remain trusted for up to one hour during an IdP outage; then validation fails 503 until refresh succeeds. `0` deliberately restores unbounded exposure. This is **not per-token revocation**: an otherwise valid token remains accepted until expiry. |
 | **Rate limiting / quotas** | mecak8s registers no rate-limit flags at all; a pod is assumed to sit behind a Service or mesh. One caller can exhaust the shared Redis, lease namespace and provider budget. |
