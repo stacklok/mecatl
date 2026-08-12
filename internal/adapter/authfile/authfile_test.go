@@ -3,7 +3,6 @@ package authfile
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -170,28 +169,6 @@ func TestOpenAICodexOAuthSchema(t *testing.T) {
 		}
 		if f != nil && f.APIKey("openai-codex") != "" {
 			t.Fatal("API key must not enable the subscription provider")
-		}
-	})
-
-	t.Run("OAuth snapshot is not exposed through Providers", func(t *testing.T) {
-		typeOfEntry := reflect.TypeFor[ProviderEntry]()
-		for i := 0; i < typeOfEntry.NumField(); i++ {
-			field := typeOfEntry.Field(i)
-			if field.IsExported() && (field.Name == "OAuth" || field.Type.Kind() == reflect.Pointer) {
-				t.Fatalf("ProviderEntry exposes mutable OAuth state through field %s (%s)", field.Name, field.Type)
-			}
-		}
-
-		dir := t.TempDir()
-		path := writeFile(t, dir, "providers:\n  openai-codex:\n    oauth:\n      access_token: original-token\n", 0o600)
-		f, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
-		if warning != "" {
-			t.Fatalf("warning = %q, want empty", warning)
-		}
-		oauthCopy := f.OAuth("openai-codex")
-		oauthCopy.AccessToken = "mutated-copy"
-		if got := f.OAuth("openai-codex").AccessToken; got != "original-token" {
-			t.Fatalf("stored OAuth token mutated through returned copy: %q", got)
 		}
 	})
 

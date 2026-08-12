@@ -5,7 +5,6 @@
 package openaicodex
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,8 +23,6 @@ const (
 	maxJWTPayloadBytes   = 64 * 1024
 	maxJWTSignatureBytes = 64 * 1024
 	maxAccountIDBytes    = 512
-	maxJSONDepth         = 32
-	authClaim            = "https://api.openai.com/auth"
 )
 
 var (
@@ -170,30 +167,34 @@ func validAccountID(value string) bool {
 	return true
 }
 
-func decodeJWTPayload(token string) (map[string]any, error) {
+type jwtClaims struct {
+	Expiry json.RawMessage `json:"exp"`
+	Auth   struct {
+		AccountID string `json:"chatgpt_account_id"`
+		FedRAMP   bool   `json:"chatgpt_account_is_fedramp"`
+	} `json:"https://api.openai.com/auth"`
+}
+
+func decodeJWTPayload(token string) (jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return nil, errInvalidCredential
+		return jwtClaims{}, errInvalidCredential
 	}
 	header, err := decodeJWTPart(parts[0], maxJWTHeaderBytes)
 	if err != nil || len(header) == 0 {
-		return nil, errInvalidCredential
+		return jwtClaims{}, errInvalidCredential
 	}
 	payload, err := decodeJWTPart(parts[1], maxJWTPayloadBytes)
 	if err != nil || !utf8.Valid(payload) {
-		return nil, errInvalidCredential
+		return jwtClaims{}, errInvalidCredential
 	}
 	signature, err := decodeJWTPart(parts[2], maxJWTSignatureBytes)
 	if err != nil || len(signature) == 0 {
-		return nil, errInvalidCredential
+		return jwtClaims{}, errInvalidCredential
 	}
-	value, err := decodeStrictJSON(payload)
-	if err != nil {
-		return nil, errInvalidCredential
-	}
-	claims, ok := value.(map[string]any)
-	if !ok {
-		return nil, errInvalidCredential
+	var claims jwtClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return jwtClaims{}, errInvalidCredential
 	}
 	return claims, nil
 }
@@ -209,110 +210,17 @@ func decodeJWTPart(encoded string, maxDecodedBytes int) ([]byte, error) {
 	return decoded, nil
 }
 
-func routingClaims(claims map[string]any) (string, time.Time, bool, error) {
+func routingClaims(claims jwtClaims) (string, time.Time, bool, error) {
 	var expiry time.Time
-	if raw, ok := claims["exp"]; ok {
-		number, ok := raw.(json.Number)
-		if !ok {
-			return "", time.Time{}, false, errInvalidCredential
-		}
-		seconds, err := number.Int64()
-		if err != nil || seconds <= 0 {
+	if len(claims.Expiry) > 0 && string(claims.Expiry) != "null" {
+		var seconds int64
+		if err := json.Unmarshal(claims.Expiry, &seconds); err != nil || seconds <= 0 {
 			return "", time.Time{}, false, errInvalidCredential
 		}
 		expiry = time.Unix(seconds, 0).UTC()
 	}
-
-	var account string
-	var fedRAMP bool
-	if raw, ok := claims[authClaim]; ok {
-		auth, ok := raw.(map[string]any)
-		if !ok {
-			return "", time.Time{}, false, errInvalidCredential
-		}
-		if rawAccount, exists := auth["chatgpt_account_id"]; exists {
-			account, ok = rawAccount.(string)
-			if !ok || !validAccountID(account) {
-				return "", time.Time{}, false, errInvalidCredential
-			}
-		}
-		if rawFedRAMP, exists := auth["chatgpt_account_is_fedramp"]; exists {
-			fedRAMP, ok = rawFedRAMP.(bool)
-			if !ok {
-				return "", time.Time{}, false, errInvalidCredential
-			}
-		}
+	if claims.Auth.AccountID != "" && !validAccountID(claims.Auth.AccountID) {
+		return "", time.Time{}, false, errInvalidCredential
 	}
-	return account, expiry, fedRAMP, nil
-}
-
-// decodeStrictJSON rejects trailing values and duplicate object keys at every
-// nesting level. encoding/json otherwise silently accepts last-key-wins input,
-// which is unsuitable for security-sensitive routing metadata.
-func decodeStrictJSON(data []byte) (any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	value, err := decodeJSONValue(decoder, 0)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("trailing JSON")
-	}
-	return value, nil
-}
-
-func decodeJSONValue(decoder *json.Decoder, depth int) (any, error) {
-	if depth > maxJSONDepth {
-		return nil, errors.New("JSON nesting too deep")
-	}
-	token, err := decoder.Token()
-	if err != nil {
-		return nil, err
-	}
-	delim, isDelim := token.(json.Delim)
-	if !isDelim {
-		return token, nil
-	}
-	switch delim {
-	case '{':
-		object := make(map[string]any)
-		for decoder.More() {
-			keyToken, keyErr := decoder.Token()
-			if keyErr != nil {
-				return nil, keyErr
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return nil, errors.New("non-string object key")
-			}
-			if _, duplicate := object[key]; duplicate {
-				return nil, errors.New("duplicate object key")
-			}
-			value, valueErr := decodeJSONValue(decoder, depth+1)
-			if valueErr != nil {
-				return nil, valueErr
-			}
-			object[key] = value
-		}
-		if end, endErr := decoder.Token(); endErr != nil || end != json.Delim('}') {
-			return nil, errors.New("unterminated object")
-		}
-		return object, nil
-	case '[':
-		array := make([]any, 0)
-		for decoder.More() {
-			value, valueErr := decodeJSONValue(decoder, depth+1)
-			if valueErr != nil {
-				return nil, valueErr
-			}
-			array = append(array, value)
-		}
-		if end, endErr := decoder.Token(); endErr != nil || end != json.Delim(']') {
-			return nil, errors.New("unterminated array")
-		}
-		return array, nil
-	default:
-		return nil, fmt.Errorf("unexpected delimiter")
-	}
+	return claims.Auth.AccountID, expiry, claims.Auth.FedRAMP, nil
 }

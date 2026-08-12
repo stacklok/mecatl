@@ -46,11 +46,9 @@ type OAuthEntry struct {
 	ExpiresAt   string `yaml:"expires_at"`
 }
 
-// ProviderEntry is one provider's stored entry. OAuth state remains
-// unexported: File.Providers is public for API-key compatibility, so putting a
-// pointer there would let a caller mutate the supposedly immutable credential
-// snapshot without going through the copy-returning accessor.
-type ProviderEntry struct {
+// providerEntry is one provider's stored entry. The whole parsed map remains
+// private; consumers receive only copied scalar values through accessors.
+type providerEntry struct {
 	APIKey   string `yaml:"api_key"`
 	oauth    OAuthEntry
 	hasOAuth bool
@@ -60,7 +58,7 @@ type ProviderEntry struct {
 // credentials. Operator-machine-local only — there is no project-tier
 // equivalent (a project has no business supplying credentials).
 type File struct {
-	Providers map[string]ProviderEntry `yaml:"providers"`
+	providers map[string]providerEntry
 }
 
 // APIKey returns the api_key for name, or "" if f is nil or has no entry for
@@ -70,7 +68,7 @@ func (f *File) APIKey(name string) string {
 	if f == nil {
 		return ""
 	}
-	return f.Providers[name].APIKey
+	return f.providers[name].APIKey
 }
 
 // OAuth returns a copy of name's validated OAuth file entry. The zero value
@@ -80,7 +78,7 @@ func (f *File) OAuth(name string) OAuthEntry {
 	if f == nil {
 		return OAuthEntry{}
 	}
-	entry := f.Providers[name]
+	entry := f.providers[name]
 	if !entry.hasOAuth {
 		return OAuthEntry{}
 	}
@@ -185,7 +183,7 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	// would otherwise be echoed verbatim into the warning — the same CWE-532
 	// class as the decode-error branch above. "Value-free" is a property of
 	// the whole warning surface, not just that one branch.
-	f := File{Providers: make(map[string]ProviderEntry, len(rawProviders))}
+	f := File{providers: make(map[string]providerEntry, len(rawProviders))}
 	unknown := 0
 	invalidSchema := 0
 	invalidSemantics := 0
@@ -203,7 +201,7 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 		if invalid {
 			invalidSemantics++
 		}
-		f.Providers[name] = entry
+		f.providers[name] = entry
 	}
 	contentWarnings := make([]string, 0, 3)
 	if unknown > 0 {
@@ -225,7 +223,7 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 		))
 	}
 	warning := joinWarnings(append([]string{permWarning}, contentWarnings...)...)
-	if invalidSchema > 0 && len(f.Providers) == 0 {
+	if invalidSchema > 0 && len(f.providers) == 0 {
 		return nil, warning
 	}
 	return &f, warning
@@ -268,33 +266,33 @@ func decodeAuthDocument(document yaml.Node) (map[string]yaml.Node, bool) {
 // decodeProviderEntry performs strict, value-free validation without asking
 // the YAML library to render an error. Its boolean is the entire error surface:
 // Load reports only a count, never a node, key, or scalar from the file.
-func decodeProviderEntry(node yaml.Node) (ProviderEntry, bool) {
+func decodeProviderEntry(node yaml.Node) (providerEntry, bool) {
 	if !canonicalMapping(&node) {
-		return ProviderEntry{}, false
+		return providerEntry{}, false
 	}
-	var entry ProviderEntry
+	var entry providerEntry
 	seen := make(map[string]struct{}, len(node.Content)/2)
 	for i := 0; i < len(node.Content); i += 2 {
 		key, value := node.Content[i], node.Content[i+1]
 		if !recordMappingKey(key, seen) {
-			return ProviderEntry{}, false
+			return providerEntry{}, false
 		}
 		switch key.Value {
 		case "api_key":
 			apiKey, ok := strictYAMLString(value)
 			if !ok {
-				return ProviderEntry{}, false
+				return providerEntry{}, false
 			}
 			entry.APIKey = apiKey
 		case "oauth":
 			oauth, ok := decodeOAuthEntry(value)
 			if !ok {
-				return ProviderEntry{}, false
+				return providerEntry{}, false
 			}
 			entry.oauth = oauth
 			entry.hasOAuth = true
 		default:
-			return ProviderEntry{}, false
+			return providerEntry{}, false
 		}
 	}
 	return entry, true
@@ -369,7 +367,7 @@ func strictExpiryString(node *yaml.Node) (string, bool) {
 	return node.Value, true
 }
 
-func validateProviderEntry(name string, entry ProviderEntry) (ProviderEntry, bool) {
+func validateProviderEntry(name string, entry providerEntry) (providerEntry, bool) {
 	invalid := false
 	if name == "openai-codex" {
 		if entry.APIKey != "" {
