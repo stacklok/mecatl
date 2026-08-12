@@ -316,6 +316,21 @@ func (m *scheduleManager) literalScheduleName(ctx context.Context, physical stri
 	return strings.TrimPrefix(physical, ns)
 }
 
+// scheduleNotFoundErr normalizes a ScheduleStore not-found error to name the
+// caller-visible LITERAL schedule name. The store has no notion of
+// literal-vs-physical — it echoes back whatever key it was given verbatim
+// (e.g. redisstore's `%w: %q` on the physical key) — so an unwrapped
+// not-found error leaks the owner-namespace hash embedded in the physical
+// key to the client. Every call site that resolves a schedule by name (Load,
+// SetEnabled, ListFires, FireNow) must normalize through this before
+// returning the error to a caller.
+func scheduleNotFoundErr(err error, literalName string) error {
+	if errors.Is(err, port.ErrScheduleNotFound) {
+		return fmt.Errorf("%w: %q", port.ErrScheduleNotFound, literalName)
+	}
+	return err
+}
+
 // CreateSchedule is the create-seam for a schedule: it validates the spec
 // fail-closed, applies the intended defaults (via applyScheduleDefaults — the
 // SHARED helper UpdateSchedule also calls, so a PUT omitting singleton does not
@@ -657,7 +672,7 @@ func (m *scheduleManager) scheduleMinInterval() time.Duration {
 func (m *scheduleManager) GetSchedule(ctx context.Context, name string) (port.Schedule, error) {
 	sched, err := m.schedStore.Load(ctx, m.physicalScheduleName(ctx, name))
 	if err != nil {
-		return port.Schedule{}, err
+		return port.Schedule{}, scheduleNotFoundErr(err, name)
 	}
 	sched.Spec.Name = name
 	return sched, nil
@@ -700,7 +715,7 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	physicalName := m.physicalScheduleName(ctx, literalName)
 	existing, err := m.schedStore.Load(ctx, physicalName)
 	if err != nil {
-		return port.Schedule{}, err
+		return port.Schedule{}, scheduleNotFoundErr(err, literalName)
 	}
 	// Preserve the existing State (firing progress) AND the creation timestamp —
 	// only the operator-authored Spec fields change on an Update. CreatedAt is a
@@ -734,13 +749,13 @@ func (m *scheduleManager) DeleteSchedule(ctx context.Context, name string) error
 // calls SetEnabled — the dedicated atomic flag update — because Save CANNOT
 // mutate Enabled (Save preserves the existing State half on a Spec overwrite).
 func (m *scheduleManager) PauseSchedule(ctx context.Context, name string) error {
-	return m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), false)
+	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), false), name)
 }
 
 // ResumeSchedule re-enables a paused schedule (Enabled=true). It calls
 // SetEnabled — see PauseSchedule's doc.
 func (m *scheduleManager) ResumeSchedule(ctx context.Context, name string) error {
-	return m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), true)
+	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), true), name)
 }
 
 // GetFire loads a fire record by id. It is the read-side sibling of
@@ -772,7 +787,7 @@ func (m *scheduleManager) GetFire(ctx context.Context, fireID string) (port.Sche
 func (m *scheduleManager) ListFires(ctx context.Context, scheduleName string) ([]port.ScheduleFire, error) {
 	fires, err := m.schedStore.ListFires(ctx, m.physicalScheduleName(ctx, scheduleName))
 	if err != nil {
-		return nil, err
+		return nil, scheduleNotFoundErr(err, scheduleName)
 	}
 	for i := range fires {
 		fires[i].ScheduleName = scheduleName
@@ -810,7 +825,7 @@ func (m *scheduleManager) FireNow(ctx context.Context, name string) (port.Schedu
 		case errors.Is(err, scheduler.ErrNotLeader):
 			return port.ScheduleFire{}, fmt.Errorf("%w: %v", ErrScheduleNotLeader, err)
 		default:
-			return port.ScheduleFire{}, err
+			return port.ScheduleFire{}, scheduleNotFoundErr(err, name)
 		}
 	}
 	fire.ScheduleName = name

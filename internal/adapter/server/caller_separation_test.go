@@ -3,8 +3,11 @@ package server_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
@@ -15,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -218,6 +222,58 @@ func TestCallerSeparation_Scenario2_EventStreamsResolveParentOwner(t *testing.T)
 	}
 	if _, err := svc.StreamSessionEvents(alice, sess.ID); err != nil {
 		t.Fatalf("Alice event stream: %v", err)
+	}
+}
+
+// TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey pins
+// the schedule half of the absence-shaped-error contract against a REAL
+// owner-namespacing backend: redisstore.Load's not-found error embeds
+// whatever key string it was handed (`%w: %q`), and the key the manager hands
+// it is the OWNER-NAMESPACED PHYSICAL key, not the caller's literal name. An
+// unnormalized not-found error therefore leaks the SHA-256 owner-namespace
+// hash to the client — an internal-implementation-detail leak, not a
+// cross-owner DATA leak, but still a regression against "absence-shaped, not
+// a distinguishing error" (this is exactly what the live-cluster walkthrough
+// in .scratch/caller-separation-walkthrough.md surfaced; memschedulestore's
+// bare sentinel error can't reproduce it, so this test goes through the real
+// redisstore backend instead).
+func TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rst, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatalf("redisstore.New: %v", err)
+	}
+	sessions := memstore.New()
+	svc, err := server.NewService(server.Config{
+		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:             sessions,
+		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: rst.ScheduleStore(), OwnershipEnforced: true}),
+		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		OwnershipEnforced: true,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser})
+	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "bob", GrantType: session.GrantTypeUser})
+
+	if _, err := svc.CreateSchedule(alice, callerSchedule("alice-only")); err != nil {
+		t.Fatalf("Alice CreateSchedule: %v", err)
+	}
+
+	_, err = svc.GetSchedule(bob, "alice-only")
+	if !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("Bob GetSchedule = %v, want ErrScheduleNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "alice-only") {
+		t.Fatalf("error %q does not name the literal schedule name", err.Error())
+	}
+	if strings.Contains(err.Error(), "schedule/") || strings.Contains(err.Error(), "\x00") {
+		t.Fatalf("error %q leaks the owner-namespaced physical key", err.Error())
 	}
 }
 
