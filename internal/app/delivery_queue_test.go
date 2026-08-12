@@ -370,5 +370,108 @@ func TestDeliveryQueue_FileSeqsPerSessionIsolated(t *testing.T) {
 	}
 }
 
-// (No trailing imports to keep honest — the test uses only context, strings,
-// testing, port, and session.)
+// TestDeliveryQueue_FileCollidingOriginsStayIsolated is the isolation test with
+// ids that ACTUALLY collide. TestDeliveryQueue_FileSeqsPerSessionIsolated above
+// uses "s-iso-a"/"s-iso-b", which deliverySafeName leaves distinct, so they get
+// two files and the assertions hold trivially — the sharing case was untested.
+//
+// "a/b" and "a_b" both sanitize to "a_b", so they share ONE log and ONE ledger
+// (the ledger records bare seqs with no session id, so it cannot be split). The
+// test asserts the sharing is real first, then that nothing observable leaks.
+func TestDeliveryQueue_FileCollidingOriginsStayIsolated(t *testing.T) {
+	ctx := context.Background()
+	q, err := NewFileDeliveryQueue(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileDeliveryQueue: %v", err)
+	}
+	defer q.Close()
+	first, second := session.SessionID("a/b"), session.SessionID("a_b")
+
+	// Precondition: if these ever stop sharing a file, this test silently stops
+	// testing anything, so fail loudly rather than pass vacuously.
+	if q.deliveryPath(first) != q.deliveryPath(second) {
+		t.Fatalf("fixture no longer collides: %q vs %q", q.deliveryPath(first), q.deliveryPath(second))
+	}
+	if q.ledgerPath(first) != q.ledgerPath(second) {
+		t.Fatalf("fixture ledgers no longer collide: %q vs %q", q.ledgerPath(first), q.ledgerPath(second))
+	}
+
+	n1, err := q.Enqueue(ctx, first, "for first")
+	if err != nil {
+		t.Fatalf("Enqueue(first): %v", err)
+	}
+	n2, err := q.Enqueue(ctx, second, "for second")
+	if err != nil {
+		t.Fatalf("Enqueue(second): %v", err)
+	}
+
+	// Seqs must be disjoint across the SHARED file. This is what makes the
+	// shared, session-less ledger unambiguous, and it is why maxSeqLocked
+	// deliberately does not filter by origin.
+	if n1.Seq == n2.Seq {
+		t.Fatalf("colliding origins both minted seq %d; the shared ledger cannot then tell them apart", n1.Seq)
+	}
+
+	// Each origin sees only its own note.
+	pFirst, err := q.Pending(ctx, first)
+	if err != nil {
+		t.Fatalf("Pending(first): %v", err)
+	}
+	if len(pFirst) != 1 || pFirst[0].Text != "for first" || pFirst[0].SessionID != first {
+		t.Fatalf("Pending(first) = %+v; want only first's own note", pFirst)
+	}
+	pSecond, err := q.Pending(ctx, second)
+	if err != nil {
+		t.Fatalf("Pending(second): %v", err)
+	}
+	if len(pSecond) != 1 || pSecond[0].Text != "for second" || pSecond[0].SessionID != second {
+		t.Fatalf("Pending(second) = %+v; want only second's own note", pSecond)
+	}
+
+	// Draining one must not drain the other.
+	if err := q.MarkDelivered(ctx, first, n1.Seq); err != nil {
+		t.Fatalf("MarkDelivered(first): %v", err)
+	}
+	if got, _ := q.Pending(ctx, first); len(got) != 0 {
+		t.Fatalf("Pending(first) after drain = %+v; want empty", got)
+	}
+	if got, _ := q.Pending(ctx, second); len(got) != 1 || got[0].Text != "for second" {
+		t.Fatalf("Pending(second) after draining first = %+v; want second's note untouched", got)
+	}
+}
+
+// TestDeliveryQueue_FileCapDoesNotDropACollidingOriginsNote pins the nastiest
+// symptom of the shared log: the backlog cap reads pendingLocked and drops
+// pending[0] by marking it delivered. With an unfiltered read, a busy session
+// could mark a COLLIDING session's oldest note as delivered — a note the other
+// session had never seen, lost with only a WARN naming the wrong session.
+func TestDeliveryQueue_FileCapDoesNotDropACollidingOriginsNote(t *testing.T) {
+	ctx := context.Background()
+	q, err := NewFileDeliveryQueue(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileDeliveryQueue: %v", err)
+	}
+	defer q.Close()
+	q.setCap(2)
+	victim, noisy := session.SessionID("a/b"), session.SessionID("a_b")
+
+	if _, err := q.Enqueue(ctx, victim, "victim's only note"); err != nil {
+		t.Fatalf("Enqueue(victim): %v", err)
+	}
+	// Push the noisy origin past the cap. Each enqueue re-reads the shared log.
+	for i := 0; i < 5; i++ {
+		if _, err := q.Enqueue(ctx, noisy, "noise"); err != nil {
+			t.Fatalf("Enqueue(noisy) %d: %v", i, err)
+		}
+	}
+	got, err := q.Pending(ctx, victim)
+	if err != nil {
+		t.Fatalf("Pending(victim): %v", err)
+	}
+	if len(got) != 1 || got[0].Text != "victim's only note" {
+		t.Fatalf("Pending(victim) = %+v; want its note intact — the colliding origin's cap dropped it", got)
+	}
+	if noisyPending, _ := q.Pending(ctx, noisy); len(noisyPending) > 2 {
+		t.Fatalf("noisy origin has %d pending, want its own cap of 2 enforced", len(noisyPending))
+	}
+}
