@@ -3122,6 +3122,22 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		}
 		return m, m.primaryPasteCmd()
 	case tea.MouseLeft:
+		// Clickable approval buttons (issue #486): while a permission/plan ask owns
+		// the body, a left-click on a button resolves it to that button's verdict,
+		// exactly like pressing its key chord (set focus, then resolveAsk — the same
+		// path the enter key drives). A click elsewhere in the modal is swallowed
+		// (the modal is a gate, not a form). This branch sits BEFORE the selectable
+		// gate: the approval phase is one of the states selectable() excludes, so
+		// without it a button click would fall through to "not selectable" and start
+		// nothing. It deliberately does NOT advance the multi-click count (clicking a
+		// button is not a word/line-select gesture).
+		if m.phase == phaseAwaitingApproval {
+			if idx, ok := m.askButtonAt(mo.X, mo.Y); ok {
+				m.ask.focus = idx
+				return m.resolveAsk(focusVerdict(idx))
+			}
+			return m, nil
+		}
 		// The selectable gate AND the count logic sit here, AFTER the gate: a press
 		// while an overlay owns the body (or under --no-mouse/--inline) starts nothing
 		// AND does not advance the multi-click count (Req 9).

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 // pendingAsk holds the state of an open permission modal. AskID is the exact
@@ -65,6 +67,15 @@ const planApprovedProceedText = "Plan approved by operator. Proceed with executi
 // renderPlanReviewView / openPlanReviewView) — the plan is too long to read in a
 // small centered card, so it fills the conversation region and scrolls.
 func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, width, height int) string {
+	return centerCard(r.th, r.renderPermissionModalBody(ask, expand, queued), width, height)
+}
+
+// renderPermissionModalBody builds the generic permission modal's body CONTENT —
+// the exact string centerCard frames. It is the SINGLE source for BOTH the render
+// path (renderPermissionModal) and the mouse hit-test (clickgeom.go askButtonAt via
+// Model.permissionModalBody), so the body the hit-test measures is byte-identical
+// to the body the frame renders.
+func (r *renderer) renderPermissionModalBody(ask pendingAsk, expand bool, queued int) string {
 	th := r.th
 	titleText := "Permission required"
 	if queued > 0 {
@@ -111,6 +122,32 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 	// "[ctrl+y] allow" for a modified chord) so every displayed chord is the
 	// one that actually fires.
 	hk := r.marks
+	buttons := permissionButtonsLine(th, hk, ask)
+	b.WriteString("\n" + buttons)
+	if ask.offerAlways {
+		b.WriteString("\n" + th.Style("muted").Render(approvalAlwaysFootnote(hk.allowAlways)))
+	}
+
+	return b.String()
+}
+
+// permissionModalBody returns the generic permission modal's body CONTENT for the
+// CURRENT front ask, so the mouse hit-test (clickgeom.go askButtonAt) measures the
+// same body the render path lays out. It delegates to the renderer with the model's
+// live expand/queue state; the hit-test path re-applies the askCard style +
+// centering arithmetic itself.
+func (m Model) permissionModalBody() string {
+	return m.rend.renderPermissionModalBody(m.ask, m.expandTools, len(m.askQueue))
+}
+
+// permissionButtonsLine renders the generic permission modal's joined button row
+// (Allow [· Always] · Deny) with the LIVE focus style on the focused button. It is
+// the SINGLE source for BOTH the render path (renderPermissionModal) and the mouse
+// hit-test geometry (clickgeom.go's askButtonAt), so a rebound chord's wider
+// standalone label is laid out and hit-tested at the SAME width — they can never
+// disagree. focus indexes {0=allow-once, 1=always, 2=deny}; a two-button modal
+// (offerAlways=false, a surfaced child ask) renders Allow · Deny only.
+func permissionButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
 	btnStyle := func(idx int) string {
 		if ask.focus == idx {
 			return "askButtonActive"
@@ -119,19 +156,32 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 	}
 	allow := th.Style(btnStyle(0)).Render(approvalButtonLabel(hk.allow, "Allow", "allow"))
 	deny := th.Style(btnStyle(2)).Render(approvalButtonLabel(hk.deny, "Deny", "deny"))
-	var buttons string
 	if ask.offerAlways {
 		always := th.Style(btnStyle(1)).Render(approvalButtonLabel(hk.allowAlways, "Always", "always allow"))
-		buttons = lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", always, "  ", deny)
-	} else {
-		buttons = lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", deny)
+		return lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", always, "  ", deny)
 	}
-	b.WriteString("\n" + buttons)
-	if ask.offerAlways {
-		b.WriteString("\n" + th.Style("muted").Render(approvalAlwaysFootnote(hk.allowAlways)))
-	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", deny)
+}
 
-	return centerCard(th, b.String(), width, height)
+// planButtonsLine renders the plan-review action bar's joined button row
+// (approve & run [· auto-accept edits] · iterate) with the LIVE focus style. It is
+// the plan path's SINGLE source for render (renderPlanReviewView) and hit-test
+// (clickgeom.go), mirroring permissionButtonsLine — the plan labels differ
+// (planApprovalButtonLabel) so it is its own builder, not a shared one.
+func planButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
+	btnStyle := func(idx int) string {
+		if ask.focus == idx {
+			return "askButtonActive"
+		}
+		return "askButton"
+	}
+	approve := th.Style(btnStyle(0)).Render(planApprovalButtonLabel(hk.allow, "Allow", "approve & run"))
+	denyBtn := th.Style(btnStyle(2)).Render(planApprovalButtonLabel(hk.deny, "Deny", "iterate"))
+	if ask.offerAlways {
+		always := th.Style(btnStyle(1)).Render(planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits"))
+		return lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", always, "  ", denyBtn)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", denyBtn)
 }
 
 // planReviewFooterHeight is the rows reserved at the bottom of the plan-review
@@ -334,21 +384,7 @@ func (m Model) renderPlanReviewView(ask pendingAsk, width, height int) string {
 	// degrade to an honest standalone form (planApprovalButtonLabel) rather than
 	// gluing a rebound chord onto the word's stem.
 	hk := m.helpKeyMarkings()
-	btnStyle := func(idx int) string {
-		if ask.focus == idx {
-			return "askButtonActive"
-		}
-		return "askButton"
-	}
-	approve := th.Style(btnStyle(0)).Render(planApprovalButtonLabel(hk.allow, "Allow", "approve & run"))
-	denyBtn := th.Style(btnStyle(2)).Render(planApprovalButtonLabel(hk.deny, "Deny", "iterate"))
-	var buttons string
-	if ask.offerAlways {
-		always := th.Style(btnStyle(1)).Render(planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits"))
-		buttons = lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", always, "  ", denyBtn)
-	} else {
-		buttons = lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", denyBtn)
-	}
+	buttons := planButtonsLine(th, hk, ask)
 	var bar strings.Builder
 	bar.WriteString(buttons)
 	if ask.offerAlways {
