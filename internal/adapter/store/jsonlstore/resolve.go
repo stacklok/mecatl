@@ -48,26 +48,29 @@ func validateSessionID(id session.SessionID) error {
 	return nil
 }
 
-type sessionKind int
+// sessionKind identifies one file in a session family. It is backed by the
+// file's own suffix, so the kind->suffix mapping is the type itself — no
+// switch, no unrepresentable "invalid kind" state to panic on.
+type sessionKind string
 
 const (
-	kindSnapshot sessionKind = iota
-	kindTools
-	kindEvents
+	kindSnapshot sessionKind = sessionFileSuffix
+	kindTools    sessionKind = toolsFileSuffix
+	kindEvents   sessionKind = eventsFileSuffix
 )
 
 func (k sessionKind) suffix() string {
-	switch k {
-	case kindSnapshot:
-		return sessionFileSuffix
-	case kindTools:
-		return toolsFileSuffix
-	case kindEvents:
-		return eventsFileSuffix
-	default:
-		panic("jsonlstore: invalid session file kind")
-	}
+	return string(k)
 }
+
+// familyOrder is the sidecars-before-snapshot order shared by every operation
+// that touches a whole session family (migration, deletion): the snapshot
+// file is what List/snapshotFiles enumerate, so writing/removing it LAST
+// means an operation interrupted partway through still leaves the family
+// discoverable (a migration retries; a delete's next sweep retries), whereas
+// doing the snapshot first would create a window where the family is
+// invisible while a sidecar still exists — a leak no future sweep can find.
+var familyOrder = []sessionKind{kindTools, kindEvents, kindSnapshot}
 
 // sessionResolver owns canonical and legacy paths, ownership checks, and
 // write-time migration. Store.mu serializes migration and writes.
@@ -300,9 +303,10 @@ func scanSnapshotDir(dir string, canonical bool, byID map[session.SessionID]snap
 }
 
 // migrateLegacyFamily preserves bytes and append order by renaming sidecars
-// first and the snapshot last. Missing sources support interrupted retries.
+// first and the snapshot last (familyOrder). Missing sources support
+// interrupted retries.
 func (r sessionResolver) migrateLegacyFamily(id session.SessionID) error {
-	for _, kind := range []sessionKind{kindTools, kindEvents, kindSnapshot} {
+	for _, kind := range familyOrder {
 		if err := moveLegacyFile(r.legacyPath(id, kind), r.canonicalPath(id, kind)); err != nil {
 			return fmt.Errorf("jsonlstore: migrate %s: %w", kind.suffix(), err)
 		}

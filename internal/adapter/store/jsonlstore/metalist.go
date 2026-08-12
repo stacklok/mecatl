@@ -101,6 +101,10 @@ func (st *Store) MetaList(_ context.Context) ([]port.SessionMeta, error) {
 			meta.Turns = m.Counters.Turns
 			meta.ModelID = m.ModelID
 			meta.Title = m.Title
+			// A zero CreatedAt (a snapshot with no created_at, or the zero time)
+			// must surface as the zero time — NOT .Unix() of the zero time, which
+			// is -62135596800 and would misreport as 0001-01-01. The caller maps
+			// a zero time to CreatedAtUnix=0 (matching the Load-fails zeroed path).
 			meta.CreatedAt = m.CreatedAt
 		}
 		out = append(out, meta)

@@ -50,8 +50,9 @@ var ErrNotFound = fmt.Errorf("jsonlstore: session not found: %w", port.ErrSessio
 
 // Store is an append-only JSONL SessionStore and ToolCallRecorder rooted at a directory.
 type Store struct {
-	dir string
-	// resolver is the single authority for canonical and legacy family paths.
+	// resolver is the single authority for canonical and legacy family paths
+	// (including the plain root dir, resolver.dir — Store has no separate
+	// copy of it).
 	resolver sessionResolver
 	mu       sync.Mutex // serializes appends across files
 }
@@ -77,7 +78,7 @@ func New(dir string) (*Store, error) {
 	if err := os.MkdirAll(resolver.canonicalDir(), 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
 	}
-	return &Store{dir: dir, resolver: resolver}, nil
+	return &Store{resolver: resolver}, nil
 }
 
 // Save appends a snapshot of s as a single JSON line to the session file.
@@ -122,7 +123,8 @@ func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session
 }
 
 // scanLastNonBlankLine returns the last non-blank line of f. Load and the
-// listing fallback share this latest-snapshot discipline.
+// listing fallback share this latest-snapshot discipline. The caller owns the
+// returned slice (a fresh copy; the scanner's buffer is reused internally).
 func scanLastNonBlankLine(f *os.File) ([]byte, error) {
 	var last []byte
 	sc := newScanner(f)
@@ -181,6 +183,12 @@ type eventLogRecord struct {
 
 // List returns one row per logical session id. IDs come from latest snapshots,
 // never filenames; canonical files win when canonical and legacy coexist.
+//
+// COST: ids are decoded from each session file's latest snapshot line rather
+// than from filenames (a filename is not invertible back to the id, and now
+// there are two directories — canonical and legacy — to reconcile), so List
+// is O(total store bytes) in the worst case — acceptable for a retention
+// sweep on a startup/hourly cadence, NOT a hot path.
 func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -195,9 +203,18 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	return out, nil
 }
 
-// Delete removes canonical sidecars before the canonical snapshot. It removes
-// a legacy family in the same order only when the latest legacy snapshot proves
-// exact ownership; mismatch and absence are idempotent success.
+// Delete removes canonical sidecars before the canonical snapshot, and a
+// legacy family in the same order — REMOVAL ORDER is load-bearing, see
+// familyOrder's doc comment (resolve.go): the snapshot file is what List
+// enumerates, so removing it last means a partial failure leaves the family
+// still VISIBLE (the next retention sweep retries it), where the reverse
+// order would leave an invisible orphaned sidecar no sweep could ever find.
+// With two families (canonical + legacy) this now has to hold TWICE per
+// call: canonical sidecars before the canonical snapshot, AND — only when
+// the legacy snapshot's embedded id proves it belongs to this session —
+// legacy sidecars before the legacy snapshot. A legacy family that fails
+// ownership (mismatch or absent) is left untouched; that mismatch and
+// absence are both idempotent success.
 func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -209,7 +226,8 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	if err != nil {
 		return err
 	}
-	for _, kind := range []sessionKind{kindTools, kindEvents} {
+	sidecars := familyOrder[:len(familyOrder)-1] // {kindTools, kindEvents}
+	for _, kind := range sidecars {
 		if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
 			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
 		}
@@ -379,7 +397,7 @@ func (st *Store) Read(_ context.Context, id session.SessionID) iter.Seq2[session
 // struct, not the session store). A caller that does not need schedules never
 // calls this; the byte-identical default is no schedules.
 func (st *Store) ScheduleStore() port.ScheduleStore {
-	return &scheduleStore{dir: st.dir, mu: &st.mu}
+	return &scheduleStore{dir: st.resolver.dir, mu: &st.mu}
 }
 
 // appendLine appends b followed by a newline to the file at path, opening it
