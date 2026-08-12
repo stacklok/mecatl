@@ -249,8 +249,9 @@ func (l *Lease) recordPath(id session.SessionID) string {
 
 // safeName encodes a session id into a collision-free, path-safe filename stem:
 // a sanitized human-readable prefix (so an operator can eyeball the dir) plus a
-// hash suffix that makes the encoding injective — two distinct ids never collide
-// onto one lock file and thus never falsely contend. jsonlstore's session files
+// hash suffix that makes a collision negligible rather than structural (the
+// suffix is 64 bits of the digest, so ~2^-64 per pair) — two distinct ids
+// practically never collide onto one lock file and thus never falsely contend. jsonlstore's session files
 // now use a reversible token instead; a sanitized-only scheme (jsonlstore's
 // legacySafeName, still used for pre-existing files and schedule/fire names) is
 // fine for a store whose mapping a Load already knows, but a lease must NEVER

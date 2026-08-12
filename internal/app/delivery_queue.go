@@ -508,12 +508,20 @@ func deliveryWriteAtomic(path string, b []byte) error {
 
 // deliverySafeName maps a SessionID to a filename-safe token so it cannot
 // traverse out of the dir. Any rune that is not alphanumeric, '-', '_' or '.'
-// becomes '_'; a leading '.' is neutralized. This is byte-for-byte the same
-// transform as jsonlstore.legacySafeName, kept as a local copy rather than
-// shared: neither the queue's nor the store's naming needs to change in step
-// with the other. Note flocklease.safeName is NOT the same sanitizer — it
-// excludes '.', caps the prefix at 40 runes, and appends a SHA-256 suffix so
-// its encoding is injective, which a lease requires and these two do not.
+// becomes '_'; a leading '.' is neutralized. At time of writing this is the
+// same transform as jsonlstore.legacySafeName, kept as a local copy rather
+// than shared: that one is a FROZEN legacy format (it survives only to read
+// and migrate pre-rewrite files), so coupling this live format to it would
+// freeze both. They are identical by history, not by contract.
+//
+// The stem is LOSSY: two ids differing only in a sanitized rune share one
+// file. jsonlstore pays for that with an ownership proof — it re-reads the id
+// embedded in each snapshot line and refuses a family whose stem collided.
+// The queue does NOT: pendingLocked filters on format and delivered-seq only,
+// never on rec.Note.SessionID, so two colliding origins read each other's
+// notes and either one's MarkDelivered marks the other's seq. That collision
+// is currently UNGUARDED here — see issue #441, which is about exactly this
+// class of lossily-named session id.
 func deliverySafeName(id session.SessionID) string {
 	s := string(id)
 	if s == "" {
