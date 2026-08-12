@@ -1097,6 +1097,12 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		}
 		res.summary = final
 	default:
+		// The same fail-safe classifier the Subagent tool uses (issue #422): a branch that
+		// stopped on a bound, anomaly, or unknown host label is NOT a clean finish, and must
+		// not render under the same "[OK]" marker as a genuine StopEndTurn with no note.
+		if note, _ := subagentTerminalNote(stop); note != "" {
+			final = note + "\n\n" + final
+		}
 		if final == "" {
 			final = "(branch produced no summary)"
 		}
