@@ -42,6 +42,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md)
 - [0097 — Scheduled fires are observable in-flight: a first-class persisted lifecycle stage](./0097-scheduled-fire-inflight-state.md)
 - [0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](./0096-live-feed-reconnect.md)
+- [0103 — mecatui seed prompt (`-p`/`--prompt`, `--prompt-file`)](./0103-mecatui-seed-prompt.md)
 - [0076 — The schedule manager is store-shaped and pre-Service; the shared catalog carries the Schedule tool](./0076-schedule-shared-catalog.md)
 - [0081 — `RulesSource` port for `.claude/rules` discovery](./0081-rules-source-port.md)
 - [0097 — Neutral permanent-provider-error signal (`port.PermanentError` → `ResultPayload.Permanent` → `EvRecoverNotice`)](./0097-permanent-provider-error-signal.md)

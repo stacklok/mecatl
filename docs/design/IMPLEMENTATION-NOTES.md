@@ -2946,6 +2946,44 @@ rejection (`rejectRemovedTopLevelKeys`, a one-field flat-struct probe — a NEST
 Progressive help is metadata-driven per binary (`validateFlagMeta` / `validateFlagApplicability`
 over the FULL real FlagSet — a registration/metadata drift fails the invariant test).
 
+### mecatui seed prompt (`-p`/`--prompt`, `--prompt-file` — ADR 0103)
+
+A SEED first turn, NOT a mode: the TUI auto-submits the CLI-supplied prompt once the session
+binds and then stays interactive. Print-and-exit is deliberately absent — that is
+`mecatequi`'s job (ADR 0028), and duplicating it here would need a second render path (no alt
+screen, no overlays, no approval modal). The seed rides the IDENTICAL typed-prompt path:
+`applySessionReady` (`cmd/mecatui/ui/update.go`) — the ONE seam both bind arms funnel through
+— sets the textarea value and calls `submitPrompt`, so the bare-slash intercept, paste
+placeholder expansion, `@`-mention media/text expansion, the per-prompt caps, and all four
+loud-reject early returns apply to a seed exactly as to typed input. Two accepted
+consequences of that, NOT special-cased (special-casing either would break the property the
+design rests on): a `/`-prefixed seed (`-p /clear`) is intercepted locally and never reaches
+the model, and a `--prompt-file` body carries full typed-prompt authority incl. `@path`
+expansion.
+
+**Fires exactly ONCE, structurally.** `Model.pendingInitialPrompt` is seeded from
+`Deps.InitialPrompt` at construction and consumed at ONE site, which clears the field BEFORE
+calling `submitPrompt`. A `/models` restart, a `/clear`, and the connect-fallback rebind (the
+server-rejected-selector → zero-selection-retry arm, issue #41) all re-enter
+`applySessionReady` with the field already empty; `ui.New` runs once per process, so nothing
+re-seeds it. A whitespace-only seed is a no-op (`TrimSpace` gate). CAVEAT: `applySessionReady`
+can now START A RUN, and its one wrapping caller (the `connectFallbackMsg` arm) keeps mutating
+the returned model afterwards — so a seeded fallback's loud rejected-model warning overwrites
+the run status. Cosmetic today (nothing reads the fields cleared after the run opens), but the
+function's contract is wider than its name.
+
+**`--prompt-file` is read at parse time** (`parseTransportFlags`, fail-fast naming the path)
+and joins AFTER the `--prompt` literal, blank-line separated. The join is the SHARED
+`cliconfig.JoinPromptBody` — ONE implementation for both prompt-bearing mains (`mecatequi`'s
+one-shot, which layers its trusted-instructions / untrusted-fence wrapping on top, and
+`mecatui`'s seed), because they must agree byte-for-byte; the mains previously held
+independent identical copies and only one was tested. `-p` is mecatui's first SHORT flag (the
+ADR-0089 "one canonical spelling" rule governs command/transport spellings, not flag short
+forms; `--inline` has aliased `--no-alt-screen` since before this) and shares one destination
+with `--prompt`, so passing both silently keeps the last. Both are shared SESSION flags
+(`flagApplicabilityByFlag`): valid in the bare embedded mode AND under `mecatui connect`.
+`mecated` is unchanged — it is a daemon, prompts arrive over the wire.
+
 ### `modelhook` (guardrails — LLM-backed tool-content checker, issue #27 — see `GUARDRAILS.md`)
 
 The `modelhook.Runner` is a `port.HookRunner` **decorator** that inspects
