@@ -1,4 +1,4 @@
-# ADR 0103 — OpenAI subscription with a manual access token
+# ADR 0104 — OpenAI subscription with a manual access token
 
 - Status: Accepted
 - Date: 2026-08-05
@@ -134,7 +134,7 @@ path yet.
 
 ## See also
 
-- [Sanitized compatibility record](./0103-openai-subscription-contract.json)
+- [Sanitized compatibility record](./0104-openai-subscription-contract.json)
 - [ADR 0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [OpenAI Codex repository](https://github.com/openai/codex)
 - [OpenAI authentication overview](https://platform.openai.com/docs/api-reference/authentication)

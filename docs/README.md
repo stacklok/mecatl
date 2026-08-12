@@ -22,5 +22,5 @@ not restate it.
 - [`usage.md`](usage.md) — the living usage & operator guide.
 - [`adr/README.md`](adr/README.md) — the frozen ADR index (the *why* archive).
 - [`design/PRODUCTION-READINESS.md`](design/PRODUCTION-READINESS.md) — the live shipped/deferred status tracker.
-- [ADR 0103](adr/0103-openai-subscription-manual-token.md) — the landed,
+- [ADR 0104](adr/0104-openai-subscription-manual-token.md) — the landed,
   experimental `openai-codex` capability and its private-backend boundary.

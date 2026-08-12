@@ -3598,7 +3598,7 @@ its OWN `openrouter.Model` (composition maps it to `modelEntry` — no import cy
 `id`/`name`/`context_length`/`top_provider.max_completion_tokens`→OutputLimit (the output
 ceiling, captured for the resolvers)/`architecture.input_modalities`/`supported_parameters∋{reasoning,tools}`.
 
-### `authfile` + `openaicodex` — manual ChatGPT subscription adjunct (ADR 0103)
+### `authfile` + `openaicodex` — manual ChatGPT subscription adjunct (ADR 0104)
 
 `internal/adapter/authfile` accepts one additional strict leaf only at
 `providers.openai-codex.oauth`: required non-empty string `access_token`, optional
@@ -3944,7 +3944,7 @@ discipline). It feeds the UNCHANGED `preferredDefaultProvider` ladder as an
 explicit operator override — it does NOT lower the precedence of key-driven
 providers. See ADR 0064 D9.
 
-**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0103).** The gateway
+**DIRECT mode — in-process OIDC token injection (issue #265, ADR 0102).** The gateway
 entry can also talk DIRECTLY to the real `gateway_url` with no local proxy hop. The
 ToolHive Go import that ADR 0064 D8 said would never exist now lives in ONE file —
 `internal/adapter/toolhivellm/tokensource.go` (the package's sole toolhive-importing

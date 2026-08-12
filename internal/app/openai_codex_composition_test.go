@@ -414,9 +414,9 @@ func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 	}
 }
 
-// TestADR_0103_OpenAICodexSecretSentinels is AC8.5's composition-level
+// TestADR_0104_OpenAICodexSecretSentinels is AC8.5's composition-level
 // regression proof for the manually supplied bearer token.
-func TestADR_0103_OpenAICodexSecretSentinels(t *testing.T) {
+func TestADR_0104_OpenAICodexSecretSentinels(t *testing.T) {
 	sentinel := base64.RawURLEncoding.EncodeToString([]byte("MECATL_STEP8_SECRET_SENTINEL_8f3c91"))
 	credential, token := codexSentinelCredential(t, sentinel)
 	if !strings.Contains(token, sentinel) {

@@ -12,13 +12,13 @@ import (
 	"time"
 )
 
-var adr0103Fixtures = []string{
+var adr0104Fixtures = []string{
 	"provider/openai/testdata/subscription_compatibility_text.sse",
 	"provider/openai/testdata/subscription_compatibility_tool_call.sse",
 	"provider/openai/testdata/subscription_compatibility_tool_continuation.sse",
 }
 
-type adr0103Record struct {
+type adr0104Record struct {
 	Schema        string          `json:"schema"`
 	ObservedAt    string          `json:"observed_at"`
 	Originator    string          `json:"originator"`
@@ -31,26 +31,26 @@ type adr0103Record struct {
 	Fixtures      []string        `json:"fixtures"`
 }
 
-func TestADR_0103_CompatibilityEvidence(t *testing.T) {
+func TestADR_0104_CompatibilityEvidence(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
-	adr := readADR0103(t, filepath.Join(root, "docs", "adr", "0103-openai-subscription-manual-token.md"))
+	adr := readADR0104(t, filepath.Join(root, "docs", "adr", "0104-openai-subscription-manual-token.md"))
 	for _, required := range []string{
 		"- Status: Accepted", "honest mecatl originator", "manual access token", "live-only",
 		"explicit selector", "plaintext", "mecak8s", "stop", "last-known-good",
 	} {
 		if !strings.Contains(string(adr), required) {
-			t.Errorf("ADR 0103 missing compatibility clause %q", required)
+			t.Errorf("ADR 0104 missing compatibility clause %q", required)
 		}
 	}
-	index := readADR0103(t, filepath.Join(root, "docs", "adr", "README.md"))
+	index := readADR0104(t, filepath.Join(root, "docs", "adr", "README.md"))
 	if !strings.Contains(string(index),
-		"[0103 — OpenAI subscription with a manual access token](./0103-openai-subscription-manual-token.md)") {
-		t.Error("ADR 0103 is not indexed under Providers & APIs")
+		"[0104 — OpenAI subscription with a manual access token](./0104-openai-subscription-manual-token.md)") {
+		t.Error("ADR 0104 is not indexed under Providers & APIs")
 	}
 
-	recordBytes := readADR0103(t, filepath.Join(root, "docs", "adr", "0103-openai-subscription-contract.json"))
-	var record adr0103Record
+	recordBytes := readADR0104(t, filepath.Join(root, "docs", "adr", "0104-openai-subscription-contract.json"))
+	var record adr0104Record
 	dec := json.NewDecoder(bytes.NewReader(recordBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&record); err != nil {
@@ -63,13 +63,13 @@ func TestADR_0103_CompatibilityEvidence(t *testing.T) {
 		len(record.Text) == 0 || len(record.Tool) == 0 || len(record.ErrorEvidence) == 0 {
 		t.Fatal("compatibility record has an invalid fixed contract field")
 	}
-	if !reflect.DeepEqual(record.Fixtures, adr0103Fixtures) {
-		t.Fatalf("fixture inventory = %#v, want %#v", record.Fixtures, adr0103Fixtures)
+	if !reflect.DeepEqual(record.Fixtures, adr0104Fixtures) {
+		t.Fatalf("fixture inventory = %#v, want %#v", record.Fixtures, adr0104Fixtures)
 	}
-	assertADR0103Sanitized(t, "record", recordBytes)
-	for _, name := range adr0103Fixtures {
-		fixture := readADR0103(t, filepath.Join(root, name))
-		assertADR0103Sanitized(t, name, fixture)
+	assertADR0104Sanitized(t, "record", recordBytes)
+	for _, name := range adr0104Fixtures {
+		fixture := readADR0104(t, filepath.Join(root, name))
+		assertADR0104Sanitized(t, name, fixture)
 		scanner := bufio.NewScanner(bytes.NewReader(fixture))
 		events := 0
 		for scanner.Scan() {
@@ -88,7 +88,7 @@ func TestADR_0103_CompatibilityEvidence(t *testing.T) {
 	}
 }
 
-func readADR0103(t *testing.T, path string) []byte {
+func readADR0104(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -97,7 +97,7 @@ func readADR0103(t *testing.T, path string) []byte {
 	return b
 }
 
-func assertADR0103Sanitized(t *testing.T, name string, b []byte) {
+func assertADR0104Sanitized(t *testing.T, name string, b []byte) {
 	t.Helper()
 	lower := strings.ToLower(string(b))
 	for _, forbidden := range []string{
