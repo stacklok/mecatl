@@ -125,8 +125,8 @@ func TestCredentialValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCredential(valid): %v", err)
 	}
-	if cred.AccountID() != "acct" || !cred.FedRAMP() {
-		t.Fatalf("routing metadata = (%q, %t)", cred.AccountID(), cred.FedRAMP())
+	if cred.accountID != "acct" || !cred.fedRAMP {
+		t.Fatalf("routing metadata = (%q, %t)", cred.accountID, cred.fedRAMP)
 	}
 	if err := cred.Validate(testNow.Add(30 * time.Minute)); err != nil {
 		t.Fatalf("Validate(valid): %v", err)
@@ -151,8 +151,8 @@ func TestCredentialUsesEarlierExpiry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !cred.ExpiresAt().Equal(tc.want) {
-				t.Fatalf("ExpiresAt() = %v, want %v", cred.ExpiresAt(), tc.want)
+			if !cred.expiresAt.Equal(tc.want) {
+				t.Fatalf("expiresAt = %v, want %v", cred.expiresAt, tc.want)
 			}
 		})
 	}
@@ -221,7 +221,7 @@ func TestRequestPolicyClonesBeforeCredentialInjection(t *testing.T) {
 	if got := req.Header.Get("Authorization"); got != "Bearer attacker" || req.Header.Get("X-Late-Header") != "must-not-pass" {
 		t.Fatalf("original request was mutated: %v", req.Header)
 	}
-	if captured == nil || captured.Header.Get("Authorization") != "Bearer "+cred.AccessToken() || captured.Header.Get("X-Late-Header") != "" {
+	if captured == nil || captured.Header.Get("Authorization") != "Bearer "+cred.accessToken || captured.Header.Get("X-Late-Header") != "" {
 		t.Fatalf("wire request did not carry the exact policy headers: %v", captured)
 	}
 }
@@ -270,7 +270,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 	}
 	responsesHeaders := canonicalHeaders(map[string]string{
 		"Accept":                  "text/event-stream",
-		"Authorization":           "Bearer " + cred.AccessToken(),
+		"Authorization":           "Bearer " + cred.accessToken,
 		"ChatGPT-Account-ID":      "acct",
 		"Content-Type":            "application/json",
 		"X-OpenAI-Fedramp":        "true",
@@ -291,7 +291,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 	}
 	modelsHeaders := canonicalHeaders(map[string]string{
 		"Accept":                  "application/json",
-		"Authorization":           "Bearer " + cred.AccessToken(),
+		"Authorization":           "Bearer " + cred.accessToken,
 		"ChatGPT-Account-ID":      "acct",
 		"X-OpenAI-Fedramp":        "true",
 		"originator":              "mecatl",
@@ -320,7 +320,7 @@ func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 		}
 		want := canonicalHeaders(map[string]string{
 			"Accept":                  "application/json",
-			"Authorization":           "Bearer " + nonFed.AccessToken(),
+			"Authorization":           "Bearer " + nonFed.accessToken,
 			"ChatGPT-Account-ID":      "acct",
 			"originator":              "mecatl",
 			"User-Agent":              UserAgent,

@@ -321,7 +321,7 @@ func TestResolvedCredentialsKeepBillingIdentitiesSeparate(t *testing.T) {
 	}
 	var cfg app.Config
 	(&ProviderFlags{}).ApplyResolved(&cfg, resolved)
-	if cfg.OpenAIKey != "sk-api" || !cfg.OpenAICodexCredential.Configured() || cfg.OpenAICodexCredential.AccountID() != "acct-separate" {
+	if cfg.OpenAIKey != "sk-api" || cfg.OpenAICodexCredential != resolved.OpenAICodex || cfg.OpenAICodexCredential.Validate(time.Now()) != nil {
 		t.Fatal("API OpenAI and Codex were not projected independently")
 	}
 }

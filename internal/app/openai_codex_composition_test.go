@@ -418,8 +418,8 @@ func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 // regression proof for the manually supplied bearer token.
 func TestADR_0103_OpenAICodexSecretSentinels(t *testing.T) {
 	sentinel := base64.RawURLEncoding.EncodeToString([]byte("MECATL_STEP8_SECRET_SENTINEL_8f3c91"))
-	credential := codexSentinelCredential(t, sentinel)
-	if !strings.Contains(credential.AccessToken(), sentinel) {
+	credential, token := codexSentinelCredential(t, sentinel)
+	if !strings.Contains(token, sentinel) {
 		t.Fatal("precondition: sentinel is not present verbatim in the valid bearer")
 	}
 
@@ -572,7 +572,7 @@ func TestADR_0103_OpenAICodexSecretSentinels(t *testing.T) {
 	}
 	var sawModels, sawResponses bool
 	for i, req := range requests {
-		if got, want := req.header.Get("Authorization"), "Bearer "+credential.AccessToken(); got != want {
+		if got, want := req.header.Get("Authorization"), "Bearer "+token; got != want {
 			t.Errorf("provider request[%d] did not carry the exact permitted bearer boundary", i)
 		}
 		switch req.path {
@@ -693,7 +693,7 @@ func (h *codexSentinelHookCapture) events() []governance.HookEvent {
 	return append([]governance.HookEvent(nil), h.captured...)
 }
 
-func codexSentinelCredential(t *testing.T, sentinel string) openaicodex.Credential {
+func codexSentinelCredential(t *testing.T, sentinel string) (openaicodex.Credential, string) {
 	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	claims, err := json.Marshal(map[string]any{
@@ -708,5 +708,5 @@ func codexSentinelCredential(t *testing.T, sentinel string) openaicodex.Credenti
 	if err != nil {
 		t.Fatalf("NewCredential: %v", err)
 	}
-	return credential
+	return credential, token
 }

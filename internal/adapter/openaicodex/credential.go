@@ -112,19 +112,6 @@ func (c Credential) Validate(now time.Time) error {
 	return nil
 }
 
-// AccessToken returns the snapshot's bearer token for the existing OpenAI
-// adapter construction seam. Callers must treat it as secret.
-func (c Credential) AccessToken() string { return c.accessToken }
-
-// AccountID returns the backend routing account identifier.
-func (c Credential) AccountID() string { return c.accountID }
-
-// ExpiresAt returns the effective (earliest) expiry.
-func (c Credential) ExpiresAt() time.Time { return c.expiresAt }
-
-// FedRAMP reports the unverified JWT routing claim.
-func (c Credential) FedRAMP() bool { return c.fedRAMP }
-
 // Configured reports whether this value is a populated credential snapshot.
 // It does not replace Validate: callers must still check expiry at use time.
 func (c Credential) Configured() bool { return c.accessToken != "" }

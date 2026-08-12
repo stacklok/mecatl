@@ -857,7 +857,7 @@ func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
 			body: fmt.Sprintf("providers:\n  openai-codex:\n    oauth:\n      access_token: %s\n      account_id: acct-tui\n      expires_at: %s\n", codextest.Token(expires, "acct-tui"), expires.Format(time.RFC3339)),
 			check: func(t *testing.T, got app.Config) {
 				t.Helper()
-				if !got.OpenAICodexCredential.Configured() || got.OpenAICodexCredential.AccountID() != "acct-tui" {
+				if !got.OpenAICodexCredential.Configured() || got.OpenAICodexCredential.Validate(time.Now()) != nil {
 					t.Fatal("embedded config did not reuse the Codex credential snapshot")
 				}
 			},
@@ -879,8 +879,13 @@ func TestConfigValidateAcceptsAuthFileCredential(t *testing.T) {
 			if err := cfg.validate(); err != nil {
 				t.Fatalf("cached file-only credential rejected after file removal: %v", err)
 			}
-			test.check(t, embeddedConfig(cfg, port.NopDiagnostics{}))
-			test.check(t, embeddedConfig(cfg, port.NopDiagnostics{}))
+			for range 2 {
+				got := embeddedConfig(cfg, port.NopDiagnostics{})
+				test.check(t, got)
+				if got.OpenAICodexCredential != cfg.providerKeys.OpenAICodex {
+					t.Fatal("embedded config re-resolved the Codex credential snapshot")
+				}
+			}
 		})
 	}
 

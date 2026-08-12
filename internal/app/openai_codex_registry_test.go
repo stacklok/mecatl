@@ -25,21 +25,26 @@ import (
 
 var codexRegistryNow = time.Date(2035, time.January, 2, 3, 4, 5, 0, time.UTC)
 
-func codexRegistryCredential(t *testing.T) openaicodex.Credential {
+const codexRegistryAccountID = "acct-codex-registry"
+
+func codexRegistryToken(t *testing.T) string {
 	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	claims, err := json.Marshal(map[string]any{
 		"exp": codexRegistryNow.Add(time.Hour).Unix(),
 		"https://api.openai.com/auth": map[string]any{
-			"chatgpt_account_id": "acct-codex-registry",
+			"chatgpt_account_id": codexRegistryAccountID,
 		},
 	})
 	if err != nil {
 		t.Fatalf("marshal claims: %v", err)
 	}
-	payload := base64.RawURLEncoding.EncodeToString(claims)
-	signature := base64.RawURLEncoding.EncodeToString([]byte("test-signature"))
-	credential, err := openaicodex.NewCredential(header+"."+payload+"."+signature, "", "", codexRegistryNow)
+	return header + "." + base64.RawURLEncoding.EncodeToString(claims) + "." + base64.RawURLEncoding.EncodeToString([]byte("test-signature"))
+}
+
+func codexRegistryCredential(t *testing.T) openaicodex.Credential {
+	t.Helper()
+	credential, err := openaicodex.NewCredential(codexRegistryToken(t), "", "", codexRegistryNow)
 	if err != nil {
 		t.Fatalf("NewCredential: %v", err)
 	}
@@ -115,7 +120,7 @@ func TestRegistryOpenAICodexAvailability(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "expired") {
 			t.Fatalf("expired Codex-only registry error = %v, want actionable expiry error", err)
 		}
-		if strings.Contains(err.Error(), cfg.OpenAICodexCredential.AccessToken()) {
+		if strings.Contains(err.Error(), codexRegistryToken(t)) {
 			t.Fatal("expired credential error disclosed the bearer token")
 		}
 	})
@@ -273,11 +278,11 @@ func TestOpenAICodexOptionsSurviveEveryRemint(t *testing.T) {
 		if req.method != http.MethodPost || req.url != wantURL {
 			t.Errorf("request %d target = %s %s, want POST %s", i, req.method, req.url, wantURL)
 		}
-		if req.header.Get("ChatGPT-Account-ID") != credential.AccountID() ||
+		if req.header.Get("ChatGPT-Account-ID") != codexRegistryAccountID ||
 			req.header.Get("originator") != "mecatl" || req.header.Get("User-Agent") != openaicodex.UserAgent {
 			t.Errorf("request %d lost one or more Codex policy headers", i)
 		}
-		if req.header.Get("Authorization") != "Bearer "+credential.AccessToken() ||
+		if req.header.Get("Authorization") != "Bearer "+codexRegistryToken(t) ||
 			req.header.Get("Accept") != "text/event-stream" ||
 			req.header.Get("Content-Type") != "application/json" ||
 			req.header.Get("X-Stainless-Retry-Count") != "0" {

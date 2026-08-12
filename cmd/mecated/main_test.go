@@ -44,9 +44,10 @@ func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
+	want := cfg.providerCredentials.OpenAICodex
 	for range 2 {
 		got := appConfig(cfg, nil, nil, nil, nil, nil)
-		if got.OpenAICodexCredential.AccessToken() != token {
+		if got.OpenAICodexCredential != want || got.OpenAICodexCredential.Validate(time.Now()) != nil {
 			t.Fatal("mecated appConfig omitted or re-resolved the parsed credential")
 		}
 	}

@@ -54,8 +54,8 @@ func TestCodexModelsRequest(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"Accept":                  "application/json",
-		"Authorization":           "Bearer " + policy.credential.AccessToken(),
-		"ChatGPT-Account-ID":      policy.credential.AccountID(),
+		"Authorization":           "Bearer " + policy.credential.accessToken,
+		"ChatGPT-Account-ID":      policy.credential.accountID,
 		"originator":              "mecatl",
 		"User-Agent":              UserAgent,
 		"X-Stainless-Retry-Count": "0",
