@@ -255,7 +255,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"DeleteSchedule": {KindCallerOwned, "authorizes via GetSchedule before delegating the delete"},
 	"PauseSchedule":  {KindCallerOwned, "authorizes via GetSchedule before delegating the pause"},
 	"ResumeSchedule": {KindCallerOwned, "authorizes via GetSchedule before delegating the resume"},
-	"GetFire":        {KindCallerOwned, "authorizes the fire's parent schedule via GetSchedule (a fire is derived through its schedule, decision 2)"},
+	"GetFire":        {KindCallerOwned, "the manager loads the fire's parent schedule directly by its stored physical key and compares owners (no longer via GetSchedule); denies with fireNotFoundErr on mismatch"},
 	"ListFires":      {KindCallerOwned, "authorizes the parent schedule via GetSchedule before listing its fires"},
 	"FireNow":        {KindCallerOwned, "authorizes via GetSchedule before manually firing"},
 
@@ -409,7 +409,7 @@ var modelToolAccessTable = map[string]ClassificationEntry{
 	"SubagentStatus":  {KindCallerOwned, "reads the run-scoped background-child registry (parentCaps.children), which only ever holds children this SAME run's caller spawned"},
 	"Subagent":        {KindCallerOwned, "a resume: <agentId> load authorizes the persisted child via sess.Owner.SameIdentity(caller) before recovering or re-persisting it (issue #368 task 09)"},
 	"Team":            {KindCallerOwned, "the in-loop Team tool inherits the run's OWN authorized session; RunTeam's gRPC entry point is separately classified above via lookupTeam"},
-	"Schedule":        {KindCallerOwned, "mutations use the context-bound owner-namespaced schedule manager; fire resolves its stored parent owner before returning"},
+	"Schedule":        {KindCallerOwned, "every verb (create/list/inspect/pause/resume/delete/fire-now) uses the context-bound owner-namespaced schedule manager, which derives/enforces ownership per verb; GetFire's parent-owner check is a separate gRPC/REST-only boundary this tool never reaches"},
 	"ScheduleQuery":   {KindCallerOwned, "the context-bound schedule manager filters list results by owner before rendering model-visible metadata"},
 }
 
