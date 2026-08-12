@@ -301,21 +301,6 @@ func (m *scheduleManager) physicalScheduleName(ctx context.Context, name string)
 	return m.ownerScheduleNamespace(ctx) + name
 }
 
-// literalScheduleName is the inverse of physicalScheduleName for a value whose
-// owner is not independently known (e.g. a ScheduleFire's ScheduleName
-// foreign key): it strips THIS context's own namespace prefix when present.
-// A physical name that belongs to a different owner (or no owner) is returned
-// unchanged — a foreign value, which a subsequent GetSchedule-shaped
-// authorization check on the unstripped string will then, correctly, fail to
-// resolve (absence-style, never a leak).
-func (m *scheduleManager) literalScheduleName(ctx context.Context, physical string) string {
-	ns := m.ownerScheduleNamespace(ctx)
-	if ns == "" {
-		return physical
-	}
-	return strings.TrimPrefix(physical, ns)
-}
-
 // scheduleNotFoundErr normalizes a ScheduleStore not-found error to name the
 // caller-visible LITERAL schedule name. The store has no notion of
 // literal-vs-physical — it echoes back whatever key it was given verbatim
@@ -329,6 +314,12 @@ func scheduleNotFoundErr(err error, literalName string) error {
 		return fmt.Errorf("%w: %q", port.ErrScheduleNotFound, literalName)
 	}
 	return err
+}
+
+// fireNotFoundErr is the absence-shaped error for a fire lookup. A fire's
+// stored parent key is physical and must never appear in a caller-visible error.
+func fireNotFoundErr(fireID string) error {
+	return fmt.Errorf("%w: %q", port.ErrScheduleNotFound, fireID)
 }
 
 // CreateSchedule is the create-seam for a schedule: it validates the spec
@@ -678,24 +669,33 @@ func (m *scheduleManager) GetSchedule(ctx context.Context, name string) (port.Sc
 	return sched, nil
 }
 
-// ListSchedules returns all stored schedules. Only the entries under THIS
-// context's own owner namespace have their Spec.Name un-prefixed back to the
-// literal caller-visible name; a foreign owner's entries are left under their
-// own (different) physical key and are filtered out by the caller
-// (Service.ListSchedules' ownsResource pass) before their Name is ever read.
+// ListSchedules returns the schedules visible to this context. With ownership
+// enforcement enabled it filters before exposing any schedule metadata; the
+// ScheduleQuery tool consumes this manager directly rather than the Service.
 func (m *scheduleManager) ListSchedules(ctx context.Context) ([]port.Schedule, error) {
 	scheds, err := m.schedStore.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if ns := m.ownerScheduleNamespace(ctx); ns != "" {
-		for i := range scheds {
-			if literal, ok := strings.CutPrefix(scheds[i].Spec.Name, ns); ok {
-				scheds[i].Spec.Name = literal
-			}
-		}
+	if !m.ownershipEnforced {
+		return scheds, nil
 	}
-	return scheds, nil
+
+	caller := session.PrincipalFromContext(ctx)
+	ns := m.ownerScheduleNamespace(ctx)
+	out := make([]port.Schedule, 0, len(scheds))
+	for _, sched := range scheds {
+		if sched.Spec.Owner == nil || !sched.Spec.Owner.SameIdentity(caller) {
+			continue
+		}
+		literal, ok := strings.CutPrefix(sched.Spec.Name, ns)
+		if !ok {
+			continue
+		}
+		sched.Spec.Name = literal
+		out = append(out, sched)
+	}
+	return out, nil
 }
 
 // UpdateSchedule re-validates the spec (the same create-seam validation) and
@@ -758,25 +758,35 @@ func (m *scheduleManager) ResumeSchedule(ctx context.Context, name string) error
 	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), true), name)
 }
 
-// GetFire loads a fire record by id. It is the read-side sibling of
-// ListFires (NOT part of port.ScheduleManager — the agent tool does not need
-// it; the gRPC/REST FireNow surface does). Kept on the manager so the Service
-// delegates the whole schedule surface to ONE truth.
-//
-// The returned ScheduleFire.ScheduleName foreign key is stored as the
-// physical (owner-namespaced) key — it is stamped from the claimed Schedule's
-// own Spec.Name by the tick loop, which never goes through this manager (see
-// physicalScheduleName's doc). It is un-prefixed back to THIS context's
-// literal view before returning, so Service.GetFire's subsequent
-// authorization call (GetSchedule(ctx, fire.ScheduleName)) resolves the same
-// schedule the caller already owns, rather than double-prefixing a physical
-// value.
+// GetFire loads a fire record by id. With ownership enforcement enabled, it
+// resolves the fire's stored physical parent key directly and authorizes that
+// parent before translating the key for the caller-visible result.
 func (m *scheduleManager) GetFire(ctx context.Context, fireID string) (port.ScheduleFire, error) {
 	fire, err := m.schedStore.LoadFire(ctx, fireID)
 	if err != nil {
 		return port.ScheduleFire{}, err
 	}
-	fire.ScheduleName = m.literalScheduleName(ctx, fire.ScheduleName)
+	if !m.ownershipEnforced {
+		return fire, nil
+	}
+
+	physicalName := fire.ScheduleName
+	parent, err := m.schedStore.Load(ctx, physicalName)
+	if err != nil {
+		if errors.Is(err, port.ErrScheduleNotFound) {
+			return port.ScheduleFire{}, fireNotFoundErr(fireID)
+		}
+		return port.ScheduleFire{}, err
+	}
+	caller := session.PrincipalFromContext(ctx)
+	if parent.Spec.Owner == nil || !parent.Spec.Owner.SameIdentity(caller) {
+		return port.ScheduleFire{}, fireNotFoundErr(fireID)
+	}
+	literal, ok := strings.CutPrefix(physicalName, m.ownerScheduleNamespace(ctx))
+	if !ok {
+		return port.ScheduleFire{}, fireNotFoundErr(fireID)
+	}
+	fire.ScheduleName = literal
 	return fire, nil
 }
 

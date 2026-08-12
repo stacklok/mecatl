@@ -316,7 +316,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"HasScheduler":           {KindExempt, "reports whether a scheduler is wired, composition-time state"},
 	"SetScheduler":           {KindExempt, "composition-time wiring of the scheduler instance"},
 	"SetScheduleMinInterval": {KindExempt, "composition-time configuration of the scheduling frequency floor"},
-	"ScheduleManager":        {KindExempt, "returns the composition-wired manager handle for internal composition/scheduler use, not a caller-facing read"},
+	"ScheduleManager":        {KindExempt, "composition-time accessor for the context-free manager handle; Schedule and ScheduleQuery are separately classified caller-owned consumers"},
 }
 
 // callerStoreAccessTable classifies memory.CallerStore's exported methods —
@@ -409,6 +409,8 @@ var modelToolAccessTable = map[string]ClassificationEntry{
 	"SubagentStatus":  {KindCallerOwned, "reads the run-scoped background-child registry (parentCaps.children), which only ever holds children this SAME run's caller spawned"},
 	"Subagent":        {KindCallerOwned, "a resume: <agentId> load authorizes the persisted child via sess.Owner.SameIdentity(caller) before recovering or re-persisting it (issue #368 task 09)"},
 	"Team":            {KindCallerOwned, "the in-loop Team tool inherits the run's OWN authorized session; RunTeam's gRPC entry point is separately classified above via lookupTeam"},
+	"Schedule":        {KindCallerOwned, "mutations use the context-bound owner-namespaced schedule manager; fire resolves its stored parent owner before returning"},
+	"ScheduleQuery":   {KindCallerOwned, "the context-bound schedule manager filters list results by owner before rendering model-visible metadata"},
 }
 
 // ModelToolBoundaries is the single registry of model-facing tool names ADR
@@ -424,6 +426,7 @@ var ModelToolBoundaries = []string{
 	"Remember", "Recall", "SearchMemory",
 	"RememberUser", "RecallUser", "SearchUserModel",
 	"InspectSubagent", "InspectMember", "SubagentStatus", "Subagent", "Team",
+	"Schedule", "ScheduleQuery",
 }
 
 // ClassifyServiceBoundaries walks every exported *Service method (the

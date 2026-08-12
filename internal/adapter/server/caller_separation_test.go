@@ -415,3 +415,135 @@ func TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged(t *testing.T) {
 		t.Fatalf("duplicate CreateSchedule = %v, want ErrInvalidArgument (single flat namespace)", err)
 	}
 }
+
+func redisCallerScheduleFixture(t *testing.T) (*server.Service, port.ScheduleStore, context.Context, context.Context) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rst, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatalf("redisstore.New: %v", err)
+	}
+	sessions := memstore.New()
+	schedules := rst.ScheduleStore()
+	svc, err := server.NewService(server.Config{
+		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:             sessions,
+		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
+		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		OwnershipEnforced: true,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser})
+	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "bob", GrantType: session.GrantTypeUser})
+	return svc, schedules, alice, bob
+}
+
+func TestCallerSeparation_Scenario2_ScheduleQueryListFiltersForeignSchedules(t *testing.T) {
+	svc, _, alice, bob := redisCallerScheduleFixture(t)
+	if _, err := svc.CreateSchedule(alice, callerSchedule("alice-secret")); err != nil {
+		t.Fatalf("Alice CreateSchedule: %v", err)
+	}
+	if _, err := svc.CreateSchedule(bob, callerSchedule("bob-visible")); err != nil {
+		t.Fatalf("Bob CreateSchedule: %v", err)
+	}
+
+	query := agent.NewScheduleQueryTool(svc.ScheduleManager())
+	result, err := query.Execute(bob, session.ToolCall{ID: "list", Name: agent.ScheduleQueryToolName, Args: []byte(`{"verb":"list"}`)}, memfs.NewWorkspace("/ws"))
+	if err != nil {
+		t.Fatalf("ScheduleQuery list: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("ScheduleQuery list error: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "bob-visible") {
+		t.Fatalf("ScheduleQuery list = %q, want Bob's schedule", result.Content)
+	}
+	for _, forbidden := range []string{"alice-secret", "schedule/", "\x00"} {
+		if strings.Contains(result.Content, forbidden) {
+			t.Fatalf("ScheduleQuery list = %q, leaks %q", result.Content, forbidden)
+		}
+	}
+}
+
+func TestCallerSeparation_Scenario2_GetFireRejectsForeignPhysicalParent(t *testing.T) {
+	svc, schedules, alice, bob := redisCallerScheduleFixture(t)
+	if _, err := svc.CreateSchedule(alice, callerSchedule("alice-only")); err != nil {
+		t.Fatalf("Alice CreateSchedule: %v", err)
+	}
+	stored, err := schedules.List(context.Background())
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("raw schedule list = %+v, %v; want Alice physical schedule", stored, err)
+	}
+	physicalName := stored[0].Spec.Name
+	if err := schedules.RecordFire(context.Background(), port.ScheduleFire{ID: "alice-fire", ScheduleName: physicalName, SessionID: "alice-fire-session", Stop: session.StopEndTurn}); err != nil {
+		t.Fatalf("RecordFire: %v", err)
+	}
+	_, err = svc.GetFire(bob, "alice-fire")
+	if !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("Bob GetFire without decoy = %v, want ErrScheduleNotFound", err)
+	}
+	for _, forbidden := range []string{physicalName, "schedule/", "\x00", "alice-only"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("Bob GetFire without decoy error %q leaks %q", err, forbidden)
+		}
+	}
+
+	if _, err := svc.CreateSchedule(bob, callerSchedule(physicalName)); err != nil {
+		t.Fatalf("Bob CreateSchedule decoy: %v", err)
+	}
+
+	_, err = svc.GetFire(bob, "alice-fire")
+	if !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("Bob GetFire = %v, want ErrScheduleNotFound", err)
+	}
+	for _, forbidden := range []string{physicalName, "schedule/", "\x00", "alice-only"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("Bob GetFire error %q leaks %q", err, forbidden)
+		}
+	}
+
+	fire, err := svc.GetFire(alice, "alice-fire")
+	if err != nil {
+		t.Fatalf("Alice GetFire: %v", err)
+	}
+	if fire.ScheduleName != "alice-only" {
+		t.Fatalf("Alice fire schedule name = %q, want literal name", fire.ScheduleName)
+	}
+}
+
+func TestCallerSeparation_Scenario2_OwnerlessGetFireKeepsOrphanCompatibility(t *testing.T) {
+	sessions := memstore.New()
+	schedules := memschedulestore.New()
+	svc, err := server.NewService(server.Config{
+		Engine:          agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:           sessions,
+		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := svc.CreateSchedule(ctx, callerSchedule("deleted-parent")); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if err := schedules.RecordFire(ctx, port.ScheduleFire{ID: "orphan-fire", ScheduleName: "deleted-parent", SessionID: "orphan-session", Stop: session.StopEndTurn}); err != nil {
+		t.Fatalf("RecordFire: %v", err)
+	}
+	if err := svc.DeleteSchedule(ctx, "deleted-parent"); err != nil {
+		t.Fatalf("DeleteSchedule: %v", err)
+	}
+	fire, err := svc.GetFire(ctx, "orphan-fire")
+	if err != nil {
+		t.Fatalf("GetFire orphan: %v", err)
+	}
+	if fire.ScheduleName != "deleted-parent" {
+		t.Fatalf("orphan fire schedule name = %q, want deleted-parent", fire.ScheduleName)
+	}
+}

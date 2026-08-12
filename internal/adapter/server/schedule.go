@@ -138,24 +138,14 @@ func (s *Service) ResumeSchedule(ctx context.Context, name string) error {
 	return mgr.ResumeSchedule(ctx, name)
 }
 
-// GetFire delegates to the embedded scheduleManager. It is the read-side
-// sibling of ListFires (NOT part of port.ScheduleManager — the agent tool does
-// not need it; the gRPC/REST FireNow surface does).
+// GetFire delegates to the embedded scheduleManager, which resolves and
+// authorizes the stored physical parent key before returning the fire.
 func (s *Service) GetFire(ctx context.Context, fireID string) (port.ScheduleFire, error) {
 	mgr := s.schedMgr
 	if mgr == nil {
 		return port.ScheduleFire{}, ErrNoScheduleStore
 	}
-	fire, err := mgr.GetFire(ctx, fireID)
-	if err != nil {
-		return port.ScheduleFire{}, err
-	}
-	if s.cfg.OwnershipEnforced {
-		if _, err := s.GetSchedule(ctx, fire.ScheduleName); err != nil {
-			return port.ScheduleFire{}, err
-		}
-	}
-	return fire, nil
+	return mgr.GetFire(ctx, fireID)
 }
 
 // ListFires delegates to the embedded scheduleManager.
