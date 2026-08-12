@@ -339,17 +339,16 @@ type subagentArgs struct {
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 
 	// MaxRunTokens is the PREFERRED per-call TIGHTEN-ONLY cumulative TOKEN budget for this
-	// child run (input+output — the loop-level run budget, NOT a single-response output
-	// ceiling). OMIT IT in almost all cases: the default is the inherited, usually-unlimited
-	// budget, which is the right choice; set a budget ONLY to specifically cap this child's
-	// cost. A budget set too low mostly just stops the child early. When set it rides a
-	// Run-scoped override on the SHARED child engine (no fresh engine needed), folded
-	// tighten-only with the operator default: the lower non-zero value wins, so a per-call
-	// budget can make the child stricter than the operator's bound, never looser. A
-	// non-positive value is ignored (inherit the engine's budget — DEFAULT is the
-	// inherited/unlimited budget). A budget-stopped child returns its best-effort summary
-	// (StopBudget is a clean terminal — salvaged even when the budget tripped before any
-	// text, see salvageEmptyStop), not an error. It is the same budget as the
+	// child run (input+output — the loop-level run budget, NOT a provider single-response
+	// output ceiling). Omit it to inherit the operator/engine budget, which may itself be
+	// bounded or disabled. When set it rides a Run-scoped override on the SHARED child engine
+	// (no fresh engine needed), folded tighten-only with the inherited budget: the lower
+	// non-zero value wins, so a per-call budget can make the child stricter, never looser. A
+	// non-positive value is ignored and inherits that budget. The cumulative boundary is
+	// checked between turns, so an in-flight turn completes before StopBudget. Recovered or
+	// partial output may be returned when available, but a best-effort summary is NOT
+	// guaranteed. A resumed child's cumulative usage is preserved; it may have already spent
+	// the inherited budget and stop before doing new work. This is the same budget as the
 	// deprecated `max_tokens` alias; supplying both with CONFLICTING positive values is a
 	// model-visible error (see resolveMaxRunTokens).
 	//
@@ -358,14 +357,14 @@ type subagentArgs struct {
 	// is silently raised to 25 000 so the child can complete at least one useful turn; the
 	// operator ceiling still wins via the tighten-only fold.
 	MaxRunTokens *int `json:"max_run_tokens,omitempty"`
-	// MaxTokens is the DEPRECATED alias for MaxRunTokens — prefer max_run_tokens, and prefer
-	// to OMIT it entirely (the default is the inherited, usually-unlimited budget). The name
-	// is misleading: it is a cumulative input+output RUN budget (the loop-level token
-	// ceiling), NOT a provider single-response output ceiling. Retained for backward
-	// compatibility. Same tighten-only + non-positive-ignored semantics, including the
-	// minSubagentRunTokens floor. When both this and MaxRunTokens are set to DIFFERENT
-	// positive values the call is rejected with a model-visible error; same-value is
-	// accepted.
+	// MaxTokens is the DEPRECATED alias for MaxRunTokens. The name is misleading: it
+	// selects the same cumulative input+output RUN budget, NOT a provider output-token
+	// limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled.
+	// It has the same turn-boundary check, tighten-only and non-positive-ignored semantics,
+	// and MinSubagentRunTokens floor as MaxRunTokens. Resumed usage remains cumulative, so
+	// the inherited budget may stop a resumed child before new work; partial or recovered
+	// output may be available, but no summary is guaranteed. When both aliases are set to
+	// DIFFERENT positive values the call is rejected; the same value is accepted.
 	MaxTokens *int `json:"max_tokens,omitempty"`
 
 	// Background detaches this child: the call returns IMMEDIATELY with a started-
@@ -490,11 +489,11 @@ var subagentSchema = json.RawMessage(`{
     },
     "max_run_tokens": {
       "type": "integer",
-      "description": "Optional CUMULATIVE input+output token budget for this child run (a loop-level run budget, NOT a single-response output ceiling). OMIT IT in almost all cases — the default is the inherited, usually-unlimited budget, which is the right choice; set a budget ONLY when you specifically need to cap this child's cost. A budget set too low mostly just stops the child early. If you do set one: it is cumulative and the system prompt + project instructions (~20 000+ tokens) are replayed every turn, so values below 25 000 are automatically raised to 25 000; it is tighten-only (the operator ceiling still wins); when reached the child stops cleanly and returns its best-effort summary. (The deprecated max_tokens is an alias; don't set both to different values.)"
+      "description": "Optional per-call TIGHTEN-ONLY override for the child's CUMULATIVE input+output run budget; this is NOT a provider output-token limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled. The lower non-zero budget wins, so this can tighten the inherited budget but never loosen it. Positive values below 25 000 are raised to the 25 000 per-call floor; the inherited operator ceiling still wins. The cumulative boundary is checked between turns, so an in-flight turn completes before the child stops. Partial or recovered output may be returned when available, but a best-effort summary is NOT guaranteed. On resume, earlier cumulative usage remains spent; a child may have already exhausted the inherited budget and stop before new work. The deprecated max_tokens field is an alias for this same run budget; do not set the aliases to different values."
     },
     "max_tokens": {
       "type": "integer",
-      "description": "DEPRECATED — prefer max_run_tokens, and prefer to OMIT it entirely (default unlimited). Alias for max_run_tokens (same CUMULATIVE input+output run budget, NOT a single-response output ceiling). Values below 25 000 are floored to 25 000 (same as max_run_tokens). Setting both to different values is rejected."
+      "description": "DEPRECATED alias for max_run_tokens: the same CUMULATIVE input+output run budget, NOT a provider output-token limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled. It is TIGHTEN-ONLY, is checked between turns, and has the same 25 000 per-call floor; the inherited operator ceiling still wins. Partial or recovered output may be returned when available, but a best-effort summary is NOT guaranteed. A resumed child keeps its earlier cumulative usage and may stop before new work if the inherited budget is already spent. Setting both aliases to different positive values is rejected."
     },
     "output_schema": {
       "type": "object",
@@ -1720,7 +1719,7 @@ func (t *SubagentTool) selectWritableSpecialistEngine(callID session.ToolCallID,
 //     run() can echo them in the model-visible error — a model repairing its JSON benefits
 //     from seeing the numbers, not just the rule;
 //   - otherwise it returns the single positive value (or, when both agree, that shared value),
-//     and 0 when neither is set (inherit the engine's budget — default unlimited).
+//     and 0 when neither is set (inherit the engine's budget, bounded or disabled).
 func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, legacyVal int) {
 	if args.MaxRunTokens != nil && *args.MaxRunTokens > 0 {
 		runVal = *args.MaxRunTokens
@@ -1758,7 +1757,7 @@ func buildSubagentRunOptions(args subagentArgs, resuming bool, posture resumePos
 	var runOpts RunOptions
 	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
 	// rejected earlier in run() as a model-visible error, so here we only need the
-	// resolved positive value (0 = inherit/unlimited).
+	// resolved positive value (0 = inherit the engine budget, bounded or disabled).
 	if v, _, _, _ := resolveMaxRunTokens(args); v > 0 {
 		// Floor: protect against a model self-imposing an unusably small budget. The
 		// system prompt + AGENTS.md + project instructions are replayed every turn and
@@ -2454,8 +2453,9 @@ type foregroundFinish struct {
 // finishForegroundRun renders a foreground Subagent run's terminal result: the
 // time-budget error first (a real deadline beats every other label), then the
 // ordinary stop-reason rendering. For a mode:"read-write" call (direct-write, ADR
-// 0041) the result carries an honest note that the child's edits were applied
-// DIRECTLY to the workspace (review with git diff/status) — there is no merge step.
+// 0041) the result honestly says the child had DIRECT access to the workspace and tells
+// the model to inspect git diff/status for any changes — there is no merge step and the
+// renderer has no evidence that an edit occurred.
 // Factored out of run() so the loop body stays within the complexity budget.
 //
 // The receiver is used for ONE thing: t.resumeSupported() is validateResume's first
@@ -2488,9 +2488,9 @@ func (t *SubagentTool) finishForegroundRun(_ context.Context, f foregroundFinish
 //
 // The next action comes from subagentTimeoutNote: a timed-out child lands StateCancelled,
 // which resume has always recovered, so this terminal is NOT a dead end — and for a
-// direct-write child (ADR 0041) the note is also the honest PARTIAL-edits warning, since a
-// writable child killed MID-TASK edited the real tree in place and may have left
-// half-finished work there. One gate resolves both axes.
+// direct-write child (ADR 0041) the note also warns that any edits it made may be
+// PARTIAL, since a writable child killed MID-TASK can leave half-finished work there.
+// The renderer does not claim that an edit occurred. One gate resolves both axes.
 //
 // The background path always passes writable=false (mode:"read-write"+background is
 // rejected in validateMode), so the writable arm is reachable from the foreground only.
@@ -3054,13 +3054,12 @@ func subagentResumeHint(resumable bool) string {
 //     falsified). "the agentId above" is literally accurate here: the timeout layout
 //     stamps the trailer FIRST and appends the note.
 //
-// A store-less deployment keeps today's rendering (no hint at all; the writable arm keeps
-// writableSubagentPartialNote's review-or-undo) because validateResume's first
-// precondition is a wired store — advertising a resume it will refuse is the same defect,
-// which is exactly what subagentResumeHint's `resumable` gate exists for.
+// A store-less deployment keeps the partial review-or-undo note because
+// validateResume's first precondition is a wired store — advertising a resume it will
+// refuse is the same defect subagentResumeHint's `resumable` gate prevents.
 const (
 	subagentTimeoutResumeHint   = "[the subagent ran out of its per-call time budget, not out of work — its conversation is preserved; resume it with the agentId above to continue from its transcript (pass a larger `timeout_ms` if the task genuinely needs longer), or start a fresh subagent with a narrower goal. Its WORKSPACE does not carry over: it ran in a throwaway checkout, so any files it wrote are GONE and it must re-read files and re-run commands.]"
-	writableSubagentTimeoutNote = "[the subagent edited your workspace directly and was stopped MID-TASK by its time budget — its edits may be PARTIAL and are still in your working tree. Either resume it with the agentId above AND mode:\"read-write\" to finish on top of them (pass a larger `timeout_ms` if the task genuinely needs longer), or discard them with `git checkout`/`git stash` (review first with `git diff`/`git status`). Do not do both.]"
+	writableSubagentTimeoutNote = "[the subagent had direct write access to your workspace and was stopped MID-TASK by its time budget — any edits it made may be PARTIAL and remain in your working tree. If changes exist, either resume it with the agentId above AND mode:\"read-write\" to finish on top of them (pass a larger `timeout_ms` if the task genuinely needs longer), or discard them with `git checkout`/`git stash` (review first with `git diff`/`git status`). Do not do both.]"
 )
 
 // subagentTimeoutNote resolves the next-action body a per-call time-budget terminal
@@ -3123,6 +3122,53 @@ func structuredOutputNote(resumable bool) string {
 	return subagentStructuredOutputNote
 }
 
+// maxSubagentStopLabelPreview bounds an open-taxonomy stop label before it is echoed to
+// the model. Stop reasons can originate with a provider or host, so they are data, not
+// trusted harness vocabulary.
+const maxSubagentStopLabelPreview = 80
+
+// subagentTerminalNote classifies every non-error Subagent terminal for model-visible
+// rendering. Its second result is true only for the explicit complete terminal,
+// StopEndTurn; writable rendering consumes that same classification rather than keeping a
+// second stop list. Known bounded or workflow terminals get specific notes; the default
+// fails safe because StopReason is an open string taxonomy and providers/hosts may add
+// values independently of this package.
+//
+// StopError and StopStructuredOutput have dedicated error-result renderers. Cancellation
+// is incomplete too: the classifier supplies the generic parent-run note, while the
+// caller-aware renderer replaces it with the specific user-cancelled wording.
+func subagentTerminalNote(stop session.StopReason) (note string, explicitlyComplete bool) {
+	switch stop {
+	case session.StopEndTurn:
+		return "", true
+	case session.StopError, session.StopStructuredOutput:
+		return "", false
+	case session.StopCancelled:
+		return "[subagent cancelled because its parent run ended — treat as partial/incomplete]", false
+	case session.StopMaxTurns:
+		return "[subagent stopped: reached its max-turns limit]", false
+	case session.StopMaxToolCalls:
+		return "[subagent stopped: reached its max-tool-calls limit]", false
+	case session.StopMaxConsecutiveFailures:
+		return "[subagent stopped: reached its consecutive-tool-failure limit — treat as partial/incomplete]", false
+	case session.StopBudget:
+		return "[subagent stopped: reached its token budget]", false
+	case session.StopNoProgress:
+		return "[subagent stopped: ended without a final summary — treat as partial; resume it with the agentId above to continue]", false
+	case session.StopTimeout:
+		return "[subagent stopped: reached its time limit — treat as partial/incomplete]", false
+	case session.StopPlanApproved:
+		return "[subagent stopped after plan approval before completing the delegated work — treat as partial/incomplete]", false
+	case session.StopPlanIterate:
+		return "[subagent stopped for plan revision before completing the delegated work — treat as partial/incomplete]", false
+	case session.StopNone:
+		return "[subagent stopped without a terminal reason — treat as partial/incomplete]", false
+	default:
+		label := clampRunes(neutraliseChildText(string(stop)), maxSubagentStopLabelPreview)
+		return fmt.Sprintf("[subagent stopped with unrecognized terminal reason %q — treat as partial/incomplete]", label), false
+	}
+}
+
 // renderSubagentResult labels the child's terminal by stop reason (D4 — the typed result
 // taxonomy), surfaced in the MODEL-VISIBLE result, and stamps the agentId trailer (D5).
 // The mapping:
@@ -3138,7 +3184,9 @@ func structuredOutputNote(resumable bool) string {
 //     plus a next action (see structuredOutputNote): fix the schema or the instruction and
 //     re-delegate, or — where a store is wired — resume with the same `output_schema`.
 //   - StopMaxTurns / StopMaxToolCalls   → success-with-note (stopped at a limit).
-//   - StopBudget                        → success-with-note (stopped at the token budget).
+//   - StopMaxConsecutiveFailures        → success-with-note (repeated tool failures;
+//     partial/incomplete).
+//   - StopBudget / StopTimeout          → success-with-note (stopped at a budget).
 //   - StopNoProgress                    → success-with-note "[subagent stopped: ended
 //     without a final summary]": a reasoning-only / empty-turn end discarded the child's
 //     work the same way a limit stop did (issue #152). driveChild has already run the
@@ -3146,10 +3194,14 @@ func structuredOutputNote(resumable bool) string {
 //   - StopCancelled + clientCancelled   → success-with-note "[subagent cancelled by
 //     user]": the partial work is usable and the trailer keeps the child resumable
 //     (cancel-then-resume-with-a-narrower-prompt is the intended workflow); an error
-//     result would teach the model the delegation mechanism failed. A parent-run
-//     cancel (clientCancelled false) keeps today's un-noted success rendering.
-//   - everything else (an EMPTY StopEndTurn carries recovered content but deliberately
-//     NO note; a non-empty StopEndTurn is the normal clean finish) → success.
+//     result would teach the model the delegation mechanism failed.
+//   - StopCancelled + !clientCancelled  → success-with-note that the parent run ended and
+//     the child output is partial/incomplete.
+//   - StopPlanApproved / StopPlanIterate → success-with-note (the plan workflow ended,
+//     but the delegated implementation is incomplete).
+//   - StopNone / unknown host stop       → safe generic partial/incomplete note; an
+//     unknown label is bounded, neutralised, and quoted.
+//   - StopEndTurn                        → unannotated success (the positive allow-list).
 //
 // On EVERY terminal the result text carries the structured payload (when a
 // schema was satisfied) else the free-text summary, prefixed with the agentId trailer
@@ -3219,43 +3271,35 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 		// so the parent can continue the child rather than abandoning the delegation).
 		body = "(subagent produced no summary — resume it with the agentId above to continue)"
 	}
-	// Limit / budget / no-progress notes: the child stopped at a bound (or ended without
-	// a final summary) rather than finishing cleanly. The result is still a success (any
-	// partial work is usable), annotated so the model knows the deliverable may be
-	// incomplete. An EMPTY clean end (StopEndTurn with recovered content) gets NO note —
-	// the recovered body speaks for itself.
-	switch stop {
-	case session.StopMaxTurns:
-		body = "[subagent stopped: reached its max-turns limit]\n\n" + body
-	case session.StopMaxToolCalls:
-		body = "[subagent stopped: reached its max-tool-calls limit]\n\n" + body
-	case session.StopBudget:
-		body = "[subagent stopped: reached its token budget]\n\n" + body
-	case session.StopNoProgress:
-		// The CANONICAL note: it owns BOTH the "why" ("ended without a final summary")
-		// and the next action, so the digest prefix (driveChild) restates NEITHER — the
-		// two are rendered one after the other on this terminal, and duplicating either
-		// reads as two separate instructions. The next-action half makes the partial
-		// result recoverable: the agentId trailer is already on the result, so the parent
-		// can resume the child rather than discard it.
-		body = "[subagent stopped: ended without a final summary — treat as partial; resume it with the agentId above to continue]\n\n" + body
-	case session.StopCancelled:
-		// Only a CLIENT cancel (CancelChild) is noted; a parent-run cancel keeps the
-		// legacy un-noted rendering (every child dies with the run anyway).
-		if clientCancelled {
-			body = "[subagent cancelled by user]\n\n" + body
-		}
+	// StopEndTurn is the sole unannotated normal completion. Every other non-error
+	// terminal is either handled specially above/below or receives a fail-safe note from
+	// subagentTerminalNote, so a newly introduced provider/host label cannot silently look
+	// like success.
+	note, _ := subagentTerminalNote(stop)
+	if stop == session.StopCancelled && clientCancelled {
+		// Preserve the specific CancelChild wording instead of stacking it with the generic
+		// parent-run cancellation note.
+		note = "[subagent cancelled by user]"
+	}
+	if note != "" {
+		body = note + "\n\n" + body
 	}
 	return session.NewToolResult(callID, renderSubagentTrailer(childID, body))
 }
 
 // The three direct-write (ADR 0041) advisory bodies a mode:"read-write" child's terminal
-// can carry:
+// can carry. None asserts an edit actually occurred — the child had the CAPABILITY to edit
+// (direct write access to the real workspace, no fork/quarantine), but whether it DID
+// write anything is unknown to the renderer. The model should inspect git diff/status to
+// discover actual changes rather than trust the terminal label.
 //
-//   - CLEAN — a clean end, and the limit terminals, which stop between complete edits.
-//   - PARTIAL — a mid-task kill (a cancel, a per-call time-budget timeout, or a StopError
-//     in a deployment where the child cannot be resumed) where half-finished work may be
-//     sitting in the real tree and the only next action is review-or-undo.
+//   - CLEAN — StopEndTurn ONLY: the child completed an ordered turn without hitting a
+//     bound, limit, or anomaly. It had direct write access; any changes it made are in
+//     the tree and reviewable with git.
+//   - PARTIAL — every OTHER non-Error terminal (bounds, plan controls, an anomalous
+//     empty Reason, a host/provider-defined label like "max_tokens", or a mid-task kill
+//     without a resume path). The child ended before a clean completion; any edits it
+//     made may be partial/incomplete.
 //   - FAILED — a StopError in a deployment that CAN resume (a session store is wired).
 //     This is the case that needs ONE decision rather than two: "the edits may be partial,
 //     undo them with git" and "resume to continue where it left off" are both true, and
@@ -3277,23 +3321,21 @@ func renderSubagentResult(callID session.ToolCallID, childID session.SessionID, 
 // harness-asserts-a-falsehood class these notes exist to close, on the most expensive
 // failure path in the tool. Pinned by TestWritableResumeNotesNameTheReadWriteMode.
 const (
-	writableSubagentCleanNote   = "[the subagent edited your workspace directly — review the changes with `git diff`/`git status` (and `git checkout`/`git stash` to undo)]"
-	writableSubagentPartialNote = "[the subagent edited your workspace directly but did NOT finish cleanly — its edits may be PARTIAL; review with `git diff`/`git status` and undo with `git checkout`/`git stash` if needed]"
-	writableSubagentFailedNote  = "[the subagent edited your workspace directly and did NOT finish cleanly — its edits may be PARTIAL and are still in your working tree. Either resume it with the agentId below AND mode:\"read-write\" to finish on top of them, or discard them with `git checkout`/`git stash` (review first with `git diff`/`git status`). Do not do both.]"
+	writableSubagentCleanNote   = "[the subagent had direct write access to your workspace — check `git diff`/`git status` to review any changes (and `git checkout`/`git stash` to undo)]"
+	writableSubagentPartialNote = "[the subagent had direct write access to your workspace and did NOT finish cleanly — any edits it made may be PARTIAL. Inspect with `git diff`/`git status` and undo with `git checkout`/`git stash` if needed]"
+	writableSubagentFailedNote  = "[the subagent had direct write access to your workspace and did NOT finish cleanly — any edits it made may be PARTIAL and remain in your working tree. If changes exist, make one choice: Either resume it with the agentId below AND mode:\"read-write\" to finish on top of them, or discard them with `git checkout`/`git stash` (review first with `git diff`/`git status`). Do not do both.]"
 )
 
 // renderWritableSubagentResult renders a mode:"read-write" child's terminal like
 // renderSubagentResult (the SAME stop-reason taxonomy + agentId trailer) and adds an
-// honest DIRECT-WRITE note so the model knows the writable child edited the workspace
-// IN PLACE (no fork, no merge — ADR 0041): its Edit/Write/Bash changed the real tree
-// directly, so the model should review the result with `git diff`/`git status` and
-// can roll back with `git checkout`/`git stash` if it is not wanted. On a mid-task kill
-// (StopError, a cancel, or — handled in finishForegroundRun — a per-call time-budget
-// timeout) the note also warns that the edits may be PARTIAL: a child killed mid-task can
-// leave half-finished work in the tree, which is the accepted direct-write trade-off (git
-// is the safety net). Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop
-// between complete edits, so they keep the benign clean note. The note is inserted right
-// after the agentId trailer line so it leads the body the model reads.
+// honest DIRECT-WRITE capability note. The renderer has no mutation evidence: it says the
+// child HAD direct access to the real workspace (no fork or merge), and tells the model to
+// inspect git diff/status for any changes rather than asserting that an edit occurred.
+//
+// The shared subagentTerminalNote classifier selects the clean note only for its explicit
+// completion terminal, StopEndTurn. Every bounded, cancelled, anomalous, plan-control, or
+// host/provider-defined terminal gets the partial/conditional note; a newly introduced
+// StopReason therefore fails safe without a second stop list here.
 //
 // On a FAILED terminal in a deployment that can resume, the note becomes the SINGLE
 // combined next-action (writableSubagentFailedNote) and renderSubagentResult's generic
@@ -3303,24 +3345,14 @@ const (
 // also emitted.
 func renderWritableSubagentResult(callID session.ToolCallID, childID session.SessionID, final string, stop session.StopReason, cause string, submit *submitResultTool, clientCancelled, resumable bool) session.ToolResult {
 	res := renderSubagentResult(callID, childID, final, stop, cause, submit, clientCancelled, "")
-	note := writableSubagentCleanNote
-	// A mid-task kill (the child crashed or was cancelled) may have left PARTIAL edits
-	// in the real tree — there is no fork/quarantine to roll them back, so warn the
-	// model honestly. (A per-call TIME-BUDGET timeout is the same mid-task kill; it is
-	// rendered as a tool error in finishForegroundRun and carries the same PARTIAL note
-	// there.) Limit terminals (StopMaxTurns/StopMaxToolCalls/StopBudget) stop BETWEEN
-	// complete edits, not mid-edit, so they keep the benign clean note above.
+	_, explicitlyComplete := subagentTerminalNote(stop)
+	note := writableSubagentPartialNote
 	switch {
 	case stop == session.StopError && resumable:
 		// The one arm that owns BOTH options, stated as one exclusive decision.
 		note = writableSubagentFailedNote
-	case stop == session.StopError || stop == session.StopCancelled,
-		// StopStructuredOutput is a mid-task kill too: the child exhausted its correction
-		// budget without ever delivering a schema-valid payload, so whatever it wrote to the
-		// real tree is as likely to be half-finished as a crash's. It used to fall through to
-		// the benign "review the changes" note, which reads as a clean finish.
-		stop == session.StopStructuredOutput:
-		note = writableSubagentPartialNote
+	case explicitlyComplete:
+		note = writableSubagentCleanNote
 	}
 	// renderSubagentResult always stamps the agentId trailer as the FIRST line
 	// (renderSubagentTrailer: "agentId: <id>\n\n<body>"); insert the direct-write note

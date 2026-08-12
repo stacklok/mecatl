@@ -114,9 +114,14 @@ func TestBuildSubagentToolWritableAgentEditsParentTree(t *testing.T) {
 	}
 	// No sibling fork directory was created (direct-write, no fork).
 	assertNoSiblingForkDir(t, repo)
-	// The result honestly notes the edits landed directly.
-	if !strings.Contains(res.Content, "edited your workspace directly") {
-		t.Fatalf("result must note the direct edit, got:\n%s", res.Content)
+	// The result honestly notes the child had direct write access (capability, not a
+	// claim of mutation — "had direct write access to your workspace").
+	if !strings.Contains(res.Content, "had direct write access to your workspace") {
+		t.Fatalf("result must note the child had direct write access, got:\n%s", res.Content)
+	}
+	// It must NOT claim an edit occurred (the old false phrasing).
+	if strings.Contains(res.Content, "edited your workspace directly") {
+		t.Fatalf("result must NOT claim the child 'edited your workspace directly' (capability, not mutation), got:\n%s", res.Content)
 	}
 	// gauntlet #7: the child's intermediate tool result text never appears in the
 	// parent-visible result (only the final summary folds back).

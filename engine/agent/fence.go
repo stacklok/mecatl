@@ -450,7 +450,7 @@ func framingHeader(trimmed string) bool {
 // marker may itself begin with punctuation ("--- not selected ---", "=== branch-"), so an
 // unconditional strip would stop matching the real thing; and without the second pass a
 // list bullet or a blockquote arrow defeated every prefix marker ("- agentId: …",
-// "> [the subagent edited your workspace directly … `git checkout` …]") while reading as
+// "> [the subagent had direct write access to your workspace … `git checkout` …]") while reading as
 // ordinary model prose rather than a smuggling tell.
 func framingHeaderOn(trimmed string, want framingSurface) bool {
 	if framingHeaderSurfaces(trimmed)&want != 0 {

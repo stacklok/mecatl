@@ -364,12 +364,15 @@ was observed announcing actions without emitting the tool calls). `EvNoProgress`
 `EvNoProgress` as a muted notice and `StopNoProgress` as a `stopped · no progress` footer label.
 
 **Token budget — the shared loop-level ceiling (`StopBudget`).** `agent.Deps.MaxRunTokens`
-(0 = disabled) is a per-RUN cumulative token ceiling checked at the turn BOUNDARY in
+(0 = disabled) is a cumulative token ceiling checked at each turn BOUNDARY in
 `Engine.drive` (Step 2, after the existing `sess.StopReason()` and `ctx.Err()` checks, before
-`BeginTurn`) against the run's accumulated `session.Usage` via `Usage.TotalTokens()`
-(input+output; cache tokens excluded — `CacheReadTokens` is a subset of `InputTokens`,
-`CacheWriteTokens` is a side cost; `ReasoningTokens` is likewise excluded — it is a subset
-of `OutputTokens`, providers billing reasoning as part of the inclusive output total, so
+`BeginTurn`) against the session aggregate's accumulated `session.Usage` via
+`Usage.TotalTokens()` (`engine/session/session.go` (`RecordUsage`)). Usage is persisted and
+survives `Reopen`/`Interrupt`/`Recover`, so the ceiling remains cumulative across resumed runs
+and restart; a resumed child can therefore stop before new work when its inherited budget is
+already spent. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
+subset of `InputTokens`, `CacheWriteTokens` is a side cost, and `ReasoningTokens` is likewise a
+subset of `OutputTokens` (providers bill reasoning as part of the inclusive output total, so
 adding it would double-count). The subset invariant holds CROSS-PROVIDER because the
 adapters normalize to it: OpenAI's `input_tokens` already includes cached tokens; Anthropic's
 raw `input_tokens` EXCLUDES cache reads/writes, so its adapter folds `cache_read_input_tokens`
@@ -380,19 +383,22 @@ breakdown is surfaced the same way: OpenAI's `output_tokens_details.reasoning_to
 Anthropic's `output_tokens_details.thinking_tokens` map to `ReasoningTokens` at the same two
 adapter mapping sites, as an additive observability field (NOT a budget-semantics change).
 When `total.TotalTokens() >= MaxRunTokens` the loop ends via
-`terminateComplete(…, session.StopBudget, …)` — a NON-error CLEAN terminal (completed path,
-Reopen-recoverable), so it mirrors `StopNoProgress` exactly. The boundary check means an
-in-flight turn always COMPLETES (no mid-stream abort → no-replay-after-first-chunk holds); a turn
-whose usage massively overshoots still finishes, then the budget trips before the next turn. It
-is NOT a `port.LLMRequest` field (the request stays provider-neutral) — it is composition-tunable
+`terminateComplete(…, session.StopBudget, …)` — a NON-error completed-state terminal
+(Reopen-recoverable), not a promise that a delegated deliverable is complete. The boundary check
+means an in-flight turn always COMPLETES (no mid-stream abort → no-replay-after-first-chunk holds);
+a turn whose usage massively overshoots still finishes, then the budget trips before the next turn.
+It is NOT a `port.LLMRequest` field (the request stays provider-neutral) — it is composition-tunable
 (`app.Config.MaxRunTokens` → `--max-run-tokens`) and INHERITED by every engine via
 `engineDepsForProvider`; `childEngineDepsForProvider` delegates there and does NOT clear it, so
 Subagent/team-member/lead/Parallel children inherit the same ceiling. `StopBudget` is the
 PER-ENGINE half of the AGENT-TEAMS-SPIKE's named "Deferred 4A" brake — landed once for every
-delegation path, but it bounds ONE run and `Reopen` resets its accumulator each round; the
-team-AGGREGATE half is the separate `WithTeamTokenBudget` below. It is a
-STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum). Guards:
-`agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
+delegation path and cumulative over that session's persisted usage; the team-AGGREGATE half is the
+separate `WithTeamTokenBudget` below. `Reopen` does not reset usage. The deliberate delivery-only
+exceptions reset it explicitly: an empty budget-stopped Subagent's single salvage attempt in
+`engine/agent/subagent.go` (`salvageEmptyStop`) and the lead's required team synthesis in
+`engine/agent/teamsupervisor.go` (`synthesise`). Neither makes a best-effort summary guaranteed.
+`StopBudget` is a STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
+Guards: `agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
 `server.TestServiceBudgetSurfacesAndReopens`, `app.TestMaxRunTokensPropagatesToParentAndChild`.
 
 **Team-aggregate token budget — the supervisor-level ceiling (`WithTeamTokenBudget`).** The
@@ -417,7 +423,7 @@ status:" line both state the budget stop, so BOTH entry points surface it. It is
 (`app.Config.MaxTeamTokens` → `--max-team-tokens`; `server.Config.TeamTokenBudget` for the gRPC
 CreateTeam path; `agent.WithTeamToolTokenBudget` for the in-catalog Team tool) and a per-call Team
 `max_team_tokens` may only TIGHTEN it (`tightenLimit`). It is ORTHOGONAL to the per-engine
-`MaxRunTokens` (which bounds ONE member drive and resets on `Reopen`) — both compose. The Supervisor
+`MaxRunTokens` (which bounds each member session's cumulative usage); both compose. The Supervisor
 sum (`TeamOutcome.Usage`) is authoritative for the budget gate; the TeamTool sink's `turn.end` sum
 (`memberEventUsage`) stays authoritative for the `EvTeamEnd` payload — they are equal by
 construction, documented not reconciled. Guards: `agent.TestTeamTokenBudget*` /
@@ -447,6 +453,22 @@ timeout ctx separately and checking `timeoutCtx.Err() == context.DeadlineExceede
 drain, rendered as a model-addressable time-budget tool error (distinct from a parent
 cancellation). No wire/proto change (`session.Limits` semantics unchanged). Guards:
 `agent.TestSubagentPerCall*`.
+
+**Subagent terminal rendering is complete-only and fail-safe.** The one positive completion
+allow-list in `engine/agent/subagent.go` (`subagentTerminalNote`) contains only `StopEndTurn`.
+Every other known non-error terminal is rendered with a model-visible bounded/workflow note rather
+than silently looking complete. In particular, `StopMaxConsecutiveFailures` means the session hit
+its configured ceiling of consecutive failed tool calls (`engine/session/session.go`
+(`StopMaxConsecutiveFailures`)); recovered text can still be useful, but the delegation is
+partial/incomplete. `session.StopReason` remains an open string taxonomy: a host-defined reason such
+as `max_tokens` is the motivating example, not a new engine constant and not a request to continue.
+The default arm neutralises, bounds, and quotes an unknown label and marks the result
+partial/incomplete. Writable results use the same classification in
+`engine/agent/subagent.go` (`renderWritableSubagentResult`): they say the child *had* direct write
+access and condition all file claims ("any changes" / "any edits it made"). Only `StopEndTurn` gets
+the complete wording; every limit, cancellation, workflow stop, missing reason, and unknown host
+reason warns that any edits may be partial. Guards: `engine/agent/subagent_terminal_internal_test.go`
+and `engine/agent/subagent_nextaction_internal_test.go`.
 
 **Subagent child concurrency cap.** `SubagentTool.childGate` (a counting-semaphore channel, default
 `defaultMaxConcurrentChildren = 8`, override `WithMaxConcurrentChildren`; the old
@@ -1199,11 +1221,17 @@ flag, no `Config`; the no-FS profile excludes it); the per-call default stays
 read-only. `prepareChildSession` passes a NIL forker for the writable path, so
 `forkChildWorkspace` returns the parent workspace directly. There is NO
 post-run merge step — `finishForegroundRun` renders the time-budget error first, then
-`renderWritableSubagentResult` adds an honest DIRECT-WRITE note ("edited your
-workspace directly — review with `git diff`/`git status`, undo with `git
-checkout`/`git stash`"); a non-clean terminal (`StopError`/cancel) warns the edits
-may be PARTIAL (a crashed/cancelled child leaves its completed edits in the tree —
-there is no fork to quarantine them; the accepted direct-write trade-off). The
+`renderWritableSubagentResult` adds an honest DIRECT-WRITE capability note: the child
+had direct write access to the real workspace, and the parent should inspect any changes
+with `git diff`/`git status` (and undo them with `git checkout`/`git stash` if needed).
+The renderer has no mutation evidence, so it never claims an edit occurred. Only an
+explicit `StopEndTurn` gets the clean wording. Every bounded, cancelled, anomalous,
+plan-control, structured-output, or host/provider-defined terminal gets conditional
+partial wording (any edits it made may be PARTIAL); a resumable `StopError` and a
+per-call timeout retain the single mutually-exclusive resume-on-top-of-changes OR
+review/discard decision. A crashed/cancelled child can leave completed or partial edits
+in the tree — there is no fork to quarantine them; that is the accepted direct-write
+trade-off. The
 writable child posture is `isolated:false` (it shares the real tree), so
 `governance.IsolationApprovable` (the A2 isolation auto-approve) does NOT apply to
 its Bash. Wired via `WithWritableChildEngine` only (the now-removed
@@ -1429,10 +1457,12 @@ Ask OWNERSHIP is recorded at the single surfacing seam: `childPosture` gains an 
 field (set at ALL THREE construction sites — subagent: childID; team: `m.sess.ID`; parallel:
 `childSess.ID` — because `role` does NOT universally carry the session id), passed through
 `surfaceAsk` to `recordAsk` (team/parallel cancel itself is the next iteration; the seam is uniform
-now). Terminal rendering: `renderSubagentResult` gains the `StopCancelled + clientCancelled` arm —
-success-with-note `[subagent cancelled by user]` + partial text + the resumable trailer (an error
-would teach the model the delegation mechanism failed); the `timeoutCtx` deadline check stays first
-and a PARENT-run cancel keeps the legacy un-noted rendering. A client-cancelled child persists
+now). Terminal rendering in `engine/agent/subagent.go` (`renderSubagentResult`) keeps the
+client-cancel-specific success note `[subagent cancelled by user]` + partial text + the resumable
+trailer (an error would teach the model the delegation mechanism failed); the `timeoutCtx` deadline
+check stays first. Under the sole-clean-`StopEndTurn` contract, a PARENT-run cancellation now gets
+the generic partial/incomplete annotation rather than the legacy un-noted rendering. A
+client-cancelled child persists
 (state cancelled) and resumes via the existing cancelled→Interrupt recovery. Wire: proto
 `ConverseRequest` oneof `CancelChild cancel_child = 12` (`{string child_id = 1}`);
 `readControl` dispatches it (false ignored by design on the stream — the finished-as-you-pressed

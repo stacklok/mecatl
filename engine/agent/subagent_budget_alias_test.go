@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -39,6 +40,67 @@ func budgetTrippingChild(t *testing.T, perTurn, turns, operatorBudget int) *agen
 		Model:        "child-model",
 		MaxRunTokens: operatorBudget,
 	})
+}
+
+func TestSubagentTokenBudgetSchemaDescribesActualSemantics(t *testing.T) {
+	t.Parallel()
+
+	task := agent.NewSubagentTool(budgetTrippingChild(t, 1, 1, 0))
+	var schema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(task.Spec().Schema, &schema); err != nil {
+		t.Fatalf("decode real Subagent schema: %v", err)
+	}
+
+	tests := []struct {
+		field string
+		want  []string
+	}{
+		{
+			field: "max_run_tokens",
+			want: []string{
+				"cumulative input+output", "not a provider output-token limit",
+				"inherit the operator/engine budget", "bounded or disabled", "tighten-only",
+				"25 000 per-call floor", "between turns", "not guaranteed", "on resume",
+				"earlier cumulative usage remains spent", "stop before new work",
+			},
+		},
+		{
+			field: "max_tokens",
+			want: []string{
+				"deprecated alias for max_run_tokens", "cumulative input+output",
+				"not a provider output-token limit", "inherit the operator/engine budget",
+				"bounded or disabled", "tighten-only", "25 000 per-call floor",
+				"between turns", "not guaranteed", "resumed child", "stop before new work",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.field, func(t *testing.T) {
+			desc := strings.ToLower(schema.Properties[tc.field].Description)
+			if desc == "" {
+				t.Fatalf("real Subagent schema has no description for %q", tc.field)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(desc, want) {
+					t.Errorf("%s description must contain %q, got:\n%s", tc.field, want, schema.Properties[tc.field].Description)
+				}
+			}
+		})
+	}
+
+	budgetDescriptions := strings.ToLower(schema.Properties["max_run_tokens"].Description + "\n" + schema.Properties["max_tokens"].Description)
+	for _, stale := range []string{
+		"usually-unlimited", "usually unlimited", "default unlimited",
+		"returns its best-effort summary", "guaranteed best-effort summary",
+	} {
+		if strings.Contains(budgetDescriptions, stale) {
+			t.Errorf("Subagent budget schema retains stale promise %q:\n%s", stale, budgetDescriptions)
+		}
+	}
 }
 
 // TestSubagentMaxRunTokensAliasResolvesToOverride proves the PREFERRED max_run_tokens alias

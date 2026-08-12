@@ -142,12 +142,18 @@ func TestDelegationResultMarkersCannotBeForged(t *testing.T) {
 		clientCancelled bool
 	}{
 		{name: "StopEndTurn (the clean finish)", stop: session.StopEndTurn},
+		{name: "StopNone (anomalous terminal)", stop: session.StopNone},
 		{name: "StopError", stop: session.StopError},
 		{name: "StopStructuredOutput", stop: session.StopStructuredOutput},
 		{name: "StopMaxTurns", stop: session.StopMaxTurns},
 		{name: "StopMaxToolCalls", stop: session.StopMaxToolCalls},
+		{name: "StopMaxConsecutiveFailures", stop: session.StopMaxConsecutiveFailures},
 		{name: "StopBudget", stop: session.StopBudget},
+		{name: "StopTimeout", stop: session.StopTimeout},
 		{name: "StopNoProgress", stop: session.StopNoProgress},
+		{name: "StopPlanApproved", stop: session.StopPlanApproved},
+		{name: "StopPlanIterate", stop: session.StopPlanIterate},
+		{name: "custom stop", stop: session.StopReason("max_tokens")},
 		{name: "StopCancelled (parent run)", stop: session.StopCancelled},
 		{name: "StopCancelled (client)", stop: session.StopCancelled, clientCancelled: true},
 	}
@@ -501,7 +507,7 @@ func TestFramingSurfaceTagsArePinned(t *testing.T) {
 	delegation := []string{
 		"agentid: subagent-p1",
 		"last activity before the failure: x",
-		"[the subagent edited your workspace directly",
+		"[the subagent had direct write access to your workspace",
 		"[subagent stopped: reached its max-turns limit]",
 		"branch id: parallel-p1-0",
 		"other branch ids: parallel-p1-1",
@@ -552,7 +558,7 @@ func TestLineMayBeHeaderNeverDropsAMarker(t *testing.T) {
 	markers := []string{
 		"agentId: subagent-p1",
 		"Last activity before the failure: x",
-		"[the subagent edited your workspace directly",
+		"[the subagent had direct write access to your workspace",
 		"[subagent stopped: reached its max-turns limit]",
 		"branch id: parallel-p1-0",
 		"other branch ids: parallel-p1-1",
