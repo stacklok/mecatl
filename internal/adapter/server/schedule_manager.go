@@ -20,11 +20,11 @@ import (
 // *Service exists. The manager holds the ScheduleStore (either an explicit
 // override passed via ScheduleManagerConfig.ScheduleStore — the
 // --schedule-store-url composition path — or type-asserted off the session
-// store via the scheduleStoreProvider accessor), the cadence floor, the
-// durable EventLog, diagnostics, the shared model-inventory pointer
+// store via the scheduleStoreProvider accessor), the cadence floor, the shared
+// model-inventory pointer
 // (selector validation reads *models.Load()), and the late-set in-process
 // scheduler (FireNow). *server.Service delegates its nine port.ScheduleManager
-// methods + EmitScheduleEvent + GetFire to this manager — the RPC surface
+// methods + GetFire to this manager — the RPC surface
 // (grpc_schedule.go, the REST /v1/schedules handlers, the mecatui /schedule
 // overlay) is byte-identical; the create-seam (validateScheduleSpec +
 // applyScheduleDefaults + the origin/selector/cadence checks) moved verbatim
@@ -51,10 +51,8 @@ import (
 // Now is the now-func (the same clock the Service uses). Models is the SHARED
 // model-inventory pointer (selector validation reads *models.Load()); the
 // Service passes its own pointer so SetModels keeps working with no second
-// copy. EventLog + Diagnostics are the durable-log + diagnostic seams
-// EmitScheduleEvent rides; nil-safe (a nil EventLog is a no-op, a nil
-// Diagnostics tolerates an append failure silently). A store that backs no
-// ScheduleStore yields a nil manager (NewScheduleManager returns nil).
+// copy. Diagnostics is the operational diagnostic seam; nil-safe. A store that
+// backs no ScheduleStore yields a nil manager (NewScheduleManager returns nil).
 type ScheduleManagerConfig struct {
 	// Store is the port.SessionStore the schedule's origin validation reads
 	// (validateScheduleOrigin). It is also the ScheduleStore discovery source
@@ -69,16 +67,15 @@ type ScheduleManagerConfig struct {
 	ScheduleStore port.ScheduleStore
 	Now           func() time.Time
 	Models        *atomic.Pointer[[]*mecatlv1.ModelInfo]
-	EventLog      port.EventLog
 	Diagnostics   port.Diagnostics
 }
 
 // scheduleManager is the store-shaped schedule create/read/update/fire seam
 // (ADR 0076). It is the single truth the *Service delegates to: the nine
-// port.ScheduleManager verbs + EmitScheduleEvent + GetFire. It holds the
+// port.ScheduleManager verbs + GetFire. It holds the
 // ScheduleStore (type-asserted at construction), the session store (origin
 // validation reads store.Load), a now-func, the cadence floor, the late-set
-// in-process scheduler, the durable EventLog, diagnostics, and the shared
+// in-process scheduler, diagnostics, and the shared
 // model-inventory pointer. A nil scheduler (the byte-identical default) means
 // FireNow distinguishes ErrNoScheduleStore (no store) from
 // ErrSchedulerNotRunning (store present, no tick loop). The cadence floor
@@ -116,13 +113,7 @@ type scheduleManager struct {
 	// scheduler is wired (the byte-identical default — FireNow distinguishes
 	// ErrNoScheduleStore from ErrSchedulerNotRunning).
 	scheduler atomic.Pointer[scheduler.Scheduler]
-	// eventLog is the durable EventLog EmitScheduleEvent appends to. nil-safe:
-	// a nil EventLog makes EmitScheduleEvent a no-op (byte-identical to the
-	// no-emit path).
-	eventLog port.EventLog
-	// diag is the operational diagnostics sink EmitScheduleEvent WARNs to on
-	// an Append failure. nil-safe: a nil Diagnostics tolerates the failure
-	// silently (the durability gap is the only effect).
+	// diag is the operational diagnostics sink. nil-safe.
 	diag port.Diagnostics
 	// models is the SHARED selectable-model inventory pointer (the SAME
 	// atomic.Pointer the Service holds and SetModels swaps). Selector
@@ -189,7 +180,7 @@ type ScheduleManagerImpl = scheduleManager
 // Models is OPTIONAL: a standalone-constructed manager (no Models pointer)
 // admits only the empty selector (an empty inventory) — composition passes
 // the Service's own pointer so SetModels keeps working with no second copy.
-// EventLog + Diagnostics are OPTIONAL and nil-safe.
+// Diagnostics is OPTIONAL and nil-safe.
 //
 //nolint:revive // intentional unexported return: the manager is an adapter-internal type (ADR 0076); callers consume it via the port.ScheduleManager interface, and the *Service embeds + delegates to it. The unexported type keeps the schedule surface from leaking into the server adapter's public API.
 func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
@@ -211,7 +202,6 @@ func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
 		store:      cfg.Store,
 		schedStore: schedStore,
 		now:        now,
-		eventLog:   cfg.EventLog,
 		diag:       cfg.Diagnostics,
 		models:     cfg.Models,
 	}
@@ -263,7 +253,7 @@ func (m *scheduleManager) scheduleStore() port.ScheduleStore {
 // schedule.
 func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
 	now := m.now()
-	cronNextFire, err := m.validateScheduleSpec(ctx, spec, now)
+	cronNextFire, originOwner, err := m.validateScheduleSpec(ctx, spec, now)
 	if err != nil {
 		return port.Schedule{}, err
 	}
@@ -280,6 +270,13 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 		return port.Schedule{}, lerr
 	}
 	applyScheduleDefaults(&spec)
+	// Capture the owner ONCE, here (ADR 0100 decision 6). A caller can never
+	// name it in the request body (protoToScheduleSpec drops any inbound owner,
+	// the same discipline that keeps an owner field off CreateSessionRequest) —
+	// it is derived from the create SURFACE. The origin session's owner comes
+	// from the load validateScheduleSpec ALREADY did, so a sweep deleting the
+	// origin between the two reads cannot silently produce an ownerless schedule.
+	spec.Owner = captureScheduleOwner(ctx, spec, originOwner)
 	// Compute the first NextFireAt. A cron trigger's next fire was ALREADY
 	// computed by validateScheduleSpec (it must parse the expression to
 	// validate the grammar, so that parse is reused here rather than calling
@@ -367,15 +364,15 @@ func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 // ListModels advertises) and the cadence floor against the composition-
 // injected scheduler MinInterval — two deployment-level inputs the spec alone
 // cannot carry.
-func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.ScheduleSpec, now time.Time) (time.Time, error) {
+func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.ScheduleSpec, now time.Time) (time.Time, *session.Principal, error) {
 	if spec.Name == "" {
-		return time.Time{}, fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
+		return time.Time{}, nil, fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
 	}
 	if spec.Prompt == "" && len(spec.Parts) == 0 {
-		return time.Time{}, fmt.Errorf("%w: prompt or parts is required", ErrInvalidArgument)
+		return time.Time{}, nil, fmt.Errorf("%w: prompt or parts is required", ErrInvalidArgument)
 	}
 	if err := spec.Trigger.Validate(); err != nil {
-		return time.Time{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		return time.Time{}, nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	// OriginSessionID validation: a non-empty OriginSessionID must name an
 	// existing session in the store (the session the fire's terminal result
@@ -384,18 +381,19 @@ func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.Sc
 	// rather than surfacing hours later as a fire-time failure. An empty
 	// OriginSessionID is always valid (delivery is OFF — the v1 pre-delivery
 	// posture).
-	if err := m.validateScheduleOrigin(ctx, spec); err != nil {
-		return time.Time{}, err
+	originOwner, err := m.validateScheduleOrigin(ctx, spec)
+	if err != nil {
+		return time.Time{}, nil, err
 	}
 	// OneShotRetry is one-shot-ONLY: a cron self-heals via misfire already
 	// (decision #1), so a retry budget on a cron is a misconfiguration the
 	// create-seam rejects fail-closed. CarryContext is allowed on either trigger
 	// (a cron carrying its prior fire's context is a valid use case).
 	if spec.OneShotRetry && spec.Trigger.Kind() != port.TriggerOneShot {
-		return time.Time{}, fmt.Errorf("%w: one_shot_retry is one-shot-only (a cron self-heals via misfire — no retry budget)", ErrInvalidArgument)
+		return time.Time{}, nil, fmt.Errorf("%w: one_shot_retry is one-shot-only (a cron self-heals via misfire — no retry budget)", ErrInvalidArgument)
 	}
 	if spec.OneShotMaxRetries < 0 {
-		return time.Time{}, fmt.Errorf("%w: one_shot_max_retries must be >= 0 (got %d)", ErrInvalidArgument, spec.OneShotMaxRetries)
+		return time.Time{}, nil, fmt.Errorf("%w: one_shot_max_retries must be >= 0 (got %d)", ErrInvalidArgument, spec.OneShotMaxRetries)
 	}
 	// Reject a read-leaning schedule (Mutating=false) with a write-capable Mode
 	// (the scheduler_fire.go:54-55 TODO — a read-leaning schedule must not carry
@@ -410,7 +408,7 @@ func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.Sc
 		mode = session.ModeDefault
 	}
 	if !spec.Mutating && mode != session.ModePlan {
-		return time.Time{}, fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
+		return time.Time{}, nil, fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
 	}
 	// Validate the workspace PROFILE-AWARE, mirroring the session create-seam
 	// (service.go createSession): a default-profile schedule REQUIRES a workspace
@@ -421,14 +419,14 @@ func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.Sc
 	switch SessionProfile(spec.Profile) {
 	case ProfileDefault:
 		if spec.Workspace == "" {
-			return time.Time{}, fmt.Errorf("%w: a default-profile schedule requires a workspace (the fire mints a filesystem session)", ErrInvalidArgument)
+			return time.Time{}, nil, fmt.Errorf("%w: a default-profile schedule requires a workspace (the fire mints a filesystem session)", ErrInvalidArgument)
 		}
 	case ProfileNoFS:
 		if spec.Workspace != "" {
-			return time.Time{}, fmt.Errorf("%w: a %q schedule must not carry a workspace (a no-FS fire has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, spec.Workspace)
+			return time.Time{}, nil, fmt.Errorf("%w: a %q schedule must not carry a workspace (a no-FS fire has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, spec.Workspace)
 		}
 	default:
-		return time.Time{}, fmt.Errorf("%w: unknown schedule profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, spec.Profile, ProfileNoFS)
+		return time.Time{}, nil, fmt.Errorf("%w: unknown schedule profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, spec.Profile, ProfileNoFS)
 	}
 	// Selector validation (ADR 0073, AC1.2c): a non-empty selector must name a
 	// provider+model pair the deployment actually serves — resolved against the
@@ -438,17 +436,18 @@ func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.Sc
 	// the deployment never configured, surfacing hours later as a fire-time
 	// failure. An empty selector (the deployment default) is ALWAYS valid.
 	if err := m.validateScheduleSelector(spec.Selector); err != nil {
-		return time.Time{}, err
+		return time.Time{}, nil, err
 	}
 	switch spec.Trigger.Kind() {
 	case port.TriggerOneShot:
 		if !spec.Trigger.OneShot.After(now) {
-			return time.Time{}, fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument)
+			return time.Time{}, nil, fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument)
 		}
 	case port.TriggerCron:
-		return m.validateCronTrigger(spec, now)
+		next, cerr := m.validateCronTrigger(spec, now)
+		return next, originOwner, cerr
 	}
-	return time.Time{}, nil
+	return time.Time{}, originOwner, nil
 }
 
 // validateCronTrigger validates the cron arm of the trigger switch: the
@@ -483,18 +482,51 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 	return next, nil
 }
 
+// captureScheduleOwner resolves the owner a schedule is created with (ADR 0100
+// decision 6), by CREATE SURFACE:
+//
+//   - the Schedule-TOOL path runs inside a session, and the origin binder has
+//     already stamped OriginSessionID with it — so the owner is that EXECUTING
+//     session's owner. The tool's caller context belongs to whoever prompted the
+//     run, which is not necessarily the session's owner, so the session wins.
+//   - an OUT-OF-BAND create (REST/CLI: no origin session) reads the verified
+//     principal riding the context.
+//
+// It NEVER fabricates one: an ownerless origin session and an unauthenticated
+// out-of-band create both yield nil.
+//
+// originOwner is the owner read off the load validateScheduleOrigin ALREADY did
+// (nil for an ownerless or absent origin). It is threaded in rather than re-read
+// here: a childgc sweep landing between the two reads would turn a validated,
+// owned create into a silently OWNERLESS schedule — the exact deletion hazard
+// ADR 0100 decision 6 exists for.
+func captureScheduleOwner(ctx context.Context, spec port.ScheduleSpec, originOwner *session.Principal) *session.Principal {
+	if spec.OriginSessionID == "" {
+		return session.PrincipalFromContext(ctx)
+	}
+	return originOwner.Clone()
+}
+
 // validateScheduleOrigin rejects (fail-closed) a non-empty OriginSessionID that
 // names a session not in the held store. An empty OriginSessionID is always
 // valid (delivery is OFF). This is extracted from validateScheduleSpec to keep the
 // cyclomatic complexity below the gocyclo threshold of 20.
-func (m *scheduleManager) validateScheduleOrigin(ctx context.Context, spec port.ScheduleSpec) error {
+//
+// It also RETURNS the validated session's owner (nil when there is no origin, or
+// the origin is ownerless), so the create-seam captures the owner from THIS load
+// instead of re-reading a session a concurrent sweep may already have deleted.
+func (m *scheduleManager) validateScheduleOrigin(ctx context.Context, spec port.ScheduleSpec) (*session.Principal, error) {
 	if spec.OriginSessionID == "" {
-		return nil
+		return nil, nil
 	}
-	if _, lerr := m.store.Load(ctx, spec.OriginSessionID); lerr != nil {
-		return fmt.Errorf("%w: origin_session_id %q must reference an existing session: %w", ErrInvalidArgument, spec.OriginSessionID, lerr)
+	origin, lerr := m.store.Load(ctx, spec.OriginSessionID)
+	if lerr != nil {
+		return nil, fmt.Errorf("%w: origin_session_id %q must reference an existing session: %w", ErrInvalidArgument, spec.OriginSessionID, lerr)
 	}
-	return nil
+	if origin == nil {
+		return nil, nil
+	}
+	return origin.Owner.Clone(), nil
 }
 
 // validateScheduleSelector rejects (fail-closed) a non-empty
@@ -546,7 +578,7 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	// The computed cron next-fire is not needed here (Update preserves the
 	// existing State, including NextFireAt); the call is still made for its
 	// validation side effect (the shared create-seam checks).
-	if _, err := m.validateScheduleSpec(ctx, spec, now); err != nil {
+	if _, _, err := m.validateScheduleSpec(ctx, spec, now); err != nil {
 		return port.Schedule{}, err
 	}
 	applyScheduleDefaults(&spec)
@@ -560,6 +592,10 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	// to the zero value (which the reconcile update path would otherwise do on
 	// every restart, destroying the audit trail).
 	spec.CreatedAt = existing.Spec.CreatedAt
+	// The owner is WRITE-ONCE (ADR 0100 decision 4/6): an Update carries the
+	// captured owner forward verbatim, so editing a schedule can never re-own it
+	// to the updating caller.
+	spec.Owner = existing.Spec.Owner
 	updated := port.Schedule{Spec: spec, State: existing.State}
 	if err := m.schedStore.Save(ctx, updated); err != nil {
 		return port.Schedule{}, err
@@ -633,44 +669,6 @@ func (m *scheduleManager) FireNow(ctx context.Context, name string) (port.Schedu
 		}
 	}
 	return fire, nil
-}
-
-// EmitScheduleEvent appends a SchedulePayload as an EvSchedule* event to the
-// fire session's durable EventLog. It is the composition-injected emit callback
-// the scheduler invokes (via Config.EmitScheduleEvent) for fired/failed/skipped
-// fires. For v1 delivery is durable-log-only (pull-only via GetFire/ListFires);
-// a live broadcast stream is a future phase. A skipped fire (no session id) is
-// dropped from the durable log (the log is session-keyed) and surfaces only via
-// the operator diagnostic. A nil EventLog is a no-op (byte-identical to the
-// no-emit path). An Append failure WARNs, never aborts (a broken durable log
-// must not break the fire).
-func (m *scheduleManager) EmitScheduleEvent(payload session.SchedulePayload) {
-	m.emitScheduleEvent(payload)
-}
-
-func (m *scheduleManager) emitScheduleEvent(payload session.SchedulePayload) {
-	if m.eventLog == nil {
-		return
-	}
-	if payload.SessionID == "" {
-		// A skipped fire has no session to log under; the live client wire (the
-		// next chunk's handlers) is the channel for skip events. The durable
-		// log is session-keyed, so a sessionless event has nowhere to land.
-		return
-	}
-	ev := session.Event{
-		Type:     scheduleEventType(payload.Kind),
-		Schedule: &payload,
-	}
-	// Cancel-detached so a fire's ctx (which may be cancelled when the run
-	// ends) cannot abort the durable append (the appendEvent precedent).
-	ctx := context.WithoutCancel(context.Background())
-	if err := m.eventLog.Append(ctx, payload.SessionID, ev); err != nil {
-		if m.diag != nil {
-			m.diag.Log(ctx, port.LevelWarn, "schedule event log append failed",
-				"session", string(payload.SessionID), "kind", payload.Kind, "err", err.Error())
-		}
-	}
 }
 
 // SetScheduler wires a scheduler onto the manager. It is the late-bind seam for

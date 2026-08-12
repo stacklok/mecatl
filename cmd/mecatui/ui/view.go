@@ -91,27 +91,27 @@ func (m Model) renderBody() string {
 		}
 		return m.rend.renderPermissionModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height())
 	case m.mcp.view != mcpNone:
-		return renderMCPOverlay(m.deps.Theme, m.mcp, m.caps, m.width, m.vp.Height())
+		return renderMCPOverlay(m.deps.Theme, m.mcp, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.team.view != teamNone:
-		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.width, m.vp.Height())
+		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.agentsInv.view != agentsInvNone:
-		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.width, m.vp.Height())
+		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.skills.view != skillsNone:
-		return renderSkillsOverlay(m.deps.Theme, m.skills, m.caps, m.width, m.vp.Height())
+		return renderSkillsOverlay(m.deps.Theme, m.skills, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.soul.view != soulNone:
-		return renderSoulOverlay(m.deps.Theme, m.soul, m.caps, m.width, m.vp.Height())
+		return renderSoulOverlay(m.deps.Theme, m.soul, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.userModel.view != userModelNone:
-		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.width, m.vp.Height())
+		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.models.view != modelsNone:
-		return renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.width, m.vp.Height())
+		return renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.effort.view != effortNone:
-		return renderEffortOverlay(m.deps.Theme, m.effort, m.effectiveModel.ReasoningEffort, m.currentModelNoReasoning(), m.width, m.vp.Height())
+		return renderEffortOverlay(m.deps.Theme, m.effort, m.effectiveModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.worktrees.view != worktreesNone:
-		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.width, m.vp.Height())
+		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.schedule.view != scheduleNone:
-		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Replayer != nil, m.width, m.vp.Height())
+		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Replayer != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.sessions.view != sessionsNone:
-		return renderSessionsOverlay(m.deps.Theme, m.sessions, m.caps, m.sessionID, m.rend.vpView(m.vp), m.width, m.vp.Height())
+		return renderSessionsOverlay(m.deps.Theme, m.sessions, m.caps, m.sessionID, m.rend.vpView(m.vp), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
 		return m.renderZeroState()
 	default:
@@ -542,27 +542,34 @@ func (m Model) renderFooter() string {
 	// caps-gated /mcp,/agents), so "/" is a live entry point even when the server
 	// has slash-command expansion disabled. While a run streams the line is extended
 	// with the type-while-running affordance (enter queues a follow-up; esc clears
-	// the staged input/queue or cancels the run).
-	help := "? help · / commands · ctrl+c quit"
+	// the staged input/queue or cancels the run). Every chord is sourced from the
+	// LIVE keyMap markings (hk) so a rebinding propagates to the footer affordances
+	// (issue #457, the #455 liveness pattern extended to the footer).
+	hk := m.helpKeyMarkings()
+	help := hk.help + " help · / commands · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
-		help = "enter queue · esc cancel/clear · " + help
+		help = hk.submit + " queue · " + hk.cancel + " cancel/clear · " + help
 	}
 	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) {
 		// Gate the "W auto-accept" hint on offerAlways — the SAME condition the
 		// action bar (permission.go renderPlanReviewView) uses to show/hide the
 		// [W] button. Without this a surfaced child plan ask (offerAlways=false)
 		// would advertise a key that silently no-ops (onApprovalKey ignores W).
+		// The mnemonics are the LIVE Allow/AllowAlways/Deny chords with the first
+		// rune upper-cased (the footer idiom: "A", "W", "D" by default) so an
+		// override propagates (issue #457).
+		allow, always, deny := approvalMnemonic(hk.allow), approvalMnemonic(hk.allowAlways), approvalMnemonic(hk.deny)
 		if m.ask.offerAlways {
-			help = "A approve & run · W auto-accept · D iterate · " + help
+			help = allow + " approve & run · " + always + " auto-accept · " + deny + " iterate · " + help
 		} else {
-			help = "A approve & run · D iterate · " + help
+			help = allow + " approve & run · " + deny + " iterate · " + help
 		}
 	}
-	// While the double-ctrl+c guard is armed, prepend a loud "again to quit" cue to
+	// While the double-quit guard is armed, prepend a loud "again to quit" cue to
 	// the help line. The footer is the one chrome line present in every phase (the
 	// left status differs by phase), so it is the robust place for the hint.
 	if m.quitArmed {
-		help = m.deps.Theme.Style("ctxWarn").Render("ctrl+c again to quit") + " · " + help
+		help = m.deps.Theme.Style("ctxWarn").Render(hk.quit+" again to quit") + " · " + help
 	}
 
 	width := m.widthOr()
@@ -649,7 +656,9 @@ func (m Model) contextWindow() int64 {
 // most valuable signal, so it survives longest. When a team is LIVE a team-summary
 // segment is PREPENDED to the right side; it is LOWER priority than the context
 // meter (it's an advertisement, context % is the headline safety signal), so it is
-// the FIRST thing dropped as width tightens. Tiers, richest to poorest:
+// the FIRST thing dropped as width tightens. The <agents> chord below is the LIVE
+// Agents binding (issue #457) — "ctrl+a" by default, rebound via keymap. Tiers,
+// richest to poorest (defaults shown):
 //
 //	"⟳ team-x · 2/3 working · ctrl+a agents  ctx ▒▒▒▒▒·· 70% · 140K/200K · ↑7.9K ↓345 cache 88%"
 //	"⟳ team-x · 2/3 working · ctrl+a agents  ctx ▒▒▒▒▒·· 70% · 140K/200K"
@@ -683,18 +692,21 @@ func (m Model) fitFooter(left string, width int) string {
 	//     (hasSubagents). Unlike the team segment this stays visible after the children
 	//     finish (the "3◐ 1✓" counts still inform), matching the F2 "3/4 done" cue.
 	const sep = "  " // gap between the agents prefix and the ctx segment, and between sub-segments
+	// agentsMark is the LIVE Agents chord (issue #457) so the footer advertisement
+	// reflects a rebound open-overlay key.
+	agentsMark := m.helpKeyMarkings().agents
 	var teamFull, teamMedium, teamCompact string
 	if b := m.conv.liveTeamBlock(); b != nil {
 		working, total := teamWorkingCounts(b.teamLanes)
-		teamFull = teamFooterFull(th, b.teamID, working, total)
-		teamMedium = th.Style("spinner").Render(teamFooterMedium(b.teamID, working, total))
+		teamFull = teamFooterFull(th, b.teamID, working, total, agentsMark)
+		teamMedium = th.Style("spinner").Render(teamFooterMedium(b.teamID, working, total, agentsMark))
 		teamCompact = th.Style("spinner").Render(teamFooterCompact(working, total))
 	}
 	var subFull, subMedium, subCompact string
 	if m.conv.hasSubagents() {
 		running, done := m.conv.subagentFleetCounts()
-		subFull = subagentFooterFull(th, running, done)
-		subMedium = th.Style("spinner").Render(subagentFooterMedium(running, done))
+		subFull = subagentFooterFull(th, running, done, agentsMark)
+		subMedium = th.Style("spinner").Render(subagentFooterMedium(running, done, agentsMark))
 		subCompact = th.Style("spinner").Render(subagentFooterCompact(running, done))
 	}
 	// The Parallel segment, non-empty whenever ≥1 Parallel run has STARTED this session
@@ -703,8 +715,8 @@ func (m Model) fitFooter(left string, width int) string {
 	var parFull, parMedium, parCompact string
 	if m.conv.hasParallel() {
 		running, done := m.conv.parallelGroupCounts()
-		parFull = parallelFooterFull(th, running, done)
-		parMedium = th.Style("spinner").Render(parallelFooterMedium(running, done))
+		parFull = parallelFooterFull(th, running, done, agentsMark)
+		parMedium = th.Style("spinner").Render(parallelFooterMedium(running, done, agentsMark))
 		parCompact = th.Style("spinner").Render(parallelFooterCompact(running, done))
 	}
 	agentsFull := joinSeg(sep, teamFull, parFull, subFull)
@@ -806,17 +818,18 @@ func (m Model) renderQueue() string {
 		return ""
 	}
 	th := m.deps.Theme
+	hk := m.helpKeyMarkings()
 	muted := th.Style("muted")
 	var b strings.Builder
 	if m.queuePaused != "" {
 		reason, _ := stopReasonLabel(m.queuePaused)
 		b.WriteString(th.Style("ctxWarn").Render(fmt.Sprintf("⏸ %d queued · paused: %s", n, reason)))
 	} else {
-		// "· ↑ edit" only applies when EditBack is actionable, which
+		// The edit hint only applies when EditBack is actionable, which
 		// requires an EMPTY input line; a draft present would make the
 		// hint misleading.
 		if strings.TrimSpace(m.ta.Value()) == "" {
-			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued · ↑ edit", n)))
+			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued · %s edit", n, hk.editBack)))
 		} else {
 			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued", n)))
 		}
@@ -831,7 +844,7 @@ func (m Model) renderQueue() string {
 		b.WriteString("\n" + muted.Render(fmt.Sprintf("  +%d more", rest)))
 	}
 	if m.queuePaused != "" {
-		b.WriteString("\n" + muted.Render("  enter sends · ↑ edit · esc clears"))
+		b.WriteString("\n" + muted.Render("  "+hk.submit+" sends · "+hk.editBack+" edit · "+hk.cancel+" clears"))
 	}
 	return th.Style("askCard").Render(b.String())
 }
@@ -965,7 +978,7 @@ func stripTrailingBlank(s string) string {
 func (m Model) renderFatal() string {
 	msg := m.deps.Theme.Style("errorText").Render("connection failed") + "\n\n" +
 		m.deps.Theme.Style("muted").Render(m.fatalErr) + "\n\n" +
-		m.deps.Theme.Style("muted").Render("press ctrl+c to quit")
+		m.deps.Theme.Style("muted").Render("press "+m.helpKeyMarkings().quit+" to quit")
 	card := m.deps.Theme.Style("askCard").Render(msg)
 	if m.width > 0 && m.height > 0 {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)

@@ -4,6 +4,8 @@ use ./
 
 use ./engine
 
+use ./authn/oidc
+
 use ./provider/anthropic
 
 use ./provider/openai

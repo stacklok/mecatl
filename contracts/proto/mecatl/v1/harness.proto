@@ -573,6 +573,26 @@ message StreamSessionLiveRequest {
 // ListSessionsRequest is the empty unary request for the stored-session inventory.
 message ListSessionsRequest {}
 
+// Principal is the verified caller an object is attributed to (ADR 0100 — caller
+// identity, threaded). Identity is the (issuer, subject) PAIR, never subject alone:
+// two IdPs or realms collide on `sub`. It carries NO scopes, NO credentials and NO
+// claims map — attribution only; enforcement is the isolation track's.
+//
+// An ABSENT principal is an ABSENT message (a nil owner), never a present-but-empty
+// one — "nobody" must never be renderable as an anonymous somebody.
+message Principal {
+  // issuer is the IdP that minted the token (the canonical `iss` claim).
+  string issuer = 1;
+  // subject is the caller id within that issuer (the `sub` claim).
+  string subject = 2;
+  // grant_type is how the caller authenticated: "user", "client_credentials" or
+  // "system". A bare string passthrough (no enum) — the domain owns the closed set.
+  string grant_type = 3;
+  // name is an optional human-readable display label. It is NEVER part of
+  // identity — display only.
+  string name = 4;
+}
+
 // SessionSummary is one stored session's picker metadata — id, timestamps, state,
 // turn count, and the resolved model id. It carries NO conversation content: it is
 // the cheap row a client renders in an "open existing session" picker (issue #245
@@ -604,6 +624,13 @@ message SessionSummary {
   // may derive a fallback). Populated from the snapshot Title (or the lazy
   // fallback) by ListSessions.
   string title = 7;
+  // owner is the verified caller the session is attributed to (ADR 0100), stamped
+  // write-once at CreateSession from the validated token — never from the request
+  // body. UNSET for an ownerless session (a no-auth deployment, or a session
+  // persisted before the owner label existed; nothing backfills it). It is DISPLAY
+  // metadata: ListSessions applies NO owner filtering — scoping is the isolation
+  // track's (#368), not this one's.
+  Principal owner = 8;
 }
 
 // ListSessionsResponse carries the stored-session inventory, sorted by

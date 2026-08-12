@@ -75,6 +75,15 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 				MaxFires:  3,
 				Mutating:  true,
 				CreatedAt: time.Unix(1_700_000_000, 0),
+				// The captured owner (ADR 0100 decision 6) must survive the
+				// round-trip on EVERY transport — a schedule outlives its origin
+				// session, so the store is the only place the attribution lives.
+				Owner: &session.Principal{
+					Issuer:    "https://idp.example",
+					Subject:   "alice",
+					GrantType: session.GrantTypeUser,
+					Name:      "Alice",
+				},
 			},
 			State: port.ScheduleState{
 				NextFireAt: time.Unix(1_700_000_060, 0),
@@ -89,6 +98,16 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Fatalf("Load: %v", err)
 		}
 		assertScheduleEqual(t, "round-trip", got, in)
+		// Owner is the spec's only POINTER field: a returned Schedule must not
+		// alias the store's record, or a caller's edit rewrites stored history.
+		got.Spec.Owner.Subject = "mallory"
+		again, err := s.Load(ctx, in.Spec.Name)
+		if err != nil {
+			t.Fatalf("Load (isolation): %v", err)
+		}
+		if again.Spec.Owner == nil || again.Spec.Owner.Subject != "alice" {
+			t.Errorf("mutating a loaded Spec.Owner changed the stored record: %+v", again.Spec.Owner)
+		}
 	})
 
 	t.Run("save preserves existing firing state on overwrite", func(t *testing.T) {
@@ -1549,6 +1568,14 @@ func assertScheduleEqual(t *testing.T, label string, got, want port.Schedule) {
 	}
 	if got.Spec.Mutating != want.Spec.Mutating {
 		t.Errorf("%s: Spec.Mutating = %v, want %v", label, got.Spec.Mutating, want.Spec.Mutating)
+	}
+	switch {
+	case got.Spec.Owner == nil && want.Spec.Owner != nil:
+		t.Errorf("%s: Spec.Owner = nil, want %+v", label, *want.Spec.Owner)
+	case got.Spec.Owner != nil && want.Spec.Owner == nil:
+		t.Errorf("%s: Spec.Owner = %+v, want nil (an ownerless schedule is never adopted)", label, *got.Spec.Owner)
+	case got.Spec.Owner != nil && *got.Spec.Owner != *want.Spec.Owner:
+		t.Errorf("%s: Spec.Owner = %+v, want %+v", label, *got.Spec.Owner, *want.Spec.Owner)
 	}
 	if !got.Spec.CreatedAt.Equal(want.Spec.CreatedAt) {
 		t.Errorf("%s: Spec.CreatedAt = %v, want %v", label, got.Spec.CreatedAt, want.Spec.CreatedAt)

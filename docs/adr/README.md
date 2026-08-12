@@ -42,6 +42,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md)
 - [0097 — Scheduled fires are observable in-flight: a first-class persisted lifecycle stage](./0097-scheduled-fire-inflight-state.md)
 - [0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](./0096-live-feed-reconnect.md)
+- [0103 — mecatui seed prompt (`-p`/`--prompt`, `--prompt-file`)](./0103-mecatui-seed-prompt.md)
 - [0076 — The schedule manager is store-shaped and pre-Service; the shared catalog carries the Schedule tool](./0076-schedule-shared-catalog.md)
 - [0081 — `RulesSource` port for `.claude/rules` discovery](./0081-rules-source-port.md)
 - [0097 — Neutral permanent-provider-error signal (`port.PermanentError` → `ResultPayload.Permanent` → `EvRecoverNotice`)](./0097-permanent-provider-error-signal.md)
@@ -119,6 +120,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0094 — Opt-in project ingestion: two-axis positive grants](./0094-opt-in-project-ingestion.md) *(superseded by 0095)*
 - [0095 — Root-aware project trust](./0095-root-aware-project-trust.md) *(the authoritative #359 trust decision; supersedes 0092 + 0094)*
 - [0096 — Diagnostic-only posture reporting](./0096-diagnostic-only-posture-reporting.md) *(orthogonal reporting surface; relates to 0095)*
+- [0100 — Caller identity: accept a principal, thread it everywhere, record the owner](./0100-caller-identity-threading.md) *(agent-identity Track A; audit-trail phase)*
+- [0101 — Bound cached JWKS staleness](./0101-bounded-jwks-staleness.md)
+- [0103 — Ship reusable OIDC caller identity as an opt-in module](./0103-oidc-authn-module.md)
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)

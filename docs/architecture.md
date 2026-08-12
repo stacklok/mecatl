@@ -571,3 +571,94 @@ overlay. What remains here is the metrics surface:
   due→terminal — skipped fires record no duration). No role label (a fire's own run
   already carries `role="main"`).
 
+
+## Caller identity
+
+Caller identity ([ADR 0100](adr/0100-caller-identity-threading.md), issue #367)
+threads *who asked* through the harness. It is **attribution, not isolation**:
+every durable artifact learns its owner, and nothing is yet refused on identity
+grounds. The thread has four segments.
+
+**It enters at the edge, and only there.** `internal/adapter/server/authn.go`
+(`PrincipalValidator`) is the seam: the gRPC interceptor and the HTTP middleware
+hand a bearer to a validator and get back a `session.Principal`
+(`engine/session/principal.go`), whose identity is the `(Issuer, Subject)` pair.
+Token mechanics — parse, signature, `iss`/`aud`/`exp`, JWKS rotation — are
+delegated to the validator; mecatl hand-rolls none of it. The reusable implementation
+is the opt-in `github.com/stacklok/mecatl/authn/oidc` module
+([ADR 0103](adr/0103-oidc-authn-module.md)); it keeps ToolHive and JWT dependencies
+outside the engine and exposes no ToolHive types. The operator wires one
+through `--oidc-issuer` / `--oidc-jwks-uri` / `--oidc-audience` /
+`--oidc-max-jwks-staleness` (`internal/cliconfig/oidc.go` (`OIDCConfig`,
+`OIDCValidator`)), and a validator that cannot be constructed is a **fatal**
+startup error, never a silent degrade to unauthenticated. The shipped
+`toolhive-core/authn` **v0.0.39** validator caches the last good JWKS during a
+brief IdP outage, but the 1h default bounds that cache: once stale, it refreshes
+before deciding and an unavailable refresh maps to **503**, not 401. `0` is the
+explicit unbounded-availability escape hatch; negative durations are rejected.
+The JWKS cache is process-local and never persisted, so restart re-fetches current
+keys. This bounds signing-key revocation exposure during an outage; it does not
+provide per-token revocation before token expiry. When OIDC and `--rate-limit`
+are both enabled, a separate pre-validation bucket limits rejected bearers by
+**direct transport peer IP** before another validator call. Forwarding headers
+are deliberately ignored. A successful validation does not consume that bucket;
+the existing post-validation limiter still charges the verified `(Issuer,
+Subject)` exactly once. With no validator wired the
+whole path is byte-identical to a mecatl without identity. Caller identity is
+deliberately independent of the static
+`--auth-token`: `SecurityConfig.identityConfigured()` gates neither on nor off
+`authEnabled()`, because a shared-token deployment has one credential and zero
+subjects.
+
+**It rides a context key, and is never fabricated.** `session.WithPrincipal` /
+`session.PrincipalFromContext` (`engine/session/principal_context.go`) carry the
+verified caller inward. For direct embedding, verification stays outside the engine;
+a generic verifier's exact wiring is:
+
+```go
+claims, err := verifyCredential(ctx, bearer) // signature, issuer, audience, expiry
+if err != nil {
+    return err
+}
+principal := session.PrincipalFromClaims(claims) // claims are already verified
+if principal == nil {
+    return errUnauthenticated
+}
+ctx = session.WithPrincipal(ctx, principal)      // context passed to Engine.Run
+if err := sess.RestoreLabels(principal, ""); err != nil {
+    return err
+}
+run := eng.Run(ctx, sess, workspace, request)
+```
+
+`authn/oidc.Validator.Validate` can replace the first projection steps and returns the
+same non-nil `*session.Principal`; embedders still apply `WithPrincipal` and, when they
+seed the aggregate themselves, `RestoreLabels`. The restore call must happen before the
+first run so durable ownership is set through the aggregate seam. Children, conversation
+forks, and resumed sessions inherit the source session's owner; do not re-derive or
+replace it at those boundaries. Absent identity is a **nil** principal — no anonymous
+placeholder is ever minted (an `AGENTS.md` invariant, pinned by
+`TestInvariant_no_fabricated_principal`). Internal goroutines have no caller at
+all, so they run under an *explicit* system principal instead of an absent one:
+`internal/syscaller/syscaller.go` (`Roots`) is the registry, and the childgc
+sweeper, both dream consolidators, the scheduler's `Start` and the JWKS refresh
+each stamp `mecatl:internal / <root>`. `FireNow` is deliberately **not** wrapped —
+a manual fire keeps its requester's identity.
+
+**Sessions and schedules record an owner.** `CreateSession` stamps the owner from
+the context principal, **write-once and never from the request body**
+(`internal/adapter/server/service.go` (`resolveOwner`)); children and forks
+inherit it from the source. It persists as the additive `owner` snapshot field
+(`engine/adapter/sessnap/sessnap.go` (`Snapshot`)) and surfaces display-only on
+both listing paths (`SessionSummary.Owner`, `port.SessionMeta.Owner`) — no
+filtering. `port.ScheduleSpec.Owner` (`engine/port/schedule.go`) is captured at
+**create**, not at fire time, so a scheduled `sched--` session runs as the human
+who asked for it rather than as the scheduler's system principal.
+
+**The event log's `Actor` is log-only.** `session.Event.Actor`
+(`engine/session/event.go`) is stamped at the relay, in the one place the durable
+log is written (`internal/adapter/server/service.go` (`appendEvent`), plus the
+`AppendRunEvent` delegate the scheduler's fire loop uses because it ranges
+`run.Events()` itself and is not a wire relay). The loop never sets it — it stays
+storage- and identity-agnostic, exactly as it does for `port.EventLog`. `Actor` is
+an annotation on log lines; the **session owner** is the identity of record.

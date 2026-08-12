@@ -46,7 +46,7 @@ ships as a client of the same API.
 **Interfaces & operations**
 - **Three API surfaces, one event model** — a bidi gRPC `Converse` stream, an HTTP/SSE mirror, and ACP over stdio for editors (`mecated acp`), all over the same domain `Event`.
 - **Single-shot CI runner & a GitHub Action that implements issues** — `mecatequi` is a headless, forge-agnostic binary: one prompt against the same engine → a git-diff patch + a machine-readable summary + an exit code. A reusable `workflow_call` workflow (a ~15-line caller) — backed by composite actions, with a hand-rolled split-privilege workflow as the escape hatch — turns an issue (label `mecatequi` / comment `@mecatequi`) into a pull request; the agent job holds only the rotatable LLM key and **no** write token, while a separate, agent-code-free job applies the patch as data and opens the PR. See [`docs/adr/0028-mecatequi.md`](docs/adr/0028-mecatequi.md).
-- **Auth & limits** — bearer token + optional TLS/mTLS, per-client + global rate limiting, `/healthz`+`/readyz` + gRPC health, graceful shutdown, session auto-resume from a store.
+- **Auth & limits** — bearer token + optional TLS/mTLS, per-client + global rate limiting, `/healthz`+`/readyz` + gRPC health, graceful shutdown, session auto-resume from a store. Reusable OIDC caller verification is available as the opt-in `github.com/stacklok/mecatl/authn/oidc` module; the engine itself accepts only an already-verified `session.Principal`.
 - **Observability** — Prometheus metrics (`/metrics`), OpenTelemetry spans with an OTLP exporter, per-tool-call logging, and an append-only JSONL replay store.
 - **Deployment** — `ko`-built static distroless image, PSS-restricted manifests, and a signed release (cosign + SBOM + SLSA provenance).
 - **Strict hexagonal/DDD** — the domain and the loop depend only on ports; the OpenAI client, the servers, the filesystem, and the tools are adapters wired only at the composition root.
@@ -175,16 +175,18 @@ exported surface fails the `api-compat` gate until the baseline + changelog are 
 `internal/` holds the heavy adapters and the composition layer.
 
 `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in this
-repo as a monorepo via a committed `go.work` (`use ./` + `use ./engine`). There are two
-`go.mod` files: the root (`github.com/stacklok/mecatl`, with its full require cone) and
-`engine/go.mod` (a tiny closure — `doublestar` + `x/sync` + test-only `goleak`). An
+repo as a monorepo via a committed `go.work`. The reusable OIDC adapter is another
+opt-in module, `github.com/stacklok/mecatl/authn/oidc`; it carries the token-validation
+dependencies so engine-only consumers do not. The root and submodule manifests are
+maintained independently. An
 external project imports the core directly, e.g.
 `import "github.com/stacklok/mecatl/engine/agent"`, and pulls in only that small closure,
 not mecatl's heavy dependency cone. See [ADR 0036](docs/adr/0036-engine-module.md).
 
 | Path | Contents |
 |---|---|
-| `go.work`, `go.mod`, `engine/go.mod` | the committed Go workspace + the two module manifests (root + the importable-core engine module) |
+| `go.work`, `go.mod`, `engine/go.mod`, `authn/oidc/go.mod` | the committed Go workspace and the root, importable-engine, and opt-in OIDC module manifests |
+| `authn/oidc` | reusable OIDC bearer validation that projects verified claims into `session.Principal` without exposing ToolHive types ([ADR 0103](docs/adr/0103-oidc-authn-module.md)) |
 | `engine/COMPATIBILITY.md`, `engine/CHANGELOG.md`, `engine/api/*.txt` | the engine public-API stability contract: policy, change record, and committed surface snapshots (the `api-compat` gate, [ADR 0037](docs/adr/0037-engine-stability-contract.md)) |
 | `engine/session`, `engine/governance`, `engine/tool`, `engine/prompt` | the domain (aggregate, permission/hook types, tool catalog + FS interfaces, prompt assembly) |
 | `engine/port` | the port interfaces the loop consumes |

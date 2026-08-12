@@ -1,11 +1,11 @@
 # Acceptance plans
 
-Each document here is an acceptance plan: the smallest set of work that makes
-one capability demonstrable on the running harness. Plans are organized
-scenario-first — acceptance is about what the harness can show, not which
-packages exist on disk. Each plan names its capability, cites the ADRs /
-[architecture](../architecture.md) / [AGENTS.md](../../AGENTS.md) invariants
-that pin its decisions, and carries the accumulator branch its work lands on.
+Each document here is an acceptance plan or completed acceptance record: the
+smallest set of work that makes one capability demonstrable on the running
+harness. They are organized scenario-first — acceptance is about what the
+harness can show, not which packages exist on disk. Each document names its
+capability and cites the ADRs / [architecture](../architecture.md) /
+[AGENTS.md](../../AGENTS.md) invariants that pin its decisions.
 
 Plans are authored by the `/to-acceptance-plan` skill and driven to completion
 by `/plan-orchestrate`. New plans must be linked from this README; the matlatl
@@ -68,6 +68,9 @@ when the code that satisfies the plan has landed.
 - [Delegation observability convergence](delegation-observability-convergence.md) —
   bounded previews for Subagent/Parallel, converging the delegation observability
   surface on two tiers (Team-unique structures stay Team-only). Status: landed.
+- [Caller identity](caller-identity.md) — completed acceptance record for optional
+  OIDC caller attribution: a verified principal, durable session/schedule ownership,
+  and log-only event actors; no authorization. Status: landed.
 
 ## See also
 

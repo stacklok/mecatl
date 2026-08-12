@@ -98,6 +98,85 @@ func TestGRPCAuthDisabledAllows(t *testing.T) {
 	}
 }
 
+func TestGRPCAuthRejectsDuplicateAuthorizationMetadata(t *testing.T) {
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "secret"})
+	for _, tc := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "conflicting", values: []string{"Bearer secret", "Bearer wrong"}},
+		{name: "both valid", values: []string{"Bearer secret", "Bearer secret"}},
+	} {
+		t.Run(tc.name+" unary", func(t *testing.T) {
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+				"authorization", tc.values[0], "authorization", tc.values[1]))
+			called := false
+			_, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
+				called = true
+				return nil, nil
+			})
+			if status.Code(err) != codes.Unauthenticated {
+				t.Fatalf("code = %v, want Unauthenticated", status.Code(err))
+			}
+			if called {
+				t.Fatal("handler was called for duplicate authorization metadata")
+			}
+		})
+		t.Run(tc.name+" stream", func(t *testing.T) {
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+				"authorization", tc.values[0], "authorization", tc.values[1]))
+			called := false
+			err := auth.StreamInterceptor()(nil, authTestStream{ctx: ctx}, &grpc.StreamServerInfo{}, func(any, grpc.ServerStream) error {
+				called = true
+				return nil
+			})
+			if status.Code(err) != codes.Unauthenticated {
+				t.Fatalf("code = %v, want Unauthenticated", status.Code(err))
+			}
+			if called {
+				t.Fatal("handler was called for duplicate authorization metadata")
+			}
+		})
+	}
+}
+
+func TestGRPCAuthRejectsDuplicateAuthorizationMetadataWithoutAuthConfig(t *testing.T) {
+	auth := server.NewAuthenticator(server.SecurityConfig{})
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		"authorization", "Bearer one", "authorization", "Bearer two"))
+
+	called := false
+	_, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
+		called = true
+		return nil, nil
+	})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unary code = %v, want Unauthenticated", status.Code(err))
+	}
+	if called {
+		t.Fatal("unary handler was called for duplicate authorization metadata without auth")
+	}
+
+	called = false
+	err = auth.StreamInterceptor()(nil, authTestStream{ctx: ctx}, &grpc.StreamServerInfo{}, func(any, grpc.ServerStream) error {
+		called = true
+		return nil
+	})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("stream code = %v, want Unauthenticated", status.Code(err))
+	}
+	if called {
+		t.Fatal("stream handler was called for duplicate authorization metadata without auth")
+	}
+}
+
+type authTestStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s authTestStream) Context() context.Context { return s.ctx }
+
 // --- gRPC rate limit ---------------------------------------------------------
 
 func TestGRPCRateLimit(t *testing.T) {

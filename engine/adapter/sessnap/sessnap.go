@@ -82,6 +82,19 @@ type Snapshot struct {
 	// event-side subagentCausePayload so the snapshot and the subagent.end event
 	// carry the same persisted cause.
 	LastError string `json:"last_error,omitempty"`
+	// Owner is the verified caller the session is attributed to (ADR 0100). A
+	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
+	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
+	// byte-identical to a pre-ship one — purely additive, no format-tag bump.
+	// Restored via the write-once aggregate method Session.RestoreLabels, NOT a
+	// RestoreState parameter (widening that signature would be a Changed/breaking
+	// entry under engine/COMPATIBILITY.md; a direct-assignment field is
+	// Added/minor).
+	Owner *session.Principal `json:"owner,omitempty"`
+	// Authority is Track C's inert label, round-tripped here so the contended
+	// generated-file regeneration is paid once. omitempty keeps a pre-ship
+	// snapshot with no "authority" key decoding to the zero value.
+	Authority session.Authority `json:"authority,omitempty"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -140,7 +153,11 @@ func Of(s *session.Session) (Snapshot, error) {
 		ModelID:         s.ModelID,
 		ReasoningEffort: s.ReasoningEffort,
 		Title:           s.Title,
+		Authority:       s.Authority,
 		CreatedAt:       s.CreatedAt,
+		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
+		// alias (and later mutate) the aggregate's own principal.
+		Owner: s.Owner.Clone(),
 	}
 	// Usage is a pointer for true omitempty: only emit the key when there is spend
 	// to persist, so a zero-usage snapshot stays byte-identical to a pre-Usage one.
@@ -186,6 +203,12 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.ModelID = snap.ModelID
 	s.ReasoningEffort = snap.ReasoningEffort
 	s.Title = snap.Title
+	// The identity labels go through the WRITE-ONCE aggregate method rather than a
+	// field poke (Session is an aggregate) and rather than a RestoreState
+	// parameter (that widening is Changed/breaking; this stays Added/minor).
+	if err := s.RestoreLabels(snap.Owner, snap.Authority); err != nil {
+		return nil, fmt.Errorf("sessnap: restore labels: %w", err)
+	}
 
 	// The cumulative usage to seed (a nil pointer => the zero Usage, the pre-Usage
 	// default), passed to RestoreState alongside the counters so it seeds the budget

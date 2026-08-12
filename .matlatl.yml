@@ -1,6 +1,16 @@
 # matlatl configuration. https://github.com/stacklok/matlatl
 version: 1
 
+# Exclude git-ignored working files from the corpus (ADR 0024, matlatl v0.0.8):
+# union the repo's effective git ignore set (tracked + nested .gitignore rules,
+# .git/info/exclude, global excludes) with .matlatlignore. Local-only files
+# (HANDOFF.md, CLAUDE.local.md, agent scratch notes) are otherwise scanned as
+# corpus documents and flagged as orphans, which (a) fails `check --strict`
+# locally on files a clean CI checkout never sees, and (b) bakes a nonzero
+# orphan count into a regenerated llms.txt, breaking CI's clean-checkout
+# staleness gate. No-op when the scan root is not a git work tree.
+respectGitignore: true
+
 # Promote the graduated structure findings (under-linked, dead-end) from Info to
 # Warning, so they FAIL `matlatl check --strict` (the CI docs gate) instead of
 # only being reported (ADR 0012). This makes documentation connectivity an enforced

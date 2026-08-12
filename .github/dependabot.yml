@@ -1,10 +1,10 @@
-# Dependabot config (issue #118). Keeps both Go modules' go.mod/go.sum and the
-# SHA-pinned GitHub Actions current — supply-chain hygiene that travels with the
-# engine library when the downstream consumer pins it.
+# Dependabot config (issue #118). Keeps every Go module's go.mod/go.sum and the
+# SHA-pinned GitHub Actions current — supply-chain hygiene for the root binary,
+# importable engine, reusable authn adapter, and opt-in providers.
 #
-# Dependabot processes each gomod directory INDEPENDENTLY, so the workspace's two
-# modules (root + engine) each get their own update config. Minor+patch bumps are
-# GROUPED into a single PR per ecosystem to cut review noise; majors stay separate
+# Dependabot processes each gomod directory INDEPENDENTLY, so every workspace
+# module gets its own update config. Minor+patch bumps are GROUPED into a single
+# PR per ecosystem to cut review noise; majors stay separate
 # (they can break, so they deserve an individual PR).
 #
 # The repo SHA-pins every GitHub Action with a `# vX.Y.Z` comment. Dependabot
@@ -32,6 +32,22 @@ updates:
   # Engine submodule (the importable core's tiny, self-contained closure).
   - package-ecosystem: gomod
     directory: "/engine"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Opt-in caller-identity adapter module (ADR 0103; not a provider).
+  - package-ecosystem: gomod
+    directory: "/authn/oidc"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10

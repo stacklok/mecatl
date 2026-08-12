@@ -538,12 +538,12 @@ func relativeTime(unixSec int64) string {
 // when there is nothing to render yet. sessionID is the adopted session's id
 // (m.sessionID), shown in the transcript header — distinct from st.confirm.ID
 // (the picker candidate, cleared on the switchToSession handoff).
-func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabilities, sessionID, vpContent string, width, height int) string {
+func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabilities, sessionID, vpContent string, hk helpKeys, width, height int) string {
 	switch st.view {
 	case sessionsTranscript:
-		return renderSessionsTranscript(th, st, sessionID, vpContent, width, height)
+		return renderSessionsTranscript(th, st, sessionID, vpContent, hk, width, height)
 	default:
-		return renderSessionsPanel(th, st, caps, width, height)
+		return renderSessionsPanel(th, st, caps, hk, width, height)
 	}
 }
 
@@ -568,7 +568,7 @@ func sessionsTabBar(th theme.Theme, tab sessionsTab) string {
 // (top-level agent sessions) or Children (subagent/team/parallel). In the Children
 // tab each row carries a one-glyph type badge (S/T/P) + a short type label so the
 // child kinds are distinguishable.
-func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities, _, _ int) string {
+func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(sessionsTabBar(th, st.tab) + "\n\n")
 	if st.loading {
@@ -577,7 +577,7 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	}
 	if st.err != nil {
 		b.WriteString(th.Style("errorText").Render("could not list sessions: " + sanitizeTerminal(st.err.Error())))
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
 	if len(st.filtered) == 0 {
@@ -588,7 +588,7 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		} else {
 			b.WriteString(th.Style("muted").Render("no sessions found"))
 		}
-		b.WriteString("\n" + th.Style("muted").Render("tab: switch  esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render(sessionsEmptyHint(hk)))
 		return b.String()
 	}
 	for i, s := range st.filtered {
@@ -619,13 +619,22 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		}
 		b.WriteString(line + "\n")
 	}
-	hint := "enter: continue  tab: switch  esc: close"
+	// The Choose/NextTab/Close chords read the LIVE keyMap markings (issue #457);
+	// with defaults the hint is byte-identical to the historical literal.
+	hint := hk.choose + ": continue  " + sessionsEmptyHint(hk)
 	if st.tab == tabChildren {
 		// Children are read-only inspection only.
-		hint = "enter: open read-only  tab: switch  esc: close"
+		hint = hk.choose + ": open read-only  " + sessionsEmptyHint(hk)
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hint))
 	return b.String()
+}
+
+// sessionsEmptyHint is the "tab: switch  esc: close" footer used by the sessions
+// panel empty states, matching the sessions double-space idiom. The chords read
+// the LIVE NextTab/Close markings (issue #457); with defaults byte-identical.
+func sessionsEmptyHint(hk helpKeys) string {
+	return hk.nextTab + ": switch  " + hk.closeOnly + ": close"
 }
 
 // renderSessionsTranscript renders the replay view. For a CHILD session this is
@@ -642,8 +651,8 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 // content has arrived) it renders the transcript. The transcript is a STATIC
 // viewport (read-only, no auto-follow streaming dynamics — the replay is a
 // bounded batch).
-func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpContent string, _, _ int) string {
-	hint := "esc: back"
+func renderSessionsTranscript(th theme.Theme, st sessionsState, sessionID, vpContent string, hk helpKeys, _, _ int) string {
+	hint := hk.closeOnly + ": back"
 	header := "session " + sanitizeTerminal(sessionID) + " · read-only transcript"
 	if st.continueOnLoad {
 		// A top-level continue: this view is transient (transitions to phaseIdle

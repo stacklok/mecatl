@@ -45,6 +45,7 @@ const (
 	k8sNamespace    = "mecatl"
 	agentComponent  = "agent" // app.kubernetes.io/component label value
 	partOfLabel     = "mecak8s"
+	agentGRPCPort   = 8080 // the gRPC listener (--grpc-addr default in the pod)
 	agentPodPort    = 8081 // the HTTP/SSE listener (--http-addr default in the pod)
 
 	// liveProviderSecret is the k8s Secret holding OPENROUTER_API_KEY for the live
@@ -391,20 +392,29 @@ func waitReplacementReady(preDelete []string) string {
 
 // --- port-forward ------------------------------------------------------------
 
-// portForward starts `kubectl port-forward` from a free local port to the
-// agent pod's HTTP listener and returns the local "host:port" address plus a
-// stop function that terminates the forward. The forward runs for the lifetime
-// of the returned context-cancellation / stop call. The local port is chosen by
-// binding a free loopback port first (the same race-free pattern as
-// e2e/harness/local.go's freePorts) and handing it to port-forward.
+// portForward starts a port-forward from a free local port to the agent pod's HTTP
+// listener and returns the local "host:port" address plus a stop function.
 func portForward(podName string) (addr string, stop func()) {
+	return portForwardPort(podName, agentPodPort)
+}
+
+// portForwardGRPC is the gRPC sibling of portForward. It shares the same
+// lifecycle and readiness behavior while targeting mecak8s's gRPC listener.
+func portForwardGRPC(podName string) (addr string, stop func()) {
+	return portForwardPort(podName, agentGRPCPort)
+}
+
+// portForwardPort starts `kubectl port-forward` from a free local port to a pod
+// listener and returns the local "host:port" address plus a stop function. The
+// forward runs for the lifetime of the returned context-cancellation / stop call.
+func portForwardPort(podName string, targetPort int) (addr string, stop func()) {
 	ginkgo.GinkgoHelper()
 	port := freeLocalPort()
 	ctx, cancel := context.WithCancel(ginkgoSuiteCtx())
 	cmd := exec.CommandContext(ctx, "kubectl", "port-forward",
 		"-n", k8sNamespace,
 		fmt.Sprintf("pod/%s", podName),
-		fmt.Sprintf("%d:%d", port, agentPodPort))
+		fmt.Sprintf("%d:%d", port, targetPort))
 	// port-forward writes progress to stderr; capture it for failure diagnosis.
 	var buf ginkgoWriter
 	cmd.Stderr = &buf

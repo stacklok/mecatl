@@ -442,15 +442,16 @@ func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time)
 	return nil
 }
 
-// cloneSpec returns a copy of spec whose Parts slice is independent of the
-// stored one (so a caller cannot mutate the store's record through the
-// returned Schedule). ScheduleSpec is otherwise a struct of values.
+// cloneSpec returns a copy of spec whose Parts slice AND Owner pointer are
+// independent of the stored one (so a caller cannot mutate the store's record
+// through the returned Schedule). ScheduleSpec is otherwise a struct of values.
 func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 	out := spec
 	if spec.Parts != nil {
 		out.Parts = make([]session.Content, len(spec.Parts))
 		copy(out.Parts, spec.Parts)
 	}
+	out.Owner = spec.Owner.Clone()
 	return out
 }
 

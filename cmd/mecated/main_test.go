@@ -116,6 +116,23 @@ func TestParseFlagsSchedulerMinIntervalDefault(t *testing.T) {
 	}
 }
 
+func TestParseFlagsOIDCMaxJWKSStaleness(t *testing.T) {
+	def, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags(nil): %v", err)
+	}
+	if def.oidc.MaxJWKSStaleness != time.Hour {
+		t.Fatalf("default --oidc-max-jwks-staleness = %v, want 1h", def.oidc.MaxJWKSStaleness)
+	}
+	override, err := parseFlags([]string{"--oidc-max-jwks-staleness=0"})
+	if err != nil {
+		t.Fatalf("parseFlags override: %v", err)
+	}
+	if override.oidc.MaxJWKSStaleness != 0 {
+		t.Fatalf("--oidc-max-jwks-staleness=0 = %v, want disabled", override.oidc.MaxJWKSStaleness)
+	}
+}
+
 // TestParseFlagsSubagentModelRouter asserts the ADR 0042 kill-switch parses:
 // unset → not set (router governed by taxonomy); a bare flag / =true still PARSES and is
 // a harmless no-op (router stays governed by taxonomy); =false maps to RouterDisabled via

@@ -168,6 +168,9 @@ type config struct {
 	tlsCert   string
 	tlsKey    string
 	clientCA  string
+	// oidc carries the caller-identity flags (--oidc-issuer/--oidc-jwks-uri/
+	// --oidc-audience), shared verbatim with mecated. Zero value = identity off.
+	oidc cliconfig.OIDCConfig
 
 	// Child-session retention/GC over the Redis store (PrunableStore). Defaults
 	// mirror mecated so a durable store does not grow without bound.
@@ -329,6 +332,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "PEM server certificate; enables TLS on gRPC + HTTP when set with --tls-key")
 	fs.StringVar(&cfg.tlsKey, "tls-key", "", "PEM server private key (paired with --tls-cert)")
 	fs.StringVar(&cfg.clientCA, "client-ca", "", "PEM client CA bundle; enables mutual TLS (require+verify client certs)")
+	cliconfig.RegisterOIDCFlags(fs, &cfg.oidc)
 
 	// Child/main retention over the (prunable) Redis store — mirrors mecated.
 	fs.DurationVar(&cfg.childRetention, "child-retention", 168*time.Hour, "how long persisted CHILD session snapshots are retained before the GC sweep deletes them; 0 disables the age pass")

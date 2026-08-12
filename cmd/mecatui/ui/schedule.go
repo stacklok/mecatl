@@ -590,21 +590,21 @@ func filterSchedules(scheds []client.Schedule, q string) []client.Schedule {
 
 // renderScheduleOverlay draws the overlay, dispatching on the view. replayerWired
 // gates the jump-to-fire footer hint in the inspect sub-view (#235).
-func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabilities, replayerWired bool, width, height int) string {
+func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabilities, replayerWired bool, hk helpKeys, width, height int) string {
 	switch st.view {
 	case scheduleConfirm:
-		return renderScheduleConfirm(th, st, width, height)
+		return renderScheduleConfirm(th, st, hk, width, height)
 	case scheduleInspect:
-		return renderScheduleInspect(th, st, replayerWired, width, height)
+		return renderScheduleInspect(th, st, replayerWired, hk, width, height)
 	case scheduleCreate:
-		return renderScheduleCreate(th, st, width, height)
+		return renderScheduleCreate(th, st, hk, width, height)
 	default:
-		return renderSchedulePanel(th, st, caps, width, height)
+		return renderSchedulePanel(th, st, caps, hk, width, height)
 	}
 }
 
 // renderSchedulePanel renders the schedule list card.
-func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities, _, _ int) string {
+func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("schedules") + "\n")
 	b.WriteString(th.Style("muted").Render("browse & manage scheduled tasks") + "\n\n")
@@ -620,7 +620,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 	}
 	if st.err != nil {
 		b.WriteString(th.Style("errorText").Render("could not list schedules: " + sanitizeTerminal(st.err.Error())))
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
 	if st.actionErr != "" {
@@ -632,7 +632,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		} else {
 			b.WriteString(th.Style("muted").Render("no schedules found (press c to create, or use `mecated schedule create` / settings.yaml)"))
 		}
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
 	for i, s := range st.filtered {
@@ -662,16 +662,20 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: inspect  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  esc: close"))
+	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
+	// the c/p/r/f/d// action keys are BARE keys consumed via msg.String (NOT
+	// keyMap bindings), so they stay literal (issue #457). With defaults the
+	// hint is byte-identical to the historical literal.
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": inspect  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  "+hk.closeOnly+": close"))
 	return b.String()
 }
 
 // renderScheduleConfirm renders the delete-confirmation card.
-func renderScheduleConfirm(th theme.Theme, st scheduleState, _, _ int) string {
+func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("delete schedule") + "\n\n")
 	b.WriteString("delete " + th.Style("accent").Render(sanitizeTerminal(st.confirm.Spec.Name)) + "?\n")
-	b.WriteString("\n" + th.Style("muted").Render("enter: delete  esc: back"))
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": delete  "+hk.closeOnly+": back"))
 	return b.String()
 }
 
@@ -687,7 +691,7 @@ func renderScheduleConfirm(th theme.Theme, st scheduleState, _, _ int) string {
 // not started) is rendered as an explicit "claimed (session pending)" line, so
 // a claimed-but-not-yet-run fire never renders as "no fires recorded" (the
 // genuinely-never-fired case).
-func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool, _, _ int) string {
+func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool, hk helpKeys, _, _ int) string {
 	s := st.inspect
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("schedule — "+sanitizeTerminal(s.Spec.Name)) + "\n\n")
@@ -730,9 +734,12 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 			b.WriteString(line + "\n")
 		}
 	}
-	hint := "esc: back"
+	// The esc (Close) and enter (Choose) chords read the LIVE keyMap markings;
+	// the ↑↓ (bare keyMenuUp/Down) and t are BARE keys via msg.String (NOT
+	// keyMap bindings), so they stay literal (issue #457).
+	hint := hk.closeOnly + ": back"
 	if replayerWired {
-		hint = "↑↓: select fire  enter/t: open transcript  esc: back"
+		hint = "↑↓: select fire  " + hk.choose + "/t: open transcript  " + hk.closeOnly + ": back"
 	}
 	b.WriteString("\n" + muted.Render(hint))
 	return b.String()
@@ -800,7 +807,7 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 // renderScheduleCreate renders the in-overlay Create form (Phase 3b, issue #236).
 // The focused field is highlighted with the accent style; the mutating toggle
 // shows y/n when focused. The footer hint advertises the keybindings.
-func renderScheduleCreate(th theme.Theme, st scheduleState, _, _ int) string {
+func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("create schedule") + "\n\n")
 	f := st.form
@@ -845,7 +852,10 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, _, _ int) string {
 		// server-sourced actionErr (e.g. a rejected cron) could carry control runes.
 		b.WriteString("\n" + th.Style("errorText").Render(sanitizeTerminal(st.actionErr)) + "\n")
 	}
-	b.WriteString("\n" + muted.Render("tab/↑↓: next  enter: advance/submit  y/n: toggle mutating  esc: back"))
+	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
+	// tab/↑↓/y/n are BARE keys via msg.String (NOT keyMap bindings), so they
+	// stay literal (issue #457).
+	b.WriteString("\n" + muted.Render("tab/↑↓: next  "+hk.choose+": advance/submit  y/n: toggle mutating  "+hk.closeOnly+": back"))
 	return b.String()
 }
 

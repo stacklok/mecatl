@@ -541,7 +541,7 @@ func TestResultBodyExpandedUnchanged(t *testing.T) {
 	if _, ok := r.summarizeResolvedResult(b, true); ok {
 		t.Error("expanded result must not be summarized")
 	}
-	full := resultBody(result, true)
+	full := r.resultBody(result, true)
 	if !strings.Contains(full, "padding to grow") {
 		t.Error("expanded result body must be the full sanitized body")
 	}

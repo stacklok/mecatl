@@ -108,14 +108,14 @@ func (m Model) closeMCP() (tea.Model, tea.Cmd) {
 }
 
 // insertIntoInput drops text into the prompt textarea, closes the overlay, and
-// sets a "press enter to send" status hint — the single mechanism both the prompt
-// path and the resource-insert path use to populate the input for a normal
-// Converse turn. label names what was loaded (e.g. "loaded prompt foo").
+// sets a live "press <submit> to send" status hint — the single mechanism both
+// the prompt path and the resource-insert path use to populate the input for a
+// normal Converse turn. label names what was loaded (e.g. "loaded prompt foo").
 func (m Model) insertIntoInput(text, label string) (tea.Model, tea.Cmd) {
 	mm, cmd := m.closeMCP()
 	m2 := mm.(Model)
 	m2.ta.SetValue(text)
-	m2.statusMsg = label + " — press enter to send"
+	m2.statusMsg = label + " — press " + firstKey(m2.keys.Submit, "enter") + " to send"
 	m2.refreshView()
 	return m2, cmd
 }
@@ -280,10 +280,10 @@ func (m Model) onPromptArgsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mcp.view = mcpPrompts
 		m.mcp.argFields = nil
 		return m, nil
-	case msg.String() == "up", msg.String() == "shift+tab":
+	case msg.String() == keyMenuUp, msg.String() == "shift+tab":
 		m.focusArg(m.mcp.argCursor - 1)
 		return m, nil
-	case msg.String() == "down", msg.String() == "tab":
+	case msg.String() == keyMenuDown, msg.String() == "tab":
 		m.focusArg(m.mcp.argCursor + 1)
 		return m, nil
 	case key.Matches(msg, m.keys.Choose):
@@ -446,19 +446,23 @@ func joinPromptMessages(ms []client.MCPPromptMessage) string {
 // renderMCPOverlay draws the active overlay centred over the conversation region.
 // It mirrors the permission modal's overlay treatment (a bordered card via
 // lipgloss.Place). All server-derived strings are terminal-sanitized.
-func renderMCPOverlay(th theme.Theme, st mcpState, caps client.Capabilities, width, height int) string {
+// hk carries the LIVE keyMap markings (issue #457) so every keyMap-backed
+// navigation hint (Up/Down on lists, Choose, Close, Refresh) and the resource-
+// preview collapse marker reference rebound chords. The prompt-argument form's
+// raw arrow controls remain literal. Defaults stay byte-identical.
+func renderMCPOverlay(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	var body string
 	switch st.view {
 	case mcpPanel:
-		body = renderMCPPanel(th, st, caps)
+		body = renderMCPPanel(th, st, caps, hk)
 	case mcpResources:
-		body = renderResourceList(th, st, caps)
+		body = renderResourceList(th, st, caps, hk)
 	case mcpResourcePrev:
-		body = renderResourcePreview(th, st)
+		body = renderResourcePreview(th, st, hk)
 	case mcpPrompts:
-		body = renderPromptList(th, st, caps)
+		body = renderPromptList(th, st, caps, hk)
 	case mcpPromptArgs:
-		body = renderPromptArgs(th, st)
+		body = renderPromptArgs(th, st, hk)
 	default:
 		return ""
 	}
@@ -483,7 +487,7 @@ func mcpEmptyCopy(caps client.Capabilities, emptyNote string) string {
 
 // renderMCPPanel renders the read-only inventory: sources → servers → diagnostics.
 // It also carries the startup-snapshot caveat in its footer copy.
-func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities) string {
+func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("MCP inventory") + "\n")
 	if footer := mcpStatusLine(th, st); footer != "" {
@@ -514,23 +518,25 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities) strin
 		}
 	}
 	b.WriteString(renderGroupsLine(th, st))
-	b.WriteString("\n" + th.Style("muted").Render(mcpPanelFooter(st)))
+	b.WriteString("\n" + th.Style("muted").Render(mcpPanelFooter(st, hk)))
 	return b.String()
 }
 
 // mcpPanelFooter is the panel's footer hint. Before any manual refresh it carries
 // the startup-snapshot caveat; after a successful re-probe it reads "updated" so
 // the user knows the panel reflects LIVE source status. Both forms advertise the
-// r-refresh and esc-close keys. No wall-clock — the wording is state-driven so the
-// View stays golden-stable.
-func mcpPanelFooter(st mcpState) string {
+// r-refresh and esc-close keys, sourced from the LIVE Refresh/Close markings
+// (issue #457). No wall-clock — the wording is state-driven so the View stays
+// golden-stable.
+func mcpPanelFooter(st mcpState, hk helpKeys) string {
+	refreshClose := hk.refresh + " refresh · " + hk.closeOnly + " close"
 	switch {
 	case st.refreshing:
-		return "refreshing… · r refresh · esc close"
+		return "refreshing… · " + refreshClose
 	case st.refreshed:
-		return "updated — live MCP source status · r refresh · esc close"
+		return "updated — live MCP source status · " + refreshClose
 	default:
-		return "snapshot from mecated startup — servers started later won't appear · r refresh · esc close"
+		return "snapshot from mecated startup — servers started later won't appear · " + refreshClose
 	}
 }
 
@@ -554,7 +560,7 @@ func renderGroupsLine(th theme.Theme, st mcpState) string {
 }
 
 // renderResourceList renders the scrollable resource picker.
-func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities) string {
+func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("MCP resources") + "\n")
 	if footer := mcpStatusLine(th, st); footer != "" {
@@ -572,21 +578,24 @@ func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities) s
 		line := fmt.Sprintf("%s  %s", sanitizeTerminal(label), sanitizeTerminal(r.Server))
 		b.WriteString(renderRow(th, line, i == st.resCursor) + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("↑/↓ move · enter read · esc close"))
+	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" read · "+hk.closeOnly+" close"))
 	return b.String()
 }
 
 // renderResourcePreview renders a read resource's text in a preview pane.
-func renderResourcePreview(th theme.Theme, st mcpState) string {
+// hk carries the LIVE keyMap markings (issue #457): the ExpandTools chord for the
+// collapse marker when the preview exceeds the line cap, and the Choose/Close
+// chords for the insert/back footer.
+func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("resource preview") + "\n\n")
-	b.WriteString(th.Style("toolArgs").Render(truncateLines(st.preview, maxToolResultLines)) + "\n")
-	b.WriteString("\n" + th.Style("muted").Render("enter insert into prompt · esc back"))
+	b.WriteString(th.Style("toolArgs").Render(truncateLinesTailMark(st.preview, maxToolResultLines, "", hk.expandTools)) + "\n")
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+" insert into prompt · "+focusBackHint(hk)))
 	return b.String()
 }
 
 // renderPromptList renders the scrollable prompt picker.
-func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities) string {
+func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("MCP prompts") + "\n")
 	if footer := mcpStatusLine(th, st); footer != "" {
@@ -604,12 +613,12 @@ func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities) str
 		line := fmt.Sprintf("%s  %s%s", sanitizeTerminal(p.Name), sanitizeTerminal(p.Server), marker)
 		b.WriteString(renderRow(th, line, i == st.prCursor) + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("↑/↓ move · enter select · esc close"))
+	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" select · "+hk.closeOnly+" close"))
 	return b.String()
 }
 
 // renderPromptArgs renders the required-argument entry form.
-func renderPromptArgs(th theme.Theme, st mcpState) string {
+func renderPromptArgs(th theme.Theme, st mcpState, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render(
 		"arguments for "+sanitizeTerminal(st.argPrompt.Name)) + "\n")
@@ -626,7 +635,9 @@ func renderPromptArgs(th theme.Theme, st mcpState) string {
 		}
 		b.WriteString(label + "\n  " + f.input.View() + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("↑/↓ field · enter next/submit · esc back"))
+	// Arrow field navigation is a genuinely fixed form control (onPromptArgsKey
+	// consumes the raw up/down strings); Choose and Close are keyMap-backed.
+	b.WriteString("\n" + th.Style("muted").Render("↑/↓ field · "+hk.choose+" next/submit · "+focusBackHint(hk)))
 	return b.String()
 }
 

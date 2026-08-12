@@ -15,8 +15,10 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // TestOpenCodeListerStampsImageModality is the F1 regression: OpenCode Go's
@@ -89,6 +91,35 @@ func (f *fakeLister) ListModels(context.Context) ([]modelEntry, error) {
 		return nil, f.err
 	}
 	return f.models, nil
+}
+
+type principalLister struct {
+	seen chan *session.Principal
+}
+
+func (l *principalLister) ListModels(ctx context.Context) ([]modelEntry, error) {
+	l.seen <- session.PrincipalFromContext(ctx)
+	return []modelEntry{{ID: "live/model"}}, nil
+}
+
+func TestStartupModelRefreshListerSeesSystemPrincipal(t *testing.T) {
+	lister := &principalLister{seen: make(chan *session.Principal, 1)}
+	reg := regWithLister(lister)
+	closer := startLiveModelRefresh(port.NopDiagnostics{}, reg, newFakeSwapper(), false, 0)
+	defer closer()
+
+	select {
+	case got := <-lister.seen:
+		if got == nil {
+			t.Fatal("lister principal is nil, want explicit system principal")
+		}
+		if got.Issuer != syscaller.Issuer || got.Subject != string(syscaller.RootModelCatalogRefresh) || got.GrantType != session.GrantTypeSystem {
+			t.Fatalf("lister principal = %+v, want issuer=%q subject=%q grant=%q", got,
+				syscaller.Issuer, syscaller.RootModelCatalogRefresh, session.GrantTypeSystem)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("startup model refresh did not call lister")
+	}
 }
 
 // regWithLister builds a registry with openai (no lister) + openrouter (the given

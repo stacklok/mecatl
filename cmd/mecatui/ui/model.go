@@ -704,6 +704,8 @@ func New(deps Deps) Model {
 		deps.Ctx = context.Background()
 	}
 	th := deps.Theme
+	keys := applyKeyOverrides(defaultKeys(), deps.KeyOverrides)
+	hk := keyMarkings(keys)
 
 	ta := textarea.New()
 	// The mode-coloured rail border (renderInputRail) is the SINGLE vertical accent cue,
@@ -713,7 +715,7 @@ func New(deps Deps) Model {
 	// ShowLineNumbers — which covers both New()'s internal SetWidth and the later onResize.
 	ta.Prompt = ""
 	ta.ShowLineNumbers = false
-	ta.Placeholder = "Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)"
+	ta.Placeholder = "Ask mecatl to do something…  (" + hk.submit + " to send · " + hk.newlineFirst + " for newline · " + hk.help + " for help)"
 	ta.SetHeight(3)
 	ta.Focus()
 
@@ -733,8 +735,8 @@ func New(deps Deps) Model {
 
 	return Model{
 		deps:  deps,
-		keys:  applyKeyOverrides(defaultKeys(), deps.KeyOverrides),
-		rend:  newRenderer(th),
+		keys:  keys,
+		rend:  newRenderer(th, keyMarkings(keys)),
 		phase: phaseConnecting,
 		ta:    ta,
 		sp:    sp,

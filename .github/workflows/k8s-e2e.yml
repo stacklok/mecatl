@@ -1,10 +1,11 @@
 # kind-based k8s e2e suite for mecak8s (ADR 0048).
 #
 # Spins a real kind cluster + Redis StatefulSet + two storage-free mecak8s agent
-# replicas and asserts lease exclusion, graceful failover, and session persistence.
-# The suite lives under e2e/k8s/ (build tag `kind_e2e`); `task e2e:k8s` runs
-# `go test -tags kind_e2e -count=1 -timeout 15m ./e2e/k8s/...`. Slow (~3-5 min) and
-# needs Docker, so it is NOT part of `task test` and runs only on relevant-path
+# replicas and asserts lease exclusion, graceful failover, session persistence,
+# and caller identity against an in-cluster Dex OIDC provider. The suite lives
+# under e2e/k8s/ (build tag `kind_e2e`); `task e2e:k8s` runs
+# `GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...`. Slow
+# (~5-8 min) and needs Docker, so it is NOT part of `task test` and runs only on
 # changes (the mecak8s binary, the Redis store, the server surface it composes, the
 # deploy manifests, the suite itself, and the build config).
 #
@@ -28,26 +29,36 @@ on:
     branches: [main]
     paths:
       - cmd/mecak8s/**
+      - internal/cliconfig/**
       - internal/adapter/redisstore/**
+      - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
       - deploy/mecak8s/**
+      - deploy/mecak8s-oidc/**
       - e2e/k8s/**
+      - go.mod
+      - go.sum
       - .ko.yaml
       - Taskfile.yml
       - .github/workflows/k8s-e2e.yml
   pull_request:
     paths:
       - cmd/mecak8s/**
+      - internal/cliconfig/**
       - internal/adapter/redisstore/**
+      - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
       - deploy/mecak8s/**
+      - deploy/mecak8s-oidc/**
       - e2e/k8s/**
+      - go.mod
+      - go.sum
       - .ko.yaml
       - Taskfile.yml
       - .github/workflows/k8s-e2e.yml
@@ -71,8 +82,8 @@ jobs:
   k8s-e2e:
     name: k8s e2e (kind)
     runs-on: ubuntu-24.04
-    # The suite normally finishes in ~3-5 minutes; 20 covers a slow kind pull day.
-    # This is the cheap backstop UNDER the suite's own 15m `go test -timeout`.
+    # The suite normally finishes in ~5-8 minutes; 20 covers a slow kind pull day.
+    # This is the cheap backstop UNDER the suite's own 30m `go test -timeout`.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +105,17 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Validate the published base and OIDC overlay before the runtime suite. The
+      # Dex fixture adds its test-only private-issuer relaxation imperatively, so
+      # it cannot prove the operator-facing overlay remains safe or well-formed.
+      - name: Install deploy manifest validators
+        run: |
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.1
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+
+      - name: task deploy:check
+        run: task deploy:check
+
       # kind: pinned version, installed via `go install` (no third-party action —
       # the house idiom for go-installable tools, matching actionlint/govulncheck
       # in ci.yml). v0.32.0 is the current release.
@@ -109,7 +131,7 @@ jobs:
       # kubectl is pre-installed on ubuntu-24.04 runners; no install step.
 
       # `task e2e:k8s` == `task build` (deps), then
-      # `go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...`.
+      # `GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...`.
       # KO_DOCKER_REPO=ko.local keeps the image local (no push, no credentials).
       # The suite builds + resolves in a SINGLE `ko resolve` step (one image ref,
       # no retagging), then `<runtime> save` + `kind load image-archive` loads the

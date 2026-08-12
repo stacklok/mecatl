@@ -74,6 +74,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // defaultContextWindowTokens is the model context window the loop uses to decide
@@ -1416,7 +1417,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if agentClose == nil {
 		agentClose = func() {}
 	}
-	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, eventLog, agentReg)
+	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, agentReg)
 	if err != nil {
 		agentClose()
 		storeClose()
@@ -2592,7 +2593,7 @@ func chainClose(first, second func()) func() {
 // resolveAgentSeam (FS or driver) — threaded in, never re-resolved here, so
 // every consumer (catalog, per-session factory, snapshot, team wiring) shares
 // the same registry.
-func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store port.SessionStore, eventLog port.EventLog, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, *server.ScheduleManagerImpl, func(), error) {
+func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store port.SessionStore, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, *server.ScheduleManagerImpl, func(), error) {
 	// SkillDraft trust boundary: when enabled, the quarantine dir must live OUTSIDE
 	// the workspace root (so the model's workspace-confined Write/Edit cannot reach
 	// it) and be disjoint from every active skills dir. Fatal on a misconfig.
@@ -2663,7 +2664,6 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	scheduleMgr := server.NewScheduleManager(server.ScheduleManagerConfig{
 		Store:         store,
 		ScheduleStore: toolSchedStore,
-		EventLog:      eventLog,
 		Diagnostics:   cfg.diag(),
 	})
 	scheduleManagerFactory := func() port.ScheduleManager {
@@ -4550,6 +4550,9 @@ func registerSkillDraft(ctx context.Context, cfg Config, cat *tool.Catalog, exis
 // goroutine when MemoryConsolidateInterval is positive. It shares ctx (so the loop
 // exits on shutdown) and the same LLM provider as the agent.
 func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) {
+	// No caller: the consolidator runs as the explicit system principal
+	// (ADR 0100 decision 7).
+	ctx = syscaller.Context(ctx, syscaller.RootMemoryConsolidation)
 	if cfg.MemoryConsolidateInterval <= 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "memory consolidation DISABLED")
 		return
@@ -4575,6 +4578,9 @@ func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.Memory
 // false otherwise — a small testability seam so a test can assert the OFF-by-default
 // posture (interval 0 ⇒ no goroutine) without observing the background loop.
 func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) bool {
+	// No caller: the consolidator runs as the explicit system principal
+	// (ADR 0100 decision 7).
+	ctx = syscaller.Context(ctx, syscaller.RootUserModelConsolidation)
 	if cfg.UserModelConsolidateInterval <= 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model consolidation DISABLED")
 		return false

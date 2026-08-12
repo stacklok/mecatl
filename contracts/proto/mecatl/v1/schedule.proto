@@ -199,6 +199,15 @@ message ScheduleSpec {
   // with StopTimeout when it lapses. Per-fire: each fire gets a fresh deadline
   // from its own start instant. The store stores it inertly.
   google.protobuf.Duration fire_timeout = 19;
+  // owner is the verified caller the schedule is attributed to (ADR 0100
+  // decision 6), captured ONCE at create time from the create SURFACE — the
+  // executing session's owner on the Schedule-tool path, the context principal
+  // on an out-of-band REST/CLI create. It is READ-ONLY on the wire: a create or
+  // update REQUEST's owner is IGNORED (a caller can no more name a schedule's
+  // owner than it can name a session's — CreateSessionRequest has no owner field
+  // for the same reason), and the server projects the captured value on every
+  // read. Absent = an ownerless schedule, never a fabricated principal.
+  Principal owner = 20;
 }
 
 // ScheduleState is the durable FIRING state of a schedule — the mutable half

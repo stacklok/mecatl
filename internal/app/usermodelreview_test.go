@@ -34,12 +34,16 @@ func (r *recordingHookRunner) Run(_ context.Context, _ governance.HookEvent) (go
 // after Load (no child engine run, no LLM), making each decorator FIRE observable on
 // the channel without background churn.
 type signalStore struct {
-	loaded chan struct{}
+	loaded    chan struct{}
+	principal chan *session.Principal
 }
 
-func newSignalStore() *signalStore { return &signalStore{loaded: make(chan struct{}, 16)} }
+func newSignalStore() *signalStore {
+	return &signalStore{loaded: make(chan struct{}, 16), principal: make(chan *session.Principal, 16)}
+}
 
-func (s *signalStore) Load(_ context.Context, id session.SessionID) (*session.Session, error) {
+func (s *signalStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	s.principal <- session.PrincipalFromContext(ctx)
 	s.loaded <- struct{}{}
 	// Empty conversation → renderTranscript empty → Review returns before any run.
 	return session.New(id, session.ModeDefault, "/proj", session.Limits{}, time.Now()), nil
@@ -118,6 +122,33 @@ func TestUserModelReviewHooksFiresOnStopDebounced(t *testing.T) {
 	// The inner runner saw every Run, fire or not (delegation is unconditional).
 	if inner.calls != 7 {
 		t.Errorf("inner runner Run calls = %d, want 7 (every Run delegates)", inner.calls)
+	}
+}
+
+func TestUserModelReviewHooksPreservesPrincipal(t *testing.T) {
+	store := newSignalStore()
+	hooks := newUserModelReviewHooks(&recordingHookRunner{}, minimalReviewer(t, store), 1, port.NopDiagnostics{})
+	principal := &session.Principal{
+		Issuer:    "https://idp.example",
+		Subject:   "alice",
+		GrantType: session.GrantTypeUser,
+	}
+
+	if _, err := hooks.Run(session.WithPrincipal(context.Background(), principal), governance.HookEvent{
+		Phase: governance.PhaseStop, SessionID: "s",
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !store.firedWithin(t) {
+		t.Fatal("review did not load the source session")
+	}
+	select {
+	case got := <-store.principal:
+		if got == nil || *got != *principal {
+			t.Fatalf("Load principal = %#v, want %#v", got, principal)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Load did not observe a principal")
 	}
 }
 

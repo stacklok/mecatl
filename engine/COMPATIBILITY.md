@@ -138,6 +138,7 @@ honour.
 | cumulative `Usage` | **MUST** | the **SUM** of every per-run `EvResult.Usage` (each `EvResult.Usage` is PER-RUN; the budget brake reads the cumulative aggregate) |
 | `Title` | **MUST** (best-effort) | seeded from the FIRST genuine `EvUserPrompt` (via `session.SetTitle`, set-once + clamped); a synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the title survives compaction. |
 | creation metadata: id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta` |
+| identity labels: `Owner` (the verified caller), `Authority` (Track C, inert) | **not event-carried** — safe to lose on a pure fold | the snapshot (`sessnap`, restored via the write-once `Session.RestoreLabels`). Per [ADR 0100](../docs/adr/0100-caller-identity-threading.md) the event annotation is log-only and the fold neither requires nor re-derives it, so a fold-rebuilt session keeps whatever owner the snapshot restored — and an ownerless one stays ownerless (**never** fabricated or backfilled). |
 | `Counters` (turns / tool calls / consecutive failures) | run-scoped — reflects the **latest run segment** (they reset on `Reopen`), derived from the latest run's events | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
 | run plumbing (diagnostics binding, askID serials, ctx) | safe to lose — rebuilt fresh | n/a |
 

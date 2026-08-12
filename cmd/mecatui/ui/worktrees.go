@@ -286,17 +286,17 @@ func filterWorktrees(wts []client.Worktree, q string) []client.Worktree {
 
 // renderWorktreesOverlay draws the picker (or its post-Enter confirmation
 // overlay). Mirrors renderModelsOverlay's centred-card shape.
-func renderWorktreesOverlay(th theme.Theme, st worktreesState, caps client.Capabilities, width, height int) string {
+func renderWorktreesOverlay(th theme.Theme, st worktreesState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	switch st.view {
 	case worktreesConfirm:
-		return renderWorktreesConfirm(th, st, width, height)
+		return renderWorktreesConfirm(th, st, hk, width, height)
 	default:
-		return renderWorktreesPanel(th, st, caps, width, height)
+		return renderWorktreesPanel(th, st, caps, hk, width, height)
 	}
 }
 
 // renderWorktreesPanel renders the worktree list card.
-func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabilities, _, _ int) string {
+func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabilities, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("worktrees") + "\n")
 	b.WriteString(th.Style("muted").Render("select a worktree to start a new session rooted there") + "\n\n")
@@ -306,7 +306,7 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 	}
 	if st.err != nil {
 		b.WriteString(th.Style("errorText").Render("could not list worktrees: " + sanitizeTerminal(st.err.Error())))
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
 	if len(st.filtered) == 0 {
@@ -315,7 +315,7 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 		} else {
 			b.WriteString(th.Style("muted").Render("no worktrees found"))
 		}
-		b.WriteString("\n" + th.Style("muted").Render("esc: close"))
+		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
 	for i, w := range st.filtered {
@@ -334,12 +334,14 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: select  esc: close"))
+	// The Choose/Close chords read the LIVE keyMap markings (issue #457); with
+	// defaults the hint is byte-identical to the historical literal.
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": select  "+hk.closeOnly+": close"))
 	return b.String()
 }
 
 // renderWorktreesConfirm renders the post-Enter confirmation card.
-func renderWorktreesConfirm(th theme.Theme, st worktreesState, _, _ int) string {
+func renderWorktreesConfirm(th theme.Theme, st worktreesState, hk helpKeys, _, _ int) string {
 	w := st.confirm
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("switch workspace") + "\n\n")
@@ -348,7 +350,7 @@ func renderWorktreesConfirm(th theme.Theme, st worktreesState, _, _ int) string 
 	if w.Branch != "" {
 		b.WriteString(th.Style("muted").Render("  branch: "+sanitizeTerminal(w.Branch)) + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render("enter: switch  esc: back"))
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": switch  "+hk.closeOnly+": back"))
 	return b.String()
 }
 

@@ -133,15 +133,28 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 	return mgr.FireNow(ctx, name)
 }
 
-// EmitScheduleEvent delegates to the embedded scheduleManager. The manager
-// appends a SchedulePayload as an EvSchedule* event to the fire session's
-// durable EventLog (nil EventLog ⇒ a no-op). When no manager is wired it is a
-// no-op too (the byte-identical no-emit path — there is no schedule surface to
-// emit for).
-func (s *Service) EmitScheduleEvent(payload session.SchedulePayload) {
-	if m := s.schedMgr; m != nil {
-		m.EmitScheduleEvent(payload)
+// EmitScheduleEvent appends a SchedulePayload as an EvSchedule* event to the fire
+// session's durable EventLog. It is the composition-injected emit callback the
+// scheduler invokes (via scheduler.Config.EmitScheduleEvent) for fired/failed/
+// skipped fires. For v1 delivery is durable-log-only (pull-only via
+// GetFire/ListFires); a live broadcast stream is a future phase. A skipped fire
+// (no session id) is dropped from the durable log (the log is session-keyed) and
+// surfaces only via the operator diagnostic.
+//
+// It routes through the ONE appendEvent chokepoint so the lifecycle events are
+// stamped with the acting caller exactly like the fire's run events — the
+// scheduler's system principal for a tick fire, the requester for a manual
+// FireNow (ADR 0100 decision 5: every durable append path stamps). ctx is the
+// caller's; it is cancel-detached here so a fire's finished/cancelled ctx cannot
+// abort the durable append, while its VALUES (the principal) survive.
+func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.SchedulePayload) {
+	if payload.SessionID == "" {
+		return
 	}
+	s.appendEvent(context.WithoutCancel(ctx), payload.SessionID, session.Event{
+		Type:     scheduleEventType(payload.Kind),
+		Schedule: &payload,
+	})
 }
 
 // scheduleStore returns the ScheduleStore the capabilities gate (Scheduling)

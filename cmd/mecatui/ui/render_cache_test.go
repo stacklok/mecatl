@@ -30,7 +30,7 @@ import (
 // newCacheRenderer builds a renderer at a fixed width, mirroring the model's
 // post-WindowSizeMsg state, for the pure renderer-level tests.
 func newCacheRenderer() *renderer {
-	r := newRenderer(theme.New("aztec", theme.AztecPalette()))
+	r := newRenderer(theme.New("aztec", theme.AztecPalette()), defaultHelpKeys())
 	r.setWidth(100)
 	return r
 }
@@ -49,7 +49,7 @@ func newCacheRenderer() *renderer {
 func assertCacheMatchesFresh(t *testing.T, step string, cached *renderer, c *conversation, expand bool) {
 	t.Helper()
 	got := cached.renderConversation(c, expand)
-	fresh := newRenderer(cached.th)
+	fresh := newRenderer(cached.th, defaultHelpKeys())
 	fresh.setWidth(cached.width)
 	want := fresh.renderConversation(c, expand)
 	if got != want {
@@ -340,7 +340,7 @@ func TestSettledBlocksRenderOnceDuringStreaming(t *testing.T) {
 
 	// And the cache is output-invisible: the cached render matches a fresh one.
 	got := m.rend.renderConversation(&m.conv, m.expandTools)
-	fresh := newRenderer(m.rend.th)
+	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
 	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
 		t.Errorf("cached render diverged from fresh render after streaming:\n got %q\nwant %q",
@@ -378,7 +378,7 @@ func TestBlockCacheInvalidatesOnWidthChange(t *testing.T) {
 	if n := r.blockRenders - base; n != len(c.blocks) {
 		t.Errorf("width change should re-render every block exactly once: got %d renders, want %d", n, len(c.blocks))
 	}
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(80)
 	if want := fresh.renderConversation(c, false); got != want {
 		t.Errorf("post-width-change render diverged from fresh:\n got %q\nwant %q",
@@ -398,7 +398,7 @@ func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	if n := r.blockRenders - base; n != len(c.blocks) {
 		t.Errorf("expand flip should re-render every block exactly once: got %d renders, want %d", n, len(c.blocks))
 	}
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
 	if want := fresh.renderConversation(c, true); got != want {
 		t.Errorf("post-expand render diverged from fresh:\n got %q\nwant %q",
@@ -425,7 +425,7 @@ func TestNonTailMutationInvalidatesOnlyThatBlock(t *testing.T) {
 	if n := r.blockRenders - base; n != 1 {
 		t.Errorf("non-tail resolve should re-render exactly the mutated block: got %d renders, want 1", n)
 	}
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
 	if want := fresh.renderConversation(c, false); got != want {
 		t.Errorf("post-resolve render diverged from fresh:\n got %q\nwant %q",
@@ -456,7 +456,7 @@ func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 	if !strings.Contains(stripANSIstr(got), "ok: 12 passed") {
 		t.Errorf("non-tail resolve through Update must render the result (stale cached card?), got:\n%s", stripANSIstr(got))
 	}
-	fresh := newRenderer(m.rend.th)
+	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
 	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
 		t.Errorf("cached render diverged from fresh after the non-tail resolve:\n got %q\nwant %q",
@@ -493,7 +493,7 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 	m.conv.addNotice("a different notice")
 	m.refreshView()
 	got := m.rend.renderConversation(&m.conv, m.expandTools)
-	fresh := newRenderer(m.rend.th)
+	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
 	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
 		t.Errorf("post-reset rebuild diverged from fresh render (index aliasing?):\n got %q\nwant %q",
@@ -538,7 +538,7 @@ func TestJoinCacheReusedWhenNothingChanged(t *testing.T) {
 			stripANSIstr(second), stripANSIstr(first))
 	}
 	// And it equals a fresh renderer's (the byte-identical guarantee).
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
 	if want := fresh.renderConversation(c, false); second != want {
 		t.Errorf("join-cached render diverged from fresh:\n got %q\nwant %q",
@@ -589,7 +589,7 @@ func TestJoinCacheInvalidatesOnWidthChange(t *testing.T) {
 
 	r.setWidth(80)
 	got := r.renderConversation(c, false)
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(80)
 	if want := fresh.renderConversation(c, false); got != want {
 		t.Errorf("post-width-change join diverged from fresh:\n got %q\nwant %q",
@@ -605,7 +605,7 @@ func TestJoinCacheInvalidatesOnExpandToggle(t *testing.T) {
 	r.renderConversation(c, false)
 
 	got := r.renderConversation(c, true)
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
 	if want := fresh.renderConversation(c, true); got != want {
 		t.Errorf("post-expand-toggle join diverged from fresh:\n got %q\nwant %q",
@@ -626,7 +626,7 @@ func TestJoinCacheInvalidatesOnBlockAppend(t *testing.T) {
 	if !strings.Contains(stripANSIstr(got), "a freshly appended prompt") {
 		t.Error("join after append must include the new block (stale join served?)")
 	}
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
 	if want := fresh.renderConversation(c, false); got != want {
 		t.Errorf("post-append join diverged from fresh:\n got %q\nwant %q",
@@ -650,7 +650,7 @@ func TestJoinCacheInvalidatesOnLiveBlockMutation(t *testing.T) {
 	if !strings.Contains(stripANSIstr(got), "second fragment") {
 		t.Error("join after a live-block mutation must include the new content (stale join served?)")
 	}
-	fresh := newRenderer(r.th)
+	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
 	if want := fresh.renderConversation(c, false); got != want {
 		t.Errorf("post-live-mutation join diverged from fresh:\n got %q\nwant %q",
@@ -676,7 +676,7 @@ func joinLinesString(r *renderer, c *conversation, expand bool) string {
 // freshConvString is the oracle: a brand-new renderer's renderConversation string
 // at the given width/expand.
 func freshConvString(th theme.Theme, width int, c *conversation, expand bool) string {
-	fresh := newRenderer(th)
+	fresh := newRenderer(th, defaultHelpKeys())
 	fresh.setWidth(width)
 	return fresh.renderConversation(c, expand)
 }

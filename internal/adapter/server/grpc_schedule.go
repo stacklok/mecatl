@@ -192,6 +192,16 @@ func (h *ScheduleServer) ListFires(ctx context.Context, req *mecatlv1.ListFiresR
 // error (the create-seam's Trigger.Validate rejects it). Timestamps without a
 // created_at are left zero (the create-seam stamps CreatedAt itself, so a caller
 // need not set it — an honest overwrite, not a silent default).
+//
+// It deliberately does NOT read in.Owner (ADR 0100 decision 6): a schedule's
+// owner is captured by the create seam from the create SURFACE (the executing
+// session's owner, or the verified context principal), never from the request
+// body — the same discipline that keeps an owner field off CreateSessionRequest.
+// The field is projected OUTBOUND only (scheduleSpecToProto).
+//
+// OriginSessionID is likewise deliberately never populated here and has no v1
+// proto field. It is an in-process-only routing key stamped by the Schedule tool
+// from the executing session; network callers cannot select a delivery target.
 func protoToScheduleSpec(in *mecatlv1.ScheduleSpec) (port.ScheduleSpec, error) {
 	out := port.ScheduleSpec{
 		Name:              in.GetName(),
@@ -271,6 +281,10 @@ func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 		OneShotRetry:      in.OneShotRetry,
 		OneShotMaxRetries: ClampInt32(in.OneShotMaxRetries),
 		CarryContext:      in.CarryContext,
+		// The captured owner is projected read-only (ADR 0100 decision 6); a nil
+		// owner stays a nil message — an ownerless schedule is never rendered as
+		// an anonymous somebody.
+		Owner: toProtoPrincipal(in.Owner),
 	}
 	if in.Trigger.Cron != "" || !in.Trigger.OneShot.IsZero() {
 		out.Trigger = &mecatlv1.TriggerSpec{

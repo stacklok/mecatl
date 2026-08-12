@@ -59,7 +59,7 @@ func TestQuitGuardFirstCtrlCEmptyArms(t *testing.T) {
 	if m.tickArmed {
 		t.Error("arming the quit guard must not arm the render tick (wrong command scheduled)")
 	}
-	if m.statusMsg != quitHint {
+	if m.statusMsg != quitHintFor(defaultKeys().Quit) {
 		t.Errorf("status should carry the quit hint, got %q", m.statusMsg)
 	}
 	footer := stripANSIstr(m.renderFooter())
@@ -105,7 +105,7 @@ func TestQuitGuardInterveningKeyDisarms(t *testing.T) {
 	if m.quitArmed {
 		t.Error("an intervening key should disarm the guard")
 	}
-	if m.statusMsg == quitHint {
+	if m.statusMsg == quitHintFor(defaultKeys().Quit) {
 		t.Error("an intervening key should clear the quit hint")
 	}
 	// Render-level proof: the footer no longer carries the armed hint.
@@ -172,7 +172,7 @@ func TestQuitDisarmMsgGenStaleVsMatching(t *testing.T) {
 	if m.quitArmed {
 		t.Error("a matching-gen disarm tick should disarm the guard")
 	}
-	if m.statusMsg == quitHint {
+	if m.statusMsg == quitHintFor(defaultKeys().Quit) {
 		t.Error("disarm should clear the quit hint")
 	}
 	// Render-level proof (not just statusMsg): the footer must no longer carry the

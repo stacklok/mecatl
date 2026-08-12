@@ -989,7 +989,7 @@ func TestFireNowEmitCallback(t *testing.T) {
 
 	var gotMu sync.Mutex
 	var got []session.SchedulePayload
-	emit := func(p session.SchedulePayload) {
+	emit := func(_ context.Context, p session.SchedulePayload) {
 		gotMu.Lock()
 		got = append(got, p)
 		gotMu.Unlock()
@@ -1056,7 +1056,7 @@ func TestFireNowStopErrorEmitsFailed(t *testing.T) {
 
 	var gotMu sync.Mutex
 	var got []session.SchedulePayload
-	emit := func(p session.SchedulePayload) {
+	emit := func(_ context.Context, p session.SchedulePayload) {
 		gotMu.Lock()
 		got = append(got, p)
 		gotMu.Unlock()

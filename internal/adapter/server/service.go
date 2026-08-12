@@ -1011,7 +1011,6 @@ func NewService(cfg Config) (*Service, error) {
 			Store:       cfg.Store,
 			Now:         cfg.Now,
 			Models:      &svc.models,
-			EventLog:    cfg.EventLog,
 			Diagnostics: cfg.Diagnostics,
 		})
 	}
@@ -1113,6 +1112,12 @@ type createSessionOpts struct {
 	// first Store.Save so the seeded history is persisted. Empty = no carryover
 	// (byte-identical default).
 	sourceSessionID session.SessionID
+	// owner overrides the context principal as the created session's owner
+	// (ADR 0100 decision 4). ownerSet distinguishes "WithOwner was called
+	// (possibly with nil — an explicitly ownerless session)" from "never
+	// called", which falls back to session.PrincipalFromContext.
+	owner    *session.Principal
+	ownerSet bool
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1138,6 +1143,34 @@ func WithSessionID(id session.SessionID) CreateSessionOption {
 // (no option) is the byte-identical no-carryover path.
 func WithSourceSession(id session.SessionID) CreateSessionOption {
 	return func(o *createSessionOpts) { o.sourceSessionID = id }
+}
+
+// WithOwner overrides the owner a CreateSession* call stamps on the new session
+// (ADR 0100 decision 4). By DEFAULT the owner comes from the verified principal
+// on the context (session.PrincipalFromContext) — a caller can never name its
+// own owner in the request body, which is why CreateSessionRequest has no owner
+// field. This option is the in-process injection seam for a caller that already
+// holds the owning principal out of band: the scheduler fire path, which runs
+// under the system principal but must attribute the fire session to the
+// SCHEDULE's captured owner.
+//
+// WithOwner(nil) is the EXPLICIT ownerless injection (a system-owned session
+// with nobody to attribute it to) and does NOT fall back to the context
+// principal — a fabricated owner is worse than none.
+func WithOwner(p *session.Principal) CreateSessionOption {
+	return func(o *createSessionOpts) { o.owner, o.ownerSet = p, true }
+}
+
+// resolveOwner picks the owner a create stamps: the explicit WithOwner value
+// when the option was passed (nil included — see WithOwner), else the verified
+// principal riding the context. An absent principal yields nil — the ownerless
+// no-auth path, byte-identical to the pre-ADR-0100 behaviour. It NEVER
+// fabricates one.
+func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principal {
+	if opts.ownerSet {
+		return opts.owner
+	}
+	return session.PrincipalFromContext(ctx)
 }
 
 // CreateSession allocates a new idle session on the SHARED engine, persists it,
@@ -1210,11 +1243,17 @@ func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string
 // empty-selector default profile this writes the zero values, so a default
 // session's snapshot is byte-identical to a pre-Phase-1 one (the labels omitempty
 // out of the JSON).
-func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile) {
+func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal) error {
 	sess.Profile = string(profile)
 	sess.ProviderID = sel.ProviderID
 	sess.ModelID = sel.ModelID
 	sess.ReasoningEffort = sel.ReasoningEffort
+	// The owner is WRITE-ONCE and is stamped through the aggregate (Session is an
+	// aggregate — never poke the field). On a freshly-minted session the slot is
+	// empty, so this cannot collide; the error is propagated rather than dropped so
+	// a future caller that re-labels a LOADED session fails loudly instead of
+	// silently re-owning it. A nil owner leaves the session ownerless.
+	return sess.RestoreLabels(owner, "")
 }
 
 // seedCarryover seeds the freshly-created (idle) session with an optional
@@ -1339,13 +1378,21 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// DefaultResolvedModel inside validateCarryover); a SAME-provider carryover
 	// replays the history verbatim, a CROSS-provider carryover strips the
 	// provider-private blobs (session.StripProviderState).
+	// The owner stamped on the new session: the explicit WithOwner injection, else
+	// the verified principal on the context, else nil (the ownerless no-auth path).
+	// A carryover fork replaces it with the SOURCE's owner below.
+	owner := resolveOwner(ctx, opts)
+
 	var carrySnap []session.Message
 	if opts.sourceSessionID != "" {
-		snap, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
+		snap, srcOwner, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
 		if err != nil {
 			return nil, err
 		}
 		carrySnap = snap
+		// A fork inherits the SOURCE's owner, overriding the context principal
+		// (and any WithOwner) — see validateCarryover.
+		owner = srcOwner
 	}
 
 	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace)
@@ -1355,7 +1402,9 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		// exactly the no-per-session case), so setLabels persists nothing new — the
 		// snapshot stays byte-identical to a pre-Phase-1 default session.
 		sess := session.New(mintID(), mode, workspace, limits, s.cfg.Now())
-		setSessionLabels(sess, sel, profile)
+		if err := setSessionLabels(sess, sel, profile, owner); err != nil {
+			return nil, err
+		}
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
@@ -1365,7 +1414,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		return sess, nil
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -1376,7 +1425,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // evicts the reservation and tears the freshly-built engine down so a failed
 // create leaks neither a slot nor a connection. See createSession for the
 // profile-aware workspace rule and the carryover snapshot semantics.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal) (*session.Session, error) {
 	if s.cfg.SessionEngine == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
@@ -1404,7 +1453,12 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
 	// default-provider floor / inferring the profile from the empty-workspace pun.
-	setSessionLabels(sess, sel, profile)
+	if err := setSessionLabels(sess, sel, profile, owner); err != nil {
+		if closeFn != nil {
+			_ = closeFn()
+		}
+		return nil, err
+	}
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -1935,7 +1989,12 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 		sel.ReasoningEffort = effortOverride
 	}
 	profile := profileForSession(src)
-	setSessionLabels(forked, sel, profile)
+	// The fork inherits the SOURCE's owner (ADR 0100 decision 4), NOT the
+	// principal of whoever called ForkSession — otherwise fork is an
+	// ownership-laundering path. An ownerless source forks ownerless.
+	if err := setSessionLabels(forked, sel, profile, src.Owner); err != nil {
+		return "", err
+	}
 	if title != "" {
 		forked.Title = title
 	} else {
@@ -1993,14 +2052,20 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 // default). The model is intentionally NOT compared: a model mismatch within a
 // provider is the point of the /models picker switch, so a same-provider
 // model change is permitted; a cross-provider model change strips and replays.
-func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, error) {
+func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, error) {
 	src, err := s.loadAndReopen(ctx, srcID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if src.State == session.StateRunning || src.State == session.StateAwaiting {
-		return nil, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
+		return nil, nil, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
+	// The SOURCE's owner travels with the carried history (ADR 0100 decision 4):
+	// a fork is attributed to whoever owned the session it copied, never to the
+	// caller doing the forking — otherwise fork is an ownership-laundering path
+	// (copy someone else's session, become its owner). An ownerless source
+	// yields an ownerless fork, never a fabricated one.
+	srcOwner := src.Owner
 	// Canonicalise each side: empty => the server default provider, mirroring how
 	// createSession resolves the selector (a zero ProviderSelector rides the
 	// shared/default engine). DefaultResolvedModel.ProviderID is the composition-
@@ -2035,12 +2100,12 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 		// provider-id check, not an adapter-type check, because the server
 		// layer only has the resolved id, not the adapter.
 		if newProv == "openai" || newProv == "openrouter" {
-			return synthesizeOpenAIItemIDs(stripped), nil
+			return synthesizeOpenAIItemIDs(stripped), srcOwner, nil
 		}
-		return stripped, nil
+		return stripped, srcOwner, nil
 	}
 	// Same provider: replay the blobs verbatim (warm cache).
-	return snap, nil
+	return snap, srcOwner, nil
 }
 
 // synthesizeOpenAIItemIDs synthesises a stable, unique ItemID for every ToolCall
@@ -3183,14 +3248,43 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 // way they gate Persist). A nil EventLog is a no-op (byte-identical to pre-3a).
 // An Append failure is best-effort: it WARNs and never aborts the run (a broken
 // durable log must not break the live stream).
+//
+// It is ALSO the SINGLE site that stamps session.Event.Actor (ADR 0100 decision
+// 5): the attribution is derive-at-append, read from the CONTEXT PRINCIPAL — the
+// verified caller who drove this request — so the loop stays storage- and
+// identity-agnostic and every emit site leaves Actor nil. Callers pass a
+// cancel-detached ctx (context.WithoutCancel), which preserves the context VALUES
+// and therefore the caller. A request with no verified caller leaves it nil —
+// absence is never fabricated. Do not add a second stamping path.
 func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev session.Event) {
 	if s.cfg.EventLog == nil {
 		return
 	}
+	// The actor is the verified caller who ACTED, NOT the session's owner. The two
+	// are different questions and routinely different values: this phase ships no
+	// authorization, so any authenticated caller may act on any session, and an
+	// owner-derived stamp would put caller A on every event of a run caller B drove
+	// (worst on EvApproval, where the record IS a human granting a tool
+	// permission). The owner stays the identity of record for "whose is this?"; the
+	// actor answers "who did this?". PrincipalFromContext returns a COPY, so a
+	// later mutation cannot rewrite an already-recorded event.
+	ev.Actor = session.PrincipalFromContext(ctx)
 	if err := s.cfg.EventLog.Append(ctx, id, ev); err != nil {
 		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "event log append failed",
 			"session", string(id), "event", string(ev.Type), "err", err.Error())
 	}
+}
+
+// AppendRunEvent durably records one event of an in-process run through the
+// SINGLE appendEvent path — the same durability, best-effort and Actor-stamping
+// contract (never a second stamping path). It exists for the IN-PROCESS
+// consumers of a run that are not wire relays: the scheduler's fire loop
+// (internal/app) drives its "sched--" session's events itself, so without this
+// seam a scheduled fire would be the one run whose events never reach the
+// durable log. Pass a cancel-detached ctx (context.WithoutCancel), exactly as
+// the relays do, so a finished run cannot abort the write.
+func (s *Service) AppendRunEvent(ctx context.Context, id session.SessionID, ev session.Event) {
+	s.appendEvent(ctx, id, ev)
 }
 
 // relayEvent applies the SHARED per-event relay discipline (cloud-native Phase
@@ -4074,6 +4168,14 @@ type SessionSummary struct {
 	// (walks the conversation for the first genuine user prompt). Empty for a
 	// session with no genuine prompt.
 	Title string
+	// Owner is the verified caller the session is attributed to (ADR 0100), or
+	// nil for an ownerless session (a no-auth deployment, or a session persisted
+	// before the owner label existed — nothing backfills it). DISPLAY ONLY:
+	// ListSessions applies NO owner filtering, so a caller sees every stored
+	// session regardless of who owns it. Scoping belongs to the isolation track
+	// (#368), not here. Populated identically on the MetaLister fast path and the
+	// Load-per-row fallback.
+	Owner *session.Principal
 }
 
 // StreamSessionEvents replays a session's durable event log as a lazy iterator
@@ -4167,6 +4269,9 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 				summary.ModelID = sess.ModelID
 			}
 			summary.Title = DeriveTitle(sess)
+			// Clone: the row must not carry a live pointer into the loaded
+			// session, or a consumer of the row can rewrite the recorded owner.
+			summary.Owner = sess.Owner.Clone()
 		}
 		out = append(out, summary)
 	}
@@ -4199,6 +4304,7 @@ func listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]SessionSummary
 			CreatedAtUnix:  r.CreatedAt.Unix(),
 			ModelID:        r.ModelID,
 			Title:          r.Title,
+			Owner:          r.Owner.Clone(),
 		}
 		// A zero CreatedAt (a snapshot with no created_at, or a corrupt row that
 		// left CreatedAt at the zero time) maps to 0, NOT the zero time's Unix

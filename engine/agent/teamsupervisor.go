@@ -795,6 +795,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
 	sess := session.New(s.sessionID(spec.Name), mode, ws.Root(), limits, build.Engine.now())
+	// The member is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	s.caps.inheritOwner(sess)
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
 
 	// Mint the per-member cancellation pair and register the member in the PARENT

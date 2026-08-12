@@ -1047,6 +1047,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		t.limits,
 		branchEngine.now(),
 	)
+	// The branch is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	caps.inheritOwner(childSess)
 
 	run := branchEngine.Run(ctx, childSess, child, RunRequest{Text: prompt})
 	// A Parallel branch always runs in its OWN isolated fork, so its Bash asks are eligible

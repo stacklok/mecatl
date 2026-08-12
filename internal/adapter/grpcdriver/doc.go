@@ -18,7 +18,10 @@
 // writes): it holds whatever the harness persists, and a corrupt or hostile
 // payload from it fails the harness-side decode loudly — it never reaches the
 // model silently. Sanitization of model-written memory values stays in the
-// harness's memory tools; a driver is never trusted to sanitize.
+// harness's memory tools; a driver is never trusted to sanitize. The server
+// wrappers deliberately install no authentication or TLS: mount them only on
+// a separately protected operator network, or provide those controls in the
+// driver host.
 //
 // # Wire format and versioning
 //

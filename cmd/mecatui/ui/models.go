@@ -150,12 +150,12 @@ func (m Model) onModelsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		mm, cmd := m.closeModels()
 		return mm, cmd, true
-	case msg.String() == "up":
+	case msg.String() == keyMenuUp:
 		if m.models.cursor > 0 {
 			m.models.cursor--
 		}
 		return m, nil, true
-	case msg.String() == "down":
+	case msg.String() == keyMenuDown:
 		if m.models.cursor < len(m.models.filtered)-1 {
 			m.models.cursor++
 		}
@@ -738,10 +738,10 @@ func (m Model) reconcileSelection() Model {
 // renderModelsOverlay draws the picker centred over the conversation region via
 // centerCard. prov is the precomputed provenance line (modelProvenanceLine). All
 // server-derived strings are terminal-sanitized.
-func renderModelsOverlay(th theme.Theme, st modelsState, caps client.Capabilities, prov string, width, height int) string {
+func renderModelsOverlay(th theme.Theme, st modelsState, caps client.Capabilities, prov string, hk helpKeys, width, height int) string {
 	switch st.view {
 	case modelsPanel:
-		return centerCard(th, renderModelsPanel(th, st, caps, prov, modelsRowBudgetFor(height)), width, height)
+		return centerCard(th, renderModelsPanel(th, st, caps, prov, hk, modelsRowBudgetFor(height)), width, height)
 	default:
 		return ""
 	}
@@ -1017,7 +1017,7 @@ func renderProviderStatusLines(statuses []client.ProviderStatus, inventoryEmpty 
 // (so it is still visible AND a filter target). EVERY server-derived string is
 // terminal-sanitized. rowBudget clips the list to the card height (the overflow
 // fix — centerCard centres but does not clip).
-func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities, prov string, rowBudget int) string {
+func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities, prov string, hk helpKeys, rowBudget int) string {
 	var b strings.Builder
 
 	// The title carries a scroll-position indicator in the default (row-list) case so
@@ -1057,7 +1057,7 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 		// The filter matched nothing (the inventory is non-empty). A clear, distinct
 		// note with a recovery hint; the cursor is safe (clamped to 0) and enter is a
 		// no-op.
-		b.WriteString(th.Style("muted").Render("no models match "+strconv.Quote(st.filter.Value())+" — esc to clear") + "\n")
+		b.WriteString(th.Style("muted").Render("no models match "+strconv.Quote(st.filter.Value())+" — "+hk.closeOnly+" to clear") + "\n")
 	default:
 		start, end := scrollWindow(st.cursor, len(st.filtered), rowBudget)
 		for i := start; i < end; i++ {
@@ -1083,8 +1083,14 @@ func renderModelsPanel(th theme.Theme, st modelsState, caps client.Capabilities,
 		}
 	}
 
+	// The "↑/↓" arrows stay literal: the models handler scrolls on the BARE
+	// up/down keys (msg.String, deliberately NOT key.Matches on Up/Down so a
+	// rebind to k/j can't hijack a typed model name). Paging IS keymap-bound, so
+	// the compact one-sided cue reads the LIVE ScrollU marking; Choose,
+	// SetGlobalDefault, and Close are live too (issue #457). With defaults the
+	// hint is byte-identical to the historical literal.
 	b.WriteString("\n" + th.Style("muted").Render(
-		"type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close"))
+		"type to filter · ↑/↓/"+hk.scrollUp+" move · "+hk.choose+" use · "+hk.setGlobalDefault+" set global default · "+hk.closeOnly+" clear filter / close"))
 	b.WriteString("\n" + th.Style("muted").Render("● current  ★ global default"))
 	// A "reason" segment marks a model that emits reasoning; the EFFORT tier for those
 	// models is a separate per-session setting (ADR 0055) — point the user at /effort

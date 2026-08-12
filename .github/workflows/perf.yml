@@ -173,6 +173,16 @@ jobs:
             -bigger perf-scenarios-bigger.json \
             -render perf-scenarios-render.json
 
+      # `task bench`/`task perf:scenarios` run `go build`/`go test` across the whole
+      # go.work workspace, which regenerates go.work.sum whenever a module's go.sum
+      # (e.g. a dependabot bump under provider/*) isn't yet reflected in it — leaving
+      # the tree dirty. benchmark-action's internal `git switch gh-pages` then fails
+      # outright ("local changes ... would be overwritten"). Nothing below needs the
+      # working tree, so discard incidental modifications before the first switch.
+      - name: Discard incidental build-time tree changes
+        shell: bash
+        run: git checkout -- . 2>/dev/null || true
+
       # The smaller-is-better suite (allocs/op + tokens + goroutine-delta) gates the
       # PR. ONE alert-threshold (102%) covers all three metrics in this unified
       # suite; scenario allocs are therefore gated at 2% — SAFE because the LOOP
@@ -334,6 +344,13 @@ jobs:
             -smaller perf-scenarios-smaller.json \
             -bigger perf-scenarios-bigger.json \
             -render perf-scenarios-render.json
+
+      # See the perf-pr job's identical step above: `task bench`/`task perf:scenarios`
+      # can leave go.work.sum locally modified, which breaks benchmark-action's
+      # internal `git switch gh-pages`.
+      - name: Discard incidental build-time tree changes
+        shell: bash
+        run: git checkout -- . 2>/dev/null || true
 
       # The ns/op + allocs TREND dashboard (advisory — fail-on-alert:false). This is
       # the `go`-tool suite over the raw `task bench` output; it never fails a build,

@@ -339,6 +339,60 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 	}
 }
 
+// TestMCPResourcePreviewCollapse is the focused liveness assertion for the
+// resource-preview collapse path (issue #457 QA SHOULD-ADD): when a read
+// resource's body exceeds the line cap (maxToolResultLines), renderResourcePreview
+// (reached via renderBody → renderMCPOverlay → renderResourcePreview) must
+// cap the body at the limit and emit the "+N more lines · <expand> expand"
+// collapse marker carrying the LIVE ExpandTools chord. It is narrow and
+// deterministic — it drives the free-function path directly, so it covers the
+// cap + collapse marker the function-primitive golden does NOT (the golden's
+// fixture body is two lines, under the cap).
+func TestMCPResourcePreviewCollapse(t *testing.T) {
+	th := aztec()
+	hk := defaultHelpKeys()
+	expandMark := hk.expandTools
+	// A body of maxToolResultLines+5 lines trips the cap; the marker names the
+	// 5 dropped lines and the live expand chord.
+	var sb strings.Builder
+	for i := 0; i < maxToolResultLines+5; i++ {
+		sb.WriteString("line\n")
+	}
+	st := mcpState{view: mcpResourcePrev, preview: sb.String()}
+	got := stripANSIstr(renderResourcePreview(th, st, hk))
+	if !strings.Contains(got, "line") {
+		t.Fatalf("preview body missing: %q", got)
+	}
+	if !strings.Contains(got, "+5 more lines · "+expandMark+" expand") {
+		t.Errorf("preview should carry the collapse marker +5 more lines · %s expand: %q", expandMark, got)
+	}
+	// The kept body must be capped: exactly maxToolResultLines body lines
+	// precede the marker (the title/footer chrome is not body). The toolArgs
+	// style pads each line, so count "line" occurrences (one per body line).
+	marker := "+5 more lines"
+	idx := strings.Index(got, marker)
+	if idx < 0 {
+		t.Fatalf("collapse marker missing: %q", got)
+	}
+	body := got[:idx]
+	// Subtract the title's "preview" (contains "view" not "line"), so the count
+	// is the body-line count.
+	if n := strings.Count(body, "line"); n != maxToolResultLines {
+		t.Errorf("preview body should keep exactly %d body lines, got %d: %q", maxToolResultLines, n, body)
+	}
+
+	// Under the cap there is no collapse marker.
+	var short strings.Builder
+	for i := 0; i < maxToolResultLines; i++ {
+		short.WriteString("line\n")
+	}
+	shortSt := mcpState{view: mcpResourcePrev, preview: short.String()}
+	shortGot := stripANSIstr(renderResourcePreview(th, shortSt, hk))
+	if strings.Contains(shortGot, "more lines") {
+		t.Errorf("preview under the cap should not carry a collapse marker: %q", shortGot)
+	}
+}
+
 // --- prompt picker ----------------------------------------------------------
 
 func TestMCPPromptListGolden(t *testing.T) {

@@ -36,6 +36,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/cronparse"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // FireFunc is the composition-supplied callback a scheduler invokes for each
@@ -131,8 +132,11 @@ type Config struct {
 	// engine/agent import): the payload is a plain session.SchedulePayload value
 	// object, not an EventSink/port import. The scheduler invokes it from
 	// fireClaimed (fired/failed) and fireOne/FireNow (skipped) — the caller
-	// decides the kind; the callback decides where it lands.
-	EmitScheduleEvent func(payload session.SchedulePayload)
+	// decides the kind; the callback decides where it lands. The ctx is the
+	// firing caller's, so the durable append can attribute the event to whoever
+	// acted (a tick fire descends from Start's system-principal root; a manual
+	// FireNow keeps its requester) — ADR 0100 decision 5.
+	EmitScheduleEvent func(ctx context.Context, payload session.SchedulePayload)
 	// ScheduleMetrics is the OPTIONAL composition-injected metrics callback
 	// (issue #233, Phase 2b). It is nil-safe (nil = no metrics recorded — the
 	// byte-identical no-metrics path). The scheduler invokes it from
@@ -381,7 +385,7 @@ func (s *Scheduler) SetFire(f FireFunc) {
 // the scheduler is fully functional, just silent on the schedule lifecycle).
 // Composition calls it after SetFire (so the FireFunc is bound) and before
 // Start (so the callback is in place when the first tick fires).
-func (s *Scheduler) SetEmitScheduleEvent(cb func(payload session.SchedulePayload)) {
+func (s *Scheduler) SetEmitScheduleEvent(cb func(ctx context.Context, payload session.SchedulePayload)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.started.Load() {
@@ -501,6 +505,12 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	if !s.started.CompareAndSwap(false, true) {
 		return nil
 	}
+	// The lifecycle root has no caller: every context the tick, fire, delivery
+	// and reconcile paths use descends from here (context.WithoutCancel keeps
+	// values), so this ONE wrap runs them all as the explicit system principal
+	// (ADR 0100 decision 7). FireNow is deliberately NOT wrapped — a manual fire
+	// keeps its requester's identity.
+	ctx = syscaller.Context(ctx, syscaller.RootScheduler)
 	if s.cfg.Fire == nil {
 		s.started.Store(false)
 		panic("scheduler: Start called before SetFire (Fire is nil)")
@@ -962,7 +972,7 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 			defer rel() // release the trial lease when fireOne returns
 		}
 		if overlap {
-			s.emitSchedule(session.SchedulePayload{
+			s.emitSchedule(ctx, session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
 				Kind:         scheduleKindSkipped,
 			})
@@ -1007,7 +1017,7 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	}
 
 	if skipFire {
-		s.emitSchedule(session.SchedulePayload{
+		s.emitSchedule(ctx, session.SchedulePayload{
 			ScheduleName: sched.Spec.Name,
 			Kind:         scheduleKindSkipped,
 		})
@@ -1080,7 +1090,7 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 			Err:          fire.Err,
 		}
 	}
-	s.emitSchedule(payload)
+	s.emitSchedule(ctx, payload)
 	// Record the fire metrics (Claim→terminal duration). now is the Claim time
 	// fireClaimed was called with; the run is now terminal, so time.Since(now)
 	// is the end-to-end fire cost. Skipped fires (no run) record metrics with a
@@ -1109,9 +1119,9 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 // the single chokepoint for emitting an EvSchedule* payload — fireClaimed calls
 // it for fired/failed, fireOne/FireNow call it for skipped. A nil callback is the
 // byte-identical no-emit path.
-func (s *Scheduler) emitSchedule(payload session.SchedulePayload) {
+func (s *Scheduler) emitSchedule(ctx context.Context, payload session.SchedulePayload) {
 	if s.cfg.EmitScheduleEvent != nil {
-		s.cfg.EmitScheduleEvent(payload)
+		s.cfg.EmitScheduleEvent(ctx, payload)
 	}
 }
 
@@ -1181,7 +1191,7 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 			defer rel()
 		}
 		if overlap {
-			s.emitSchedule(session.SchedulePayload{
+			s.emitSchedule(ctx, session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
 				Kind:         scheduleKindSkipped,
 			})

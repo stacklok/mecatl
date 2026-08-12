@@ -98,24 +98,37 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 	// Three buttons when always-allow is offered (main-agent asks), two otherwise
 	// (surfaced subagent asks). focus indexes {allow-once, always, deny}; for a
 	// two-button modal focus only ever takes 0 (allow) or 2 (deny).
+	//
+	// The mnemonics are honest about the LIVE approval chords (issue #457 SPEC/UX
+	// gap: they were hard-coded to the word-embedded form). With the DEFAULT
+	// approval chords (a/w/d) the bracketed letter sits inside "Allow"/"Always"/
+	// "Deny" at its natural position, so the case follows the WORD's spelling
+	// (the "w" in "Al[w]ays" is lowercase because it is a middle letter, not
+	// because the chord is) — the historical word-embedded form renders
+	// byte-for-byte. When an approval chord is rebound AWAY from its default
+	// word letter, the wordplay no longer holds, so the button degrades to an
+	// honest STANDALONE form ("[Y] allow" / "[Q] always allow" / "[N] deny", or
+	// "[ctrl+y] allow" for a modified chord) so every displayed chord is the
+	// one that actually fires.
+	hk := r.marks
 	btnStyle := func(idx int) string {
 		if ask.focus == idx {
 			return "askButtonActive"
 		}
 		return "askButton"
 	}
-	allow := th.Style(btnStyle(0)).Render("[A]llow")
-	deny := th.Style(btnStyle(2)).Render("[D]eny")
+	allow := th.Style(btnStyle(0)).Render(approvalButtonLabel(hk.allow, "Allow", "allow"))
+	deny := th.Style(btnStyle(2)).Render(approvalButtonLabel(hk.deny, "Deny", "deny"))
 	var buttons string
 	if ask.offerAlways {
-		always := th.Style(btnStyle(1)).Render("Al[w]ays")
+		always := th.Style(btnStyle(1)).Render(approvalButtonLabel(hk.allowAlways, "Always", "always allow"))
 		buttons = lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", always, "  ", deny)
 	} else {
 		buttons = lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", deny)
 	}
 	b.WriteString("\n" + buttons)
 	if ask.offerAlways {
-		b.WriteString("\n" + th.Style("muted").Render("al[w]ays allows this exact command for the rest of this session"))
+		b.WriteString("\n" + th.Style("muted").Render(approvalAlwaysFootnote(hk.allowAlways)))
 	}
 
 	return centerCard(th, b.String(), width, height)
@@ -127,11 +140,13 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 // reads (scrolls the planVP), then acts.
 const planReviewFooterHeight = 3
 
-// planScrollHint is the muted hint naming the scroll keys, shown as the LAST
-// line of the pinned action bar so the operator discovers the scroll affordance
-// without reading the "?" help. The chords mirror exactly what onPlanScrollKey
-// routes to planVP (pgup/pgdn/up/down/home/end + wheel), so the hint is truthful.
-const planScrollHint = "scroll: ↑/↓ · pgup/pgdn · home/end · mouse wheel"
+// planScrollHint renders the muted scroll hint shown as the LAST line of the
+// pinned action bar. Arrow scrolling and the mouse wheel are genuinely fixed;
+// ScrollU/ScrollD and ScrollTop/ScrollBottom read the LIVE keyMap markings so a
+// rebind is advertised honestly (issue #457). Defaults remain byte-identical.
+func planScrollHint(hk helpKeys) string {
+	return "scroll: ↑/↓ · " + hk.scroll + " · " + hk.jump + " · mouse wheel"
+}
 
 // openPlanReviewView populates the dedicated plan-review viewport (planVP) with
 // the FULL plan and sizes it to the conversation region. It is the REPLACEMENT
@@ -312,18 +327,24 @@ func (m Model) renderPlanReviewView(ask pendingAsk, width, height int) string {
 	// accept edits → accept-edits mode), deny (iterate → stay in plan mode).
 	// Always is offered only for the main agent (offerAlways); for a surfaced
 	// child ask (which never reaches plan mode in practice) it is absent and the
-	// button copy strips "auto-accept".
+	// button copy strips "auto-accept". The bracketed mnemonics are the LIVE
+	// Allow/AllowAlways/Deny chords so an override propagates (issue #457); with
+	// the default bare-rune chords they render as "[A]pprove & run"/"[W] auto-
+	// accept edits"/"[D] iterate" byte-for-byte, and under an override they
+	// degrade to an honest standalone form (planApprovalButtonLabel) rather than
+	// gluing a rebound chord onto the word's stem.
+	hk := m.helpKeyMarkings()
 	btnStyle := func(idx int) string {
 		if ask.focus == idx {
 			return "askButtonActive"
 		}
 		return "askButton"
 	}
-	approve := th.Style(btnStyle(0)).Render("[A]pprove & run")
-	denyBtn := th.Style(btnStyle(2)).Render("[D] iterate")
+	approve := th.Style(btnStyle(0)).Render(planApprovalButtonLabel(hk.allow, "Allow", "approve & run"))
+	denyBtn := th.Style(btnStyle(2)).Render(planApprovalButtonLabel(hk.deny, "Deny", "iterate"))
 	var buttons string
 	if ask.offerAlways {
-		always := th.Style(btnStyle(1)).Render("[W] auto-accept edits")
+		always := th.Style(btnStyle(1)).Render(planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits"))
 		buttons = lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", always, "  ", denyBtn)
 	} else {
 		buttons = lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", denyBtn)
@@ -334,7 +355,7 @@ func (m Model) renderPlanReviewView(ask pendingAsk, width, height int) string {
 		bar.WriteString("\n" + th.Style("muted").Render(
 			"auto-accept allows every edit in the execution phase for the rest of this session"))
 	}
-	bar.WriteString("\n" + th.Style("muted").Render(planScrollHint))
+	bar.WriteString("\n" + th.Style("muted").Render(planScrollHint(hk)))
 
 	// Join the viewport window above the pinned bar. The viewport's own Height
 	// already excludes planReviewFooterHeight (set in openPlanReviewView), so the

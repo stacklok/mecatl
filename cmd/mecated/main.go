@@ -121,6 +121,9 @@ type config struct {
 	clientCA  string  // PEM client CA bundle; enables mutual TLS (require+verify client certs)
 	rateLimit float64 // sustained per-client request rate (req/s); 0 disables rate limiting
 	rateBurst int     // token-bucket burst size; 0 -> derived from rateLimit
+	// oidc carries the caller-identity flags (--oidc-issuer/--oidc-jwks-uri/
+	// --oidc-audience). Zero value = identity off, the unchanged path.
+	oidc cliconfig.OIDCConfig
 
 	// LLM resilience knobs (see package internal/adapter/llmresilience).
 	llmMaxAttempts       int
@@ -1511,6 +1514,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "PEM server certificate; with --tls-key enables TLS on the gRPC + HTTP servers")
 	fs.StringVar(&cfg.tlsKey, "tls-key", "", "PEM server private key (paired with --tls-cert)")
 	fs.StringVar(&cfg.clientCA, "client-ca", "", "PEM client-CA bundle; enables mutual TLS (require + verify client certs)")
+	cliconfig.RegisterOIDCFlags(fs, &cfg.oidc)
 	fs.Float64Var(&cfg.rateLimit, "rate-limit", 0, "sustained per-client request rate in req/s (0 disables rate limiting)")
 	fs.IntVar(&cfg.rateBurst, "rate-burst", 0, "rate-limit token-bucket burst size (0 derives a sane default from --rate-limit)")
 
@@ -1708,21 +1712,18 @@ func readAskReviewerPolicy(path string) (string, error) {
 // /debug/flightrecorder is not mounted.
 //
 // The harness API is protected by the server.Authenticator (bearer auth + rate
-// limiting, both off by default) and optionally by TLS / mutual TLS. The
-// liveness/readiness probes and the standard gRPC health service are mounted
-// OUTSIDE the auth/rate-limit layer so orchestrators can probe without
-// credentials.
+// limiting, both off by default) and optionally by TLS / mutual TLS. HTTP
+// liveness/readiness probes are mounted OUTSIDE the auth/rate-limit layer so
+// orchestrators can probe without credentials. The gRPC health service shares
+// the server-wide interceptors and therefore requires credentials when auth is on.
 func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
-	tlsCfg, err := buildTLSConfig(cfg)
+	tlsCfg, auth, err := buildEdge(ctx, cfg)
 	if err != nil {
 		return err
 	}
-
-	auth := server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		RateLimit: cfg.rateLimit,
-		RateBurst: cfg.rateBurst,
-	})
+	// The caller-identity validator owns a background JWKS refresh that only its
+	// own Close() stops — cancelling ctx does not. No-op when identity is off.
+	defer auth.Close()
 	logSecurityPosture(cfg, tlsCfg)
 
 	// --- gRPC: auth+rate interceptors, standard health service ---
@@ -1793,7 +1794,9 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 		}
 	}
 
-	authed := auth != nil && (cfg.authToken != "" || tlsCfg != nil)
+	// Caller identity counts as authentication: an OIDC deployment may carry no
+	// static token at all, and warning "NO authentication" there would be false.
+	authed := auth != nil && (cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil)
 	warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
 	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
 
@@ -1852,6 +1855,37 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 
 	shutdown(grpcSrv, httpSrv, metricsSrv)
 	return nil
+}
+
+// buildEdge assembles everything guarding the listeners: the TLS config plus the
+// edge policy (static bearer token, rate limiter, and — when --oidc-issuer is
+// set — the caller-identity validator).
+//
+// ctx is the SERVER-ROOT context: the validator owns background JWKS refresh, so
+// it must outlive any request. EVERY failure here is fatal and the daemon
+// refuses to start — silently falling back to the unauthenticated path would
+// turn an authenticated deployment into an open one (ADR 0100).
+func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authenticator, error) {
+	tlsCfg, err := buildTLSConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Logged BEFORE construction so it appears even if the validator then fails
+	// to build.
+	warnInsecureIssuer(cfg.oidc)
+	if err := cliconfig.ValidateOIDCAuthToken(cfg.oidc, cfg.authToken); err != nil {
+		return nil, nil, err
+	}
+	validator, err := cliconfig.OIDCValidator(ctx, cfg.oidc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tlsCfg, server.NewAuthenticator(server.SecurityConfig{
+		AuthToken: cfg.authToken,
+		RateLimit: cfg.rateLimit,
+		RateBurst: cfg.rateBurst,
+		Validator: validator,
+	}), nil
 }
 
 // warnIfNonLoopback logs the API trust assumption for the given bind address.
@@ -1959,6 +1993,7 @@ func logSecurityPosture(cfg config, tlsCfg *tls.Config) {
 	mtls := tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert
 	slog.Info("API security posture",
 		"bearer_auth", cfg.authToken != "",
+		"caller_identity", cfg.oidc.Enabled(),
 		"tls", tlsCfg != nil,
 		"mutual_tls", mtls,
 		"rate_limit_rps", cfg.rateLimit,
@@ -1989,4 +2024,14 @@ func shutdown(grpcSrv *grpc.Server, httpSrv, metricsSrv *http.Server) {
 		}
 	}
 	grpcSrv.GracefulStop()
+}
+
+// warnInsecureIssuer logs the SSRF-relaxation warning when the operator enabled
+// it, and is silent otherwise. It is a function rather than an inline branch so
+// the caller does not grow another decision point (gocyclo), and so both server
+// mains surface the warning identically.
+func warnInsecureIssuer(c cliconfig.OIDCConfig) {
+	if w := c.InsecureIssuerWarning(); w != "" {
+		slog.Warn(w)
+	}
 }

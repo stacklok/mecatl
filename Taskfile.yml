@@ -45,6 +45,9 @@ tasks:
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
+      # authn/oidc is the opt-in caller-identity adapter module (ADR 0103),
+      # separate from both the dependency-free engine and provider modules.
+      - cd authn/oidc && go build ./...
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each its
       # own module under the workspace. Building them here keeps the importable
       # adapters compiling alongside the binaries.
@@ -178,12 +181,14 @@ tasks:
           ./cmd/mecatui
 
   test:
-    desc: Run unit tests with the race detector (root module + engine module + provider modules + the standalone hygiene proofs)
+    desc: Run unit tests with the race detector (root + engine + authn/oidc + provider modules + standalone hygiene proofs)
     cmds:
       - go test -race ./...
       # engine/ is a separate module under the workspace — `./...` from the root
       # does NOT cross the module boundary, so its tests are a second invocation.
       - cd engine && go test -race ./...
+      # The opt-in OIDC adapter is a separate non-provider module.
+      - cd authn/oidc && go test -race ./...
       # provider/ submodules (ADR 0093) — each its own module under the workspace;
       # the per-module `./...` invocation runs their tests through the workspace.
       - cd provider/ssefilter && go test -race ./...
@@ -191,7 +196,14 @@ tasks:
       - cd provider/openai && go test -race ./...
       - cd provider/openaichat && go test -race ./...
       - task: test:engine-standalone
+      - task: test:authn-standalone
       - task: test:provider-standalone
+
+  test:authn-standalone:
+    desc: Prove the opt-in OIDC module builds and tests with GOWORK=off.
+    cmds:
+      - cd authn/oidc && GOWORK=off go build ./...
+      - cd authn/oidc && GOWORK=off go test ./...
 
   test:engine-standalone:
     desc: |
@@ -271,10 +283,11 @@ tasks:
       Run the kind-based k8s e2e suite (e2e/k8s/, build tag kind_e2e, ADR 0048).
       Spins a real kind cluster with a Redis StatefulSet + two storage-free
       mecak8s agent replicas and asserts lease exclusion, graceful failover,
-      and session persistence. Export OPENROUTER_API_KEY to ALSO run the LIVE
-      variant (real LLM turns through the pods proving the plumbing under load;
-      the live specs Skip without the key). Needs Docker + kind + ko + kubectl.
-      NOT part of `task test` (slow ~3-5 min mock-only, ~10-15 min with live).
+      session persistence, and OIDC caller identity against an in-cluster Dex.
+      Export OPENROUTER_API_KEY to ALSO run the LIVE variant (real LLM turns
+      through the pods proving the plumbing under load; the live specs Skip
+      without the key). Needs Docker + kind + ko + kubectl. NOT part of
+      `task test` (slow ~5-8 min mock-only, ~10-15 min with live).
     deps: [build]
     preconditions:
       - sh: command -v kind >/dev/null 2>&1
@@ -288,8 +301,119 @@ tasks:
       # real haiku turn takes 10-30s, the live lease/persistence specs each drive
       # 2-3 turns with FlakeAttempts(2), and the provider patch + rollout adds
       # ~1-2 min. Without the key the live specs Skip and the suite fits in 15m;
-      # the outer bound only matters when the live variant runs.
-      - go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+      # the outer bound only matters when the live variant runs. GOWORK=off proves
+      # the image uses tagged external dependencies rather than workspace overlays.
+      - GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+
+  deploy:check:
+    desc: |
+      Validate every deploy/ kustomize root WITHOUT a cluster: schema-check the
+      rendered manifests and assert the caller-identity boundaries (ADR 0100).
+      Needs kustomize + kubeconform; needs NO cluster and NO KO_DOCKER_REPO, so
+      it runs in CI and on a laptop.
+    preconditions:
+      - sh: command -v kustomize >/dev/null 2>&1
+        msg: "kustomize is not installed (https://kubectl.docs.kubernetes.io/installation/kustomize/)"
+      - sh: command -v kubeconform >/dev/null 2>&1
+        msg: "kubeconform is not installed (go install github.com/yannh/kubeconform/cmd/kubeconform@latest)"
+    cmds:
+      # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:
+      # kubectl maps kinds against the API server even with --validate=false, so
+      # it needs a reachable cluster and cannot run here.
+      - for root in deploy/mecak8s deploy/mecak8s-oidc; do echo "== $root"; kustomize build "$root" | kubeconform -strict -summary -; done
+      # The base must stay identity-OFF: caller identity is opt-in, and the
+      # published example must keep deploying what operators already expect.
+      - cmd: |
+          if kustomize build deploy/mecak8s | grep -qi 'oidc'; then
+            echo "deploy/mecak8s (the BASE) mentions oidc — caller identity must stay opt-in"; exit 1
+          fi
+        silent: true
+      # A published example must never ship SSRF relaxation: the flag that lets
+      # the validator reach a private/in-cluster or http:// issuer exists for the
+      # e2e fixtures ONLY. (--oidc-jwks-uri is a URL, not a relaxation.)
+      - cmd: |
+          if kustomize build deploy/mecak8s-oidc | grep -qiE 'insecure|allow-private'; then
+            echo "deploy/mecak8s-oidc ships an SSRF relaxation flag — that belongs to the e2e fixtures only"; exit 1
+          fi
+        silent: true
+      # The overlay APPENDS its flags (JSON6902 add) — a strategic-merge patch
+      # mentioning `args` would REPLACE the atomic list and silently drop the
+      # storage + lease flags while every schema check still passed. This is the
+      # regression guard for that.
+      - cmd: |
+          missing=""
+          rendered=$(kustomize build deploy/mecak8s-oidc)
+          for arg in --redis-url --session-lease-k8s-namespace --headless --posture --grpc-addr --http-addr --oidc-issuer --oidc-audience --oidc-jwks-uri --oidc-max-jwks-staleness=1h; do
+            echo "$rendered" | grep -q -- "$arg" || missing="$missing $arg"
+          done
+          if [ -n "$missing" ]; then
+            echo "deploy/mecak8s-oidc DROPPED base args:$missing — the patch must be a JSON6902 append, not a strategic merge"; exit 1
+          fi
+        silent: true
+
+  deploy:render:
+    desc: |
+      Render a deploy/ kustomize root with the ko-built image ref, on stdout.
+      ROOT defaults to deploy/mecak8s (set ROOT=deploy/mecak8s-oidc for the
+      caller-identity overlay). Honours KO_DOCKER_REPO. NOTE: KO_DOCKER_REPO=ko.local
+      renders a ref no cluster can PULL (ko.local is not a registry) — fine for
+      inspecting the output, not for deploying; see deploy:apply.
+      This is the composition to use for a kustomize root:
+      `ko resolve -f <dir>` does NOT run kustomize (it globs the directory as
+      plain YAML and even emits kustomization.yaml as a resource), so the
+      kustomize build must come first and ko must read it on stdin.
+    vars:
+      ROOT: '{{.ROOT | default "deploy/mecak8s"}}'
+    preconditions:
+      - sh: command -v kustomize >/dev/null 2>&1
+        msg: "kustomize is not installed"
+      - sh: command -v ko >/dev/null 2>&1
+        msg: "ko is not installed (https://ko.build/install/)"
+      - sh: '[ -n "${KO_DOCKER_REPO:-}" ]'
+        msg: "KO_DOCKER_REPO is required (e.g. export KO_DOCKER_REPO=ko.local for a local image)"
+    cmds:
+      - kustomize build {{.ROOT}} | ko resolve -f -
+
+  deploy:apply:
+    desc: |
+      Render a deploy/ kustomize root and apply it, namespace FIRST. ROOT defaults
+      to deploy/mecak8s. Honours KO_DOCKER_REPO and the CURRENT kubectl context —
+      it deploys to whatever `kubectl config current-context` points at, so check
+      that first.
+      REQUIRES A REGISTRY THE CLUSTER CAN PULL FROM. This task does not distribute
+      images: with KO_DOCKER_REPO=ko.local the pods get ErrImagePull, because
+      ko.local lives in the local Docker daemon and is not a registry the node can
+      resolve. For kind, either push to a real registry, or build+load first (the
+      way e2e/k8s does it: save the ref to a tarball and `kind load
+      image-archive`, which survives daemons where `kind load docker-image`
+      fails).
+    vars:
+      ROOT: '{{.ROOT | default "deploy/mecak8s"}}'
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: "kubectl is not installed"
+      - sh: command -v kustomize >/dev/null 2>&1
+        msg: "kustomize is not installed"
+      - sh: '[ -n "${KO_DOCKER_REPO:-}" ]'
+        msg: "KO_DOCKER_REPO is required (a registry the CLUSTER can pull from; ko.local is not one — see the task description)"
+      # Refuse the footgun rather than deploying pods that can only ErrImagePull.
+      - sh: '[ "${KO_DOCKER_REPO:-}" != "ko.local" ]'
+        msg: "KO_DOCKER_REPO=ko.local cannot be pulled by a cluster node (it is the local Docker daemon, not a registry). Push to a real registry, or build+load the image into the node first (see e2e/k8s saveAndLoadImage)."
+    cmds:
+      # Two-phase apply. kubectl processes documents in order, but the namespace
+      # controller marks a new namespace Active ASYNCHRONOUSLY, so namespaced
+      # resources in the SAME invocation fail with "namespaces not found".
+      # e2e/k8s/helpers_test.go splits the same way for the same reason.
+      - cmd: |
+          set -eu
+          rendered=$(kustomize build {{.ROOT}} | ko resolve -f -)
+          nsdoc=$(printf '%s\n' "$rendered" | awk 'BEGIN{RS="\n---\n"} /^kind: Namespace$|\nkind: Namespace$/ {print; exit}')
+          if [ -n "$nsdoc" ]; then
+            printf '%s\n' "$nsdoc" | kubectl apply -f -
+            ns=$(printf '%s\n' "$nsdoc" | awk '/^  name:/ {print $2; exit}')
+            kubectl wait --for=jsonpath='{.status.phase}'=Active "namespace/$ns" --timeout=60s
+          fi
+          printf '%s\n' "$rendered" | kubectl apply -f -
 
   fuzz:
     desc: |
@@ -450,6 +574,9 @@ tasks:
       - go tool cover -func=coverage/engine.out
       - go tool cover -html=coverage/engine.out -o coverage/engine.html
       - 'echo "HTML engine coverage report: coverage/engine.html"'
+      - cd authn/oidc && go test -race -coverprofile=../../coverage/authn-oidc.out -covermode=atomic ./...
+      - go tool cover -func=coverage/authn-oidc.out
+      - go tool cover -html=coverage/authn-oidc.out -o coverage/authn-oidc.html
       # provider/ submodules (ADR 0093) — sibling profiles per module.
       - cd provider/ssefilter && go test -race -coverprofile=../../coverage/provider-ssefilter.out -covermode=atomic ./...
       - cd provider/anthropic && go test -race -coverprofile=../../coverage/provider-anthropic.out -covermode=atomic ./...
@@ -457,7 +584,7 @@ tasks:
       - cd provider/openaichat && go test -race -coverprofile=../../coverage/provider-openaichat.out -covermode=atomic ./...
 
   lint:
-    desc: Run golangci-lint (parallel-safe) and go vet over the root module + the engine module + the provider modules
+    desc: Run golangci-lint (parallel-safe) and go vet over the root, engine, authn/oidc, and provider modules
     cmds:
       - golangci-lint run --allow-parallel-runners ./...
       - go vet ./...
@@ -466,6 +593,9 @@ tasks:
       # single source of truth across the module boundary.
       - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners ./...
       - cd engine && go vet ./...
+      # authn/oidc is a separate opt-in adapter module, sharing the root config.
+      - cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners ./...
+      - cd authn/oidc && go vet ./...
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners ./...
@@ -504,6 +634,8 @@ tasks:
       # module boundary, so its scan is a second invocation against engine/go.mod.
       # No allowlist: the engine library's closure is clean and must stay clean.
       - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+      # Opt-in OIDC module: independently scan its security-sensitive closure.
+      - cmd: set -o pipefail; cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
       # provider/ submodules (ADR 0093) — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
       - cmd: set -o pipefail; cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
@@ -512,10 +644,11 @@ tasks:
       - cmd: set -o pipefail; cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
 
   lint:fix:
-    desc: Run golangci-lint with autofix (parallel-safe) over the root module + the engine module + the provider modules
+    desc: Run golangci-lint with autofix (parallel-safe) over the root, engine, authn/oidc, and provider modules
     cmds:
       - golangci-lint run --allow-parallel-runners --fix ./...
       - cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --fix ./...
+      - cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
       - cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
       - cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
       - cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
@@ -567,21 +700,23 @@ tasks:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
 
   tidy:
-    desc: Tidy go.mod / go.sum for the root module + the engine module, then sync the workspace
+    desc: Tidy root, engine, authn/oidc, and standalone-ready provider module manifests, then sync the workspace
     cmds:
-      # INVARIANT — do NOT reorder these three steps. The order
-      #   (1) root `go mod tidy`  →  (2) `go work sync`  →  (3) engine `GOWORK=off go mod tidy`
-      # is load-bearing. engine/ is a separate module: it must be tidied with the
-      # workspace OFF (step 3) so its go.sum reflects its OWN tiny closure, not the
-      # host repo's heavy cone. `go work sync` (step 2) aligns the shared transitive
-      # versions across both modules but can DROP `/go.mod` hash lines from
-      # engine/go.sum; the standalone tidy MUST run AFTER the sync to restore them.
-      # Reordering (running the sync last, or the engine tidy before it) leaves
-      # engine/go.sum missing those `/go.mod` lines, which breaks the GOWORK=off
-      # engine-standalone CI job on a fresh checkout. Keep this exact order.
+      # INVARIANT — do NOT reorder these steps. The order
+      #   (1) root `go mod tidy` → (2) `go work sync` → (3) each standalone
+      #   module's `GOWORK=off go mod tidy`
+      # is load-bearing. Separate modules must be tidied with the workspace OFF
+      # so each go.sum reflects its OWN closure, not the host repo's heavy cone.
+      # `go work sync` can drop `/go.mod` hash lines, so standalone tidy MUST run
+      # after sync. Running sync last leaves standalone sums incomplete.
       - go mod tidy
       - go work sync
       - cd engine && GOWORK=off go mod tidy
+      # The OIDC adapter's own sum must cover its standalone closure. Its go.mod
+      # deliberately has no replace directive. Until an engine minor containing
+      # PrincipalFromClaims/GrantTypeFromClaims is published, this command is an
+      # intentional release-sequencing gate and may fail against the older tag.
+      - cd authn/oidc && GOWORK=off go mod tidy
       # provider/ submodules (ADR 0093) — same GOWORK=off discipline as engine:
       # each module's go.sum must reflect its OWN closure, not the host repo's.
       # ssefilter (stdlib + openai-go) and anthropic (engine is a published dep)
@@ -624,7 +759,7 @@ tasks:
       # Pinned to a matlatl release; --title MUST match the README H1 ("mecatl")
       # and the freshness gate in .github/workflows/ci.yml. Never hand-edit
       # llms.txt — regenerate. (A private-module fetch needs GOPRIVATE set.)
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.7 index . --llms --title "mecatl" > llms.txt
+      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 index . --llms --title "mecatl" > llms.txt
 
   docs:configref:
     desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
@@ -640,7 +775,7 @@ tasks:
   docs:check:
     desc: Gate doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.7 check . --strict
+      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 check . --strict
 
   docs:model:
     desc: Re-render & validate the modelith domain model (edit the .yaml, never the .md)

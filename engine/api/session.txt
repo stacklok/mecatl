@@ -1,5 +1,6 @@
     method func (*Conversation).Append(m Message)
     method func (*Conversation).Len() int
+    method func (*Principal).Clone() *Principal
     method func (*Session).BeginTurn() error
     method func (*Session).Cancel() error
     method func (*Session).Complete() error
@@ -23,12 +24,14 @@
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ResetUsage() error
+    method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).SeedHistory(messages []Message) error
     method func (*Session).SetMode(mode PermissionMode) error
     method func (*Session).SetTitle(text string)
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
+    method func (GrantType).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAsk).Origin() AskOrigin
     method func (State).IsTerminal() bool
@@ -77,6 +80,9 @@ const EvToolResult EventType = "tool.result"
 const EvTurnEnd EventType = "turn.end"
 const EvTurnStart EventType = "turn.start"
 const EvUserPrompt EventType = "user_prompt"
+const GrantTypeClientCredentials GrantType = "client_credentials"
+const GrantTypeSystem GrantType = "system"
+const GrantTypeUser GrantType = "user"
 const HookAdvisory HookDecision = "advisory"
 const HookBlocked HookDecision = "blocked"
 const HookInfo HookDecision = "info"
@@ -135,6 +141,7 @@ const VerdictStringDeny untyped string = "deny"
 func ClampTitle(s string) string
 func CloneMessages(msgs []Message) []Message
 func ForkSnapshot(c *Conversation) []Message
+func GrantTypeFromClaims(claims map[string]any) GrantType
 func IsGenuineUserPrompt(m Message) bool
 func IsSynthesisedSummary(text string) bool
 func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session
@@ -157,6 +164,8 @@ func NewToolResultWithParts(callID ToolCallID, content string, parts []Content) 
 func NewUserMessage(text string) Message
 func NewUserMessageWithParts(text string, parts []Content) Message
 func ParseArgs(call ToolCall, dst any) (msg string, ok bool)
+func PrincipalFromClaims(claims map[string]any) *Principal
+func PrincipalFromContext(ctx context.Context) *Principal
 func RepairToolResult(r ToolResult) ToolResult
 func StripProviderState(messages []Message) []Message
 func ToValidUTF8(s string) string
@@ -168,16 +177,19 @@ func ValidateResolvedIP(ip net.IP) error
 func ValidateToolPairing(msgs []Message) error
 func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
+func WithPrincipal(ctx context.Context, p *Principal) context.Context
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
 type AskOrigin int
+type Authority string
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; Schedule *SchedulePayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; Actor *Principal; Schedule *SchedulePayload}
 type EventType string
+type GrantType string
 type HookDecision string
 type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID}
 type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
@@ -187,10 +199,11 @@ type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
+type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; Owner *Principal; Authority Authority; CreatedAt time.Time}
 type SessionID string
 type State string
 type StopReason string
@@ -211,3 +224,4 @@ var ErrIllegalTransition error
 var ErrInvalidContent error
 var ErrInvalidMediaURL error
 var ErrNoPendingAsk error
+var ErrOwnerAlreadySet error

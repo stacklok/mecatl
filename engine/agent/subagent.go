@@ -167,6 +167,32 @@ type parentCaps struct {
 	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
 	// (issue #94); see SubagentModelRouter.
 	routeTask func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
+	// owner is the PARENT session's verified owner (ADR 0100 decision 4), handed
+	// down so every child session (subagent-/parallel-/team-) is attributed to the
+	// same principal as the session that spawned it. It is read off the parent
+	// AGGREGATE, deliberately NOT off the ambient context: a child must inherit
+	// the SOURCE's owner, never the identity of whichever caller happens to be
+	// driving the run — that would be an ownership-laundering path. nil for an
+	// OWNERLESS parent (the no-auth path), which yields an ownerless child: never
+	// a fabricated one, and never a rejection.
+	owner *session.Principal
+}
+
+// inheritOwner stamps the parent session's owner onto a freshly-minted child
+// session (ADR 0100 decision 4). It is the ONE point every child family goes
+// through, so subagent/parallel/team children cannot drift apart. Write-once via
+// the aggregate (Session is an aggregate — never poke the field); on a fresh
+// child the slot is empty so this cannot collide, and a nil owner is a no-op —
+// an ownerless parent yields an ownerless child.
+func (c parentCaps) inheritOwner(child *session.Session) {
+	if c.owner == nil || child == nil {
+		return
+	}
+	// The only error RestoreLabels can return is ErrOwnerAlreadySet on a DIFFERENT
+	// owner; a fresh child has no owner, and a resumed child already carries this
+	// same one. Either way the persisted owner stands — the write is write-once by
+	// construction and must never overwrite.
+	_ = child.RestoreLabels(c.owner, "")
 }
 
 // registerChildRun is the nil-safe registration wrapper a spawning tool calls: a
@@ -2341,6 +2367,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	if !ok {
 		return errResult, nil
 	}
+	// The child is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	caps.inheritOwner(child)
 	// Tear down the run workspace after the child fully drains. For a writable
 	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
 	// forkChildWorkspace for a nil forker (the child ran against the parent ws, which
@@ -2675,6 +2703,8 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		endOnError(errResult)
 		return
 	}
+	// The child is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	b.caps.inheritOwner(child)
 	// RESUME-START persist, mirroring prepareChildSession: refresh the resumed
 	// snapshot's last-modified time so the child-session GC's age pass never
 	// deletes an in-flight resumed child (best-effort, failures swallowed).

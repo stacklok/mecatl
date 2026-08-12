@@ -39,6 +39,11 @@
 # below does NOT match `provider/<name>/v*` (the tag has a leading path segment),
 # so a provider release never fires this container build, and an image release
 # never re-tags a provider module.
+#
+# Authn-module note (ADR 0103): the reusable OIDC validator is the separate
+# github.com/stacklok/mecatl/authn/oidc module, released as authn/oidc/vX.Y.Z.
+# It is not a provider module. Its path-prefixed tags likewise do not match the
+# root image trigger below.
 name: Release
 
 on:
@@ -117,6 +122,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -241,6 +247,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

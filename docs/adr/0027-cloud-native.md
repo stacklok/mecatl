@@ -517,6 +517,32 @@ each is derive, not persist. The `goleak` D-Bus ignores in
 `internal/app/leakmain_test.go` are the visible symptom of row 40 and are scoped
 to a top-of-stack pin, not a blanket suppression. The re-audit verdict is CLEAN.
 
+**Caller-identity re-audit (List 1 / List 2 — issue #367, ADR 0100).** The
+caller-identity track (attribution only — nothing is refused on identity grounds
+yet) adds ONE new outlives-a-call resource (List 1 row 41): the token validator's
+JWKS cache and its background refresh. Everything else it adds is a FIELD on an
+already-inventoried artifact:
+
+- **`internal/syscaller` earns no row.** The registry is a package-level slice of
+  string constants (`internal/syscaller/syscaller.go` (`Roots`)) — compile-time
+  data, not an allocated resource, and it holds nothing per session or per run.
+  `syscaller.Context` stamps a value on the root context of goroutines that are
+  ALREADY inventoried (rows 1 childgc, 30 scheduler tick, 31 leader-lease renewer,
+  and the two consolidators); a context value on an existing root changes no
+  lifetime, no cleanup and no re-attach answer, so annotating those rows would be
+  the only honest alternative and it would say nothing new.
+- **The session owner and `Event.Actor` are List 2 concerns, not List 1** (rows 26
+  and 27): both are fields on the existing snapshot / existing durable event log,
+  adding no handle, goroutine, cache or map.
+- **The schedule owner earns a List 2 row (28)** because it is state a restart
+  would otherwise lose: it is captured at CREATE, and a fire that happens after a
+  restart must still run as the caller who created the schedule.
+
+The re-audit verdict is CLEAN. The shipped `toolhive-core/authn` v0.0.39 validator
+is wired by the shared OIDC config; its cached keys are bounded by default under
+[ADR 0101](./0101-bounded-jwks-staleness.md), and remain reconstructible rather
+than persisted.
+
 ### Sequencing rationale
 
 0→1→2 is a strict dependency chain (rehydrate needs faithful snapshots). 3 is
@@ -583,6 +609,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 38 | mecak8s `/metrics` loopback listener (ADR 0098) | `cmd/mecak8s` (`serve`) | process (OPT-IN: only when `--metrics-addr` is set; loopback-only, fail-closed at parse time) | the `metricsSrv *http.Server` joins the `errCh` set and the `boundedShutdown` sequence (its `Shutdown` runs alongside the API listener's); SIGTERM also flushes OTLP via the `defer flushTelemetry` (LIFO before `built.Close()`) | **reset-by-design**: the prometheus reader is process-local; the scraped metrics are the scraper's record. The admin mux (`/metrics` + pprof/expvar) is loopback-only and carries no durable state. Nothing here needs a List 2 row | `cmd/mecak8s/serve.go` (`serve`, `boundedShutdown`, `isLoopbackAddr`); `cmd/mecak8s/observability.go` (`buildObservability`, `flushTelemetry`); `internal/adapter/telemetry/adminmux.go` (`NewAdminMux`) |
 | 39 | ToolHive-LLM direct-mode OIDC token source (issue #265, ADR 0102) | `internal/app` — built ONCE per Build inside `newDirectGatewayEntry` and captured by the `bearerRoundTripper`; the underlying `*llm.TokenSource` is toolhive's `pkg/auth/tokensource.OAuthTokenSource` | process (OPT-IN: constructed ONLY when the resolved routing mode is `direct` — the proxy path allocates none of this and stays byte-identical to pre-#265) | none needed and none exists: it holds no goroutine, no fd and no timer — an in-memory access token + expiry behind its own mutex, refreshed lazily on the per-request `Token(ctx)` call and dying with the process. It is deliberately NOT re-minted per session: every per-session/heal engine re-mint appends the SAME `WithHTTPClient`, so one token source serves every session (`construct()` closes over `extra`). Note the mutex serializes `Token` across concurrent sessions, so a slow IdP refresh blocks other requests for its duration — bounded by each caller's request ctx | **reconstructible** (a restarted process rebuilds it at the next Build and re-derives an access token from the keyring-held refresh token; decision = derive). Nothing enters a snapshot: the access token is short-lived derived material, and the refresh token already survives outside mecatl in the OS keyring with only its REFERENCE (`CachedRefreshTokenRef`) in ToolHive's config — so no List 2 row | `internal/adapter/toolhivellm/tokensource.go` (`DirectTokenSource`, `buildTokenSource`); consumed by `internal/app/registry.go` (`newDirectGatewayEntry`, `bearerRoundTripper`) |
 | 40 | OS-keyring / D-Bus connection behind the direct-mode secrets provider (issue #265, ADR 0102) | toolhive's `pkg/auth/secrets` (`GetSystemSecretsProvider`), opened transitively by row 39's construction; mecatl never holds the handle | process (OPT-IN with row 39; on Linux this is a `godbus` connection with its own reader/writer goroutines) | NOT mecatl-owned — no `Close` seam is exposed and none is folded into Build's `closeAll`; the connection is process-scoped and released at exit. This is the accepted residual, and it is why `internal/app/leakmain_test.go` pins `godbus/dbus/v5.newConn.func1` + `(*Conn).inWorker` by top-of-stack (a narrow pin, NOT a blanket suppression — any other leak still fails the gate) | **reconstructible** (re-opened lazily by the next Build's token-source construction; it is a transport to the keyring, never state-of-record — the credential it fetches is the keyring's, decision = derive). No List 2 row | `internal/adapter/toolhivellm/tokensource.go` (`buildTokenSource`); the goleak pins live in `internal/app/leakmain_test.go` (`TestMain`) |
+| 41 | OIDC token-validator JWKS cache + its background key-rotation refresh (caller identity, ADR 0100 decision 3/7 and ADR 0103; the `toolhive-core/authn` validator wrapped by the opt-in `authn/oidc` module and adapted to `server.PrincipalValidator`) | the `authn/oidc.Validator` instance, constructed once per process through `internal/cliconfig/oidc.go` (`OIDCValidator`) and handed to `server.SecurityConfig.Validator`; the module owns the reusable lifecycle seam, never the JWT/JWKS mechanics | process (OPT-IN: only when `--oidc-issuer` is set; the zero value is identity OFF and allocates nothing) | **explicit teardown at the edge**, NOT the root context's cancel: the validator's background refresh is stopped by its OWN `Close()`, and cancelling a context does not call it. `internal/adapter/server/authn.go` (`Authenticator.Close`) type-asserts an OPTIONAL `io.Closer` on the configured validator (the `port.HookApprovalLearner` idiom — `PrincipalValidator` stays single-method, so a fake without teardown needs none) and closes it once (`sync.Once`); both mains `defer auth.Close()` (`cmd/mecated/main.go`, `cmd/mecak8s/serve.go`). The SERVER-ROOT context is still what the constructor is handed — deliberately NOT a per-request one, which would tear key rotation down with the first request — but it bounds in-flight fetches, not the refresh loop's lifetime. The refresh goroutine has no caller and therefore runs under the explicit system principal `mecatl:internal / jwks-refresh` (`internal/syscaller/syscaller.go` (`RootJWKSRefresh`)) | **reconstructible** (a restarted process re-resolves the flags and re-fetches the key set on the next Build; nothing is persisted and nothing should be — a cached signing key is a derivation of the IdP's live JWKS). Cached-key trust is bounded by `--oidc-max-jwks-staleness` (1h default; 0 explicitly disables the bound; ADR 0101) | `authn/oidc/oidc.go` (`Validator`, `NewValidator`, `Close`); `internal/cliconfig/oidc.go` (`OIDCConfig`, `OIDCValidator`, `RegisterOIDCFlags`); `internal/adapter/server/authn.go` (`PrincipalValidator`); `internal/syscaller/syscaller.go` (`RootJWKSRefresh`) |
 
 **Issue #388 re-audit (bounded embedded-mecatui shutdown).** #388 added NO new
 outlives-a-call resource row. The work BOUNDS existing rows' cleanup, it does not add

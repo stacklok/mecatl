@@ -10,7 +10,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 )
 
 // soulView is the active soul (persona) inspection overlay (none = closed). Like
@@ -133,11 +132,11 @@ func soulContentLines(content string) []string {
 
 // renderSoulOverlay draws the soul panel centred over the conversation region via
 // centerCard. All server-derived strings are terminal-sanitized.
-func renderSoulOverlay(th theme.Theme, st soulState, caps client.Capabilities, width, height int) string {
+func renderSoulOverlay(th theme.Theme, st soulState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	if st.view != soulPanel {
 		return ""
 	}
-	return centerCard(th, renderSoulPanel(th, st, caps, width), width, height)
+	return centerCard(th, renderSoulPanel(th, st, caps, hk, width), width, height)
 }
 
 // soulDisabledNote is the empty-state copy when soul is NOT enabled on the
@@ -178,7 +177,7 @@ func soulTrustLabel(s client.Soul) string {
 // renderSoulPanel renders the read-only, scrollable persona inspector: a title, a
 // dim metadata line (provenance/trust · size · sha), then a scroll-windowed view of
 // the content. EVERY server-derived string is terminal-sanitized.
-func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, width int) string {
+func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, hk helpKeys, width int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Soul (persona)") + "\n\n")
 
@@ -205,7 +204,10 @@ func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, wid
 		b.WriteString(renderSoulBody(th, st, budget))
 	}
 
-	b.WriteString("\n" + th.Style("muted").Render("read-only persona · "+platform.ScrollKeysMarking()+" scroll · esc close"))
+	// The scroll pair (ScrollU/ScrollD) and the close chord (Close) read the LIVE
+	// keyMap markings (issue #457); with defaults the hint is byte-identical to the
+	// historical literal.
+	b.WriteString("\n" + th.Style("muted").Render("read-only persona · "+hk.scroll+" scroll · "+hk.closeOnly+" close"))
 	return b.String()
 }
 

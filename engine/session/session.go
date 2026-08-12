@@ -388,6 +388,18 @@ type Session struct {
 	// It is "" for a session with no genuine prompt yet (lazy display-time
 	// fallback applies). The aggregate never interprets it.
 	Title string
+	// Owner is the verified caller this session is attributed to, or nil when the
+	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
+	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
+	// never a public setter, and never fabricated when identity is absent
+	// (ADR 0100 decision 4). The aggregate STORES it and never interprets it: no
+	// enforcement, no filtering, display + audit only.
+	Owner *Principal
+	// Authority is Track C's label, shipped INERT here so the contended
+	// engine/api/*.txt + CHANGELOG regeneration is paid once (ADR 0100
+	// consequences). Nothing in this plan reads or writes it beyond the snapshot
+	// round-trip; the zero value means "unset". Stamped through RestoreLabels.
+	Authority Authority
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 

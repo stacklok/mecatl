@@ -69,10 +69,12 @@ The transport is exactly what the invocation says — there is no implicit probe
 or fallback:
 
 - **Bare `mecatui [flags]`** — always host an embedded `mecated` in-process over
-  a private UNIX socket; **never probe** loopback, **never dial**. All
-  embedded-server flags (`--mock`, `--trust-project`, provider knobs, …) apply,
-  and the remote-only flags (`--auth-token`, `--tls`, `--tls-ca`, `--insecure`)
-  are **rejected** here.
+  a private UNIX socket; **never probe** loopback, **never dial**. The socket
+  lives in a same-local-user private directory; it is a local trust boundary,
+  not a bearer/OIDC authentication surface. Its sessions are therefore
+  intentionally ownerless. All embedded-server flags (`--mock`,
+  `--trust-project`, provider knobs, …) apply, and the remote-only flags
+  (`--auth-token`, `--tls`, `--tls-ca`, `--insecure`) are **rejected** here.
 
 - **`mecatui connect ADDRESS [flags]`** — always dial a running `mecated` at
   `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
@@ -83,8 +85,27 @@ or fallback:
   ```sh
   bin/mecated serve &                                 # listens on 127.0.0.1:8080
   bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
-  bin/mecatui connect mecated.internal:443 --tls --auth-token $MECATL_AUTH_TOKEN
+  bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
+
+### OIDC-connected server
+
+For a `mecated` or `mecak8s` deployment with caller identity enabled, obtain an
+OIDC token from your identity provider and pass it to the **external** transport.
+`mecatui` sends it as per-RPC `authorization: Bearer …` metadata on every gRPC
+request; it does not run an OIDC browser flow or refresh the token itself.
+
+```sh
+# A local port-forward is loopback, so it is the one plaintext bearer exception.
+kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
+export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
+bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN" --workspace /tmp
+```
+
+For a non-loopback endpoint, `mecatui` refuses to send a bearer without `--tls`.
+Use `--tls-ca` when the deployment uses a private CA. The workspace is evaluated
+by the **server**, not the TUI host: `/tmp` above is a path inside the selected
+agent pod, not your local checkout. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
 
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
 a usage error, with one carve-out: `mecatui connect --help` renders the connect
@@ -670,9 +691,9 @@ show the plain prompt-hint card.
 | `enter` (idle, **paused queue**, empty input) | resume — send the merged staged follow-ups |
 | `esc` (idle, **paused queue**) | clear staged input → else clear the queue |
 | `ctrl+c` | graceful quit (double-press): with a non-empty prompt the first press **clears the input**; on an empty prompt it **arms** the guard and shows a footer hint — press `ctrl+c` again within 3s to exit. Any other key disarms. The fatal (dead-connection) screen exits on a single press. |
-| in the permission modal: `a`/`y` | allow once |
-| in the permission modal: `w` | always allow (this session; offered for the main agent's asks only, not surfaced subagent asks) |
-| in the permission modal: `d`/`n`/`esc` | deny |
+| in the permission modal: `a`/`y` | allow once (rebindable via `Allow`; the button label reflects the live chord — `[A]llow` for the default `a`, `[Y] allow` for an override) |
+| in the permission modal: `w` | always allow (this session; offered for the main agent's asks only, not surfaced subagent asks; rebindable via `AllowAlways`) |
+| in the permission modal: `d`/`n`/`esc` | deny (rebindable via `Deny`) |
 | in the permission modal: `←`/`→`/`tab` | cycle the focused button; `enter` activates it |
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
@@ -689,8 +710,9 @@ show the plain prompt-hint card.
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |
 | `@` | file-mention menu — complete a workspace path, then attach it on submit (see below) |
 
-**Always-allow (the `w` button).** A main-agent ask offers a third button, **Al[w]ays**,
-alongside allow-once and deny. Choosing it permits the current call AND learns a rule that
+**Always-allow (the always button).** A main-agent ask offers a third button —
+**Al[w]ays** with the default `w` chord (it degrades to `[Q] always allow` under
+an `AllowAlways` override) — alongside allow-once and deny. Choosing it permits the current call AND learns a rule that
 suppresses the re-ask for the **exact same command** for the rest of this session
 (session-scoped, evicted when the session closes). It never overrides a configured
 deny/ask — a deny in any scope is still absolute, and a configured ask is never silenced
@@ -719,10 +741,13 @@ inventory.
 
 ### Remapping keys
 
-Every action in mecatui's keymap is rebindable. Two override surfaces exist, and
-they resolve to the same map — the **CLI flag wins per action** when both name it:
+Every action in mecatui's keymap is rebindable. Three override layers exist,
+and they resolve to the same map **per action** — a higher layer rebinds only
+the actions it names. Precedence, lowest to highest: the legacy server file
+< the client file < the **CLI flag wins**:
 
-- **`~/.config/mecatl/settings.yaml`** (operator-tier, shared with `mecated`) —
+- **`~/.config/mecatui/settings.yaml`** (client-owned, mecatui's own settings
+  file, strictly parsed — an unknown top-level key is a startup error) —
   a `keymap:` map of action name → comma-separated chord string:
 
   ```yaml
@@ -733,6 +758,11 @@ they resolve to the same map — the **CLI flag wins per action** when both name
 
 - **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
   rebinds one action and overrides the YAML entry for that action.
+
+  The `keymap:` setting was migrated from `~/.config/mecatl/settings.yaml`
+  (the server-shared operator file) — the legacy location still works but is
+  **deprecated** (a startup warning names the new home), and the client file
+  wins on conflict.
 
 Settings are read **once at startup** — restart mecatui to apply a change (live
 reload is a planned follow-up, issue #456).
@@ -812,8 +842,25 @@ chord to reach the textarea.** With the defaults, `ctrl+a` opens the agents
 overlay and `ctrl+e` opens the effort picker — so the readline line-start /
 line-end chords never reach the input. Rebind the actions away
 (`keymap: {Agents: ctrl+f12, Effort: ctrl+f5}`) and `ctrl+a` / `ctrl+e` start
-jumping the cursor to the line start / end instead. The `?` help overlay and the
-welcome card always show the **live** bindings.
+jumping the cursor to the line start / end instead. The `?` help overlay, the
+welcome card, the footer help/approval lines, the inline-card affordances
+(reasoning/subagent/team trace headers, collapse roll-ups, the team `+N more`
+advertisement), the generic permission-modal buttons, AND every overlay's
+navigation footer (the agents/team/mcp/effort/models/sessions/worktrees/
+schedule/skills/soul/user-model pickers — `↑/↓`, `enter`, `esc`, `tab`, the
+team `t`/`f`, the subagent `x`, the MCP `r`, the models `ctrl+g`, the parallel
+`home/g·end/G`) all show the **live** bindings for any action backed by a
+rebindable keyMap entry. Literal chords remain only for genuinely local controls
+that do NOT consult the keyMap: for example the slash-palette / `@`-mention
+menu's `up`/`down`/`tab`/`enter`/`esc`, raw form/list arrows and tabs (models,
+skills, MCP prompt arguments, schedule creation/inspection), plan-review arrows
+and mouse wheel, and the schedule panel's `c`/`p`/`r`/`f`/`d`/`/` plus the
+create-form `y`/`n`. Those controls are fixed in their handlers, so the literal
+shown is the chord that actually fires. With the default approval chords (`a`/`w`/`d`) the
+permission-modal buttons render the historical word-embedded form (`[A]llow` /
+`Al[w]ays` / `[D]eny`); rebound, they degrade to an honest standalone form
+(`[Y] allow` / `[Q] always allow` / `[N] deny`, or `[ctrl+y] allow` for a
+modified chord) so every displayed chord is the one that actually fires.
 
 #### Validation rules
 

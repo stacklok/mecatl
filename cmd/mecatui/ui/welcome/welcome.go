@@ -23,6 +23,7 @@ type Info struct {
 	Provider string // provider name ("" → just the model)
 	Version  string // mecatui build version ("" → omit)
 	Tagline  string // one-line tagline under the identity ("" → omit)
+	Submit   string // live submit chord used by the prompt hint ("" → "enter")
 
 	// Affordances are the pre-rendered (themed) affordance rows the caller builds
 	// from its caps-tailored zeroStateRows(), so the welcome card's chord list stays
@@ -152,13 +153,20 @@ func Splash(th theme.Theme, in Info, width, height int) string {
 	return b.String()
 }
 
+func submitKey(in Info) string {
+	if in.Submit != "" {
+		return in.Submit
+	}
+	return "enter"
+}
+
 // tinySplash is the minimal, safe body for a terminal too small for the splash:
 // the greppable title, a prompt hint, and the affordance rows so discoverability
 // survives. Never panics.
 func tinySplash(th theme.Theme, in Info) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Welcome to mecatui") + "\n")
-	b.WriteString(th.Style("muted").Render("Type a request and press enter."))
+	b.WriteString(th.Style("muted").Render("Type a request and press " + submitKey(in) + "."))
 	for _, row := range in.Affordances {
 		b.WriteString("\n" + row)
 	}
@@ -187,7 +195,7 @@ func splashHead(th theme.Theme, in Info, width, height int) []splashSection {
 	head = append(head,
 		splashSection{text: Wordmark(th, in.FullColor)},
 		splashSection{text: th.Style("askTitle").Render("Welcome to mecatui")},
-		splashSection{text: th.Style("toolArgs").Render("  Type a request below and press enter.")},
+		splashSection{text: th.Style("toolArgs").Render("  Type a request below and press " + submitKey(in) + ".")},
 	)
 	return head
 }
