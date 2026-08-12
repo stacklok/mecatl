@@ -71,7 +71,11 @@ func (WriteTool) Spec() tool.ToolSpec {
 // ReadOnly reports that Write mutates state.
 func (WriteTool) ReadOnly() bool { return false }
 
-// Execute writes the file, enforcing read-before-overwrite on existing paths.
+// Execute writes the file, enforcing read-before-overwrite on existing paths
+// via the version protocol (ADR 0103): a NEW file uses create-only; an
+// EXISTING file requires a recorded version, re-reads the current version, and
+// finishes with a conditional replace against that current version. No
+// unconditional operation is used by the agent-facing Write tool.
 func (WriteTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
 	var args writeArgs
 	if msg, ok := parseArgs(in, &args); !ok {
@@ -81,36 +85,64 @@ func (WriteTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Works
 		return session.NewToolError(in.ID, "the \"path\" argument is required"), nil
 	}
 
+	overwriteConflict := session.NewToolError(in.ID, fmt.Sprintf(
+		"refusing to overwrite existing file %q: it was not read this session, or it changed since you read it. Read it first, then retry.",
+		args.Path))
+
 	// Determine whether the path already exists.
 	_, statErr := ws.Stat(ctx, args.Path)
 	switch {
 	case statErr == nil:
-		// Existing file: require read-before-overwrite.
-		unchanged, err := ws.WasReadUnchanged(ctx, args.Path)
+		// Existing file: require read-before-overwrite via the version protocol.
+		recorded, recordedOK := ws.RecordedVersion(args.Path)
+		if !recordedOK {
+			return overwriteConflict, nil
+		}
+		_, current, err := ws.ReadVersion(ctx, args.Path)
 		if err != nil {
-			return session.ToolResult{}, fmt.Errorf("write: checking read-ledger for %q: %w", args.Path, err)
+			// A read failure is a model-visible "cannot read" error, NOT the
+			// changed-since-read refusal — the file may have been deleted or made
+			// unreadable since the recorded read; surface the real cause.
+			return session.NewToolError(in.ID, fmt.Sprintf("cannot read %q: %v", args.Path, err)), nil
 		}
-		if !unchanged {
-			return session.NewToolError(in.ID, fmt.Sprintf(
-				"refusing to overwrite existing file %q: it was not read this session, or it changed since you read it. Read it first, then retry.",
-				args.Path)), nil
+		if !recorded.Equal(current) {
+			return overwriteConflict, nil
 		}
+		newVer, err := ws.ReplaceFile(ctx, args.Path, current, []byte(args.Content))
+		if err != nil {
+			var mismatch *tool.VersionMismatchError
+			if errors.As(err, &mismatch) {
+				return overwriteConflict, nil
+			}
+			// A concurrent DELETE after the current read but before this replace
+			// surfaces as fs.ErrNotExist -> a model-visible "deleted since you
+			// read it" refusal, distinct from a concurrent change. An unrelated
+			// write failure stays a harness-level error.
+			if errors.Is(err, fs.ErrNotExist) {
+				return session.NewToolError(in.ID, fmt.Sprintf(
+					"refusing to overwrite %q: it was deleted since you read it. Read it again to confirm, then retry.",
+					args.Path)), nil
+			}
+			return session.ToolResult{}, fmt.Errorf("write: writing %q: %w", args.Path, err)
+		}
+		// Re-record the new version so a subsequent Edit/Write in the same turn is valid.
+		ws.RecordRead(args.Path, newVer)
+		return session.NewToolResult(in.ID, fmt.Sprintf("overwrote %q (%d bytes)", args.Path, len(args.Content))), nil
 	case errors.Is(statErr, fs.ErrNotExist):
-		// New file: allowed without a prior read.
+		// New file: create-only (no prior read needed). A concurrent creation
+		// surfaces as fs.ErrExist -> a create-conflict refusal.
+		newVer, err := ws.CreateFile(ctx, args.Path, []byte(args.Content))
+		if err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return session.NewToolError(in.ID, fmt.Sprintf(
+					"cannot create %q: a file already exists at that path. Read it first, then overwrite it.",
+					args.Path)), nil
+			}
+			return session.ToolResult{}, fmt.Errorf("write: creating %q: %w", args.Path, err)
+		}
+		ws.RecordRead(args.Path, newVer)
+		return session.NewToolResult(in.ID, fmt.Sprintf("wrote %q (%d bytes)", args.Path, len(args.Content))), nil
 	default:
 		return session.ToolResult{}, fmt.Errorf("write: stat %q: %w", args.Path, statErr)
 	}
-
-	if err := ws.Write(ctx, args.Path, []byte(args.Content)); err != nil {
-		return session.ToolResult{}, fmt.Errorf("write: writing %q: %w", args.Path, err)
-	}
-
-	// Record the read so a subsequent Edit/Write in the same turn is valid.
-	ws.RecordRead(args.Path, "")
-
-	verb := "wrote"
-	if statErr == nil {
-		verb = "overwrote"
-	}
-	return session.NewToolResult(in.ID, fmt.Sprintf("%s %q (%d bytes)", verb, args.Path, len(args.Content))), nil
 }

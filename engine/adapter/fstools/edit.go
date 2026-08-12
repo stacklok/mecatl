@@ -2,7 +2,9 @@ package fstools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -78,7 +80,8 @@ func (EditTool) Spec() tool.ToolSpec {
 // ReadOnly reports that Edit mutates state.
 func (EditTool) ReadOnly() bool { return false }
 
-// Execute enforces the three Edit invariants and writes the modified file.
+// Execute enforces the three Edit invariants and writes the modified file via a
+// conditional replace (ADR 0103).
 func (EditTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
 	var args editArgs
 	if msg, ok := parseArgs(in, &args); !ok {
@@ -94,21 +97,36 @@ func (EditTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Worksp
 		return session.NewToolError(in.ID, "\"old_string\" and \"new_string\" are identical; nothing to change"), nil
 	}
 
-	// Invariant #1: read-before-edit-and-unchanged.
-	unchanged, err := ws.WasReadUnchanged(ctx, args.Path)
-	if err != nil {
-		return session.ToolResult{}, fmt.Errorf("edit: checking read-ledger for %q: %w", args.Path, err)
-	}
-	if !unchanged {
-		return session.NewToolError(in.ID, fmt.Sprintf(
-			"refusing to edit %q: it was not read this session, or it changed since you read it. Read the file again, then retry the edit.",
-			args.Path)), nil
+	readConflict := session.NewToolError(in.ID, fmt.Sprintf(
+		"refusing to edit %q: it was not read this session, or it changed since you read it. Read the file again, then retry the edit.",
+		args.Path))
+
+	// Invariant #1a: read-before-edit. RecordedVersion is an I/O-free lookup of
+	// the version a prior Read recorded; ok=false means the file was not read
+	// this session.
+	recorded, recordedOK := ws.RecordedVersion(args.Path)
+	if !recordedOK {
+		return readConflict, nil
 	}
 
-	data, err := ws.Read(ctx, args.Path)
+	// Re-read the file with its CURRENT authoritative version. This is the
+	// version-bearing read that also yields the content the edit is computed
+	// against. A read failure is a model-visible "cannot read" error, NOT the
+	// changed-since-read refusal — the file may have been deleted, made
+	// unreadable, or the path rejected; none of those are "changed since you
+	// read it", and surfacing the real cause lets the model act on it.
+	data, current, err := ws.ReadVersion(ctx, args.Path)
 	if err != nil {
 		return session.NewToolError(in.ID, fmt.Sprintf("cannot read %q: %v", args.Path, err)), nil
 	}
+
+	// Invariant #1b: unchanged-since-read. The recorded version (from the prior
+	// Read) must equal the current version; a mismatch means the file changed
+	// since the read.
+	if !recorded.Equal(current) {
+		return readConflict, nil
+	}
+
 	content := string(data)
 
 	// Invariant #2: exact match.
@@ -133,12 +151,30 @@ func (EditTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Worksp
 		updated = strings.Replace(content, args.OldString, args.NewString, 1)
 	}
 
-	if err := ws.Write(ctx, args.Path, []byte(updated)); err != nil {
+	// Finish with a CONDITIONAL replace against the CURRENT version (the CAS).
+	// A concurrent mutation that landed between the ReadVersion above and this
+	// ReplaceFile surfaces as a VersionMismatchError -> the same "changed since
+	// you read it" refusal, so the final CAS is load-bearing and model-visible.
+	// A concurrent DELETE after the current read but before this replace
+	// surfaces as fs.ErrNotExist -> a model-visible "deleted since you read it"
+	// refusal, distinct from a concurrent change (the file is GONE, not
+	// changed). An unrelated write failure stays a harness-level error.
+	newVer, err := ws.ReplaceFile(ctx, args.Path, current, []byte(updated))
+	if err != nil {
+		var mismatch *tool.VersionMismatchError
+		if errors.As(err, &mismatch) {
+			return readConflict, nil
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return session.NewToolError(in.ID, fmt.Sprintf(
+				"refusing to edit %q: it was deleted since you read it. Read it again to confirm, then retry.",
+				args.Path)), nil
+		}
 		return session.ToolResult{}, fmt.Errorf("edit: writing %q: %w", args.Path, err)
 	}
 
-	// Re-record the read so subsequent edits in the same turn remain valid.
-	ws.RecordRead(args.Path, "")
+	// Re-record the new version so subsequent edits in the same turn remain valid.
+	ws.RecordRead(args.Path, newVer)
 
 	replaced := 1
 	if args.ReplaceAll {

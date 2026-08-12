@@ -502,10 +502,11 @@ for this direction would supersede them by new ADR, never by quiet edits.
   concern). A filesystem doesn't know its mount point; the mount table does.
   The three current consumers (permission-config resolver, surfaced fork-root
   paths, the `CommandRunner` workdir) get what they need from composition.
-- **The Edit read-ledger externalizes.** `RecordRead`/`WasReadUnchanged` moves
-  from private adapter state to an explicit read-token / conditional-write
-  contract on the interface (the `version` parameter is currently vestigial).
-  The model's experience is unchanged.
+- **The Edit read-ledger externalizes.** The current `FileVersion` +
+  `RecordRead`/`RecordedVersion` + `CreateFile`/`ReplaceFile` protocol makes the
+  token and conditional-write contract explicit. Ledger keying itself is I/O-free
+  and lexical; a future remote environment supplies backend versions/CAS without
+  changing the model's experience.
 - **ADR 0005's workspace-driver deferral ends.** The sketch's trigger
   condition is met by this design; the 64 MiB unary rule gives way to
   streaming for this one service, as the sketch itself anticipated.

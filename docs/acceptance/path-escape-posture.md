@@ -20,9 +20,9 @@ harness can demonstrate, not which packages exist on disk.
   is an `*os.Root` + canonicalize-then-reject invariant, not a permission lookup;
   the relax must consult policy *before* the tool body, never strip the vetting.
 - [ADR-0047](../adr/0047-absolute-path-resolution.md) — the frozen decision that
-  defines `resolveInRoot`, the canonicalize-then-reject contract, the read-ledger
-  key normalization, and the Glob/Grep-no-behavioural-change rule this plan relaxes
-  *the decision of* (never the vetting).
+  defines `resolveInRoot`, the canonicalize-then-reject serving contract, and the
+  Glob/Grep-no-behavioural-change rule this plan relaxes *the decision of* (never
+  the vetting). ADR 0104 separately makes ledger keying I/O-free and lexical.
 - The guardrail matcher keys on tool **name** only
   ([`internal/adapter/modelhook/matcher.go`](../../internal/adapter/modelhook/matcher.go)
   `ruleMatches`), never on call args — so "gate on the guardrails decision" cannot
@@ -183,8 +183,9 @@ full shell risk). Under `auto` (no guardrail knob), a write escape resolves
 the mutate-serial path unchanged (the read-parallel / mutate-serial invariant
 holds — [`AGENTS.md` — dispatch invariants](../../AGENTS.md)). Edit's three
 invariants (read-before-edit, exact match, uniqueness) apply to an out-of-root
-target identically, with the read-ledger keyed on the canonicalized path so an
-out-of-root read followed by an out-of-root edit matches.
+target identically. The I/O-free ledger uses lexical Clean/Rel keying: ordinary
+absolute-root/relative forms and cleaned out-of-root absolute spellings match;
+physical symlink aliases may conservatively miss and require another Read.
 
 **Work:**
 - composition (`internal/app`): write escapes resolve Allow at `yolo`, Ask at
@@ -197,8 +198,8 @@ out-of-root read followed by an out-of-root edit matches.
   option, **through a fresh `*os.Root` on the target's parent** (never a direct
   `os.WriteFile`) so the symlink-escape containment
   ([ADR-0047](../adr/0047-absolute-path-resolution.md)) survives; the read-ledger
-  (`RecordRead`/`WasReadUnchanged`) keys out-of-root paths by their canonical
-  absolute form without regressing in-root cross-form matching.
+  (`RecordRead`/`RecordedVersion`) performs no I/O and keys out-of-root absolute
+  paths by `filepath.Clean`, without regressing ordinary in-root abs/relative matching.
 - composition: the escape Ask surfaces through the ordinary `surfaceAsk` spine
   (mint askID → PauseForApproval → EvPermissionAsk), reusing the existing
   ask mechanics — no new ask channel.
@@ -398,9 +399,9 @@ guardrail routing), which may be driven as separate `/plan-orchestrate` runs.
   `TestPathEscapePosture_GuardrailRoutedEscape`.
 - **Escape Ask rule persistence.** An "allow always" on an escape Ask is v2;
   v1 asks are allow-once only (no learned out-of-root rule).
-- **Edit-ledger key for out-of-root paths** must be the canonical absolute form,
-  not root-relative (out-of-root paths have no root-relative form); pinned by
-  AC3.3.
+- **Edit-ledger key for out-of-root paths** is the cleaned absolute spelling,
+  not root-relative (out-of-root paths have no root-relative form). Physical
+  symlink aliases may conservatively miss; ledger methods perform no I/O.
 - **Pseudo-fs surface is broader than `/proc/self/environ`.** v1 denies
   `/proc`,`/sys`,`/dev` outright (AC1.5/AC2.5); whether a narrower allow (e.g.
   read-only `/proc/<pid>/cmdline`) is ever useful is a v2 question, default no.
@@ -415,10 +416,9 @@ guardrail routing), which may be driven as separate `/plan-orchestrate` runs.
 
 - AC-W2-F1: an Edit-ledger read of a pseudo-fs path cannot bypass the
   pseudo-fs guard — the asymmetry is CLOSED: `escapeWorkspace` overrides
-  `RecordRead`/`WasReadUnchanged` with the same `refusePseudoFS` guard
-  Read/Stat/Write consult (fail-safe no-op / never-read), so the inner osfs
-  `fingerprint` read is no longer the one tool-body read site the wrapper
-  forgot.
+  `RecordRead`/`RecordedVersion` with the same `refusePseudoFS` guard
+  Read/Stat/CreateFile/ReplaceFile consult (fail-safe no-op / never-read), so no
+  version-bearing tool-body path bypasses the wrapper.
   - verify: `TestPathEscapePosture_EditLedgerPseudoFSGuarded`
 - AC-W2-F2: `vetRelaxedParent` delegates to `osfs.Canonicalize`
   (canonicalize-then-compare against the verbatim cleaned prefix) — no third

@@ -238,47 +238,44 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 	})
 }
 
-// readGateWorkspace wraps the relaxed escape workspace and PARKS a Read of
-// the gate path inside the workspace until release is closed. The
+// readGateWorkspace wraps the relaxed escape workspace and PARKS a ReplaceFile
+// of the gate path inside the workspace until release is closed. The
 // EditLedgerOutOfRoot test uses it to plant the behind-the-back file change
-// at a deterministic point: the loop records the read-ledger entry (the
-// fstools Read body runs BEFORE the workspace Read the tool body then issues
-// — actually the body reads via ws.Read AFTER RecordRead, so the gate fires
-// with the ledger already recorded), then the gate blocks the tool body until
-// the test has planted the behind-the-back change, so the next turn's Edit
-// provably checks the ledger AFTER the file changed — no reliance on
-// event-loop delivery timing (which can lag behind dispatch under parallel
-// load).
+// at a deterministic point: the Edit body re-reads the file (ReadVersion) and
+// records the pre-change version, then calls ReplaceFile as the conditional
+// CAS against that version. The gate fires on e3's ReplaceFile (the
+// changed-since edit) so the test can plant a behind-the-back change BEFORE the
+// CAS compares, proving the final ReplaceFile is load-bearing and
+// model-visible — no reliance on event-loop delivery timing (which can lag
+// behind dispatch under parallel load).
 type readGateWorkspace struct {
 	tool.Workspace
 	gatePath string
-	entered  chan struct{} // closed when the SECOND gated WasReadUnchanged parks (e3's)
-	release  chan struct{} // closed by the test to let the parked check through
+	entered  chan struct{} // closed when the SECOND gated ReplaceFile parks (e3's)
+	release  chan struct{} // closed by the test to let the parked replace through
 	checks   atomic.Int32
 }
 
-// WasReadUnchanged is the EDIT tool's ledger read — and the ONLY workspace
-// call that fires with the read-ledger already holding the pre-change
-// fingerprint (the fstools Read body calls ws.Read BEFORE ws.RecordRead, so a
-// Read-gate can never park "after the record"). The FIRST gated check is
-// e1's (the cross-form edit — it must flow unimpeded); the SECOND is e3's
-// (the changed-since edit — the one the test plants the behind-the-back
-// change behind). Parking e3's check while the test plants the change makes
-// the ordering deterministic: the ledger still holds r2's pre-change
-// fingerprint when the check resumes, so the check provably compares against
-// the changed file.
-func (w *readGateWorkspace) WasReadUnchanged(ctx context.Context, path string) (bool, error) {
+// ReplaceFile is the Edit tool's conditional CAS — the call that fires AFTER the
+// Edit body re-read the file (ReadVersion) and recorded the pre-change version.
+// The FIRST gated replace is e1's (the cross-form edit — it must flow
+// unimpeded); the SECOND is e3's (the changed-since edit — the one the test
+// plants the behind-the-back change behind). Parking e3's replace while the
+// test plants the change makes the ordering deterministic: the replace resumes
+// and compares its recorded version (e3 just read it) against the now-CHANGED
+// on-disk content, so the CAS provably mismatches and the edit is rejected.
+func (w *readGateWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
 	if filepath.Clean(path) == filepath.Clean(w.gatePath) {
 		if w.checks.Add(1) == 2 {
 			close(w.entered)
 			select {
 			case <-w.release:
 			case <-ctx.Done():
-				return false, ctx.Err()
+				return tool.FileVersion{}, ctx.Err()
 			}
 		}
 	}
-	return w.Workspace.WasReadUnchanged(ctx, path)
+	return w.Workspace.ReplaceFile(ctx, path, old, data)
 }
 
 // TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot pins AC3.3: an
@@ -289,13 +286,15 @@ func (w *readGateWorkspace) WasReadUnchanged(ctx context.Context, path string) (
 // absolute path satisfies the edit's ledger check (and the reverse).
 //
 // DETERMINISM: the changed-since-read half plants the behind-the-back change
-// while e3's WasReadUnchanged ledger check is PARKED inside the workspace
+// while e3's ReplaceFile CAS is PARKED inside the workspace
 // (readGateWorkspace): r2's re-read already re-recorded the pre-change
-// fingerprint, and the gate fires with the ledger in that state, so the
-// resumed check provably compares against the CHANGED file. (The earlier
-// shape planted the change on the r2 EVENT, but event delivery can lag behind
-// dispatch under parallel load — the edit then checked the ledger before the
-// plant landed, a test-ordering flake, not a product race.)
+// version, and e3's own ReadVersion re-read it too, so the gate fires with
+// the recorded version in that state; the test plants the change, releases
+// the gate, and the resumed CAS compares its recorded version against the
+// CHANGED on-disk content and mismatches. (The earlier shape planted the
+// change on the r2 EVENT, but event delivery can lag behind dispatch under
+// parallel load — the edit then checked the ledger before the plant landed,
+// a test-ordering flake, not a product race.)
 func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 	t.Parallel()
 	f := setupWriteFS(t)
@@ -324,9 +323,10 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		mockllm.ToolCallTurn(read, editViaAlias),
 		// 2: Edit a never-read out-of-root path — read-before-edit rejects it.
 		mockllm.ToolCallTurn(editUnread),
-		// 3: Re-read the target (PARKED at the gate); the test plants the
-		//    behind-the-back change, releases the gate, and the next turn's
-		//    Edit must be rejected by unchanged-since-read.
+		// 3: Re-read the target (records the pre-change version); the next turn's
+		//    Edit re-reads it again (ReadVersion), then its ReplaceFile CAS PARKS
+		//    at the gate. The test plants the behind-the-back change, releases
+		//    the gate, and the resumed CAS mismatches the changed file.
 		mockllm.ToolCallTurn(readChanged),
 		mockllm.ToolCallTurn(editChanged),
 		mockllm.TextTurn("done"),
@@ -339,11 +339,11 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	// Install the read-gate workspace for the whole run: r1's read flows
-	// through BEFORE the e1 edit (ungated — the gate fires once, on r2's
-	// read), so the cross-form half runs unimpeded; r2's read parks until the
-	// test plants the behind-the-back change, making the changed-since-read
-	// ordering deterministic.
+	// Install the replace-gate workspace for the whole run: r1's read flows
+	// through BEFORE the e1 edit (ungated — the gate fires once, on e3's
+	// replace), so the cross-form half runs unimpeded; e3's ReplaceFile parks
+	// until the test plants the behind-the-back change, making the
+	// changed-since-read ordering deterministic.
 	clf, err := newEscapeClassifier(f.workspace)
 	if err != nil {
 		t.Fatalf("newEscapeClassifier: %v", err)
@@ -378,8 +378,8 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 			}
 		}
 	}()
-	// Wait for e3's ledger check to park inside the gate (r2's re-read
-	// already re-recorded the pre-change fingerprint), plant the
+	// Wait for e3's ReplaceFile CAS to park inside the gate (e3 already
+	// re-read the file and recorded the pre-change version), plant the
 	// behind-the-back change, then release. r1/e1/e2/r2 all completed before
 	// e3 starts (turn order), so this single rendezvous bounds the whole
 	// run's progress.
@@ -387,7 +387,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 	select {
 	case <-gate.entered:
 	case <-deadline:
-		t.Fatal("the changed-since edit (e3) never reached the ledger gate")
+		t.Fatal("the changed-since edit (e3) never reached the replace gate")
 	}
 	if err := os.WriteFile(f.target, []byte("changed-behind-the-back"), 0o644); err != nil {
 		t.Fatalf("planting the changed file: %v", err)
@@ -451,9 +451,9 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 }
 
 // serialProbeWorkspace wraps the REAL relaxed escape workspace (the same
-// relaxed wrapper the composition factory builds) and records how many Write
-// executions are in flight concurrently. A pause is injected on entry so an
-// overlapping pair cannot hide behind instantaneous writes.
+// relaxed wrapper the composition factory builds) and records how many
+// CreateFile executions are in flight concurrently. A pause is injected on
+// entry so an overlapping pair cannot hide behind instantaneous creates.
 type serialProbeWorkspace struct {
 	tool.Workspace
 	inflight *atomic.Int32
@@ -479,8 +479,8 @@ func newSerialProbeWorkspace(t *testing.T, root string, inflight, maxSeen *atomi
 	}
 }
 
-// Write records the concurrency window around the delegated write.
-func (w *serialProbeWorkspace) Write(ctx context.Context, path string, data []byte) error {
+// CreateFile records the concurrency window around the delegated safe create.
+func (w *serialProbeWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
 	n := w.inflight.Add(1)
 	for {
 		old := w.maxSeen.Load()
@@ -490,7 +490,7 @@ func (w *serialProbeWorkspace) Write(ctx context.Context, path string, data []by
 	}
 	time.Sleep(w.pause)
 	defer w.inflight.Add(-1)
-	return w.Workspace.Write(ctx, path, data)
+	return w.Workspace.CreateFile(ctx, path, data)
 }
 
 // TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial pins AC3.4: two

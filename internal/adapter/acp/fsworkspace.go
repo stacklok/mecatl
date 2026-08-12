@@ -2,8 +2,6 @@ package acp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/hashutil"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -37,10 +36,11 @@ const fsCallTimeout = 30 * time.Second
 // It is a HYBRID, not a full reimplementation:
 //
 //   - Read / Write — DELEGATED through fs/* over the ACP connection.
-//   - RecordRead / WasReadUnchanged — the Edit read-ledger, SYNTHESIZED locally
-//     over the delegated reads: the fingerprint is the sha256 of the fs/read
-//     content, so Edit's read-before-edit-and-unchanged invariant tracks the
-//     editor's BUFFER, not disk (strictly better than osfs for an editor session).
+//   - ReadVersion / CreateFile / ReplaceFile — version-bearing reads and explicit
+//     mutations over the editor buffer; versions are sha256 of fs/read content.
+//   - RecordRead / RecordedVersion — the I/O-free session ledger, so Edit's
+//     read-before-edit-and-unchanged invariant tracks the editor's BUFFER, not disk
+//     (strictly better than osfs for an editor session).
 //   - Root / Glob / Grep — COMPOSED from an osfs.Workspace rooted at the SAME
 //     session cwd. ACP has no fs/list or fs/grep, so these read the local on-disk
 //     tree. The residual: Grep/Glob see disk, not unsaved buffers. This is
@@ -70,8 +70,17 @@ type fsWorkspace struct {
 	// tests may shrink it to assert the bound fires against a non-responsive peer.
 	callTimeout time.Duration
 
-	mu     sync.Mutex
-	ledger map[string]string // ledgerKey(path) -> sha256 of last fs/read content
+	// ledgerMu guards ONLY the in-memory ledger map. Ledger methods (RecordRead/
+	// RecordedVersion) take it alone and perform NO I/O, so a parked RPC
+	// mutation never blocks a ledger lookup or record.
+	ledgerMu sync.Mutex
+	ledger   map[string]tool.FileVersion // LedgerKey(path) -> version of last fs/read content
+
+	// callMu serializes the buffer CAS / create RPC SEQUENCES in CreateFile and
+	// ReplaceFile (the read-then-write compare-and-swap), so a same-instance
+	// concurrent CreateFile/ReplaceFile cannot race the editor buffer. It is
+	// held ONLY across the fs/* round-trips, never across ledger access.
+	callMu sync.Mutex
 }
 
 // Compile-time assertion that fsWorkspace satisfies the tool.Workspace port.
@@ -91,7 +100,7 @@ func newFSWorkspace(conn *Conn, sessionID, root string) (*fsWorkspace, error) {
 		sessionID:   sessionID,
 		local:       local,
 		callTimeout: fsCallTimeout,
-		ledger:      make(map[string]string),
+		ledger:      make(map[string]tool.FileVersion),
 	}, nil
 }
 
@@ -209,13 +218,39 @@ func (w *fsWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
 	return []byte(resp.Content), nil
 }
 
+// ReadVersion returns the buffer content AND the authoritative FileVersion
+// (sha256 of the buffer content). It delegates the read to fs/read_text_file
+// (the SAME path as Read) and mints the version locally, so the version tracks
+// the editor's BUFFER, not disk (strictly better than osfs for an editor
+// session — Edit's read-before-edit-and-unchanged invariant tracks what the
+// editor would actually overwrite).
+func (w *fsWorkspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.FileVersion, error) {
+	data, err := w.Read(ctx, path)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	return data, acpVersion(data), nil
+}
+
+// acpVersion mints a FileVersion from content bytes (sha256 via
+// hashutil.SHA256Hex, the shared adapter-layer fingerprint primitive). It is the
+// single ACP version primitive, shared by ReadVersion/CreateFile/ReplaceFile.
+func acpVersion(data []byte) tool.FileVersion {
+	return tool.NewFileVersion(hashutil.SHA256Hex(data))
+}
+
 // Write replaces the file's content by delegating to fs/write_text_file, so the
-// write lands in the editor's buffer. The response is empty.
+// write lands in the editor's buffer. This adapter-public bootstrap operation is
+// deliberately not part of tool.Workspace; tools use CreateFile/ReplaceFile,
+// which gate the same delegation on a version check under the callMu CAS
+// sequence.
 func (w *fsWorkspace) Write(ctx context.Context, path string, data []byte) error {
 	abs, err := w.absPath(path)
 	if err != nil {
 		return err
 	}
+	w.callMu.Lock()
+	defer w.callMu.Unlock()
 	callCtx, cancel := context.WithTimeout(ctx, w.callTimeout)
 	defer cancel()
 	if err := w.conn.Call(callCtx, methodFSWriteTextFile, fsWriteTextFileRequest{
@@ -226,6 +261,84 @@ func (w *fsWorkspace) Write(ctx context.Context, path string, data []byte) error
 		return fmt.Errorf("acp: fs/write_text_file %q: %w", path, err)
 	}
 	return nil
+}
+
+// CreateFile creates a NEW file at path by delegating to fs/write_text_file, but
+// only if the buffer does not already exist. It fails (wrapping fs.ErrExist) if
+// the editor's buffer already holds the path (checked via fs/read_text_file,
+// mirroring Stat's buffer-aware existence). The compare+write is serialized
+// under callMu (the RPC CAS sequence — ADR 0103 §5), so a concurrent
+// CreateFile/ReplaceFile on the same instance cannot race. The ledger is NOT
+// held across the RPC: callMu and ledgerMu are independent.
+func (w *fsWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
+	abs, err := w.absPath(path)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	w.callMu.Lock()
+	defer w.callMu.Unlock()
+	// Existence probe through the SAME delegated read the mutation uses, under
+	// callMu, so the create-only check and the write are atomic w.r.t. other
+	// fsWorkspace CAS sequences.
+	_, readErr := w.bufferRead(ctx, abs)
+	switch {
+	case readErr == nil:
+		return tool.FileVersion{}, fmt.Errorf("acp: create %q: %w", path, fs.ErrExist)
+	case isFSNotFound(readErr, abs):
+		// Genuinely new — fall through to write.
+	default:
+		// Ambiguous read fault -> fail safe: refuse the create rather than risk
+		// clobbering a buffer we could not probe.
+		return tool.FileVersion{}, fmt.Errorf("acp: create %q: cannot verify existence: %w", path, readErr)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, w.callTimeout)
+	defer cancel()
+	if err := w.conn.Call(callCtx, methodFSWriteTextFile, fsWriteTextFileRequest{
+		SessionID: w.sessionID,
+		Path:      abs,
+		Content:   string(data),
+	}, nil); err != nil {
+		return tool.FileVersion{}, fmt.Errorf("acp: fs/write_text_file %q: %w", path, err)
+	}
+	return acpVersion(data), nil
+}
+
+// ReplaceFile conditionally replaces the buffer content at path, only if the
+// editor's current buffer version equals old. It reads the buffer, mints the
+// current version, compares, and writes — all under callMu (the RPC CAS
+// sequence — ADR 0103 §5). On a version mismatch it returns a
+// *tool.VersionMismatchError; on a missing buffer it returns an error wrapping
+// fs.ErrNotExist. Because fs/write_text_file is unconditional, the CAS is only
+// as atomic as callMu; there is exactly one fsWorkspace per session, so a
+// same-session concurrent ReplaceFile is serialized.
+func (w *fsWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
+	abs, err := w.absPath(path)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	w.callMu.Lock()
+	defer w.callMu.Unlock()
+	content, readErr := w.bufferRead(ctx, abs)
+	if readErr != nil {
+		if isFSNotFound(readErr, abs) {
+			return tool.FileVersion{}, fmt.Errorf("acp: replace %q: %w", path, fs.ErrNotExist)
+		}
+		return tool.FileVersion{}, fmt.Errorf("acp: replace %q: read buffer: %w", path, readErr)
+	}
+	have := acpVersion([]byte(content))
+	if !have.Equal(old) {
+		return tool.FileVersion{}, &tool.VersionMismatchError{Path: path}
+	}
+	callCtx, cancel := context.WithTimeout(ctx, w.callTimeout)
+	defer cancel()
+	if err := w.conn.Call(callCtx, methodFSWriteTextFile, fsWriteTextFileRequest{
+		SessionID: w.sessionID,
+		Path:      abs,
+		Content:   string(data),
+	}, nil); err != nil {
+		return tool.FileVersion{}, fmt.Errorf("acp: fs/write_text_file %q: %w", path, err)
+	}
+	return acpVersion(data), nil
 }
 
 // Stat returns metadata for path. Disk is PRIMARY (ACP has no fs/stat): a file
@@ -260,7 +373,7 @@ func (w *fsWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, err
 		// delegatable path anyway). Return the disk error.
 		return tool.FileInfo{}, err
 	}
-	content, readErr := w.bufferRead(ctx, abs, path)
+	content, readErr := w.bufferRead(ctx, abs)
 	switch {
 	case readErr == nil:
 		// Buffer exists -> synthesize an EXISTS FileInfo. Name is the leaf; Size is
@@ -273,7 +386,7 @@ func (w *fsWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, err
 			ModTime: time.Time{},
 			IsDir:   false,
 		}, nil
-	case isFSNotFound(readErr):
+	case isFSNotFound(readErr, abs):
 		// Editor confirms the file does not exist anywhere -> genuinely new.
 		return tool.FileInfo{}, err
 	default:
@@ -288,11 +401,12 @@ func (w *fsWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, err
 	}
 }
 
-// bufferRead issues a single fs/read_text_file for an already-confined absolute
-// path, returning the content or the raw call error (so the caller can classify
-// it). It is the existence-probe used by Stat; it does NOT go through Read (which
-// re-confines), so the caller MUST pass an abs that absPath already produced.
-func (w *fsWorkspace) bufferRead(ctx context.Context, abs, path string) (string, error) {
+// bufferRead issues one fs/read_text_file for an already-confined absolute
+// path and returns the underlying call error WITHOUT adding path context. Its
+// callers classify that trusted structured error first; only then may they add
+// the model-controlled path to an outward-facing error. It does not go through
+// Read (which re-confines), so the caller must pass an abs that absPath produced.
+func (w *fsWorkspace) bufferRead(ctx context.Context, abs string) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, w.callTimeout)
 	defer cancel()
 	var resp fsReadTextFileResponse
@@ -300,45 +414,70 @@ func (w *fsWorkspace) bufferRead(ctx context.Context, abs, path string) (string,
 		SessionID: w.sessionID,
 		Path:      abs,
 	}, &resp); err != nil {
-		return "", fmt.Errorf("acp: fs/read_text_file %q: %w", path, err)
+		// Return the trusted underlying RPC/transport error verbatim. Callers must
+		// classify it BEFORE adding the model-controlled path as context.
+		return "", err
 	}
 	return resp.Content, nil
 }
 
-// isFSNotFound reports whether a fs/read_text_file error is a CLEAN "file does not
-// exist" from the editor, as opposed to a transport/timeout/other fault. ACP does
-// not define a canonical not-found JSON-RPC code for fs/read, and editors differ,
-// so this is conservative: it matches only on unambiguous not-found markers in the
-// error text. Anything it does not recognize is treated as ambiguous (NOT
-// not-found) so the caller can fail safe to "exists". A context deadline/cancel is
-// explicitly NOT not-found.
-func isFSNotFound(err error) bool {
-	if err == nil {
+// isFSNotFound reports whether the trusted underlying structured editor error is
+// a clean absence response for requestedPath. The exact model-controlled path
+// (including common quote wrappers) is removed before normalization. Classification
+// is an anchored equality check over a narrow vocabulary — never a substring scan.
+// Generic/wrapped errors and structured permission/unavailable errors fail closed.
+func isFSNotFound(err error, requestedPath string) bool {
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return false
-	}
-	// The JSON-RPC error surfaces as *rpcError; fall back to the message text.
-	msg := strings.ToLower(err.Error())
 	var re *rpcError
-	if errors.As(err, &re) {
-		// LSP/ACP convention sometimes uses -32602 (invalid params) for a bad path,
-		// but that is not reliably "not found", so we still gate on the message.
-		msg = strings.ToLower(re.Message)
+	if !errors.As(err, &re) {
+		return false
 	}
-	for _, marker := range []string{
-		"no such file",
-		"not found",
-		"does not exist",
-		"enoent",
-		"cannot find",
-	} {
-		if strings.Contains(msg, marker) {
-			return true
+	msg := re.Message
+	if requestedPath != "" {
+		for _, form := range []string{
+			`"` + requestedPath + `"`,
+			"'" + requestedPath + "'",
+			"`" + requestedPath + "`",
+			requestedPath,
+		} {
+			msg = strings.ReplaceAll(msg, form, "")
 		}
 	}
-	return false
+	msg = normalizeFSAbsence(msg)
+	switch msg {
+	case "not found", "file not found", "no such file or directory", "does not exist", "file does not exist", "enoent":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeFSAbsence(msg string) string {
+	msg = strings.ToLower(strings.Join(strings.Fields(msg), " "))
+	for _, pair := range [][2]string{
+		{" :", ":"}, {" ,", ","}, {" ;", ";"},
+	} {
+		msg = strings.ReplaceAll(msg, pair[0], pair[1])
+	}
+	msg = strings.Trim(msg, " \t\r\n:;,.()[]{}\"'`")
+	for _, prefix := range []string{"error:", "open:", "read:", "stat:", "fs/read_text_file:"} {
+		if strings.HasPrefix(msg, prefix) {
+			msg = strings.TrimSpace(strings.TrimPrefix(msg, prefix))
+			break
+		}
+	}
+	if strings.HasPrefix(msg, "enoent:") {
+		msg = strings.TrimSpace(strings.TrimPrefix(msg, "enoent:"))
+		if msg == "" {
+			return "enoent"
+		}
+	}
+	for _, suffix := range []string{", open", ", read", ", stat"} {
+		msg = strings.TrimSuffix(msg, suffix)
+	}
+	return strings.Trim(msg, " \t\r\n:;,.()[]{}\"'`")
 }
 
 // Glob returns local on-disk matches (ACP has no fs/list/glob). Residual: it does
@@ -355,74 +494,28 @@ func (w *fsWorkspace) Grep(ctx context.Context, pattern, pathGlob string) ([]too
 	return w.local.Grep(ctx, pattern, pathGlob)
 }
 
-// ledgerKey normalizes a ledger path to its canonical absolute form so a file
-// read by absolute path and then edited by relative path (or vice versa) matches
-// in the ledger. It resolves through absPath; an in-root absolute path is left as
-// its canonical absolute form (absPath canonicalizes BOTH relative and absolute
-// in-root inputs to the SAME <root>/<rel> absolute form — the editor buffer
-// address), a relative path is joined under Root() to that same absolute form,
-// and an escaping path absPath rejects falls back to filepath.Clean's slash form
-// (mirroring osfs.ledgerKey's fallback; these paths are never edited, so the key
-// shape only needs both call sites to agree). The key is stable across the two
-// cross-form call sites (RecordRead and WasReadUnchanged) because both apply the
-// same normalization.
-func (w *fsWorkspace) ledgerKey(path string) string {
-	if abs, err := w.absPath(path); err == nil {
-		return abs
-	}
-	return filepath.Clean(filepath.ToSlash(path))
+// RecordRead stores the EXACT authoritative version for path under the session
+// ledger, performing NO I/O: it stores the FileVersion the caller supplies (the
+// one ReadVersion minted). The version authority is the BUFFER (sha256 of the
+// fs/read content), so a later comparison tracks what the editor would actually
+// overwrite. The I/O-free lexical key (tool.LedgerKey over the shared osfs root)
+// makes ordinary absolute-root and relative forms share one entry; symlink
+// aliases may require another Read.
+func (w *fsWorkspace) RecordRead(path string, version tool.FileVersion) {
+	key := tool.LedgerKey(w.Root(), path)
+	w.ledgerMu.Lock()
+	w.ledger[key] = version
+	w.ledgerMu.Unlock()
 }
 
-// RecordRead stores the buffer-keyed fingerprint of path: it re-reads through
-// fs/read_text_file and records the sha256 of the editor's buffer content. The
-// caller-supplied version is ignored (the adapter computes its own authoritative
-// fingerprint, exactly like osfs) — but here the authority is the BUFFER, not
-// disk, so WasReadUnchanged compares against what the editor would actually
-// overwrite. A delegation fault leaves the path unrecorded (so a later edit is
-// refused as "not read", fail-safe). The ledger key is the canonical absolute
-// form (see ledgerKey), so an absolute path and the equivalent relative path
-// share one entry.
-func (w *fsWorkspace) RecordRead(path string, version string) {
-	key := w.ledgerKey(path)
-	fp, err := w.fingerprint(context.Background(), path)
-	if err != nil {
-		// Best effort: fall back to the caller's token so an unchanged-comparison can
-		// still be attempted; if even that is empty the file is simply unrecorded.
-		fp = version
-	}
-	w.mu.Lock()
-	w.ledger[key] = fp
-	w.mu.Unlock()
-}
-
-// WasReadUnchanged reports whether path was recorded via RecordRead AND the
-// editor's current buffer content still matches the recorded fingerprint. It
-// returns false if never recorded or if the buffer changed (or the read now
-// faults), mirroring osfs's "vanished file is changed, not an error" semantics.
-// The lookup uses the same canonical ledger key as RecordRead, so a read by
-// absolute path and a check by relative path (or the reverse) agree.
-func (w *fsWorkspace) WasReadUnchanged(ctx context.Context, path string) (bool, error) {
-	key := w.ledgerKey(path)
-	w.mu.Lock()
-	recorded, ok := w.ledger[key]
-	w.mu.Unlock()
-	if !ok {
-		return false, nil
-	}
-	current, err := w.fingerprint(ctx, path)
-	if err != nil {
-		return false, nil
-	}
-	return current == recorded, nil
-}
-
-// fingerprint computes the sha256 of the editor's buffer content for path, via
-// fs/read_text_file. The path is confined by Read's absPath before delegation.
-func (w *fsWorkspace) fingerprint(ctx context.Context, path string) (string, error) {
-	data, err := w.Read(ctx, path)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+// RecordedVersion returns the version previously recorded for path via
+// RecordRead, performing NO I/O. ok is false if path was never recorded. The
+// lookup uses the same lexical ledger key (tool.LedgerKey) as RecordRead, so
+// ordinary absolute-root and relative forms agree without filesystem/editor I/O.
+func (w *fsWorkspace) RecordedVersion(path string) (tool.FileVersion, bool) {
+	key := tool.LedgerKey(w.Root(), path)
+	w.ledgerMu.Lock()
+	version, ok := w.ledger[key]
+	w.ledgerMu.Unlock()
+	return version, ok
 }

@@ -9,8 +9,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -180,12 +183,60 @@ type CommandResult struct {
 type FileSystem interface {
 	// Read returns the entire contents of the file at path.
 	Read(ctx context.Context, path string) ([]byte, error)
-	// Write replaces the contents of the file at path, creating it if needed.
-	Write(ctx context.Context, path string, data []byte) error
 	// Stat returns metadata for the file at path.
 	Stat(ctx context.Context, path string) (FileInfo, error)
 	// Glob returns the paths matching the shell-style pattern.
 	Glob(ctx context.Context, pattern string) ([]string, error)
+}
+
+// FileVersion is the opaque, comparable content version a Workspace attaches to a
+// version-bearing read (ADR 0103). It is an adapter-minted token (a content hash,
+// an inode+mtime pair, a remote ETag, …) the caller compares for equality with
+// another FileVersion from the SAME adapter and passes back to a conditional
+// mutation. It carries NO meaning outside equality and is NEVER used as a
+// sentinel: there is deliberately no "any"/"wildcard"/"unversioned" FileVersion
+// that means "overwrite unconditionally" — an unconditional overwrite is a
+// distinct adapter/bootstrap operation that is deliberately NOT part of the
+// Workspace capability passed to Tool.Execute. The zero value is an unusable
+// placeholder; RecordedVersion returns ok=false (not a zero FileVersion sentinel)
+// for a path that was never recorded.
+type FileVersion struct {
+	// token is interpreted only by the adapter that minted it. valid separates
+	// the zero value (never a usable version) from an adapter token that happens
+	// to be the empty string; empty is therefore never an overwrite sentinel.
+	token string
+	valid bool
+}
+
+// Equal reports whether two valid FileVersions carry the same opaque token.
+// The zero value is invalid and never equals any version, including another
+// zero value.
+func (f FileVersion) Equal(o FileVersion) bool {
+	return f.valid && o.valid && f.token == o.token
+}
+
+// NewFileVersion mints a FileVersion from an adapter-private token. It is the
+// constructor adapters use to wrap the opaque token they computed (a content
+// hash, an ETag, …); the field stays unexported so callers cannot inspect it.
+// The agent-facing Read/Edit/Write tools never call this — they only receive
+// FileVersions from ReadVersion/CreateFile/ReplaceFile and pass them back. An
+// empty token is still a valid opaque token, never an "any version" sentinel.
+func NewFileVersion(token string) FileVersion {
+	return FileVersion{token: token, valid: true}
+}
+
+// Token returns the adapter-private opaque token this FileVersion carries, and
+// ok reports whether the version is valid (a non-zero FileVersion). The zero
+// value returns ("", false) — it is never an "any version" sentinel — so a
+// caller can distinguish "no version recorded" from "an adapter minted the
+// empty-string token". It is the serializer hook for a planned remote backend
+// that must round-trip an adapter-minted version over the wire: the backend
+// stores the token verbatim and reconstructs the FileVersion with
+// NewFileVersion(token) on the way back. Callers MUST treat the token as
+// opaque (compare with Equal, never inspect its bytes); only a serializer
+// owned by the SAME adapter that minted the version ever reads it.
+func (f FileVersion) Token() (token string, ok bool) {
+	return f.token, f.valid
 }
 
 // WorkspaceReader is the READ-ONLY subset of Workspace: a rooted, path-scoped
@@ -195,6 +246,13 @@ type FileSystem interface {
 // `.mecatl/settings.yaml` and stats it to revalidate its cache, but must never
 // write. Passing a WorkspaceReader (not a full Workspace) to those consumers
 // makes the read-only contract a compile-time guarantee.
+//
+// It carries the PLAIN (non-versioned) Read/Stat: non-agent consumers that only
+// inspect the tree (permission config, prompt discovery, the agent-def/skill
+// sources) never participate in the read-ledger / conditional-mutation protocol
+// (ADR 0103) and do not need a FileVersion. The agent-facing built-in
+// Read/Edit/Write tools use the version-bearing ReadVersion + CreateFile/
+// ReplaceFile on the full Workspace, NOT this plain Read.
 //
 // Workspace embeds it, so any *Workspace is usable where a WorkspaceReader is
 // expected. All paths are session-relative; the adapter rejects escapes, EXCEPT
@@ -212,41 +270,160 @@ type WorkspaceReader interface {
 
 // Workspace is the session-scoped seam every Tool executes against. It scopes
 // all paths to a single session root (rejecting escapes such as "../"), exposes
-// the read/search/run operations the 7 core tools need, and carries the
-// per-session Edit read-ledger that lets the Edit tool enforce its invariants.
+// the read/search operations the 7 core tools need, and carries the per-session
+// read-ledger + the explicit, unambiguous mutation operations the built-in
+// Edit/Write tools enforce their invariants through (ADR 0103).
 //
 // All paths are relative to the session root unless documented otherwise;
 // adapters must reject any path that resolves outside the root. The ONE
 // sanctioned exception is read-only: an adapter may carry explicit allowed
 // roots (osfs.WithReadRoots — the per-skill directories of discovered skills)
-// that Read and Stat, and only Read and Stat, serve by absolute path. Write,
+// that Read/Stat/ReadVersion serve by absolute path. CreateFile, ReplaceFile,
 // Glob, and Grep are workspace-only always.
+//
+// VERSION PROTOCOL (ADR 0103). The Workspace capability exposes only the
+// explicit create-only / conditional-replace-by-version pair, so a tool mutation
+// can never silently clobber a concurrent change:
+//
+//   - ReadVersion returns the content AND the authoritative FileVersion the
+//     adapter currently holds for path. The built-in Read tool records that
+//     version via RecordRead (a pure in-memory store, NO I/O) so a later
+//     Edit/Write can assert read-before-mutate-and-unchanged.
+//   - Existing-file Write and Edit: require a recorded version, ReadVersion
+//     again to get the CURRENT version, compare the recorded version with the
+//     current version (unchanged-since), and finish with ReplaceFile against
+//     the CURRENT version — the conditional CAS that survives a change that
+//     lands between the Edit's own ReadVersion and its ReplaceFile.
+//   - New-file Write: CreateFile (atomic create-only; fails if the path already
+//     exists, so it never silently clobbers).
+//
+// ADAPTER ATOMICITY CONTRACT. CreateFile and the compare+mutation in
+// ReplaceFile are atomic with respect to concurrent calls through the same live
+// Workspace/backend handle: a conditional replace sees either the pre- or the
+// post-mutation version, never a torn middle. osfs provides the stronger guarantee
+// across Workspace instances in this process using fixed canonical-path lock
+// stripes. Other adapters need not globally serialize independent Workspace
+// instances unless their backend contract says so. A NON-COOPERATING POSIX writer
+// (a shell command, an external editor) that bypasses the Workspace seam can still
+// race a conditional replace — this is honest best-effort same-process CAS, NOT
+// kernel-level locking; a future remote transport will provide true backend CAS
+// (ADR 0103, remote transport deferred).
 type Workspace interface {
-	// WorkspaceReader is the read-only subset (Root + Read + Stat); embedding it
-	// keeps the read methods defined once and lets a *Workspace satisfy a
-	// read-only consumer.
+	// WorkspaceReader is the read-only subset (Root + plain Read + Stat);
+	// embedding it keeps the read methods defined once and lets a *Workspace
+	// satisfy a read-only consumer. Non-agent consumers use the plain Read;
+	// agent-facing tools use ReadVersion below.
 	WorkspaceReader
 
-	// Write replaces the contents of the file at the session-relative path,
-	// creating it (and parent directories) if needed.
-	Write(ctx context.Context, path string, data []byte) error
+	// ReadVersion returns the contents of the file at path AND the authoritative
+	// FileVersion the adapter currently holds for it. It is the version-bearing
+	// read the built-in Read tool uses (recording the returned version via
+	// RecordRead). It reads the SAME backing store as the plain Read; the only
+	// difference is it also mints and returns a FileVersion.
+	ReadVersion(ctx context.Context, path string) ([]byte, FileVersion, error)
+
+	// CreateFile creates a NEW file at path with the given content, atomically.
+	// It fails (wrapping fs.ErrExist) if a file already exists at path — it is
+	// create-only, NEVER an overwrite, so it can never silently clobber an
+	// existing file. Parent directories are created as needed. It returns the
+	// new file's FileVersion. The agent-facing Write tool uses it for a
+	// not-yet-existing path.
+	CreateFile(ctx context.Context, path string, data []byte) (FileVersion, error)
+
+	// ReplaceFile conditionally replaces the contents of the file at path with
+	// data, ONLY if the file's CURRENT authoritative FileVersion equals old.
+	// On success it returns the new FileVersion. On a version mismatch (the
+	// file changed between the caller's ReadVersion and this call — including a
+	// concurrent mutation through the same backend) it returns a
+	// *VersionMismatchError; the caller re-reads and retries. If the file does
+	// not exist it returns an error wrapping fs.ErrNotExist. It is the
+	// conditional CAS the agent-facing Edit and existing-file Write tools finish
+	// with, against the CURRENT version their own ReadVersion just returned. old must be a FileVersion the SAME adapter
+	// minted (from ReadVersion or a prior CreateFile/ReplaceFile); a zero
+	// FileVersion is never a valid "any version" sentinel — it always mismatches.
+	ReplaceFile(ctx context.Context, path string, old FileVersion, data []byte) (FileVersion, error)
+
 	// Glob returns session-relative paths matching the shell-style pattern.
 	Glob(ctx context.Context, pattern string) ([]string, error)
 	// Grep returns the matches of a regular expression across files selected by
 	// an optional path glob. Results are capped/shaped by the adapter.
 	Grep(ctx context.Context, pattern, pathGlob string) ([]GrepMatch, error)
 
-	// RecordRead marks path as having been read at the given content version so
-	// the Edit tool can later assert read-before-edit. version is an opaque
-	// fingerprint (e.g. a content hash or mtime) the adapter chooses; the Edit
-	// tool treats it as a comparable token, not a meaning-bearing value.
-	RecordRead(path string, version string)
-	// WasReadUnchanged reports whether path was previously recorded via
-	// RecordRead AND its current on-disk version still equals the recorded one.
-	// This is the read-before-edit-and-unchanged check the Edit tool's first
-	// invariant depends on. It returns false if path was never read or if the
-	// file changed since it was read.
-	WasReadUnchanged(ctx context.Context, path string) (bool, error)
+	// RecordRead records that path was read at the authoritative version. It is
+	// a PURE IN-MEMORY store: it performs NO I/O and stores the EXACT version
+	// passed (the caller supplies the FileVersion its ReadVersion returned). A
+	// later RecordedVersion lookup compares against this stored token. The
+	// built-in Read tool calls it with the version ReadVersion minted; the
+	// built-in Edit/Write tools call it after a successful CreateFile/ReplaceFile
+	// so a subsequent same-turn Edit stays valid. Ledger-key normalization must
+	// also perform NO I/O: ordinary absolute <root>/<rel> and relative <rel>
+	// forms should converge lexically, while physical symlink aliases may
+	// conservatively miss and force another Read.
+	RecordRead(path string, version FileVersion)
+
+	// RecordedVersion returns the version previously recorded for path via
+	// RecordRead, performing NO I/O. ok is false if path was never recorded or
+	// the live Workspace/ledger was rebuilt. It is the I/O-free
+	// read-before-mutate lookup: the agent-facing Edit/Write tools call it to
+	// assert the file was read this session; they then separately ReadVersion
+	// for the CURRENT version and compare, so a file that changed since the
+	// recorded read is caught by the version comparison, not by this lookup.
+	RecordedVersion(path string) (version FileVersion, ok bool)
+}
+
+// VersionMismatchError is the error ReplaceFile returns when the file's current
+// authoritative version does not equal the old version the caller supplied — a
+// concurrent mutation landed between the caller's read and its conditional
+// replace. Callers classify it with errors.As. It is the model-visible "changed
+// since you read it" condition surfaced by the Edit/Write tools.
+type VersionMismatchError struct {
+	// Path is the session-relative (or canonical) path that mismatched.
+	Path string
+}
+
+// Error implements the error interface without exposing either opaque version.
+func (e *VersionMismatchError) Error() string {
+	return fmt.Sprintf("tool: version mismatch for %q: file changed since read", e.Path)
+}
+
+// LedgerKey is the I/O-FREE lexical normalization a Workspace read-ledger uses to
+// converge ordinary forms of the same in-root file onto one key, so a file read
+// by relative path and then mutated by absolute in-root path (or vice versa)
+// matches without any filesystem inspection. It performs NO Lstat/EvalSymlinks/
+// RPC: physical symlink aliases may conservatively produce distinct entries
+// (a safe false-negative that forces another Read).
+//
+//   - A session-RELATIVE path keys by its cleaned slash form (filepath.Clean,
+//     ToSlash). filepath.IsLocal reports not-relative for absolute/slash-prefixed
+//     operands; a relative path that climbs above the root ("../x") still keys by
+//     its cleaned form (the ledger is a lookup, not a confinement gate —
+//     confinement is the Workspace's business at use time).
+//   - An ordinary ABSOLUTE <root>/<rel> path is reduced with filepath.Rel so it
+//     converges with the relative <rel> form.
+//   - An absolute path that does NOT lie under root (an out-of-root relaxed-read
+//     path, or any path whose cleaned form climbs above root) keys by its cleaned
+//     absolute form, so a `..`-carrying lexical alias matches in both directions.
+//
+// root MUST be the already-canonicalized absolute session root a Workspace
+// reports via Root() (osfs canonicalizes it at construction; memfs passes its
+// logical root). A relative path with an absolute root, or an absolute path with
+// a relative root, is handled defensively: the former keys by the cleaned
+// relative form, the latter by the cleaned absolute form.
+func LedgerKey(root, path string) string {
+	if path == "" {
+		return "."
+	}
+	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
+		return filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	}
+	cleaned := filepath.Clean(path)
+	if root != "" {
+		if rel, err := filepath.Rel(root, cleaned); err == nil &&
+			rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(filepath.Clean(rel))
+		}
+	}
+	return filepath.ToSlash(cleaned)
 }
 
 // MemoryEntry is a single cross-session memory record: an opaque key, its stored

@@ -55,8 +55,8 @@ func TestForkGitWorktree(t *testing.T) {
 	}
 
 	// A write in the child does NOT touch the base.
-	if err := child.Write(context.Background(), "child-only.txt", []byte("x")); err != nil {
-		t.Fatalf("child write: %v", err)
+	if _, err := child.CreateFile(context.Background(), "child-only.txt", []byte("x")); err != nil {
+		t.Fatalf("child create: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(base, "child-only.txt")); !os.IsNotExist(err) {
 		t.Fatalf("child write leaked into base (err=%v)", err)
@@ -151,8 +151,12 @@ func TestForkCopyFallback(t *testing.T) {
 	}
 
 	// Mutating the child must not affect the base.
-	if err := child.Write(context.Background(), "a.txt", []byte("CHANGED")); err != nil {
-		t.Fatalf("child write: %v", err)
+	_, version, err := child.ReadVersion(context.Background(), "a.txt")
+	if err != nil {
+		t.Fatalf("read child version: %v", err)
+	}
+	if _, err := child.ReplaceFile(context.Background(), "a.txt", version, []byte("CHANGED")); err != nil {
+		t.Fatalf("child replace: %v", err)
 	}
 	baseData, err := os.ReadFile(filepath.Join(base, "a.txt"))
 	if err != nil {

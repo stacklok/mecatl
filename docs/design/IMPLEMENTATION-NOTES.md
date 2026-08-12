@@ -4892,6 +4892,64 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
   files are body-only in a no-fs session: the body injects fine, asset reads fail honestly
   with not-exist through the nofs workspace (and the posture note tells the model so).
 
+### Version-aware Workspace mutation and execution-environment direction (ADR 0104)
+
+A coding agent ultimately needs one execution environment whose filesystem and command namespace are
+affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0104 fixes the
+future layering without prematurely adding that seam. Durable identity will live cycle-safely in
+`session.EnvironmentRef`; the future minimal `tool.Environment` will carry that identity plus a
+Workspace and bound CommandRunner. `WorkspaceForker`/`ForkMerger` stay separate capabilities,
+governance stays outside, and remote transport is deferred. No Environment type or Engine-signature
+migration is in this PR.
+
+The first migration stage is the version protocol in `engine/tool/tool.go` (`FileVersion`,
+`Workspace`). Plain Read remains for non-agent consumers, but public Workspace exposes no
+unconditional mutation: concrete adapter/FileSystem Write methods are bootstrap/setup APIs outside the
+capability handed to tools. The built-in bodies use only the safe path:
+
+1. `engine/adapter/fstools/read.go` (`ReadTool.Execute`) calls `ReadVersion` and records the exact
+   adapter-minted version; `RecordRead`/`RecordedVersion` perform no I/O. osfs and ACP ledger keys use
+   lexical Clean/Rel only: ordinary abs/relative forms converge, while physical symlink aliases may
+   safely miss and force another Read.
+2. `engine/adapter/fstools/edit.go` (`EditTool.Execute`) and existing-file Write require
+   `RecordedVersion`, make a current version-bearing read, reject a recorded/current mismatch, then
+   call conditional `ReplaceFile` against that current version.
+3. New-file Write calls create-only `CreateFile`. A create race reports an existing-file conflict;
+   there is no empty/`AnyVersion` overwrite sentinel.
+4. A successful create/replace records the returned new version so another mutation through the same
+   live Workspace remains valid.
+
+The final ReplaceFile is load-bearing: `engine/adapter/fstools/fstools_test.go`
+(`TestEditConditionalReplaceRejectsConcurrentChange`,
+`TestWriteConditionalReplaceRejectsConcurrentChange`) injects a mutation after the tool's current read
+but before replace and proves the concurrent bytes survive with the model-visible changed-since
+refusal. `engine/adapter/fsconformance/fsconformance.go` (`Run`) pins stable versions, existing-path
+and concurrent create-only conflicts, successful replace/new-version, stale conflict, and one-winner
+concurrent replace for every conforming backend.
+
+Adapter authority and atomicity are explicit. The base contract covers concurrent calls through the
+same live Workspace/backend handle: memfs hashes content and performs compare/write under its
+filesystem mutex (`engine/adapter/memfs/memfs.go`), while ACP hashes editor-buffer content and uses its
+workspace-instance mutex (`internal/adapter/acp/fsworkspace.go`). ACP classifies a missing editor
+buffer only from `rpcError.Message`: it removes the exact confined requested path (bare/common quoted
+forms), normalizes harmless punctuation/prefixes, and compares the WHOLE remainder against the narrow
+absence vocabulary. It never scans marker substrings; generic transport/decode errors and structured
+permission/unavailable messages fail closed even if the path contains `not found`/`enoent`. osfs
+deliberately provides the stronger guarantee: existing mutation targets canonicalize the full physical
+path, while missing creates canonicalize the parent then append the basename, so relative/absolute and
+in-root symlink aliases share one process-wide lock stripe across Workspace instances
+(`internal/adapter/osfs/osfs.go`). Operations remain confined through `os.Root`, and CreateFile uses
+`O_CREATE|O_EXCL` as the final defense against non-cooperating creators. Independent Workspace
+instances over an arbitrary backend are not claimed to be globally serialized. A shell or arbitrary
+POSIX process bypassing Workspace does not participate; local osfs is not claimed as kernel-level CAS.
+A future remote backend owes true backend CAS.
+
+The ledger belongs to the live Workspace/environment instance. The default Service path continues to
+construct a fresh Workspace per run; `internal/adapter/server/service.go` (`sessionWorkspaces`)
+remains limited to the existing no-fs/ACP overrides. Rebuilding a default Workspace — including the
+next user run — resets its ledger, so Edit/overwrite is refused until Read records a version through
+that instance. No new Service registry or os.Root retention lifecycle is introduced.
+
 ### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
 
 The osfs out-of-root rejection used to be a silent dead-end: `ErrPathEscape` pushed the
@@ -4960,11 +5018,11 @@ LEXICAL parent directory — never a bare os.Open/os.WriteFile — so a symlink 
 target dir that escapes further is refused by that root's containment, exactly as the
 workspace root's own containment refuses an in-root escape. The relax widens WHICH
 paths may be served, never HOW they are served. `escapeWorkspace` also carries the
-pseudo-fs hard-deny as defense-in-depth at the tool-body boundary, INCLUDING the Edit
-read-ledger (`RecordRead`/`WasReadUnchanged` are overridden — the inner osfs fingerprint
-read would otherwise bypass the guard, AC-W2-F1; the guarded record/check are fail-safe
-no-ops, so a pseudo-fs Edit can never validate its read-before-edit invariant through
-this wrapper).
+pseudo-fs hard-deny as defense-in-depth at the tool-body boundary, INCLUDING the
+version-bearing read/mutations and Edit read-ledger (`ReadVersion`/`CreateFile`/
+`ReplaceFile` and `RecordRead`/`RecordedVersion` are overridden, AC-W2-F1). A guarded
+record is a no-op and a guarded lookup reports not-recorded, so a pseudo-fs Edit can
+never validate its read-before-edit invariant through this wrapper.
 
 **Pseudo-fs is never relaxed** (`escapePseudoFS`, distinct from a regular escape at
 every posture): an in-process FS Read of `/proc/self/environ` would return the SERVER's

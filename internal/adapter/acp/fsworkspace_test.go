@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
@@ -36,10 +37,14 @@ type fsPeer struct {
 	// hang, when true, makes the peer NEVER respond to a request (it reads and
 	// drops it), so a test can assert the per-call fs/* timeout fires.
 	hang atomic.Bool
-	// ambiguousRead, when true, answers a fs/read_text_file MISS with a NON-
-	// not-found error (a transport-shaped fault), so a test can exercise the
-	// Stat fail-safe (ambiguous read -> report EXISTS).
+	// ambiguousRead returns a structured editor error that is not not-found.
 	ambiguousRead atomic.Bool
+	// genericReadFailure returns a malformed success payload, making Conn.Call
+	// fail with a generic protocol/decode error while leaving the peer write-capable.
+	genericReadFailure atomic.Bool
+	// readErrorTemplate, when set, is formatted with the requested absolute path
+	// and returned as a structured rpcError message.
+	readErrorTemplate atomic.Pointer[string]
 
 	toConn   *io.PipeWriter // peer -> conn.r (responses)
 	fromConn *bufio.Reader  // conn.w -> peer (the agent's requests)
@@ -88,6 +93,10 @@ func (p *fsPeer) set(abs, content string) {
 	p.mu.Unlock()
 }
 
+func (p *fsPeer) setReadErrorTemplate(template string) {
+	p.readErrorTemplate.Store(&template)
+}
+
 // loop reads the agent's fs/* requests and answers them from the buffer map.
 func (p *fsPeer) loop() {
 	for {
@@ -119,6 +128,16 @@ func (p *fsPeer) loop() {
 			_ = json.Unmarshal(m.Params, &req)
 			content, ok := p.get(req.Path)
 			if !ok {
+				if template := p.readErrorTemplate.Load(); template != nil {
+					p.respondErr(m.ID, fmt.Sprintf(*template, req.Path))
+					continue
+				}
+				if p.genericReadFailure.Load() {
+					// A malformed success response produces a generic decode/protocol
+					// error from Conn.Call without closing this write-capable peer.
+					p.respond(m.ID, "temporary read failure")
+					continue
+				}
 				if p.ambiguousRead.Load() {
 					// A transport-shaped fault (NOT a clean not-found): exercises the
 					// Stat fail-safe path.
@@ -226,10 +245,11 @@ func TestFSWorkspaceEditInvariants(t *testing.T) {
 	}
 
 	// (ii) Read, then the editor buffer changes out of band, then Edit -> rejected.
-	if _, err := ws.Read(ctx, "f.go"); err != nil {
-		t.Fatalf("Read: %v", err)
+	if _, ver, err := ws.ReadVersion(ctx, "f.go"); err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	} else {
+		ws.RecordRead("f.go", ver)
 	}
-	ws.RecordRead("f.go", "")
 	peer.set(filepath.Join(root, "f.go"), "package x\nvar A = 999\n") // editor edited the buffer
 	res = runEdit(t, edit, ws, "f.go", "var A = 1", "var A = 2", false)
 	if !res.IsError {
@@ -238,10 +258,11 @@ func TestFSWorkspaceEditInvariants(t *testing.T) {
 
 	// (iii) Read then Edit with a unique old_string -> succeeds; write delegated.
 	ws2, peer2, root2 := newTestFSWorkspace(t, map[string]string{"f.go": "package x\nvar A = 1\nvar C = 3\n"})
-	if _, err := ws2.Read(ctx, "f.go"); err != nil {
-		t.Fatalf("Read: %v", err)
+	if _, ver, err := ws2.ReadVersion(ctx, "f.go"); err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	} else {
+		ws2.RecordRead("f.go", ver)
 	}
-	ws2.RecordRead("f.go", "")
 	res = runEdit(t, edit, ws2, "f.go", "var A = 1", "var A = 2", false)
 	if res.IsError {
 		t.Fatalf("(iii) unique edit should succeed, got error: %s", res.Content)
@@ -252,10 +273,11 @@ func TestFSWorkspaceEditInvariants(t *testing.T) {
 
 	// (iv) non-unique old_string without replace_all -> rejected (invariant #3).
 	ws3, _, _ := newTestFSWorkspace(t, map[string]string{"f.go": "dup\ndup\n"})
-	if _, err := ws3.Read(ctx, "f.go"); err != nil {
-		t.Fatalf("Read: %v", err)
+	if _, ver, err := ws3.ReadVersion(ctx, "f.go"); err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	} else {
+		ws3.RecordRead("f.go", ver)
 	}
-	ws3.RecordRead("f.go", "")
 	res = runEdit(t, edit, ws3, "f.go", "dup", "x", false)
 	if !res.IsError {
 		t.Fatalf("(iv) non-unique edit without replace_all should be rejected")
@@ -263,10 +285,11 @@ func TestFSWorkspaceEditInvariants(t *testing.T) {
 
 	// (v) old_string not found -> rejected (invariant #2, exact match).
 	ws4, _, _ := newTestFSWorkspace(t, map[string]string{"f.go": "alpha\n"})
-	if _, err := ws4.Read(ctx, "f.go"); err != nil {
-		t.Fatalf("Read: %v", err)
+	if _, ver, err := ws4.ReadVersion(ctx, "f.go"); err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	} else {
+		ws4.RecordRead("f.go", ver)
 	}
-	ws4.RecordRead("f.go", "")
 	res = runEdit(t, edit, ws4, "f.go", "missing", "x", false)
 	if !res.IsError {
 		t.Fatalf("(v) edit with absent old_string should be rejected")
@@ -294,29 +317,64 @@ func TestFSWorkspaceBufferKeyedLedger(t *testing.T) {
 	ctx := context.Background()
 	ws, peer, root := newTestFSWorkspace(t, map[string]string{"a.txt": "v1"})
 
-	ws.RecordRead("a.txt", "")
-	ok, err := ws.WasReadUnchanged(ctx, "a.txt")
+	// Record the buffer version via ReadVersion (no I/O inside RecordRead).
+	_, ver, err := ws.ReadVersion(ctx, "a.txt")
 	if err != nil {
-		t.Fatalf("WasReadUnchanged: %v", err)
+		t.Fatalf("ReadVersion: %v", err)
 	}
-	if !ok {
-		t.Fatalf("expected unchanged right after RecordRead")
+	ws.RecordRead("a.txt", ver)
+	if got, ok := ws.RecordedVersion("a.txt"); !ok {
+		t.Fatalf("RecordedVersion not recorded")
+	} else if !got.Equal(ver) {
+		t.Fatal("RecordedVersion did not return the recorded version")
 	}
 
-	// Mutate the editor buffer out of band -> the fingerprint must change.
+	// Mutate the editor buffer out of band -> a fresh ReadVersion mints a
+	// different version, so the recorded-vs-current comparison detects the change.
 	peer.set(filepath.Join(root, "a.txt"), "v2")
-	ok, err = ws.WasReadUnchanged(ctx, "a.txt")
-	if err != nil {
-		t.Fatalf("WasReadUnchanged: %v", err)
-	}
-	if ok {
-		t.Fatalf("expected changed after the peer buffer was mutated")
+	if _, cur, err := ws.ReadVersion(ctx, "a.txt"); err != nil {
+		t.Fatalf("ReadVersion after buffer change: %v", err)
+	} else if cur.Equal(ver) {
+		t.Fatalf("expected the current buffer version to differ after the peer mutated it")
 	}
 
-	// A never-recorded path is "changed" (false, nil), not an error.
-	ok, err = ws.WasReadUnchanged(ctx, "never.txt")
-	if err != nil || ok {
-		t.Fatalf("never-recorded path: ok=%v err=%v, want false/nil", ok, err)
+	// A never-recorded path is not in the ledger (ok=false), not an error.
+	if _, ok := ws.RecordedVersion("never.txt"); ok {
+		t.Fatalf("never-recorded path: ok=%v, want false", ok)
+	}
+}
+
+// RecordRead and RecordedVersion are pure ledger operations backed by
+// tool.LedgerKey (the comprehensive convergence table lives in
+// engine/tool/ledgerkey_test.go). This pins the ACP adapter's WIRING: the
+// ledger methods issue NO editor RPCs even when the root pathname is replaced
+// by a symlink (a perturbation that would change any absPath/confineSymlinks-
+// based key), because tool.LedgerKey is purely lexical.
+func TestFSWorkspaceLedgerKeyIsLexicalAndIOFree(t *testing.T) {
+	ws, peer, root := newTestFSWorkspace(t, nil)
+	moved := root + "-moved"
+	if err := os.Rename(root, moved); err != nil {
+		t.Fatalf("Rename(root): %v", err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, root); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	first := tool.NewFileVersion("first")
+	ws.RecordRead("dir/../one.txt", first)
+	got, ok := ws.RecordedVersion(filepath.Join(ws.Root(), "one.txt"))
+	if !ok || !got.Equal(first) {
+		t.Fatalf("relative record / absolute lookup did not converge (ok=%v)", ok)
+	}
+	second := tool.NewFileVersion("second")
+	ws.RecordRead(filepath.Join(ws.Root(), "two.txt"), second)
+	got, ok = ws.RecordedVersion("two.txt")
+	if !ok || !got.Equal(second) {
+		t.Fatalf("absolute record / relative lookup did not converge (ok=%v)", ok)
+	}
+	if reads, writes := peer.reads.Load(), peer.writes.Load(); reads != 0 || writes != 0 {
+		t.Fatalf("ledger methods issued editor calls: reads=%d writes=%d", reads, writes)
 	}
 }
 
@@ -379,10 +437,16 @@ func TestFSWorkspaceConcurrentReads(t *testing.T) {
 			if string(got) != want {
 				errs <- fmt.Errorf("read %s = %q, want %q", rel, got, want)
 			}
-			// Also exercise the ledger concurrently.
-			ws.RecordRead(rel, "")
-			if ok, lerr := ws.WasReadUnchanged(ctx, rel); lerr != nil || !ok {
-				errs <- fmt.Errorf("ledger %s: ok=%v err=%v", rel, ok, lerr)
+			// Also exercise the ledger concurrently: ReadVersion + RecordRead +
+			// RecordedVersion round-trip under concurrency.
+			_, ver, rerr := ws.ReadVersion(ctx, rel)
+			if rerr != nil {
+				errs <- fmt.Errorf("ReadVersion %s: %w", rel, rerr)
+				return
+			}
+			ws.RecordRead(rel, ver)
+			if got, ok := ws.RecordedVersion(rel); !ok || !got.Equal(ver) {
+				errs <- fmt.Errorf("ledger %s did not return the recorded version (ok=%v)", rel, ok)
 			}
 		}(i)
 	}
@@ -449,10 +513,11 @@ func TestFSWorkspaceBufferOnlyStatGatesWrite(t *testing.T) {
 	}
 
 	// (b) Read then Write -> succeeds, lands in the buffer.
-	if _, err := ws.Read(ctx, "buf.txt"); err != nil {
-		t.Fatalf("Read: %v", err)
+	if _, ver, err := ws.ReadVersion(ctx, "buf.txt"); err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	} else {
+		ws.RecordRead("buf.txt", ver)
 	}
-	ws.RecordRead("buf.txt", "")
 	res = runWrite(t, write, ws, "buf.txt", "clobbered")
 	if res.IsError {
 		t.Fatalf("Write after Read should succeed, got error: %s", res.Content)
@@ -484,6 +549,79 @@ func TestFSWorkspaceAmbiguousReadStatFailsSafe(t *testing.T) {
 	}
 	if info.IsDir {
 		t.Fatalf("fail-safe FileInfo should be a regular file: %+v", info)
+	}
+}
+
+// A model-controlled path containing a not-found marker must not turn a generic
+// unstructured decode/protocol failure into permission to create.
+func TestFSWorkspaceCreateDoesNotClassifyPathTextAsNotFound(t *testing.T) {
+	ctx := context.Background()
+	ws, peer, root := newTestFSWorkspace(t, nil)
+	peer.genericReadFailure.Store(true)
+	const path = "not found.txt"
+
+	if _, err := ws.CreateFile(ctx, path, []byte("must not be written")); err == nil {
+		t.Fatal("CreateFile succeeded after a generic temporary read failure")
+	}
+	if got := peer.writes.Load(); got != 0 {
+		t.Fatalf("CreateFile sent %d write request(s), want 0 after ambiguous read", got)
+	}
+	if _, ok := peer.get(filepath.Join(root, path)); ok {
+		t.Fatal("CreateFile populated the editor buffer after ambiguous read")
+	}
+}
+
+func TestFSWorkspaceCreateRejectsStructuredErrorsEchoingNotFoundPath(t *testing.T) {
+	for _, message := range []string{
+		"permission denied for %s",
+		"cannot read %q: unavailable",
+	} {
+		t.Run(message, func(t *testing.T) {
+			ws, peer, root := newTestFSWorkspace(t, nil)
+			peer.setReadErrorTemplate(message)
+			const path = "not found.txt"
+			if _, err := ws.CreateFile(context.Background(), path, []byte("must not be written")); err == nil {
+				t.Fatal("CreateFile succeeded after a structured non-absence error")
+			}
+			if got := peer.writes.Load(); got != 0 {
+				t.Fatalf("CreateFile sent %d write request(s), want 0", got)
+			}
+			if _, ok := peer.get(filepath.Join(root, path)); ok {
+				t.Fatal("CreateFile populated the editor buffer")
+			}
+		})
+	}
+}
+
+func TestFSWorkspaceCreateAcceptsAnchoredNotFoundMessagesWithPath(t *testing.T) {
+	messages := []string{
+		"not found: %s",
+		"file not found: %q",
+		"no such file or directory: %s",
+		"no such file or directory: '%s'",
+		"%q does not exist",
+		"ENOENT: %s",
+		"ENOENT: no such file or directory, open %q",
+		"open: no such file or directory: %q",
+		"error: file not found: %s",
+		"not found: `%s`",
+	}
+	for i, message := range messages {
+		t.Run(message, func(t *testing.T) {
+			ws, peer, root := newTestFSWorkspace(t, nil)
+			peer.setReadErrorTemplate(message)
+			path := fmt.Sprintf("missing-%d.txt", i)
+			content := []byte("created")
+			if _, err := ws.CreateFile(context.Background(), path, content); err != nil {
+				t.Fatalf("CreateFile rejected clean not-found message: %v", err)
+			}
+			if got := peer.writes.Load(); got != 1 {
+				t.Fatalf("CreateFile sent %d write request(s), want 1", got)
+			}
+			if got, ok := peer.get(filepath.Join(root, path)); !ok || got != string(content) {
+				t.Fatalf("created buffer = %q, %v; want %q, true", got, ok, content)
+			}
+		})
 	}
 }
 
@@ -714,41 +852,98 @@ func TestFSWorkspaceAbsPathUnit(t *testing.T) {
 	}
 }
 
-// TestFSWorkspaceLedgerCrossForm pins Finding 1's fix: the ACP ledger key is
-// normalized via ledgerKey (absPath), so a read by absolute path and a check by
-// relative path (and the reverse) share ONE entry. A mutation via Write on
-// EITHER form flips WasReadUnchanged to false for BOTH. Without the fix, a
-// Read(abs) then WasReadUnchanged(rel) was a ledger MISS (false) even though the
-// buffer was unchanged — breaking the exact invariant ADR 0047 point 3 protects.
+// TestFSWorkspaceLedgerCrossForm pins the I/O-free lexical key: an ordinary
+// absolute <root>/<rel> and relative <rel> share one entry through Clean/Rel,
+// without absPath, filesystem inspection, or an editor RPC. A concrete adapter
+// Write through either form mints a fresh version that no longer matches the
+// recorded one. Physical symlink aliases may conservatively miss.
 func TestFSWorkspaceLedgerCrossForm(t *testing.T) {
 	ctx := context.Background()
 	ws, _, root := newTestFSWorkspace(t, map[string]string{"led.txt": "original"})
 	rel := "led.txt"
 	abs := filepath.Join(root, "led.txt")
 
-	// Read by ABSOLUTE, check by RELATIVE → unchanged.
-	ws.RecordRead(abs, "")
-	if ok, err := ws.WasReadUnchanged(ctx, rel); err != nil || !ok {
-		t.Fatalf("read abs / check rel: (%v,%v), want (true,nil)", ok, err)
+	// Read by ABSOLUTE, look up by RELATIVE → recorded version matches.
+	_, absVer, err := ws.ReadVersion(ctx, abs)
+	if err != nil {
+		t.Fatalf("ReadVersion(abs): %v", err)
 	}
-	// Mutate by RELATIVE → check by ABSOLUTE → changed.
+	ws.RecordRead(abs, absVer)
+	got, ok := ws.RecordedVersion(rel)
+	if !ok {
+		t.Fatalf("read abs / lookup rel: not recorded")
+	}
+	if !got.Equal(absVer) {
+		t.Fatal("read abs / lookup rel returned a different version")
+	}
+	// Mutate by RELATIVE → a fresh ReadVersion by ABSOLUTE mints a different version.
 	if err := ws.Write(ctx, rel, []byte("mutated")); err != nil {
 		t.Fatalf("Write(rel) mutation: %v", err)
 	}
-	if ok, err := ws.WasReadUnchanged(ctx, abs); err != nil || ok {
-		t.Fatalf("after relative mutation, check abs: (%v,%v), want (false,nil)", ok, err)
+	if _, cur, err := ws.ReadVersion(ctx, abs); err != nil {
+		t.Fatalf("ReadVersion(abs) after mutation: %v", err)
+	} else if cur.Equal(absVer) {
+		t.Fatalf("after relative mutation, current abs version still equals recorded")
 	}
 
-	// Reverse: read by RELATIVE, check by ABSOLUTE → unchanged.
-	ws.RecordRead(rel, "")
-	if ok, err := ws.WasReadUnchanged(ctx, abs); err != nil || !ok {
-		t.Fatalf("read rel / check abs: (%v,%v), want (true,nil)", ok, err)
+	// Reverse: read by RELATIVE, look up by ABSOLUTE → recorded version matches.
+	_, relVer, err := ws.ReadVersion(ctx, rel)
+	if err != nil {
+		t.Fatalf("ReadVersion(rel): %v", err)
 	}
-	// Mutate by ABSOLUTE → check by RELATIVE → changed.
+	ws.RecordRead(rel, relVer)
+	got, ok = ws.RecordedVersion(abs)
+	if !ok {
+		t.Fatalf("read rel / lookup abs: not recorded")
+	}
+	if !got.Equal(relVer) {
+		t.Fatal("read rel / lookup abs returned a different version")
+	}
+	// Mutate by ABSOLUTE → a fresh ReadVersion by RELATIVE mints a different version.
 	if err := ws.Write(ctx, abs, []byte("mutated again")); err != nil {
 		t.Fatalf("Write(abs) mutation: %v", err)
 	}
-	if ok, err := ws.WasReadUnchanged(ctx, rel); err != nil || ok {
-		t.Fatalf("after absolute mutation, check rel: (%v,%v), want (false,nil)", ok, err)
+	if _, cur, err := ws.ReadVersion(ctx, rel); err != nil {
+		t.Fatalf("ReadVersion(rel) after mutation: %v", err)
+	} else if cur.Equal(relVer) {
+		t.Fatalf("after absolute mutation, current rel version still equals recorded")
+	}
+}
+
+// TestFSWorkspaceLedgerNotBlockedByParkedRPC proves the split synchronization
+// (ADR 0103): the ledger mutex (ledgerMu) is independent of the RPC CAS mutex
+// (callMu), so a parked RPC mutation holding callMu NEVER blocks a ledger
+// RecordRead/RecordedVersion. Before the split (a single mu for both), a wedged
+// fs/* round-trip would have wedged the ledger too.
+func TestFSWorkspaceLedgerNotBlockedByParkedRPC(t *testing.T) {
+	ws, _, _ := newTestFSWorkspace(t, nil)
+
+	// Park callMu as a CreateFile/ReplaceFile would while it holds an in-flight
+	// RPC. The ledger must still be writable/readable.
+	ws.callMu.Lock()
+	defer ws.callMu.Unlock()
+
+	ver := tool.NewFileVersion("parked")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ws.RecordRead("a.txt", ver)
+		if got, ok := ws.RecordedVersion("a.txt"); !ok || !got.Equal(ver) {
+			t.Errorf("RecordedVersion while callMu is parked = (ok=%v, got=%v), want the recorded version", ok, got)
+		}
+		// A second record on a different path and a lookup of the first both
+		// succeed without touching callMu.
+		ws.RecordRead("b.txt", tool.NewFileVersion("second"))
+		if _, ok := ws.RecordedVersion("b.txt"); !ok {
+			t.Error("RecordedVersion(b.txt) not recorded while callMu is parked")
+		}
+		if got, ok := ws.RecordedVersion("a.txt"); !ok || !got.Equal(ver) {
+			t.Errorf("RecordedVersion(a.txt) after b record = (ok=%v, got=%v), want the first recorded version", ok, got)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ledger RecordRead/RecordedVersion blocked behind a parked RPC holding callMu — the mutexes must be independent")
 	}
 }

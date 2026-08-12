@@ -34,21 +34,20 @@
 // route patterns through absolute resolution — patterns are not paths; a leading
 // "/" in a pattern is stripped as before).
 //
-// The Workspace also carries the per-session Edit read-ledger
-// (RecordRead/WasReadUnchanged) backed by a sha256 content fingerprint, the seam
-// WP7's Edit tool uses to enforce read-before-edit-and-unchanged. The ledger
-// NORMALIZES its keys via resolvePath, so a file read by absolute path and then
-// edited by relative path (or vice versa) matches — the key is the canonical
-// root-relative form, not the verbatim argument.
+// The Workspace also carries the per-session version ledger
+// (RecordRead/RecordedVersion) and mints sha256 content versions from
+// ReadVersion. Edit uses the recorded/current comparison plus final ReplaceFile
+// to enforce read-before-edit-and-unchanged. The ledger normalizes keys via
+// resolvePath, so a file read by absolute path and then edited by relative path
+// (or vice versa) matches — the key is canonical, not the verbatim argument.
 package osfs
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"io"
 	"io/fs"
 	"os"
@@ -64,6 +63,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/hashutil"
 	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
@@ -537,33 +537,12 @@ func (f *FileSystem) allowedReadRoot(path string) (*os.Root, string, bool) {
 	return nil, "", false
 }
 
-// Write replaces the contents of the file at the session-relative path, creating
-// it and any parent directories if needed. An absolute path that canonicalizes
-// OUTSIDE the workspace root is served only under the explicit WithRelaxedWrites
-// option (default off), through a fresh *os.Root on the target's vetted parent —
-// never a bare os.WriteFile (relaxedWriteRoot).
-func (f *FileSystem) Write(_ context.Context, path string, data []byte) error {
-	rel, err := f.resolvePath(path)
-	if err != nil {
-		if r, leaf, ok := f.relaxedWriteRoot(path); ok {
-			return mapEscape(path, r.WriteFile(leaf, data, 0o644))
-		}
-		return err
-	}
-	if dir := filepath.Dir(rel); dir != "." {
-		// An "already exists" error here is benign (the dir, or a symlink in its
-		// place, is present); let WriteFile make the final escape decision so a
-		// symlinked parent component surfaces as ErrPathEscape rather than being
-		// masked by MkdirAll's "file exists".
-		if err := f.r.MkdirAll(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-			return mapEscape(path, err)
-		}
-	}
-	if err := f.r.WriteFile(rel, data, 0o644); err != nil {
-		return mapEscape(path, err)
-	}
-	return nil
-}
+// Write is intentionally NOT a method of osfs.FileSystem: the agent-facing tools
+// use the version-bearing Workspace mutations (CreateFile/ReplaceFile) on the
+// composed Workspace. The unconditional write survives only as the
+// adapter-public bootstrap operation osfs.Workspace.Write (used by tests and
+// cmd/mecademo to seed fixtures), which performs its OWN resolve/lock through
+// the Workspace seam.
 
 // relaxedWriteRoot serves an out-of-root ABSOLUTE write under the
 // WithRelaxedWrites option (default off — a zero-value FileSystem never
@@ -885,16 +864,56 @@ func MatchReadRoot(path string, readRoots []string) bool {
 	return false
 }
 
+// pathLocks is a fixed process-wide set of striped mutexes. Hashing a physical
+// canonical mutation target to the same stripe serializes aliases of that file across
+// Workspace instances over the same root (ADR 0103). Stripe collisions only
+// serialize unrelated files; the fixed array avoids an unbounded path-key map.
+//
+// This is PROCESS-SCOPED same-process cooperation, not a POSIX lock:
+//   - It serializes only cooperating Workspace writers in THIS process. A
+//     shell command, another process, or an editor writing the same file
+//     directly does not participate and can still race the final write.
+//   - The lock identity is derived from the canonical mutation target
+//     (canonicalMutationPath: full-target canonicalization for an existing
+//     target, canonical parent + basename for a missing one). A NON-COOPERATING
+//     writer that races target EXISTENCE or a SYMLINK IDENTITY during that
+//     pre-lock canonicalization step (e.g. swaps the file for a symlink between
+//     the Lstat and the Canonicalize) can cause a cooperating writer to lock a
+//     different identity than the bytes it ultimately writes. osfs does NOT
+//     re-resolve under the lock; the final confined write still flows through
+//     *os.Root, which refuses a symlink traversal that escapes the root, but a
+//     race against an in-root symlink swap is not closed by the lock alone.
+//     A future remote backend provides true backend CAS, which closes the gap
+//     by making the conditional replace atomic at the storage layer (ADR 0103,
+//     remote transport deferred).
+const pathLockStripes = 256
+
+var pathLocks [pathLockStripes]sync.Mutex
+
+// pathLockSeed is a process-local hash/maphash.Seed so the stripe assignment is
+// stable within a process (a fixed array MUST hash deterministically per
+// process so an alias always lands on the same stripe) without a hand-rolled
+// FNV-1a.
+var pathLockSeed = maphash.MakeSeed()
+
+func pathLock(canon string) *sync.Mutex {
+	var h maphash.Hash
+	h.SetSeed(pathLockSeed)
+	_, _ = h.WriteString(canon)
+	return &pathLocks[h.Sum64()%pathLockStripes]
+}
+
 // Workspace is the session-scoped seam over the real OS filesystem. It composes
-// a FileSystem, performs an in-Go recursive Grep, and carries the Edit
-// read-ledger. Command execution is NOT part of the Workspace: it lives behind
+// a FileSystem, performs an in-Go recursive Grep, and carries the read-ledger
+// plus the explicit create-only / conditional-replace mutation operations
+// (ADR 0103). Command execution is NOT part of the Workspace: it lives behind
 // the separate CommandRunner type (see NewCommandRunner) so the harness can run
 // without any shell at all.
 type Workspace struct {
 	fs *FileSystem
 
 	mu     sync.Mutex
-	ledger map[string]string // session-relative path -> recorded fingerprint
+	ledger map[string]tool.FileVersion // canonical ledger key -> recorded version
 }
 
 // NewWorkspace returns a Workspace rooted at the given directory. The root is
@@ -906,7 +925,7 @@ func NewWorkspace(root string, opts ...Option) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{fs: fsys, ledger: make(map[string]string)}, nil
+	return &Workspace{fs: fsys, ledger: make(map[string]tool.FileVersion)}, nil
 }
 
 // Compile-time assertion that Workspace satisfies the frozen port.
@@ -921,9 +940,239 @@ func (w *Workspace) Read(ctx context.Context, path string) ([]byte, error) {
 }
 
 // Write replaces the contents of the file at the session-relative path, creating
-// it and parent directories if needed.
+// parents as needed. This adapter-public bootstrap operation is deliberately not
+// part of tool.Workspace; tools use CreateFile/ReplaceFile.
 func (w *Workspace) Write(ctx context.Context, path string, data []byte) error {
-	return w.fs.Write(ctx, path, data)
+	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return w.writeResolved(rel, root, leaf, path, data)
+}
+
+// lockMutationTarget is the shared mutation preamble: it checks ctx, resolves
+// the confined write target, opens the per-path lock stripe, and returns a
+// release closure the caller MUST defer. The release unlocks the stripe and, if
+// a relaxed out-of-root os.Root was opened, closes it. Confinement is unchanged
+// — this is pure factoring of the resolve/lock/release sequence Write/CreateFile/
+// ReplaceFile all repeated.
+func (w *Workspace) lockMutationTarget(ctx context.Context, path string) (rel string, root *os.Root, leaf string, release func(), err error) {
+	if cerr := ctx.Err(); cerr != nil {
+		return "", nil, "", nil, cerr
+	}
+	canon, rel, r, l, rerr := w.resolveWriteAbs(path)
+	if rerr != nil {
+		return "", nil, "", nil, rerr
+	}
+	mu := pathLock(canon)
+	mu.Lock()
+	release = func() {
+		mu.Unlock()
+		if r != nil {
+			_ = r.Close()
+		}
+	}
+	return rel, r, l, release, nil
+}
+
+// ReadVersion returns the contents of the file at path AND the authoritative
+// FileVersion (sha256 of the content). It reads through the same resolvePath/
+// resolveInRoot/relaxed-read path as the plain Read, so the content and the
+// version are a consistent snapshot of the on-disk file.
+func (w *Workspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.FileVersion, error) {
+	data, err := w.fs.Read(ctx, path)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	return data, osfsVersion(data), nil
+}
+
+// osfsVersion mints a FileVersion from content bytes (sha256 via
+// hashutil.SHA256Hex, the shared adapter-layer fingerprint primitive). It is
+// the single osfs version primitive, shared by ReadVersion/CreateFile/
+// ReplaceFile so a recorded version and a freshly-minted version are
+// byte-identical for the same content.
+func osfsVersion(data []byte) tool.FileVersion {
+	return tool.NewFileVersion(hashutil.SHA256Hex(data))
+}
+
+// canonicalMutationPath returns the physical absolute identity used for mutation
+// locking. Existing targets reuse Canonicalize on the full operand (including a
+// symlink leaf). Missing targets intentionally canonicalize the parent and append
+// only the basename, making the create identity explicit. The Lstat only selects
+// those semantics; a dangling/ambiguous symlink fails safe.
+func canonicalMutationPath(base, path string) (string, error) {
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(base, filepath.FromSlash(path))
+	}
+	abs = filepath.Clean(abs)
+	_, err := os.Lstat(abs)
+	switch {
+	case err == nil:
+		return Canonicalize("", abs)
+	case errors.Is(err, fs.ErrNotExist):
+		parent, leaf := filepath.Dir(abs), filepath.Base(abs)
+		resolvedParent, rerr := Canonicalize("", parent)
+		if rerr != nil {
+			return "", rerr
+		}
+		return filepath.Join(resolvedParent, leaf), nil
+	default:
+		return "", fmt.Errorf("%w: %q cannot be verified: %v", ErrPathEscape, path, err)
+	}
+}
+
+// resolveWriteAbs returns the physical canonical lock identity and the confined
+// operation path. Existing in-root symlink aliases are reduced to their target;
+// a missing target resolves its parent before appending the basename. The
+// resulting in-root operation still flows through the workspace *os.Root.
+func (w *Workspace) resolveWriteAbs(path string) (canon string, rel string, root *os.Root, leaf string, err error) {
+	canon, err = canonicalMutationPath(w.fs.root, path)
+	if err != nil {
+		return "", "", nil, "", err
+	}
+	if pathAtOrBelow(w.fs.root, canon) {
+		rel, _ = filepath.Rel(w.fs.root, canon)
+		return canon, filepath.ToSlash(rel), nil, "", nil
+	}
+
+	// A relative operand, or an absolute operand lexically inside the workspace
+	// whose physical target escaped it, is never eligible for relaxed writes.
+	if !filepath.IsAbs(path) || pathAtOrBelow(w.fs.root, filepath.Clean(path)) {
+		return "", "", nil, "", fmt.Errorf("%w: %q", ErrPathEscape, path)
+	}
+	// Out-of-root relaxed write path (WithRelaxedWrites), preserving the existing
+	// lexical-parent vet and read-root exclusion. canon remains the physical lock
+	// identity so aliases converge across Workspace instances.
+	if r, relaxedLeaf, ok := w.fs.relaxedWriteRoot(path); ok {
+		return canon, "", r, relaxedLeaf, nil
+	}
+	return "", "", nil, "", fmt.Errorf("%w: %q", ErrPathEscape, path)
+}
+
+// writeResolved writes data to the already-resolved write target: the in-root
+// (rel, os.Root) path or the relaxed (root, leaf) path. It mirrors
+// FileSystem.Write's directory-creation + WriteFile, minus the resolve (already
+// done) so CreateFile/ReplaceFile can reuse it under the per-path lock.
+func (w *Workspace) writeResolved(rel string, root *os.Root, leaf string, path string, data []byte) error {
+	if root == nil {
+		// In-root write through the workspace's *os.Root.
+		if dir := filepath.Dir(rel); dir != "." {
+			if err := w.fs.r.MkdirAll(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+				return mapEscape(path, err)
+			}
+		}
+		if err := w.fs.r.WriteFile(rel, data, 0o644); err != nil {
+			return mapEscape(path, err)
+		}
+		return nil
+	}
+	// Relaxed out-of-root write through a fresh *os.Root on the parent.
+	return mapEscape(path, root.WriteFile(leaf, data, 0o644))
+}
+
+// createResolved performs an actual exclusive create through the confined
+// *os.Root. The O_EXCL check is the final defense against non-cooperating
+// creators that do not participate in pathLocks.
+func (w *Workspace) createResolved(rel string, root *os.Root, leaf string, path string, data []byte) error {
+	targetRoot, target := root, leaf
+	if targetRoot == nil {
+		targetRoot, target = w.fs.r, rel
+		if dir := filepath.Dir(rel); dir != "." {
+			if err := targetRoot.MkdirAll(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+				return mapEscape(path, err)
+			}
+		}
+	}
+	file, err := targetRoot.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return mapEscape(path, err)
+	}
+	// os.File.Write on a regular file writes all of data or returns an error;
+	// the short-write (n < len(data), err == nil) path is unreachable here, so a
+	// Write error is the complete write failure.
+	if _, writeErr := file.Write(data); writeErr != nil {
+		_ = file.Close()
+		return mapEscape(path, writeErr)
+	}
+	return mapEscape(path, file.Close())
+}
+
+// readResolved reads the current content (and existence) at the already-resolved
+// write target, so CreateFile/ReplaceFile can do the compare half under the
+// per-path lock WITHOUT a re-resolve race.
+func (w *Workspace) readResolved(rel string, root *os.Root, leaf string) ([]byte, bool, error) {
+	if root == nil {
+		// In-root read through the workspace's *os.Root.
+		data, err := w.fs.r.ReadFile(rel)
+		if err == nil {
+			return data, true, nil
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, mapEscape(rel, err)
+	}
+	// Relaxed out-of-root read through a fresh *os.Root on the parent.
+	data, err := root.ReadFile(leaf)
+	if err == nil {
+		return data, true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	return nil, false, mapEscape(leaf, err)
+}
+
+// CreateFile creates a NEW file at path with the given content, atomically. It
+// fails (wrapping fs.ErrExist) if a file already exists. Parent directories are
+// created as needed. It serializes aliases through process-wide physical-target
+// lock striping and performs the create with O_CREATE|O_EXCL (ADR 0103 §5).
+func (w *Workspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
+	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	defer release()
+	if err := w.createResolved(rel, root, leaf, path, data); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return tool.FileVersion{}, &fs.PathError{Op: "create", Path: path, Err: fs.ErrExist}
+		}
+		return tool.FileVersion{}, err
+	}
+	return osfsVersion(data), nil
+}
+
+// ReplaceFile conditionally replaces the contents of the file at path with data,
+// only if the file's current authoritative version equals old. On a version
+// mismatch it returns a *tool.VersionMismatchError; on a missing file it returns
+// an error wrapping fs.ErrNotExist. It serializes against other same-path
+// mutations through process-wide canonical-path lock striping, so the
+// compare+write is atomic with respect to cooperating Workspace writers
+// (ADR 0103 §5).
+func (w *Workspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
+	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	defer release()
+	cur, exists, err := w.readResolved(rel, root, leaf)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	if !exists {
+		return tool.FileVersion{}, fmt.Errorf("osfs: replace %q: %w", path, fs.ErrNotExist)
+	}
+	have := osfsVersion(cur)
+	if !have.Equal(old) {
+		return tool.FileVersion{}, &tool.VersionMismatchError{Path: path}
+	}
+	if err := w.writeResolved(rel, root, leaf, path, data); err != nil {
+		return tool.FileVersion{}, err
+	}
+	return osfsVersion(data), nil
 }
 
 // Stat returns metadata for the file at the session-relative path.
@@ -1213,82 +1462,29 @@ func (r *CommandRunner) run(ctx context.Context, command, workdir string, stdout
 	return 0, nil
 }
 
-// ledgerKey normalizes a ledger path to its canonical root-relative form so a
-// file read by absolute path and then edited by relative path (or vice versa)
-// matches in the ledger. It resolves through fs.resolvePath; an in-root absolute
-// path is reduced to its root-relative form, a relative path is cleaned, and an
-// out-of-root absolute path (a skills-base read served by an allowed root, or a
-// relaxed-read/write escape) has no root-relative form, so it keys by its
-// CANONICAL ABSOLUTE form (deepest-existing-ancestor + EvalSymlinks, the
-// resolveInRoot algorithm) — a path with ".." components, or one riding a
-// symlinked ancestor, normalizes to the SAME key as the canonical absolute
-// path of the same file. The key is stable across the two cross-form call
-// sites (RecordRead and WasReadUnchanged) because both apply the same
-// normalization.
-func (w *Workspace) ledgerKey(path string) string {
-	if rel, err := w.fs.resolvePath(path); err == nil {
-		return rel
-	}
-	if filepath.IsAbs(path) {
-		if canon, err := Canonicalize("", path); err == nil {
-			return filepath.ToSlash(canon)
-		}
-	}
-	return filepath.Clean(filepath.ToSlash(path))
-}
-
-// RecordRead stores the current on-disk fingerprint of path under the session
-// ledger. The version argument is accepted for interface conformance but the
-// adapter computes and stores its own authoritative fingerprint so that
-// WasReadUnchanged can compare against the live file. The ledger key is the
-// canonical root-relative form (see ledgerKey), so an absolute path and the
-// equivalent relative path share one entry.
-func (w *Workspace) RecordRead(path string, version string) {
-	key := w.ledgerKey(path)
-	fp, err := w.fingerprint(path)
-	if err != nil {
-		// Record the caller-supplied token as a best-effort fallback so a later
-		// unchanged-comparison can still be attempted.
-		fp = version
-	}
+// RecordRead stores the EXACT authoritative version for path under the session
+// ledger. It performs NO I/O: it stores the FileVersion the caller supplies (the
+// one ReadVersion minted), so a later RecordedVersion lookup compares against the
+// recorded token without re-reading the file. The I/O-free lexical key
+// (tool.LedgerKey over the canonical root) makes ordinary absolute-root and
+// relative forms share one entry; symlink aliases may require a re-read.
+func (w *Workspace) RecordRead(path string, version tool.FileVersion) {
+	key := tool.LedgerKey(w.fs.root, path)
 	w.mu.Lock()
-	w.ledger[key] = fp
+	w.ledger[key] = version
 	w.mu.Unlock()
 }
 
-// WasReadUnchanged reports whether path was previously recorded via RecordRead
-// and its current on-disk fingerprint still equals the recorded one. It returns
-// false if path was never read or if the file changed (or vanished) since. The
-// lookup uses the same canonical ledger key as RecordRead, so a read by absolute
-// path and a check by relative path (or the reverse) agree.
-func (w *Workspace) WasReadUnchanged(_ context.Context, path string) (bool, error) {
-	key := w.ledgerKey(path)
+// RecordedVersion returns the version previously recorded for path via RecordRead,
+// performing NO I/O. ok is false if path was never recorded. The lookup uses the
+// same lexical ledger key (tool.LedgerKey) as RecordRead, so an ordinary
+// absolute-root path and relative path agree without filesystem I/O.
+func (w *Workspace) RecordedVersion(path string) (tool.FileVersion, bool) {
+	key := tool.LedgerKey(w.fs.root, path)
 	w.mu.Lock()
-	recorded, ok := w.ledger[key]
+	version, ok := w.ledger[key]
 	w.mu.Unlock()
-	if !ok {
-		return false, nil
-	}
-	current, err := w.fingerprint(path)
-	if err != nil {
-		// File unreadable/removed since the read: treat as changed, not an error.
-		return false, nil
-	}
-	return current == recorded, nil
-}
-
-// fingerprint computes a sha256-based content fingerprint for a session-relative
-// path.
-func (w *Workspace) fingerprint(path string) (string, error) {
-	// Route through the os.Root-backed FileSystem.Read so a symlink that escapes
-	// the workspace cannot be fingerprinted (and thus cannot be followed out of
-	// root for the read-before-edit ledger).
-	data, err := w.fs.Read(context.Background(), path)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return version, ok
 }
 
 // cappedBuffer is a bytes.Buffer-like writer that stops accepting bytes once cap

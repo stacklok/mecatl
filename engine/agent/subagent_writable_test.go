@@ -105,7 +105,7 @@ func TestSubagentWritableDirectWriteE2E(t *testing.T) {
 
 	writeTool := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
-			if err := w.Write(context.Background(), "child-output.txt", []byte("written by the writable subagent\n")); err != nil {
+			if _, err := w.CreateFile(context.Background(), "child-output.txt", []byte("written by the writable subagent\n")); err != nil {
 				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
 			}
 			return session.NewToolResult(in.ID, "wrote child-output.txt"), nil
@@ -160,7 +160,7 @@ func TestSubagentWritablePartialEditSurvivesStopError(t *testing.T) {
 
 	writeTool := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
-			if err := w.Write(context.Background(), "partial.txt", []byte("first edit landed\n")); err != nil {
+			if _, err := w.CreateFile(context.Background(), "partial.txt", []byte("first edit landed\n")); err != nil {
 				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
 			}
 			return session.NewToolResult(in.ID, "wrote partial.txt"), nil
@@ -205,7 +205,7 @@ func TestSubagentWritablePartialEditSurvivesStopCancelled(t *testing.T) {
 	block := &signalThenBlockTool{entered: make(chan struct{}, 1)}
 	writeTool := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
-			if err := w.Write(context.Background(), "cancelled.txt", []byte("first edit landed\n")); err != nil {
+			if _, err := w.CreateFile(context.Background(), "cancelled.txt", []byte("first edit landed\n")); err != nil {
 				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
 			}
 			return session.NewToolResult(in.ID, "wrote cancelled.txt"), nil
@@ -262,7 +262,7 @@ func TestSubagentWritableTimeoutSurfacesTimeBudgetError(t *testing.T) {
 	block := &signalThenBlockTool{entered: make(chan struct{}, 1)}
 	writeTool := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
-			if err := w.Write(context.Background(), "timed-out.txt", []byte("first edit landed\n")); err != nil {
+			if _, err := w.CreateFile(context.Background(), "timed-out.txt", []byte("first edit landed\n")); err != nil {
 				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
 			}
 			return session.NewToolResult(in.ID, "wrote timed-out.txt"), nil

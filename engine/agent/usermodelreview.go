@@ -188,17 +188,23 @@ func (noopWorkspace) Read(_ context.Context, name string) ([]byte, error) {
 	// file and contributes nothing, rather than aborting the run on a read fault.
 	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 }
+func (noopWorkspace) ReadVersion(_ context.Context, name string) ([]byte, tool.FileVersion, error) {
+	return nil, tool.FileVersion{}, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+}
 func (noopWorkspace) Stat(_ context.Context, name string) (tool.FileInfo, error) {
 	return tool.FileInfo{}, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
 }
-func (noopWorkspace) Write(context.Context, string, []byte) error {
-	return fmt.Errorf("usermodel review: no filesystem access")
+func (noopWorkspace) CreateFile(context.Context, string, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, fmt.Errorf("usermodel review: no filesystem access")
+}
+func (noopWorkspace) ReplaceFile(context.Context, string, tool.FileVersion, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, fmt.Errorf("usermodel review: no filesystem access")
 }
 func (noopWorkspace) Glob(context.Context, string) ([]string, error) { return nil, nil }
 func (noopWorkspace) Grep(context.Context, string, string) ([]tool.GrepMatch, error) {
 	return nil, nil
 }
-func (noopWorkspace) RecordRead(string, string) {}
-func (noopWorkspace) WasReadUnchanged(context.Context, string) (bool, error) {
-	return false, nil
+func (noopWorkspace) RecordRead(string, tool.FileVersion) {}
+func (noopWorkspace) RecordedVersion(string) (tool.FileVersion, bool) {
+	return tool.FileVersion{}, false
 }

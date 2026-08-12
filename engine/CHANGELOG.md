@@ -102,6 +102,27 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   principal. The stored principal is a copy, so a caller cannot mutate what the
   context reports. Added (a minor bump).
 
+- **Version-aware file/Edit foundation (ADR 0104, issue #462)** — the
+  `tool.Workspace` surface gains explicit, unambiguous mutation operations and
+  a version-bearing read, so the agent-facing Read/Edit/Write tools never
+  silently clobber a concurrent change:
+  - `tool.FileVersion` is an opaque, comparable content version with no
+    wildcard or unversioned sentinel. `NewFileVersion` mints it, `Equal`
+    compares it, and `Token() (string, bool)` provides transport-safe
+    serialization while preserving the zero-value-invalid contract.
+  - `tool.LedgerKey(root, path)` is the single stdlib-only, I/O-free lexical
+    normalization used by osfs and ACP read ledgers. Ordinary relative and
+    in-root absolute forms converge; physical symlink aliases may conservatively
+    miss and require another read.
+  - `tool.VersionMismatchError` identifies a conditional replace that lost a
+    race without exposing opaque versions.
+  - `tool.Workspace.ReadVersion` returns content plus its authoritative version;
+    `CreateFile` is atomic create-only; `ReplaceFile` conditionally replaces by
+    version; `RecordedVersion` is the I/O-free read-ledger lookup replacing
+    `WasReadUnchanged`.
+  New exported identifiers are Added per COMPATIBILITY.md; the interface method
+  changes and `FileSystem.Write` removal are the breaking half recorded below.
+
 - **`session.ToValidUTF8` and `session.RepairToolResult`** (issue #402) — the
   UTF-8 repair primitives that close the Converse-stream kill. A tool can hand
   back arbitrary bytes (a command's stdout, a file's contents, an MCP server's
@@ -535,6 +556,16 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 - **`session.SubagentPayload.RoutingReason` / `session.ParallelPayload.RoutingReason` / `session.TeamMemberSpec.RoutingReason`, the `session.RoutingReason*` gate constants, and `agent.WithPinnedAgents`** (issue #397) — the three delegation-start events now carry a bounded, bare-metadata reason WHY the OPT-IN semantic model router did not classify a delegation: EMPTY on a routed hit, otherwise one of the gate constants (`RoutingReasonPinnedModel` / `RoutingReasonAgentDefPinned` / `RoutingReasonResume` / `RoutingReasonFork` / `RoutingReasonRouterDisabled` / `RoutingReasonTargetUnavailable` / `RoutingReasonBreakerOpen` / `RoutingReasonAborted`) or a static classifier/composition miss code (`RouterMiss*`, `empty-model`, `category-selector-empty`, …). This lets a UI distinguish router-absent from pinned-model from agent-def-pinned from classifier-failure from breaker-open — previously every miss/gate collapsed to empty `routed_*`. `WithPinnedAgents` carries the composition-computed model-pin set separately from the routable set, so provider-switched and inline-MCP defs are not falsely attributed as model-pinned. If a routed engine factory declines its target, routed fields are cleared and `RoutingReasonTargetUnavailable` records the fallback while `Model` names the engine that actually ran. The Subagent gate attributes the explicit choice gates (resume / fork / per-call `model` / agent-def pin) ahead of the router-absent gate, so a pinned delegation is never mislabeled `router-disabled`. The reason is clamped at the emit site (`routingReasonPayload`, 200-rune cap) AND confined to an event-safe allowlist (`routingReasonEventSafe`): because the missReason channel is open to external engine compositions via the exported `Deps.SubagentModelRouter`, known detailed composition reasons are reduced to their static code and every other non-allowlisted reason (a provider error body, classifier output, a task excerpt) is substituted with the generic `routing-miss` label on the wire while the verbatim text stays in operator diagnostics — gauntlet #7. Classified Added per COMPATIBILITY.md (new struct fields, constants, and option constructor are a minor bump). See ADR 0083.
 
 ### Changed
+
+- **`tool.FileSystem.Write` removed** (ADR 0104, issue #462) — the
+  unconditional-mutation seam is deleted from the `tool.FileSystem` interface.
+  The agent-facing tools never used it: they go through the version-bearing
+  `Workspace.CreateFile`/`ReplaceFile` pair. Concrete adapter Workspaces retain
+  unconditional bootstrap writers only for test/demo setup, outside both
+  `tool.FileSystem` and `tool.Workspace`; `osfs.FileSystem.Write` is removed
+  entirely because it had no live callers and used a divergent resolver.
+  Removing a method from an exported interface is breaking for implementors;
+  under the pre-v1 policy it ships in a minor bump. See ADR 0104.
 
 - **`agent.Engine.Run` consolidated to a single request-struct entry point** (issue #461) — the three exported prompt entry points `Engine.Run(ctx, sess, ws, userText string)`, `Engine.RunContent(ctx, sess, ws, userText string, parts []session.Content)`, and `Engine.RunContentWith(ctx, sess, ws, userText string, parts []session.Content, opts RunOptions)` are REMOVED and replaced by exactly one normal entry point: `Engine.Run(ctx context.Context, sess *session.Session, ws tool.Workspace, req RunRequest) *Run`. The per-run override type `agent.RunOptions` is REMOVED; its fields (`MaxRunTokensOverride`, `ExtraTools`, `AskIDDiscriminator`) move onto the new `agent.RunRequest` alongside the prompt (`Text string`, `Parts []session.Content`). No aliases or deprecated wrappers are retained. `Engine.ResumeApproval` keeps its public signature unchanged (it is the awaiting-only run-entry seam, not a prompt entry) and internally starts with a zero `RunRequest`. This is a breaking signature change on the exported engine prompt surface (the three removed methods + the removed type), classified Changed per COMPATIBILITY.md; it is an API consolidation only — every existing behaviour and invariant is preserved. The single in-repo production caller (`internal/adapter/server.Service.StartRunContent`) and all adapter/demo/perf/test callers are updated. See issue #461.
 

@@ -503,8 +503,8 @@ func TestEndToEndFSDelegation(t *testing.T) {
 
 	runScenario := func(t *testing.T, caps bool) (reads, writes int, diskTouched bool, root string) {
 		t.Helper()
-		// Real Read + Edit tools so the engine exercises the Workspace contract
-		// (RecordRead on Read, WasReadUnchanged/Read/Write on Edit).
+		// Real Read + Edit tools so the engine exercises the Workspace version
+		// contract (ReadVersion/RecordRead, then RecordedVersion/ReplaceFile).
 		llm := mockllm.New(
 			mockllm.ToolCallTurn(call("c1", "Read", `{"path":"main.go"}`)),
 			mockllm.ToolCallTurn(call("c2", "Edit", `{"path":"main.go","old_string":"var A = 1","new_string":"var A = 2"}`)),

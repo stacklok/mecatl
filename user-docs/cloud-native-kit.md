@@ -128,7 +128,7 @@ For the full deployment guide, see [mecak8s deployment](/deployment/mecak8s.md).
 
 The list of state that IS reset by design on restart:
 
-- **Edit read-ledger** — the per-`osfs.Workspace` sha256 fingerprint map (`internal/adapter/osfs/osfs.go`). After restart the model must re-Read any file before editing. This costs one extra Read per touched file per session.
+- **Edit read-ledger** — each live Workspace holds an in-memory map of opaque file versions. The default Service path creates a fresh Workspace per run, so the next run must re-Read before Edit/overwrite; explicit no-fs/ACP overrides retain their existing owner-defined lifetime. Restart also resets every ledger. This fails safe rather than carrying stale authorization across environment instances.
 - **Modelhook guardrail breaker** (`failureStreak`, `internal/adapter/modelhook/breaker.go`) — resets to closed (fail-safe).
 - **Per-run circuit breakers** (`askReviewBreaker`, `modelRouterBreaker`) — run-scoped, rebuilt trivially.
 - **Mid-round team state** — the largest honest gap. Member sessions persist; the coordination state (roster, goal, tasks, findings) does not survive restart. Member transcripts remain individually loadable.

@@ -219,14 +219,14 @@ type Workspace struct {
 	fs *FileSystem
 
 	mu     sync.Mutex
-	ledger map[string]string // path -> recorded fingerprint
+	ledger map[string]tool.FileVersion // path -> recorded version
 }
 
 // NewWorkspace returns an empty in-memory Workspace with the given logical root.
 func NewWorkspace(root string) *Workspace {
 	return &Workspace{
 		fs:     NewFileSystem(root),
-		ledger: make(map[string]string),
+		ledger: make(map[string]tool.FileVersion),
 	}
 }
 
@@ -241,9 +241,80 @@ func (w *Workspace) Read(ctx context.Context, p string) ([]byte, error) {
 	return w.fs.Read(ctx, p)
 }
 
-// Write replaces the contents of the file at the session-relative path.
+// versionOf mints a FileVersion from content bytes (sha256). It is the single
+// memfs version primitive: ReadVersion, CreateFile, and ReplaceFile all use it
+// so a recorded version and a freshly-minted version are byte-identical for the
+// same content.
+func versionOf(data []byte) tool.FileVersion {
+	sum := sha256.Sum256(data)
+	return tool.NewFileVersion(hex.EncodeToString(sum[:]))
+}
+
+// ReadVersion returns the contents of the file at the session-relative path AND
+// the authoritative FileVersion (sha256 of the content). It reads under the
+// FileSystem's lock so the content and the version are a consistent snapshot.
+func (w *Workspace) ReadVersion(_ context.Context, p string) ([]byte, tool.FileVersion, error) {
+	key, err := cleanPath(p)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	w.fs.mu.RLock()
+	defer w.fs.mu.RUnlock()
+	n, ok := w.fs.files[key]
+	if !ok {
+		return nil, tool.FileVersion{}, fmt.Errorf("memfs: open %q: %w", p, ErrNotExist)
+	}
+	out := bytes.Clone(n.data)
+	return out, versionOf(n.data), nil
+}
+
+// Write is an adapter-public bootstrap operation, deliberately outside
+// tool.Workspace; tools use CreateFile/ReplaceFile instead.
 func (w *Workspace) Write(ctx context.Context, p string, data []byte) error {
 	return w.fs.Write(ctx, p, data)
+}
+
+// CreateFile creates a NEW file at path with the given content, atomically. It
+// fails (wrapping fs.ErrExist) if a file already exists. Parent directories are
+// created as needed (memfs is flat — directories are implicit in the key). It
+// returns the new file's FileVersion.
+func (w *Workspace) CreateFile(_ context.Context, p string, data []byte) (tool.FileVersion, error) {
+	key, err := cleanPath(p)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	stored := bytes.Clone(data)
+	w.fs.mu.Lock()
+	defer w.fs.mu.Unlock()
+	if _, exists := w.fs.files[key]; exists {
+		return tool.FileVersion{}, fmt.Errorf("memfs: create %q: %w", p, fs.ErrExist)
+	}
+	w.fs.files[key] = &node{data: stored, modTime: w.fs.now()}
+	return versionOf(stored), nil
+}
+
+// ReplaceFile conditionally replaces the contents of the file at path with data,
+// only if the file's current authoritative version equals old. On a version
+// mismatch it returns a *tool.VersionMismatchError; on a missing file it returns
+// an error wrapping fs.ErrNotExist. It is atomic under the FileSystem's lock.
+func (w *Workspace) ReplaceFile(_ context.Context, p string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
+	key, err := cleanPath(p)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	stored := bytes.Clone(data)
+	w.fs.mu.Lock()
+	defer w.fs.mu.Unlock()
+	n, ok := w.fs.files[key]
+	if !ok {
+		return tool.FileVersion{}, fmt.Errorf("memfs: replace %q: %w", p, ErrNotExist)
+	}
+	cur := versionOf(n.data)
+	if !cur.Equal(old) {
+		return tool.FileVersion{}, &tool.VersionMismatchError{Path: p}
+	}
+	w.fs.files[key] = &node{data: stored, modTime: w.fs.now()}
+	return versionOf(stored), nil
 }
 
 // Stat returns metadata for the file at the session-relative path.
@@ -357,45 +428,33 @@ func (r *CommandRunner) Run(ctx context.Context, _, _ string) (tool.CommandResul
 	return *res, nil
 }
 
-// RecordRead stores the current in-memory fingerprint of path under the session
-// ledger. The version argument is accepted for interface conformance; the
-// adapter computes and stores its own authoritative fingerprint so
-// WasReadUnchanged compares against the live contents.
-func (w *Workspace) RecordRead(p string, version string) {
-	fp, err := w.fingerprint(p)
+// RecordRead stores the EXACT authoritative version for path under the session
+// ledger. It performs NO I/O: it stores the FileVersion the caller supplies (the
+// one ReadVersion minted), so a later RecordedVersion lookup compares against the
+// recorded token without re-reading the file. The ledger key is the clean
+// session-relative path (see cleanPath).
+func (w *Workspace) RecordRead(p string, version tool.FileVersion) {
+	key, err := cleanPath(p)
 	if err != nil {
-		fp = version
+		// An uncleanable path cannot be recorded; leave it unrecorded (fail-safe:
+		// a later mutation refuses as "not read").
+		return
 	}
 	w.mu.Lock()
-	w.ledger[p] = fp
+	w.ledger[key] = version
 	w.mu.Unlock()
 }
 
-// WasReadUnchanged reports whether path was previously recorded via RecordRead
-// and its current in-memory fingerprint still equals the recorded one. It
-// returns false if path was never read or if the contents changed (or were
-// removed) since.
-func (w *Workspace) WasReadUnchanged(_ context.Context, p string) (bool, error) {
+// RecordedVersion returns the version previously recorded for path via RecordRead,
+// performing NO I/O. ok is false if path was never recorded. The lookup uses the
+// same clean key as RecordRead.
+func (w *Workspace) RecordedVersion(p string) (tool.FileVersion, bool) {
+	key, err := cleanPath(p)
+	if err != nil {
+		return tool.FileVersion{}, false
+	}
 	w.mu.Lock()
-	recorded, ok := w.ledger[p]
+	version, ok := w.ledger[key]
 	w.mu.Unlock()
-	if !ok {
-		return false, nil
-	}
-	current, err := w.fingerprint(p)
-	if err != nil {
-		return false, nil
-	}
-	return current == recorded, nil
-}
-
-// fingerprint computes a sha256-based content fingerprint for a session-relative
-// path in the in-memory store.
-func (w *Workspace) fingerprint(p string) (string, error) {
-	data, err := w.fs.Read(context.Background(), p)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return version, ok
 }
