@@ -331,28 +331,44 @@ func (r sessionResolver) migrateLegacyFamily(id session.SessionID) error {
 	return nil
 }
 
+// moveLegacyFile renames one legacy family file onto its canonical path.
+//
+// The os.Stat(src) is NOT a redundant round-trip that os.Rename's own ENOENT
+// could replace — it is load-bearing twice, and both uses are easy to lose:
+//
+//   - It must come FIRST, so an absent source returns nil REGARDLESS of the
+//     destination. That is the interrupted-migration retry shape (a previous
+//     attempt already moved this file), pinned by
+//     TestInterruptedMigrationRetriesAfterSidecarAlreadyMoved. Checking the
+//     destination first turns that retry into a spurious clash error.
+//   - IsRegular refuses a non-regular source instead of renaming it into the
+//     canonical namespace. os.Rename happily moves a directory, after which
+//     every Load/Save/Append for that id fails with EISDIR forever while List
+//     silently omits it; a FIFO is worse — readSnapshotLine's os.Open blocks
+//     indefinitely waiting for a writer while Store.mu is held, deadlocking
+//     the whole store.
+//
+// A present destination with a present regular source is a genuine clash:
+// error rather than let os.Rename silently clobber already-migrated data.
 func moveLegacyFile(src, dst string) error {
-	present, err := pathExists(dst)
+	info, err := os.Stat(src)
 	if err != nil {
-		return err
-	}
-	if present {
-		// Destination already migrated. A source still present alongside it is a
-		// genuine clash (guard against silently clobbering already-migrated data
-		// via os.Rename's overwrite-on-POSIX behavior); a missing source is the
-		// expected state on an interrupted-migration retry.
-		if _, statErr := os.Stat(src); statErr == nil { //nolint:gosec // resolver-derived path
-			return fmt.Errorf("destination already exists: %q", dst)
-		}
-		return nil
-	}
-	if err := os.Rename(src, dst); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	return nil
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("source %q is not a regular file", src)
+	}
+	present, err := pathExists(dst)
+	if err != nil {
+		return err
+	}
+	if present {
+		return fmt.Errorf("destination already exists: %q", dst)
+	}
+	return os.Rename(src, dst)
 }
 
 func pathExists(path string) (bool, error) {
