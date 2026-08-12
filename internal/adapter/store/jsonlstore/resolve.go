@@ -1,13 +1,13 @@
 package jsonlstore
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -129,7 +129,7 @@ func readSnapshotLine(path string) ([]byte, error) {
 func (r sessionResolver) canonicalSnapshot(id session.SessionID) ([]byte, bool, error) {
 	line, err := readSnapshotLine(r.canonicalPath(id, kindSnapshot))
 	if err != nil || line == nil {
-		return nil, line != nil, err
+		return nil, false, err
 	}
 	embedded, err := snapshotIDFromLine(line)
 	if err != nil {
@@ -268,13 +268,8 @@ func (r sessionResolver) snapshotFiles() ([]snapshotFile, error) {
 	if err := scanSnapshotDir(r.canonicalDir(), true, byID); err != nil {
 		return nil, err
 	}
-	out := make([]snapshotFile, 0, len(byID))
-	for _, file := range byID {
-		out = append(out, file)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return bytes.Compare([]byte(out[i].id), []byte(out[j].id)) < 0
-	})
+	out := slices.Collect(maps.Values(byID))
+	slices.SortFunc(out, func(a, b snapshotFile) int { return strings.Compare(string(a.id), string(b.id)) })
 	return out, nil
 }
 
@@ -330,24 +325,27 @@ func (r sessionResolver) migrateLegacyFamily(id session.SessionID) error {
 }
 
 func moveLegacyFile(src, dst string) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("source %q is not a regular file", src)
-	}
 	present, err := pathExists(dst)
 	if err != nil {
 		return err
 	}
 	if present {
-		return fmt.Errorf("destination already exists: %q", dst)
+		// Destination already migrated. A source still present alongside it is a
+		// genuine clash (guard against silently clobbering already-migrated data
+		// via os.Rename's overwrite-on-POSIX behavior); a missing source is the
+		// expected state on an interrupted-migration retry.
+		if _, statErr := os.Stat(src); statErr == nil { //nolint:gosec // resolver-derived path
+			return fmt.Errorf("destination already exists: %q", dst)
+		}
+		return nil
 	}
-	return os.Rename(src, dst)
+	if err := os.Rename(src, dst); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func pathExists(path string) (bool, error) {
