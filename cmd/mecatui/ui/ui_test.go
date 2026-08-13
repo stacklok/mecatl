@@ -98,6 +98,16 @@ func (p *progress) waitRunComplete(t *testing.T, n int, d time.Duration) {
 		func() string { return "complete a run (idle after running)" })
 }
 
+// runs reads the completed-run counter under the lock. The reducer goroutine writes
+// it from record() while the program is still live, so an UPPER-bound assertion
+// ("exactly n runs, no more") must come through here — waitRunComplete only
+// establishes the lower bound, and reading p.runDone directly is a data race.
+func (p *progress) runs() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.runDone
+}
+
 // waitFunc is the shared wait body: block until ok() under the lock, failing after
 // the race-scaled deadline. desc names the awaited condition for the failure.
 func (p *progress) waitFunc(t *testing.T, d time.Duration, ok func() bool, desc func() string) {
@@ -242,8 +252,12 @@ type programDeps struct {
 
 // newProgramModel builds the gated fake stream PLUS the deterministic signals and
 // the onPhase observer the *Program teatest cases sequence on. The script is
-// configurable so the scramble case can supply its own ungated stream.
-func newProgramModel(t *testing.T, th theme.Theme, script []*mecatlv1.ConverseResponse, gateType string) programDeps {
+// configurable so the scramble case can supply its own ungated stream. Each tweak
+// runs against the Deps literal before New, so a case that needs one extra field
+// (a CLI seed prompt, a saved model selection) adds it without forking the whole
+// construction — the fakes stay reachable through the returned programDeps for any
+// fake-side setup (e.g. conv.rejectSelector) the case needs before teatest starts.
+func newProgramModel(t *testing.T, th theme.Theme, script []*mecatlv1.ConverseResponse, gateType string, tweak ...func(*Deps)) programDeps {
 	t.Helper()
 	recv := &fakeRecver{
 		script:      script,
@@ -259,7 +273,7 @@ func newProgramModel(t *testing.T, th theme.Theme, script []*mecatlv1.ConverseRe
 	}
 	conv := &fakeConv{recv: recv, send: send, sessionReady: make(chan struct{})}
 	prog := newProgress()
-	m := New(Deps{
+	deps := Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       th,
@@ -270,8 +284,11 @@ func newProgramModel(t *testing.T, th theme.Theme, script []*mecatlv1.ConverseRe
 		Ctx:         context.Background(),
 		NoAltScreen: true,
 		onPhase:     prog.record,
-	})
-	return programDeps{recv: recv, send: send, conv: conv, prog: prog, model: m}
+	}
+	for _, fn := range tweak {
+		fn(&deps)
+	}
+	return programDeps{recv: recv, send: send, conv: conv, prog: prog, model: New(deps)}
 }
 
 // TestFullCycleProgram drives the whole three-act scenario through the real
@@ -762,34 +779,12 @@ func TestStreamedEmojiMarkdownNotScrambled(t *testing.T) {
 	}
 }
 
-// newSeedProgramModel builds the gated fake stream + onPhase observer the seed
-// e2e drives, wiring Deps.InitialPrompt so applySessionReady auto-submits it on
-// the first session bind. It mirrors newProgramModel but threads the seed.
+// newSeedProgramModel is newProgramModel with Deps.InitialPrompt threaded, so
+// applySessionReady auto-submits the seed on the first session bind. Ungated
+// stream (gateType ""), so the shared release hook never fires.
 func newSeedProgramModel(t *testing.T, th theme.Theme, script []*mecatlv1.ConverseResponse, seed string) programDeps {
 	t.Helper()
-	recv := &fakeRecver{
-		script:      script,
-		gateType:    "",
-		gate:        make(chan struct{}),
-		reachedGate: make(chan struct{}),
-	}
-	send := &fakeSender{}
-	conv := &fakeConv{recv: recv, send: send, sessionReady: make(chan struct{})}
-	prog := newProgress()
-	m := New(Deps{
-		Session:       conv,
-		Conv:          conv,
-		Theme:         th,
-		Server:        "127.0.0.1:8080",
-		Workspace:     "/workspace",
-		Mode:          "default",
-		Model:         "mock-model",
-		Ctx:           context.Background(),
-		NoAltScreen:   true,
-		onPhase:       prog.record,
-		InitialPrompt: seed,
-	})
-	return programDeps{recv: recv, send: send, conv: conv, prog: prog, model: m}
+	return newProgramModel(t, th, script, "", func(d *Deps) { d.InitialPrompt = seed })
 }
 
 // TestSeedPromptIsSubmittedOnFirstSession asserts a CLI seed prompt (-p/--prompt)
@@ -810,17 +805,12 @@ func TestSeedPromptIsSubmittedOnFirstSession(t *testing.T) {
 	pd.prog.waitRunComplete(t, 1, 5*time.Second)
 
 	// Exactly ONE Prompt frame was sent, carrying the seed text verbatim.
-	var prompts []*mecatlv1.ConverseRequest
-	for _, fr := range pd.send.frames() {
-		if p := fr.GetPrompt(); p != nil {
-			prompts = append(prompts, fr)
-		}
-	}
+	prompts := promptTexts(pd.send)
 	if len(prompts) != 1 {
 		t.Fatalf("sent %d Prompt frames, want exactly 1 (the seed, no re-fire)", len(prompts))
 	}
-	if got := prompts[0].GetPrompt().GetText(); got != "Read greeting.txt" {
-		t.Errorf("seed Prompt text = %q, want %q", got, "Read greeting.txt")
+	if prompts[0] != "Read greeting.txt" {
+		t.Errorf("seed Prompt text = %q, want %q", prompts[0], "Read greeting.txt")
 	}
 
 	// Graceful quit (double ctrl+c), THEN assert final state on the deterministic
@@ -866,8 +856,8 @@ func TestSeedPromptDoesNotReFireOnModelsRestart(t *testing.T) {
 		t.Errorf("a rebind sent %d new frame(s), want 0 (seed must not re-fire); frames: %v",
 			after-before, pd.send.frames()[before:])
 	}
-	if pd.prog.runDone != 1 {
-		t.Errorf("runDone = %d, want 1 (no second run from a rebind)", pd.prog.runDone)
+	if got := pd.prog.runs(); got != 1 {
+		t.Errorf("runDone = %d, want 1 (no second run from a rebind)", got)
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
@@ -887,23 +877,17 @@ func TestSeedPromptWhitespaceOnlyIsNoop(t *testing.T) {
 		simpleRunScript("should-not-run"), "   ")
 	tm := teatest.NewTestModel(t, pd.model, teatest.WithInitialTermSize(100, 30))
 
-	// The seed is whitespace-only; the TrimSpace gate at update.go:364 must skip
+	// The seed is whitespace-only; applySessionReady's TrimSpace gate must skip
 	// the submit. Wait for idle to confirm the connect settled without a run.
 	pd.prog.wait(t, phaseIdle, 3*time.Second)
 
 	// Assert ZERO Prompt frames were sent.
-	var prompts []*mecatlv1.ConverseRequest
-	for _, fr := range pd.send.frames() {
-		if p := fr.GetPrompt(); p != nil {
-			prompts = append(prompts, fr)
-		}
-	}
-	if len(prompts) != 0 {
+	if prompts := promptTexts(pd.send); len(prompts) != 0 {
 		t.Fatalf("sent %d Prompt frames, want 0 (whitespace-only seed must be a no-op)", len(prompts))
 	}
 	// No run started either.
-	if pd.prog.runDone != 0 {
-		t.Errorf("runDone = %d, want 0 (whitespace-only seed must not start a run)", pd.prog.runDone)
+	if got := pd.prog.runs(); got != 0 {
+		t.Errorf("runDone = %d, want 0 (whitespace-only seed must not start a run)", got)
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
@@ -925,13 +909,7 @@ func TestSeedPromptSlashCommandIntercepted(t *testing.T) {
 	pd.prog.wait(t, phaseIdle, 3*time.Second)
 
 	// Assert ZERO Prompt frames reached the server.
-	var prompts []*mecatlv1.ConverseRequest
-	for _, fr := range pd.send.frames() {
-		if p := fr.GetPrompt(); p != nil {
-			prompts = append(prompts, fr)
-		}
-	}
-	if len(prompts) != 0 {
+	if prompts := promptTexts(pd.send); len(prompts) != 0 {
 		t.Fatalf("sent %d Prompt frames, want 0 (/clear must be intercepted locally)", len(prompts))
 	}
 
@@ -947,56 +925,29 @@ func TestSeedPromptSlashCommandIntercepted(t *testing.T) {
 // is rejected as InvalidArgument, the zero-selection retry succeeds, and the
 // resulting connectFallbackMsg drives applySessionReady → seed submit.
 func TestSeedPromptConnectFallbackFires(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	recv := &fakeRecver{
-		script:      simpleRunScript("fallback-seed"),
-		gateType:    "",
-		gate:        make(chan struct{}),
-		reachedGate: make(chan struct{}),
-	}
-	send := &fakeSender{}
+	pd := newProgramModel(t, theme.New("aztec", theme.AztecPalette()),
+		simpleRunScript("fallback-seed"), "", func(d *Deps) {
+			d.InitialPrompt = "hello from fallback"
+			d.InitialModel = client.ModelSelection{ProviderID: "bad-proto", ModelID: "bad-model"}
+		})
 	// rejectSelector returns InvalidArgument for any non-zero selector, triggering
 	// createSessionCmd's zero-selection retry which produces connectFallbackMsg.
-	conv := &fakeConv{
-		recv:           recv,
-		send:           send,
-		sessionReady:   make(chan struct{}),
-		rejectSelector: status.Error(codes.InvalidArgument, "unknown model"),
-	}
-	prog := newProgress()
-	m := New(Deps{
-		Session:       conv,
-		Conv:          conv,
-		Theme:         th,
-		Server:        "127.0.0.1:8080",
-		Workspace:     "/workspace",
-		Mode:          "default",
-		Model:         "mock-model",
-		InitialModel:  client.ModelSelection{ProviderID: "bad-proto", ModelID: "bad-model"},
-		Ctx:           context.Background(),
-		NoAltScreen:   true,
-		onPhase:       prog.record,
-		InitialPrompt: "hello from fallback",
-	})
-	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(100, 30))
+	// Set before teatest starts the program, so the create goroutine sees it.
+	pd.conv.rejectSelector = status.Error(codes.InvalidArgument, "unknown model")
+	tm := teatest.NewTestModel(t, pd.model, teatest.WithInitialTermSize(100, 30))
 
 	// The connect-fallback arrives via createSessionCmd's goroutine, then
 	// applySessionReady fires the seed. Wait for the run to complete.
-	prog.wait(t, phaseIdle, 3*time.Second)
-	prog.waitRunComplete(t, 1, 5*time.Second)
+	pd.prog.wait(t, phaseIdle, 3*time.Second)
+	pd.prog.waitRunComplete(t, 1, 5*time.Second)
 
 	// Exactly ONE Prompt frame carrying the seed text.
-	var prompts []*mecatlv1.ConverseRequest
-	for _, fr := range send.frames() {
-		if p := fr.GetPrompt(); p != nil {
-			prompts = append(prompts, fr)
-		}
-	}
+	prompts := promptTexts(pd.send)
 	if len(prompts) != 1 {
 		t.Fatalf("sent %d Prompt frames, want exactly 1 (seed on connect-fallback path)", len(prompts))
 	}
-	if got := prompts[0].GetPrompt().GetText(); got != "hello from fallback" {
-		t.Errorf("seed Prompt text = %q, want %q", got, "hello from fallback")
+	if prompts[0] != "hello from fallback" {
+		t.Errorf("seed Prompt text = %q, want %q", prompts[0], "hello from fallback")
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})

@@ -74,6 +74,15 @@ var flagMetaByFlag = map[string]flagMeta{
 	"client-ca":  {group: groupSecurity, common: false, acp: acpExclude},
 	"rate-limit": {group: groupSecurity, common: false, acp: acpExclude},
 	"rate-burst": {group: groupSecurity, common: false, acp: acpExclude},
+	// Caller identity (ADR 0100): advanced, server-boundary — an ACP client
+	// speaks over stdio and has no authenticated edge.
+	"oidc-issuer":             {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-jwks-uri":           {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-audience":           {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-max-jwks-staleness": {group: groupSecurity, common: false, acp: acpExclude},
+	// TEST-ONLY SSRF relaxation (see cliconfig.OIDCConfig): not common, and
+	// acpExclude like its siblings — an ACP client has no business setting it.
+	"oidc-insecure-allow-private-issuer": {group: groupSecurity, common: false, acp: acpExclude},
 
 	// ── Observability (serve-only) ────────────────────────────────────────
 	"otlp-endpoint":            {group: groupObservability, common: false, acp: acpExclude},

@@ -213,9 +213,9 @@ func (m Model) effortSelection(effort string) client.ModelSelection {
 // renderEffortOverlay draws the picker centred over the conversation region via
 // centerCard. current is the effective effort the server resolved (the ● marker
 // target). Returns "" when the overlay is closed.
-func renderEffortOverlay(th theme.Theme, st effortState, current string, noReasoning bool, width, height int) string {
+func renderEffortOverlay(th theme.Theme, st effortState, current string, noReasoning bool, hk helpKeys, width, height int) string {
 	if st.view == effortPanel {
-		return centerCard(th, renderEffortPanel(th, st, current, noReasoning), width, height)
+		return centerCard(th, renderEffortPanel(th, st, current, noReasoning, hk), width, height)
 	}
 	return ""
 }
@@ -225,7 +225,7 @@ func renderEffortOverlay(th theme.Theme, st effortState, current string, noReaso
 // footer hint. The enum is short + ASCII-safe, so no windowing/sanitization is
 // needed (every string is an internal const). current is the effective effort
 // (server-resolved); the ● tracks effortLabel(current).
-func renderEffortPanel(th theme.Theme, st effortState, current string, noReasoning bool) string {
+func renderEffortPanel(th theme.Theme, st effortState, current string, noReasoning bool, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Reasoning effort") + "\n\n")
 	currentLabel := effortLabel(current)
@@ -242,7 +242,9 @@ func renderEffortPanel(th theme.Theme, st effortState, current string, noReasoni
 	if noReasoning {
 		b.WriteString("\n" + th.Style("warning").Render("this model has no reasoning support — a tier will be ignored"))
 	}
-	b.WriteString("\n" + th.Style("muted").Render("↑/↓ move · enter apply · esc close"))
+	// The nav/select/close chords read the LIVE Up/Down/Choose/Close markings
+	// (issue #457); with defaults the hint is byte-identical to the historical literal.
+	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" apply · "+hk.closeOnly+" close"))
 	b.WriteString("\n" + th.Style("muted").Render("● current  ·  auto = provider default"))
 	return b.String()
 }

@@ -58,7 +58,7 @@ turn routing off, set `models.router.disabled: true` or launch with
 `mecated serve --subagent-model-router=false` (the kill-switch). With no `models.router:` block
 at all, every call keeps the session model — the default is byte-identical.
 
-`models.context_windows` ([ADR 0103](../adr/0103-context-window-overrides.md)) is
+`models.context_windows` ([ADR 0104](../adr/0104-context-window-overrides.md)) is
 operator-tier only and maps an exact provider ID to an
 exact final model/routing ID and its total context-token limit. Alias and slot routing
 finish before lookup, so the map never performs fuzzy, reverse, or cross-provider

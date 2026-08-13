@@ -328,11 +328,70 @@ func TestRecoveredDigestStatesTheNextActionOnce(t *testing.T) {
 	}
 }
 
+// TestWritableTerminalClassificationSelectsCleanNoteOnlyForEndTurn pins the writable
+// renderer to the SAME fail-safe terminal classifier used by the ordinary Subagent result.
+// StopEndTurn is the sole explicit completion; every bound, cancellation, anomaly,
+// plan-control, and host/provider-defined reason must describe possible work conditionally.
+func TestWritableTerminalClassificationSelectsCleanNoteOnlyForEndTurn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		stop      session.StopReason
+		final     string
+		submit    *submitResultTool
+		wantClean bool
+		want      string
+	}{
+		{name: "end turn is the only clean terminal", stop: session.StopEndTurn, final: "done", wantClean: true},
+		{name: "max turns", stop: session.StopMaxTurns, final: "partial", want: "max-turns limit"},
+		{name: "max tool calls", stop: session.StopMaxToolCalls, final: "partial", want: "max-tool-calls limit"},
+		{name: "no progress", stop: session.StopNoProgress, final: "partial", want: "ended without a final summary"},
+		{name: "immediate budget with zero work", stop: session.StopBudget, want: "reached its token budget"},
+		{name: "max consecutive failures", stop: session.StopMaxConsecutiveFailures, final: "partial", want: "consecutive-tool-failure limit"},
+		{name: "custom max tokens", stop: session.StopReason("max_tokens"), final: "partial", want: `unrecognized terminal reason "max_tokens"`},
+		{name: "cancelled", stop: session.StopCancelled, final: "partial"},
+		{name: "scheduled timeout", stop: session.StopTimeout, final: "partial", want: "reached its time limit"},
+		{name: "plan approved", stop: session.StopPlanApproved, final: "plan", want: "plan approval"},
+		{name: "plan iterate", stop: session.StopPlanIterate, final: "plan", want: "plan revision"},
+		{name: "missing reason", stop: session.StopNone, want: "without a terminal reason"},
+		{name: "error", stop: session.StopError, final: "last activity"},
+		{name: "structured output", stop: session.StopStructuredOutput, submit: &submitResultTool{lastValidationError: "invalid payload"}, want: "invalid payload"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := renderWritableSubagentResult("p1", "subagent-p1", tc.final, tc.stop, "provider failed", tc.submit, false, false)
+			hasClean := strings.Contains(res.Content, writableSubagentCleanNote)
+			hasPartial := strings.Contains(res.Content, writableSubagentPartialNote)
+			if hasClean != tc.wantClean {
+				t.Errorf("clean note present = %v, want %v:\n%s", hasClean, tc.wantClean, res.Content)
+			}
+			if hasPartial == tc.wantClean {
+				t.Errorf("partial note present = %v, want %v:\n%s", hasPartial, !tc.wantClean, res.Content)
+			}
+			if !strings.Contains(res.Content, "had direct write access") {
+				t.Errorf("writable result must describe capability:\n%s", res.Content)
+			}
+			if strings.Contains(res.Content, "edited your workspace") || strings.Contains(res.Content, "its edits") {
+				t.Errorf("renderer must not assert a mutation without evidence:\n%s", res.Content)
+			}
+			if tc.want != "" && !strings.Contains(res.Content, tc.want) {
+				t.Errorf("content missing %q:\n%s", tc.want, res.Content)
+			}
+			if tc.stop == session.StopBudget && !strings.Contains(res.Content, "subagent produced no summary") {
+				t.Errorf("zero-work budget result lost its no-summary shape:\n%s", res.Content)
+			}
+		})
+	}
+}
+
 // TestWritableStructuredOutputTerminalWarnsPartialEdits pins the direct-write note cell a
 // structured-output failure lands in. The child exhausted its correction budget without ever
-// producing a schema-valid payload, having already edited the operator's real tree in place
-// (ADR 0041) — it did NOT finish cleanly, so the benign "review the changes" note the switch
-// used to fall through to reads as a clean finish on a mid-task failure.
+// producing a schema-valid payload while holding direct access to the operator's real tree
+// (ADR 0041). The renderer has no mutation evidence, so it must say any edits MAY be partial
+// rather than claiming changes exist or presenting the benign clean-completion note.
 func TestWritableStructuredOutputTerminalWarnsPartialEdits(t *testing.T) {
 	t.Parallel()
 	res := renderWritableSubagentResult("p1", "subagent-p1", "", session.StopStructuredOutput, "",

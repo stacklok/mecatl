@@ -17,6 +17,26 @@ Prefer updating the relevant design doc + this file over re-growing CLAUDE.md.
 
 ---
 
+## Caller identity embedding and OIDC module boundary
+
+The engine accepts identity only after verification. `session.PrincipalFromClaims`
+projects an already-verified claim map into the narrow `(iss, sub)` identity, rejecting
+missing, empty, or non-string identity claims and deriving only `user` or
+`client_credentials`; it never verifies a token and never mints `system`. An embedder
+puts that principal on the run context with `session.WithPrincipal`. If it constructs a
+session aggregate itself, it also seeds durable ownership through
+`Session.RestoreLabels(principal, "")`; children, forks, and resumed sessions inherit
+that owner.
+
+OIDC/JWKS mechanics live in the opt-in `authn/oidc` module (ADR 0103), not engine and
+not a provider module. Its `Validator` wraps `toolhive-core/authn`, maps validation and
+IdP-availability failures onto module-owned sentinels, fails closed if verified claims
+do not project to a principal, and owns an explicit `Close` for the background refresh.
+`internal/cliconfig` adapts those errors to the unchanged server sentinels and retains
+the server-root system context and all existing flag behavior.
+
+---
+
 ## Domain — `engine/session/` (lifecycle recovery)
 
 A turn always drives the `Session` aggregate to a terminal state within one
@@ -364,12 +384,15 @@ was observed announcing actions without emitting the tool calls). `EvNoProgress`
 `EvNoProgress` as a muted notice and `StopNoProgress` as a `stopped · no progress` footer label.
 
 **Token budget — the shared loop-level ceiling (`StopBudget`).** `agent.Deps.MaxRunTokens`
-(0 = disabled) is a per-RUN cumulative token ceiling checked at the turn BOUNDARY in
+(0 = disabled) is a cumulative token ceiling checked at each turn BOUNDARY in
 `Engine.drive` (Step 2, after the existing `sess.StopReason()` and `ctx.Err()` checks, before
-`BeginTurn`) against the run's accumulated `session.Usage` via `Usage.TotalTokens()`
-(input+output; cache tokens excluded — `CacheReadTokens` is a subset of `InputTokens`,
-`CacheWriteTokens` is a side cost; `ReasoningTokens` is likewise excluded — it is a subset
-of `OutputTokens`, providers billing reasoning as part of the inclusive output total, so
+`BeginTurn`) against the session aggregate's accumulated `session.Usage` via
+`Usage.TotalTokens()` (`engine/session/session.go` (`RecordUsage`)). Usage is persisted and
+survives `Reopen`/`Interrupt`/`Recover`, so the ceiling remains cumulative across resumed runs
+and restart; a resumed child can therefore stop before new work when its inherited budget is
+already spent. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
+subset of `InputTokens`, `CacheWriteTokens` is a side cost, and `ReasoningTokens` is likewise a
+subset of `OutputTokens` (providers bill reasoning as part of the inclusive output total, so
 adding it would double-count). The subset invariant holds CROSS-PROVIDER because the
 adapters normalize to it: OpenAI's `input_tokens` already includes cached tokens; Anthropic's
 raw `input_tokens` EXCLUDES cache reads/writes, so its adapter folds `cache_read_input_tokens`
@@ -380,19 +403,22 @@ breakdown is surfaced the same way: OpenAI's `output_tokens_details.reasoning_to
 Anthropic's `output_tokens_details.thinking_tokens` map to `ReasoningTokens` at the same two
 adapter mapping sites, as an additive observability field (NOT a budget-semantics change).
 When `total.TotalTokens() >= MaxRunTokens` the loop ends via
-`terminateComplete(…, session.StopBudget, …)` — a NON-error CLEAN terminal (completed path,
-Reopen-recoverable), so it mirrors `StopNoProgress` exactly. The boundary check means an
-in-flight turn always COMPLETES (no mid-stream abort → no-replay-after-first-chunk holds); a turn
-whose usage massively overshoots still finishes, then the budget trips before the next turn. It
-is NOT a `port.LLMRequest` field (the request stays provider-neutral) — it is composition-tunable
+`terminateComplete(…, session.StopBudget, …)` — a NON-error completed-state terminal
+(Reopen-recoverable), not a promise that a delegated deliverable is complete. The boundary check
+means an in-flight turn always COMPLETES (no mid-stream abort → no-replay-after-first-chunk holds);
+a turn whose usage massively overshoots still finishes, then the budget trips before the next turn.
+It is NOT a `port.LLMRequest` field (the request stays provider-neutral) — it is composition-tunable
 (`app.Config.MaxRunTokens` → `--max-run-tokens`) and INHERITED by every engine via
 `engineDepsForProvider`; `childEngineDepsForProvider` delegates there and does NOT clear it, so
 Subagent/team-member/lead/Parallel children inherit the same ceiling. `StopBudget` is the
 PER-ENGINE half of the AGENT-TEAMS-SPIKE's named "Deferred 4A" brake — landed once for every
-delegation path, but it bounds ONE run and `Reopen` resets its accumulator each round; the
-team-AGGREGATE half is the separate `WithTeamTokenBudget` below. It is a
-STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum). Guards:
-`agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
+delegation path and cumulative over that session's persisted usage; the team-AGGREGATE half is the
+separate `WithTeamTokenBudget` below. `Reopen` does not reset usage. The deliberate delivery-only
+exceptions reset it explicitly: an empty budget-stopped Subagent's single salvage attempt in
+`engine/agent/subagent.go` (`salvageEmptyStop`) and the lead's required team synthesis in
+`engine/agent/teamsupervisor.go` (`synthesise`). Neither makes a best-effort summary guaranteed.
+`StopBudget` is a STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
+Guards: `agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
 `server.TestServiceBudgetSurfacesAndReopens`, `app.TestMaxRunTokensPropagatesToParentAndChild`.
 
 **Team-aggregate token budget — the supervisor-level ceiling (`WithTeamTokenBudget`).** The
@@ -417,7 +443,7 @@ status:" line both state the budget stop, so BOTH entry points surface it. It is
 (`app.Config.MaxTeamTokens` → `--max-team-tokens`; `server.Config.TeamTokenBudget` for the gRPC
 CreateTeam path; `agent.WithTeamToolTokenBudget` for the in-catalog Team tool) and a per-call Team
 `max_team_tokens` may only TIGHTEN it (`tightenLimit`). It is ORTHOGONAL to the per-engine
-`MaxRunTokens` (which bounds ONE member drive and resets on `Reopen`) — both compose. The Supervisor
+`MaxRunTokens` (which bounds each member session's cumulative usage); both compose. The Supervisor
 sum (`TeamOutcome.Usage`) is authoritative for the budget gate; the TeamTool sink's `turn.end` sum
 (`memberEventUsage`) stays authoritative for the `EvTeamEnd` payload — they are equal by
 construction, documented not reconciled. Guards: `agent.TestTeamTokenBudget*` /
@@ -447,6 +473,22 @@ timeout ctx separately and checking `timeoutCtx.Err() == context.DeadlineExceede
 drain, rendered as a model-addressable time-budget tool error (distinct from a parent
 cancellation). No wire/proto change (`session.Limits` semantics unchanged). Guards:
 `agent.TestSubagentPerCall*`.
+
+**Subagent terminal rendering is complete-only and fail-safe.** The one positive completion
+allow-list in `engine/agent/subagent.go` (`subagentTerminalNote`) contains only `StopEndTurn`.
+Every other known non-error terminal is rendered with a model-visible bounded/workflow note rather
+than silently looking complete. In particular, `StopMaxConsecutiveFailures` means the session hit
+its configured ceiling of consecutive failed tool calls (`engine/session/session.go`
+(`StopMaxConsecutiveFailures`)); recovered text can still be useful, but the delegation is
+partial/incomplete. `session.StopReason` remains an open string taxonomy: a host-defined reason such
+as `max_tokens` is the motivating example, not a new engine constant and not a request to continue.
+The default arm neutralises, bounds, and quotes an unknown label and marks the result
+partial/incomplete. Writable results use the same classification in
+`engine/agent/subagent.go` (`renderWritableSubagentResult`): they say the child *had* direct write
+access and condition all file claims ("any changes" / "any edits it made"). Only `StopEndTurn` gets
+the complete wording; every limit, cancellation, workflow stop, missing reason, and unknown host
+reason warns that any edits may be partial. Guards: `engine/agent/subagent_terminal_internal_test.go`
+and `engine/agent/subagent_nextaction_internal_test.go`.
 
 **Subagent child concurrency cap.** `SubagentTool.childGate` (a counting-semaphore channel, default
 `defaultMaxConcurrentChildren = 8`, override `WithMaxConcurrentChildren`; the old
@@ -1199,11 +1241,17 @@ flag, no `Config`; the no-FS profile excludes it); the per-call default stays
 read-only. `prepareChildSession` passes a NIL forker for the writable path, so
 `forkChildWorkspace` returns the parent workspace directly. There is NO
 post-run merge step — `finishForegroundRun` renders the time-budget error first, then
-`renderWritableSubagentResult` adds an honest DIRECT-WRITE note ("edited your
-workspace directly — review with `git diff`/`git status`, undo with `git
-checkout`/`git stash`"); a non-clean terminal (`StopError`/cancel) warns the edits
-may be PARTIAL (a crashed/cancelled child leaves its completed edits in the tree —
-there is no fork to quarantine them; the accepted direct-write trade-off). The
+`renderWritableSubagentResult` adds an honest DIRECT-WRITE capability note: the child
+had direct write access to the real workspace, and the parent should inspect any changes
+with `git diff`/`git status` (and undo them with `git checkout`/`git stash` if needed).
+The renderer has no mutation evidence, so it never claims an edit occurred. Only an
+explicit `StopEndTurn` gets the clean wording. Every bounded, cancelled, anomalous,
+plan-control, structured-output, or host/provider-defined terminal gets conditional
+partial wording (any edits it made may be PARTIAL); a resumable `StopError` and a
+per-call timeout retain the single mutually-exclusive resume-on-top-of-changes OR
+review/discard decision. A crashed/cancelled child can leave completed or partial edits
+in the tree — there is no fork to quarantine them; that is the accepted direct-write
+trade-off. The
 writable child posture is `isolated:false` (it shares the real tree), so
 `governance.IsolationApprovable` (the A2 isolation auto-approve) does NOT apply to
 its Bash. Wired via `WithWritableChildEngine` only (the now-removed
@@ -1429,10 +1477,12 @@ Ask OWNERSHIP is recorded at the single surfacing seam: `childPosture` gains an 
 field (set at ALL THREE construction sites — subagent: childID; team: `m.sess.ID`; parallel:
 `childSess.ID` — because `role` does NOT universally carry the session id), passed through
 `surfaceAsk` to `recordAsk` (team/parallel cancel itself is the next iteration; the seam is uniform
-now). Terminal rendering: `renderSubagentResult` gains the `StopCancelled + clientCancelled` arm —
-success-with-note `[subagent cancelled by user]` + partial text + the resumable trailer (an error
-would teach the model the delegation mechanism failed); the `timeoutCtx` deadline check stays first
-and a PARENT-run cancel keeps the legacy un-noted rendering. A client-cancelled child persists
+now). Terminal rendering in `engine/agent/subagent.go` (`renderSubagentResult`) keeps the
+client-cancel-specific success note `[subagent cancelled by user]` + partial text + the resumable
+trailer (an error would teach the model the delegation mechanism failed); the `timeoutCtx` deadline
+check stays first. Under the sole-clean-`StopEndTurn` contract, a PARENT-run cancellation now gets
+the generic partial/incomplete annotation rather than the legacy un-noted rendering. A
+client-cancelled child persists
 (state cancelled) and resumes via the existing cancelled→Interrupt recovery. Wire: proto
 `ConverseRequest` oneof `CancelChild cancel_child = 12` (`{string child_id = 1}`);
 `readControl` dispatches it (false ignored by design on the stream — the finished-as-you-pressed
@@ -2915,6 +2965,45 @@ rejection (`rejectRemovedTopLevelKeys`, a one-field flat-struct probe — a NEST
 `output-economy:` can never trip it) because the real decode is deliberately lenient.
 Progressive help is metadata-driven per binary (`validateFlagMeta` / `validateFlagApplicability`
 over the FULL real FlagSet — a registration/metadata drift fails the invariant test).
+
+### mecatui seed prompt (`-p`/`--prompt`, `--prompt-file` — ADR 0103)
+
+A SEED first turn, NOT a mode: the TUI auto-submits the CLI-supplied prompt once the session
+binds and then stays interactive. Print-and-exit is deliberately absent — that is
+`mecatequi`'s job (ADR 0028), and duplicating it here would need a second render path (no alt
+screen, no overlays, no approval modal). The seed rides the IDENTICAL typed-prompt path:
+`applySessionReady` (`cmd/mecatui/ui/update.go`) — the ONE seam both bind arms funnel through
+— sets the textarea value and calls `submitPrompt`, so the bare-slash intercept, paste
+placeholder expansion, `@`-mention media/text expansion, the per-prompt caps, and all three
+loud-reject early returns apply to a seed exactly as to typed input. Two accepted
+consequences of that, NOT special-cased (special-casing either would break the property the
+design rests on): a `/`-prefixed seed (`-p /clear`) is intercepted locally and never reaches
+the model, and a `--prompt-file` body carries full typed-prompt authority incl. `@path`
+expansion.
+
+**Fires exactly ONCE, structurally.** `Model.pendingInitialPrompt` is seeded from
+`Deps.InitialPrompt` at construction and consumed at ONE site, which clears the field BEFORE
+calling `submitPrompt`. BOTH re-bind paths — a `/models` restart and the connect-fallback
+rebind (the server-rejected-selector → zero-selection-retry arm, issue #41) — re-enter
+`applySessionReady` with the field already empty; `ui.New` runs once per process, so nothing
+re-seeds it. `/clear` is NOT a third path: `runClear` (`cmd/mecatui/ui/builtins.go`) resets the
+conversation on the SAME session via `resetSession` and never reaches this seam. A whitespace-only seed is a no-op (`TrimSpace` gate). CAVEAT: `applySessionReady`
+can now START A RUN, and its one wrapping caller (the `connectFallbackMsg` arm) keeps mutating
+the returned model afterwards — so a seeded fallback's loud rejected-model warning overwrites
+the run status. Cosmetic today (nothing reads the fields cleared after the run opens), but the
+function's contract is wider than its name.
+
+**`--prompt-file` is read at parse time** (`parseTransportFlags`, fail-fast naming the path)
+and joins AFTER the `--prompt` literal, blank-line separated. The join is the SHARED
+`cliconfig.JoinPromptBody` — ONE implementation for both prompt-bearing mains (`mecatequi`'s
+one-shot, which layers its trusted-instructions / untrusted-fence wrapping on top, and
+`mecatui`'s seed), because they must agree byte-for-byte; the mains previously held
+independent identical copies and only one was tested. `-p` is mecatui's first SHORT flag (the
+ADR-0089 "one canonical spelling" rule governs command/transport spellings, not flag short
+forms; `--inline` has aliased `--no-alt-screen` since before this) and shares one destination
+with `--prompt`, so passing both silently keeps the last. Both are shared SESSION flags
+(`flagApplicabilityByFlag`): valid in the bare embedded mode AND under `mecatui connect`.
+`mecated` is unchanged — it is a daemon, prompts arrive over the wire.
 
 ### `modelhook` (guardrails — LLM-backed tool-content checker, issue #27 — see `GUARDRAILS.md`)
 
@@ -5429,7 +5518,10 @@ on the byte-identical no-scheduling path). The pieces:
   schedule name (control/space/path-separator runes → `-`) so a name with a newline or
   slash cannot produce a multi-line fire id. The OPTIONAL `EmitScheduleEvent` callback (`Service.EmitScheduleEvent`)
   appends the `EvScheduleFired`/`Skipped`/`Failed` event to the fire session's durable
-  `EventLog`.
+  `EventLog` — through the Service's single `appendEvent` chokepoint, so the event is
+  `Event.Actor`-stamped like every other durable append (it takes the scheduler's
+  `ctx`, which carries the system principal, so a `fired` event names
+  `mecatl:internal`/`scheduler`).
 - **Wire API (Phase 2a, #232).** `ScheduleService` — 10 gRPC RPCs
   (`CreateSchedule`/`GetSchedule`/`ListSchedules`/`UpdateSchedule`/`DeleteSchedule`/
   `FireNow`/`PauseSchedule`/`ResumeSchedule`/`GetFire`/`ListFires`) in
@@ -5534,8 +5626,13 @@ type-asserted via the `scheduleStoreProvider` accessor — a now-func, the durab
 for `FireNow`, the model inventory for selector validation) as late-bound atomic
 FIELDS on the manager (`SetScheduler` / `setModelsPointer`), never a reach back
 into the Service. `*server.Service` DELEGATES its nine `port.ScheduleManager`
-verbs + `EmitScheduleEvent` + `GetFire` to the embedded manager, so the RPC
-surface is byte-identical. A store with no `ScheduleStore` (the in-memory
+verbs + `GetFire` to the embedded manager, so the RPC surface is byte-identical.
+`EmitScheduleEvent` is the ONE exception and lives on the **Service**, not the
+manager (ADR 0100 decision 5): a schedule lifecycle event has to be stamped with
+`Event.Actor` by the same single `appendEvent` chokepoint as every other durable
+append, and that chokepoint is the Service's. It takes a `ctx` for exactly that
+reason — the old manager-side body built a fresh `context.Background()`, which
+carries no principal, so a `fired` event would record no actor at all. A store with no `ScheduleStore` (the in-memory
 memstore) yields a NIL manager — the honest no-scheduling path, matching
 `ServerCapabilities.Scheduling` — never a stub.
 

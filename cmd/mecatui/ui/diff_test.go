@@ -8,7 +8,7 @@ import (
 )
 
 func newTestRenderer() *renderer {
-	r := newRenderer(theme.New("aztec", theme.AztecPalette()))
+	r := newRenderer(theme.New("aztec", theme.AztecPalette()), defaultHelpKeys())
 	r.setWidth(100)
 	return r
 }

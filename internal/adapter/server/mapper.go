@@ -901,6 +901,24 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		ModelId:        s.ModelID,
 		CreatedAtUnix:  s.CreatedAtUnix,
 		Title:          valid(s.Title),
+		Owner:          toProtoPrincipal(s.Owner),
+	}
+}
+
+// toProtoPrincipal maps the verified owner (ADR 0100) to its proto form. A nil
+// principal maps to a nil message — an ABSENT owner must stay absent on the wire,
+// never a present-but-empty "anonymous" one. Every string goes through valid()
+// (the UTF-8 scrubber every other wire string uses): the issuer/subject come from
+// a token, i.e. from outside the process.
+func toProtoPrincipal(p *session.Principal) *mecatlv1.Principal {
+	if p == nil {
+		return nil
+	}
+	return &mecatlv1.Principal{
+		Issuer:    valid(p.Issuer),
+		Subject:   valid(p.Subject),
+		GrantType: valid(string(p.GrantType)),
+		Name:      valid(p.Name),
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/provider/anthropic"
 )
 
@@ -102,15 +103,16 @@ func startLiveModelRefresh(d port.Diagnostics, reg *providerRegistry, swap model
 		}
 		return func() {} // nothing to refresh
 	}
+	rootCtx := syscaller.Context(context.Background(), syscaller.RootModelCatalogRefresh)
 	if runSync {
-		ctx, cancel := context.WithTimeout(context.Background(), liveModelRefreshTimeout)
+		ctx, cancel := context.WithTimeout(rootCtx, liveModelRefreshTimeout)
 		defer cancel()
 		byProvider := liveModelSnapshot(ctx, d, reg)
 		publishSnapshot(d, reg, swap, byProvider)
 		reg.meta.markRefreshCompleted() // sync path SETTLES after the swap.
 		return func() {}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(rootCtx)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

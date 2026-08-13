@@ -10,7 +10,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 )
 
 // agentsTab selects which body the unified ctrl+a "agents" overlay renders. The
@@ -397,7 +396,7 @@ func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // active tab highlighted) above the active tab's body, then frames the whole thing in the
 // shared card. The team block may be nil (no team yet) — the Teams tab then shows an
 // honest empty note rather than borrowing another tab's body.
-func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, width, height int) string {
+func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int) string {
 	bar := agentsTabBar(th, tab)
 	// The body gets the height MINUS the tab bar + its blank line (agentsTabBarLines),
 	// so the window math in the tab bodies still keeps the footer hint on-screen.
@@ -405,11 +404,11 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	var body string
 	switch tab {
 	case tabSubagents:
-		body = renderSubagentTab(th, sub, fleet, width, bodyHeight)
+		body = renderSubagentTab(th, sub, fleet, hk, width, bodyHeight)
 	case tabParallel:
-		body = renderParallelTab(th, par, groups, bodyHeight)
+		body = renderParallelTab(th, par, groups, hk, bodyHeight)
 	default:
-		body = renderTeamsTab(th, team, b, width, bodyHeight)
+		body = renderTeamsTab(th, team, b, hk, width, bodyHeight)
 	}
 	return centerCard(th, bar+"\n\n"+body, width, height)
 }
@@ -428,6 +427,22 @@ func agentsBodyHeight(height int) int {
 		return height
 	}
 	return height - agentsTabBarLines
+}
+
+// agentsEmptyHint is the "tab switch · esc close" footer used by the empty
+// subagent/parallel/team-tab states. The chords read the LIVE NextTab/Close
+// markings so an override propagates (issue #457); with defaults it is
+// byte-identical to the historical literal.
+func agentsEmptyHint(hk helpKeys) string {
+	return hk.nextTab + " switch · " + hk.closeOnly + " close"
+}
+
+// focusBackHint is the "esc back" footer used by the subagent/team/parallel
+// focus panes. The chord reads the LIVE Close marking (the focus handlers
+// drive back-to-roster via key.Matches(m.keys.Close)) so an override propagates
+// (issue #457); with the default it is byte-identical to "esc back".
+func focusBackHint(hk helpKeys) string {
+	return hk.closeOnly + " back"
 }
 
 // agentsTabBar renders the "Subagents | Parallel | Teams" tab strip: the active tab in the
@@ -454,21 +469,21 @@ func agentsTabBar(th theme.Theme, tab agentsTab) string {
 // width is the OUTER viewport width, forwarded to the focus pane so its failure line
 // can wrap to the card's text budget (see teamFailureLine, mirroring the subagent
 // tab's width forwarding); the roster's own lines are all rune-bounded already.
-func renderTeamsTab(th theme.Theme, st teamState, b *block, width, height int) string {
+func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, width, height int) string {
 	if b == nil {
 		muted := th.Style("muted")
 		return muted.Render("no team has run this session") + "\n\n" +
-			muted.Render("tab switch · esc close")
+			muted.Render(agentsEmptyHint(hk))
 	}
 	switch st.view {
 	case teamFocus:
-		return renderTeamFocus(th, b, st.member, width, height)
+		return renderTeamFocus(th, b, st.member, hk, width, height)
 	case teamTasks:
-		return renderTeamTasks(th, b, height)
+		return renderTeamTasks(th, b, hk, height)
 	case teamFindings:
-		return renderTeamFindings(th, b, height)
+		return renderTeamFindings(th, b, hk, height)
 	default:
-		return renderTeamRoster(th, st, b, height)
+		return renderTeamRoster(th, st, b, hk, height)
 	}
 }
 
@@ -476,18 +491,18 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, width, height int) s
 // focused child's redacted chip trace. width is the OUTER viewport width, forwarded to the
 // focus pane so its failure line can wrap to the card's text budget (see
 // subagentFailureLine); the roster's own lines are all rune-bounded already.
-func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, width, height int) string {
+func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, width, height int) string {
 	if st.view == subagentFocus {
-		return renderSubagentFocus(th, fleet, st.child, width, height)
+		return renderSubagentFocus(th, fleet, st.child, hk, width, height)
 	}
-	return renderSubagentRoster(th, st, fleet, height)
+	return renderSubagentRoster(th, st, fleet, hk, height)
 }
 
 // renderSubagentRoster renders the flat fleet roster WINDOWED to the available height,
 // mirroring renderTeamRoster: a header (running/done counts), the slice of rows that
 // fits with the selected row highlighted, "+K above/below" tails, and an always-visible
 // footer hint. An empty fleet reads as a muted "(no subagents)". height<=0 shows all.
-func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, height int) string {
+func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, height int) string {
 	muted := th.Style("muted")
 	var out strings.Builder
 
@@ -497,7 +512,7 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 
 	if len(fleet) == 0 {
 		out.WriteString(muted.Render("(no subagents)"))
-		out.WriteString("\n\n" + muted.Render("tab switch · esc close"))
+		out.WriteString("\n\n" + muted.Render(agentsEmptyHint(hk)))
 		return out.String()
 	}
 
@@ -522,7 +537,9 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 	// otherwise push this card past a 100-col terminal (the hint is the card's widest
 	// line, so it directly sets the overlay width — the centred card does not wrap).
 	// home/g·end/G and pgup/pgdn paging still work; the hint names the primary chords.
-	out.WriteString("\n" + muted.Render("↑/↓ select · "+platform.ScrollKeysMarking()+" · home/end · enter focus · x cancel · tab switch · esc close"))
+	// Every chord reads the LIVE keyMap markings (hk) so an override propagates
+	// (issue #457); with defaults the hint is byte-identical to the historical literal.
+	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk)))
 	return out.String()
 }
 
@@ -678,13 +695,13 @@ const childIDHashLen = 6
 // focus format (tool chips with bounded previews + capped message lines),
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
 // child vanished — defensive) reads as a muted note. It mirrors renderTeamFocus.
-func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, width, height int) string {
+func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk helpKeys, width, height int) string {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
 		return th.Style("askTitle").Render("subagent") + "\n\n" +
 			muted.Render("subagent #"+shortChildID(child)+" is no longer in the fleet") + "\n\n" +
-			muted.Render("esc back")
+			muted.Render(focusBackHint(hk))
 	}
 
 	var out strings.Builder
@@ -717,7 +734,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, wid
 	}
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th} // width-0 renderer: chips don't wrap, trace renders full
+	r := &renderer{th: th, marks: hk} // width-0 renderer: chips don't wrap, trace renders full
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -726,10 +743,10 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, wid
 	}
 
 	// The cancel hint is shown only for a NON-terminal child (the key no-ops on a
-	// done lane).
-	hint := "esc back"
+	// done lane). The chords read the LIVE CancelChild/Close markings (issue #457).
+	hint := focusBackHint(hk)
 	if !ln.done {
-		hint = "x cancel · esc back"
+		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
 	out.WriteString("\n\n" + muted.Render(hint))
 	return out.String()
@@ -764,18 +781,18 @@ func subagentStopErrored(stop string) bool {
 
 // renderParallelTab renders the Parallel tab body: the GROUP roster (one row per Parallel
 // call) or one focused group's branches inline.
-func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup, height int) string {
+func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int) string {
 	if st.view == parallelGroupView {
-		return renderParallelGroupFocus(th, st, groups, height)
+		return renderParallelGroupFocus(th, st, groups, hk, height)
 	}
-	return renderParallelRoster(th, st, groups, height)
+	return renderParallelRoster(th, st, groups, hk, height)
 }
 
 // renderParallelRoster renders the Parallel group roster WINDOWED to the available height,
 // mirroring renderSubagentRoster: a header (running/done group counts), the slice of rows
 // that fits with the selected row highlighted, "+K above/below" tails, and a footer hint.
 // An empty group list reads as a muted "(no parallel runs)". height<=0 shows all.
-func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, height int) string {
+func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int) string {
 	muted := th.Style("muted")
 	var out strings.Builder
 
@@ -785,7 +802,7 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 
 	if len(groups) == 0 {
 		out.WriteString(muted.Render("(no parallel runs)"))
-		out.WriteString("\n\n" + muted.Render("tab switch · esc close"))
+		out.WriteString("\n\n" + muted.Render(agentsEmptyHint(hk)))
 		return out.String()
 	}
 
@@ -806,7 +823,11 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render("↑/↓ select · "+platform.ScrollKeysMarking()+" page · home/g·end/G first/last · enter focus · tab switch · esc close"))
+	// Every chord reads the LIVE keyMap markings (hk) so an override propagates
+	// (issue #457); with defaults the hint is byte-identical to the historical literal.
+	// The jump pair uses the FULL joined keys ("home/g·end/G") to match the roster
+	// handler's JumpTop/JumpEnd bindings, which bind both home/g and end/G.
+	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" page · "+hk.jumpTopFull+"·"+hk.jumpEndFull+" first/last · "+hk.choose+" focus · "+agentsEmptyHint(hk)))
 	return out.String()
 }
 
@@ -873,13 +894,13 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 // cancel key addresses, the WINNER row a "★") with its interleaved trace in the Team
 // focus format below its roster line, and the preserved winner fork path. A focused
 // ParentCallID with no matching group reads as a muted note.
-func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, height int) string {
+func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int) string {
 	muted := th.Style("muted")
 	g := findParallelGroup(groups, st.group)
 	if g == nil {
 		return th.Style("askTitle").Render("parallel") + "\n\n" +
 			muted.Render("this parallel run is no longer tracked") + "\n\n" +
-			muted.Render("esc back")
+			muted.Render(focusBackHint(hk))
 	}
 
 	var out strings.Builder
@@ -907,7 +928,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	rows := teamFocusRows(height)
 	used := 0
 	cancellable := false
-	r := &renderer{th: th} // a width-0 renderer: chips don't wrap, traces render full
+	r := &renderer{th: th, marks: hk} // a width-0 renderer: chips don't wrap, traces render full
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
@@ -928,13 +949,14 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 		out.WriteString("\n" + muted.Render("winner fork (preserved): "+sanitizeTerminal(g.winnerWorkspace)))
 	}
 	// The cancel hint shows only while some branch is still cancellable (running with a
-	// known child id); the selection arrows are always live on a populated list.
-	hint := "↑/↓ select · esc back"
+	// known child id); the selection arrows are always live on a populated list. The chords
+	// read the LIVE Up/Down/CancelChild/Close markings (issue #457).
+	hint := hk.navUp + "/" + hk.navDown + " select · " + focusBackHint(hk)
 	if cancellable {
-		hint = "↑/↓ select · x cancel · esc back"
+		hint = hk.navUp + "/" + hk.navDown + " select · " + hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
 	if len(ordered) == 0 {
-		hint = "esc back"
+		hint = focusBackHint(hk)
 	}
 	out.WriteString("\n\n" + muted.Render(hint))
 	return out.String()

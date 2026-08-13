@@ -31,7 +31,7 @@ func TestMCPEmptyStateCapsAware(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			offOut := stripANSIstr(renderMCPOverlay(th, emptyMCPState(tc.view), off, 100, 24))
+			offOut := stripANSIstr(renderMCPOverlay(th, emptyMCPState(tc.view), off, defaultHelpKeys(), 100, 24))
 			if !strings.Contains(offOut, tc.offWant) {
 				t.Errorf("MCP off: want %q in:\n%s", tc.offWant, offOut)
 			}
@@ -39,7 +39,7 @@ func TestMCPEmptyStateCapsAware(t *testing.T) {
 			if !strings.Contains(offOut, "Run a full mecated") {
 				t.Errorf("MCP off copy should carry the remedy:\n%s", offOut)
 			}
-			onOut := stripANSIstr(renderMCPOverlay(th, emptyMCPState(tc.view), on, 100, 24))
+			onOut := stripANSIstr(renderMCPOverlay(th, emptyMCPState(tc.view), on, defaultHelpKeys(), 100, 24))
 			if !strings.Contains(onOut, tc.onWant) {
 				t.Errorf("MCP on-but-empty: want %q in:\n%s", tc.onWant, onOut)
 			}
@@ -59,7 +59,7 @@ func TestSkillsEmptyStateCapsAware(t *testing.T) {
 	on := client.Capabilities{Skills: true} // skills on, but inventory empty
 	emptyPanel := skillsState{view: skillsPanel}
 
-	offOut := stripANSIstr(renderSkillsOverlay(th, emptyPanel, off, 100, 24))
+	offOut := stripANSIstr(renderSkillsOverlay(th, emptyPanel, off, defaultHelpKeys(), 100, 24))
 	if !strings.Contains(offOut, "Skills are not enabled on this server") {
 		t.Errorf("skills off: want 'not enabled' copy in:\n%s", offOut)
 	}
@@ -67,7 +67,7 @@ func TestSkillsEmptyStateCapsAware(t *testing.T) {
 		t.Errorf("skills off copy should carry the remedy:\n%s", offOut)
 	}
 
-	onOut := stripANSIstr(renderSkillsOverlay(th, emptyPanel, on, 100, 24))
+	onOut := stripANSIstr(renderSkillsOverlay(th, emptyPanel, on, defaultHelpKeys(), 100, 24))
 	if !strings.Contains(onOut, "No skills configured on this server") {
 		t.Errorf("skills on-but-empty: want 'none configured' copy in:\n%s", onOut)
 	}

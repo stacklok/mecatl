@@ -39,10 +39,15 @@ func (Model) renderTickCmd() tea.Cmd {
 // Claude Code's "press ctrl+c again to exit" grace window.
 const quitArmWindow = 3 * time.Second
 
-// quitHint is the footer hint shown while the quit guard is armed. The exact string
-// is reused as the disarm/clear sentinel: onKey/quitDisarmMsg clear the status line
-// ONLY when it still equals this hint, so a later status overwrite is never undone.
-const quitHint = "press ctrl+c again to quit"
+// quitHintFor builds the footer quit hint LIVE from the model's current Quit
+// binding, so a rebound quit chord is advertised honestly. With the default
+// binding ("ctrl+c") it is byte-identical to the historical "press ctrl+c again
+// to quit". It doubles as the disarm/clear sentinel — the arm and the disarm
+// both re-derive it from the SAME binding, so a mid-arm remap (a live reload
+// path) cannot strand a stale hint.
+func quitHintFor(b key.Binding) string {
+	return "press " + firstKey(b, "ctrl+c") + " again to quit"
+}
 
 // quitDisarmMsg fires quitArmWindow after the guard is armed. Its gen is the arm
 // generation it was scheduled with; the handler ignores it unless it still matches
@@ -358,7 +363,9 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// clear the pending field, and submit via the identical typed-prompt path so
 	// the behavior is byte-identical to the operator pressing enter. The pending
 	// field is cleared BEFORE submitPrompt runs (defense-in-depth against re-fire
-	// on a /models restart or /clear, both of which funnel back through here).
+	// on a /models restart or the connect-fallback rebind, the two paths that
+	// funnel back through here — /clear is NOT one: runClear resets the same
+	// session via resetSession and never reaches this seam).
 	// A "/"-prefixed seed (e.g. -p /clear) is intercepted by submitPrompt's
 	// built-in intercept — documented behavior.
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
@@ -441,7 +448,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
 			"could not switch to " + sanitizeTerminal(msg.model) + ": " +
-				sanitizeTerminal(msg.err.Error()) + " — press enter to retry")
+				sanitizeTerminal(msg.err.Error()) + " — press " + firstKey(m.keys.Submit, "enter") + " to retry")
 		_ = m.ta.Focus()
 		m.refreshView()
 		return m, nil, true
@@ -1165,7 +1172,7 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// consecutive ctrl+c presses.
 	if m.quitArmed {
 		m.quitArmed = false
-		if m.statusMsg == quitHint {
+		if m.statusMsg == quitHintFor(m.keys.Quit) {
 			m.statusMsg = ""
 		}
 	}
@@ -1367,7 +1374,7 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	// timed disarm for this arm generation.
 	m.quitArmed = true
 	m.quitArmGen++
-	m.statusMsg = quitHint
+	m.statusMsg = quitHintFor(m.keys.Quit)
 	m.refreshView()
 	return m, m.quitDisarmCmd(m.quitArmGen)
 }
@@ -1378,7 +1385,7 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 func (m Model) onQuitDisarm(msg quitDisarmMsg) (tea.Model, tea.Cmd) {
 	if m.quitArmed && msg.gen == m.quitArmGen {
 		m.quitArmed = false
-		if m.statusMsg == quitHint {
+		if m.statusMsg == quitHintFor(m.keys.Quit) {
 			m.statusMsg = ""
 		}
 		m.refreshView()
@@ -1985,7 +1992,7 @@ func (m Model) onIdleSubmit() (tea.Model, tea.Cmd) {
 		return m.resumeQueue()
 	}
 	if m.pendingMode != "" && strings.TrimSpace(m.ta.Value()) != "" {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " is still pending — press enter again after it applies")
+		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " is still pending — press " + firstKey(m.keys.Submit, "enter") + " again after it applies")
 		return m, nil
 	}
 	return m.submitPrompt()
@@ -3746,7 +3753,8 @@ func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.queued = nil
 	m.ta.SetValue(merged)
 	if m.pendingMode != "" {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press enter to continue")
+		submit := firstKey(m.keys.Submit, "enter")
+		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press " + submit + " to continue")
 		m.queuePaused = "mode"
 		return m, nil
 	}

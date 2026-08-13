@@ -328,7 +328,7 @@ func teamWindow(cursor, total, rows int) (start, end, above, below int) {
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
-func renderTeamRoster(th theme.Theme, st teamState, b *block, height int) string {
+func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int) string {
 	muted := th.Style("muted")
 	var out strings.Builder
 
@@ -363,8 +363,10 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, height int) string
 	// SHORTER than the old roster hint (the paging chords still work, unnamed): the
 	// added "x cancel" segment would otherwise push this card past a 100-col terminal
 	// — the hint is the card's widest line, so it directly sets the overlay width
-	// (centerCard does not wrap). Same discipline as the Subagents-tab hint.
-	out.WriteString("\n" + muted.Render("↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close"))
+	// (centerCard does not wrap). Same discipline as the Subagents-tab hint. Every
+	// chord reads the LIVE keyMap markings (hk) so an override propagates (issue
+	// #457); with defaults the hint is byte-identical to the historical literal.
+	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk)))
 	return out.String()
 }
 
@@ -429,13 +431,13 @@ func teamRosterSubhead(b *block) string {
 // header and trace are height-bounded, not width-wrapped. A focused name with no
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
-func renderTeamFocus(th theme.Theme, b *block, member string, width, height int) string {
+func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width, height int) string {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
 		return th.Style("askTitle").Render("agents") + "\n\n" +
 			muted.Render("member "+sanitizeTerminal(member)+" is no longer in the roster") + "\n\n" +
-			muted.Render("esc back")
+			muted.Render(focusBackHint(hk))
 	}
 
 	var out strings.Builder
@@ -452,7 +454,7 @@ func renderTeamFocus(th theme.Theme, b *block, member string, width, height int)
 	out.WriteString(muted.Render(subhead))
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th} // a width-0 renderer: chips don't wrap, traces render full
+	r := &renderer{th: th, marks: hk} // a width-0 renderer: chips don't wrap, traces render full
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -474,10 +476,11 @@ func renderTeamFocus(th theme.Theme, b *block, member string, width, height int)
 	}
 
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
-	// already stopped, and a known session id (the CancelChild handle).
-	hint := "esc back"
+	// already stopped, and a known session id (the CancelChild handle). The chords
+	// read the LIVE CancelChild/Close markings (issue #457).
+	hint := focusBackHint(hk)
 	if !b.teamDone && !ln.stopped && ln.sessionID != "" {
-		hint = "x cancel · esc back"
+		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
 	out.WriteString("\n\n" + muted.Render(hint))
 	return out.String()
@@ -600,12 +603,20 @@ func taskGlyph(state string, blocked bool) string {
 	}
 }
 
+// teamSubViewHint is the "<flip> roster · <close> close" footer used by the team
+// tasks/findings sub-views. The flip chord (Tasks/Findings) and the close chord
+// (Close) read the LIVE keyMap markings so an override propagates (issue #457);
+// with defaults it is byte-identical to the historical literal.
+func teamSubViewHint(hk helpKeys, flip string) string {
+	return flip + " roster · " + hk.closeOnly + " close"
+}
+
 // renderTeamTasks draws the shared team task list: a title, a one-line summary
 // (N done · N in-progress · N pending(N blocked)), then one height-windowed row per
 // task (glyph · id · state · assignee · deps). An empty list reads as a muted
 // "(no tasks)". All task-derived strings are terminal-sanitized. It mirrors the
 // roster's height-window math so a long task list never clips the footer.
-func renderTeamTasks(th theme.Theme, b *block, height int) string {
+func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int) string {
 	muted := th.Style("muted")
 	var out strings.Builder
 
@@ -616,7 +627,7 @@ func renderTeamTasks(th theme.Theme, b *block, height int) string {
 
 	if len(b.teamTasks) == 0 {
 		out.WriteString(muted.Render("(no tasks)"))
-		out.WriteString("\n\n" + muted.Render("t roster · esc close"))
+		out.WriteString("\n\n" + muted.Render(teamSubViewHint(hk, hk.tasks)))
 		return out.String()
 	}
 
@@ -636,7 +647,7 @@ func renderTeamTasks(th theme.Theme, b *block, height int) string {
 		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more", below)) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render("t roster · esc close"))
+	out.WriteString("\n" + muted.Render(teamSubViewHint(hk, hk.tasks)))
 	return out.String()
 }
 
@@ -725,7 +736,7 @@ func teamFindingsRows(height int) int {
 // (member · body). An empty ledger reads as a muted "(no findings)". All
 // finding-derived strings are terminal-sanitized. It mirrors renderTeamTasks's
 // chrome and height-window math so a long ledger never clips the footer.
-func renderTeamFindings(th theme.Theme, b *block, height int) string {
+func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int) string {
 	muted := th.Style("muted")
 	var out strings.Builder
 
@@ -736,7 +747,7 @@ func renderTeamFindings(th theme.Theme, b *block, height int) string {
 
 	if len(b.teamFindings) == 0 {
 		out.WriteString(muted.Render("(no findings)"))
-		out.WriteString("\n\n" + muted.Render("f roster · esc close"))
+		out.WriteString("\n\n" + muted.Render(teamSubViewHint(hk, hk.findings)))
 		return out.String()
 	}
 
@@ -751,7 +762,7 @@ func renderTeamFindings(th theme.Theme, b *block, height int) string {
 		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more", below)) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render("f roster · esc close"))
+	out.WriteString("\n" + muted.Render(teamSubViewHint(hk, hk.findings)))
 	return out.String()
 }
 

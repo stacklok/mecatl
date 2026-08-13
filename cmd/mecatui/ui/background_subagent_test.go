@@ -44,7 +44,7 @@ func TestSubagentRosterBackgroundMarkerEndToEnd(t *testing.T) {
 		startBgSub("p1", "subagent-p1", "long audit"),
 		startSub("p1", "subagent-p2", "quick trace"),
 	)
-	out := stripANSIstr(renderSubagentRoster(m.deps.Theme, subagentState{}, m.conv.subagentFleet, 0))
+	out := stripANSIstr(renderSubagentRoster(m.deps.Theme, subagentState{}, m.conv.subagentFleet, defaultHelpKeys(), 0))
 	var bgLine, fgLine string
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "long audit") {
@@ -73,19 +73,19 @@ func TestSubagentRosterBackgroundMarkerEndToEnd(t *testing.T) {
 func TestSubagentFocusBackgroundNote(t *testing.T) {
 	th := aztec()
 	running := []subagentLane{{childID: "subagent-p1", goal: "long audit", background: true}}
-	out := stripANSIstr(renderSubagentFocus(th, running, "subagent-p1", 0, 0))
+	out := stripANSIstr(renderSubagentFocus(th, running, "subagent-p1", defaultHelpKeys(), 0, 0))
 	if !strings.Contains(out, "background: runs detached") || !strings.Contains(out, "SubagentStatus") {
 		t.Errorf("running background focus must note the detached delivery channel, got:\n%s", out)
 	}
 
 	done := []subagentLane{{childID: "subagent-p1", goal: "long audit", background: true, done: true, stop: "end_turn"}}
-	out = stripANSIstr(renderSubagentFocus(th, done, "subagent-p1", 0, 0))
+	out = stripANSIstr(renderSubagentFocus(th, done, "subagent-p1", defaultHelpKeys(), 0, 0))
 	if !strings.Contains(out, "background: done — result ready for the agent") {
 		t.Errorf("done background focus must note the result is ready, got:\n%s", out)
 	}
 
 	fg := []subagentLane{{childID: "subagent-p2", goal: "quick trace"}}
-	out = stripANSIstr(renderSubagentFocus(th, fg, "subagent-p2", 0, 0))
+	out = stripANSIstr(renderSubagentFocus(th, fg, "subagent-p2", defaultHelpKeys(), 0, 0))
 	if strings.Contains(out, "background:") {
 		t.Errorf("foreground focus must carry no background note, got:\n%s", out)
 	}

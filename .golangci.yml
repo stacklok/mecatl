@@ -464,6 +464,22 @@ linters:
           deny:
             - pkg: os
               desc: 'agent (application loop) must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
+        # --- authn/oidc opt-in caller-identity module (ADR 0103) ---------------
+        # Production verification depends only on stdlib, the narrow engine
+        # principal projection, and ToolHive's authn implementation. Tests are
+        # exempt per the repository convention for local fixtures.
+        authn-oidc:
+          list-mode: strict
+          files:
+            - '**/authn/oidc/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/toolhive-core/authn
+          deny:
+            - pkg: os
+              desc: 'the OIDC adapter must not touch the host OS or import the root module'
         # --- provider/* opt-in LLM-provider submodules (ADR 0093) ----------------
         # The real provider wire-format adapters graduated OUT of internal/adapter
         # into their own opt-in Go modules (consumers import the SDK transitively

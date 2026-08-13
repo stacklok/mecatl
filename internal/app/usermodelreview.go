@@ -59,15 +59,12 @@ func (h *userModelReviewHooks) Run(ctx context.Context, ev governance.HookEvent)
 
 	if ev.Phase == governance.PhaseStop && h.admit() {
 		sessionID := ev.SessionID
-		// Detach: a Stop must never wait on the (LLM-backed) review. context.Background
-		// is DELIBERATE — the run's ctx is cancelled as the run ends (the Stop hook
-		// fires on the terminal transition), so threading it would cancel the review
-		// the instant it starts. The detached review is best-effort and bounded by the
-		// reviewer's own child limits, not the (already-finished) run ctx.
-		//nolint:gosec // G118: intentional background ctx — see comment above.
+		// Detach cancellation without dropping the originating caller's context
+		// values. The review derives user-model facts from that caller's session.
+		reviewCtx := context.WithoutCancel(ctx)
 		go func() {
-			if rerr := h.reviewer.Review(context.Background(), sessionID); rerr != nil {
-				h.diag.Log(context.Background(), port.LevelWarn, "user-model background review failed", "session", sessionID, "err", rerr)
+			if rerr := h.reviewer.Review(reviewCtx, sessionID); rerr != nil {
+				h.diag.Log(reviewCtx, port.LevelWarn, "user-model background review failed", "session", sessionID, "err", rerr)
 			}
 		}()
 	}

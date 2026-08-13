@@ -50,12 +50,11 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 		return err
 	}
 
-	auth := server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		// No rate limiting on a pod: it is fronted by the Service/mesh, not a
-		// raw public port. RateBurst 0 leaves the authenticator's rate limiter
-		// disabled.
-	})
+	auth, err := newAuthenticator(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer auth.Close()
 
 	// --- gRPC: auth interceptors, standard health service ---
 	grpcOpts := []grpc.ServerOption{
@@ -113,7 +112,9 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 		TLSConfig:         tlsCfg,
 	}
 
-	authed := cfg.authToken != "" || tlsCfg != nil
+	// Caller identity counts as authentication: an OIDC deployment may carry no
+	// static token at all.
+	authed := cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil
 	warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
 	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
 
@@ -185,6 +186,29 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 
 	boundedShutdown(grpcSrv, httpSrv, metricsSrv, svc)
 	return nil
+}
+
+// newAuthenticator constructs the caller-identity boundary with the server-root
+// context so its JWKS refresh survives individual requests. A broken OIDC setup
+// is fatal: the pod must not silently serve unauthenticated traffic.
+func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, error) {
+	// Log before construction so an insecure test-only relaxation is visible even
+	// when validator construction then fails.
+	warnInsecureIssuer(cfg.oidc)
+	if err := cliconfig.ValidateOIDCAuthToken(cfg.oidc, cfg.authToken); err != nil {
+		return nil, err
+	}
+	validator, err := cliconfig.OIDCValidator(ctx, cfg.oidc)
+	if err != nil {
+		return nil, err
+	}
+	return server.NewAuthenticator(server.SecurityConfig{
+		AuthToken: cfg.authToken,
+		Validator: validator,
+		// No rate limiting on a pod: it is fronted by the Service/mesh, not a
+		// raw public port. RateBurst 0 leaves the authenticator's rate limiter
+		// disabled.
+	}), nil
 }
 
 // boundedShutdown is the ADR-0048-§4d shutdown sequence:
@@ -290,4 +314,14 @@ func warnIfNonLoopback(flagName, addr string, authed bool) {
 // signal boundary (mecak8s reacts to SIGTERM by draining + bounded-stopping).
 func signalCtx() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+}
+
+// warnInsecureIssuer logs the SSRF-relaxation warning when the operator enabled
+// it, and is silent otherwise. It is a function rather than an inline branch so
+// the caller does not grow another decision point (gocyclo), and so both server
+// mains surface the warning identically.
+func warnInsecureIssuer(c cliconfig.OIDCConfig) {
+	if w := c.InsecureIssuerWarning(); w != "" {
+		slog.Warn(w)
+	}
 }

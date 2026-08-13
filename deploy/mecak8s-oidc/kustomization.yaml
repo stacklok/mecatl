@@ -1,0 +1,39 @@
+# Kustomize overlay: caller identity (OIDC) for the mecak8s agent (ADR 0100).
+#
+# OPT-IN. The base deploys with identity OFF, which is byte-identical to a mecatl
+# without caller identity — this overlay is for a deployment that wants every
+# session and schedule to record WHICH verified caller owns it.
+#
+#   kubectl apply -k deploy/mecak8s-oidc
+#
+# It points at a REAL, EXTERNAL IdP over HTTPS. That is deliberate and it is the
+# only configuration that works with the token validator's security defaults
+# intact: the validator refuses an `http://` issuer, and refuses a jwks_uri that
+# resolves to a private, loopback or link-local address (which is what stops a
+# jwks_uri pointing at cloud instance metadata, 169.254.169.254). An in-cluster
+# IdP therefore needs a flag that relaxes those checks; that flag exists for the
+# e2e fixtures ONLY and is deliberately absent here — a published example must
+# not ship SSRF relaxation.
+#
+# No NetworkPolicy patch is needed: the base egress already allows DNS plus TCP
+# 443 to any destination IP, which is exactly what an external IdP requires.
+#
+# ATTRIBUTION, NOT ISOLATION: this records who acted. It refuses nothing. Any
+# authenticated caller can still act on any session — per-caller access control
+# is a later, separate piece of work. Do not deploy this as a tenancy boundary.
+#
+# The production validator is toolhive-core/authn v0.0.39. A bad OIDC
+# configuration still fails closed at startup rather than serving unauthenticated.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../mecak8s
+
+patches:
+  - path: agent-oidc-args.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: mecak8s-agent

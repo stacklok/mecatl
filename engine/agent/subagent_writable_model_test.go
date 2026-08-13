@@ -46,7 +46,7 @@ func TestSubagentWritableModelUsesFactory(t *testing.T) {
 		t.Fatalf("read-write+model must NOT run the default writable explorer or the read-only engine, got:\n%s", res.Content)
 	}
 	// Direct-write parity note still holds for the minted engine.
-	if !strings.Contains(res.Content, "edited your workspace directly") {
+	if !strings.Contains(res.Content, "had direct write access to your workspace") {
 		t.Fatalf("read-write+model result must carry the direct-write note, got:\n%s", res.Content)
 	}
 }

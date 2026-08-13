@@ -487,6 +487,11 @@ func TestMapContentEmbeddedResourceEmpty(t *testing.T) {
 func TestMapContentUnsupportedKind(t *testing.T) {
 	result := &mcpsdk.CallToolResult{
 		Content: []mcpsdk.Content{
+			// ToolUseContent is the SDK's only Content implementation that mapContent
+			// deliberately does not handle. It remains valid during the SDK's documented
+			// sampling deprecation window, which makes it the regression fixture for a
+			// legacy server returning an unsupported content kind.
+			//nolint:staticcheck // deliberately exercise the SDK's legacy content type.
 			&mcpsdk.ToolUseContent{ID: "tu-1", Name: "some-tool"},
 		},
 	}

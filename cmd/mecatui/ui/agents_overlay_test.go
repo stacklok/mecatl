@@ -157,8 +157,8 @@ func TestFooterShowsRunningAndDone(t *testing.T) {
 // narrowing widths (full → medium → compact → dropped), like the team segment.
 func TestFooterFleetTiers(t *testing.T) {
 	th := aztec()
-	full := stripANSIstr(subagentFooterFull(th, 3, 1))
-	medium := stripANSIstr(subagentFooterMedium(3, 1))
+	full := stripANSIstr(subagentFooterFull(th, 3, 1, defaultHelpKeys().agents))
+	medium := stripANSIstr(subagentFooterMedium(3, 1, defaultHelpKeys().agents))
 	compact := stripANSIstr(subagentFooterCompact(3, 1))
 	if !strings.Contains(full, "subagents") {
 		t.Errorf("full tier should name 'subagents', got %q", full)
@@ -204,8 +204,8 @@ func TestFooterFleetTierSelection(t *testing.T) {
 	meter := renderContextMeter(th, m.contextTokens, m.contextWindow())
 	meterCompact := renderContextMeterCompact(th, m.contextTokens, m.contextWindow())
 	meterMinimal := renderContextMeterMinimal(th, m.contextTokens, m.contextWindow())
-	full := subagentFooterFull(th, 3, 0)
-	medium := th.Style("spinner").Render(subagentFooterMedium(3, 0))
+	full := subagentFooterFull(th, 3, 0, defaultHelpKeys().agents)
+	medium := th.Style("spinner").Render(subagentFooterMedium(3, 0, defaultHelpKeys().agents))
 	compact := th.Style("spinner").Render(subagentFooterCompact(3, 0))
 	cand0 := full + sep + meter + " · " + renderUsageFacets(m.usage) // richest
 	cand1 := full + sep + meter
@@ -895,8 +895,8 @@ func TestFooterParallelGolden(t *testing.T) {
 // counts are correct, mirroring the subagent fleet footer tier test.
 func TestParallelFooterTiers(t *testing.T) {
 	th := aztec()
-	full := stripANSIstr(parallelFooterFull(th, 1, 2))
-	medium := stripANSIstr(parallelFooterMedium(1, 2))
+	full := stripANSIstr(parallelFooterFull(th, 1, 2, defaultHelpKeys().agents))
+	medium := stripANSIstr(parallelFooterMedium(1, 2, defaultHelpKeys().agents))
 	compact := stripANSIstr(parallelFooterCompact(1, 2))
 	if !strings.Contains(full, "parallel") || !strings.Contains(full, "ctrl+a") {
 		t.Errorf("full tier should name parallel + ctrl+a: %q", full)

@@ -42,6 +42,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 // usageErrorTrailer wraps a resolveTransportMode usage error so main's error
@@ -246,7 +247,7 @@ func run(argv []string) error {
 		// Seed prompt from -p/--prompt + --prompt-file: joined at startup and
 		// auto-submitted once the first session is ready (interactive-seed, NOT a
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
-		InitialPrompt: joinPromptBody(cfg.prompt, cfg.promptFileBody),
+		InitialPrompt: cliconfig.JoinPromptBody(cfg.prompt, cfg.promptFileBody),
 	}
 
 	// Apply keymap overrides (CLI for now).

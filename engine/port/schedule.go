@@ -332,6 +332,21 @@ type ScheduleSpec struct {
 	// class as the other spec rejections). An empty OriginSessionID is always
 	// valid (delivery is OFF — the byte-identical pre-delivery posture).
 	OriginSessionID session.SessionID
+	// Owner is the verified caller the schedule is attributed to (ADR 0100
+	// decision 6). It is captured ONCE at create time — never derived at fire
+	// time, because the origin session may be swept by retention while the
+	// schedule lives on. The capture rule is the CREATE SEAM's business (the
+	// Schedule-tool path reads the executing session's owner via the origin
+	// binder; an out-of-band REST/CLI create reads the context principal); the
+	// store is identity-blind and round-trips the value verbatim. A nil Owner is
+	// an ownerless schedule (the unauthenticated path) — never a fabricated
+	// principal.
+	//
+	// A fire mints its "sched--" session under this owner with GrantType
+	// client_credentials (the fire is automated, not interactive), injected via
+	// the explicit owner seam so the scheduler's system principal does not become
+	// the fire's owner.
+	Owner *session.Principal
 	// FireTimeout is the per-fire wall-clock deadline (issue #386, the in-flight
 	// scheduled-fire state). Zero means "use the deployment default" (the operator-
 	// tier default applied by composition; a zero here is NOT "no timeout" — it

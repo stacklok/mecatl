@@ -106,7 +106,7 @@ func TestSkillsPanelWrapsLongDescriptions(t *testing.T) {
 	sk := []client.Skill{{Name: "wrappy", Description: long}}
 	st := skillsState{view: skillsPanel, skills: sk, filtered: sk}
 
-	plain := stripANSIstr(renderSkillsPanel(th, st, client.Capabilities{Skills: true}, width))
+	plain := stripANSIstr(renderSkillsPanel(th, st, client.Capabilities{Skills: true}, defaultHelpKeys(), width))
 	indented := 0
 	for _, ln := range strings.Split(plain, "\n") {
 		// The width check guards the WRAPPED DESCRIPTION rows (the indentWrap

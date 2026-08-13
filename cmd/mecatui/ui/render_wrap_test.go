@@ -167,7 +167,7 @@ func TestWrapResizeSafe(t *testing.T) {
 // long body stays on a single logical line.
 func TestWrapWidthZeroNoWrap(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	r := &renderer{th: th} // width 0
+	r := &renderer{th: th, marks: defaultHelpKeys()} // width 0
 	long := strings.TrimSpace(strings.Repeat("the quick brown fox jumps over the lazy dog ", 6))
 	b := block{kind: blockUser, raw: long}
 	out := r.renderBlock(0, &b, false)

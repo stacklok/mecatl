@@ -13,6 +13,95 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **`session.PrincipalFromClaims` and `session.GrantTypeFromClaims`**
+  ([ADR 0103](../docs/adr/0103-oidc-authn-module.md)) — stdlib-only projection
+  helpers for embedders that verify credentials outside the engine. Projection
+  requires non-empty string `iss` and `sub`, preserves strings byte-exactly,
+  never fabricates anonymous identity or derives the `system` grant, and keeps
+  JWT/OIDC dependencies out of the engine. New exported functions: Added (a
+  minor bump).
+
+- **Caller-identity labels on the session aggregate** (issue #367,
+  [ADR 0100](../docs/adr/0100-caller-identity-threading.md)) — the joint
+  field-prep addition for the caller-identity track (`Owner`) and Track C
+  (`Authority`), landed together so the generated-surface regeneration is paid
+  once:
+  - `session.Principal` — the verified-caller value object
+    (`{Issuer, Subject, GrantType, Name}`). Identity is the `(Issuer, Subject)`
+    PAIR, never `Subject` alone (two IdPs collide on `sub`). It carries no
+    scopes, no authority, no credentials, no claims map. Absent identity is a
+    nil `*Principal`, never a fabricated anonymous one.
+  - `session.GrantType` + `GrantTypeUser` / `GrantTypeClientCredentials` /
+    `GrantTypeSystem` + `GrantType.Valid` — the closed three-value enum; the
+    zero value is deliberately not a member.
+  - `session.Authority` — Track C's label, shipped INERT (nothing reads or
+    writes it beyond the snapshot round-trip). Zero value means unset.
+  - `session.Session.Owner` / `session.Session.Authority` — the additive labels,
+    stamped through the new WRITE-ONCE `Session.RestoreLabels(owner, authority)`
+    (a different owner over a set one returns the new
+    `session.ErrOwnerAlreadySet`; a nil owner is the ownerless no-auth path and
+    does not burn the slot). `sessnap.Snapshot` gains matching `owner` /
+    `authority` fields, both `omitempty`, restored through that aggregate method
+    — `sessnap.RestoreState`'s signature is deliberately UNCHANGED (a trailing
+    parameter would be Changed/breaking; a direct-assignment field is
+    Added/minor). A pre-ship snapshot with no `owner`/`authority` key restores
+    to a nil owner and a zero authority.
+
+  All of the above are new exported identifiers and new struct fields —
+  classified Added per COMPATIBILITY.md (a minor bump). (issue #367)
+
+- **`session.(*Principal).Clone`** (issue #367) — the ONE place the "copy a
+  `*Principal` across a boundary, nil stays nil" rule lives. It is
+  nil-receiver-safe (a nil principal clones to nil), and every site that hands a
+  principal out of, or into, a structure it does not own routes through it
+  instead of hand-rolling the nil check and the deref. `Principal` is all-strings
+  today so a shallow copy IS a deep copy; the method exists so that the day it
+  gains a slice or map field, every site stays correct together rather than
+  silently becoming an aliasing bug. A new exported method: Added (a minor bump).
+
+- **`port.SessionMeta.Owner`** (issue #367,
+  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 4) — the
+  session owner on the cheap picker projection, so a `MetaLister` listing (which
+  skips `Load` entirely) renders the owner column IDENTICALLY to the
+  `Load`-per-row fallback instead of leaving it empty on the fast path. Nil for
+  an ownerless session — a store that cannot decode an owner renders it as
+  unowned, never as somebody else. A new struct field: Added (a minor bump).
+
+- **`session.Event.Actor`** (issue #367,
+  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 5) — the
+  verified caller a durable-log event is attributed to, so an event read in
+  isolation names its actor. It is LOG-ONLY and DERIVE-AT-APPEND: every emit
+  site — the agent loop included — leaves it nil (the loop is storage- and
+  identity-agnostic), and the server relay's single `appendEvent` chokepoint
+  stamps it from the LOADED SESSION'S OWNER just before the durable
+  `port.EventLog.Append`. It never reaches the client wire (no proto field maps
+  it) and it is NOT a reconstruction input: `eventsource.Fold` ignores it, so a
+  folded session keeps the owner its caller restored from the snapshot. The
+  session owner stays the identity of record; an ownerless (pre-ship) session
+  records a nil actor, never a fabricated one. A new struct field: Added (a
+  minor bump).
+
+- **`port.ScheduleSpec.Owner`** (issue #367,
+  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 6) — the
+  verified caller a schedule is attributed to, captured ONCE at create time and
+  never derived at fire time (retention sweeps the origin session while the
+  schedule lives on, so a fire-time lookup would read a session that no longer
+  exists). The store is identity-blind: it round-trips the value verbatim on
+  every transport, which the schedule conformance suite now pins along with
+  pointer isolation (a loaded spec must not alias the stored record). Nil means
+  an ownerless schedule — never a fabricated principal. A new struct field:
+  Added (a minor bump).
+
+- **`session.WithPrincipal` / `session.PrincipalFromContext`** (issue #367,
+  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 2) — the
+  context seam the verified caller rides on. No port interface gains a principal
+  parameter; the principal travels in the `context.Context` under an unexported
+  empty-struct key. Absent identity reads back as a nil `*Principal`, never a
+  fabricated anonymous one — and `WithPrincipal(ctx, nil)` returns `ctx`
+  unchanged, so "no identity" can never be laundered into a present-but-empty
+  principal. The stored principal is a copy, so a caller cannot mutate what the
+  context reports. Added (a minor bump).
+
 - **`session.ToValidUTF8` and `session.RepairToolResult`** (issue #402) — the
   UTF-8 repair primitives that close the Converse-stream kill. A tool can hand
   back arbitrary bytes (a command's stdout, a file's contents, an MCP server's

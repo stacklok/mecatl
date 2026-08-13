@@ -370,24 +370,26 @@ func teamWorkingCounts(lanes []teamLane) (working, total int) {
 }
 
 // teamFooterFull is the richest footer team-summary tier:
-// "⟳ team-<id> · k/N working · ctrl+a agents". The id is sanitized and rune-safe
+// "⟳ team-<id> · k/N working · <agents> agents". The id is sanitized and rune-safe
 // truncated; when it is empty (team.start missed) the id-less medium form is used
 // instead of showing a bare "team-". The segment carries the spinner (accent) slot
-// so the live team reads as active without animation.
-func teamFooterFull(th theme.Theme, teamID string, working, total int) string {
+// so the live team reads as active without animation. agentsMark is the LIVE Agents
+// chord (issue #457) so an override propagates to the footer affordance.
+func teamFooterFull(th theme.Theme, teamID string, working, total int, agentsMark string) string {
 	id := truncate(sanitizeTerminal(teamID), teamFooterIDLimit)
 	if id == "" {
-		return th.Style("spinner").Render(teamFooterMedium(teamID, working, total))
+		return th.Style("spinner").Render(teamFooterMedium(teamID, working, total, agentsMark))
 	}
-	seg := fmt.Sprintf("%s %s · %d/%d working · ctrl+a agents", teamLiveGlyph, id, working, total)
+	seg := fmt.Sprintf("%s %s · %d/%d working · %s agents", teamLiveGlyph, id, working, total, agentsMark)
 	return th.Style("spinner").Render(seg)
 }
 
-// teamFooterMedium drops the id and the "agents" word: "⟳ k/N working · ctrl+a".
+// teamFooterMedium drops the id and the "agents" word: "⟳ k/N working · <agents>".
 // It carries no theme styling itself so it composes when called from
 // teamFooterFull (which styles the whole segment); fitFooter styles standalone uses.
-func teamFooterMedium(_ string, working, total int) string {
-	return fmt.Sprintf("%s %d/%d working · ctrl+a", teamLiveGlyph, working, total)
+// agentsMark is the LIVE Agents chord (issue #457).
+func teamFooterMedium(_ string, working, total int, agentsMark string) string {
+	return fmt.Sprintf("%s %d/%d working · %s", teamLiveGlyph, working, total, agentsMark)
 }
 
 // teamFooterCompact is the poorest team tier: "⟳ k/N" — just the glyph + counts.
@@ -411,19 +413,21 @@ const (
 )
 
 // subagentFooterFull is the richest fleet footer tier:
-// "⛭ subagents 3◐ 1✓ · ctrl+a". It is shown whenever ≥1 subagent has STARTED this
+// "⛭ subagents 3◐ 1✓ · <agents>". It is shown whenever ≥1 subagent has STARTED this
 // session (running+done > 0), so the parallel case is discoverable even before the
 // overlay is opened — the missing "3/4 done" peripheral cue. It carries the spinner
-// (accent) slot so the live fleet reads as active without animation.
-func subagentFooterFull(th theme.Theme, running, done int) string {
-	seg := fmt.Sprintf("%s subagents %d%s %d%s · ctrl+a", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
+// (accent) slot so the live fleet reads as active without animation. agentsMark is
+// the LIVE Agents chord (issue #457) so an override propagates.
+func subagentFooterFull(th theme.Theme, running, done int, agentsMark string) string {
+	seg := fmt.Sprintf("%s subagents %d%s %d%s · %s", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
 	return th.Style("spinner").Render(seg)
 }
 
-// subagentFooterMedium drops the "subagents" word: "⛭ 3◐ 1✓ · ctrl+a". It carries no
+// subagentFooterMedium drops the "subagents" word: "⛭ 3◐ 1✓ · <agents>". It carries no
 // theme styling itself so it composes when styled by the caller (view.go).
-func subagentFooterMedium(running, done int) string {
-	return fmt.Sprintf("%s %d%s %d%s · ctrl+a", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
+// agentsMark is the LIVE Agents chord (issue #457).
+func subagentFooterMedium(running, done int, agentsMark string) string {
+	return fmt.Sprintf("%s %d%s %d%s · %s", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
 }
 
 // subagentFooterCompact is the poorest fleet tier: "⛭ 3◐ 1✓" — glyph + counts only.
@@ -436,21 +440,126 @@ func subagentFooterCompact(running, done int) string {
 // fork glyph distinct from ⛭ subagents and ⟳ team), deliberately NOT the animated spinner.
 const parallelFleetGlyph = "⑂"
 
-// parallelFooterFull is the richest Parallel footer tier: "⑂ parallel 1◐ 2✓ · ctrl+a".
+// parallelFooterFull is the richest Parallel footer tier: "⑂ parallel 1◐ 2✓ · <agents>".
 // Like the fleet segment it is shown whenever ≥1 Parallel run has STARTED this session
 // (running+done > 0) and reuses the ◐/✓ count vocabulary so footer + overlay agree.
-func parallelFooterFull(th theme.Theme, running, done int) string {
-	seg := fmt.Sprintf("%s parallel %d%s %d%s · ctrl+a", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
+// agentsMark is the LIVE Agents chord (issue #457) so an override propagates.
+func parallelFooterFull(th theme.Theme, running, done int, agentsMark string) string {
+	seg := fmt.Sprintf("%s parallel %d%s %d%s · %s", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
 	return th.Style("spinner").Render(seg)
 }
 
-// parallelFooterMedium drops the "parallel" word: "⑂ 1◐ 2✓ · ctrl+a". It carries no theme
-// styling itself so it composes when styled by the caller (view.go).
-func parallelFooterMedium(running, done int) string {
-	return fmt.Sprintf("%s %d%s %d%s · ctrl+a", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
+// parallelFooterMedium drops the "parallel" word: "⑂ 1◐ 2✓ · <agents>". It carries no theme
+// styling itself so it composes when styled by the caller (view.go). agentsMark is the
+// LIVE Agents chord (issue #457).
+func parallelFooterMedium(running, done int, agentsMark string) string {
+	return fmt.Sprintf("%s %d%s %d%s · %s", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
 }
 
 // parallelFooterCompact is the poorest Parallel tier: "⑂ 1◐ 2✓" — glyph + counts only.
 func parallelFooterCompact(running, done int) string {
 	return fmt.Sprintf("%s %d%s %d%s", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
+}
+
+// approvalButtonLabel renders a generic permission-modal button label that is
+// honest about the LIVE approval chord. With the DEFAULT word-embedded chord
+// ("a"/"w"/"d") the bracketed letter sits inside the word at its natural
+// position, so the case follows the word's spelling and the historical form
+// ("[A]llow" / "Al[w]ays" / "[D]eny") renders byte-for-byte. When the chord is
+// rebound AWAY from its default word letter the wordplay no longer holds, so
+// the button degrades to an honest standalone form: the bracketed live chord
+// (upper-cased via approvalMnemonic for a bare rune, verbatim for a modified
+// chord) followed by the action's standalone word ("[Y] allow" / "[Q] always
+// allow" / "[N] deny", or "[ctrl+y] allow" for a modified chord). word is the
+// default word-embedded form's word ("Allow"/"Always"/"Deny"); standalone is
+// the overridden form's action phrase ("allow"/"always allow"/"deny"). The
+// default chord for each action is its word's mnemonic letter (a/w/d), so an
+// override to a different letter (y/q/n) OR a modified chord trips the
+// standalone branch. Issue #457.
+func approvalButtonLabel(chord, word, standalone string) string {
+	if isDefaultApprovalChord(chord, word) {
+		switch word {
+		case "Allow":
+			return "[A]llow"
+		case "Always":
+			return "Al[w]ays"
+		case "Deny":
+			return "[D]eny"
+		}
+	}
+	return "[" + approvalMnemonic(chord) + "] " + standalone
+}
+
+// planApprovalButtonLabel renders a PLAN-review action-bar button label that is
+// honest about the LIVE approval chord. With the DEFAULT a/w/d chords the
+// historical word-embedded plan form ("[A]pprove & run" / "[W] auto-accept
+// edits" / "[D] iterate") renders byte-for-byte. Under an override the plan
+// wordplay ("[Y]pprove & run") would read as a typo — and for a MODIFIED chord
+// ("ctrl+y") the stem-glued form ("[ctrl+y]pprove & run") is outright broken —
+// so the button degrades to an honest standalone form: the bracketed live chord
+// followed by the plan action phrase ("[Y] approve & run" / "[ctrl+y] approve &
+// run"). This mirrors approvalButtonLabel's default-vs-override split for the
+// generic modal; the plan path needs its own helper because its default labels
+// differ from the generic modal's. Issue #457.
+func planApprovalButtonLabel(chord, word, standalone string) string {
+	if isDefaultApprovalChord(chord, word) {
+		switch word {
+		case "Allow":
+			return "[A]pprove & run"
+		case "Always":
+			return "[W] auto-accept edits"
+		case "Deny":
+			return "[D] iterate"
+		}
+	}
+	return "[" + approvalMnemonic(chord) + "] " + standalone
+}
+
+// approvalAlwaysFootnote renders the "always allows this exact command …"
+// footnote under the always-allow button. With the default chord ("w") it is
+// the historical byte-for-byte "al[w]ays allows …" word-embedded form; under
+// an override it states the live chord honestly ("always (q) allows …"). Issue #457.
+func approvalAlwaysFootnote(chord string) string {
+	if isDefaultApprovalChord(chord, "Always") {
+		return "al[w]ays allows this exact command for the rest of this session"
+	}
+	return "always (" + chord + ") allows this exact command for the rest of this session"
+}
+
+// isDefaultApprovalChord reports whether chord is the default first chord for
+// the given approval word — "a"/"w"/"d" for Allow/Always/Deny — so the
+// word-embedded form's wordplay holds. Any other chord (a different bare rune
+// like "y", or a modified chord like "ctrl+y") trips the honest standalone
+// form.
+func isDefaultApprovalChord(chord, word string) bool {
+	switch word {
+	case "Allow":
+		return chord == "a"
+	case "Always":
+		return chord == "w"
+	case "Deny":
+		return chord == "d"
+	}
+	return false
+}
+
+// approvalMnemonic renders the footer/plan-review approval affordance mnemonic for a
+// rebindable approval chord: the chord with its first rune upper-cased, so the
+// default Allow/AllowAlways/Deny chords ("a"/"w"/"d") render as the historical "A"/
+// "W"/"D" mnemonics byte-for-byte, while a remapped bare rune ("y") renders as its
+// upper-case ("Y"). A modified chord ("ctrl+y") is returned unchanged — upper-casing
+// only the first LETTER of a modified chord would mangle it, and a modified approval
+// chord is rare (the validator allows bare runes for approval keys), so the fallback
+// keeps the chord legible. Issue #457.
+func approvalMnemonic(chord string) string {
+	if chord == "" {
+		return chord
+	}
+	r := rune(chord[0])
+	// Only upper-case a leading ASCII lowercase letter (a bare-rune approval key).
+	// A modified chord ("ctrl+y", "f5") or a multi-rune chord stays verbatim.
+	if r >= 'a' && r <= 'z' && len(chord) == 1 {
+		return string(r - 'a' + 'A')
+	}
+	return chord
 }

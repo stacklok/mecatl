@@ -402,8 +402,35 @@ non-loopback bind — see the trust note below.
 | `--auth-token` | `""` | bearer token required on **every** gRPC/HTTP request (or `MECATL_AUTH_TOKEN`; empty disables auth). |
 | `--tls-cert` / `--tls-key` | `""` | PEM server certificate/key pair; together they enable TLS on the gRPC + HTTP servers. |
 | `--client-ca` | `""` | PEM client-CA bundle; enables **mutual TLS** (require + verify client certs). |
-| `--rate-limit` | `0` | sustained per-client request rate in req/s (`0` disables rate limiting). |
-| `--rate-burst` | `0` | rate-limit token-bucket burst size (`0` derives a sane default from `--rate-limit`). |
+| `--rate-limit` | `0` | sustained per-client request rate in req/s (`0` disables rate limiting). With OIDC, this also bounds rejected bearer validation per direct transport peer IP. |
+| `--rate-burst` | `0` | rate-limit token-bucket burst size (`0` derives a sane default from `--rate-limit`), including the separate OIDC rejected-token bucket. |
+| `--oidc-issuer` | `""` | OIDC issuer URL (the `iss` claim, byte-exact) whose tokens identify callers. Setting it turns **caller identity** on: every request must present a bearer the IdP vouches for, and the verified `(iss, sub)` is recorded as the session owner. Empty processes requests unauthenticated exactly as before. |
+| `--oidc-jwks-uri` | `""` | static JWKS endpoint for `--oidc-issuer`, short-circuiting OIDC discovery (the air-gapped / pinned-key deployment). Empty derives it from the issuer's discovery document. |
+| `--oidc-audience` | `""` | audience (`aud`) this deployment accepts. **Required** with `--oidc-issuer` — an audience-less verifier would accept tokens minted for a different service. |
+| `--oidc-max-jwks-staleness` | `1h` | maximum age of a last-good JWKS when refresh cannot reach the IdP. `0` deliberately disables the bound; a negative duration is rejected. Once stale, a failed refresh returns 503 rather than accepting with stale keys. |
+
+The four OIDC flags are identical on `mecak8s`. Two things to be clear about
+([ADR 0100](../adr/0100-caller-identity-threading.md),
+[ADR 0101](../adr/0101-bounded-jwks-staleness.md)):
+
+- **Attribution, not isolation.** Sessions, schedules and durable event-log
+  records gain an owner; **nothing is refused** on identity grounds. Any
+  authenticated caller can still act on any session. Per-caller access control is
+  separate, later work — do not deploy these as a tenancy boundary.
+- **Validator and revocation boundary.** The production validator is a
+  delegated, actively-maintained OIDC/JWT library. Its last-good JWKS cache tolerates short IdP
+  outages, but the default one-hour staleness bound fails closed with **503** if
+  a refresh still cannot obtain current keys. A malformed, expired, wrong-issuer,
+  or wrong-audience token is **401**. When OIDC and rate limiting are both on,
+  repeated rejected bearers are limited before further validation by the direct
+  transport peer IP; `Forwarded` and `X-Forwarded-For` are never trusted. An
+  admitted valid token does not consume this rejected-token bucket and is charged
+  once by the existing verified-principal limiter. An exhausted rejected-token
+  bucket returns **429** (gRPC `RESOURCE_EXHAUSTED`). The bound limits
+  signing-key revocation exposure during an outage; it does **not** revoke an otherwise valid individual
+  token before its expiry. The cache is process-local and unpersisted, so a restart
+  fetches keys again. `--oidc-max-jwks-staleness=0` is the explicit, risk-accepting
+  unbounded-cache escape hatch.
 
 ### Observability (the loopback admin listener)
 

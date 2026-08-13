@@ -30,6 +30,10 @@ type metaSnapshot struct {
 	ModelID   string            `json:"model_id,omitempty"`
 	Title     string            `json:"title,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
+	// Owner is the session's verified owner (ADR 0100). Decoding it here is
+	// what keeps the cheap fast path's row IDENTICAL to the Load-per-row
+	// fallback's; a pre-owner snapshot simply has no key and stays nil.
+	Owner *session.Principal `json:"owner,omitempty"`
 }
 
 // knownStates is the set of valid session.State values. MetaList validates the
@@ -123,6 +127,7 @@ func (st *Store) MetaList(_ context.Context) ([]port.SessionMeta, error) {
 			meta.Turns = m.Counters.Turns
 			meta.ModelID = m.ModelID
 			meta.Title = m.Title
+			meta.Owner = m.Owner
 			// A zero CreatedAt (a snapshot with no created_at, or the zero time)
 			// must surface as the zero time — NOT .Unix() of the zero time, which
 			// is -62135596800 and would misreport as 0001-01-01. The caller maps

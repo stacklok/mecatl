@@ -248,11 +248,11 @@ func TestAgentsInvPanelRendersBothEmptyStates(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	st := agentsInvState{view: agentsInvPanel}
 
-	notEnabled := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: false}, 100))
+	notEnabled := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: false}, defaultHelpKeys(), 100))
 	if !strings.Contains(notEnabled, "not enabled") {
 		t.Errorf("not-enabled render missing the disabled copy:\n%s", notEnabled)
 	}
-	enabledEmpty := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, 100))
+	enabledEmpty := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, defaultHelpKeys(), 100))
 	if !strings.Contains(enabledEmpty, "no agent definitions resolved") {
 		t.Errorf("enabled-but-empty render missing the empty copy:\n%s", enabledEmpty)
 	}
@@ -273,7 +273,7 @@ func TestAgentsInvPanelSanitizes(t *testing.T) {
 			Tools:          []string{"\x1b[1mRead"},
 		},
 	}}
-	out := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, 100))
+	out := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, defaultHelpKeys(), 100))
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("raw ESC (0x1b) leaked into the rendered panel; sanitizeTerminal not applied:\n%q", out)
 	}
@@ -303,7 +303,7 @@ func TestAgentsInvColorDoesNotAlterContent(t *testing.T) {
 		st := agentsInvState{view: agentsInvPanel, agents: []client.Agent{
 			{Name: "scout", Description: "explore", Model: "gpt-5", Color: color},
 		}}
-		return renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, 100)
+		return renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, defaultHelpKeys(), 100)
 	}
 
 	plain := mk("")          // no colour

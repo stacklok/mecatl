@@ -10,7 +10,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 )
 
 // agentColorPalette maps the Claude Code agent-def `color` hint (one of a fixed
@@ -160,11 +159,11 @@ func (m Model) updateAgentsInvMsg(msg tea.Msg) (tea.Model, bool) {
 // renderAgentsInvOverlay draws the inventory panel centred over the conversation
 // region via centerCard (the same bordered-card treatment as the skills/MCP
 // overlays). All server-derived strings are terminal-sanitized.
-func renderAgentsInvOverlay(th theme.Theme, st agentsInvState, caps client.Capabilities, width, height int) string {
+func renderAgentsInvOverlay(th theme.Theme, st agentsInvState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	if st.view != agentsInvPanel {
 		return ""
 	}
-	return centerCard(th, renderAgentsInvPanel(th, st, caps, width), width, height)
+	return centerCard(th, renderAgentsInvPanel(th, st, caps, hk, width), width, height)
 }
 
 // agentsInvDisabledNote is the empty-inventory copy when agent definitions are
@@ -239,7 +238,7 @@ func agentsInvRowLines(th theme.Theme, agents []client.Agent, budget int) []stri
 // "lines X–Y of N" indicator when the inventory overflows. Colour is a UX hint
 // only and never affects layout — it only tints the already-rendered name
 // foreground, so a stripANSI'd row is colour-invariant.
-func renderAgentsInvPanel(th theme.Theme, st agentsInvState, caps client.Capabilities, width int) string {
+func renderAgentsInvPanel(th theme.Theme, st agentsInvState, caps client.Capabilities, hk helpKeys, width int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Agent definitions") + "\n\n")
 
@@ -259,6 +258,9 @@ func renderAgentsInvPanel(th theme.Theme, st agentsInvState, caps client.Capabil
 		b.WriteString(windowRenderedLines(th, agentsInvRowLines(th, st.agents, budget), st.scroll, agentsInvBodyLines))
 	}
 
-	b.WriteString("\n" + th.Style("muted").Render("agent definitions route Subagent delegations · "+platform.ScrollKeysMarking()+" scroll · esc close"))
+	// The scroll pair (ScrollU/ScrollD) and the close chord (Close) read the LIVE
+	// keyMap markings (issue #457); with defaults the hint is byte-identical to
+	// the historical literal.
+	b.WriteString("\n" + th.Style("muted").Render("agent definitions route Subagent delegations · "+hk.scroll+" scroll · "+hk.closeOnly+" close"))
 	return b.String()
 }

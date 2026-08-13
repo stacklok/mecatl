@@ -86,7 +86,7 @@ func TestSubagentWritableSelectsWritableEngineAndWritesParentWorkspace(t *testin
 		t.Fatalf("child Write ran against root %v, want the real parent workspace /ws (direct-write)", rr)
 	}
 	// The result honestly tells the model its edits landed directly in the workspace.
-	if !strings.Contains(res.Content, "edited your workspace directly") {
+	if !strings.Contains(res.Content, "had direct write access to your workspace") {
 		t.Fatalf("result must note the edits were applied directly, got:\n%s", res.Content)
 	}
 	if strings.Contains(res.Content, "merge") || strings.Contains(res.Content, "fork") {
@@ -319,7 +319,7 @@ func TestSubagentWritableWithOutputSchemaComposes(t *testing.T) {
 	if strings.Contains(res.Content, "READ-ONLY EXPLORER RAN") {
 		t.Fatalf("read-write call must run the writable engine, not the explorer, got:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "edited your workspace directly") {
+	if !strings.Contains(res.Content, "had direct write access to your workspace") {
 		t.Fatalf("read-write result must still carry the direct-write note, got:\n%s", res.Content)
 	}
 }
@@ -443,7 +443,7 @@ func TestSubagentModeCombinationGuards(t *testing.T) {
 		if strings.Contains(res.Content, "should NOT run") {
 			t.Fatalf("read-write+agent must NOT run the generic writable explorer, got:\n%s", res.Content)
 		}
-		if !strings.Contains(res.Content, "edited your workspace directly") {
+		if !strings.Contains(res.Content, "had direct write access to your workspace") {
 			t.Fatalf("read-write+agent result must carry the direct-write note, got:\n%s", res.Content)
 		}
 	})
@@ -572,12 +572,12 @@ func readOnlySubagentFailureBody(t *testing.T) string {
 }
 
 // TestWritableSubagentFailureRendersOneCombinedNextAction pins the render #318's
-// MOTIVATING scenario produces: a long-running direct-write child that died mid-task with
-// edits already applied to the real tree. Three independently-owned pieces collide in that
-// one body and none of them was asserted together:
+// motivating scenario: a direct-write child died mid-task while it had access to the real
+// tree. The renderer has no mutation evidence, so three independently-owned pieces meet in
+// one conditional body:
 //
 //   - subagentErrorBody's cause-leads composition (issue #319),
-//   - the partial-edits honesty ADR 0041 owes ("its edits may be PARTIAL"),
+//   - the conditional partial-edits honesty ADR 0041 owes,
 //   - the resume affordance (issue #318).
 //
 // The load-bearing property is that the last two arrive as ONE decision. Stated as two

@@ -88,11 +88,11 @@ func (m Model) updateUserModelMsg(msg tea.Msg) (tea.Model, bool) {
 
 // renderUserModelOverlay draws the panel centred over the conversation region via
 // centerCard. All server-derived strings are terminal-sanitized.
-func renderUserModelOverlay(th theme.Theme, st userModelState, caps client.Capabilities, width, height int) string {
+func renderUserModelOverlay(th theme.Theme, st userModelState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	if st.view != userModelPanel {
 		return ""
 	}
-	return centerCard(th, renderUserModelPanel(th, st, caps, width), width, height)
+	return centerCard(th, renderUserModelPanel(th, st, caps, hk, width), width, height)
 }
 
 // userModelDisabledNote is the empty-state copy when the user model is NOT enabled
@@ -113,7 +113,7 @@ func userModelEmptyCopy(caps client.Capabilities) string {
 // metadata line (count · size · sha), then one row per entry (key + indented
 // description), key-sorted by the server. EVERY server-derived string is
 // terminal-sanitized.
-func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabilities, width int) string {
+func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabilities, hk helpKeys, width int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("User model (operator facts)") + "\n\n")
 
@@ -139,7 +139,9 @@ func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabil
 		}
 	}
 
-	b.WriteString("\n" + th.Style("muted").Render("the agent curates this · Recall loads a fact's value · esc close"))
+	// The close chord (Close) reads the LIVE keyMap marking (issue #457); with the
+	// default it is byte-identical to the historical "esc close".
+	b.WriteString("\n" + th.Style("muted").Render("the agent curates this · Recall loads a fact's value · "+hk.closeOnly+" close"))
 	return b.String()
 }
 

@@ -6,6 +6,33 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+// TrackedClientKeysForTest returns the post-validation rate-limiter's per-client
+// bucket keys (empty when rate limiting is disabled). It lets an external test
+// assert WHAT the limiter keys on — the verified (iss, sub) rather than the raw
+// token — and that a rejected token creates no post-validation bucket (ADR 0100
+// decision 3).
+func (a *Authenticator) TrackedClientKeysForTest() []string {
+	if a.limiters == nil {
+		return nil
+	}
+	a.limiters.mu.Lock()
+	defer a.limiters.mu.Unlock()
+	keys := make([]string, 0, len(a.limiters.clients))
+	for k := range a.limiters.clients {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func (a *Authenticator) RejectedTrackedClientCountForTest() int {
+	if a.rejectedLimiters == nil {
+		return 0
+	}
+	a.rejectedLimiters.mu.Lock()
+	defer a.rejectedLimiters.mu.Unlock()
+	return len(a.rejectedLimiters.clients)
+}
+
 // SetEngineCloseTimeoutForTest overrides the package-level engineCloseTimeout var
 // for the duration of one test; it returns a restore func (defer it). The override
 // lets a test shrink the timeout so a bounded-engine-close assertion runs in

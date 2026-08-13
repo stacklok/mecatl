@@ -54,6 +54,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -66,6 +67,9 @@ jobs:
       # does NOT cross the module boundary, so build it explicitly too.
       - name: go build (engine module)
         run: cd engine && go build ./...
+
+      - name: go build (OIDC authn module)
+        run: cd authn/oidc && go build ./...
 
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each
       # its own module under the workspace — build them explicitly too.
@@ -92,6 +96,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -109,6 +114,9 @@ jobs:
       # module boundary, so its tests are a second invocation.
       - name: go test -race (engine module)
         run: cd engine && go test -race ./...
+
+      - name: go test -race (OIDC authn module)
+        run: cd authn/oidc && go test -race ./...
 
       # provider/ submodules (ADR 0093) — each its own module under the workspace.
       - name: go test -race (provider modules)
@@ -134,6 +142,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -164,6 +173,9 @@ jobs:
       - name: golangci-lint (engine module)
         run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=8m ./...
 
+      - name: golangci-lint (OIDC authn module)
+        run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...
+
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - name: golangci-lint (provider modules)
@@ -178,6 +190,9 @@ jobs:
 
       - name: go vet (engine module)
         run: cd engine && go vet ./...
+
+      - name: go vet (OIDC authn module)
+        run: cd authn/oidc && go vet ./...
 
       - name: go vet (provider modules)
         run: |
@@ -233,6 +248,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -388,6 +404,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -431,6 +448,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -458,6 +476,13 @@ jobs:
           set -o pipefail
           cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
             | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+
+      - name: govulncheck (OIDC authn module — strict, no allowlist)
+        shell: bash
+        run: |
+          set -o pipefail
+          cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
 
       # provider/ submodules (ADR 0093) — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
@@ -494,6 +519,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -530,7 +556,7 @@ jobs:
       # records the tag. findings.json + junit.xml land in matlatl-out/.
       - name: matlatl docs gate (strict)
         id: matlatl
-        uses: stacklok/matlatl@f3d9023edbe131db3fe92f0dc30794e1b24aa93a # v0.0.7
+        uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
         with:
           strict: "true"
 

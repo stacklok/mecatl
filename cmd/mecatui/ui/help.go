@@ -77,7 +77,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.mcpPanel, action: "MCP inventory", available: caps.MCP, gated: true},
 		{key: hk.resources, action: "MCP resources", available: caps.MCP, gated: true},
 		{key: hk.prompts, action: "MCP prompts", available: caps.MCP, gated: true},
-		{key: hk.agents, action: "agents overlay (subagents / parallel / teams · tab to switch)"},
+		{key: hk.agents, action: "agents overlay (subagents / parallel / teams · " + hk.nextTab + " to switch)"},
 		{key: hk.effort, action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
 		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
 		{key: "/sessions", action: "open a stored session (read-only transcript)"},
@@ -88,9 +88,9 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	b.WriteString("\n" + muted.Render("General") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.scroll, action: "scroll the conversation (a ↑NN% header cue shows while scrolled up)"},
-		{key: hk.jump, action: "jump to top / bottom (end resumes auto-follow)"},
+		{key: hk.jump, action: "jump to top / bottom (" + hk.scrollBottom + " resumes auto-follow)"},
 		{key: "wheel", action: "mouse-wheel scroll (alt screen only)"},
-		{key: "drag", action: "select text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · esc clears"},
+		{key: "drag", action: "select text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · " + hk.cancel + " clears"},
 		{key: "middle-click", action: "paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)"},
 		{key: hk.help, action: "this help (on an empty prompt)"},
 		{key: hk.quit, action: "quit (press twice; first press clears the prompt or arms, again within 3s exits)"},
@@ -155,12 +155,20 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 // builder stays pure, and the welcome card reuses the same struct for its
 // live affordance rows. With DEFAULT keys every field resolves to exactly the
 // literal it replaced, so the goldens stay byte-identical.
+//
+// The approval markings (allow/allowAlways/deny) are carried here too even
+// though the help body does not render them as rows: the footer help line and
+// the permission-modal/plan-review action bars read them off the SAME struct
+// (via the renderer's copy) so a rebinding propagates to those affordances
+// without a second markings path (issue #457 — the #455 liveness pattern
+// extended to the footer + inline cards).
 type helpKeys struct {
 	submit       string // Submit — send the prompt / queue a follow-up
 	newlineFirst string // Newline — first chord of the binding
 	newlineAlso  string // Newline — static " (also X)" suffix for remaining chords ("" when none)
 	paste        string // Paste
 	cancel       string // Cancel — cancel the running turn / clear staged input & queue
+	editBack     string // EditBack — pull the queued follow-up back into the textarea
 	quit         string // Quit
 	help         string // Help — this overlay
 	mcpPanel     string // MCPPanel
@@ -171,8 +179,34 @@ type helpKeys struct {
 	modeSwitch   string // ModeSwitch
 	expandTools  string // ExpandTools
 	scroll       string // ScrollU/ScrollD — platform-adaptive on the default, "<up>/<down>" once remapped
+	scrollUp     string // ScrollU — first chord, for compact one-sided paging hints
+	scrollBottom string // ScrollBottom — first chord, for auto-follow prose
 	jump         string // ScrollTop/ScrollBottom joined as "home/end"
 	close        string // Close/Help joined as "esc or ?" — the keys that dismiss this overlay
+	allow        string // Allow — the permission-modal allow-once key (approval)
+	allowAlways  string // AllowAlways — the permission-modal always-allow key (approval)
+	deny         string // Deny — the permission-modal deny key (approval)
+
+	// Overlay-navigation markings (issue #457). The agents/team/mcp/effort/models/
+	// sessions/worktrees/schedule/skills/soul/usermodel overlays render inline hints
+	// whose chords are backed by rebindable keyMap actions; these carry the LIVE
+	// first chord (or, for JumpTop/JumpEnd, the full joined help key) so an override
+	// propagates to the displayed hint. With DEFAULT keys each resolves to exactly
+	// the literal it replaced, so the goldens stay byte-identical.
+	choose           string // Choose — the list "select"/"focus"/"apply" key (enter)
+	nextTab          string // NextTab — the in-overlay tab switch (tab)
+	jumpTop          string // JumpTop — first chord (home)
+	jumpEnd          string // JumpEnd — first chord (end)
+	jumpTopFull      string // JumpTop — full joined key (home/g)
+	jumpEndFull      string // JumpEnd — full joined key (end/G)
+	cancelChild      string // CancelChild — cancel the selected subagent/branch/member (x)
+	tasks            string // Tasks — team overlay tasks sub-view (t)
+	findings         string // Findings — team overlay findings sub-view (f)
+	refresh          string // Refresh — MCP inventory re-probe (r)
+	setGlobalDefault string // SetGlobalDefault — models picker set-global-default (ctrl+g)
+	closeOnly        string // Close — the bare close chord (esc), distinct from `close` ("esc or ?")
+	navUp            string // Up — humanized first chord (↑ for the default "up", else the chord)
+	navDown          string // Down — humanized first chord (↓ for the default "down", else the chord)
 }
 
 // firstKey returns the first chord of b, or def when the binding is empty
@@ -182,6 +216,38 @@ func firstKey(b key.Binding, def string) string {
 		return keys[0]
 	}
 	return def
+}
+
+// fullKey returns the binding's full joined help key (all chords joined by "/"),
+// or def when the binding is empty. Used for the JumpTop/JumpEnd overlay hints
+// that render the FULL key set ("home/g · end/G") rather than just the first
+// chord (issue #457).
+func fullKey(b key.Binding, def string) string {
+	if h := b.Help(); h.Key != "" {
+		return h.Key
+	}
+	if keys := b.Keys(); len(keys) > 0 {
+		return strings.Join(keys, "/")
+	}
+	return def
+}
+
+// navGlyph humanizes an Up/Down list-nav chord for the overlay hints: the
+// DEFAULT "up"/"down" chords render as the arrow glyphs "↑"/"↓" (the compact
+// form the overlays have always used); any other chord (a rebind to "k", a
+// modified chord) renders verbatim so an override is advertised honestly. It is
+// ONLY applied to the Up/Down list-nav bindings (NOT the token-direction arrows
+// in the footer/subagent lines, which are literal glyphs, not key bindings)
+// (issue #457).
+func navGlyph(chord string) string {
+	switch chord {
+	case keyMenuUp:
+		return "↑"
+	case keyMenuDown:
+		return "↓"
+	default:
+		return chord
+	}
 }
 
 // helpKeyMarkings builds the help-body key markings from the model's LIVE
@@ -195,24 +261,47 @@ func defaultHelpKeys() helpKeys { return keyMarkings(defaultKeys()) }
 // keyMarkings derives the help-body key markings from km: each rebindable row
 // shows the binding's first chord; the scroll pair joins ScrollTop/ScrollBottom
 // as "home/end"; the newline row keeps its static " (also …)" suffix for any
-// remaining chords.
+// remaining chords. The approval keys (allow/allowAlways/deny) are populated
+// too so the footer help line and the permission/plan-review action bars read
+// the LIVE chords from the same struct (issue #457).
 func keyMarkings(km keyMap) helpKeys {
 	hk := helpKeys{
-		submit:      firstKey(km.Submit, "enter"),
-		paste:       firstKey(km.Paste, "ctrl+v"),
-		cancel:      firstKey(km.Cancel, "esc"),
-		quit:        firstKey(km.Quit, "ctrl+c"),
-		help:        firstKey(km.Help, "?"),
-		mcpPanel:    firstKey(km.MCPPanel, "ctrl+o"),
-		resources:   firstKey(km.Resources, "ctrl+r"),
-		prompts:     firstKey(km.Prompts, "ctrl+p"),
-		agents:      firstKey(km.Agents, "ctrl+a"),
-		effort:      firstKey(km.Effort, "ctrl+e"),
-		modeSwitch:  firstKey(km.ModeSwitch, "alt+m"),
-		expandTools: firstKey(km.ExpandTools, "ctrl+t"),
-		scroll:      scrollMarking(km),
-		jump:        firstKey(km.ScrollTop, "home") + "/" + firstKey(km.ScrollBottom, "end"),
-		close:       firstKey(km.Close, "esc") + " or " + firstKey(km.Help, "?"),
+		submit:       firstKey(km.Submit, "enter"),
+		paste:        firstKey(km.Paste, "ctrl+v"),
+		cancel:       firstKey(km.Cancel, "esc"),
+		editBack:     navGlyph(firstKey(km.EditBack, "up")),
+		quit:         firstKey(km.Quit, "ctrl+c"),
+		help:         firstKey(km.Help, "?"),
+		mcpPanel:     firstKey(km.MCPPanel, "ctrl+o"),
+		resources:    firstKey(km.Resources, "ctrl+r"),
+		prompts:      firstKey(km.Prompts, "ctrl+p"),
+		agents:       firstKey(km.Agents, "ctrl+a"),
+		effort:       firstKey(km.Effort, "ctrl+e"),
+		modeSwitch:   firstKey(km.ModeSwitch, "alt+m"),
+		expandTools:  firstKey(km.ExpandTools, "ctrl+t"),
+		scroll:       scrollMarking(km),
+		scrollUp:     firstKey(km.ScrollU, "pgup"),
+		scrollBottom: firstKey(km.ScrollBottom, "end"),
+		jump:         firstKey(km.ScrollTop, "home") + "/" + firstKey(km.ScrollBottom, "end"),
+		close:        firstKey(km.Close, "esc") + " or " + firstKey(km.Help, "?"),
+		allow:        firstKey(km.Allow, "a"),
+		allowAlways:  firstKey(km.AllowAlways, "w"),
+		deny:         firstKey(km.Deny, "d"),
+
+		choose:           firstKey(km.Choose, "enter"),
+		nextTab:          firstKey(km.NextTab, "tab"),
+		jumpTop:          firstKey(km.JumpTop, "home"),
+		jumpEnd:          firstKey(km.JumpEnd, "end"),
+		jumpTopFull:      fullKey(km.JumpTop, "home/g"),
+		jumpEndFull:      fullKey(km.JumpEnd, "end/G"),
+		cancelChild:      firstKey(km.CancelChild, "x"),
+		tasks:            firstKey(km.Tasks, "t"),
+		findings:         firstKey(km.Findings, "f"),
+		refresh:          firstKey(km.Refresh, "r"),
+		setGlobalDefault: firstKey(km.SetGlobalDefault, "ctrl+g"),
+		closeOnly:        firstKey(km.Close, "esc"),
+		navUp:            navGlyph(firstKey(km.Up, keyMenuUp)),
+		navDown:          navGlyph(firstKey(km.Down, keyMenuDown)),
 	}
 	nl := km.Newline.Keys()
 	if len(nl) > 0 {
@@ -274,12 +363,14 @@ func (m Model) renderZeroState() string {
 		return centerCard(th, m.legacyZeroStateBody(), width, height)
 	}
 
+	hk := m.helpKeyMarkings()
 	in := welcome.Info{
 		Cwd:         m.deps.Workspace,
 		Model:       m.zeroStateModelName(),
 		Provider:    m.activeModel.ProviderID, // "" when no selection yet → modelLine omits it
 		Version:     m.deps.Version,
 		Tagline:     "your local agentic coding harness",
+		Submit:      hk.submit,
 		Affordances: m.zeroStateAffordanceRows(),
 		MemoryNote:  m.zeroStateMemoryNote(),
 		GatewayNote: m.zeroStateGatewayNote(),
@@ -297,8 +388,9 @@ func (m Model) legacyZeroStateBody() string {
 	th := m.deps.Theme
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Welcome to mecatui") + "\n\n")
-	b.WriteString(th.Style("toolArgs").Render("  Type a request below and press enter.") + "\n\n")
-	writeHelpRows(&b, th, zeroStateRows(m.helpKeyMarkings()))
+	hk := m.helpKeyMarkings()
+	b.WriteString(th.Style("toolArgs").Render("  Type a request below and press "+hk.submit+".") + "\n\n")
+	writeHelpRows(&b, th, zeroStateRows(hk))
 	if note := m.zeroStateMemoryNote(); note != "" {
 		b.WriteString("\n" + note + "\n")
 	}

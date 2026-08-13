@@ -74,7 +74,7 @@ func TestSubagentWritableAgentRoutesToFactoryEngine(t *testing.T) {
 		t.Fatalf("specialist Write ran against root %v, want the real parent workspace /ws (direct-write)", rr)
 	}
 	// The result carries the direct-write note.
-	if !strings.Contains(results[0].Content, "edited your workspace directly") {
+	if !strings.Contains(results[0].Content, "had direct write access to your workspace") {
 		t.Fatalf("read-write+agent result must carry the direct-write note, got:\n%s", results[0].Content)
 	}
 	// The pre-built reviewer engine never ran (no map mutation / reuse on the writable path).

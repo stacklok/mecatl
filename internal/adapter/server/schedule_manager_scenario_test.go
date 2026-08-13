@@ -197,7 +197,7 @@ func TestScheduleSharedCatalog_Scenario1_ServiceDelegates(t *testing.T) {
 	}
 
 	// EmitScheduleEvent delegates: nil EventLog ⇒ a no-op that does not panic.
-	svc.EmitScheduleEvent(session.SchedulePayload{Kind: "fired", SessionID: "s1", ScheduleName: "delegate"})
+	svc.EmitScheduleEvent(ctx, session.SchedulePayload{Kind: "fired", SessionID: "s1", ScheduleName: "delegate"})
 
 	if err := svc.DeleteSchedule(ctx, "delegate"); err != nil {
 		t.Fatalf("svc.DeleteSchedule: %v", err)

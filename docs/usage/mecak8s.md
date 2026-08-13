@@ -99,6 +99,11 @@ ADR 0048):
    drain → lease release) lets a survivor take over *immediately*, not after the 30s TTL.
 3. **Session persistence across pod restart** — a session + run reaching terminal on pod-A
    survives pod-A's deletion; a follow-up on pod-B succeeds (Redis snapshot, `Recover`/reopen).
+4. **OIDC caller identity against a real in-cluster Dex** — the agent discovers Dex's
+   signing keys, rejects no-token and forged-token requests on both HTTP and gRPC,
+   records Alice as a newly created session owner, and records Bob as the durable
+   actor when he prompts Alice's session. A separate journey proves bounded JWKS
+   staleness returns 503 during an IdP outage and recovers when Dex is reachable.
 
 ```sh
 task e2e:k8s   # needs kind + ko + kubectl + Docker; NOT part of task test (~3-5 min)

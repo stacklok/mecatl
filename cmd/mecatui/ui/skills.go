@@ -11,7 +11,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 )
 
 // skillsView is the active skills overlay (none = closed). Like the MCP panel it
@@ -112,10 +111,10 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		mm, cmd := m.closeSkills()
 		return mm, cmd, true
-	case msg.String() == "down":
+	case msg.String() == keyMenuDown:
 		m.skills.scroll = clampScroll(m.skills.scroll+1, m.skillsFilteredRowTotal(), skillsBodyLines)
 		return m, nil, true
-	case msg.String() == "up":
+	case msg.String() == keyMenuUp:
 		m.skills.scroll = clampScroll(m.skills.scroll-1, m.skillsFilteredRowTotal(), skillsBodyLines)
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollD):
@@ -201,11 +200,11 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 // renderSkillsOverlay draws the skills panel centred over the conversation region
 // via centerCard (the same bordered-card treatment as the MCP/agents overlays).
 // All server-derived strings are terminal-sanitized.
-func renderSkillsOverlay(th theme.Theme, st skillsState, caps client.Capabilities, width, height int) string {
+func renderSkillsOverlay(th theme.Theme, st skillsState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	if st.view != skillsPanel {
 		return ""
 	}
-	return centerCard(th, renderSkillsPanel(th, st, caps, width), width, height)
+	return centerCard(th, renderSkillsPanel(th, st, caps, hk, width), width, height)
 }
 
 // cardTextWidth is the column budget for wrapping server-derived overlay text
@@ -289,7 +288,7 @@ func skillsRowLines(th theme.Theme, skills []client.Skill, budget int) []string 
 // description), name-sorted by the server, scroll-windowed to skillsBodyLines
 // with a "lines X–Y of N" indicator when the inventory overflows. EVERY
 // server-derived string is terminal-sanitized.
-func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities, width int) string {
+func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities, hk helpKeys, width int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Skills inventory") + "\n\n")
 	// The filter input row (focused while the panel is open) sits ABOVE the body
@@ -314,11 +313,15 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 	case len(st.filtered) == 0:
 		// The filter matched nothing (the inventory is non-empty). A clear, distinct
 		// note with a recovery hint; the scroll is safe (clamped to 0).
-		b.WriteString(th.Style("muted").Render("no skills match "+strconv.Quote(st.filter.Value())+" — esc to clear") + "\n")
+		b.WriteString(th.Style("muted").Render("no skills match "+strconv.Quote(st.filter.Value())+" — "+hk.closeOnly+" to clear") + "\n")
 	default:
 		b.WriteString(windowRenderedLines(th, skillsRowLines(th, st.filtered, budget), st.scroll, skillsBodyLines))
 	}
 
-	b.WriteString("\n" + th.Style("muted").Render("skills activate automatically when relevant · type to filter · ↑/↓/"+platform.ScrollKeysMarking()+" scroll · esc clear filter / close"))
+	// The "↑/↓" nav stays literal: the skills handler scrolls on the BARE up/down
+	// keys (msg.String, not key.Matches), so they are genuinely fixed. The pgup/pgdn
+	// scroll pair and the close chord ARE keymap-bound (ScrollU/ScrollD/Close) so
+	// they read the LIVE markings (issue #457).
+	b.WriteString("\n" + th.Style("muted").Render("skills activate automatically when relevant · type to filter · ↑/↓/"+hk.scroll+" scroll · "+hk.closeOnly+" clear filter / close"))
 	return b.String()
 }

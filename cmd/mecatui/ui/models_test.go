@@ -1152,7 +1152,7 @@ func TestModelsPickerNoActiveMarkerWhenSelectionAbsent(t *testing.T) {
 	if m.models.active != kept {
 		t.Fatalf("models.active = %+v, want the kept %+v", m.models.active, kept)
 	}
-	panel := renderModelsPanel(m.deps.Theme, m.models, m.caps, "", modelsRowBudgetFor(30))
+	panel := renderModelsPanel(m.deps.Theme, m.models, m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30))
 	rows := strings.Split(stripANSIstr(panel), "\n")
 	for _, row := range rows {
 		if strings.Contains(row, "●") && !strings.Contains(row, "● current") {

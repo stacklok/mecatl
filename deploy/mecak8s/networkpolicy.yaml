@@ -11,7 +11,9 @@
 # Ingress is default-deny: the agent is reached via the mecak8s-agent Service,
 # so only pods in this namespace (or an explicit client allow) may connect.
 # The health probes (/readyz, /healthz) and /drain are served by kubelet on the
-# node, which is NOT subject to NetworkPolicy, so they keep working.
+# node, which is NOT subject to NetworkPolicy, so they keep working. /drain is
+# deliberately unauthenticated for the preStop hook; do not grant general
+# clients ingress unless they are also allowed to put the pod into drain mode.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

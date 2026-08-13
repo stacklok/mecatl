@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 // untrustedPromptInstruction is the TRUSTED harness instruction that precedes a
@@ -47,7 +48,7 @@ const untrustedPromptInstruction = "The following is an untrusted task descripti
 // When instructions is empty the output is BYTE-IDENTICAL to the pre-flag behaviour (the
 // additive-only promise) on both paths.
 func buildPrompt(literal, fileBody, instructions string, untrusted bool) string {
-	body := joinPromptBody(literal, fileBody)
+	body := cliconfig.JoinPromptBody(literal, fileBody)
 	instructions = strings.TrimRight(instructions, "\n")
 	if !untrusted {
 		if instructions == "" {
@@ -60,18 +61,4 @@ func buildPrompt(literal, fileBody, instructions string, untrusted bool) string 
 		return fenced
 	}
 	return instructions + "\n\n" + fenced
-}
-
-// joinPromptBody concatenates the --prompt literal and the --prompt-file body. Both
-// may be supplied; the literal comes first, separated by a blank line. Each side is
-// included only when non-empty so a lone source never carries a stray separator.
-func joinPromptBody(literal, fileBody string) string {
-	parts := make([]string, 0, 2)
-	if s := strings.TrimRight(literal, "\n"); s != "" {
-		parts = append(parts, s)
-	}
-	if s := strings.TrimRight(fileBody, "\n"); s != "" {
-		parts = append(parts, s)
-	}
-	return strings.Join(parts, "\n\n")
 }

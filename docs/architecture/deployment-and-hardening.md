@@ -17,7 +17,11 @@ and `cmd/mecated` wires the knobs:
   `--client-ca`). The server still **warns loudly** if it binds a non-loopback
   address with no auth configured.
 - **Rate limiting** — per-client + global token-bucket (`--rate-limit` /
-  `--rate-burst`), bounded and idle-evicting.
+  `--rate-burst`), bounded and idle-evicting. With OIDC enabled, a separate
+  pre-validation rejected-token bucket protects JWT/JWKS validation. It is keyed
+  only by the direct transport peer IP (`RemoteAddr` / gRPC peer), never by
+  `Forwarded` or `X-Forwarded-For`; valid tokens do not consume it and proceed to
+  the unchanged post-validation `(issuer, subject)` limiter.
 - **Health** — HTTP `/healthz` (liveness) + `/readyz` (readiness) mounted outside
   auth/rate-limit, plus standard `grpc_health_v1` `SERVING` (`internal/adapter/server/health.go`).
 - **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.

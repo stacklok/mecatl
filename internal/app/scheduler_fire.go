@@ -83,7 +83,9 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// override means the fire's persisted session carries the sched-- family
 		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
 		fireID := newFireID(sched.Spec.Name, now)
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile, server.WithSessionID(session.SessionID(fireID)))
+		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile,
+			server.WithSessionID(session.SessionID(fireID)),
+			server.WithOwner(fireSessionOwner(sched.Spec.Owner)))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
 		}
@@ -182,7 +184,18 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// pointer to the session id.
 		var stop session.StopReason
 		var runErr string
+		// Cancel-detached, exactly as the wire relays' logCtx: the fire's ctx may
+		// already be cancelled (watchdog, shutdown) when the terminal events land,
+		// and the durable log exists precisely to record that tail.
+		logCtx := context.WithoutCancel(ctx)
 		for ev := range run.Events() {
+			// The fire loop is this run's only consumer, so it owns the durable
+			// append the gRPC/HTTP relays do for a client-driven run. It routes
+			// through the ONE stamping path (Service.appendEvent), which attributes
+			// each event to the caller on this ctx — the scheduler's SYSTEM
+			// principal, the thing that actually acted. The schedule's owner stays
+			// on the fire SESSION (ADR 0100 decisions 5 + 6).
+			svc.AppendRunEvent(logCtx, sess.ID, ev)
 			// RecordFireProgress on turn-boundary / activity events (issue #386):
 			// NOT every chunk — once per EvToolCall / EvTurnEnd / EvResult, so a
 			// long streaming turn does not stamp a per-delta. Best-effort WARN.
@@ -245,6 +258,28 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			Err:          runErr,
 		}, nil
 	}
+}
+
+// fireSessionOwner projects the SCHEDULE's captured owner (ADR 0100 decision 6)
+// onto the fire session's owner: the same (issuer, subject) identity, with
+// GrantType client_credentials — a fire is automated, not interactive, and the
+// grant type says so honestly while attribution still collapses to the
+// accountable person.
+//
+// It is passed to CreateSessionWithProfile UNCONDITIONALLY (server.WithOwner):
+// the fire runs under the scheduler's SYSTEM principal, so without the explicit
+// injection the create-seam would stamp mecatl:internal/scheduler as the fire
+// session's owner. A nil (ownerless) schedule yields WithOwner(nil) — the
+// EXPLICIT ownerless injection, which deliberately does NOT fall back to the
+// context principal: an ownerless schedule's fire stays ownerless rather than
+// being adopted by the harness.
+func fireSessionOwner(owner *session.Principal) *session.Principal {
+	out := owner.Clone()
+	if out == nil {
+		return nil
+	}
+	out.GrantType = session.GrantTypeClientCredentials
+	return out
 }
 
 // newFireID mints a per-fire identifier: "sched--<name>-<UTC compact>-<randhex>".

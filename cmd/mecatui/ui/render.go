@@ -86,6 +86,18 @@ type renderer struct {
 	th    theme.Theme
 	width int
 
+	// marks carries the LIVE chord markings derived from the model's keyMap at
+	// construction (keyMarkings). The inline-card affordances that reference
+	// rebindable actions — the ExpandTools chord ("ctrl+t" by default) in the
+	// reasoning/subagent/team headers and the collapse/rollup markers, and the
+	// Agents chord ("ctrl+a") in the team "+N more" roll-up — read them off
+	// here so an override propagates to those affordances (issue #457, the
+	// #455 liveness pattern extended to inline cards). Set once at construction
+	// from keyMarkings; a bare &renderer{th: th} (the width-0 team/fleet focus
+	// panes) is seeded with defaultHelpKeys() so its output stays
+	// byte-identical to the pre-#457 default.
+	marks helpKeys
+
 	// indent is the left margin (in cells) prepended to EVERY conversation block so the
 	// history aligns with the 1-col-padded header/footer instead of sitting flush at
 	// column 0. It is applied in renderBlock (the cache-miss path) by prefixing each
@@ -320,10 +332,15 @@ const defaultBlockIndent = 1
 // hang never exceeds r.width.
 const assistantBodyHang = 2
 
-// newRenderer builds a renderer for a theme.
-func newRenderer(th theme.Theme) *renderer {
+// newRenderer builds a renderer for a theme, seeded with the LIVE chord
+// markings (hk) so inline-card affordances that reference rebindable actions
+// (ExpandTools/Agents) reflect any override (issue #457). With default keys hk
+// resolves to exactly the literals the affordances used to hardcode, so the
+// goldens stay byte-identical.
+func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
 		th:         th,
+		marks:      hk,
 		indent:     defaultBlockIndent,
 		cache:      map[int]*glamour.TermRenderer{},
 		blockMD:    map[int]mdEntry{},
@@ -1185,13 +1202,14 @@ func (r *renderer) renderReasoning(b *block, expand bool) string {
 	style := r.th.Style("reasoning")
 	text := sanitizeTerminal(strings.TrimRight(b.reasoning, "\n"))
 	n := lineCount(text)
+	expandMark := r.marks.expandTools
 	if !expand {
 		if b.reasoningStreaming {
 			return style.Render("reasoning…")
 		}
-		return style.Render("reasoning summary · " + plural(n, "line") + " · ctrl+t expand")
+		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
 	}
-	header := style.Render("reasoning summary · " + plural(n, "line") + " · ctrl+t collapse")
+	header := style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " collapse")
 	return header + "\n" + r.wrapStyled(reasoningCaveat, style) + "\n" + r.wrapStyled(text, style)
 }
 
@@ -1520,7 +1538,7 @@ func (r *renderer) renderToolResultBody(b *block, expand bool) string {
 	if summary, ok := r.summarizeResolvedResult(b, expand); ok {
 		return summary
 	}
-	body := resultBody(b.resultBody, expand)
+	body := r.resultBody(b.resultBody, expand)
 	if body == "" {
 		return ""
 	}
@@ -1635,7 +1653,7 @@ func (r *renderer) renderSubagent(b *block, expand bool) string {
 		return strings.TrimRight(out.String(), "\n")
 	}
 
-	out.WriteString(muted.Render(subagentLiveLine(b)))
+	out.WriteString(muted.Render(r.subagentLiveLine(b)))
 	return strings.TrimRight(out.String(), "\n")
 }
 
@@ -1681,19 +1699,22 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 
 // subagentLiveLine is the calm, monotonic collapsed status line: the child's live
 // current-tool name (when one has run — "…" while it is still working), the token
-// totals, a running tool count, and the ctrl+t trace affordance. No elapsed clock
+// totals, a running tool count, and the expand-tools trace affordance. No elapsed clock
 // and no heartbeat ticker, so the line changes only when the tool actually changes
-// (ADR 0079 AC3.1). The tool name is sanitized (server-derived).
-func subagentLiveLine(b *block) string {
+// (ADR 0079 AC3.1). The tool name is sanitized (server-derived). The trace chord
+// reads the LIVE ExpandTools marking (r.marks.expandTools) so an override propagates
+// (issue #457).
+func (r *renderer) subagentLiveLine(b *block) string {
 	current := "…"
 	if b.subCurrent != "" {
 		current = sanitizeTerminal(b.subCurrent)
 	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · ctrl+t trace",
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace",
 		current,
 		humanizeTokens(b.subUsage.InputTokens),
 		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"))
+		plural(b.subToolCount, "tool"),
+		r.marks.expandTools)
 }
 
 // subagentResolvedLine is the muted one-line summary shown once the child run has
@@ -1860,7 +1881,7 @@ func (r *renderer) renderTeam(b *block, expand bool) string {
 		return out.String()
 	}
 
-	out.WriteString(muted.Render(teamHeader(b, expand)))
+	out.WriteString(muted.Render(r.teamHeader(b, expand)))
 
 	order := teamLaneOrder(b.teamLanes)
 	shown := order
@@ -1884,23 +1905,25 @@ func (r *renderer) renderTeam(b *block, expand bool) string {
 		}
 	}
 	if extra := len(order) - len(shown); extra > 0 {
-		// The inline card caps at maxTeamLanes; the rest live in the ctrl+a overlay.
+		// The inline card caps at maxTeamLanes; the rest live in the agents overlay.
 		// Advertise it on the roll-up so a capped card is the discovery point for the
-		// full, windowed roster.
+		// full, windowed roster. The chord reads the LIVE Agents marking so an override
+		// propagates (issue #457).
 		out.WriteString("\n")
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more · ctrl+a", extra)))
+		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents)))
 	}
 	return out.String()
 }
 
 // teamHeader is the muted lead line summarising the team's shape: the member count
-// and the ctrl+t affordance, whose verb tracks the toggle (trace when collapsed,
+// and the expand-tools affordance, whose verb tracks the toggle (trace when collapsed,
 // collapse when expanded). The round count is carried only on team.end, so it is
-// shown on the resolved line rather than fabricated live.
-func teamHeader(b *block, expand bool) string {
-	verb := "ctrl+t trace"
+// shown on the resolved line rather than fabricated live. The chord reads the LIVE
+// ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
+func (r *renderer) teamHeader(b *block, expand bool) string {
+	verb := r.marks.expandTools + " trace"
 	if expand {
-		verb = "ctrl+t collapse"
+		verb = r.marks.expandTools + " collapse"
 	}
 	return "team · " + plural(len(b.teamLanes), "member") + " · " + verb
 }
@@ -2155,11 +2178,11 @@ func humanizeDuration(ms int64) string {
 }
 
 // resultBody renders a tool result body: full when expanded, else line-capped.
-func resultBody(body string, expand bool) string {
+func (r *renderer) resultBody(body string, expand bool) string {
 	if expand {
 		return sanitizeTerminal(strings.TrimRight(body, "\n"))
 	}
-	return truncateLines(body, maxToolResultLines)
+	return r.truncateLines(body, maxToolResultLines)
 }
 
 // renderChangedFiles renders the session's changed-files summary as a muted,
@@ -2304,7 +2327,7 @@ func (r *renderer) diffSide(text, prefix, slot string, expand bool) string {
 	if !expand && len(lines) > maxDiffLines {
 		extra := len(lines) - maxDiffLines
 		lines = lines[:maxDiffLines]
-		marker = collapseMarker(extra)
+		marker = r.collapseMarker(extra)
 	}
 	style := r.th.Style(slot)
 	var b strings.Builder
@@ -2391,28 +2414,30 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 	// shape so adjacent collapsed cards/results read consistently.
 	if extra := len(keys) - len(shown); extra > 0 {
 		b.WriteString("\n")
-		b.WriteString(muted.Render(argRollupMarker(extra)))
+		b.WriteString(muted.Render(r.argRollupMarker(extra)))
 	} else if valueCollapsed {
 		b.WriteString("\n")
-		b.WriteString(muted.Render(argRollupMarker(0)))
+		b.WriteString(muted.Render(r.argRollupMarker(0)))
 	}
 	return b.String(), true
 }
 
 // argRollupMarker formats the collapsed-args affordance footer, matching
-// collapseMarker's "  … <…> · ctrl+t expand" shape (leading "…", indented) so an
+// collapseMarker's "  … <…> · <expand> expand" shape (leading "…", indented) so an
 // arg roll-up and a line-capped result/diff don't show two different "there's
 // more" idioms. n>0 names the hidden-key count ("+K more keys"); n==0 (a pure
-// per-value collapse, no key overflow) shows just the expand hint.
-func argRollupMarker(n int) string {
+// per-value collapse, no key overflow) shows just the expand hint. The chord
+// reads the LIVE ExpandTools marking (r.marks.expandTools) so an override
+// propagates (issue #457).
+func (r *renderer) argRollupMarker(n int) string {
 	if n <= 0 {
-		return "  … ctrl+t expand"
+		return "  … " + r.marks.expandTools + " expand"
 	}
 	noun := "keys"
 	if n == 1 {
 		noun = "key"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · ctrl+t expand"
+	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.expandTools + " expand"
 }
 
 // sortedArgKeys returns obj's keys in deterministic render order: the keys in
@@ -2742,20 +2767,38 @@ func (r *renderer) summarizeResolvedResult(b *block, expand bool) (string, bool)
 	return r.summarizeResult(b.resultBody)
 }
 
-// truncateLines clamps s to max lines, appending a "+N more lines · ctrl+t
-// expand" affordance when it overflows. Used for tool results and diff sides,
-// where ctrl+t is the way to see the rest.
-func truncateLines(s string, maxLines int) string {
-	return truncateLinesTail(s, maxLines, "")
+// truncateLines clamps s to max lines, appending a "+N more lines · <expand> expand"
+// affordance when it overflows. Used for tool results and diff sides, where the
+// expand-tools chord is the way to see the rest. The chord reads the LIVE
+// ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
+func (r *renderer) truncateLines(s string, maxLines int) string {
+	return r.truncateLinesTail(s, maxLines, "")
 }
 
 // truncateLinesTail clamps s to maxLines lines, appending an overflow tail when
-// it overflows. An empty tail uses the default "+N more lines · ctrl+t expand"
-// collapse marker (the ctrl+t-referencing form for collapsible content); a
+// it overflows. An empty tail uses the default "+N more lines · <expand> expand"
+// collapse marker (the expand-tools-referencing form for collapsible content); a
 // non-empty tail is used verbatim instead — e.g. a neutral "…(truncated)" for
 // already-expanded reasoning, which must NOT reference the toggle that revealed
 // it. The (server-derived) body is terminal-sanitized.
-func truncateLinesTail(s string, maxLines int, tail string) string {
+func (r *renderer) truncateLinesTail(s string, maxLines int, tail string) string {
+	return truncateLinesTailMark(s, maxLines, tail, r.marks.expandTools)
+}
+
+// collapseMarker formats the "+N more line(s) · <expand> expand" affordance shown
+// when a tool result or diff side is line-capped. The verb matches the footer
+// help line's collapsed-state hint ("<expand> expand") — the expand/collapse pair
+// is used consistently across help line, keybinding help, and this marker. The
+// chord reads the LIVE ExpandTools marking (r.marks.expandTools) so an override
+// propagates (issue #457).
+func (r *renderer) collapseMarker(n int) string {
+	return collapseMarkerMark(n, r.marks.expandTools)
+}
+
+// truncateLinesTailMark is the free-function core of truncateLinesTail, taking the
+// expand chord explicitly so non-renderer callers (the MCP resource preview, which
+// has no *renderer) can thread the LIVE ExpandTools marking through (issue #457).
+func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) string {
 	s = sanitizeTerminal(strings.TrimRight(s, "\n"))
 	if s == "" {
 		return ""
@@ -2767,21 +2810,19 @@ func truncateLinesTail(s string, maxLines int, tail string) string {
 	kept := lines[:maxLines]
 	marker := tail
 	if marker == "" {
-		marker = collapseMarker(len(lines) - maxLines)
+		marker = collapseMarkerMark(len(lines)-maxLines, expandMark)
 	}
 	return strings.Join(kept, "\n") + "\n" + lipgloss.NewStyle().Render(marker)
 }
 
-// collapseMarker formats the "+N more line(s) · ctrl+t expand" affordance shown
-// when a tool result or diff side is line-capped. The verb matches the footer
-// help line's collapsed-state hint ("ctrl+t expand") — the expand/collapse pair
-// is used consistently across help line, keybinding help, and this marker.
-func collapseMarker(n int) string {
+// collapseMarkerMark is the free-function core of collapseMarker, taking the
+// expand chord explicitly (issue #457).
+func collapseMarkerMark(n int, expandMark string) string {
 	noun := "lines"
 	if n == 1 {
 		noun = "line"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · ctrl+t expand"
+	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + expandMark + " expand"
 }
 
 // lineCount returns the number of text lines in s (0 for empty, otherwise one

@@ -2,6 +2,9 @@ package server_test
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -215,6 +218,14 @@ func TestFireDelivery_Scenario5_TUIRendersRecordedNoteNotRaw(t *testing.T) {
 // drains-to-discard without wedging the delivery run; the durable log still
 // records the tail. (The wire-transport half is task 08's AC6.3.)
 func TestFireDelivery_Scenario6_DeadClientDrainsWithoutWedging(t *testing.T) {
+	runSubscriptionHelper(t, "MECATL_SUBSCRIPTION_DEAD_CLIENT_HELPER", "TestFireDelivery_Scenario6_DeadClientDrainsWithoutWedgingHelper")
+}
+
+func TestFireDelivery_Scenario6_DeadClientDrainsWithoutWedgingHelper(t *testing.T) {
+	if os.Getenv("MECATL_SUBSCRIPTION_DEAD_CLIENT_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+
 	svc := newSubscriptionService(t,
 		mockllm.TextTurn("ack: delivery received"),
 	)
@@ -290,6 +301,259 @@ func TestFireDelivery_Scenario6_DeadClientDrainsWithoutWedging(t *testing.T) {
 	}
 
 	_ = sub
+}
+
+// TestSubscriptionFullBufferPublishDoesNotBlock runs the overflowing publish in
+// a subprocess. If a regression blocks that call, CommandContext kills only the
+// helper process, so this test neither hangs nor leaks a publisher goroutine.
+func TestSubscriptionFullBufferPublishDoesNotBlock(t *testing.T) {
+	runSubscriptionHelper(t, "MECATL_SUBSCRIPTION_FULL_BUFFER_HELPER", "TestSubscriptionFullBufferPublishHelper")
+}
+
+func runSubscriptionHelper(t *testing.T, env, testName string) {
+	t.Helper()
+	// Generous: this bounds a HANG, not the helper's runtime. A -race helper on a
+	// 2-core CI runner is an order of magnitude slower than a dev laptop.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+testName+"$")
+	cmd.Env = append(os.Environ(), env+"=1")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("%s did not return before deadline: %v", testName, ctx.Err())
+	}
+	if err != nil {
+		t.Fatalf("%s failed: %v\n%s", testName, err, output)
+	}
+}
+
+func TestSubscriptionFullBufferPublishHelper(t *testing.T) {
+	if os.Getenv("MECATL_SUBSCRIPTION_FULL_BUFFER_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+
+	svc := newSubscriptionService(t)
+	defer svc.Close()
+	id := session.SessionID("subscription-full-buffer")
+	ch, unsub := svc.Subscribe(id)
+
+	// Verify the subscription is live before filling it and asserting closure.
+	svc.PublishSessionEvent(id, session.Event{Type: session.EvTurnStart})
+	if _, ok := <-ch; !ok {
+		t.Fatal("live subscription closed before receiving its first event")
+	}
+
+	for range 64 {
+		svc.PublishSessionEvent(id, session.Event{})
+	}
+	// This is the call whose return is bounded by the parent process.
+	svc.PublishSessionEvent(id, session.Event{})
+
+	unsub()
+	count := 0
+	for range ch {
+		count++
+	}
+	if count != 64 {
+		t.Fatalf("full subscriber received %d events, want buffer capacity 64", count)
+	}
+}
+
+// TestSubscriptionConcurrentPublishAndUnsubscribe keeps publishers live while
+// subscriptions for one session are repeatedly created and idempotently removed.
+func TestSubscriptionConcurrentPublishAndUnsubscribe(t *testing.T) {
+	runSubscriptionHelper(t, "MECATL_SUBSCRIPTION_CHURN_HELPER", "TestSubscriptionConcurrentPublishAndUnsubscribeHelper")
+}
+
+func TestSubscriptionConcurrentPublishAndUnsubscribeHelper(t *testing.T) {
+	if os.Getenv("MECATL_SUBSCRIPTION_CHURN_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+
+	svc := newSubscriptionService(t)
+	defer svc.Close()
+
+	const (
+		publishers    = 8
+		churners      = 16
+		subscriptions = 32
+	)
+	id := session.SessionID("subscription-concurrency")
+
+	publishStart := make(chan struct{})
+	stopPublishers := make(chan struct{})
+	publishActive := make(chan struct{}, publishers)
+	var publishersDone sync.WaitGroup
+	publishersDone.Add(publishers)
+	for range publishers {
+		go func() {
+			defer publishersDone.Done()
+			<-publishStart
+			// Confirm that this publisher has made a real call before churn begins.
+			svc.PublishSessionEvent(id, session.Event{Type: session.EvTurnStart})
+			publishActive <- struct{}{}
+			for {
+				select {
+				case <-stopPublishers:
+					return
+				default:
+					svc.PublishSessionEvent(id, session.Event{})
+					// Yield: an unthrottled publish loop starves the churners on a
+					// low-core CI runner under -race, and the point of this test is
+					// concurrency, not publish throughput.
+					runtime.Gosched()
+				}
+			}
+		}()
+	}
+	close(publishStart)
+	for range publishers {
+		<-publishActive
+	}
+
+	var churnDone sync.WaitGroup
+	churnDone.Add(churners)
+	for range churners {
+		go func() {
+			defer churnDone.Done()
+			for range subscriptions {
+				ch, unsub := svc.Subscribe(id)
+
+				// A receive proves this individual subscription was live before
+				// the concurrent publisher/unsubscribe phase. It may be a publisher
+				// event or this explicit event; either is a successful delivery.
+				svc.PublishSessionEvent(id, session.Event{Type: session.EvTurnStart})
+				if _, ok := <-ch; !ok {
+					t.Error("subscription closed before receiving its first event")
+					return
+				}
+
+				// Keep the buffer available while unsubscribe races the publishers,
+				// so the publishers execute sends rather than only the full-buffer
+				// drop path. The helper-process parent bounds this wait if a broken
+				// implementation fails to close the channel.
+				drained := make(chan struct{})
+				go func() {
+					for range ch {
+					}
+					close(drained)
+				}()
+
+				// Publishers are already active and keep publishing throughout these
+				// calls; this is intentionally ordered after their first real publish,
+				// rather than merely co-releasing both sides of the race.
+				var duplicateUnsub sync.WaitGroup
+				duplicateUnsub.Add(2)
+				for range 2 {
+					go func() {
+						defer duplicateUnsub.Done()
+						unsub()
+					}()
+				}
+				duplicateUnsub.Wait()
+
+				// The drainer completes only after this exact returned channel closes.
+				<-drained
+			}
+		}()
+	}
+
+	churnDone.Wait()
+	close(stopPublishers)
+	publishersDone.Wait()
+}
+
+// TestSubscriptionCloseOverlapsPublish verifies shutdown closes existing
+// subscribers without racing publishers, and that subscriptions made after
+// shutdown are already closed and can still be unsubscribed idempotently.
+func TestSubscriptionCloseOverlapsPublish(t *testing.T) {
+	runSubscriptionHelper(t, "MECATL_SUBSCRIPTION_CLOSE_HELPER", "TestSubscriptionCloseOverlapsPublishHelper")
+}
+
+func TestSubscriptionCloseOverlapsPublishHelper(t *testing.T) {
+	if os.Getenv("MECATL_SUBSCRIPTION_CLOSE_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+
+	svc := newSubscriptionService(t)
+	const (
+		subscribers = 32
+		publishers  = 8
+	)
+	id := session.SessionID("subscription-close-concurrency")
+
+	channels := make([]<-chan session.Event, 0, subscribers)
+	for range subscribers {
+		ch, _ := svc.Subscribe(id)
+		channels = append(channels, ch)
+	}
+	// Establish every pre-existing channel is live before Close is asserted to
+	// close it. Each publish reaches all channels; each receive drains one.
+	for _, ch := range channels {
+		svc.PublishSessionEvent(id, session.Event{Type: session.EvTurnStart})
+		if _, ok := <-ch; !ok {
+			t.Fatal("pre-existing subscription closed before receiving its first event")
+		}
+	}
+
+	publishStart := make(chan struct{})
+	stopPublishers := make(chan struct{})
+	publishActive := make(chan struct{}, publishers)
+	var publishersDone sync.WaitGroup
+	publishersDone.Add(publishers)
+	for range publishers {
+		go func() {
+			defer publishersDone.Done()
+			<-publishStart
+			// Close begins only after every publisher has entered the API at least
+			// once, then each continues publishing through the Close call.
+			svc.PublishSessionEvent(id, session.Event{Type: session.EvTurnStart})
+			publishActive <- struct{}{}
+			for {
+				select {
+				case <-stopPublishers:
+					return
+				default:
+					svc.PublishSessionEvent(id, session.Event{})
+					runtime.Gosched() // see the churn helper: don't starve the other side
+				}
+			}
+		}()
+	}
+	close(publishStart)
+	for range publishers {
+		<-publishActive
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closeDone)
+	}()
+
+	<-closeDone
+	close(stopPublishers)
+	publishersDone.Wait()
+
+	// Every channel returned before shutdown must close, even when it retained
+	// buffered events at the point Close won the race.
+	for _, ch := range channels {
+		for range ch {
+		}
+	}
+
+	postClose, unsub := svc.Subscribe(id)
+	select {
+	case _, ok := <-postClose:
+		if ok {
+			t.Fatal("Subscribe after Close returned an open channel")
+		}
+	default:
+		t.Fatal("Subscribe after Close returned a channel that is not already closed")
+	}
+	unsub()
+	unsub()
 }
 
 // newSubscriptionService builds a Service with jsonlstore + mockllm for
