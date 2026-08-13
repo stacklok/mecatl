@@ -1404,6 +1404,56 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 	}
 }
 
+// TestHeaderProviderRouteSuffix proves the routed downstream provider appears as a
+// "/ <name>" suffix on the header model segment (issue #480) ONLY once a route has
+// been reported this session, and is absent before any routed turn (no stale or
+// fabricated suffix).
+func TestHeaderProviderRouteSuffix(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "moonshotai/kimi-k3"}
+	m.phase = phaseIdle // a bound session, so the model segment renders
+	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
+
+	// Before any provider.route event: the bare model segment, no "/" suffix.
+	header := stripANSIstr(m.renderHeader())
+	if strings.Contains(header, "kimi-k3/") {
+		t.Fatalf("no route yet — header must NOT show a downstream suffix, got:\n%s", header)
+	}
+
+	// A provider.route event arrives (the openrouter entry routed to Google).
+	m = applyAll(m, client.ProviderRouteMsg{Text: "Google"})
+	header = stripANSIstr(m.renderHeader())
+	if !strings.Contains(header, "kimi-k3/Google") {
+		t.Errorf("header should show the model + routed downstream as 'kimi-k3/Google', got:\n%s", header)
+	}
+	if statusText := stripANSIstr(m.statusMsg); !strings.Contains(statusText, "via Google") {
+		t.Errorf("route arrival should show transient footer status, got %q", statusText)
+	}
+
+	// A subsequent route updates the suffix (e.g. a fallback kicked in).
+	m = applyAll(m, client.ProviderRouteMsg{Text: "Amazon Bedrock"})
+	header = stripANSIstr(m.renderHeader())
+	if !strings.Contains(header, "kimi-k3/Amazon Bedrock") {
+		t.Errorf("header should track the latest routed downstream, got:\n%s", header)
+	}
+
+	// The next turn clears the per-turn route before any metadata arrives. This is
+	// the cache-hit/metadata-miss path: absence must render absence, never stale data.
+	m = applyAll(m, client.TurnStartMsg{Turn: 2})
+	header = stripANSIstr(m.renderHeader())
+	if strings.Contains(header, "kimi-k3/") {
+		t.Errorf("a new turn with no route must clear the stale suffix, got:\n%s", header)
+	}
+
+	// Session reset is the other stale-state boundary.
+	m.providerRoute = "Google"
+	m = m.resetSession()
+	if m.providerRoute != "" {
+		t.Errorf("resetSession must clear providerRoute, got %q", m.providerRoute)
+	}
+}
+
 // --- goldens ---------------------------------------------------------------
 
 // TestModelsPickerGolden locks the populated, grouped picker with an active marker

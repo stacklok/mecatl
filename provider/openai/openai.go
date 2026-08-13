@@ -68,18 +68,27 @@ type Provider struct {
 	// promptCacheKey — see cachekey.go. A pointer (not embedded by value) so
 	// the zero-value Provider needs no initialisation.
 	cacheMemo atomic.Pointer[prefixMemo]
+	// providerPrefs resolves the OpenRouter downstream-provider routing object
+	// for a request's model (issue #480); nil for every non-openrouter entry, so
+	// the `provider` body key is only ever stamped for OpenRouter.
+	providerPrefs func(model string) *OpenRouterProviderPreferences
+	// metadataHeader arms the X-OpenRouter-Metadata: enabled header so OpenRouter
+	// returns the routed-downstream metadata block; gated to the openrouter entry.
+	metadataHeader bool
 }
 
 // Option configures a Provider.
 type Option func(*config)
 
 type config struct {
-	apiKey       string
-	baseURL      string
-	effort       string
-	caps         *port.ProviderCapabilities
-	extra        []option.RequestOption
-	cacheDialect CacheDialect
+	apiKey         string
+	baseURL        string
+	effort         string
+	caps           *port.ProviderCapabilities
+	extra          []option.RequestOption
+	cacheDialect   CacheDialect
+	providerPrefs  func(model string) *OpenRouterProviderPreferences
+	metadataHeader bool
 }
 
 // WithAPIKey sets the API key used to authenticate requests.
@@ -145,6 +154,46 @@ func WithRequestOption(opts ...option.RequestOption) Option {
 	return func(c *config) { c.extra = append(c.extra, opts...) }
 }
 
+// OpenRouterProviderPreferences is the OpenRouter DOWNSTREAM-provider routing object
+// (issue #480) stamped onto the request body's `provider` key. It is the
+// adapter-local, provider-private mirror of OpenRouter's ProviderPreferences
+// schema — v1 carries only Order + AllowFallbacks. It is NOT a port.LLMRequest
+// field: the request stays provider-neutral and the knob is minted per model at
+// adapter construction (the remint discipline).
+//
+// Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic",
+// "google-vertex", "deepinfra/turbo") tried in order; setting it disables
+// OpenRouter's default price load-balancing. AllowFallbacks is a POINTER so
+// "absent" (OpenRouter default true) is distinguishable from an explicit false
+// (pin hard to Order, no fallback). Base-slug matching applies: "google-vertex"
+// matches all its regions/variants (service tiers excepted).
+type OpenRouterProviderPreferences struct {
+	Order          []string
+	AllowFallbacks *bool
+}
+
+// WithOpenRouterProviderPreferences sets a resolve-at-request closure keyed on the
+// request's model id, returning the downstream-provider routing object for that
+// model (nil = send nothing). The per-model closure shape exists because the
+// registry entry is shared across models while the config is per-model. It is
+// gated to the openrouter registry entry in COMPOSITION — every other entry
+// passes no Option, so the `provider` key can never leak to a non-OpenRouter
+// endpoint. The body key is injected via option.WithJSONSet at Stream time, so
+// buildParams and the byte-stable prompt-cache prefix are untouched.
+func WithOpenRouterProviderPreferences(resolve func(model string) *OpenRouterProviderPreferences) Option {
+	return func(c *config) { c.providerPrefs = resolve }
+}
+
+// WithOpenRouterMetadata arms the `X-OpenRouter-Metadata: enabled` request header,
+// which makes OpenRouter return the openrouter_metadata block (naming the routed
+// downstream provider) on the terminal streaming event. It is a SEPARATE Option
+// from WithOpenRouterProviderPreferences so the routing echo works even with no order
+// configured. Gated to the openrouter registry entry in composition. The adapter
+// never logs; the value reaches the loop as ChunkProviderRoute.
+func WithOpenRouterMetadata(enabled bool) Option {
+	return func(c *config) { c.metadataHeader = enabled }
+}
+
 // New constructs a Provider. At minimum supply WithAPIKey; add WithBaseURL for
 // compatible endpoints.
 func New(opts ...Option) *Provider {
@@ -169,7 +218,14 @@ func New(opts ...Option) *Provider {
 	reqOpts = append(reqOpts, c.extra...)
 
 	client := oai.NewClient(reqOpts...)
-	return &Provider{client: client.Responses, effort: c.effort, caps: c.caps, cacheDialect: c.cacheDialect}
+	return &Provider{
+		client:         client.Responses,
+		effort:         c.effort,
+		caps:           c.caps,
+		cacheDialect:   c.cacheDialect,
+		providerPrefs:  c.providerPrefs,
+		metadataHeader: c.metadataHeader,
+	}
 }
 
 // Stream issues a streaming Responses request and yields provider-neutral
@@ -187,8 +243,14 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 		return nil, err
 	}
 
+	// Per-REQUEST OpenRouter routing options (issue #480). These are request
+	// options, NOT buildParams output: the `provider` key is routing metadata, so
+	// the params struct and the byte-stable prompt-cache prefix stay untouched.
+	// Both the initial attempt and the encrypted-reasoning fallback carry them.
+	reqOpts := p.routingRequestOptions(req.Model)
+
 	return func(yield func(port.Chunk, error) bool) {
-		emitted, stopped, streamErr := p.streamAttempt(ctx, params, yield)
+		emitted, stopped, streamErr := p.streamAttempt(ctx, params, reqOpts, yield)
 		if stopped || streamErr == nil || ctx.Err() != nil {
 			return
 		}
@@ -209,11 +271,40 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			yield(port.Chunk{}, buildErr)
 			return
 		}
-		_, stopped, streamErr = p.streamAttempt(ctx, fallbackParams, yield)
+		_, stopped, streamErr = p.streamAttempt(ctx, fallbackParams, reqOpts, yield)
 		if !stopped && streamErr != nil && ctx.Err() == nil {
 			yield(port.Chunk{}, &encryptedReasoningFallbackError{err: streamErr})
 		}
 	}, nil
+}
+
+// routingRequestOptions builds the OpenRouter per-request options for model: the
+// `provider` body key (when providerPrefs resolves one) and the
+// X-OpenRouter-Metadata header (when armed). It returns nil for every
+// non-openrouter entry (both knobs unset), so the openai/anthropic/toolhive wire
+// is byte-identical to before — the routing object can never leak to a
+// non-OpenRouter endpoint. WithJSONSet mutates the marshalled body buffer (an
+// SDK-sanctioned escape hatch), leaving buildParams' params struct clean.
+func (p *Provider) routingRequestOptions(model string) []option.RequestOption {
+	var opts []option.RequestOption
+	if p.providerPrefs != nil {
+		if prefs := p.providerPrefs(model); prefs != nil {
+			body := map[string]any{}
+			if len(prefs.Order) > 0 {
+				body["order"] = prefs.Order
+			}
+			if prefs.AllowFallbacks != nil {
+				body["allow_fallbacks"] = *prefs.AllowFallbacks
+			}
+			if len(body) > 0 {
+				opts = append(opts, option.WithJSONSet("provider", body))
+			}
+		}
+	}
+	if p.metadataHeader {
+		opts = append(opts, option.WithHeader("X-OpenRouter-Metadata", "enabled"))
+	}
+	return opts
 }
 
 // encryptedReasoningFallbackError marks a failed cleaned fallback as terminal for
@@ -232,11 +323,11 @@ func (*encryptedReasoningFallbackError) Retryable() bool { return false }
 // provider-neutral chunk was handed to the caller; stopped means the caller declined a
 // chunk. An HTTP/SSE/clean-EOF failure is returned rather than yielded so Stream can make
 // the single pre-commit encrypted-reasoning recovery decision in one place.
-func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseNewParams, yield func(port.Chunk, error) bool) (emitted, stopped bool, err error) {
-	stream := p.client.NewStreaming(ctx, params)
+func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseNewParams, reqOpts []option.RequestOption, yield func(port.Chunk, error) bool) (emitted, stopped bool, err error) {
+	stream := p.client.NewStreaming(ctx, params, reqOpts...)
 	defer func() { _ = stream.Close() }()
 
-	var st streamState
+	st := streamState{providerRoute: p.metadataHeader}
 	for stream.Next() {
 		if ctx.Err() != nil {
 			return emitted, false, nil

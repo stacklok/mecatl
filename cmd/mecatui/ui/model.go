@@ -418,6 +418,14 @@ type Model struct {
 	// default itself. Zero value (empty ids) until SessionReadyMsg and for an older
 	// server → the header shows no model segment. The model is FIXED per session.
 	effectiveModel client.ResolvedModel
+	// providerRoute is the DOWNSTREAM provider the serving provider routed the LATEST
+	// turn to (issue #480; today only the openrouter entry produces it, as a display
+	// name like "Google"). Updated on each ProviderRouteMsg; the header appends it to
+	// the model segment as "/ <name>" so the operator sees the routed downstream next
+	// to the model id. Empty until the first routed turn, on a cache hit (OpenRouter
+	// strips the metadata), and for any non-routed provider — the header then shows
+	// the bare model segment, never a stale or fabricated suffix.
+	providerRoute string
 	// activeWorkspace is the workspace root the CURRENT session is bound to. Seeded
 	// from Deps.Workspace at construction (the launch root) and updated by
 	// switchToWorktree (issue #102) to the chosen worktree path. Shown in the header
@@ -831,6 +839,7 @@ func (m Model) resetSession() Model {
 	m.contextTokens = 0
 	m.activeTool = ""
 	m.toolProgress = ""
+	m.providerRoute = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
 	// / adopted from the stored session on a switch), so a /clear or a /models
 	// restart-now must not leave a stale label on the freshly-cleared session.

@@ -289,6 +289,15 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	// never resolves a default itself. While connecting there is NO model segment.
 	if name := m.headerModelLabel(); name != "" {
 		seg := truncate(sanitizeTerminal(name), maxModelLen)
+		// Downstream-provider suffix (issue #480): when the serving provider routed
+		// this session's latest turn to a DOWNSTREAM provider (openrouter today), append
+		// "/ <name>" so the operator sees e.g. "Kimi K3/Google". Shown ONLY when a route
+		// has actually been reported this session (m.providerRoute non-empty) — empty on
+		// a cache hit, before the first turn, and for any non-routed provider, so the
+		// bare model segment shows with no stale/fabricated suffix.
+		if m.providerRoute != "" {
+			seg += "/" + sanitizeTerminal(m.providerRoute)
+		}
 		// Reasoning-effort suffix (ADR 0055): the EFFECTIVE effort the server resolved
 		// THIS session to, appended as a subtle ` · <effort>` so it rides WITH the model
 		// segment (and sheds with it under width pressure). Shown ONLY when non-empty

@@ -170,6 +170,15 @@ type Resolver struct {
 	// out-ranks user-global (first-non-nil keeps CLI).
 	operatorModels *ModelsSection
 
+	// operatorOpenRouter is the OPERATOR-TIER openrouter: subtree (issue #480), read
+	// ONCE at construction from the user-global + CLI tiers ONLY (the SOLE capture
+	// path is captureOpenRouter from loadUserRules — mirroring captureModels). A
+	// project-tier file's openrouter: block is IGNORED with a WARN in loadProjectRules
+	// (steering requests to a downstream provider is an operator spend/compliance
+	// decision). nil when no operator-tier file carried an openrouter: section. CLI
+	// (explicit files) out-ranks user-global (first-non-nil keeps CLI).
+	operatorOpenRouter *OpenRouterSection
+
 	mu    sync.RWMutex
 	cache map[string]*cacheEntry // keyed by ws.Root()
 }
@@ -231,6 +240,19 @@ func (r *Resolver) OperatorModelSlots() *ModelsSection {
 		return nil
 	}
 	return r.operatorModels
+}
+
+// OperatorOpenRouter returns the operator-tier openrouter: subtree (user-global +
+// CLI only), or nil when none was configured (issue #480). It is the SOLE accessor
+// the composition layer uses to read OpenRouter downstream-provider routing from
+// config — by construction it never returns a project-tier block (a project
+// openrouter: is ignored with a WARN in loadProjectRules). nil-safe. Mirrors
+// OperatorModelSlots().
+func (r *Resolver) OperatorOpenRouter() *OpenRouterSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorOpenRouter
 }
 
 // OperatorModelPolicy returns the operator-tier models: subtree (user-global + CLI
@@ -474,6 +496,16 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"plan-mode-auto-approve: IGNORING a project-tier plan-mode-auto-approve: key (operator-tier only — a project repo cannot enable autonomous plan approval; set plan-mode-auto-approve in your user-global settings.yaml or via --plan-mode-auto-approve)",
 				"file", src.path, "root", ws.Root())
 		}
+		// OpenRouter downstream-provider routing is OPERATOR-TIER ONLY (issue #480): a
+		// project file's openrouter: block is IGNORED with a loud WARN. Steering requests
+		// to a particular downstream inference provider is a spend/compliance/capability
+		// decision the operator owns — the same operator-only discipline as
+		// default_provider/allowlist/router (a project repo cannot pick the downstream).
+		if cfg.OpenRouter != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"openrouter: IGNORING a project-tier openrouter: block (operator-tier only — a project repo cannot steer the OpenRouter downstream provider; set openrouter in your user-global settings.yaml)",
+				"file", src.path, "root", ws.Root())
+		}
 		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST (ADR 0030 Phase 4),
 		// otherwise IGNORED. captureProjectModels applies the full gate (allowlist key
 		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
@@ -663,6 +695,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
 		r.captureModels(cfg.Models)
+		// Operator-tier openrouter: same first-non-nil-keeps-CLI discipline (issue #480).
+		r.captureOpenRouter(cfg.OpenRouter)
 	}
 
 	if !r.opts.Conventional {
@@ -690,6 +724,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 				// User-global models: captured only if no higher CLI file already did.
 				r.captureModels(cfg.Models)
+				// User-global openrouter: captured only if no higher CLI file already did.
+				r.captureOpenRouter(cfg.OpenRouter)
 			}
 		}
 	}
@@ -781,6 +817,16 @@ func (r *Resolver) captureModels(m *ModelsSection) {
 		return
 	}
 	r.operatorModels = m
+}
+
+// captureOpenRouter records the FIRST operator-tier openrouter: block seen during
+// loadUserRules (CLI files out-rank user-global, so first-non-nil keeps CLI).
+// Mirrors captureModels (issue #480).
+func (r *Resolver) captureOpenRouter(s *OpenRouterSection) {
+	if s == nil || r.operatorOpenRouter != nil {
+		return
+	}
+	r.operatorOpenRouter = s
 }
 
 // specOf reconstructs a human-readable "Tool(pattern)" spec from a rule, for the

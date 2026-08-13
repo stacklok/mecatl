@@ -1835,6 +1835,12 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, ws 
 			if chunk.Usage != nil {
 				usage = usage.Add(*chunk.Usage)
 			}
+		case port.ChunkProviderRoute:
+			// The downstream provider slug that routed this turn (issue #480).
+			// Relayed verbatim onto a client-visible event; never stored on the
+			// message, never branched on, never replayed. It anchors no TTFT and
+			// feeds no usage (like ChunkPhase). Absent on a cache hit.
+			e.emit(r, session.Event{Type: session.EvProviderRoute, Turn: turnIdx, Text: chunk.Text})
 		case port.ChunkDone:
 			stop = chunk.Stop
 		}

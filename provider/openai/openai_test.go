@@ -1741,3 +1741,162 @@ func TestReasoningItemDroppedWhenIDEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestTranslateProviderRouteEmitted pins the issue-#480 echo: a response.completed
+// event whose raw JSON carries openrouter_metadata yields a ChunkProviderRoute
+// (the selected downstream display label) BEFORE the usage/done chunks; a cache-hit
+// completed event (metadata stripped) yields none.
+func TestTranslateProviderRouteEmitted(t *testing.T) {
+	sse := "event: response.output_text.delta\n" +
+		`data: {"type":"response.output_text.delta","sequence_number":0,"delta":"hi"}` + "\n\n" +
+		"event: response.completed\n" +
+		`data: {"type":"response.completed","sequence_number":1,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1},"openrouter_metadata":{"endpoints":{"available":[{"provider":"Google Vertex","selected":false},{"provider":"Anthropic","selected":true}]},"attempts":[{"provider":"Google Vertex"},{"provider":"Anthropic"}]}}}` + "\n\n"
+	got, err := decodeSSE(strings.NewReader(sse))
+	if err != nil {
+		t.Fatalf("decodeSSE: %v", err)
+	}
+	want := []port.Chunk{
+		{Kind: port.ChunkText, Text: "hi"},
+		{Kind: port.ChunkProviderRoute, Text: "Anthropic"},
+		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 1, OutputTokens: 1}},
+		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	}
+	assertChunks(t, got, want)
+}
+
+// TestTranslateProviderRouteAbsentOnCacheHit pins the honest degradation: a
+// response.completed with NO openrouter_metadata (a cache hit, or any
+// non-openrouter response) emits no ChunkProviderRoute — never a fabricated value.
+func TestTranslateProviderRouteAbsentOnCacheHit(t *testing.T) {
+	sse := "event: response.completed\n" +
+		`data: {"type":"response.completed","sequence_number":0,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
+	got, err := decodeSSE(strings.NewReader(sse))
+	if err != nil {
+		t.Fatalf("decodeSSE: %v", err)
+	}
+	for _, c := range got {
+		if c.Kind == port.ChunkProviderRoute {
+			t.Fatalf("cache-hit completed emitted ChunkProviderRoute %q, want none", c.Text)
+		}
+	}
+}
+
+// TestStreamStampsProviderBodyAndHeader is the STRICT wire-injection guard
+// (issue #480): with WithOpenRouterProviderPreferences + WithOpenRouterMetadata armed, the
+// outgoing request body carries the `provider` object (order + allow_fallbacks)
+// and the X-OpenRouter-Metadata header; with neither (the openai-entry parity
+// path) it carries NEITHER. This is the only thing standing between us and a
+// silent SDK behaviour change on WithJSONSet — keep it strict.
+func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
+	completed := "event: response.completed\n" +
+		`data: {"type":"response.completed","sequence_number":0,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1},"openrouter_metadata":{"endpoints":{"available":[{"provider":"Anthropic","selected":true}]}}}}` + "\n\n"
+
+	type captured struct {
+		body        map[string]any
+		metadataHdr string
+	}
+	serve := func(capd *captured) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read body: %v", err)
+			}
+			capd.metadataHdr = r.Header.Get("X-OpenRouter-Metadata")
+			if err := json.Unmarshal(raw, &capd.body); err != nil {
+				t.Errorf("unmarshal request body: %v (body=%s)", err, raw)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(completed))
+		}))
+	}
+
+	stream := func(t *testing.T, p *Provider) bool {
+		t.Helper()
+		seq, err := p.Stream(context.Background(), port.LLMRequest{
+			Model:    "anthropic/claude-sonnet-4-6",
+			Messages: []session.Message{session.NewUserMessage("hi")},
+		})
+		if err != nil {
+			t.Fatalf("Stream outer error: %v", err)
+		}
+		var routed bool
+		for chunk, err := range seq {
+			if err != nil {
+				t.Fatalf("stream error: %v", err)
+			}
+			if chunk.Kind == port.ChunkProviderRoute {
+				routed = true
+			}
+		}
+		return routed
+	}
+
+	t.Run("openrouter entry stamps provider object and header", func(t *testing.T) {
+		var capd captured
+		srv := serve(&capd)
+		defer srv.Close()
+		allow := false
+		p := New(
+			WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"),
+			WithOpenRouterProviderPreferences(func(string) *OpenRouterProviderPreferences {
+				return &OpenRouterProviderPreferences{Order: []string{"anthropic", "google-vertex"}, AllowFallbacks: &allow}
+			}),
+			WithOpenRouterMetadata(true),
+		)
+		if routed := stream(t, p); !routed {
+			t.Error("openrouter entry did not emit provider route from armed metadata")
+		}
+
+		prov, ok := capd.body["provider"].(map[string]any)
+		if !ok {
+			t.Fatalf("request body missing provider object; body=%v", capd.body)
+		}
+		order, ok := prov["order"].([]any)
+		if !ok || len(order) != 2 || order[0] != "anthropic" || order[1] != "google-vertex" {
+			t.Errorf("provider.order = %v, want [anthropic google-vertex]", prov["order"])
+		}
+		if af, ok := prov["allow_fallbacks"].(bool); !ok || af != false {
+			t.Errorf("provider.allow_fallbacks = %v, want false", prov["allow_fallbacks"])
+		}
+		if capd.metadataHdr != "enabled" {
+			t.Errorf("X-OpenRouter-Metadata = %q, want enabled", capd.metadataHdr)
+		}
+	})
+
+	t.Run("nil prefs resolver sends no provider key but header still armed", func(t *testing.T) {
+		var capd captured
+		srv := serve(&capd)
+		defer srv.Close()
+		p := New(
+			WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"),
+			WithOpenRouterProviderPreferences(func(string) *OpenRouterProviderPreferences { return nil }),
+			WithOpenRouterMetadata(true),
+		)
+		if routed := stream(t, p); !routed {
+			t.Error("metadata-enabled entry did not emit provider route")
+		}
+		if _, present := capd.body["provider"]; present {
+			t.Errorf("nil prefs resolver stamped a provider key; body=%v", capd.body)
+		}
+		if capd.metadataHdr != "enabled" {
+			t.Errorf("X-OpenRouter-Metadata = %q, want enabled (echo works with no order)", capd.metadataHdr)
+		}
+	})
+
+	t.Run("openai parity: neither option sends neither key nor header", func(t *testing.T) {
+		var capd captured
+		srv := serve(&capd)
+		defer srv.Close()
+		p := New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"))
+		if routed := stream(t, p); routed {
+			t.Error("default (openai) entry emitted provider route from unarmed metadata")
+		}
+		if _, present := capd.body["provider"]; present {
+			t.Errorf("default (openai) entry stamped a provider key; body=%v", capd.body)
+		}
+		if capd.metadataHdr != "" {
+			t.Errorf("default (openai) entry sent X-OpenRouter-Metadata=%q, want empty", capd.metadataHdr)
+		}
+	})
+}

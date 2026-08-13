@@ -2806,6 +2806,51 @@ a `settings.yaml` TTL key, and Anthropic's 1h TTL via OpenRouter (no TTL
 concept on that path). See [ADR 0100](../adr/0100-provider-prompt-caching.md)
 for the full rationale and the rejected mixed-TTL alternative.
 
+### OpenRouter downstream-provider steering + echo (issue #480, ADR 0104)
+
+OpenRouter is a meta-provider: one model id fans out to several **downstream**
+inference providers (Anthropic, Bedrock, Vertex, DeepInfra, …). Two halves, both
+scoped to the openrouter registry entry and never touching provider-neutral
+`port.LLMRequest`:
+
+- **Steering.** Operator-tier-only `openrouter:` settings subtree
+  (`permconfig.OpenRouterSection` → `Config.OpenRouter`, strict-parsed, project-tier
+  WARN-ignored like `default_provider`/`allowlist`/`router`). `foldOperatorOpenRouter`
+  validates fail-soft into `Config.openRouterRoutes` keyed by the resolved concrete
+  model id; aliases and concrete keys that collide are all dropped so map iteration
+  can never choose a compliance route nondeterministically. `Config.openRouterRouteFor`
+  resolves the adapter preferences per model. The openrouter entry's
+  `newOpenAICompatEntry` `extra` carries
+  `openai.WithOpenRouterProviderPreferences` (the model-keyed resolver) +
+  `openai.WithOpenRouterMetadata(true)`, so every mint/default +
+  per-session remint has them and no other entry can leak the body key/header. The
+  adapter stamps the `provider` body object via `option.WithJSONSet` (verified to
+  work on the Responses POST body — the SDK has no typed field) and the
+  `X-OpenRouter-Metadata` header as PER-REQUEST options built in
+  `Provider.routingRequestOptions` and threaded through BOTH `streamAttempt` calls
+  (initial + encrypted-reasoning fallback) — so `buildParams` / the prompt-cache
+  prefix are untouched.
+- **Echo.** `Provider.streamAttempt` arms route parsing only when
+  `WithOpenRouterMetadata(true)` is set, then `translateCompleted` reads the
+  terminal `response.completed` `Response.RawJSON()`'s `openrouter_metadata` via
+  `selectedDownstreamProvider` (selected endpoint, else last attempt, else "" — a
+  tolerant fail-empty parse in `openrouter_metadata.go`; cache hits strip the block)
+  and emits `port.ChunkProviderRoute` FIRST. The display label is UTF-8-repaired,
+  flattened, and bounded before it crosses the adapter. The loop relays it verbatim
+  onto `session.EvProviderRoute` (`"provider.route"`, a string passthrough, no proto
+  change), metadata-only, never recorded, never a diagnostics line (the event owns
+  the fact); mecatui renders a transient `via <display-name>` footer and a
+  `<model>/<display-name>` header suffix for the current turn, clearing the suffix
+  at the next turn start. `llmresilience.isCommitting` classifies the kind
+  non-committing.
+
+Strict wire guard: `internal/app/openrouter_route_e2e_test.go` runs the REAL openai
+adapter against an httptest OpenRouter server (offline) and asserts the body key +
+header land for openrouter and NOT for the openai parity entry, the run stream
+carries `EvProviderRoute`, and a cache-hit emits none. v1 scope: `order` +
+`allow_fallbacks`, config-only. The two new exported engine constants
+(`ChunkProviderRoute`, `EvProviderRoute`) are Added (minor) in `engine/CHANGELOG.md`.
+
 ### Adapter request-assembly benchmarks — closing the #157 measurement gap
 
 Issue #157 found the main-turn allocation churn is dominated by the **per-turn

@@ -108,6 +108,71 @@ type Config struct {
 	// returns false and composition keeps the default OFF). The composition layer
 	// interprets the bool; permconfig only reads the scalar.
 	PlanModeAutoApprove bool `yaml:"plan-mode-auto-approve"`
+	// OpenRouter holds the OPERATOR-TIER OpenRouter downstream-provider routing
+	// config (issue #480): a per-model preferred DOWNSTREAM provider order, sent as
+	// OpenRouter's `provider` request-body object. Like Guardrails/Posture it is
+	// honoured ONLY from the user-global + CLI tiers; a project-tier file's
+	// openrouter: block is IGNORED with a WARN (steering requests to a particular
+	// downstream is a spend/compliance/capability decision the operator owns — the
+	// same operator-only discipline as default_provider/allowlist/router). It is
+	// parsed STRICTLY (unknown sub-keys = error, like guardrails:/router:) so a
+	// typo cannot silently drop a routing preference. A nil OpenRouter means the
+	// key was absent. The composition layer reads + validates the maps; permconfig
+	// only carries them.
+	OpenRouter *OpenRouterSection `yaml:"openrouter"`
+}
+
+// OpenRouterSection is the `openrouter:` operator-tier YAML subtree (issue #480):
+// per-model downstream-provider routing preferences. mecatl's "provider" stays
+// the wire adapter — these are the DOWNSTREAM inference providers OpenRouter
+// routes a model to (Anthropic, Amazon Bedrock, Google Vertex, …). The TOP
+// mapping is parsed STRICTLY (unknown keys error); the per-model entries are
+// also strict. Validated fail-soft in composition (invalid slugs WARN-dropped).
+type OpenRouterSection struct {
+	// Models maps a model id (or alias, resolved in composition) to its
+	// downstream-provider routing preference.
+	Models map[string]OpenRouterModelRoute `yaml:"models"`
+}
+
+// OpenRouterModelRoute is one model's downstream-provider routing preference
+// (issue #480), the on-disk mirror of OpenRouter's `provider` request object
+// (v1 surface: order + allow_fallbacks). Composition maps it to
+// OpenRouterProviderPreferences.
+type OpenRouterModelRoute struct {
+	// Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic",
+	// "google-vertex", "deepinfra/turbo") tried in order. Setting it disables
+	// OpenRouter's default price load-balancing. Base-slug matching applies:
+	// "google-vertex" matches all its regions/variants (service tiers excepted).
+	Order []string `yaml:"order"`
+	// AllowFallbacks, when explicitly false, pins the request to Order with no
+	// fallback to other downstreams. Omit the key to keep OpenRouter's default
+	// (true); set it to false to disable fallback.
+	AllowFallbacks *bool `yaml:"allow_fallbacks"`
+}
+
+func (s *OpenRouterSection) strictFields() map[string]any {
+	return map[string]any{
+		"models": &s.Models,
+	}
+}
+
+// UnmarshalYAML decodes the openrouter: mapping STRICTLY (issue #480): an
+// unknown key inside the subtree is a parse error — a typo like `moddels:` must
+// not silently drop the routing preferences. Same rationale as GuardrailsSection.
+func (s *OpenRouterSection) UnmarshalYAML(node *yaml.Node) error {
+	return decodeStrictMapping(node, "openrouter", s.strictFields())
+}
+
+func (m *OpenRouterModelRoute) strictFields() map[string]any {
+	return map[string]any{
+		"order":           &m.Order,
+		"allow_fallbacks": &m.AllowFallbacks,
+	}
+}
+
+// UnmarshalYAML decodes an openrouter.models.<id> entry STRICTLY.
+func (m *OpenRouterModelRoute) UnmarshalYAML(node *yaml.Node) error {
+	return decodeStrictMapping(node, "openrouter.models[]", m.strictFields())
 }
 
 // ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding

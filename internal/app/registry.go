@@ -522,7 +522,18 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 		if baseURL == "" {
 			baseURL = openRouterDefaultBaseURL
 		}
-		entry := newOpenAICompatEntry(cfg, providerOpenRouter, key, baseURL)
+		// Downstream-provider routing (issue #480): the openrouter entry ALONE arms
+		// the two OpenRouter-private knobs. WithOpenRouterProviderPreferences resolves the
+		// per-model `provider` body object from cfg.openRouterRoutes (nil for an
+		// unconfigured model → no body key); WithOpenRouterMetadata(true) arms the
+		// X-OpenRouter-Metadata header so the routed downstream echoes back as
+		// ChunkProviderRoute → EvProviderRoute. Both ride the `extra` channel, so
+		// EVERY mint (the default build AND every per-session/heal remint) carries
+		// them. Every OTHER entry passes no such option, so the body key + header
+		// can never leak to a non-OpenRouter endpoint.
+		entry := newOpenAICompatEntry(cfg, providerOpenRouter, key, baseURL,
+			openai.WithOpenRouterProviderPreferences(cfg.openRouterRouteFor),
+			openai.WithOpenRouterMetadata(true))
 		// OpenRouter opts into LIVE model listing: its public /models endpoint
 		// enumerates the real catalog (336 models) vs the curated embedded subset.
 		// The lister rides on the entry (NOT the shared openai.Provider) so openai —
@@ -648,9 +659,10 @@ func providerKey(cfgKey, providerID string, detect envDetector) string {
 // cannot drift on resilience wrapping. It logs the provider id and base URL ONLY —
 // never the key. extra carries additional openai.Options appended to EVERY
 // construct() call (default AND per-session/heal re-mints), so a caller-supplied
-// option (e.g. the gateway entry's redirect-refusing HTTP client, F3) rides every
-// re-mint too, never just the initial build. openai/openrouter call sites pass
-// none — byte-identical.
+// option rides every re-mint too, never just the initial build. openai passes none —
+// byte-identical; the gateway entry passes its redirect-refusing WithHTTPClient (F3);
+// openrouter passes its downstream-provider WithOpenRouterProviderPreferences + WithOpenRouterMetadata
+// (issue #480).
 func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.Option) providerEntry {
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", id, "model", cfg.Model, "base_url", baseURL)
 	// Composition-only test seam (S3 e2e): when a providerConstructor is injected,

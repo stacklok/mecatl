@@ -151,6 +151,26 @@ before (the default path is byte-identical). A composition-only `providerConstru
 seam (mirroring `envDetector`) lets the offline e2e back two real provider ids with
 mocks; production leaves it nil.
 
+**OpenRouter downstream-provider routing (issue #480, ADR 0104).** OpenRouter is a
+*meta-provider* — one model id is served by several **downstream** inference
+providers (Anthropic, Amazon Bedrock, Google Vertex, …) that OpenRouter
+load-balances across on price. mecatl exposes both halves: **steering** via the
+operator-tier-only `openrouter:` settings subtree (a per-model `order:` +
+`allow_fallbacks:`, folded by `foldOperatorOpenRouter` into `Config.openRouterRoutes`),
+and **observability** of which downstream actually served a turn. The openrouter
+registry entry ALONE passes two `openai` adapter Options —
+`WithOpenRouterProviderPreferences` (a model-keyed resolver) +
+`WithOpenRouterMetadata(true)` —
+over the shared `extra` channel, so every mint (default + per-session remint)
+carries them and no other entry can leak the `provider` body key or the
+`X-OpenRouter-Metadata` header. Both are stamped as PER-REQUEST options
+(`option.WithJSONSet` for the body key), leaving `buildParams` and the byte-stable
+prompt-cache prefix untouched. The routed downstream echoes back as
+`port.ChunkProviderRoute` (parsed from the terminal `response.completed` raw JSON's
+`openrouter_metadata`, fail-empty) → the client-visible `session.EvProviderRoute`
+(`"provider.route"`), absent on a cache hit — never fabricated. See
+[`docs/adr/0104-openrouter-downstream-provider-steering.md`](../adr/0104-openrouter-downstream-provider-steering.md).
+
 **Intent-driven availability (issue #262, ADR 0064).** Every provider above is
 **key-driven** — available iff a credential resolves. The ToolHive LLM gateway proxy
 entry (`providerToolhive`, id `"toolhive"`) is **intent-driven** instead: it is

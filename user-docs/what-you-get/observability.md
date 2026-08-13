@@ -172,6 +172,8 @@ The agent loop emits exactly three run-scoped diagnostic lines:
 
 Everything else is carried by the event stream (`session.Event` taxonomy): cancellation, tool errors, compaction success, permission asks and allows. Those are not duplicated in diagnostics.
 
+One event worth calling out for OpenRouter users: `provider.route`. When the serving provider is `openrouter`, each turn reports which **downstream** inference provider OpenRouter actually routed to (mecatl's "provider" stays the wire adapter). It rides the event stream as a `provider.route` event — rendered in mecatui as a transient `via <slug>` footer status — and is absent on a cache hit (OpenRouter strips the routing metadata from cached responses). You can steer the choice per model with the operator-tier `openrouter:` settings block; see the [model-routing guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md#5b-openrouter-downstream-provider-routing-openrouter-issue-480).
+
 Build-time composition facts (store kind, compaction strategy, feature flags) are logged once in `app.Build` and never re-emitted per session.
 
 ---

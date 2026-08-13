@@ -26,6 +26,7 @@ func BuildModel(docs Docs) *Model {
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
 		modelsSubtree(docs),
+		openRouterSubtree(docs),
 	}}
 }
 
@@ -254,4 +255,41 @@ func docFor(docs Docs, key, fallback string) string {
 		return d
 	}
 	return fallback
+}
+
+func openRouterSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("OpenRouterSection", permconfig.OpenRouterSection{}, docs)
+	for _, f := range fields {
+		if f.Key == "models" {
+			// The per-model routing entries (order + allow_fallbacks). The map value
+			// type is OpenRouterModelRoute; render its keys as the nested shape under an
+			// illustrative model-id key so the skeleton round-trips the schema.
+			f.ExampleMapKey = `"anthropic/claude-sonnet-4-6"`
+			rf := fieldsOf("OpenRouterModelRoute", permconfig.OpenRouterModelRoute{}, docs)
+			for _, nf := range rf {
+				if nf.Key == "order" {
+					nf.ExampleValue = `["anthropic", "google-vertex"]`
+				}
+			}
+			f.Nested = rf
+		}
+	}
+	return &Subtree{
+		Key:  "openrouter",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model " +
+			"preferred DOWNSTREAM provider order, sent as OpenRouter's `provider` request-body " +
+			"object. Setting an order disables OpenRouter's default price load-balancing; " +
+			"allow_fallbacks: false pins hard to the order. A project-tier openrouter: block is " +
+			"IGNORED with a WARN (a project cannot pick the downstream provider).",
+		CommentedOut: true,
+		Fields:       fields,
+		Example: []string{
+			"openrouter:",
+			"  models:",
+			`    "anthropic/claude-sonnet-4-6":`,
+			`      order: ["anthropic", "google-vertex"]`,
+			"      allow_fallbacks: false",
+		},
+	}
 }

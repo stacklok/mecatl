@@ -182,6 +182,7 @@ func TestEventToMsg(t *testing.T) {
 		},
 		{"compaction", &mecatlv1.Event{Type: "compaction", Text: "compacted"}, CompactionMsg{Text: "compacted"}},
 		{"no_progress", &mecatlv1.Event{Type: "no_progress", Text: "nudging to continue"}, NoProgressMsg{Text: "nudging to continue"}},
+		{"provider.route", &mecatlv1.Event{Type: "provider.route", Text: "anthropic"}, ProviderRouteMsg{Text: "anthropic"}},
 		{"recover_notice", &mecatlv1.Event{Type: "recover_notice", Text: "permanent failure advisory"}, RecoverNoticeMsg{Text: "permanent failure advisory"}},
 		{
 			"result",

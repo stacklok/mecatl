@@ -13,6 +13,18 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Added
 
+- **OpenRouter downstream-provider routing echo** (issue #480) — two new
+  constants that surface which DOWNSTREAM inference provider OpenRouter routed a
+  request to (mecatl's "provider" stays the wire adapter):
+  - `port.ChunkProviderRoute` — a `ChunkKind` carrying the downstream provider
+    slug on `Chunk.Text`, emitted by the OpenAI adapter only for the openrouter
+    registry entry at the terminal `response.completed` event. Display-only and
+    provider-private in contents (the same discipline as `ChunkPhase`): never
+    branched on, never replayed, absent on a cache hit.
+  - `session.EvProviderRoute` (`"provider.route"`) — the `EventType` the loop
+    relays the slug onto for clients. Advisory + metadata-only, a string
+    passthrough on the wire (no proto enum). Both are Added (a minor bump).
+
 - **`session.PrincipalFromClaims` and `session.GrantTypeFromClaims`**
   ([ADR 0103](../docs/adr/0103-oidc-authn-module.md)) — stdlib-only projection
   helpers for embedders that verify credentials outside the engine. Projection

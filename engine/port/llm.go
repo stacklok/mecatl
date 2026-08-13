@@ -82,6 +82,19 @@ const (
 	// on or validates the value). Placed LAST in the block — chunks are in-process
 	// only, never serialized as ints, so ordinal stability is not a concern.
 	ChunkPhase
+	// ChunkProviderRoute carries the opaque DOWNSTREAM provider display label that
+	// actually served a routed request on Text (issue #480). It is emitted by the
+	// OpenAI adapter ONLY when OpenRouter metadata is explicitly armed, at the
+	// terminal response.completed event. Like ChunkPhase it is DISPLAY-ONLY and
+	// provider-private in CONTENTS: the loop relays it verbatim onto an
+	// EvProviderRoute event for clients, never branches on it, never replays it,
+	// never anchors TTFT or feeds usage. It is absent on a cache hit (OpenRouter
+	// strips openrouter_metadata from cached responses) — the loop simply emits
+	// nothing. The STRUCTURE is neutral (one opaque label per turn); mecatl's
+	// "provider" stays the wire adapter — this is the DOWNSTREAM inference provider
+	// OpenRouter routed to. The label is human-readable and is not a routing slug or
+	// round-trippable identifier. Same discipline as ChunkPhase.
+	ChunkProviderRoute
 )
 
 // Chunk is a single provider-neutral unit of a model stream. The loop assembles

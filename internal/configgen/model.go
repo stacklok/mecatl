@@ -79,4 +79,8 @@ type Field struct {
 	// ExampleValue is a short inline example used in the skeleton's commented binding
 	// (e.g. `default: sonnet`). Empty renders a type-shaped placeholder.
 	ExampleValue string
+	// ExampleMapKey is the illustrative map key a map-of-struct skeleton entry renders
+	// under (e.g. the openrouter.models per-model entry's model id). Empty renders the
+	// generic `"<key>"` placeholder. Documentation only — the operator replaces it.
+	ExampleMapKey string
 }

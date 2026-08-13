@@ -295,3 +295,76 @@ models:
 - **Out of scope (this slice):** the allowlist caps **config-file** bindings only — an
   agent-def `model:` literal and the per-session API `model_id` selector are not capped
   here.
+
+## 5b. OpenRouter downstream-provider routing (`openrouter:`, issue #480)
+
+OpenRouter is a *meta-provider*: a single model id (e.g.
+`anthropic/claude-sonnet-4-6`) is served by several **downstream** inference
+providers (Anthropic, Amazon Bedrock, Google Vertex, DeepInfra, …). By default
+OpenRouter load-balances across them on price. mecatl lets an operator steer which
+downstream serves a model **and** see which downstream actually served each turn.
+(mecatl's "provider" stays the wire adapter — these are the *downstream* providers
+OpenRouter routes to.)
+
+### Steering: per-model preferred downstream order
+
+Set a per-model `order:` in your **operator-tier** `settings.yaml`:
+
+```yaml
+# ~/.config/mecatl/settings.yaml  (operator-tier ONLY — NOT a project file)
+openrouter:
+  models:
+    "anthropic/claude-sonnet-4-6":
+      order: ["anthropic", "google-vertex"]
+      allow_fallbacks: false        # default true when absent
+    "openai/gpt-5":
+      order: ["deepinfra/turbo"]
+```
+
+- `order:` lists downstream provider slugs (lowercase-kebab — e.g. `anthropic`,
+  `google-vertex`, `deepinfra/turbo` for an endpoint variant) tried in order.
+  **Setting an order disables OpenRouter's default price load-balancing.**
+  Base-slug matching applies: `google-vertex` matches all its regions/variants
+  (service tiers excepted); use the full slug (`google-vertex/us-east5`,
+  `deepinfra/turbo`) to pin one variant.
+- `allow_fallbacks:` absent ⇒ OpenRouter's default (`true` — after `order` is
+  exhausted, other downstreams are tried). Explicit `false` pins hard to `order`.
+  ⚠️ **A hard pin can hard-fail the turn.** With `allow_fallbacks: false`, if
+  OpenRouter cannot satisfy *any* downstream in your `order` for that model (it's
+  out of policy on your account, unlisted for the model, or transiently
+  unavailable), the request fails with a `404 No endpoints found for <model>` and
+  the turn errors — there is no silent fallback. (Verified live: a downstream can
+  be *listed* as healthy on a model's endpoints and still be unroutable because
+  it's out of policy on your OpenRouter account.) List every downstream you'd
+  accept, or leave `allow_fallbacks` at its default so an exhausted `order`
+  degrades to other downstreams instead of erroring.
+- **Operator-tier only.** A project-tier `openrouter:` block is **ignored with a
+  WARN** — steering requests to a particular downstream is a spend/compliance/
+  capability decision the operator owns (the same gate as `models.default_provider`,
+  `models.allowlist`, `models.router`). Invalid slugs / empty orders are dropped
+  with a build-once WARN, keeping the rest.
+
+### Observability: which downstream served a turn
+
+For the `openrouter` provider mecatl arms OpenRouter's `X-OpenRouter-Metadata`
+opt-in, and the routed downstream echoes back as a `provider.route` event. mecatui
+briefly shows `via <display-name>` in the footer and appends
+`/<display-name>` to the header's model segment for the current turn (for example,
+`Kimi K3/Google`). The next turn clears that suffix before any metadata arrives,
+so a cache hit or metadata miss shows no stale route. The event is metadata-only
+and degrades to **absent on a cache hit** (OpenRouter strips the metadata from
+cached responses): no value is ever fabricated.
+
+**The echo is a display name, NOT your config slug.** You *send* lowercase-kebab
+slugs (`google-vertex`); OpenRouter *returns* its own display name for the
+downstream (`Google`). These come from two different OpenRouter surfaces (the
+request's `provider` object vs. the response's routing metadata) and use different
+vocabularies. mecatl relays the display name **verbatim** for the status echo and
+deliberately does *not* try to map it back to a config slug (guessing a slug we
+didn't receive could be wrong — e.g. `"Google"` → `google` ≠ `google-vertex`). So
+don't string-match the echo against your `order:` list; treat it as a human
+readout, not a round-trippable identifier.
+
+See the [configuration reference](../configuration-reference.md#openrouter) for the
+full key listing and [ADR 0104](../adr/0104-openrouter-downstream-provider-steering.md)
+for the design.

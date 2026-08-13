@@ -598,6 +598,9 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conv.startAssistant()
 		m.activeTool = ""
 		m.toolProgress = ""
+		// Routing metadata is per turn. OpenRouter omits it on cache hits, so the
+		// previous turn's downstream must not survive into a turn that reports none.
+		m.providerRoute = ""
 		return m.afterEvent()
 	case client.AssistantDeltaMsg:
 		// Append only; markDirty arms a one-shot frame-cadence flush. No per-token
@@ -835,6 +838,14 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// at idle — during a run the spinner owns the footer-left and already shows
 		// liveness; that is the intended, non-intrusive behaviour.)
 		m.statusMsg = m.deps.Theme.Style("muted").Render(noticeLine(msg))
+		return m.afterEvent()
+	case client.ProviderRouteMsg:
+		// The routed downstream provider (issue #480) is shown persistently beside
+		// the model id for the current turn and transiently in the footer when the
+		// metadata arrives. TurnStartMsg clears the header first, so a cache hit or
+		// any turn with missing metadata cannot retain a stale route.
+		m.providerRoute = msg.Text
+		m.statusMsg = m.deps.Theme.Style("muted").Render("via " + msg.Text)
 		return m.afterEvent()
 	case client.RecoverNoticeMsg:
 		// Recover-notice (permanent-failure advisory) is a DURABLE scrollback
@@ -2896,6 +2907,10 @@ func (m *Model) applyReplayEventSecondary(msg tea.Msg) {
 		// Transient in the live path; in a replay it is a durable record of the
 		// run's no-progress boundary, so render it as a muted notice.
 		c.addNotice(noticeLine(msg))
+	case client.ProviderRouteMsg:
+		// Transient in the live path; in a replay render the routed downstream as a
+		// muted notice (issue #480).
+		c.addNotice("via " + msg.Text)
 	case client.SubagentMsg:
 		// The delegation projections route into the transcript's Subagent card /
 		// fleet via the SAME mutators the live applySubagent path uses.

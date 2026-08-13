@@ -39,6 +39,8 @@ func authoritativeKeys() []string {
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
+	collect("openrouter", permconfig.OpenRouterSection{})
+	collect("openrouter.models", permconfig.OpenRouterModelRoute{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
 	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
@@ -81,13 +83,25 @@ func TestEveryStrictKeyAppearsInBothArtifacts(t *testing.T) {
 }
 
 // referenceHasKey reports whether the reference contains the dotted key, tolerating the
-// "[]" array-element markers the renderer inserts after slice-of-struct segments (e.g.
-// authoritative "models.router.categories.name" vs rendered
-// "models.router[].categories[].name"). It normalizes the reference by stripping "[]"
-// and checks the plain dotted path appears as a backticked code span.
+// "[]" array-element markers and ".<key>" map-entry markers the renderer inserts after
+// structured collection segments. It normalizes both before checking the authoritative
+// schema path appears as a backticked code span.
 func referenceHasKey(reference, full string) bool {
 	normalized := strings.ReplaceAll(reference, "[]", "")
+	normalized = strings.ReplaceAll(normalized, ".<key>", "")
 	return strings.Contains(normalized, "`"+full+"`")
+}
+
+func TestOpenRouterReferenceShowsDynamicModelKey(t *testing.T) {
+	reference := configgen.RenderReference(configgen.BuildModel(nil))
+	for _, key := range []string{
+		"`openrouter.models.<key>.order`",
+		"`openrouter.models.<key>.allow_fallbacks`",
+	} {
+		if !strings.Contains(reference, key) {
+			t.Errorf("reference is missing dynamic map-entry path %s", key)
+		}
+	}
 }
 
 // TestRenderersAreDeterministic guards the CI diff-gate against map-iteration-order
@@ -192,6 +206,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
+		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)
 	}
 	got := map[string]configgen.Tier{}
 	for _, st := range configgen.BuildModel(nil).Subtrees {

@@ -18,6 +18,11 @@ import (
 // per event, so the only carried state is the assembled final response (for the
 // terminal usage/stop), threaded via the events themselves.
 type streamState struct {
+	// providerRoute permits parsing OpenRouter's private routing metadata. It is
+	// armed only by WithOpenRouterMetadata, so a compatible non-OpenRouter endpoint
+	// cannot manufacture a provider-neutral route chunk by returning the same key.
+	providerRoute bool
+
 	// done is set when a TERMINAL Responses event is observed
 	// (response.completed / response.incomplete / response.failed / a top-level
 	// error). It guards against emitting a second ChunkDone if both
@@ -196,24 +201,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 
 	case "response.completed":
-		if st.done {
-			return nil, nil
-		}
-		st.done = true
-		usage := mapUsage(event.Response.Usage)
-		chunks := make([]port.Chunk, 0, 3)
-		// The turn's buffered reasoning items, packed into one replay blob. It
-		// rides out here — the only point at which the full ordered list is known.
-		// ReasoningItemID stays EMPTY: with several ids in play the port's single
-		// id cannot name them, and each id now travels inside the envelope beside
-		// the blob it belongs to (provider/anthropic does the same).
-		if packed := packReasoningItems(st.reasoning); packed != "" {
-			chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
-		}
-		return append(chunks,
-			port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
-			port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
-		), nil
+		return translateCompleted(event, st)
 
 	case "response.incomplete":
 		// An incomplete response still carries usage and a reason (e.g.
@@ -255,6 +243,41 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 	default:
 		return nil, nil
 	}
+}
+
+// translateCompleted handles the terminal response.completed event: it packs the
+// turn's buffered reasoning items into one replay blob, emits the routed
+// downstream provider (when present), and closes with usage + done. Split out of
+// translate only to keep the dispatcher under the cyclomatic-complexity bound.
+func translateCompleted(event responses.ResponseStreamEventUnion, st *streamState) ([]port.Chunk, error) {
+	if st.done {
+		return nil, nil
+	}
+	st.done = true
+	usage := mapUsage(event.Response.Usage)
+	chunks := make([]port.Chunk, 0, 4)
+	// The routed DOWNSTREAM provider (issue #480): the openrouter_metadata
+	// block rides the terminal event's raw JSON when the request armed
+	// X-OpenRouter-Metadata. Parsing is gated by that same adapter option so a
+	// compatible non-OpenRouter endpoint cannot inject a route echo. Emitted FIRST
+	// so ordering is deterministic. "" on a cache hit → no chunk.
+	if st.providerRoute {
+		if label := selectedDownstreamProvider(event.Response.RawJSON()); label != "" {
+			chunks = append(chunks, port.Chunk{Kind: port.ChunkProviderRoute, Text: label})
+		}
+	}
+	// The turn's buffered reasoning items, packed into one replay blob. It
+	// rides out here — the only point at which the full ordered list is known.
+	// ReasoningItemID stays EMPTY: with several ids in play the port's single
+	// id cannot name them, and each id now travels inside the envelope beside
+	// the blob it belongs to (provider/anthropic does the same).
+	if packed := packReasoningItems(st.reasoning); packed != "" {
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
+	}
+	return append(chunks,
+		port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
+		port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
+	), nil
 }
 
 // translateTextDelta handles a response.output_text.delta event. It enforces the
@@ -556,7 +579,7 @@ func mapStop(status responses.ResponseStatus) session.StopReason {
 // because the event JSON carries its own "type".
 func decodeSSE(r io.Reader) ([]port.Chunk, error) {
 	var out []port.Chunk
-	var st streamState
+	st := streamState{providerRoute: true}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {

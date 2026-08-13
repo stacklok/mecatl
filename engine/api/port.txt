@@ -58,6 +58,7 @@
     method func (TriggerSpec).Validate() error
 const ChunkDone ChunkKind = 5
 const ChunkPhase ChunkKind = 6
+const ChunkProviderRoute ChunkKind = 7
 const ChunkReasoning ChunkKind = 1
 const ChunkReasoningItem ChunkKind = 2
 const ChunkText ChunkKind = 0

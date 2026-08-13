@@ -199,3 +199,31 @@
 #   # total context token override map. It is intentionally not a selector map: aliases
 #   # and slots are resolved before this lookup, and project values are ignored.
 #   context_windows: {}
+
+#| === openrouter === (tier: operator)
+#| OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model
+#| preferred DOWNSTREAM provider order, sent as OpenRouter's `provider` request-body
+#| object. Setting an order disables OpenRouter's default price load-balancing;
+#| allow_fallbacks: false pins hard to the order. A project-tier openrouter: block is
+#| IGNORED with a WARN (a project cannot pick the downstream provider).
+# openrouter:
+#   # Models maps a model id (or alias, resolved in composition) to its
+#   # downstream-provider routing preference.
+#   models:
+#     "anthropic/claude-sonnet-4-6":
+#       # Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic",
+#       # "google-vertex", "deepinfra/turbo") tried in order. Setting it disables
+#       # OpenRouter's default price load-balancing. Base-slug matching applies:
+#       # "google-vertex" matches all its regions/variants (service tiers excepted).
+#       order: ["anthropic", "google-vertex"]
+#       # AllowFallbacks, when explicitly false, pins the request to Order with no
+#       # fallback to other downstreams. Omit the key to keep OpenRouter's default (true);
+#       # set it to false to disable fallback.
+#       allow_fallbacks: false
+#|
+#| Example:
+#|   openrouter:
+#|     models:
+#|       "anthropic/claude-sonnet-4-6":
+#|         order: ["anthropic", "google-vertex"]
+#|         allow_fallbacks: false
