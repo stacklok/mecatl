@@ -675,12 +675,47 @@ func (m *scheduleManager) validateScheduleOrigin(ctx context.Context, spec port.
 	}
 	origin, lerr := m.store.Load(ctx, spec.OriginSessionID)
 	if lerr != nil {
-		return nil, fmt.Errorf("%w: origin_session_id %q must reference an existing session: %w", ErrInvalidArgument, spec.OriginSessionID, lerr)
+		return nil, errOriginSessionMustExist(spec.OriginSessionID)
 	}
 	if origin == nil {
 		return nil, nil
 	}
+	// Under ownership enforcement, the origin's owner must match the verified
+	// caller (review finding 1, issue #368): a schedule's delivery path
+	// (deliverFireResult/deliverFireStarted, internal/app) drives its fire's
+	// content into OriginSessionID trusting spec.Owner — without this check a
+	// caller who merely KNOWS another caller's session id could name it as the
+	// origin and have every fire enqueue content into that foreign session.
+	// requireCaller (checked by every public verb before this validation runs)
+	// guarantees the ctx principal is non-nil here under enforcement, so the
+	// nil-safe SameIdentity comparison below is defense-in-depth, not the
+	// load-bearing gate. An ownerless origin (Owner == nil) also fails this
+	// check — under enforcement an ownerless session is invisible to every
+	// caller (the same "ownerless resources are not adopted" rule GetSession
+	// applies), so it can never be validly named as a delivery target either.
+	//
+	// The rejection uses the SAME "must reference an existing session" shape a
+	// genuinely-missing origin produces: an existing-but-foreign origin and a
+	// missing one must be indistinguishable, or the error itself becomes an
+	// existence oracle for another caller's session id.
+	if m.ownershipEnforced {
+		caller := session.PrincipalFromContext(ctx)
+		if origin.Owner == nil || !origin.Owner.SameIdentity(caller) {
+			return nil, errOriginSessionMustExist(spec.OriginSessionID)
+		}
+	}
 	return origin.Owner.Clone(), nil
+}
+
+// errOriginSessionMustExist is the ONE error constructor for a rejected
+// OriginSessionID (review finding 1, issue #368): a genuinely-missing session
+// and an existing-but-foreign-owned one under enforcement must produce the
+// BYTE-IDENTICAL message for the same id — no store-internal detail
+// (backend-specific "not found" text, or any other trailing wrap) may leak,
+// or the message itself becomes an existence/ownership oracle for another
+// caller's session id.
+func errOriginSessionMustExist(id session.SessionID) error {
+	return fmt.Errorf("%w: origin_session_id %q must reference an existing session", ErrInvalidArgument, id)
 }
 
 // validateScheduleSelector rejects (fail-closed) a non-empty

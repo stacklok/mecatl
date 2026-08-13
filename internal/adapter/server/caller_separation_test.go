@@ -547,3 +547,120 @@ func TestCallerSeparation_Scenario2_OwnerlessGetFireKeepsOrphanCompatibility(t *
 		t.Fatalf("orphan fire schedule name = %q, want deleted-parent", fire.ScheduleName)
 	}
 }
+
+// callerScheduleWithOrigin is callerSchedule plus an OriginSessionID — the
+// field a schedule's fire delivery (internal/app deliverFireResult /
+// deliverFireStarted) trusts as the session to enqueue content into.
+func callerScheduleWithOrigin(name string, origin session.SessionID) port.ScheduleSpec {
+	spec := callerSchedule(name)
+	spec.OriginSessionID = origin
+	return spec
+}
+
+// TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected pins review
+// finding 1 (issue #368, ADR 0102): under ownership enforcement, a caller who
+// merely KNOWS another caller's session id must not be able to name it as a
+// schedule's OriginSessionID — that field is what the fire delivery path later
+// trusts to enqueue the fire's content into. The create must be rejected
+// fail-closed (ErrInvalidArgument), and NOTHING must be persisted (a
+// half-created schedule pointing at a foreign session would still be a hole).
+func TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected(t *testing.T) {
+	svc, sessions, schedules, alice, bob := callerSeparationFixture(t)
+
+	bobSess, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("Bob CreateSession: %v", err)
+	}
+
+	_, err = svc.CreateSchedule(alice, callerScheduleWithOrigin("alice-targets-bob", bobSess.ID))
+	if !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("Alice CreateSchedule with Bob's session as origin = %v, want ErrInvalidArgument", err)
+	}
+	if strings.Contains(err.Error(), string(bobSess.ID)) {
+		// The error still names the CALLER-SUPPLIED origin id (that's not a
+		// leak — Alice already knows the id she typed); it must not, however,
+		// name Bob or his session's content.
+		if strings.Contains(err.Error(), "bob") {
+			t.Fatalf("error %q names Bob", err.Error())
+		}
+	}
+
+	// Fail-closed: nothing was persisted anywhere.
+	if _, gerr := svc.GetSchedule(alice, "alice-targets-bob"); !errors.Is(gerr, port.ErrScheduleNotFound) {
+		t.Fatalf("the rejected schedule was visible to Alice: %v", gerr)
+	}
+	stored, lerr := schedules.List(context.Background())
+	if lerr != nil {
+		t.Fatalf("raw schedule list: %v", lerr)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("raw schedule store = %+v, want empty (fail-closed means not saved)", stored)
+	}
+
+	// Bob's session itself is untouched by the rejected attempt.
+	stillBob, serr := sessions.Load(context.Background(), bobSess.ID)
+	if serr != nil {
+		t.Fatalf("load Bob's session: %v", serr)
+	}
+	if stillBob.Owner == nil || !stillBob.Owner.SameIdentity(session.PrincipalFromContext(bob)) {
+		t.Fatalf("Bob's session owner changed: %+v", stillBob.Owner)
+	}
+}
+
+// TestCallerSeparation_Scenario_ForeignAndMissingScheduleOriginErrorsAreIndistinguishable
+// pins the second half of review finding 1: naming a session that belongs to
+// someone else and naming a session that does not exist at all must be
+// BYTE-IDENTICAL errors for the same id (never a distinguishing "exists but
+// isn't yours" vs "no such session") — otherwise the error itself becomes an
+// existence/ownership oracle a caller could probe with candidate session ids.
+func TestCallerSeparation_Scenario_ForeignAndMissingScheduleOriginErrorsAreIndistinguishable(t *testing.T) {
+	svc, _, _, alice, bob := callerSeparationFixture(t)
+
+	bobSess, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("Bob CreateSession: %v", err)
+	}
+
+	_, foreignErr := svc.CreateSchedule(alice, callerScheduleWithOrigin("probe-foreign", bobSess.ID))
+	if !errors.Is(foreignErr, server.ErrInvalidArgument) {
+		t.Fatalf("foreign-origin CreateSchedule = %v, want ErrInvalidArgument", foreignErr)
+	}
+
+	// A missing session id, formatted to the SAME length/shape as Bob's real
+	// id so the comparison below isn't accidentally trivial.
+	missingID := session.SessionID(strings.Repeat("z", len(string(bobSess.ID))))
+	_, missingErr := svc.CreateSchedule(alice, callerScheduleWithOrigin("probe-missing", missingID))
+	if !errors.Is(missingErr, server.ErrInvalidArgument) {
+		t.Fatalf("missing-origin CreateSchedule = %v, want ErrInvalidArgument", missingErr)
+	}
+
+	// Substitute each error's own origin id back to a common placeholder and
+	// compare: the two messages must be identical apart from the id itself.
+	normalize := func(err error, id session.SessionID) string {
+		return strings.ReplaceAll(err.Error(), string(id), "<id>")
+	}
+	got, want := normalize(foreignErr, bobSess.ID), normalize(missingErr, missingID)
+	if got != want {
+		t.Fatalf("foreign-origin error %q and missing-origin error %q are distinguishable (normalized: %q vs %q)",
+			foreignErr.Error(), missingErr.Error(), got, want)
+	}
+}
+
+// TestCallerSeparation_Scenario_OwnScheduleOriginIsStillAccepted pins the
+// non-regression half: a caller naming a session THEY themselves own as the
+// origin must keep working exactly as before under enforcement.
+func TestCallerSeparation_Scenario_OwnScheduleOriginIsStillAccepted(t *testing.T) {
+	svc, _, _, alice, _ := callerSeparationFixture(t)
+
+	aliceSess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("Alice CreateSession: %v", err)
+	}
+	created, err := svc.CreateSchedule(alice, callerScheduleWithOrigin("alice-own-origin", aliceSess.ID))
+	if err != nil {
+		t.Fatalf("Alice CreateSchedule with her OWN session as origin = %v, want success", err)
+	}
+	if created.Spec.Owner == nil || !created.Spec.Owner.SameIdentity(session.PrincipalFromContext(alice)) {
+		t.Fatalf("created schedule owner = %+v, want Alice", created.Spec.Owner)
+	}
+}
