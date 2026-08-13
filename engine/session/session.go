@@ -19,8 +19,10 @@ type SessionID string
 // with Cancel permitted from any non-terminal state and Fail from any
 // non-terminal state. completed, failed, and cancelled are terminal. Each terminal
 // state has its own recovery seam back to idle: Reopen (from completed), Interrupt
-// (from cancelled, also repairing the interrupted turn's history), and Recover
-// (from failed, same history repair — issue #51).
+// (from cancelled, also repairing the interrupted turn's history), Recover
+// (from failed, same history repair — issue #51), and Abandon (from running,
+// same history repair, for a session left running by a process that exited
+// mid-turn — issue #475).
 type State string
 
 const (
@@ -831,6 +833,11 @@ const (
 	// provider stream error, or an internal record failure mid-dispatch) — no
 	// user cancelled anything, and the replayed history must not say they did.
 	recoverCloseOutMessage = "tool call aborted: the run failed before this call's result was recorded"
+	// abandonCloseOutMessage closes an orphan left by a session found still
+	// StateRunning with no process actually driving it (e.g. a crash-orphaned
+	// snapshot, issue #475) — neither a cancellation nor a run failure was
+	// observed, so the wording must not claim either.
+	abandonCloseOutMessage = "tool call aborted: the process driving this run exited before this call's result was recorded"
 )
 
 // closeOutInterruptedTurn repairs an interrupted-mid-dispatch history so it is
@@ -916,6 +923,36 @@ func (s *Session) Recover() error {
 		return fmt.Errorf("%w: Recover from %q", ErrIllegalTransition, s.State)
 	}
 	s.closeOutInterruptedTurn(recoverCloseOutMessage)
+	s.resetToIdle()
+	return nil
+}
+
+// Abandon returns a session STUCK in StateRunning to StateIdle after repairing
+// the abandoned turn's history — the case where the process that was driving
+// the run exited (crashed, was killed, lost its host) without ever reaching a
+// terminal state, so the last persisted snapshot reads "running" forever
+// (issue #475). Legal ONLY from StateRunning: a session actually paused on an
+// ask belongs to Awaiting's own resume path, not this seam (abandoning it
+// would discard a still-resolvable PendingAsk via resetToIdle), and every
+// other state is already idle or has its own recovery seam.
+//
+// A turn abandoned mid-dispatch may leave the trailing assistant message with
+// tool calls that never received a result; closeOutInterruptedTurn appends a
+// synthetic error result per orphan (with the abandonment-accurate
+// abandonCloseOutMessage — never the cancellation or failure wording, neither
+// of which was observed here) so the replayed history stays provider-valid (no
+// dangling tool_use / function_call) before the next prompt.
+//
+// It is the sibling of Interrupt (cancelled→idle) and Recover (failed→idle):
+// same reset (resetToIdle), separate method because its precondition and
+// message differ. Callers are expected to have already established that no
+// process is actually still driving the session (e.g. an age-horizon-gated
+// staleness sweep) — Abandon itself performs no liveness check.
+func (s *Session) Abandon() error {
+	if s.State != StateRunning {
+		return fmt.Errorf("%w: Abandon from %q", ErrIllegalTransition, s.State)
+	}
+	s.closeOutInterruptedTurn(abandonCloseOutMessage)
 	s.resetToIdle()
 	return nil
 }

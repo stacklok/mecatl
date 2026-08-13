@@ -5748,7 +5748,28 @@ BEFORE the build-time `assembleCatalog` call — so `registerScheduleTool`
 (`internal/app/catalog.go`) fires on the SHARED pass and the build-time shared
 catalog gains `Schedule` (mutating) + `ScheduleQuery` (read-only), exactly like
 the six memory tools (ADR 0073 decision 1: "registered in the catalog for every
-session that has a backing `ScheduleStore`"). The historical LATE bind (a
+session that has a backing `ScheduleStore`").
+
+**Run-context origin attribution (ADR 0104).** There is no schedule-manager wrapper.
+The shared run constructor in `engine/agent/loop.go` (`startRun`) applies
+`withSessionOrigin` immediately after deriving the cancellation context; both the
+normal `Run` path and `ResumeApproval` therefore carry the executing session id.
+`engine/agent/scheduletool.go` (`ScheduleTool.create`) reads it via
+`sessionOriginFromContext` and sets `ScheduleSpec.OriginSessionID` in the spec literal
+— the SINGLE site that assigns the field, so no decorator can be omitted and no
+`args`-supplied value has anywhere to enter (`scheduleArgs` has no origin field). An
+unbound context yields the empty id. Composition registers the tools over the raw
+`port.ScheduleManager`; it owns no binder field and assigns no per-run state. This is
+request attribution, not atomic shared state: two sessions concurrently using one
+shared `Engine` retain independent origins even when their tool executions interleave.
+`withSessionOrigin` is deliberately UNEXPORTED and there is no exported replacement for
+the removed `BindSessionOrigin`: running under `Engine.Run` is the only way to acquire
+an origin. A caller that creates a schedule outside a run is out-of-band, is originless
+by design (ADR 0075 decision #1), and uses the UNWRAPPED manager — which is exactly what
+`internal/adapter/server` (`Service.CreateSchedule`) does. The external tests reach the
+constructor through the `export_test.go` seam, so the shipped surface stays narrow.
+
+The historical LATE bind (a
 factory set to `svc.ScheduleManager` after `server.NewService`, on the theory
 that "any schedule-capable session routes through a per-session engine") left
 the default-profile shared-engine fast path — the plain mecatui launch —

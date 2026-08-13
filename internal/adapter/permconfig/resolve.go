@@ -280,10 +280,17 @@ func (r *Resolver) ProjectModelBindings(ws tool.WorkspaceReader) *ModelsSection 
 // posture. Returns nil when opts requests no sources at all, so callers can pass
 // the result straight to permpolicy.NewPolicyWithResolver (a nil resolver = off).
 func New(opts Options) *Resolver {
-	return newWithEnv(opts, xdgconfig.OSEnv)
+	return NewWithEnv(opts, xdgconfig.OSEnv)
 }
 
-// newWithEnv is New with an injectable environment, for tests.
+// NewWithEnv constructs a Resolver using env for user-global discovery. It is for
+// composition callers that need to provide an isolated environment; New preserves
+// the production binding to xdgconfig.OSEnv.
+func NewWithEnv(opts Options, env xdgconfig.ResolveEnv) *Resolver {
+	return newWithEnv(opts, env)
+}
+
+// newWithEnv is NewWithEnv's private implementation, also used by package tests.
 func newWithEnv(opts Options, env xdgconfig.ResolveEnv) *Resolver {
 	if !opts.Conventional && len(opts.ExplicitFiles) == 0 {
 		return nil

@@ -80,6 +80,27 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		}
 	})
 
+	t.Run("injected user-global posture is discovered", func(t *testing.T) {
+		env := trustSettingsEnv(t.TempDir(), []byte("posture: auto\n"))
+		withTrustEnv(t, env)
+		built, err := Build(context.Background(), Config{
+			Workspace:               t.TempDir(),
+			Model:                   "mock",
+			UseMock:                 true,
+			NoSoul:                  true,
+			PermissionsConventional: true,
+			permConfigEnv:           &env,
+			Diagnostics:             port.NopDiagnostics{},
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+		if got := postureEchoFromBuild(t, built); got != "auto" {
+			t.Fatalf("injected user-global posture: echoed %q, want \"auto\"", got)
+		}
+	})
+
 	// Headless variant: auto does not trust a HEADLESS root. The authoritative
 	// narration and the shell consumer must both report the fail-safe result.
 	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
@@ -167,10 +188,10 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 
 	t.Run("project tier posture is ignored (stays strict)", func(t *testing.T) {
 		// No explicit operator file is wired in this subtest, so the CONVENTIONAL
-		// user-global settings.yaml is the only operator-tier posture source — isolate
-		// it or the developer's real ~/.config/mecatl/settings.yaml leaks in.
-		isolateUserConfig(t)
-		// A project-tier .mecatl/settings.yaml carrying posture: yolo in the workspace.
+		// user-global settings.yaml is the only operator-tier posture source.
+		// Isolate it so the developer's real config cannot leak in.
+		permEnv := isolatedPermConfigEnv(t)
+		withTrustEnv(t, *permEnv)
 		ws := t.TempDir()
 		mkdirProjectSettings(t, ws, "posture: yolo\n")
 		built, err := Build(context.Background(), Config{
@@ -179,6 +200,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			UseMock:                 true,
 			NoSoul:                  true,
 			PermissionsConventional: true, // discover the project file (and ignore its posture:)
+			permConfigEnv:           permEnv,
 			Diagnostics:             port.NopDiagnostics{},
 		})
 		if err != nil {

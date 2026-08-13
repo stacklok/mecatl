@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,17 +21,16 @@ import (
 
 // TestFireDelivery_Scenario1_CreateCapturesOriginSession pins AC1.1:
 // A schedule created via the in-chat Schedule create verb persists the calling
-// session's id in Spec.OriginSessionID, bound via the per-run wrapper.
+// session's id in Spec.OriginSessionID, read off the run context.
 func TestFireDelivery_Scenario1_CreateCapturesOriginSession(t *testing.T) {
 	t.Parallel()
 	mgr := newStubScheduleManager()
-	wrapper := agent.NewSessionOriginScheduleManager(mgr)
 
-	// Bind a session origin; the wrapper's CreateSchedule should stamp it.
-	wrapper.BindSessionOrigin(session.SessionID("s1"))
+	// The run context's origin should be stamped by the tool.
+	ctx := agent.WithSessionOrigin(context.Background(), session.SessionID("s1"))
 
-	tl := agent.NewScheduleTool(wrapper)
-	res, err := tl.Execute(context.Background(), scheduleCall(t,
+	tl := agent.NewScheduleTool(mgr)
+	res, err := tl.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo"}`),
 		memfs.NewWorkspace("/ws"))
 	if err != nil {
@@ -46,9 +47,9 @@ func TestFireDelivery_Scenario1_CreateCapturesOriginSession(t *testing.T) {
 		t.Fatalf("OriginSessionID = %q, want %q", mgr.created[0].OriginSessionID, "s1")
 	}
 
-	// Re-bind to a different session; the next create should carry the new id.
-	wrapper.BindSessionOrigin(session.SessionID("s2"))
-	res, err = tl.Execute(context.Background(), scheduleCall(t,
+	// A different run context carries a different origin.
+	ctx = agent.WithSessionOrigin(context.Background(), session.SessionID("s2"))
+	res, err = tl.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"daily","prompt":"check ci","cron":"0 9 * * *","workspace":"/repo"}`),
 		memfs.NewWorkspace("/ws"))
 	if err != nil {
@@ -61,15 +62,16 @@ func TestFireDelivery_Scenario1_CreateCapturesOriginSession(t *testing.T) {
 		t.Fatalf("second OriginSessionID = %q, want %q", mgr.created[1].OriginSessionID, "s2")
 	}
 
-	// Unbound wrapper (no BindSessionOrigin) stamps empty OriginSessionID.
+	// An unbound context yields the EMPTY origin, not a stale or borrowed one:
+	// a create that never ran under Engine.Run is originless (no delivery),
+	// which is the fail-safe direction.
 	mgr2 := newStubScheduleManager()
-	wrapper2 := agent.NewSessionOriginScheduleManager(mgr2)
-	tl2 := agent.NewScheduleTool(wrapper2)
+	tl2 := agent.NewScheduleTool(mgr2)
 	res, err = tl2.Execute(context.Background(), scheduleCall(t,
 		`{"verb":"create","name":"orphan","prompt":"x","cron":"@every 1h","workspace":"/r"}`),
 		memfs.NewWorkspace("/ws"))
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("unbound Execute: %v", err)
 	}
 	if res.IsError {
 		t.Fatalf("unbound create = error %q", res.Content)
@@ -104,10 +106,9 @@ func TestFireDelivery_Scenario1_OriginNotModelForgeable(t *testing.T) {
 	// (the bound id wins). Create a schedule with "origin" in args and
 	// assert it does NOT reach the spec's OriginSessionID field.
 	mgr := newStubScheduleManager()
-	wrapper := agent.NewSessionOriginScheduleManager(mgr)
-	wrapper.BindSessionOrigin(session.SessionID("real-session"))
-	tl2 := agent.NewScheduleTool(wrapper)
-	res, err := tl2.Execute(context.Background(), scheduleCall(t,
+	ctx := agent.WithSessionOrigin(context.Background(), session.SessionID("real-session"))
+	tl2 := agent.NewScheduleTool(mgr)
+	res, err := tl2.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo","origin":"evil-session"}`),
 		memfs.NewWorkspace("/ws"))
 	if err != nil {
@@ -134,11 +135,10 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 
 	// AC1.5a: The OriginSessionID does NOT appear in the tool result text.
 	mgr := newStubScheduleManager()
-	wrapper := agent.NewSessionOriginScheduleManager(mgr)
-	wrapper.BindSessionOrigin(originID)
+	ctx := agent.WithSessionOrigin(context.Background(), originID)
 
-	tl := agent.NewScheduleTool(wrapper)
-	res, err := tl.Execute(context.Background(), scheduleCall(t,
+	tl := agent.NewScheduleTool(mgr)
+	res, err := tl.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo"}`),
 		memfs.NewWorkspace("/ws"))
 	if err != nil {
@@ -157,7 +157,6 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 	// observer.
 	var capturedSystem string
 	mgr2 := newStubScheduleManager()
-	wrapper2 := agent.NewSessionOriginScheduleManager(mgr2)
 
 	var observeOnce bool
 	llm := mockllm.NewWith(
@@ -173,13 +172,12 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 	)
 
 	cat := tool.NewCatalog()
-	cat.MustRegister(agent.NewScheduleTool(wrapper2))
+	cat.MustRegister(agent.NewScheduleTool(mgr2))
 
 	eng := agent.NewEngine(agent.Deps{
-		LLM:          llm,
-		Catalog:      cat,
-		Policy:       permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
-		OriginBinder: wrapper2,
+		LLM:     llm,
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 	})
 
 	sess := session.New(originID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
@@ -193,5 +191,110 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 	// The origin session ID must NOT appear in the system prompt.
 	if strings.Contains(capturedSystem, string(originID)) {
 		t.Fatalf("system prompt contains OriginSessionID %q — must NOT be model-visible", originID)
+	}
+}
+
+type concurrentOriginManager struct {
+	port.ScheduleManager
+	mu      sync.Mutex
+	origins map[string]session.SessionID
+}
+
+func (m *concurrentOriginManager) CreateSchedule(_ context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
+	m.mu.Lock()
+	m.origins[spec.Name] = spec.OriginSessionID
+	m.mu.Unlock()
+	return port.Schedule{Spec: spec}, nil
+}
+
+func (m *concurrentOriginManager) origin(name string) session.SessionID {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.origins[name]
+}
+
+// interleaveTimeout bounds the two run-A/run-B rendezvous points below. Generous
+// versus the real wait (microseconds) and well under the go-test timeout, so a
+// broken run surfaces as a NAMED failure rather than a hang.
+const interleaveTimeout = 30 * time.Second
+
+func TestScheduleTool_ConcurrentSharedEngineRunsDoNotCrossStamp(t *testing.T) {
+	firstStreamEntered := make(chan struct{})
+	secondStreamEntered := make(chan struct{})
+	// testDone lets the observer bail out silently once the test goroutine has
+	// returned (e.g. via t.Fatalf on run A never reaching the provider) — without
+	// it, this goroutine could still be parked below when the test completes and
+	// call t.Errorf afterward, panicking with "Log in goroutine after test has
+	// completed".
+	testDone := make(chan struct{})
+	t.Cleanup(func() { close(testDone) })
+	var streamCalls atomic.Int64
+	observer := func(port.LLMRequest) {
+		call := streamCalls.Add(1)
+		if call == 1 {
+			close(firstStreamEntered)
+			// Bounded: if run B never reaches the provider, run A would park here
+			// forever and the test would HANG to the go-test timeout, dumping
+			// goroutines that name this observer instead of whatever broke run B.
+			// t.Errorf (never t.Fatalf) — this is not the test goroutine.
+			select {
+			case <-secondStreamEntered:
+			case <-testDone:
+			case <-time.After(interleaveTimeout):
+				select {
+				case <-testDone:
+				default:
+					t.Errorf("run B never reached the provider — run A could not be interleaved")
+				}
+			}
+			return
+		}
+		if call == 2 {
+			close(secondStreamEntered)
+		}
+	}
+
+	llm := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(observer)},
+		mockllm.ToolCallTurn(toolCall("call-a", agent.ScheduleToolName,
+			`{"verb":"create","name":"from-a","prompt":"a","cron":"@every 1h","workspace":"/ws"}`)),
+		mockllm.ToolCallTurn(toolCall("call-b", agent.ScheduleToolName,
+			`{"verb":"create","name":"from-b","prompt":"b","cron":"@every 1h","workspace":"/ws"}`)),
+		mockllm.TextTurn("done"),
+		mockllm.TextTurn("done"),
+	)
+	mgr := &concurrentOriginManager{
+		ScheduleManager: newStubScheduleManager(),
+		origins:         make(map[string]session.SessionID),
+	}
+	cat := tool.NewCatalog()
+	cat.MustRegister(agent.NewScheduleTool(mgr))
+	eng := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: cat,
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+	})
+	ws := memfs.NewWorkspace("/ws")
+	sessA := session.New("session-a", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sessB := session.New("session-b", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+
+	runA := eng.Run(context.Background(), sessA, ws, agent.RunRequest{Text: "create a"})
+	select {
+	case <-firstStreamEntered:
+	case <-time.After(interleaveTimeout):
+		t.Fatalf("run A never reached the provider — nothing to interleave against")
+	}
+	runB := eng.Run(context.Background(), sessB, ws, agent.RunRequest{Text: "create b"})
+
+	var wg sync.WaitGroup
+	wg.Go(func() { drain(runA) })
+	wg.Go(func() { drain(runB) })
+	wg.Wait()
+
+	if got := mgr.origin("from-a"); got != sessA.ID {
+		t.Errorf("from-a origin = %q, want %q", got, sessA.ID)
+	}
+	if got := mgr.origin("from-b"); got != sessB.ID {
+		t.Errorf("from-b origin = %q, want %q", got, sessB.ID)
 	}
 }

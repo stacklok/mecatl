@@ -333,15 +333,6 @@ type Deps struct {
 	// registered into the catalog by NewEngine only when this is enabled.
 	ProgressiveTools bool
 
-	// OriginBinder, when non-nil, is called in startRun with the executing session's
-	// id so per-run state (e.g. the Schedule tool's origin capture) can bind the
-	// current session. It is the session-origin half of fire-result-delivery
-	// (ADR 0075): the Schedule tool wrapped in a SessionOriginScheduleManager stamps
-	// every CreateSchedule's OriginSessionID with this bound id, so a fire's terminal
-	// result is delivered back to the originating session. nil is fine (the
-	// no-delivery posture).
-	OriginBinder OriginBinder
-
 	// DeliveryQueue, when non-nil, is the DURABLE per-session pending-delivery queue
 	// the loop's turn-boundary drain reads (ADR 0075 decision #3, fire-result-delivery
 	// Scenario 4). The fire path (composition) enqueues a rendered fire-result note
@@ -909,6 +900,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, ws t
 // entry seams cannot drift in their concurrency setup.
 func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
+	ctx = withSessionOrigin(ctx, sess.ID)
 	r := &Run{
 		events:    make(chan session.Event, 64),
 		asks:      newAskRegistry(),
@@ -923,13 +915,6 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
-	}
-	// Bind the per-run origin (the session id this engine is driving) so the
-	// SessionOriginScheduleManager wrapper stamps every CreateSchedule with the
-	// origin session id (fire-result-delivery, ADR 0075). nil is fine (the
-	// no-delivery posture).
-	if e.deps.OriginBinder != nil {
-		e.deps.OriginBinder.BindSessionOrigin(sess.ID)
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044): a host-supplied,
 	// colon-free value makes the run's askIDs reconstructable across processes;

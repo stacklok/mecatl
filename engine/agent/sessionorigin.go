@@ -2,107 +2,38 @@ package agent
 
 import (
 	"context"
-	"sync/atomic"
 
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// OriginBinder is the narrow interface the engine calls in startRun to bind the
-// executing session's id so per-run state (e.g. the Schedule tool's origin capture)
-// can record which session produced this run's side effects. It is satisfied by
-// *SessionOriginScheduleManager. The method is BindSessionOrigin(session.SessionID).
-type OriginBinder interface {
-	BindSessionOrigin(session.SessionID)
-}
+type sessionOriginContextKey struct{}
 
-// SessionOriginScheduleManager wraps a real port.ScheduleManager, holding the
-// current origin session id in a sync/atomic.Pointer[session.SessionID]. Its
-// CreateSchedule stamps spec.OriginSessionID = <current id> (empty if unbound)
-// before delegating to the wrapped manager. All other methods delegate verbatim.
+// withSessionOrigin returns a child context carrying the session id that owns
+// schedule side effects created during the run. Deliberately UNEXPORTED: the
+// only correct way to acquire an origin is to run under Engine.Run, whose
+// startRun stamps it. An out-of-band create has no origin by design (ADR 0075
+// decision #1) and goes straight to the schedule manager, never through the
+// Schedule tool — so an exported writer would serve no composition this harness
+// performs, while letting an embedder name any session as the origin. Exporting
+// later is Added (a minor bump); un-exporting later would be breaking, so the
+// option is kept open.
 //
-// Why race-free: Schedule tool is ReadOnly()==false → mutate-serial; the engine
-// drives ONE session's run at a time → the atomic pointer always names the
-// executing session. Works for shared AND per-session engines. NOT a ctx-value,
-// NOT a parentCaps widening.
-type SessionOriginScheduleManager struct {
-	inner port.ScheduleManager
-	org   atomic.Pointer[session.SessionID]
+// It lives here rather than beside session.WithPrincipal on purpose: the
+// principal has writers outside the engine core (the server authn edge, the
+// syscaller registry), which forces its writer to be exported from the domain
+// leaf. This one has exactly one writer (startRun) and one reader
+// (ScheduleTool.create), both in this package, and staying unexported IS the
+// security argument above.
+func withSessionOrigin(ctx context.Context, id session.SessionID) context.Context {
+	return context.WithValue(ctx, sessionOriginContextKey{}, id)
 }
 
-// NewSessionOriginScheduleManager constructs the wrapper over mgr. mgr must be
-// non-nil; NewSessionOriginScheduleManager panics otherwise (a composition-root
-// programming error, same contract as the ScheduleTool constructors).
-func NewSessionOriginScheduleManager(mgr port.ScheduleManager) *SessionOriginScheduleManager {
-	if mgr == nil {
-		panic("agent: NewSessionOriginScheduleManager requires a non-nil ScheduleManager")
-	}
-	return &SessionOriginScheduleManager{inner: mgr}
+// sessionOriginFromContext reads the run's origin session id, returning the
+// empty id when the context did not come from startRun. The empty id is the
+// honest "no origin" value every consumer fails closed on — it is never
+// substituted for a fallback session. Its one reader is ScheduleTool.create,
+// which sets port.ScheduleSpec.OriginSessionID from it and nothing else.
+func sessionOriginFromContext(ctx context.Context) session.SessionID {
+	id, _ := ctx.Value(sessionOriginContextKey{}).(session.SessionID)
+	return id
 }
-
-// BindSessionOrigin sets the current origin session id. It is called by the engine
-// in startRun before every run, and by nothing else — the id is per-run state
-// bound on the same goroutine that later calls the tool.
-func (w *SessionOriginScheduleManager) BindSessionOrigin(id session.SessionID) {
-	w.org.Store(&id)
-}
-
-// CreateSchedule stamps spec.OriginSessionID from the bound id (empty if unbound),
-// then delegates to the wrapped manager. The model-supplied args never reach the
-// OriginSessionID field — the bound id wins unconditionally.
-func (w *SessionOriginScheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
-	spec.OriginSessionID = w.currentID()
-	return w.inner.CreateSchedule(ctx, spec)
-}
-
-// currentID reads the bound session id, returning "" if unbound.
-func (w *SessionOriginScheduleManager) currentID() session.SessionID {
-	ptr := w.org.Load()
-	if ptr == nil {
-		return ""
-	}
-	return *ptr
-}
-
-// GetSchedule delegates verbatim.
-func (w *SessionOriginScheduleManager) GetSchedule(ctx context.Context, name string) (port.Schedule, error) {
-	return w.inner.GetSchedule(ctx, name)
-}
-
-// ListSchedules delegates verbatim.
-func (w *SessionOriginScheduleManager) ListSchedules(ctx context.Context) ([]port.Schedule, error) {
-	return w.inner.ListSchedules(ctx)
-}
-
-// UpdateSchedule delegates verbatim.
-func (w *SessionOriginScheduleManager) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
-	return w.inner.UpdateSchedule(ctx, spec)
-}
-
-// DeleteSchedule delegates verbatim.
-func (w *SessionOriginScheduleManager) DeleteSchedule(ctx context.Context, name string) error {
-	return w.inner.DeleteSchedule(ctx, name)
-}
-
-// PauseSchedule delegates verbatim.
-func (w *SessionOriginScheduleManager) PauseSchedule(ctx context.Context, name string) error {
-	return w.inner.PauseSchedule(ctx, name)
-}
-
-// ResumeSchedule delegates verbatim.
-func (w *SessionOriginScheduleManager) ResumeSchedule(ctx context.Context, name string) error {
-	return w.inner.ResumeSchedule(ctx, name)
-}
-
-// FireNow delegates verbatim.
-func (w *SessionOriginScheduleManager) FireNow(ctx context.Context, name string) (port.ScheduleFire, error) {
-	return w.inner.FireNow(ctx, name)
-}
-
-// ListFires delegates verbatim.
-func (w *SessionOriginScheduleManager) ListFires(ctx context.Context, name string) ([]port.ScheduleFire, error) {
-	return w.inner.ListFires(ctx, name)
-}
-
-// Compile-time assertion: the wrapper satisfies the port.
-var _ port.ScheduleManager = (*SessionOriginScheduleManager)(nil)

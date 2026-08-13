@@ -1311,6 +1311,146 @@ func TestResetToIdlePreservesUsage(t *testing.T) {
 	})
 }
 
+func TestAbandonFromRunningClosesOutOrphansAndIdles(t *testing.T) {
+	s := newTestSession(Limits{})
+	if err := s.RecordUserPrompt("do two things", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	calls := []ToolCall{
+		NewToolCall("call-a", "read_file", nil),
+		NewToolCall("call-b", "list_dir", nil),
+	}
+	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+		t.Fatalf("RecordAssistant: %v", err)
+	}
+	// The session is left StateRunning here — no Cancel, no Fail — mirroring
+	// the crash-orphaned snapshot (issue #475): nothing observed a
+	// cancellation or a failure, so neither of those seams applies.
+	if s.State != StateRunning {
+		t.Fatalf("precondition: state = %q, want running", s.State)
+	}
+	before := len(s.Conversation.Messages)
+
+	if err := s.Abandon(); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
+	if s.State != StateIdle {
+		t.Fatalf("after Abandon state = %q, want idle", s.State)
+	}
+	added := s.Conversation.Messages[before:]
+	if len(added) != 2 {
+		t.Fatalf("appended %d tool results, want 2", len(added))
+	}
+	wantIDs := []ToolCallID{"call-a", "call-b"}
+	for i, m := range added {
+		if m.Role != RoleTool || m.ToolResult == nil {
+			t.Fatalf("appended[%d] = %+v, want a tool-role synthetic result", i, m)
+		}
+		if m.ToolResult.CallID != wantIDs[i] {
+			t.Fatalf("appended[%d] CallID = %q, want %q (in order)", i, m.ToolResult.CallID, wantIDs[i])
+		}
+		if !m.ToolResult.IsError {
+			t.Fatalf("appended[%d] IsError = false, want true (abandonment sentinel)", i)
+		}
+		if m.ToolResult.Content != abandonCloseOutMessage {
+			t.Fatalf("appended[%d] content = %q, want the abandon wording", i, m.ToolResult.Content)
+		}
+		if m.ToolResult.Content == interruptCloseOutMessage {
+			t.Fatalf("appended[%d] content reused interruptCloseOutMessage — must be its own wording", i)
+		}
+		if m.ToolResult.Content == recoverCloseOutMessage {
+			t.Fatalf("appended[%d] content reused recoverCloseOutMessage — must be its own wording", i)
+		}
+	}
+	if err := ValidateToolPairing(s.Conversation.Messages); err != nil {
+		t.Fatalf("abandoned history fails tool pairing: %v", err)
+	}
+}
+
+func TestAbandonRefusedOutsideRunning(t *testing.T) {
+	for _, mk := range []struct {
+		name  string
+		setup func(*Session)
+	}{
+		{"idle", func(*Session) {}},
+		{"awaiting", func(s *Session) { _ = s.BeginTurn(); _ = s.PauseForApproval(PendingAsk{}) }},
+		{"completed", func(s *Session) { _ = s.BeginTurn(); _ = s.Complete() }},
+		{"failed", func(s *Session) { _ = s.Fail() }},
+		{"cancelled", func(s *Session) { _ = s.BeginTurn(); _ = s.Cancel() }},
+	} {
+		t.Run(mk.name, func(t *testing.T) {
+			s := newTestSession(Limits{})
+			mk.setup(s)
+			if err := s.Abandon(); !errors.Is(err, ErrIllegalTransition) {
+				t.Fatalf("Abandon from %s: err = %v, want ErrIllegalTransition", mk.name, err)
+			}
+		})
+	}
+}
+
+func TestAbandonPreservesUsage(t *testing.T) {
+	spend := Usage{InputTokens: 5000, OutputTokens: 1200, CacheReadTokens: 100, CacheWriteTokens: 50}
+
+	s := newTestSession(Limits{})
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.RecordUsage(spend))
+	if s.State != StateRunning {
+		t.Fatalf("precondition: state = %q, want running", s.State)
+	}
+	mustOK(t, s.Abandon())
+	if s.Usage != spend {
+		t.Fatalf("Abandon cleared Usage: got %+v, want %+v (the budget must survive)", s.Usage, spend)
+	}
+	if s.Counters != (Counters{}) {
+		t.Fatalf("Abandon did NOT reset Counters: %+v", s.Counters)
+	}
+}
+
+// TestAbandonIsIdempotentAgainstAlreadyRepairedHistory pins the claim the
+// composition-level staleness sweep relies on (issue #475 design §4): a
+// second application of the SAME repair mechanism against an already-repaired
+// history is a no-op, since two replicas' sweeps can both Load the same stale
+// snapshot before either writes back. closeOutInterruptedTurn builds its
+// "already answered" set from the messages following the last assistant
+// turn, so re-running it after the first Abandon's synthetic results have
+// already been appended matches nothing and appends nothing further. Abandon
+// itself cannot be called twice in a row on the same object (the first call's
+// resetToIdle leaves the session StateIdle, and a second Abandon there
+// correctly refuses per TestAbandonRefusedOutsideRunning) — this test instead
+// pins the underlying repair helper's idempotency directly.
+func TestAbandonIsIdempotentAgainstAlreadyRepairedHistory(t *testing.T) {
+	s := newTestSession(Limits{})
+	if err := s.RecordUserPrompt("do two things", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	calls := []ToolCall{
+		NewToolCall("call-a", "read_file", nil),
+		NewToolCall("call-b", "list_dir", nil),
+	}
+	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+		t.Fatalf("RecordAssistant: %v", err)
+	}
+	s.closeOutInterruptedTurn(abandonCloseOutMessage)
+	after1 := len(s.Conversation.Messages)
+
+	// A second replica's sweep re-applies the SAME repair against the SAME
+	// (already-repaired) history before either has written back.
+	s.closeOutInterruptedTurn(abandonCloseOutMessage)
+
+	if len(s.Conversation.Messages) != after1 {
+		t.Fatalf("second closeOutInterruptedTurn changed history length: got %d, want %d (no-op)", len(s.Conversation.Messages), after1)
+	}
+	if err := ValidateToolPairing(s.Conversation.Messages); err != nil {
+		t.Fatalf("twice-repaired history fails tool pairing: %v", err)
+	}
+}
+
 // TestResetUsage pins the explicit ResetUsage seam (the aggregate-mutation counterpart
 // to resetToIdle's deliberate Usage-preservation): it zeroes Usage from any NON-running
 // state and is rejected from running (where it would race the loop's RecordUsage and

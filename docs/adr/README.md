@@ -40,7 +40,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)
 - [0073 — Schedule tool](./0073-schedule-tool.md)
 - [0074 — Many loops per server; scheduler shape](./0074-many-loops-scheduler-shape.md)
-- [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md)
+- [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md) *(origin-binding mechanism superseded by 0104)*
+- [0104 — Attribute schedule origins through the run context](./0104-schedule-origin-run-context.md) *(supersedes 0075's wrapper-state origin binding)*
 - [0097 — Scheduled fires are observable in-flight: a first-class persisted lifecycle stage](./0097-scheduled-fire-inflight-state.md)
 - [0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](./0096-live-feed-reconnect.md)
 - [0103 — mecatui seed prompt (`-p`/`--prompt`, `--prompt-file`)](./0103-mecatui-seed-prompt.md)

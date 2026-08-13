@@ -779,8 +779,8 @@ func startEmbeddedBuiltServer(t *testing.T, cfg app.Config) (target string, buil
 // NO origin_session_id field (the wire carries no such field by design — see
 // engine/CHANGELOG.md + internal/adapter/server/grpc_schedule.go's
 // protoToScheduleSpec, which never maps it). OriginSessionID is stamped ONLY by
-// the in-loop Schedule tool via the SessionOriginScheduleManager wrapper
-// (engine/agent/sessionorigin.go). The canned UseMock provider cannot drive a
+// the in-loop Schedule tool, from the run context (engine/agent/scheduletool.go
+// + engine/agent/sessionorigin.go). The canned UseMock provider cannot drive a
 // Schedule tool call, so the test reaches the just-built *app.Built.Service
 // directly to create the schedule with OriginSessionID set — the ONE in-process
 // step in an otherwise real-wire e2e. The fire, delivery, and live

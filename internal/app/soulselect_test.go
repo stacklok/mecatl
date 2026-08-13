@@ -109,7 +109,7 @@ func TestSoulWithheldByProjectSettingsDeny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := Config{Workspace: ws, PermissionsConventional: true, TrustProject: true}
+	cfg := Config{Workspace: ws, PermissionsConventional: true, permConfigEnv: isolatedPermConfigEnv(t), TrustProject: true}
 	cfg.permResolver = buildPermResolver(cfg) // the Build fold (buildSoulGate consumes the ONE resolver)
 	if got := buildSoulGate(cfg).Effect(); got != governance.Deny {
 		t.Fatalf("project settings deny on soul:apply must resolve to Deny, got %v", got)
@@ -149,7 +149,7 @@ func TestSoulApplyProjectAllowIgnoredWithoutTrust(t *testing.T) {
 	}
 
 	// Trust OFF: the untrusted project allow is dropped → gate stays at the floor Allow.
-	untrusted := Config{Workspace: ws, PermissionsConventional: true, TrustProject: false}
+	untrusted := Config{Workspace: ws, PermissionsConventional: true, permConfigEnv: isolatedPermConfigEnv(t), TrustProject: false}
 	untrusted.permResolver = buildPermResolver(untrusted) // the Build fold
 	if got := buildSoulGate(untrusted).Effect(); got != governance.Allow {
 		t.Fatalf("untrusted project allow must be inert; gate should be floor Allow, got %v", got)
@@ -199,7 +199,7 @@ func TestSoulApplyConfiguredDenyWinsUnderYolo(t *testing.T) {
 func TestBuildSoulGateUnopenableWorkspaceDefaultsAllow(t *testing.T) {
 	xdg := t.TempDir()
 	fakeSoulEnv(t, xdg)
-	cfgUnopenable := Config{Workspace: "/nonexistent/xyz", PermissionsConventional: true}
+	cfgUnopenable := Config{Workspace: "/nonexistent/xyz", PermissionsConventional: true, permConfigEnv: isolatedPermConfigEnv(t)}
 	cfgUnopenable.permResolver = buildPermResolver(cfgUnopenable)
 	if got := buildSoulGate(cfgUnopenable).Effect(); got != governance.Allow {
 		t.Fatalf("an unopenable workspace must fail open to floor Allow (no panic), got %v", got)
@@ -533,7 +533,7 @@ func TestSoulGateIgnoresSubagentBlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mecatlDir, "settings.yaml"), []byte(settings), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Workspace: ws, PermissionsConventional: true, TrustProject: true}
+	cfg := Config{Workspace: ws, PermissionsConventional: true, permConfigEnv: isolatedPermConfigEnv(t), TrustProject: true}
 	cfg.permResolver = buildPermResolver(cfg)
 	if got := buildSoulGate(cfg).Effect(); got != governance.Allow {
 		t.Fatalf("a subagent-block soul:apply deny must be invisible to the MAIN soul gate; got %v", got)

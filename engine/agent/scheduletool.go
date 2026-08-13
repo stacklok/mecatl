@@ -388,6 +388,15 @@ func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args s
 		Mutating:  args.Mutating,
 		MaxFires:  args.MaxFires,
 		Timezone:  args.Timezone,
+		// The origin comes from the RUN CONTEXT and from nowhere else, and this
+		// literal is the only place it is ever set (ADR 0104). scheduleArgs has
+		// no origin field, so a model-supplied one cannot reach it — do NOT add
+		// an `args.Origin ?: ctx` fallback, which is exactly the forgery this
+		// closes. An unbound context yields the empty id, which means NO
+		// delivery (the delivery path early-returns), never delivery to an
+		// arbitrary session; that is the fail-safe direction and it is what an
+		// out-of-band create gets by design (ADR 0075 decision #1).
+		OriginSessionID: sessionOriginFromContext(ctx),
 		// The Phase-2 one-shot retry fields map through VERBATIM: their rule
 		// enforcement (one-shot-only rejection, the >= 0 bound, the default of
 		// 3) lives ENTIRELY in the create-seam — the tool must never drop them

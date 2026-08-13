@@ -542,6 +542,168 @@ The re-audit verdict is CLEAN. The shipped `toolhive-core/authn` v0.0.39 validat
 is wired by the shared OIDC config; its cached keys are bounded by default under
 [ADR 0101](./0101-bounded-jwks-staleness.md), and remain reconstructible rather
 than persisted.
+### Phase 6: crash-orphaned running-session recovery (SHIPPED)
+
+A session's `state` is persisted mid-turn — every `e.save` after `BeginTurn`
+writes `StateRunning` well before the turn (let alone the run) reaches a
+terminal state — so a process that crashes, is killed, or loses its host while
+a session is `StateRunning` leaves the LAST persisted snapshot reading
+"running" forever: none of Reopen/Interrupt/Recover is legal from `running`,
+so nothing ever recovers it (issue #475). Two real symptoms: the `/sessions`
+listing lies forever ("in progress" with nobody driving it), and a follow-up
+prompt on the SAME id risks reaching the provider with a dangling
+`tool_use`/`function_call` left by the abandoned turn (an unrepaired history →
+provider HTTP 400 → `failed`).
+
+The fix adds a 4th terminal-recovery seam and two independent repair paths
+that route through it, plus a composition-level sweep for the case where
+nobody ever touches the orphan again:
+
+- **`Session.Abandon()`** (`engine/session/session.go` (`Abandon`)): the 4th
+  seam, sibling of Reopen/Interrupt/Recover, legal ONLY from `StateRunning`.
+  Repairs any trailing unanswered `tool_use` via the SAME
+  `closeOutInterruptedTurn` history repair the other three seams use, with its
+  own abandonment-accurate close-out wording (never claiming a cancellation or
+  a failure, neither of which was observed), then `resetToIdle()`s. `awaiting`
+  is untouched by design — see the widened AGENTS.md invariant.
+- **The run-entry funnel's own repair** (`internal/adapter/server/service.go`
+  (`StartRunContent`)): placed AFTER `runEntryMu.lock(id)` and the REAL
+  `acquireLease` have both succeeded — never inside `loadAndReopen`'s pre-lock
+  switch, where a trial lease could race a concurrent caller or reject a
+  peer's genuine `acquireLease`. The successful acquire IS the proof of
+  exclusive ownership, so no trial lease or age-horizon oracle is needed here;
+  an `IsLive(id)` guard refuses the repair outright (rather than racing it) if
+  THIS process still has a genuinely live run for `id` (`runEntryMu` only
+  serializes run-ENTRY, not a run's whole lifetime, so a second
+  `StartRunContent` for the same id can land here while an earlier run this
+  process started is still mid-flight).
+- **`Service.SessionStale` / `Service.SettleIfStale`**
+  (`internal/adapter/server/service.go`): the shared staleness DECISION and
+  repair WRITE. `SessionStale` mirrors
+  `internal/adapter/scheduler/scheduler.go`'s own
+  `shouldReconcileStaleFire`/`isPriorFireLive` ordering — an age horizon
+  (`staleSessionWindow`, 30m) is a HARD PRECONDITION checked BEFORE any
+  liveness/lease signal, because it is the ONLY defense that covers
+  `subagent-*`/`parallel-*`/`team-*` child sessions at all (`IsLive`'s own doc
+  comment says it never sees engine children even mid-run — a liveness-only
+  oracle would be blind to exactly the population issue #475's confirmed bug
+  came from); `IsLive` is checked next; and, when a `port.SessionLease` is
+  wired, a bounded trial Acquire is a SECONDARY refinement (with a
+  self-held-lease correction and a sticky `LeaseSweepDisabled` fallback on
+  `ErrLeaseUnsupported` — never a per-candidate downgrade to local-only
+  liveness, which would reintroduce the cross-replica unsoundness the lease
+  branch exists to prevent). `SettleIfStale` re-checks `State==StateRunning`
+  (closing the meta-scan/load TOCTOU) and `!IsLive(id)` before calling
+  `Abandon()`+`Store.Save`. It is the SWEEP's repair path ONLY — the funnel's
+  `StartRunContent` repair calls `Abandon()`+`Store.Save` directly on the
+  in-memory session it already holds, since routing through `SettleIfStale`'s
+  fresh `Store.Load` would leave the funnel's own in-memory session (already
+  loaded, about to be handed to `engine.Run`) untouched and still carrying its
+  unpaired `tool_use` — the HTTP-400 this whole fix exists to prevent would
+  survive unnoticed.
+- **The composition-level sweep** (`internal/app/session_reconcile.go`
+  (`startStaleSessionReconcile`)): a startup-sweep-then-ticker goroutine
+  (mirroring the `startLiveModelRefresh` idiom, not `childGC`'s Build-ctx-tied
+  one — this sweep always keeps a persistent ticker running, so it needs its
+  own cancelable lifetime) that lists every stored session via
+  `Service.ListSessions`, narrows to `state=="running"` rows excluding
+  `sched--` fire ids (the scheduler owns its own stale-fire reconciler), and
+  settles every candidate `SessionStale` judges stale via `SettleIfStale`.
+  This is the ONLY repair path that reaches a
+  `subagent-*`/`parallel-*`/`team-*` child crash-orphaned in `StateRunning`,
+  and the ONLY mechanism that fixes the `/sessions`-display symptom for a
+  session nobody ever re-opens (the funnel's repair only fires when a caller
+  re-opens the EXACT orphaned id).
+
+This is honestly **last-write-wins narrowed by a wide age window, not
+atomic**: `Store.Save` has no CAS/fencing consulted anywhere in this design,
+so nothing here actually PREVENTS an already-in-flight `e.save` from a
+genuinely live run landing after a sweep's repair — the 30-minute age window
+is what makes the residual race acceptable in practice, not a proof that it
+cannot happen.
+
+Gate (CI-green, offline): `engine/session/session_test.go`
+(`TestAbandonFromRunningClosesOutOrphansAndIdles`,
+`TestAbandonRefusedOutsideRunning`, `TestAbandonPreservesUsage`,
+`TestAbandonIsIdempotentAgainstAlreadyRepairedHistory`) pin the seam's
+precondition, history repair, and usage preservation;
+`internal/adapter/server/staleness_test.go` (`TestSessionStaleWithinAgeWindowNeverStale`,
+`TestSessionStaleLeaseSelfHeldIsStale`,
+`TestSessionStaleLeaseUnsupportedDisablesSweepNotFallback`, and siblings) pin
+the age-first/IsLive/lease ordering; `internal/adapter/server/settle_test.go`
+(`TestSettleIfStaleAbandonsRunningSessionThenNoOps`,
+`TestSettleIfStaleSkipsGenuinelyLiveSession`) pin the repair write;
+`internal/adapter/server/staterunning_repair_test.go`
+(`TestStartRunContentAbandonsStaleRunningSession`,
+`TestStartRunContentLeavesLiveRunningSessionAlone`) pin the funnel repair; and
+`internal/app/session_reconcile_test.go`
+(`TestStaleSessionReconcileSettlesChildCandidate`,
+`TestStaleSessionReconcileExcludesScheduleFireSessions`,
+`TestStaleSessionReconcileNeverTouchesAwaiting`,
+`TestStaleSessionReconcileLeavesFreshRunningAlone`,
+`TestSweepStaleSessionsSkipsWhenLeaseSweepDisabled`,
+`TestStartStaleSessionReconcileExitsOnCancel`) pin the sweep's candidate
+narrowing and its join-on-close.
+
+**Phase 6 re-audit (List 1 / List 2).** Phase 6 added ONE new outlives-a-call
+resource (List 1 row 43): the stale-session sweep goroutine — owner
+`internal/app` (`startStaleSessionReconcile`), scope PROCESS, cleanup = the
+returned closer now `cancel()`s AND `wg.Wait()`s (mirroring
+`startLiveModelRefresh`'s exact idiom) so `Built.Close()` cannot return while a
+sweep pass is mid-`SettleIfStale`, folded into `Built.Close`'s `closeAll`;
+re-attach = a restarted process starts a FRESH sweep at the next `Build`'s
+startup pass — there is nothing to carry over, since the durable snapshot the
+sweep repairs already IS the state in question. It is deliberately NOT tied to
+`Build`'s own ctx, unlike `childGC` (a no-op-by-default goroutine most callers
+never notice outlives one `Build` call, since `ChildGCInterval` defaults to
+0/startup-only) — this sweep always runs a persistent ticker, so tying it to a
+ctx a test fixture never cancels would leak a goroutine per test. List 2 gains
+NO row: the sweep and the funnel repair both act on the ALREADY-persisted
+`session.Session` snapshot — there is no new restart-losable state here, only
+a repair of state that already existed. The re-audit verdict is CLEAN.
+
+Named residuals (accepted gaps, not silently omitted):
+
+- An orphaned-`awaiting` session that gets a NEW prompt instead of a resume
+  stays wedged (`BeginTurn` is illegal from `awaiting`, so `RecordUserPrompt`
+  rejects with `ErrIllegalTransition`) — not fixed by this phase; see the
+  widened AGENTS.md invariant.
+- The scheduler's own stale-fire reconciler
+  (`internal/app/scheduler_reconcile.go` (`makeReconcileStaleFire`)) only ever
+  inspects the MOST RECENT fire per schedule (`sched.State`), so an older
+  orphaned `sched--` session beyond the latest fire is reconciled by NEITHER
+  mechanism: `session_reconcile.go`'s sweep deliberately excludes the whole
+  `sched--` family (this reconciler owns it), and this reconciler itself never
+  looks that far back.
+- A genuinely-live `subagent-*`/`parallel-*`/`team-*` child session id could in
+  principle be repaired out from under a SINGLE `StartRunContent` call at
+  that child id — unlike the main-session case, there is no "first" funnel
+  call that registered the live run for `IsLive` to see: the child is driven
+  in-process by its parent's own dispatch, so `IsLive` is structurally blind
+  to it (see the doc comment on `IsLive` itself) and any `StartRunContent`
+  reaching a live child's id would find `IsLive` false and proceed. The
+  funnel's repair relies on "a successful lease acquire is its own proof,"
+  not an age horizon, for that specific path — distinct from the sweep, which
+  DOES gate every child candidate (these families included) on the age
+  horizon first. **This is NOT theoretical** — a child's id is deliberately
+  surfaced to the same caller that owns its parent session (the
+  `agentId:`/`Team id:` result trailer, `InspectSubagent`/`InspectMember`'s
+  `MemberSessionID(teamID, member)` scheme), so any caller with ordinary
+  prompt-endpoint access could `StartRunContent` a live child's id directly
+  and race the parent's own drive. The fix (a panel-review finding on this
+  same issue's Step 3) is `internal/adapter/server/service.go`'s
+  `isDelegationChildSessionID` guard: `StartRunContent` now rejects ANY
+  `subagent-`/`parallel-`/`team-` prefixed id outright with
+  `ErrInvalidArgument`, unconditionally, before `loadAndReopen`, before the
+  lease/lock, and before the `StateRunning` crash-orphan repair branch can
+  even be reached — closing the wire path structurally rather than trying to
+  make the repair itself race-safe. `sched--`-prefixed schedule-fire sessions
+  are deliberately excluded (`scheduler_fire.go`'s own `StartRunContent` call
+  on a fire session IS the legitimate driver for that family). Pinned by
+  `TestStartRunContentRejectsDelegationChildSessionID`
+  (`internal/adapter/server/staterunning_repair_test.go`). `SessionStale`'s
+  age-first ordering remains the sweep's own, independent defense for this
+  population — the two defenses are complementary, not redundant.
 
 ### Sequencing rationale
 
@@ -611,6 +773,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 40 | OS-keyring / D-Bus connection behind the direct-mode secrets provider (issue #265, ADR 0102) | toolhive's `pkg/auth/secrets` (`GetSystemSecretsProvider`), opened transitively by row 39's construction; mecatl never holds the handle | process (OPT-IN with row 39; on Linux this is a `godbus` connection with its own reader/writer goroutines) | NOT mecatl-owned — no `Close` seam is exposed and none is folded into Build's `closeAll`; the connection is process-scoped and released at exit. This is the accepted residual, and it is why `internal/app/leakmain_test.go` pins `godbus/dbus/v5.newConn.func1` + `(*Conn).inWorker` by top-of-stack (a narrow pin, NOT a blanket suppression — any other leak still fails the gate) | **reconstructible** (re-opened lazily by the next Build's token-source construction; it is a transport to the keyring, never state-of-record — the credential it fetches is the keyring's, decision = derive). No List 2 row | `internal/adapter/toolhivellm/tokensource.go` (`buildTokenSource`); the goleak pins live in `internal/app/leakmain_test.go` (`TestMain`) |
 | 41 | OIDC token-validator JWKS cache + its background key-rotation refresh (caller identity, ADR 0100 decision 3/7 and ADR 0103; the `toolhive-core/authn` validator wrapped by the opt-in `authn/oidc` module and adapted to `server.PrincipalValidator`) | the `authn/oidc.Validator` instance, constructed once per process through `internal/cliconfig/oidc.go` (`OIDCValidator`) and handed to `server.SecurityConfig.Validator`; the module owns the reusable lifecycle seam, never the JWT/JWKS mechanics | process (OPT-IN: only when `--oidc-issuer` is set; the zero value is identity OFF and allocates nothing) | **explicit teardown at the edge**, NOT the root context's cancel: the validator's background refresh is stopped by its OWN `Close()`, and cancelling a context does not call it. `internal/adapter/server/authn.go` (`Authenticator.Close`) type-asserts an OPTIONAL `io.Closer` on the configured validator (the `port.HookApprovalLearner` idiom — `PrincipalValidator` stays single-method, so a fake without teardown needs none) and closes it once (`sync.Once`); both mains `defer auth.Close()` (`cmd/mecated/main.go`, `cmd/mecak8s/serve.go`). The SERVER-ROOT context is still what the constructor is handed — deliberately NOT a per-request one, which would tear key rotation down with the first request — but it bounds in-flight fetches, not the refresh loop's lifetime. The refresh goroutine has no caller and therefore runs under the explicit system principal `mecatl:internal / jwks-refresh` (`internal/syscaller/syscaller.go` (`RootJWKSRefresh`)) | **reconstructible** (a restarted process re-resolves the flags and re-fetches the key set on the next Build; nothing is persisted and nothing should be — a cached signing key is a derivation of the IdP's live JWKS). Cached-key trust is bounded by `--oidc-max-jwks-staleness` (1h default; 0 explicitly disables the bound; ADR 0101) | `authn/oidc/oidc.go` (`Validator`, `NewValidator`, `Close`); `internal/cliconfig/oidc.go` (`OIDCConfig`, `OIDCValidator`, `RegisterOIDCFlags`); `internal/adapter/server/authn.go` (`PrincipalValidator`); `internal/syscaller/syscaller.go` (`RootJWKSRefresh`) |
 | 42 | osfs same-path mutation lock stripes (ADR 0104) | `internal/adapter/osfs` package | process (fixed array of 256 `sync.Mutex` values, physical-target `hash/maphash` stripe) | none needed: fixed allocation, no goroutine/fd/map entry, released with the process. Existing targets canonicalize fully; missing targets canonicalize parent+basename, so stable symlink aliases converge. A collision only serializes unrelated mutations; concrete osfs bootstrap `Write` plus Workspace `CreateFile`/`ReplaceFile` use the same stripe across Workspace instances. The guarantee is process-scoped and assumes a non-cooperating writer does not race target existence or symlink identity during pre-lock canonicalization | **reset-by-design**: pure synchronization, no state-of-record. Re-created as zero-value mutexes at process start; backend file contents remain authoritative. Multi-process deployments receive only per-backend-handle atomicity until remote backend CAS lands. No List 2 row | `internal/adapter/osfs/osfs.go` (`pathLocks`, `pathLock`) |
+| 43 | Stale-session sweep goroutine (Phase 6, issue #475) | `internal/app` (`startStaleSessionReconcile`) | process (unconditional — always runs a startup sweep then a persistent ticker; there is no operator-facing flag to disable it, only the per-pass `LeaseSweepDisabled` sticky-disable when a wired lease backend does not support leasing) | the returned closer `cancel()`s the sweep's own ctx AND `wg.Wait()`s the goroutine (mirroring `startLiveModelRefresh`'s exact idiom), folded into `Built.Close`'s `closeAll` so a caller that never cancels `Build`'s own ctx (the common test-fixture shape) still gets a clean, race-free teardown — `Built.Close()` cannot return while a sweep pass is mid-`SettleIfStale` | **derived** (a restarted process starts a fresh sweep at the next `Build`'s startup pass; nothing about the sweep itself is state-of-record — it repairs the ALREADY-persisted `session.Session` snapshot, so there is nothing to carry over). No List 2 row | `internal/app/session_reconcile.go` (`startStaleSessionReconcile`, `sweepStaleSessions`); wired at `internal/app/build.go` |
 
 **Issue #388 re-audit (bounded embedded-mecatui shutdown).** #388 added NO new
 outlives-a-call resource row. The work BOUNDS existing rows' cleanup, it does not add

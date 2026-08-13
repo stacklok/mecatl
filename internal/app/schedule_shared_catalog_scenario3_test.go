@@ -181,11 +181,11 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 }
 
 // TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired pins AC3.3 (ADR
-// 0075): the SHARED engine's OriginBinder + DeliveryQueue are live once the
-// manager is bound, so a schedule created from a shared-engine session stamps
+// 0075, superseded for origin attribution by ADR 0104): the SHARED engine's
+// run-context attribution + DeliveryQueue are live once the manager is bound, so a schedule created from a shared-engine session stamps
 // its OriginSessionID, and the fire's result is delivered back into that chat.
 // The whole arc rides the PRODUCTION seams — no test-fire shortcut: the
-// origin run's create goes through the OriginBinder-wrapped manager the shared
+// origin run's create goes through the context-attributing manager wrapper the shared
 // catalog registered; the fire goes through scheduler.FireNow → makeFireFunc
 // (the same closure startScheduler installs) → fireClaimed → the
 // DeliverFireResult callback deliverFireResult(svc, queue), which enqueues to
@@ -225,8 +225,8 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	// The origin run creates the schedule. startRun binds the shared engine's
-	// OriginBinder to THIS session id, so the create stamps OriginSessionID.
+	// The origin run creates the schedule. startRun places THIS session id on
+	// the run context, so the create stamps OriginSessionID.
 	run, err := built.Service.StartRunContent(ctx, sess.ID, "schedule a nightly ci check", nil)
 	if err != nil {
 		t.Fatalf("StartRunContent (create): %v", err)
@@ -238,13 +238,13 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 	}
 
 	// ORIGIN half: the created schedule carries the shared-engine session's id
-	// — the shared engine's OriginBinder (wired at buildEngine) is live.
+	// that the Schedule tool read off the run context.
 	created, err := built.Service.GetSchedule(ctx, "nightly")
 	if err != nil {
 		t.Fatalf("GetSchedule: %v", err)
 	}
 	if created.Spec.OriginSessionID != sess.ID {
-		t.Fatalf("OriginSessionID = %q, want the shared-engine session id %q — the shared engine's OriginBinder did not stamp the create", created.Spec.OriginSessionID, sess.ID)
+		t.Fatalf("OriginSessionID = %q, want the shared-engine session id %q — run-context attribution did not stamp the create", created.Spec.OriginSessionID, sess.ID)
 	}
 
 	// Late-bind the REAL production fire path, mirroring startScheduler

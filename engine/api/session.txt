@@ -1,6 +1,7 @@
     method func (*Conversation).Append(m Message)
     method func (*Conversation).Len() int
     method func (*Principal).Clone() *Principal
+    method func (*Session).Abandon() error
     method func (*Session).BeginTurn() error
     method func (*Session).Cancel() error
     method func (*Session).Complete() error

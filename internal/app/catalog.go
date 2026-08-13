@@ -112,12 +112,6 @@ type catalogAssets struct {
 	// (scheduleStore() != nil). Typed-nil discipline: assigned once,
 	// known-non-nil or untyped nil.
 	scheduleManagerFactory func() port.ScheduleManager
-	// scheduleOriginBinder is the session-origin binder the Schedule tool's
-	// manager wrapper holds (fire-result-delivery, ADR 0075). It is set in
-	// registerScheduleTool when the wrapper is created and read by both
-	// baseEngineDeps (the shared engine) and the per-session engine factory to
-	// wire OriginBinder on the engine Deps. nil when scheduling is off.
-	scheduleOriginBinder agent.OriginBinder
 	// deliveryQueue is the DURABLE per-session pending-delivery queue
 	// (fire-result-delivery, ADR 0075 decision #3). It is built once in Build
 	// (a FileDeliveryQueue under the store dir for a durable store, an
@@ -483,18 +477,16 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 	if s.narrate {
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
-	// Wrap the manager with the session-origin capture binder (fire-result-delivery,
-	// ADR 0075): every CreateSchedule stamps the bound session id as OriginSessionID.
-	// The wrapper is stored on the assets so the engine Deps can wire it as
-	// OriginBinder (the per-run session binding).
-	wrapper := agent.NewSessionOriginScheduleManager(mgr)
-	a.scheduleOriginBinder = wrapper
+	// No origin wiring here: the Schedule tool stamps OriginSessionID from the
+	// run context itself (fire-result-delivery, ADR 0104), so there is nothing
+	// composition can forget to wrap.
+	//
 	// The READ-ONLY half (AC1.4): list/inspect live on a separate query tool so
 	// they join the read-parallel batch (ReadOnly()==true). It registers in
 	// EVERY mode — plan mode included — because it is already ReadOnly()==true
 	// (no plan-aware wrapper needed).
-	cat.MustRegister(agent.NewScheduleQueryTool(wrapper))
-	base := agent.NewScheduleTool(wrapper)
+	cat.MustRegister(agent.NewScheduleQueryTool(mgr))
+	base := agent.NewScheduleTool(mgr)
 	if s.mode == session.ModePlan {
 		// PLAN-MODE variant (AC4.3): the default MUTATING tool reports
 		// ReadOnly()==false, so the plan-mode catalog projection would hide the
