@@ -354,6 +354,22 @@ type Session struct {
 	Usage Usage
 	// Workspace is the root directory tools operate against (the session cwd).
 	Workspace string
+	// EnvironmentRef is the resolved execution-environment identity this session
+	// runs against (ADR 0105 phase 3, issue #462). The aggregate STORES it but never
+	// interprets it — the EnvironmentKind/ID pair is opaque here, and resolution to a
+	// live tool.Environment lives entirely in composition (server.Config.
+	// EnvironmentResolver for a non-in-tree Kind). It is the durable identity half of
+	// the Environment seam: persisting it lets a restarted process reattach a live
+	// Environment to the SAME backend (a remote worker, a container) rather than
+	// silently re-deriving one from the workspace/profile. It is a write-once
+	// creation label stamped by the composition root after New (no mutator): for the
+	// in-tree backends the resolved default is `local` (ID = workspace root) for a
+	// filesystem session and `nofs` (empty ID) for a no-fs session. The zero value
+	// {Kind:"", ID:""} is the "unspecified" ref carried by a legacy snapshot or a
+	// session built without a ref; composition stamps it from the first
+	// successfully resolved live Environment so the next ordinary save persists it.
+	// Local/mem/nofs never need a resolver; any other Kind requires one.
+	EnvironmentRef EnvironmentRef
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
 	// it but never interprets it: the meaning lives entirely in the composition

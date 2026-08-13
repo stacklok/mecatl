@@ -104,8 +104,11 @@ Service factory builds a fresh Environment per run, while existing no-fs/ACP
 overrides (registered via `SetSessionEnvironment`) retain their owner-defined
 lifetime. Restarting the process loses in-memory overrides; a restarted session
 re-derives its Environment through the same rehydration path (no-fs profile,
-ACP adapter reconnect) — snapshot persistence of `EnvironmentRef` is deferred to
-phase 3 (ADR 0105).
+ACP adapter reconnect). As of ADR 0106, `EnvironmentRef` is a DURABLE snapshot
+field: a non-in-tree ref persists and reattaches a live `Environment` at run
+entry through `server.Config.EnvironmentResolver` (the in-tree Kinds never reach
+it; a nil/mismatch/nil-Workspace result fails loudly). A legacy zero ref is
+stamped from the first resolved live Environment on the next save.
 
 `CreateFile` and the compare-plus-mutation in `ReplaceFile` are atomic for
 concurrent calls through the same live Workspace/backend handle. ACP's
@@ -139,7 +142,11 @@ whose `Workspace` and bound `CommandRunner` address one namespace. The
 capabilities; the forker/merger are `tool.EnvironmentForker`/
 `tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
 governance remains outside. `EnvironmentRef` is an in-process identity in phase 2
-— snapshot persistence and remote transport are deferred to phase 3. The
+— snapshot persistence and remote transport are deferred to phase 3. [ADR 0106](../adr/0106-environment-persistence.md)
+implements the phase-3 persistence/reattachment half: `EnvironmentRef` is a durable
+snapshot field, and `server.Config.EnvironmentResolver` reattaches a live
+`Environment` for a non-in-tree Kind (the `internal/adapter/remoteenv` reference
+fake proves the contract). The
 version-aware file-mutation foundation is [ADR 0104](../adr/0104-execution-environment.md).
 
 `tool.MemoryStore` and `tool.EnvironmentForker` live alongside it for the same

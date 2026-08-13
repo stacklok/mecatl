@@ -209,6 +209,27 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   merger signature changes are the breaking half recorded below. The removed
   `WorkspaceForker`/`ForkMerger` interfaces are recorded under Removed.
 
+- **`session.Session.EnvironmentRef` persisted** (ADR 0106, issue #462 phase 3)
+  — the resolved execution-environment identity is now a durable, inert exported
+  field on `session.Session` (the same write-once-label posture as
+  `Profile`/`ProviderID`/`ModelID`):
+  - `session.Session.EnvironmentRef` (`session.EnvironmentRef`, added in phase 2)
+    is now persisted: `sessnap.Snapshot.EnvironmentRef` round-trips it through
+    `Of`/`Restore` with Go 1.26's `omitzero` (NOT `omitempty`, which never omits a
+    non-empty struct) so a default/local session with no remote ref stays
+    byte-identical to a pre-phase-3 snapshot — purely additive, no format-tag
+    bump. A legacy snapshot with no `environment_ref` key restores the zero ref
+    and remains backward-compatible (composition stamps a fresh ref from the
+    first resolved live Environment on the next ordinary save; no migration
+    sweep). The session aggregate stores it and never interprets it; reattachment
+    to a live `tool.Environment` for a non-in-tree Kind lives in composition.
+  This is an additive field on an already-Added type (phase 2 added
+  `EnvironmentRef`); the persisted snapshot field is Added per COMPATIBILITY.md
+  (a minor bump). The COMPATIBILITY.md "Session reconstruction contract" classifies
+  `EnvironmentRef` as a not-event-carried identity label (like `Owner`/`Authority`).
+  A remote transport itself remains deferred — the ref is durable identity, not a
+  transport contract. See ADR 0106.
+
 - **`session.ToValidUTF8` and `session.RepairToolResult`** (issue #402) — the
   UTF-8 repair primitives that close the Converse-stream kill. A tool can hand
   back arbitrary bytes (a command's stdout, a file's contents, an MCP server's

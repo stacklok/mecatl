@@ -242,15 +242,17 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
 	//     Profile, ProviderID, ModelID, ReasoningEffort, CreatedAt
-	//   not-event-carried identity labels (ADR 0100): Owner, Authority — the event
-	//     annotation is log-only and the fold neither requires nor re-derives it,
-	//     so a folded session keeps the snapshot-restored owner (ownerless stays
-	//     ownerless, never fabricated)
+	//   not-event-carried identity labels (ADR 0100/0106): Owner, Authority,
+	//     EnvironmentRef — the event annotation is log-only and the fold neither
+	//     requires nor re-derives any of them, so a folded session keeps the
+	//     snapshot-restored value (ownerless stays ownerless, a zero ref stays
+	//     zero — composition stamps it from the first resolved live Environment on
+	//     the next run — never fabricated)
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "CreatedAt": {},
-		"Title": {}, "Owner": {}, "Authority": {},
+		"Title": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,
 		"session.Session — classify the new field in COMPATIBILITY.md's reconstruction contract")

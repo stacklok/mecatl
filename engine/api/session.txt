@@ -211,7 +211,7 @@ type Principal struct{Issuer string; Subject string; GrantType GrantType; Name s
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; Owner *Principal; Authority Authority; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; Owner *Principal; Authority Authority; CreatedAt time.Time}
 type SessionID string
 type State string
 type StopReason string

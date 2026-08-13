@@ -24,6 +24,7 @@ func runningSession(t *testing.T) *session.Session {
 	s.ProviderID = "openrouter"
 	s.ModelID = "anthropic/claude-3.5-sonnet"
 	s.ReasoningEffort = "high"
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}
 	s.SetTitle("Fix the flaky CI job")
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
@@ -82,6 +83,9 @@ func assertEquivalent(t *testing.T, got, want *session.Session) {
 	}
 	if got.ReasoningEffort != want.ReasoningEffort {
 		t.Errorf("ReasoningEffort = %q, want %q", got.ReasoningEffort, want.ReasoningEffort)
+	}
+	if got.EnvironmentRef != want.EnvironmentRef {
+		t.Errorf("EnvironmentRef = %+v, want %+v", got.EnvironmentRef, want.EnvironmentRef)
 	}
 	if got.Title != want.Title {
 		t.Errorf("Title = %q, want %q", got.Title, want.Title)
@@ -753,5 +757,63 @@ func TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty(t *testing.T) {
 	}
 	if got.LastError() != "" {
 		t.Fatalf("restored LastError = %q, want empty (pre-last_error snapshot)", got.LastError())
+	}
+}
+
+// TestSnapshotEnvironmentRefRoundTrip proves a non-zero EnvironmentRef survives
+// Marshal→Unmarshal (ADR 0106, issue #462 phase 3).
+func TestSnapshotEnvironmentRefRoundTrip(t *testing.T) {
+	s := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}
+	got, err := sessnap.Unmarshal(mustMarshal(t, s))
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.EnvironmentRef != s.EnvironmentRef {
+		t.Fatalf("EnvironmentRef = %+v, want %+v", got.EnvironmentRef, s.EnvironmentRef)
+	}
+}
+
+// TestSnapshotEnvironmentRefOmitZero proves a zero EnvironmentRef is wire-omitted
+// (a default/local session with no remote ref stays byte-identical to a
+// pre-phase-3 snapshot — purely additive, no format-tag bump).
+func TestSnapshotEnvironmentRefOmitZero(t *testing.T) {
+	s := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
+	line, err := sessnap.Marshal(s)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(line), "environment_ref") {
+		t.Fatalf("zero EnvironmentRef must be wire-omitted; got %s", line)
+	}
+}
+
+// TestSnapshotEnvironmentRefLegacyDecodesZero proves a legacy snapshot with no
+// "environment_ref" key decodes to the zero ref (backward-compatible restore).
+func TestSnapshotEnvironmentRefLegacyDecodesZero(t *testing.T) {
+	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
+		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z","messages":[]}`
+	got, err := sessnap.Unmarshal([]byte(v1))
+	if err != nil {
+		t.Fatalf("Unmarshal legacy: %v", err)
+	}
+	if got.EnvironmentRef != (session.EnvironmentRef{}) {
+		t.Fatalf("legacy EnvironmentRef = %+v, want zero", got.EnvironmentRef)
+	}
+}
+
+// TestSnapshotEnvironmentRefForwardCompat proves an unknown extra key in a
+// future snapshot does not break decode (forward-compatible — encoding/json
+// ignores unknown fields, so a future format-tag-free addition stays additive).
+func TestSnapshotEnvironmentRefForwardCompat(t *testing.T) {
+	v1 := `{"id":"new","state":"idle","mode":"default","limits":{},"counters":{},` +
+		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z","messages":[],` +
+		`"environment_ref":{"kind":"local","id":"/ws"},"future_key":123}`
+	got, err := sessnap.Unmarshal([]byte(v1))
+	if err != nil {
+		t.Fatalf("Unmarshal forward: %v", err)
+	}
+	if got.EnvironmentRef != (session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}) {
+		t.Fatalf("forward EnvironmentRef = %+v, want local /ws", got.EnvironmentRef)
 	}
 }

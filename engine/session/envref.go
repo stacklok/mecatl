@@ -9,11 +9,16 @@
 // pointer) so it is comparable and never escapes to the heap on the hot
 // dispatch path.
 //
-// PHASE 2 (ADR 0105): EnvironmentRef is an IN-PROCESS identity only. It is NOT
-// yet a snapshot field — it does not persist across a process restart, and a
-// restored session re-derives its Environment through the rehydration path
-// rather than reattaching a live Environment from a persisted ref. Snapshot
-// persistence and remote transport are explicitly deferred to phase 3.
+// PHASE 3 (ADR 0106): EnvironmentRef is now a snapshot field. It persists
+// across a process restart as an inert exported field on session.Session
+// (sessnap.Snapshot.EnvironmentRef), round-tripped through Of/Restore. A
+// restored session with a non-zero ref reattaches a live Environment through
+// composition's server.Config.EnvironmentResolver for a non-in-tree Kind;
+// local/mem/nofs resolve through the existing factories. Legacy snapshots
+// without the field restore the zero ref and remain backward-compatible
+// (Workspace-derived local/nofs resolution stamps a fresh ref on the next
+// save). Remote transport itself remains deferred — the ref is durable
+// identity, not a transport contract.
 package session
 
 // EnvironmentKind names the backend family an EnvironmentRef was minted
@@ -46,10 +51,12 @@ const (
 // pulling tool types in — it is the identity half of the Environment seam,
 // kept separate from the capability half (tool.Environment).
 //
-// PHASE 2 (ADR 0105): this is an IN-PROCESS identity. It is not yet persisted
-// on the snapshot nor carried on the event log — that reattachment contract is
-// deferred to phase 3. The session package stores and carries the value in
-// memory only; it interprets NEITHER field.
+// PHASE 3 (ADR 0106): this is a DURABLE identity. It persists on the snapshot
+// (sessnap.Snapshot.EnvironmentRef) so a restarted process can reattach a live
+// Environment to the SAME backend. The session package interprets NEITHER
+// field — it only stores and carries them. A zero ref restored from a legacy
+// snapshot is stamped from the first successfully resolved live Environment so
+// the next ordinary save persists it (no migration sweep).
 //
 // Kind is a backend FAMILY label (see EnvironmentKind); ID is opaque backend
 // identity (a workspace root, a remote container id, …). Both are compared by

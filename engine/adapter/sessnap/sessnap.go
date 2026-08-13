@@ -95,6 +95,18 @@ type Snapshot struct {
 	// generated-file regeneration is paid once. omitempty keeps a pre-ship
 	// snapshot with no "authority" key decoding to the zero value.
 	Authority session.Authority `json:"authority,omitempty"`
+	// EnvironmentRef is the resolved execution-environment identity this session
+	// runs against (ADR 0106, issue #462 phase 3). The ref is a value type
+	// (EnvironmentKind + opaque ID); a zero ref {Kind:"", ID:""} is the
+	// "unspecified" value. It uses Go 1.26's `omitzero` (NOT `omitempty`, which
+	// never omits a non-empty struct) so a default/local session with no remote
+	// ref stays byte-identical to a pre-phase-3 snapshot — purely additive, no
+	// format-tag bump. A legacy snapshot with no "environment_ref" key decodes to
+	// the zero ref. Persisting it lets a restarted process reattach a live
+	// Environment to the SAME backend for a non-in-tree Kind via
+	// server.Config.EnvironmentResolver; local/mem/nofs resolve through the
+	// existing factories.
+	EnvironmentRef session.EnvironmentRef `json:"environment_ref,omitzero"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -148,6 +160,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		Limits:          s.Limits,
 		Counters:        s.Counters,
 		Workspace:       s.Workspace,
+		EnvironmentRef:  s.EnvironmentRef,
 		Profile:         s.Profile,
 		ProviderID:      s.ProviderID,
 		ModelID:         s.ModelID,
@@ -197,11 +210,12 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	}
 	// Restore the inert creation labels by direct assignment — exported authoritative
 	// values, with no state transition. Profile / ProviderID / ModelID /
-	// ReasoningEffort are opaque to the domain.
+	// ReasoningEffort / EnvironmentRef are opaque to the domain.
 	s.Profile = snap.Profile
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
 	s.ReasoningEffort = snap.ReasoningEffort
+	s.EnvironmentRef = snap.EnvironmentRef
 	s.Title = snap.Title
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState

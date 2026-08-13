@@ -4,7 +4,7 @@
 - Date: 2026-08-13
 - Scope: `engine/tool` (`Environment`, `EnvironmentForker`, `EnvironmentMerger`, `Tool.Execute`, `CommandRunner`/`CommandStreamer`); `engine/session` (`EnvironmentRef`, `EnvironmentKind`); `internal/adapter/forker`; per-session Environment ownership in `internal/adapter/server`; ACP/no-fs override construction in `internal/adapter/acp`
 - Supersedes: [ADR 0104](./0104-execution-environment.md) — ONLY for the staged deferral of the `Environment`/runner/forker/merger runtime signatures (ADR 0104 decisions 1–3, which deliberately left the runtime seam unimplemented). ADR 0104's version-aware file mutation (decision 4–6) remains authoritative and is NOT superseded.
-- Superseded by: none
+- Superseded by: [ADR 0106](./0106-environment-persistence.md) — ONLY for decision 6 (the phase-3 deferral of `EnvironmentRef` snapshot persistence and reattachment). This ADR's runtime seam (decisions 1–5) remains authoritative and is NOT superseded.
 
 ## Context
 

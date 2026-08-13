@@ -5061,7 +5061,7 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
   files are body-only in a no-fs session: the body injects fine, asset reads fail honestly
   with not-exist through the nofs workspace (and the posture note tells the model so).
 
-### Version-aware Workspace mutation and the execution-environment seam (ADR 0104 + ADR 0105)
+### Version-aware Workspace mutation and the execution-environment seam (ADR 0104 + ADR 0105 + ADR 0106)
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
 affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0104 fixes the
@@ -5081,8 +5081,25 @@ complete child Environment whose Workspace and runner share the child namespace)
 forkRoot string). A direct-write Subagent uses the PARENT Environment; read-only/copy/worktree branches
 and Team use the CHILD Environment. Composition wires the forker's bound-runner builder
 (`forker.WithRunner`, the same envscrub/gitenv hardening as the parent runner); the Service binds the
-main `CommandRunner` + a `CommandRunnerFactory` for worktree-bound sessions. No production remote
-transport yet (phase 3); governance stays outside.
+main `CommandRunner` + a `CommandRunnerFactory` for worktree-bound sessions.
+
+**Persistence/reattachment (ADR 0106, issue #462 phase 3).** `EnvironmentRef` is now a DURABLE
+snapshot field: `session.Session.EnvironmentRef` is an inert exported label (the same posture as
+`Profile`/`ProviderID`), persisted via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero`, so a
+default/local session stays byte-identical to a pre-phase-3 snapshot; a legacy snapshot restores the
+zero ref). At `createSession` the resolved default ref is stamped (`local` ID=workspace root, `nofs`
+empty ID); a legacy zero ref is stamped from the first resolved live Environment at run entry (no
+migration sweep). `server.Config.EnvironmentResolver func(ctx, session.EnvironmentRef) (tool.Environment, error)`
+reattaches a live Environment for a non-in-tree Kind — the in-tree Kinds never reach it (they
+re-derive through the factories); a nil resolver, a ref mismatch, or a nil-Workspace result fails
+loudly (`ErrFailedPrecondition`), never a silent local fallback; the returned `Ref()` MUST equal the
+request. The resolver does NOT trigger/rebuild a per-session `SessionEngine` for a default
+provider/model — environment reattachment and engine rehydration are INDEPENDENT. `internal/adapter/remoteenv`
+is a deterministic, in-process reference fake (`Backend` ID→namespace registry; `NewEnvironment`/`Resolve`
+return Workspace+CommandRunner bound to the same namespace; `EnvironmentForker`/`EnvironmentMerger` over
+refs; a tiny `cat`/`write` test protocol; `FileVersion` CAS across handles; `const Kind = "remote-fake"`
+inside the adapter, NOT in `engine/session`). It is a contract proof only and is NOT wired by default
+`app.Build`. No production remote transport, flags, proto changes, or external dependencies.
 
 The first migration stage is the version protocol in `engine/tool/tool.go` (`FileVersion`,
 `Workspace`). Plain Read remains for non-agent consumers, but public Workspace exposes no
@@ -5137,8 +5154,7 @@ evicted on `CloseSession` / editor disconnect. Rebuilding a default Environment 
 including the next user run — resets its ledger, so Edit/overwrite is refused until Read
 records a version through that instance. The overrides are in-memory (restart loses them);
 a restarted session re-derives its Environment through the same rehydration path (no-fs
-profile, ACP adapter reconnect). Snapshot persistence of `EnvironmentRef` is deferred to
-phase 3 (ADR 0105).
+profile, ACP adapter reconnect). **EnvironmentRef is now a DURABLE snapshot field (ADR 0106, issue #462 phase 3):** `EnvironmentRef` persists via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero` — a default/local session stays byte-identical to a pre-phase-3 snapshot); a non-in-tree Kind reattaches a live `Environment` at run entry through `server.Config.EnvironmentResolver` (nil/mismatch/nil-Workspace fails loudly with `ErrFailedPrecondition`, never a silent local fallback; the in-tree Kinds never reach the resolver — they re-derive through the factories; the resolver does NOT trigger per-session engine rehydration — environment reattachment and engine rehydration are INDEPENDENT). A default `local`/`nofs` ref is stamped at `createSession`; a legacy zero ref is stamped from the first resolved live Environment on the next save (no migration sweep). See the Persistence/reattachment subsection above for the full detail.
 
 ### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
 

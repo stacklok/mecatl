@@ -200,6 +200,25 @@ type Config struct {
 	// shell-less Environment (Bash surfaces ErrNoShell) — acceptable for no-fs /
 	// ACP / cloud deployments. The factory returns nil when Bash is disabled.
 	CommandRunnerFactory func(root string) tool.CommandRunner
+	// EnvironmentResolver, when non-nil, resolves a persisted session.EnvironmentRef
+	// to a LIVE tool.Environment for a non-in-tree Kind (ADR 0106, issue #462 phase
+	// 3). It is the reattachment half of the Environment seam: a restarted process
+	// reads the persisted ref off a loaded session and reattaches a live
+	// Environment to the SAME backend (a remote worker, a container) rather than
+	// silently re-deriving one from the workspace/profile. Context is required
+	// (a future network backend may dial out). The resolver MUST return an
+	// Environment whose Ref() equals the requested ref; a nil/mismatch/nil-
+	// Workspace result fails loudly (composition maps it to ErrFailedPrecondition,
+	// never a silent local fallback). Local/mem/nofs NEVER reach the resolver:
+	// a zero ref uses the legacy Workspace-derived resolution, and the in-tree
+	// Kinds resolve through the existing Workspaces/CommandRunnerFactory path.
+	// nil (the default) means any non-in-tree Kind fails loudly — the feature is
+	// off, byte-identical to a pre-phase-3 build. Do NOT conflate this with
+	// per-session engine rehydration: rehydration rebuilds the ENGINE for a
+	// persisted provider/model selector; this reattaches the ENVIRONMENT for a
+	// persisted environment ref. The two are independent (a session may need
+	// either, both, or neither).
+	EnvironmentResolver func(context.Context, session.EnvironmentRef) (tool.Environment, error)
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
@@ -1485,6 +1504,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if err := setSessionLabels(sess, sel, profile, owner); err != nil {
 			return nil, err
 		}
+		stampDefaultEnvironmentRef(sess)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
@@ -1539,6 +1559,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return nil, err
 	}
+	stampDefaultEnvironmentRef(sess)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -2660,9 +2681,14 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			return nil, tool.Environment{}, err
 		}
 		hasEngine = true
-		if sess.Profile == string(ProfileNoFS) || sess.Workspace == "" {
+		if !isRemoteEnvironmentRef(sess.EnvironmentRef) && (sess.Profile == string(ProfileNoFS) || sess.Workspace == "") {
 			// rehydrateSession re-registered the no-fs environment override (same as
 			// create); read it back so the resolution below uses the complete override.
+			// A REMOTE EnvironmentRef (ADR 0106) is excluded: its Environment is
+			// reattached at run entry through the EnvironmentResolver, NOT relabeled
+			// no-fs from its empty persisted Workspace (a remote backend's filesystem
+			// is not a local root). Reading the no-fs override here would preempt the
+			// resolver below (issue #462 phase-3 finding #1).
 			s.mu.Lock()
 			envOverride, hasEnvOverride = s.sessionEnvironments[id]
 			s.mu.Unlock()
@@ -2681,8 +2707,30 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// A per-session Environment override (ACP fs/* buffers, no-fs) is COMPLETE:
 		// the creator supplied the accurate ref and the correct (possibly nil)
 		// CommandRunner. Use it directly — never guess a ref or runner from the
-		// override's presence (issue #462 phase-2 finding #2).
+		// override's presence (issue #462 phase-2 finding #2). Stamp the default ref
+		// from the live override so a legacy zero-ref session persists it on the next
+		// save (ADR 0106, issue #462 phase 3).
+		stampDefaultEnvironmentRef(sess)
 		return engine, envOverride, nil
+	}
+	// ENVIRONMENT REATTACHMENT (ADR 0106, issue #462 phase 3): a loaded session
+	// with a PERSISTED non-in-tree EnvironmentRef (a remote worker, a container)
+	// reattaches a LIVE Environment through the configured resolver. This runs
+	// ONLY when no in-process override is registered (a remote session registers
+	// none — its Environment is the reattached one, not an ACP/no-fs override).
+	// A zero ref (legacy snapshot, or a pre-phase-3 session) and the in-tree
+	// Kinds (local/mem/nofs) NEVER reach the resolver: the zero ref falls
+	// through to the Workspace-derived default path below (and gets a fresh ref
+	// stamped there), and the in-tree Kinds resolve through the existing
+	// Workspaces/CommandRunnerFactory path. A non-in-tree Kind with no resolver
+	// wired, a ref mismatch, or a nil-Workspace result fails loudly
+	// (ErrFailedPrecondition) — never a silent local fallback.
+	if isRemoteEnvironmentRef(sess.EnvironmentRef) {
+		env, rerr := s.resolveEnvironmentRef(ctx, sess.EnvironmentRef)
+		if rerr != nil {
+			return nil, tool.Environment{}, rerr
+		}
+		return engine, env, nil
 	}
 	// Default path: build the environment from the shared Workspace + runner
 	// factories. The workspace requirement is profile-aware: an empty persisted
@@ -2704,7 +2752,52 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	if err != nil {
 		return nil, tool.Environment{}, err
 	}
+	// Stamp the resolved default ref from the live Environment so a legacy
+	// zero-ref session persists it on the next ordinary save (ADR 0106, issue
+	// #462 phase 3 — no migration sweep).
+	stampDefaultEnvironmentRef(sess)
 	return engine, env, nil
+}
+
+// isRemoteEnvironmentRef reports whether ref names a non-in-tree backend that
+// requires an EnvironmentResolver to reattach (ADR 0106). The zero ref and the
+// in-tree Kinds (local/mem/nofs) return false; any other Kind returns true. The
+// in-tree set is closed here (the session package owns the constants); a
+// future remote transport adds its own Kind label and this predicate returns
+// true for it without widening the session package.
+func isRemoteEnvironmentRef(ref session.EnvironmentRef) bool {
+	if ref == (session.EnvironmentRef{}) {
+		return false
+	}
+	switch ref.Kind {
+	case session.EnvKindLocal, session.EnvKindMem, session.EnvKindNoFS:
+		return false
+	}
+	return true
+}
+
+// resolveEnvironmentRef reattaches a LIVE tool.Environment for a persisted
+// non-in-tree EnvironmentRef via the configured EnvironmentResolver (ADR 0106,
+// issue #462 phase 3). It validates the returned Environment's Ref() equals
+// the requested ref and carries a non-nil Workspace; a nil resolver, a ref
+// mismatch, or a nil-Workspace result fails loudly (ErrFailedPrecondition),
+// never a silent local fallback. The resolver is composition-owned — the loop
+// and the engine stay storage/transport-agnostic.
+func (s *Service) resolveEnvironmentRef(ctx context.Context, ref session.EnvironmentRef) (tool.Environment, error) {
+	if s.cfg.EnvironmentResolver == nil {
+		return tool.Environment{}, fmt.Errorf("%w: session environment ref %q (kind %q) requires an EnvironmentResolver but none is configured", ErrFailedPrecondition, ref.ID, ref.Kind)
+	}
+	env, err := s.cfg.EnvironmentResolver(ctx, ref)
+	if err != nil {
+		return tool.Environment{}, fmt.Errorf("%w: resolve environment %q (kind %q): %v", ErrFailedPrecondition, ref.ID, ref.Kind, err)
+	}
+	if env.Workspace() == nil {
+		return tool.Environment{}, fmt.Errorf("%w: EnvironmentResolver returned an Environment with a nil workspace for ref %q (kind %q)", ErrFailedPrecondition, ref.ID, ref.Kind)
+	}
+	if got := env.Ref(); got != ref {
+		return tool.Environment{}, fmt.Errorf("%w: EnvironmentResolver returned a mismatched ref: got %q (kind %q), want %q (kind %q)", ErrFailedPrecondition, got.ID, got.Kind, ref.ID, ref.Kind)
+	}
+	return env, nil
 }
 
 // buildSessionEnvironment wraps a session's resolved Workspace into a complete
@@ -2723,19 +2816,54 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 // override (issue #462 phase-2 finding #2).
 func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspace) (tool.Environment, error) {
 	var runner tool.CommandRunner
-	kind := session.EnvKindLocal
-	if sess.Workspace == "" {
-		kind = session.EnvKindNoFS
-	} else if sess.Workspace == s.cfg.DefaultWorkspace {
-		runner = s.cfg.CommandRunner
-	} else if s.cfg.CommandRunnerFactory != nil {
-		// A worktree-bound session (or any root differing from the launch root):
-		// build a runner bound to the session root so Bash observes the session
-		// namespace, not the launch root.
-		runner = s.cfg.CommandRunnerFactory(sess.Workspace)
+	if sess.Workspace != "" {
+		if sess.Workspace == s.cfg.DefaultWorkspace {
+			runner = s.cfg.CommandRunner
+		} else if s.cfg.CommandRunnerFactory != nil {
+			// A worktree-bound session (or any root differing from the launch root):
+			// build a runner bound to the session root so Bash observes the session
+			// namespace, not the launch root.
+			runner = s.cfg.CommandRunnerFactory(sess.Workspace)
+		}
 	}
-	ref := session.EnvironmentRef{Kind: kind, ID: sess.Workspace}
+	// The ref is the SAME default derivation the create-time stamp uses
+	// (defaultEnvironmentRef is the single source — issue #462 phase-3 finding
+	// #6), so the live Environment's ref and the persisted/stamped ref always
+	// agree for the in-tree backends.
+	ref := defaultEnvironmentRef(sess)
 	return tool.NewEnvironment(ref, ws, runner)
+}
+
+// defaultEnvironmentRef computes the resolved default EnvironmentRef for a
+// session from its workspace/profile. It is the SINGLE source for the in-tree
+// default ref (ADR 0106, issue #462 phase 3 — finding #6 collapsed the
+// duplicate derivation): buildSessionEnvironment uses it for the LIVE
+// Environment's ref, and stampDefaultEnvironmentRef uses it for the ref STAMPED
+// at create time so the next ordinary save persists it. The two therefore
+// always agree for the in-tree backends: local (ID = workspace root) for a
+// filesystem session, nofs (empty ID) for a no-fs / empty-workspace session. A
+// non-zero persisted ref is NOT overwritten — only a zero (unspecified) ref
+// gets the default stamped. This is the create-time stamp; reattaching a ref
+// for a non-in-tree Kind goes through resolveEnvironmentRef at run entry.
+func defaultEnvironmentRef(sess *session.Session) session.EnvironmentRef {
+	if sess.Workspace == "" {
+		return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}
+	}
+	return session.EnvironmentRef{Kind: session.EnvKindLocal, ID: sess.Workspace}
+}
+
+// stampDefaultEnvironmentRef stamps the resolved default EnvironmentRef onto a
+// freshly-created (or zero-ref) session. It is a no-op when the session already
+// carries a non-zero ref (a re-created carryover fork inherits its labels, an
+// override creator stamped its own). Called at createSession after setSessionLabels
+// so the first Store.Save persists the resolved default, and at run entry when a
+// loaded legacy session (zero ref) is first resolved to a live Environment — the
+// next ordinary save persists it (no migration sweep).
+func stampDefaultEnvironmentRef(sess *session.Session) {
+	if sess.EnvironmentRef != (session.EnvironmentRef{}) {
+		return
+	}
+	sess.EnvironmentRef = defaultEnvironmentRef(sess)
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
@@ -2766,7 +2894,15 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // selector, default profile, non-empty workspace) returns false: it keeps riding
 // the shared engine with zero rehydration overhead, exactly as before. The
 // empty-workspace check stays as the SECOND defense (a no-fs session that
-// somehow persisted no profile label still rehydrates).
+// somehow persisted no profile label still rehydrates) — but it is GUARDED
+// against a REMOTE EnvironmentRef (ADR 0106, issue #462 phase 3): a remote
+// session carries an empty persisted Workspace (its filesystem lives in the
+// remote backend, not on a local root), so the empty-workspace arm must NOT
+// fire for it — that would relabel it no-fs (profileForSession → ProfileNoFS),
+// register a no-fs environment override, and preempt the EnvironmentResolver at
+// run entry. A remote session still rehydrates when it carries a non-default
+// provider/model selector (the selector arms fire), but never via the
+// empty-workspace inference.
 //
 // Worktree binding (issue #102, docs/adr/0032): a session whose persisted
 // workspace DIFFERS from the server's launch root (DefaultWorkspace) ALSO needs
@@ -2788,7 +2924,7 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 	return sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
-		sess.Workspace == "" ||
+		(sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef)) ||
 		s.cfg.DefaultModelPending ||
 		(sess.Workspace != "" && s.cfg.DefaultWorkspace != "" && sess.Workspace != s.cfg.DefaultWorkspace)
 }
@@ -2797,12 +2933,18 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 // inert labels (the SAME mapping rehydrateSession uses): the explicit no-fs label, or
 // the second-defense empty-workspace inference. It is the shared profile source for the
 // mode→model rebuild (CASE 1) so a no-fs session that switches mode rebuilds the no-FS
-// catalog, never silently escalating onto the FS tools.
+// catalog, never silently escalating onto the FS tools. A REMOTE EnvironmentRef
+// (ADR 0106, issue #462 phase 3) is excluded from the empty-workspace inference: a
+// remote session carries an empty persisted Workspace (its filesystem lives in the
+// remote backend), so inferring no-fs from it would relabel the session and register a
+// no-fs environment override that preempts the EnvironmentResolver. A remote session
+// with an explicit no-fs profile label (a hybrid that opted into no-FS tools) still
+// honors the explicit label.
 func profileForSession(sess *session.Session) SessionProfile {
 	switch {
 	case sess.Profile == string(ProfileNoFS):
 		return ProfileNoFS
-	case sess.Profile == "" && sess.Workspace == "":
+	case sess.Profile == "" && sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef):
 		return ProfileNoFS
 	default:
 		return ProfileDefault

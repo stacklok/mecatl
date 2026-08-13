@@ -310,8 +310,13 @@ Two deliberate cycle-breaks worth noting, documented in code:
   and Edit/existing-file Write finish with conditional replace. Public Workspace
   exposes no unconditional mutation; its ledger belongs to the live
   Environment instance and resets whenever the default Service factory rebuilds it.
+  As of [ADR 0106](adr/0106-environment-persistence.md), `EnvironmentRef` is a DURABLE
+  snapshot field: a non-in-tree ref persists across a restart and reattaches a live
+  `Environment` at run entry through `server.Config.EnvironmentResolver`; the in-tree
+  Kinds never reach the resolver, and a nil/mismatch/nil-Workspace result fails loudly.
   See [ADR 0104](adr/0104-execution-environment.md),
-  [ADR 0105](adr/0105-execution-environment-runtime-seam.md), and the
+  [ADR 0105](adr/0105-execution-environment-runtime-seam.md),
+  [ADR 0106](adr/0106-environment-persistence.md), and the
   [ports chapter](architecture/ports.md).
 - `governance` does **not** import `session` (so `session` can import
   `governance` without a cycle); the `Evaluator` works on primitive args, and
