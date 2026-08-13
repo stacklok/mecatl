@@ -35,6 +35,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
     relays the slug onto for clients. Advisory + metadata-only, a string
     passthrough on the wire (no proto enum). Both are Added (a minor bump).
 
+- **`port.ScheduleCreator` and `port.ErrScheduleAlreadyExists`** — an OPTIONAL
+  atomic create-only seam for `port.ScheduleStore` (mirroring
+  `ScheduleOneShotReArmer`'s type-assertion discovery pattern), closing a
+  check-then-Save TOCTOU window where two concurrent same-name schedule
+  creates could both observe absence and one silently overwrite the other.
+  `memschedulestore`, `jsonlstore`, and `redisstore` all implement it; a store
+  that does not degrades to the pre-existing check-then-Save fallback. New
+  exported interface + sentinel: Added (a minor bump).
+
 - **`agent.WithSubagentOwnershipEnforced`** — wires the verified request edge's
   ownership policy into `Subagent` resume authorization. When enabled, a resume
   requires the caller to match the persisted child owner, including when the

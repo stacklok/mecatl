@@ -72,6 +72,12 @@ var _ port.ScheduleStore = (*Store)(nil)
 // not implement it degrades to at-most-once (byte-identical pre-Phase-2).
 var _ port.ScheduleOneShotReArmer = (*Store)(nil)
 
+// compile-time assertion that Store satisfies the OPTIONAL ScheduleCreator seam
+// (review finding 5, issue #368 — atomic create-only). A store that does not
+// implement it degrades to the manager's check-then-Save (byte-identical
+// pre-fix TOCTOU-accepted path).
+var _ port.ScheduleCreator = (*Store)(nil)
+
 // New constructs an in-memory ScheduleStore. Every port.ScheduleStore method
 // takes `now` as an explicit argument, so the store needs no injected clock of
 // its own — time is caller-supplied. (An earlier draft injected a port.Clock
@@ -106,6 +112,28 @@ func (s *Store) Save(_ context.Context, in port.Schedule) error {
 		if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
 			rec.state.Enabled = true
 		}
+	}
+	s.scheds[in.Spec.Name] = rec
+	return nil
+}
+
+// Create atomically creates a NEW schedule under in.Spec.Name (review finding
+// 5, issue #368): under the SAME mutex Save/Load/Claim already serialize on,
+// it checks for an existing record and creates the new one in one lock
+// acquisition — unlike the manager's prior two-call Load-then-Save, which raced
+// across two separate acquisitions. A name already in use returns
+// ErrScheduleAlreadyExists (wrapped) and leaves the existing record untouched.
+func (s *Store) Create(_ context.Context, in port.Schedule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.scheds[in.Spec.Name]; exists {
+		return fmt.Errorf("memschedulestore: %w: %q", port.ErrScheduleAlreadyExists, in.Spec.Name)
+	}
+	// New schedule: honour an explicit State, but default a zero State to
+	// enabled — the same convention Save applies for a brand-new name.
+	rec := record{spec: cloneSpec(in.Spec), state: in.State}
+	if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
+		rec.state.Enabled = true
 	}
 	s.scheds[in.Spec.Name] = rec
 	return nil

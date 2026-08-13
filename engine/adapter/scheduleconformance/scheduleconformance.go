@@ -42,6 +42,7 @@ package scheduleconformance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1543,6 +1544,88 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		}
 		if !got.State.Enabled {
 			t.Errorf("Enabled = false, want true (re-enabled)")
+		}
+	})
+
+	// ScheduleCreator is an OPTIONAL interface (type-asserted on the store, like
+	// ScheduleOneShotReArmer/PrunableStore). A store that does not implement it
+	// degrades to the manager's check-then-Save (byte-identical pre-fix,
+	// TOCTOU-accepted); a store that DOES implement it must make Create atomic
+	// (two concurrent creates of the same name yield exactly one success). The
+	// suite runs this only against stores that opt in — review finding 5, issue
+	// #368.
+	t.Run("create refuses a duplicate name and leaves the existing record untouched", func(t *testing.T) {
+		s := newStore(t)
+		creator, ok := s.(port.ScheduleCreator)
+		if !ok {
+			t.Skip("store does not implement ScheduleCreator (check-then-Save — byte-identical pre-fix)")
+		}
+		const name = "conf-sched-create"
+		first := port.Schedule{
+			Spec:  port.ScheduleSpec{Name: name, Prompt: "v1", Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_060, 0)}},
+			State: port.ScheduleState{NextFireAt: time.Unix(1_700_000_060, 0), Enabled: true},
+		}
+		if err := creator.Create(ctx, first); err != nil {
+			t.Fatalf("Create #1: %v", err)
+		}
+		// A second Create under the SAME name is refused; the FIRST record's
+		// content survives untouched (never silently overwritten).
+		second := port.Schedule{
+			Spec: port.ScheduleSpec{Name: name, Prompt: "v2-should-not-land", Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_120, 0)}},
+		}
+		if err := creator.Create(ctx, second); !errors.Is(err, port.ErrScheduleAlreadyExists) {
+			t.Fatalf("Create #2 (duplicate) = %v, want ErrScheduleAlreadyExists", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.Spec.Prompt != "v1" {
+			t.Errorf("Spec.Prompt = %q, want %q (the refused duplicate Create must not overwrite)", got.Spec.Prompt, "v1")
+		}
+	})
+
+	t.Run("create concurrent calls for the same name yield exactly one winner", func(t *testing.T) {
+		// THE ATOMICITY PROOF. N callers Create the same name "simultaneously".
+		// The store MUST serialize them so exactly ONE succeeds and the rest see
+		// ErrScheduleAlreadyExists — never two successes (one silently clobbering
+		// the other, the pre-fix check-then-Save race). Run with -race to surface
+		// a torn check-then-write.
+		s := newStore(t)
+		creator, ok := s.(port.ScheduleCreator)
+		if !ok {
+			t.Skip("store does not implement ScheduleCreator (check-then-Save — byte-identical pre-fix)")
+		}
+		const name = "conf-sched-create-concurrent"
+		const n = 8
+		done := make(chan error, n)
+		for i := 0; i < n; i++ {
+			i := i
+			go func() {
+				done <- creator.Create(ctx, port.Schedule{
+					Spec: port.ScheduleSpec{Name: name, Prompt: fmt.Sprintf("attempt-%d", i), Trigger: port.TriggerSpec{OneShot: time.Unix(1_700_000_060, 0)}},
+				})
+			}()
+		}
+		var wins, losses int
+		for i := 0; i < n; i++ {
+			switch err := <-done; {
+			case err == nil:
+				wins++
+			case errors.Is(err, port.ErrScheduleAlreadyExists):
+				losses++
+			default:
+				t.Fatalf("Create (concurrent) = %v, want nil or ErrScheduleAlreadyExists", err)
+			}
+		}
+		if wins != 1 {
+			t.Fatalf("wins = %d, losses = %d, want exactly 1 winner out of %d concurrent creates", wins, losses, n)
+		}
+		if losses != n-1 {
+			t.Fatalf("losses = %d, want %d", losses, n-1)
+		}
+		if _, err := s.Load(ctx, name); err != nil {
+			t.Fatalf("Load after concurrent Create: %v", err)
 		}
 	})
 }

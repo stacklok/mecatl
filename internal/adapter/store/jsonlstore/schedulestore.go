@@ -95,6 +95,39 @@ var _ port.ScheduleStore = (*scheduleStore)(nil)
 // ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
+// compile-time assertion that scheduleStore satisfies the OPTIONAL
+// ScheduleCreator seam (review finding 5, issue #368 — atomic create-only).
+var _ port.ScheduleCreator = (*scheduleStore)(nil)
+
+// Create atomically creates a NEW schedule under in.Spec.Name (review finding
+// 5, issue #368): under the SAME mutex Save/Load already serialize on, it
+// checks for an existing record and writes the new one in one lock
+// acquisition — unlike the manager's prior two-call Load-then-Save, which
+// raced across two separate acquisitions (this store is single-host-only
+// anyway — see the type doc — so the mutex alone is sufficient, no OS-level
+// O_CREATE|O_EXCL needed). A name already in use returns
+// ErrScheduleAlreadyExists (wrapped) and leaves the existing file untouched;
+// any OTHER loadLocked error (a corrupt file, an I/O failure) is propagated
+// rather than treated as "absent".
+func (s *scheduleStore) Create(_ context.Context, in port.Schedule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.loadLocked(in.Spec.Name); err == nil {
+		return fmt.Errorf("jsonlstore: %w: %q", port.ErrScheduleAlreadyExists, in.Spec.Name)
+	} else if !errors.Is(err, ErrScheduleNotFound) {
+		return err
+	}
+	rec := scheduleRecord{V: scheduleFormat}
+	rec.Schedule.Spec = cloneSpec(in.Spec)
+	// New schedule: honour an explicit State, but default a zero State to
+	// enabled — the same convention Save applies for a brand-new name.
+	rec.Schedule.State = in.State
+	if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
+		rec.Schedule.State.Enabled = true
+	}
+	return s.writeScheduleLocked(in.Spec.Name, rec)
+}
+
 // Save upserts the schedule by Spec.Name. A schedule with the same name is
 // overwritten on the Spec half; the State half is PRESERVED on overwrite (a
 // Save with a fresh zero State does not reset firing progress — call Delete +

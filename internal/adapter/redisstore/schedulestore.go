@@ -202,6 +202,28 @@ redis.call('HSET', KEYS[1], 'enabled', ARGV[1])
 return 'OK'
 `)
 
+// createScheduleScript is the atomic create-only primitive (review finding 5,
+// issue #368): the existence check + the full HSET seed run in ONE EVAL, so two
+// concurrent Create calls for the same name cannot both observe absence and
+// both write — Redis's single-threaded script execution serializes them, and
+// exactly one sees EXISTS==0 and wins. Mirrors setEnabledScript's
+// check-then-mutate-in-one-EVAL discipline.
+//
+// KEYS[1] = mecatl:schedule:<name>
+// ARGV = the flat field/value list to HSET on a win (the same fields Save's
+//
+//	new-schedule branch seeds).
+//
+// Returns "EXISTS" if the key already exists (create refused, record
+// untouched), "OK" on success.
+var createScheduleScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 'EXISTS'
+end
+redis.call('HSET', KEYS[1], unpack(ARGV))
+return 'OK'
+`)
+
 // reArmOneShotScript is the at-least-once re-arm primitive for a one-shot
 // schedule (ADR 0059 Phase 2). Under Redis's single-threaded execution it
 // atomically: checks the key exists, re-enables the schedule (enabled=1), sets
@@ -287,6 +309,49 @@ var _ port.ScheduleStore = (*scheduleStore)(nil)
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
 // ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
+
+// compile-time assertion that scheduleStore satisfies the OPTIONAL
+// ScheduleCreator seam (review finding 5, issue #368 — atomic create-only).
+var _ port.ScheduleCreator = (*scheduleStore)(nil)
+
+// Create atomically creates a NEW schedule under in.Spec.Name (review finding
+// 5, issue #368) via createScheduleScript: the existence check + the full
+// field seed run in ONE Redis EVAL, so two concurrent Create calls for the
+// same name cannot both observe absence — Redis's single-threaded script
+// execution is the fence. A name already in use returns ErrScheduleAlreadyExists
+// (wrapped) and leaves the existing record untouched.
+func (s *scheduleStore) Create(ctx context.Context, in port.Schedule) error {
+	specJSON, err := json.Marshal(cloneSpec(in.Spec))
+	if err != nil {
+		return fmt.Errorf("redisstore: marshal schedule spec: %w", err)
+	}
+	// Seed the same fields Save's new-schedule branch seeds, including the
+	// zero-State-defaults-enabled rule.
+	enabled := in.State.Enabled
+	if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
+		enabled = true
+	}
+	res, err := createScheduleScript.Run(ctx, s.client, []string{scheduleKey(in.Spec.Name)},
+		fieldSpec, specJSON,
+		fieldNextFireAt, nanoStr(in.State.NextFireAt),
+		fieldLastFireAt, nanoStr(in.State.LastFireAt),
+		fieldFireCount, strconv.Itoa(in.State.FireCount),
+		fieldEnabled, boolStr(enabled),
+		fieldLastFireSessionID, string(in.State.LastFireSessionID),
+		fieldCreatedAt, nanoStr(in.Spec.CreatedAt),
+		fieldOneShotRetryCount, strconv.Itoa(in.State.OneShotRetryCount),
+		fieldLastFireStartedAt, nanoStr(in.State.LastFireStartedAt),
+		fieldLastFireProgressAt, nanoStr(in.State.LastFireProgressAt),
+		fieldFireDeadline, nanoStr(in.State.FireDeadline),
+	).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: create schedule %q: %w", in.Spec.Name, err)
+	}
+	if str, ok := res.(string); ok && str == "EXISTS" {
+		return fmt.Errorf("redisstore: %w: %q", port.ErrScheduleAlreadyExists, in.Spec.Name)
+	}
+	return nil
+}
 
 // Save upserts the schedule by Spec.Name. A schedule with the same name is
 // overwritten on the Spec half; the State half is PRESERVED on overwrite (a

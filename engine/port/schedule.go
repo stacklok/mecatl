@@ -28,6 +28,13 @@ var ErrScheduleNotFound = errors.New("port: schedule not found")
 // ErrLeaseUnsupported / ErrPruneUnsupported's sticky-disable contract.
 var ErrScheduleUnsupported = errors.New("port: scheduled tasks not supported by this backend")
 
+// ErrScheduleAlreadyExists is the sentinel a ScheduleCreator returns (wrapped
+// with %w) when Create is called against a name that already has a schedule.
+// It is the atomic-create counterpart of the manager's pre-existing
+// check-then-Save duplicate-name error (schedule_manager.go's "a schedule
+// named %q already exists"), distinct from an infrastructure failure.
+var ErrScheduleAlreadyExists = errors.New("port: schedule already exists")
+
 // ErrFireNowOverlap is the port-level sentinel a ScheduleManager's FireNow
 // returns (wrapped with %w) when the schedule's singleton guard found a prior
 // fire still running — the manual fire is REJECTED, not run concurrently with
@@ -770,4 +777,31 @@ type ScheduleOneShotReArmer interface {
 	// primitive the tick loop calls for a crashed one-shot retry. The not-found
 	// case wraps ErrScheduleNotFound.
 	ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error
+}
+
+// ScheduleCreator is the OPTIONAL atomic create-only seam (review finding 5,
+// issue #368): a schedule manager's Create must never silently overwrite an
+// existing schedule of the same name, and the pre-existing check-then-Save
+// path (Load, then Save) has a TOCTOU window across two separate store calls —
+// two concurrent same-name creates can both observe absence and one silently
+// clobbers the other. It is discovered by type assertion on a ScheduleStore
+// exactly like ScheduleOneShotReArmer / PrunableStore / SessionLease: a store
+// that does not implement it is simply never consulted, and the manager's
+// create path degrades to the pre-existing check-then-Save (byte-identical,
+// the documented small-risk TOCTOU noted on that path).
+//
+// Why an OPTIONAL interface, NOT a method on ScheduleStore: adding a required
+// method is BREAKING for external implementers (a ScheduleStore implementation
+// outside this repo would fail to compile) — the same rationale
+// ScheduleOneShotReArmer's doc gives.
+type ScheduleCreator interface {
+	// Create atomically creates a NEW schedule under s.Spec.Name: if a schedule
+	// already exists under that name, it returns ErrScheduleAlreadyExists
+	// (wrapped) and leaves the existing record untouched; otherwise it creates
+	// the schedule exactly as Save would for a brand-new name (including the
+	// zero-State-defaults-to-enabled convention). The check-and-create is a
+	// SINGLE atomic operation from the backend's perspective — two concurrent
+	// Create calls for the same name must yield exactly one success and one
+	// ErrScheduleAlreadyExists, never two successes.
+	Create(ctx context.Context, s Schedule) error
 }

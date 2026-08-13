@@ -360,15 +360,11 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	if err != nil {
 		return port.Schedule{}, err
 	}
-	// Collision guard: ScheduleStore.Save is an UPSERT-by-name, so a Create whose
-	// name already exists would SILENTLY CLOBBER the existing schedule's spec. A
-	// "Create" must never destroy an existing task — reject a duplicate name here
-	// (the edit path is UpdateSchedule, a distinct method). There is a tiny
-	// check-then-Save TOCTOU window (the store has no atomic create-if-absent),
-	// but Create is a low-frequency human action, so the racing-duplicate risk is
-	// acceptable and not worth store-level locking.
+	// Collision guard: a Create whose name already exists must never SILENTLY
+	// CLOBBER the existing schedule's spec (the edit path is UpdateSchedule, a
+	// distinct method).
 	//
-	// The check (and the eventual Save) run against the OWNER-NAMESPACED
+	// The check (and the eventual write) run against the OWNER-NAMESPACED
 	// physical key (issue #368, ADR-0102 decision 1), not the bare literal
 	// name: a name already used by a DIFFERENT owner must be absence-style
 	// (indistinguishable from "name available"), never a distinguishing
@@ -376,11 +372,6 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	// namespace, so two different owners may share the identical literal name.
 	literalName := spec.Name
 	physicalName := m.physicalScheduleName(ctx, literalName)
-	if _, lerr := m.schedStore.Load(ctx, physicalName); lerr == nil {
-		return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
-	} else if !errors.Is(lerr, port.ErrScheduleNotFound) {
-		return port.Schedule{}, lerr
-	}
 	applyScheduleDefaults(&spec)
 	// Capture the owner ONCE, here (ADR 0100 decision 6). A caller can never
 	// name it in the request body (protoToScheduleSpec drops any inbound owner,
@@ -416,8 +407,30 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 			Enabled:    true,
 		},
 	}
-	if err := m.schedStore.Save(ctx, sched); err != nil {
-		return port.Schedule{}, err
+	// Create the record. When the backing store implements the OPTIONAL
+	// ScheduleCreator seam (review finding 5, issue #368), the check-and-write
+	// is ONE atomic backend operation: two concurrent creates of the same name
+	// yield exactly one success and one ErrScheduleAlreadyExists, never a
+	// silent overwrite. A store that does not implement the seam falls back to
+	// the pre-fix check-then-Save (a tiny TOCTOU window across two separate
+	// calls — Create is a low-frequency human action, so the residual race is
+	// accepted on that path only).
+	if creator, ok := m.schedStore.(port.ScheduleCreator); ok {
+		if err := creator.Create(ctx, sched); err != nil {
+			if errors.Is(err, port.ErrScheduleAlreadyExists) {
+				return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
+			}
+			return port.Schedule{}, err
+		}
+	} else {
+		if _, lerr := m.schedStore.Load(ctx, physicalName); lerr == nil {
+			return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
+		} else if !errors.Is(lerr, port.ErrScheduleNotFound) {
+			return port.Schedule{}, lerr
+		}
+		if err := m.schedStore.Save(ctx, sched); err != nil {
+			return port.Schedule{}, err
+		}
 	}
 	sched.Spec.Name = literalName
 	return sched, nil
