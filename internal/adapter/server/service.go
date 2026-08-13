@@ -1599,7 +1599,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		// factory (which would MkdirAll/OpenRoot the server process's cwd — the
 		// exact hazard). It is a complete shell-less Environment with an honest
 		// nofs ref (no command runner: a file-less namespace has no shell).
-		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
+		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
 	}
 	s.mu.Unlock()
 
@@ -2444,7 +2444,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		// under the same lock (the create-time discipline), so StartRun never
 		// consults the shared factory with the empty root. It is a complete
 		// shell-less Environment with an honest nofs ref.
-		s.sessionEnvironments[id] = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
+		s.sessionEnvironments[id] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
 	}
 	s.mu.Unlock()
 	return sess, nil
@@ -2695,7 +2695,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			if !hasEnvOverride {
 				// Defensive: if the override somehow was not registered, install the
 				// honest file-less environment directly (the no-fs chokepoint).
-				envOverride = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
+				envOverride = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
 				hasEnvOverride = true
 			}
 		}
@@ -3076,7 +3076,7 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		// empty root. It is a complete shell-less Environment with an honest nofs ref.
 		// A selector session with a real workspace needs no override: the run-entry
 		// seam builds its environment from the shared factory as usual.
-		s.sessionEnvironments[id] = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
+		s.sessionEnvironments[id] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
 	}
 	s.mu.Unlock()
 	// On a clean replace, free the displaced prior engine's MCP manager OUTSIDE the lock
