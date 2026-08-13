@@ -2870,7 +2870,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 
 	// Guardrails decorate the ordinary hook chain. Completion learning has its own
 	// synchronous engine seam and no longer shares Stop-hook ownership.
-	var mainHooks port.HookRunner = hooks
+	mainHooks := hooks
 	// Guardrails (issue #27): decorate the MAIN engine's hooks with the LLM-backed
 	// PreToolUse/PostToolUse content checker. modelhook wraps the userModelReview
 	// chain so the inner hooks run FIRST and the checker SECOND (decision 5). It is

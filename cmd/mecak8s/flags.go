@@ -464,7 +464,6 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 	out := app.Config{
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
-		BuildVersion:           buildinfo.Current(),
 		DefaultProvider:        cfg.defaultProvider,
 		DefaultModel:           cfg.defaultModel,
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
