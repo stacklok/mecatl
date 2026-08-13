@@ -146,7 +146,7 @@ openrouter:
 }
 
 // TestOpenRouterRouteFor pins the per-model resolver the registry entry's
-// WithProviderPreferences closure calls: a configured model converts to
+// WithOpenRouterProviderPreferences closure calls: a configured model converts to
 // openai.OpenRouterProviderPreferences, an unconfigured model returns nil (no body key).
 func TestOpenRouterRouteFor(t *testing.T) {
 	allow := false
