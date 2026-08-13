@@ -73,6 +73,9 @@ func TestFoldOperatorOpenRouterNoResolver(t *testing.T) {
 // (no "/" and none of the id-shape chars) is dropped fail-soft.
 func TestFoldOperatorOpenRouterResolvesAlias(t *testing.T) {
 	cfg := foldOpenRouter(t, `
+models:
+  aliases:
+    fast-claude: anthropic/claude-sonnet-4-6
 openrouter:
   models:
     "fast-claude":
@@ -80,8 +83,9 @@ openrouter:
     "sonnetinvented":
       order: ["anthropic"]
 `)
-	// An operator-defined alias resolving to a concrete id.
-	cfg.ModelAliases = map[string]string{"fast-claude": "anthropic/claude-sonnet-4-6"}
+	// Match Build's load-bearing order: operator aliases must fold before OpenRouter
+	// route keys are resolved, so aliases declared in this same file are available.
+	cfg = foldOperatorModelSlots(cfg)
 	got := foldOperatorOpenRouter(cfg)
 	if _, ok := got.openRouterRoutes["anthropic/claude-sonnet-4-6"]; !ok {
 		t.Errorf("alias-keyed route must land under the resolved model id; got %v", got.openRouterRoutes)
@@ -90,6 +94,29 @@ openrouter:
 	// known=false ⇒ dropped fail-soft (it can never be a concrete model id).
 	if _, ok := got.openRouterRoutes["sonnetinvented"]; ok {
 		t.Errorf("an unknown bare-token key must be dropped fail-soft; got %v", got.openRouterRoutes)
+	}
+}
+
+// TestFoldOperatorOpenRouterDropsResolvedKeyConflicts pins deterministic handling
+// when an alias and concrete key name the same model. A compliance route must not
+// depend on Go map iteration order, so every conflicting route is dropped.
+func TestFoldOperatorOpenRouterDropsResolvedKeyConflicts(t *testing.T) {
+	cfg := foldOpenRouter(t, `
+models:
+  aliases:
+    fast-claude: anthropic/claude-sonnet-4-6
+openrouter:
+  models:
+    fast-claude:
+      order: ["anthropic"]
+      allow_fallbacks: false
+    anthropic/claude-sonnet-4-6:
+      order: ["google-vertex"]
+`)
+	cfg = foldOperatorModelSlots(cfg)
+	got := foldOperatorOpenRouter(cfg)
+	if _, ok := got.openRouterRoutes["anthropic/claude-sonnet-4-6"]; ok {
+		t.Fatalf("conflicting resolved routes must be dropped, got %v", got.openRouterRoutes)
 	}
 }
 
@@ -120,10 +147,10 @@ openrouter:
 
 // TestOpenRouterRouteFor pins the per-model resolver the registry entry's
 // WithProviderPreferences closure calls: a configured model converts to
-// openai.ProviderPreferences, an unconfigured model returns nil (no body key).
+// openai.OpenRouterProviderPreferences, an unconfigured model returns nil (no body key).
 func TestOpenRouterRouteFor(t *testing.T) {
 	allow := false
-	cfg := Config{openRouterRoutes: map[string]openai.ProviderPreferences{
+	cfg := Config{openRouterRoutes: map[string]openai.OpenRouterProviderPreferences{
 		"anthropic/claude-sonnet-4-6": {Order: []string{"anthropic"}, AllowFallbacks: &allow},
 	}}
 	prefs := cfg.openRouterRouteFor("anthropic/claude-sonnet-4-6")

@@ -900,7 +900,7 @@ type Config struct {
 	// openrouter registry entry builds byte-identical to before. Unexported: a
 	// composition detail, not an operator knob (the YAML is the sole source in v1 —
 	// no CLI flag).
-	openRouterRoutes map[string]openai.ProviderPreferences
+	openRouterRoutes map[string]openai.OpenRouterProviderPreferences
 
 	// liveModelHTTPClient is the composition-only test seam for the LIVE model
 	// listers' HTTP transport (mirroring envDetector/providerConstructor). Production
@@ -1192,13 +1192,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// built and before the provider/model fail-fast normalization below.
 	cfg = foldOperatorGuardrails(cfg)
 
-	// OpenRouter downstream-provider routing (issue #480): fold the operator-tier
-	// `openrouter:` YAML subtree (user-global + CLI ONLY — a project file's block is
-	// WARN-ignored) onto cfg.openRouterRoutes, BEFORE the provider registry is built
-	// so the openrouter entry's construct/remint closes over the resolved map. There
-	// is no CLI flag twin in v1, so the YAML is the sole source.
-	cfg = foldOperatorOpenRouter(cfg)
-
 	// Per-slot models (ADR 0030, Phase 1+2): fold the operator-tier `models:` YAML
 	// subtree (user-global + CLI only — a project file's models: block is handled by
 	// the Phase-4 fold below) onto cfg.ModelSlots/cfg.ModelAliases, CLI flags
@@ -1220,6 +1213,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// TestPrecedenceCombinedTiersOperatorYAMLAndProject (the all-three-tiers seam guards).
 	cliModelKeys := captureCLIModelKeys(cfg)
 	cfg = foldOperatorModelSlots(cfg)
+
+	// OpenRouter downstream-provider routing (issue #480): fold the operator-tier
+	// `openrouter:` YAML subtree (user-global + CLI ONLY — a project file's block is
+	// WARN-ignored) only AFTER operator aliases have been merged above. Route keys may
+	// use that alias vocabulary and must resolve to the concrete model id before the
+	// provider registry closes over cfg.openRouterRoutes. There is no CLI flag twin
+	// in v1, so the YAML is the sole source.
+	cfg = foldOperatorOpenRouter(cfg)
 
 	// Start-of-session git snapshot, computed ONCE here (FIX 2): gitSnapshot runs git
 	// against cfg.Workspace through a HARDENED/scrubbed env and only when the project
@@ -6700,7 +6701,9 @@ func foldOperatorOpenRouter(cfg Config) Config {
 	if sec == nil || len(sec.Models) == 0 {
 		return cfg
 	}
-	routes := make(map[string]openai.ProviderPreferences, len(sec.Models))
+	routes := make(map[string]openai.OpenRouterProviderPreferences, len(sec.Models))
+	seen := make(map[string]string, len(sec.Models))
+	conflicted := make(map[string]bool)
 	for model, route := range sec.Models {
 		modelID := strings.TrimSpace(model)
 		if modelID == "" {
@@ -6733,7 +6736,18 @@ func foldOperatorOpenRouter(cfg Config) Config {
 				"model", modelID, "slug", bad)
 			continue
 		}
-		routes[modelID] = openai.ProviderPreferences{Order: slugs, AllowFallbacks: route.AllowFallbacks}
+		if prior, duplicate := seen[modelID]; duplicate {
+			delete(routes, modelID)
+			if !conflicted[modelID] {
+				cfg.diag().Log(context.Background(), port.LevelWarn,
+					"openrouter: dropping conflicting routes that resolve to the same model id",
+					"model", modelID, "keys", []string{prior, model})
+			}
+			conflicted[modelID] = true
+			continue
+		}
+		seen[modelID] = model
+		routes[modelID] = openai.OpenRouterProviderPreferences{Order: slugs, AllowFallbacks: route.AllowFallbacks}
 		cfg.diag().Log(context.Background(), port.LevelInfo,
 			"openrouter: downstream-provider order configured", "model", modelID, "order", slugs)
 	}
@@ -6746,9 +6760,9 @@ func foldOperatorOpenRouter(cfg Config) Config {
 // openRouterRouteFor resolves the downstream-provider preferences for a model id
 // from cfg.openRouterRoutes (issue #480). It returns nil for an unconfigured model
 // (the adapter then stamps no `provider` body key) and is nil-safe on Config. It
-// is the resolver the openrouter registry entry's WithProviderPreferences closure
-// calls per request.
-func (c Config) openRouterRouteFor(model string) *openai.ProviderPreferences {
+// is the resolver the openrouter registry entry's WithOpenRouterProviderPreferences
+// closure calls per request.
+func (c Config) openRouterRouteFor(model string) *openai.OpenRouterProviderPreferences {
 	if prefs, ok := c.openRouterRoutes[model]; ok {
 		return &prefs
 	}

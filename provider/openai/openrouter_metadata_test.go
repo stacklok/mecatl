@@ -1,6 +1,9 @@
 package openai
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestSelectedDownstreamProvider pins the tolerant, fail-empty parse of the
 // opt-in openrouter_metadata block (issue #480): the selected endpoint wins, the
@@ -25,6 +28,16 @@ func TestSelectedDownstreamProvider(t *testing.T) {
 			name: "selected with empty provider falls through to attempts",
 			raw:  `{"openrouter_metadata":{"endpoints":{"available":[{"provider":"","selected":true}]},"attempts":[{"provider":"Together"}]}}`,
 			want: "Together",
+		},
+		{
+			name: "display label is flattened and controls removed",
+			raw:  `{"openrouter_metadata":{"endpoints":{"available":[{"provider":"Google\n\u001bVertex","selected":true}]}}}`,
+			want: "Google Vertex",
+		},
+		{
+			name: "display label is bounded",
+			raw:  `{"openrouter_metadata":{"endpoints":{"available":[{"provider":"` + strings.Repeat("a", maxDownstreamProviderLabelRunes+1) + `","selected":true}]}}}`,
+			want: strings.Repeat("a", maxDownstreamProviderLabelRunes),
 		},
 		{
 			name: "cache hit: metadata absent",

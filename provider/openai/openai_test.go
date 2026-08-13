@@ -1744,7 +1744,7 @@ func TestReasoningItemDroppedWhenIDEmpty(t *testing.T) {
 
 // TestTranslateProviderRouteEmitted pins the issue-#480 echo: a response.completed
 // event whose raw JSON carries openrouter_metadata yields a ChunkProviderRoute
-// (the selected downstream slug) BEFORE the usage/done chunks; a cache-hit
+// (the selected downstream display label) BEFORE the usage/done chunks; a cache-hit
 // completed event (metadata stripped) yields none.
 func TestTranslateProviderRouteEmitted(t *testing.T) {
 	sse := "event: response.output_text.delta\n" +
@@ -1782,14 +1782,14 @@ func TestTranslateProviderRouteAbsentOnCacheHit(t *testing.T) {
 }
 
 // TestStreamStampsProviderBodyAndHeader is the STRICT wire-injection guard
-// (issue #480): with WithProviderPreferences + WithMetadataHeader armed, the
+// (issue #480): with WithOpenRouterProviderPreferences + WithOpenRouterMetadata armed, the
 // outgoing request body carries the `provider` object (order + allow_fallbacks)
 // and the X-OpenRouter-Metadata header; with neither (the openai-entry parity
 // path) it carries NEITHER. This is the only thing standing between us and a
 // silent SDK behaviour change on WithJSONSet — keep it strict.
 func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 	completed := "event: response.completed\n" +
-		`data: {"type":"response.completed","sequence_number":0,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
+		`data: {"type":"response.completed","sequence_number":0,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1},"openrouter_metadata":{"endpoints":{"available":[{"provider":"Anthropic","selected":true}]}}}}` + "\n\n"
 
 	type captured struct {
 		body        map[string]any
@@ -1811,7 +1811,7 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		}))
 	}
 
-	stream := func(t *testing.T, p *Provider) {
+	stream := func(t *testing.T, p *Provider) bool {
 		t.Helper()
 		seq, err := p.Stream(context.Background(), port.LLMRequest{
 			Model:    "anthropic/claude-sonnet-4-6",
@@ -1820,11 +1820,16 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Stream outer error: %v", err)
 		}
-		for _, err := range seq {
+		var routed bool
+		for chunk, err := range seq {
 			if err != nil {
 				t.Fatalf("stream error: %v", err)
 			}
+			if chunk.Kind == port.ChunkProviderRoute {
+				routed = true
+			}
 		}
+		return routed
 	}
 
 	t.Run("openrouter entry stamps provider object and header", func(t *testing.T) {
@@ -1834,12 +1839,14 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		allow := false
 		p := New(
 			WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"),
-			WithProviderPreferences(func(string) *ProviderPreferences {
-				return &ProviderPreferences{Order: []string{"anthropic", "google-vertex"}, AllowFallbacks: &allow}
+			WithOpenRouterProviderPreferences(func(string) *OpenRouterProviderPreferences {
+				return &OpenRouterProviderPreferences{Order: []string{"anthropic", "google-vertex"}, AllowFallbacks: &allow}
 			}),
-			WithMetadataHeader(true),
+			WithOpenRouterMetadata(true),
 		)
-		stream(t, p)
+		if routed := stream(t, p); !routed {
+			t.Error("openrouter entry did not emit provider route from armed metadata")
+		}
 
 		prov, ok := capd.body["provider"].(map[string]any)
 		if !ok {
@@ -1863,10 +1870,12 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		defer srv.Close()
 		p := New(
 			WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"),
-			WithProviderPreferences(func(string) *ProviderPreferences { return nil }),
-			WithMetadataHeader(true),
+			WithOpenRouterProviderPreferences(func(string) *OpenRouterProviderPreferences { return nil }),
+			WithOpenRouterMetadata(true),
 		)
-		stream(t, p)
+		if routed := stream(t, p); !routed {
+			t.Error("metadata-enabled entry did not emit provider route")
+		}
 		if _, present := capd.body["provider"]; present {
 			t.Errorf("nil prefs resolver stamped a provider key; body=%v", capd.body)
 		}
@@ -1880,7 +1889,9 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		srv := serve(&capd)
 		defer srv.Close()
 		p := New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"))
-		stream(t, p)
+		if routed := stream(t, p); routed {
+			t.Error("default (openai) entry emitted provider route from unarmed metadata")
+		}
 		if _, present := capd.body["provider"]; present {
 			t.Errorf("default (openai) entry stamped a provider key; body=%v", capd.body)
 		}

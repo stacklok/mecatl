@@ -335,8 +335,11 @@ openrouter:
 ### Observability: which downstream served a turn
 
 For the `openrouter` provider mecatl arms OpenRouter's `X-OpenRouter-Metadata`
-opt-in, and the routed downstream echoes back as a `provider.route` event —
-rendered in mecatui as a transient `via <slug>` footer status. It is metadata-only
+opt-in, and the routed downstream echoes back as a `provider.route` event. mecatui
+briefly shows `via <display-name>` in the footer and appends
+`/<display-name>` to the header's model segment for the current turn (for example,
+`Kimi K3/Google`). The next turn clears that suffix before any metadata arrives,
+so a cache hit or metadata miss shows no stale route. The event is metadata-only
 and degrades to **absent on a cache hit** (OpenRouter strips the metadata from
 cached responses): no value is ever fabricated.
 

@@ -159,7 +159,8 @@ operator-tier-only `openrouter:` settings subtree (a per-model `order:` +
 `allow_fallbacks:`, folded by `foldOperatorOpenRouter` into `Config.openRouterRoutes`),
 and **observability** of which downstream actually served a turn. The openrouter
 registry entry ALONE passes two `openai` adapter Options —
-`WithProviderPreferences` (a model-keyed resolver) + `WithMetadataHeader(true)` —
+`WithOpenRouterProviderPreferences` (a model-keyed resolver) +
+`WithOpenRouterMetadata(true)` —
 over the shared `extra` channel, so every mint (default + per-session remint)
 carries them and no other entry can leak the `provider` body key or the
 `X-OpenRouter-Metadata` header. Both are stamped as PER-REQUEST options

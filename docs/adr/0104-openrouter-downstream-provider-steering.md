@@ -42,7 +42,8 @@ or unresolvable model key WARN-dropped) into `Config.openRouterRoutes` — resol
 an alias KEY to its concrete model id via `lookupModelAlias`, so a route written
 against an alias lands under the id the request actually carries — and the
 openrouter registry entry alone passes two `openai` Options —
-`WithProviderPreferences` (a model-keyed resolver) + `WithMetadataHeader(true)` —
+`WithOpenRouterProviderPreferences` (a model-keyed resolver) +
+`WithOpenRouterMetadata(true)` —
 via the existing `extra` channel so every mint (default + per-session remint)
 carries them. The adapter injects the `provider` key onto the marshalled body with
 `option.WithJSONSet` (verified to work on the Responses POST body) and adds the
@@ -52,18 +53,22 @@ Options, so the key/header can never leak to a non-OpenRouter endpoint.
 
 **Observability (response → echo).** The adapter parses the terminal
 `response.completed` event's `RawJSON()` for `openrouter_metadata` and emits a new
-`port.ChunkProviderRoute` (Text = the selected downstream slug, fail-empty). The
-loop relays it verbatim onto a new client-visible `session.EvProviderRoute`
-(`"provider.route"`) event — a string passthrough (no proto enum), metadata-only,
-never recorded to the conversation, never a diagnostics line (the `EvNoProgress`
-discipline). On a cache hit (metadata stripped) nothing is emitted — never a
-fabricated value. mecatui maps it to a transient footer status (`via <slug>`).
+`port.ChunkProviderRoute` (Text = OpenRouter's selected downstream display label,
+fail-empty). The loop relays it verbatim onto a new client-visible
+`session.EvProviderRoute` (`"provider.route"`) event — a string passthrough (no
+proto enum), metadata-only, never recorded to the conversation, never a
+diagnostics line (the event taxonomy owns the fact). On a cache hit (metadata
+stripped) nothing is emitted — never a fabricated value. mecatui briefly shows
+`via <display-name>` in the footer and retains `<model>/<display-name>` in the
+header for the current turn; the next turn clears the header before metadata can
+arrive, so a cache hit cannot display stale routing.
 `ChunkProviderRoute` is classified non-committing in `llmresilience`.
 
 **Rejected alternatives.** Folding the routed downstream into `Service.ResolvedModel`
 — wrong shape: that is per-session *identity* resolved at engine construction; the
 routed downstream is per-turn and post-hoc. A diagnostics line — operator-only,
-invisible to clients, and against the three-lines invariant. Stamping the params
+invisible to clients, while the client-visible event already owns the fact.
+Stamping the params
 struct via `param.Override` — brittle against SDK bumps; `WithJSONSet` is the SDK's
 own escape hatch.
 

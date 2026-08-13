@@ -1427,12 +1427,30 @@ func TestHeaderProviderRouteSuffix(t *testing.T) {
 	if !strings.Contains(header, "kimi-k3/Google") {
 		t.Errorf("header should show the model + routed downstream as 'kimi-k3/Google', got:\n%s", header)
 	}
+	if status := stripANSIstr(m.statusMsg); !strings.Contains(status, "via Google") {
+		t.Errorf("route arrival should show transient footer status, got %q", status)
+	}
 
 	// A subsequent route updates the suffix (e.g. a fallback kicked in).
 	m = applyAll(m, client.ProviderRouteMsg{Text: "Amazon Bedrock"})
 	header = stripANSIstr(m.renderHeader())
 	if !strings.Contains(header, "kimi-k3/Amazon Bedrock") {
 		t.Errorf("header should track the latest routed downstream, got:\n%s", header)
+	}
+
+	// The next turn clears the per-turn route before any metadata arrives. This is
+	// the cache-hit/metadata-miss path: absence must render absence, never stale data.
+	m = applyAll(m, client.TurnStartMsg{Turn: 2})
+	header = stripANSIstr(m.renderHeader())
+	if strings.Contains(header, "kimi-k3/") {
+		t.Errorf("a new turn with no route must clear the stale suffix, got:\n%s", header)
+	}
+
+	// Session reset is the other stale-state boundary.
+	m.providerRoute = "Google"
+	m = m.resetSession()
+	if m.providerRoute != "" {
+		t.Errorf("resetSession must clear providerRoute, got %q", m.providerRoute)
 	}
 }
 

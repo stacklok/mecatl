@@ -124,8 +124,8 @@ OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model p
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `openrouter.models` | `map[string]openroutermodelroute` | `(absent)` | Models maps a model id (or alias, resolved in composition) to its downstream-provider routing preference. |
-| `openrouter.models.order` | `[]string` | `(absent)` | Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic", "google-vertex", "deepinfra/turbo") tried in order. Setting it disables OpenRouter's default price load-balancing. Base-slug matching applies: "google-vertex" matches all its regions/variants (service tiers excepted). |
-| `openrouter.models.allow_fallbacks` | `bool` | `(absent)` | AllowFallbacks, when explicitly false, pins the request to Order with no fallback to other downstreams. A POINTER so "absent" (OpenRouter default true) is distinguishable from an explicit false. |
+| `openrouter.models.<key>.order` | `[]string` | `(absent)` | Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic", "google-vertex", "deepinfra/turbo") tried in order. Setting it disables OpenRouter's default price load-balancing. Base-slug matching applies: "google-vertex" matches all its regions/variants (service tiers excepted). |
+| `openrouter.models.<key>.allow_fallbacks` | `bool` | `(absent)` | AllowFallbacks, when explicitly false, pins the request to Order with no fallback to other downstreams. Omit the key to keep OpenRouter's default (true); set it to false to disable fallback. |
 
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 

@@ -1,6 +1,12 @@
 package openai
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+	"unicode"
+)
+
+const maxDownstreamProviderLabelRunes = 128
 
 // openrouter_metadata is the opt-in routing block OpenRouter adds to a response
 // when the request carries `X-OpenRouter-Metadata: enabled` (issue #480). On the
@@ -50,27 +56,42 @@ func selectedDownstreamProvider(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	// Cheap gate: the field is absent on a cache hit and on every non-openrouter
-	// response — avoid the unmarshal cost (and any chance of a false positive).
-	var probe struct {
-		Meta json.RawMessage `json:"openrouter_metadata"`
+	var envelope struct {
+		Meta openrouterMetadata `json:"openrouter_metadata"`
 	}
-	if err := json.Unmarshal([]byte(raw), &probe); err != nil || len(probe.Meta) == 0 {
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
 		return ""
 	}
-	var meta openrouterMetadata
-	if err := json.Unmarshal(probe.Meta, &meta); err != nil {
-		return ""
-	}
-	for _, ep := range meta.Endpoints.Available {
-		if ep.Selected && ep.Provider != "" {
-			return ep.Provider
+	for _, ep := range envelope.Meta.Endpoints.Available {
+		if ep.Selected {
+			if label := normaliseDownstreamProviderLabel(ep.Provider); label != "" {
+				return label
+			}
 		}
 	}
-	for i := len(meta.Attempts) - 1; i >= 0; i-- {
-		if meta.Attempts[i].Provider != "" {
-			return meta.Attempts[i].Provider
+	for i := len(envelope.Meta.Attempts) - 1; i >= 0; i-- {
+		if label := normaliseDownstreamProviderLabel(envelope.Meta.Attempts[i].Provider); label != "" {
+			return label
 		}
 	}
 	return ""
+}
+
+// normaliseDownstreamProviderLabel bounds and flattens the upstream-controlled
+// display label before it crosses into a client-visible engine event. Terminal
+// clients still escape for their own medium; this keeps the neutral wire value
+// valid UTF-8, single-line, and cheap to retain or render.
+func normaliseDownstreamProviderLabel(label string) string {
+	label = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(label, "\uFFFD"))
+	label = strings.Join(strings.Fields(label), " ")
+	runes := []rune(label)
+	if len(runes) > maxDownstreamProviderLabelRunes {
+		runes = runes[:maxDownstreamProviderLabelRunes]
+	}
+	return string(runes)
 }

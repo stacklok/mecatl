@@ -839,6 +839,7 @@ func (m Model) resetSession() Model {
 	m.contextTokens = 0
 	m.activeTool = ""
 	m.toolProgress = ""
+	m.providerRoute = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
 	// / adopted from the stored session on a switch), so a /clear or a /models
 	// restart-now must not leave a stale label on the freshly-cleared session.

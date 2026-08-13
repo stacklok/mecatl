@@ -598,6 +598,9 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conv.startAssistant()
 		m.activeTool = ""
 		m.toolProgress = ""
+		// Routing metadata is per turn. OpenRouter omits it on cache hits, so the
+		// previous turn's downstream must not survive into a turn that reports none.
+		m.providerRoute = ""
 		return m.afterEvent()
 	case client.AssistantDeltaMsg:
 		// Append only; markDirty arms a one-shot frame-cadence flush. No per-token
@@ -836,12 +839,10 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(noticeLine(msg))
 		return m.afterEvent()
 	case client.ProviderRouteMsg:
-		// The routed downstream provider (issue #480). Two surfaces: (1) the header
-		// model segment gains a persistent "/ <name>" suffix so the operator sees the
-		// routed downstream next to the model id; (2) a TRANSIENT footer status, like
-		// NoProgressMsg. Absent on a cache hit — neither surface moves (the header
-		// keeps the last routed value; a stale suffix is honest because a cache hit
-		// means the SAME downstream served from cache).
+		// The routed downstream provider (issue #480) is shown persistently beside
+		// the model id for the current turn and transiently in the footer when the
+		// metadata arrives. TurnStartMsg clears the header first, so a cache hit or
+		// any turn with missing metadata cannot retain a stale route.
 		m.providerRoute = msg.Text
 		m.statusMsg = m.deps.Theme.Style("muted").Render("via " + msg.Text)
 		return m.afterEvent()

@@ -308,11 +308,15 @@ func writeFieldReference(b *strings.Builder, path string, f *Field) {
 		desc += " **Enable:** " + oneLine(f.EnableNote)
 	}
 	fmt.Fprintf(b, "| `%s` | `%s` | `%s` | %s |\n", full, f.Type, defaultCell(f.Default), desc)
-	// A slice-of-struct's children are array ELEMENTS (foo[].bar); a plain nested
+	// A slice-of-struct's children are array ELEMENTS (foo[].bar); a map-of-struct's
+	// children live below an operator-supplied key (foo.<key>.bar); a plain nested
 	// mapping's children are direct keys (foo.bar).
 	childPath := full
-	if strings.HasPrefix(f.Type, "[]") {
+	switch {
+	case strings.HasPrefix(f.Type, "[]"):
 		childPath = full + "[]"
+	case strings.HasPrefix(f.Type, "map["):
+		childPath = full + ".<key>"
 	}
 	for _, nf := range f.Nested {
 		writeFieldReference(b, childPath, nf)

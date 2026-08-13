@@ -2816,11 +2816,13 @@ scoped to the openrouter registry entry and never touching provider-neutral
 - **Steering.** Operator-tier-only `openrouter:` settings subtree
   (`permconfig.OpenRouterSection` → `Config.OpenRouter`, strict-parsed, project-tier
   WARN-ignored like `default_provider`/`allowlist`/`router`). `foldOperatorOpenRouter`
-  validates fail-soft into `Config.openRouterRoutes map[string]openRouterRoute`
-  (composition-local so build.go stays free of the provider/openai import);
-  `Config.openRouterRouteFor` converts per model. The openrouter entry's
-  `newOpenAICompatEntry` `extra` carries `openai.WithProviderPreferences` (the
-  model-keyed resolver) + `openai.WithMetadataHeader(true)`, so every mint/default +
+  validates fail-soft into `Config.openRouterRoutes` keyed by the resolved concrete
+  model id; aliases and concrete keys that collide are all dropped so map iteration
+  can never choose a compliance route nondeterministically. `Config.openRouterRouteFor`
+  resolves the adapter preferences per model. The openrouter entry's
+  `newOpenAICompatEntry` `extra` carries
+  `openai.WithOpenRouterProviderPreferences` (the model-keyed resolver) +
+  `openai.WithOpenRouterMetadata(true)`, so every mint/default +
   per-session remint has them and no other entry can leak the body key/header. The
   adapter stamps the `provider` body object via `option.WithJSONSet` (verified to
   work on the Responses POST body — the SDK has no typed field) and the
@@ -2828,15 +2830,19 @@ scoped to the openrouter registry entry and never touching provider-neutral
   `Provider.routingRequestOptions` and threaded through BOTH `streamAttempt` calls
   (initial + encrypted-reasoning fallback) — so `buildParams` / the prompt-cache
   prefix are untouched.
-- **Echo.** `Provider.streamAttempt` → `translateCompleted` reads the terminal
-  `response.completed` `Response.RawJSON()`'s `openrouter_metadata` via
+- **Echo.** `Provider.streamAttempt` arms route parsing only when
+  `WithOpenRouterMetadata(true)` is set, then `translateCompleted` reads the
+  terminal `response.completed` `Response.RawJSON()`'s `openrouter_metadata` via
   `selectedDownstreamProvider` (selected endpoint, else last attempt, else "" — a
   tolerant fail-empty parse in `openrouter_metadata.go`; cache hits strip the block)
-  and emits `port.ChunkProviderRoute` FIRST. The loop relays it verbatim onto
-  `session.EvProviderRoute` (`"provider.route"`, a string passthrough, no proto
-  change), metadata-only, never recorded, never a diagnostics line (the EvNoProgress
-  discipline); mecatui renders a transient `via <slug>` footer status.
-  `llmresilience.isCommitting` classifies the kind non-committing.
+  and emits `port.ChunkProviderRoute` FIRST. The display label is UTF-8-repaired,
+  flattened, and bounded before it crosses the adapter. The loop relays it verbatim
+  onto `session.EvProviderRoute` (`"provider.route"`, a string passthrough, no proto
+  change), metadata-only, never recorded, never a diagnostics line (the event owns
+  the fact); mecatui renders a transient `via <display-name>` footer and a
+  `<model>/<display-name>` header suffix for the current turn, clearing the suffix
+  at the next turn start. `llmresilience.isCommitting` classifies the kind
+  non-committing.
 
 Strict wire guard: `internal/app/openrouter_route_e2e_test.go` runs the REAL openai
 adapter against an httptest OpenRouter server (offline) and asserts the body key +

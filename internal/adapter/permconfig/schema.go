@@ -132,7 +132,7 @@ type OpenRouterSection struct {
 // OpenRouterModelRoute is one model's downstream-provider routing preference
 // (issue #480), the on-disk mirror of OpenRouter's `provider` request object
 // (v1 surface: order + allow_fallbacks). Composition maps it to
-// openai.ProviderPreferences.
+// OpenRouterProviderPreferences.
 type OpenRouterModelRoute struct {
 	// Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic",
 	// "google-vertex", "deepinfra/turbo") tried in order. Setting it disables
@@ -140,8 +140,8 @@ type OpenRouterModelRoute struct {
 	// "google-vertex" matches all its regions/variants (service tiers excepted).
 	Order []string `yaml:"order"`
 	// AllowFallbacks, when explicitly false, pins the request to Order with no
-	// fallback to other downstreams. A POINTER so "absent" (OpenRouter default
-	// true) is distinguishable from an explicit false.
+	// fallback to other downstreams. Omit the key to keep OpenRouter's default
+	// (true); set it to false to disable fallback.
 	AllowFallbacks *bool `yaml:"allow_fallbacks"`
 }
 

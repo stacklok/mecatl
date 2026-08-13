@@ -71,7 +71,7 @@ type Provider struct {
 	// providerPrefs resolves the OpenRouter downstream-provider routing object
 	// for a request's model (issue #480); nil for every non-openrouter entry, so
 	// the `provider` body key is only ever stamped for OpenRouter.
-	providerPrefs func(model string) *ProviderPreferences
+	providerPrefs func(model string) *OpenRouterProviderPreferences
 	// metadataHeader arms the X-OpenRouter-Metadata: enabled header so OpenRouter
 	// returns the routed-downstream metadata block; gated to the openrouter entry.
 	metadataHeader bool
@@ -87,7 +87,7 @@ type config struct {
 	caps           *port.ProviderCapabilities
 	extra          []option.RequestOption
 	cacheDialect   CacheDialect
-	providerPrefs  func(model string) *ProviderPreferences
+	providerPrefs  func(model string) *OpenRouterProviderPreferences
 	metadataHeader bool
 }
 
@@ -154,7 +154,7 @@ func WithRequestOption(opts ...option.RequestOption) Option {
 	return func(c *config) { c.extra = append(c.extra, opts...) }
 }
 
-// ProviderPreferences is the OpenRouter DOWNSTREAM-provider routing object
+// OpenRouterProviderPreferences is the OpenRouter DOWNSTREAM-provider routing object
 // (issue #480) stamped onto the request body's `provider` key. It is the
 // adapter-local, provider-private mirror of OpenRouter's ProviderPreferences
 // schema — v1 carries only Order + AllowFallbacks. It is NOT a port.LLMRequest
@@ -167,12 +167,12 @@ func WithRequestOption(opts ...option.RequestOption) Option {
 // "absent" (OpenRouter default true) is distinguishable from an explicit false
 // (pin hard to Order, no fallback). Base-slug matching applies: "google-vertex"
 // matches all its regions/variants (service tiers excepted).
-type ProviderPreferences struct {
+type OpenRouterProviderPreferences struct {
 	Order          []string
 	AllowFallbacks *bool
 }
 
-// WithProviderPreferences sets a resolve-at-request closure keyed on the
+// WithOpenRouterProviderPreferences sets a resolve-at-request closure keyed on the
 // request's model id, returning the downstream-provider routing object for that
 // model (nil = send nothing). The per-model closure shape exists because the
 // registry entry is shared across models while the config is per-model. It is
@@ -180,17 +180,17 @@ type ProviderPreferences struct {
 // passes no Option, so the `provider` key can never leak to a non-OpenRouter
 // endpoint. The body key is injected via option.WithJSONSet at Stream time, so
 // buildParams and the byte-stable prompt-cache prefix are untouched.
-func WithProviderPreferences(resolve func(model string) *ProviderPreferences) Option {
+func WithOpenRouterProviderPreferences(resolve func(model string) *OpenRouterProviderPreferences) Option {
 	return func(c *config) { c.providerPrefs = resolve }
 }
 
-// WithMetadataHeader arms the `X-OpenRouter-Metadata: enabled` request header,
+// WithOpenRouterMetadata arms the `X-OpenRouter-Metadata: enabled` request header,
 // which makes OpenRouter return the openrouter_metadata block (naming the routed
 // downstream provider) on the terminal streaming event. It is a SEPARATE Option
-// from WithProviderPreferences so the routing echo works even with no order
+// from WithOpenRouterProviderPreferences so the routing echo works even with no order
 // configured. Gated to the openrouter registry entry in composition. The adapter
 // never logs; the value reaches the loop as ChunkProviderRoute.
-func WithMetadataHeader(enabled bool) Option {
+func WithOpenRouterMetadata(enabled bool) Option {
 	return func(c *config) { c.metadataHeader = enabled }
 }
 
@@ -327,7 +327,7 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 	stream := p.client.NewStreaming(ctx, params, reqOpts...)
 	defer func() { _ = stream.Close() }()
 
-	var st streamState
+	st := streamState{providerRoute: p.metadataHeader}
 	for stream.Next() {
 		if ctx.Err() != nil {
 			return emitted, false, nil

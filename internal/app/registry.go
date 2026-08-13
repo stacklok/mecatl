@@ -516,17 +516,17 @@ func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, e
 			baseURL = openRouterDefaultBaseURL
 		}
 		// Downstream-provider routing (issue #480): the openrouter entry ALONE arms
-		// the two OpenRouter-private knobs. WithProviderPreferences resolves the
+		// the two OpenRouter-private knobs. WithOpenRouterProviderPreferences resolves the
 		// per-model `provider` body object from cfg.openRouterRoutes (nil for an
-		// unconfigured model → no body key); WithMetadataHeader(true) arms the
+		// unconfigured model → no body key); WithOpenRouterMetadata(true) arms the
 		// X-OpenRouter-Metadata header so the routed downstream echoes back as
 		// ChunkProviderRoute → EvProviderRoute. Both ride the `extra` channel, so
 		// EVERY mint (the default build AND every per-session/heal remint) carries
 		// them. Every OTHER entry passes no such option, so the body key + header
 		// can never leak to a non-OpenRouter endpoint.
 		entry := newOpenAICompatEntry(cfg, providerOpenRouter, key, baseURL,
-			openai.WithProviderPreferences(cfg.openRouterRouteFor),
-			openai.WithMetadataHeader(true))
+			openai.WithOpenRouterProviderPreferences(cfg.openRouterRouteFor),
+			openai.WithOpenRouterMetadata(true))
 		// OpenRouter opts into LIVE model listing: its public /models endpoint
 		// enumerates the real catalog (336 models) vs the curated embedded subset.
 		// The lister rides on the entry (NOT the shared openai.Provider) so openai —
@@ -654,7 +654,7 @@ func providerKey(cfgKey, providerID string, detect envDetector) string {
 // construct() call (default AND per-session/heal re-mints), so a caller-supplied
 // option rides every re-mint too, never just the initial build. openai passes none —
 // byte-identical; the gateway entry passes its redirect-refusing WithHTTPClient (F3);
-// openrouter passes its downstream-provider WithProviderPreferences + WithMetadataHeader
+// openrouter passes its downstream-provider WithOpenRouterProviderPreferences + WithOpenRouterMetadata
 // (issue #480).
 func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.Option) providerEntry {
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", id, "model", cfg.Model, "base_url", baseURL)

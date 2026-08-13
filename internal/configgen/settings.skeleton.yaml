@@ -213,8 +213,8 @@
 #       # "google-vertex" matches all its regions/variants (service tiers excepted).
 #       order: ["anthropic", "google-vertex"]
 #       # AllowFallbacks, when explicitly false, pins the request to Order with no
-#       # fallback to other downstreams. A POINTER so "absent" (OpenRouter default true)
-#       # is distinguishable from an explicit false.
+#       # fallback to other downstreams. Omit the key to keep OpenRouter's default (true);
+#       # set it to false to disable fallback.
 #       allow_fallbacks: false
 #|
 #| Example:

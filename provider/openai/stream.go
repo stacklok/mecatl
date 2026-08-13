@@ -18,6 +18,11 @@ import (
 // per event, so the only carried state is the assembled final response (for the
 // terminal usage/stop), threaded via the events themselves.
 type streamState struct {
+	// providerRoute permits parsing OpenRouter's private routing metadata. It is
+	// armed only by WithOpenRouterMetadata, so a compatible non-OpenRouter endpoint
+	// cannot manufacture a provider-neutral route chunk by returning the same key.
+	providerRoute bool
+
 	// done is set when a TERMINAL Responses event is observed
 	// (response.completed / response.incomplete / response.failed / a top-level
 	// error). It guards against emitting a second ChunkDone if both
@@ -253,10 +258,13 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 	chunks := make([]port.Chunk, 0, 4)
 	// The routed DOWNSTREAM provider (issue #480): the openrouter_metadata
 	// block rides the terminal event's raw JSON when the request armed
-	// X-OpenRouter-Metadata. Emitted FIRST so ordering is deterministic. "" on
-	// a cache hit (metadata stripped) or a non-openrouter response → no chunk.
-	if slug := selectedDownstreamProvider(event.Response.RawJSON()); slug != "" {
-		chunks = append(chunks, port.Chunk{Kind: port.ChunkProviderRoute, Text: slug})
+	// X-OpenRouter-Metadata. Parsing is gated by that same adapter option so a
+	// compatible non-OpenRouter endpoint cannot inject a route echo. Emitted FIRST
+	// so ordering is deterministic. "" on a cache hit → no chunk.
+	if st.providerRoute {
+		if label := selectedDownstreamProvider(event.Response.RawJSON()); label != "" {
+			chunks = append(chunks, port.Chunk{Kind: port.ChunkProviderRoute, Text: label})
+		}
 	}
 	// The turn's buffered reasoning items, packed into one replay blob. It
 	// rides out here — the only point at which the full ordered list is known.
@@ -571,7 +579,7 @@ func mapStop(status responses.ResponseStatus) session.StopReason {
 // because the event JSON carries its own "type".
 func decodeSSE(r io.Reader) ([]port.Chunk, error) {
 	var out []port.Chunk
-	var st streamState
+	st := streamState{providerRoute: true}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
