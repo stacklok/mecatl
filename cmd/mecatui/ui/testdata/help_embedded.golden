@@ -34,7 +34,9 @@
 ┃    drag                  select text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · esc clears  ┃
 ┃    middle-click          paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)                             ┃
 ┃    ?                     this help (on an empty prompt)                                                                                                            ┃
+┃    ctrl+z                suspend to the shell — the engine keeps running; fg resumes                                                                               ┃
 ┃    ctrl+c                quit (press twice; first press clears the prompt or arms, again within 3s exits)                                                          ┃
+┃    ctrl+d                quit (EOF habit; press twice on an empty prompt)                                                                                          ┃
 ┃                                                                                                                                                                    ┃
 ┃  Skills run automatically when the model needs them — not a browsable                                                                                              ┃
 ┃  list; watch the transcript for Skill tool calls.                                                                                                                  ┃
