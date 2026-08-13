@@ -75,11 +75,15 @@ func TestParentDiscoversTeamIDFromResultAndInspects(t *testing.T) {
 	// InspectMember must pass THAT id; we script it to use the Team call id "p1"
 	// VERBATIM (which is exactly what extractTeamID will recover from the result, and
 	// what the test asserts below — so the script and the surfaced id agree).
+	// The published team id is namespaced under the parent session id (review
+	// finding 2, issue #368): session "s1" (newSession) + Team call id "p1" =>
+	// "s1-p1". The turn-2 InspectMember script uses that pre-computed value —
+	// exactly what extractTeamID will recover from the result.
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Team",
 			json.RawMessage(`{"goal":"fix it","members":[{"name":"lead","role":"lead"},{"name":"worker","role":"work"}]}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("p2", "InspectMember",
-			json.RawMessage(`{"team_id":"p1","member":"worker"}`))),
+			json.RawMessage(`{"team_id":"s1-p1","member":"worker"}`))),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
@@ -96,10 +100,10 @@ func TestParentDiscoversTeamIDFromResultAndInspects(t *testing.T) {
 		t.Fatalf("Team tool errored: %s", teamBody)
 	}
 	gotID := extractTeamID(t, teamBody)
-	// The surfaced id must be the published id (the Team call id), byte-identical, so
-	// MemberSessionID reconstructs the saved id.
-	if gotID != "p1" {
-		t.Fatalf("surfaced team id = %q, want the published Team call id %q (verbatim, per the MemberSessionID contract)", gotID, "p1")
+	// The surfaced id must be the published id (parent-session-id + Team call
+	// id), byte-identical, so MemberSessionID reconstructs the saved id.
+	if gotID != "s1-p1" {
+		t.Fatalf("surfaced team id = %q, want the published team id %q (verbatim, per the MemberSessionID contract)", gotID, "s1-p1")
 	}
 
 	// 2. The parent's InspectMember call (using the surfaced id) must succeed with a

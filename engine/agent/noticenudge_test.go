@@ -91,7 +91,7 @@ func TestBackgroundNoticeInjectedAtNextBoundary(t *testing.T) {
 		// terminal lands in the registry, so the next boundary deterministically
 		// sees a finished, uncollected background child.
 		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1"}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -101,7 +101,7 @@ func TestBackgroundNoticeInjectedAtNextBoundary(t *testing.T) {
 
 	// EXACT notice text: ids + stop labels only, one message (A2/A9). Exact
 	// equality also proves nothing child-authored (no goal, no findings) leaked.
-	wantNotice := "[harness note: 1 background subagent(s) finished: subagent-p1 (end_turn). " +
+	wantNotice := "[harness note: 1 background subagent(s) finished: subagent-s1-p1 (end_turn). " +
 		"Collect each result with SubagentStatus before relying on it.]"
 	noticeIdx := userMessageEqual(sess.Conversation.Messages, wantNotice)
 	if len(noticeIdx) != 1 {
@@ -153,7 +153,7 @@ func TestBackgroundNoticeSkipsDeliveredResult(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -200,7 +200,7 @@ func TestBackgroundPendingNudgeOneMoreTurn(t *testing.T) {
 			toolCall("pw", "AwaitChild", `{}`), // child is genuinely mid-flight at the clean end
 		),
 		mockllm.TextTurn("interim answer"), // would-be clean end → nudge
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("final answer"),
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
@@ -214,7 +214,7 @@ func TestBackgroundPendingNudgeOneMoreTurn(t *testing.T) {
 		}
 	})
 
-	wantNudge := "[harness note: 1 background subagent(s) still running: subagent-p1. " +
+	wantNudge := "[harness note: 1 background subagent(s) still running: subagent-s1-p1. " +
 		"Collect or wait for them with SubagentStatus, cancel them, or finish — " +
 		"anything still running when you finish will be cancelled.]"
 	nudgeIdx := userMessageEqual(sess.Conversation.Messages, wantNudge)
@@ -294,7 +294,7 @@ func TestBackgroundPendingNudgeIgnoredThenCancelledAtRunEnd(t *testing.T) {
 		t.Fatalf("ignored child must be drain-cancelled before the terminal (end idx %d stop %q, result idx %d)",
 			endIdx, endStop, resultIdx)
 	}
-	saved, err := store.Load(context.Background(), "subagent-p1")
+	saved, err := store.Load(context.Background(), "subagent-s1-p1")
 	if err != nil || saved == nil || saved.State != session.StateCancelled {
 		t.Fatalf("ignored child must persist cancelled, got %v (err %v)", saved, err)
 	}
@@ -518,7 +518,7 @@ func TestBackgroundNoticeDurableAcrossSave(t *testing.T) {
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1"}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	spy := &noticeSpyStore{inner: memstore.New()}

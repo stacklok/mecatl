@@ -232,7 +232,7 @@ func TestCancelParallelBranchJoinAll(t *testing.T) {
 	// The D16 child id rides branch_start AND branch_end ("parallel-<callID>-<i>").
 	for _, kind := range []session.ParallelEventKind{session.ParallelBranchStart, session.ParallelBranchEnd} {
 		for _, p := range branchPayloads(evs, kind) {
-			want := fmt.Sprintf("parallel-p1-%d", p.BranchIndex)
+			want := fmt.Sprintf("parallel-s1-p1-%d", p.BranchIndex)
 			if p.ChildID != want {
 				t.Errorf("%s branch %d ChildID = %q, want %q", kind, p.BranchIndex, p.ChildID, want)
 			}
@@ -469,7 +469,7 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 		// which is only cancelled after this succeeds.
 		deadline := time.After(10 * time.Second)
 		for !queuedOK {
-			if queuedOK = r.CancelChild(fmt.Sprintf("parallel-p1-%d", queuedIdx)); queuedOK {
+			if queuedOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", queuedIdx)); queuedOK {
 				break
 			}
 			select {
@@ -478,13 +478,13 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 				// (and so the whole run) would only unwind via drainObserving's
 				// watchdog, masking this as a generic wedge. Errorf is
 				// goroutine-safe; the main goroutine still reports !queuedOK.
-				t.Errorf("queued branch parallel-p1-%d never became cancellable within the deadline", queuedIdx)
+				t.Errorf("queued branch parallel-s1-p1-%d never became cancellable within the deadline", queuedIdx)
 				r.Cancel()
 				return
 			case <-time.After(time.Millisecond):
 			}
 		}
-		runningOK = r.CancelChild(fmt.Sprintf("parallel-p1-%d", runningIdx))
+		runningOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", runningIdx))
 	}()
 
 	evs := drainObserving(t, r, nil)

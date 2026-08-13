@@ -238,7 +238,7 @@ func TestSubagentForkBackgroundChildSeesParentHistory(t *testing.T) {
 		// Turn 2: fork the child IN THE BACKGROUND (returns immediately with the started-result).
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"continue in the background","fork":true,"background":true}`)),
 		// Turn 3: collect the detached child's result.
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool(), note)})

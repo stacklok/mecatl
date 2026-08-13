@@ -406,13 +406,15 @@ func TestParentDiscoversBranchIDFromResultAndInspects(t *testing.T) {
 	inspectTool := agent.NewInspectSubagentTool(store)
 	parentCat := catalogWith(t, parTool, inspectTool)
 
-	// The parent's Parallel call id is "p1" with one branch, so the branch id is
-	// "parallel-p1-0" — exactly what the scripted turn-2 InspectSubagent uses.
+	// The parent's Parallel call id is "p1" with one branch, run under session
+	// "s1" (newSession), so the branch id is "parallel-s1-p1-0" (review finding
+	// 2, issue #368: branch ids are namespaced by the parent session id) —
+	// exactly what the scripted turn-2 InspectSubagent uses.
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Parallel",
 			json.RawMessage(`{"tasks":["trace the code path"]}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("p2", "InspectSubagent",
-			json.RawMessage(`{"agent_id":"parallel-p1-0"}`))),
+			json.RawMessage(`{"agent_id":"parallel-s1-p1-0"}`))),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
@@ -429,8 +431,8 @@ func TestParentDiscoversBranchIDFromResultAndInspects(t *testing.T) {
 		t.Fatalf("Parallel tool errored: %s", parBody)
 	}
 	gotID := extractBranchID(t, parBody)
-	if gotID != "parallel-p1-0" {
-		t.Fatalf("surfaced branch id = %q, want the deterministic branch id %q (verbatim)", gotID, "parallel-p1-0")
+	if gotID != "parallel-s1-p1-0" {
+		t.Fatalf("surfaced branch id = %q, want the deterministic branch id %q (verbatim)", gotID, "parallel-s1-p1-0")
 	}
 
 	// 2. The parent's InspectSubagent call (using the surfaced id) must succeed with the

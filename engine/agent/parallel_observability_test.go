@@ -550,7 +550,7 @@ func TestParallelBranchCancelledBeforeStartRepresented(t *testing.T) {
 		// Even a never-started branch carries its deterministic D16 child id on both
 		// bracketing events (cancelledBeforeStart now sets childID: be.branchChildID(i)),
 		// so a client can still address it for cancel/inspect.
-		wantID := fmt.Sprintf("parallel-p1-%d", i)
+		wantID := fmt.Sprintf("parallel-s1-p1-%d", i)
 		if end.ChildID != wantID {
 			t.Errorf("branch %d: branch_end ChildID = %q, want %q (deterministic even when never started)", i, end.ChildID, wantID)
 		}

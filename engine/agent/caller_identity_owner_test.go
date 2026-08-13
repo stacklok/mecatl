@@ -52,7 +52,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 	}{
 		{
 			name:    "subagent",
-			childID: "subagent-p1",
+			childID: "subagent-owner-parent-p1",
 			register: func(t *testing.T, cat *tool.Catalog, store port.SessionStore) {
 				t.Helper()
 				cat.MustRegister(NewSubagentTool(childEngineForOwnerTest(t), WithSubagentStore(store)))
@@ -61,7 +61,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 		},
 		{
 			name:    "parallel branch",
-			childID: "parallel-p1-0",
+			childID: "parallel-owner-parent-p1-0",
 			register: func(t *testing.T, cat *tool.Catalog, store port.SessionStore) {
 				t.Helper()
 				cat.MustRegister(NewParallelTool(childEngineForOwnerTest(t), ownerTestForker{},
@@ -71,7 +71,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 		},
 		{
 			name:    "team member",
-			childID: MemberSessionID("p1", "worker"),
+			childID: MemberSessionID("owner-parent-p1", "worker"),
 			register: func(t *testing.T, cat *tool.Catalog, store port.SessionStore) {
 				t.Helper()
 				cat.MustRegister(NewTeamTool(ownerTestMemberFactory(t),

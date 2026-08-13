@@ -46,7 +46,7 @@ func TestBackgroundSubagentCauseSurvivesPostSealEmitRace(t *testing.T) {
 	task := NewSubagentTool(childEngine, WithSubagentStore(store))
 
 	holder := &noticeRunHolder{ready: make(chan struct{})}
-	await := &awaitChildrenDoneTool{holder: holder, ids: []string{"subagent-p1"}}
+	await := &awaitChildrenDoneTool{holder: holder, ids: []string{"subagent-bg-cause-race-p1"}}
 
 	mkCall := func(id, args string) session.ToolCall {
 		return session.NewToolCall(session.ToolCallID(id), "Subagent", json.RawMessage(args))
@@ -116,7 +116,7 @@ func TestBackgroundSubagentCauseSurvivesPostSealEmitRace(t *testing.T) {
 	// (b) The child snapshot carries the cause — the mutation-kill. Removing the
 	// RecordLastError call in driveBackground empties this while (a) still passes
 	// (the event is independent of the snapshot field).
-	saved, err := store.Load(context.Background(), "subagent-p1")
+	saved, err := store.Load(context.Background(), "subagent-bg-cause-race-p1")
 	if err != nil || saved == nil {
 		t.Fatalf("background child must be persisted: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestForegroundSubagentCauseAlsoPersistedOnSnapshot(t *testing.T) {
 
 	// (b) The loaded child snapshot ALSO carries the cause (issue #332 — the
 	// snapshot is the single durable cause source regardless of path).
-	saved, err := store.Load(context.Background(), "subagent-p1")
+	saved, err := store.Load(context.Background(), "subagent-fg-cause-snap-p1")
 	if err != nil || saved == nil {
 		t.Fatalf("foreground child must be persisted: %v", err)
 	}

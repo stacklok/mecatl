@@ -685,7 +685,7 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent",
 			json.RawMessage(`{"prompt":"trace the FIRST code path"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("p2", "Subagent",
-			json.RawMessage(`{"resume":"subagent-p1","prompt":"continue"}`))),
+			json.RawMessage(`{"resume":"subagent-s1-p1","prompt":"continue"}`))),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
@@ -705,8 +705,8 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 	}
 	firstID := extractAgentID(t, subResults[0].Content)
 	secondID := extractAgentID(t, subResults[1].Content)
-	if firstID != "subagent-p1" {
-		t.Fatalf("first trailer id = %q, want subagent-p1", firstID)
+	if firstID != "subagent-s1-p1" {
+		t.Fatalf("first trailer id = %q, want subagent-s1-p1", firstID)
 	}
 	if secondID != firstID {
 		t.Fatalf("second trailer id = %q, want byte-identical to the first %q", secondID, firstID)

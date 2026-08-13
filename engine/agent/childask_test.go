@@ -278,8 +278,8 @@ func TestNonIsolatedHeadlessChildAutoDenies(t *testing.T) {
 	if line.level != port.LevelInfo {
 		t.Fatalf("auto-deny diagnostic level = %v, want LevelInfo", line.level)
 	}
-	if got := line.argValue("agent"); got != "subagent-p1" {
-		t.Fatalf("auto-deny diagnostic must carry agent=child-session-id; got %v want %q; args=%v", got, "subagent-p1", line.args)
+	if got := line.argValue("agent"); got != "subagent-s1-p1" {
+		t.Fatalf("auto-deny diagnostic must carry agent=child-session-id; got %v want %q; args=%v", got, "subagent-s1-p1", line.args)
 	}
 }
 

@@ -119,7 +119,7 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 			toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`),
 			toolCall("p2", "Probe", `{}`),
 		),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool(), &probeTool{})})
@@ -153,7 +153,7 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 	if started == nil || started.IsError {
 		t.Fatalf("background Subagent call must return a non-error started-result, got %+v", started)
 	}
-	if !strings.HasPrefix(started.Content, "agentId: subagent-p1") {
+	if !strings.HasPrefix(started.Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("started-result must lead with the agentId trailer line, got %q", started.Content)
 	}
 	for _, want := range []string{"started in the background", "SubagentStatus", "wait_ms", "cancelled if it is still running when this run ends"} {
@@ -179,7 +179,7 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 	if !strings.Contains(collected.Content, "CHILD FINDINGS: the bug is in parser.go") {
 		t.Fatalf("collected body must carry the child's findings, got %q", collected.Content)
 	}
-	if !strings.Contains(collected.Content, "agentId: subagent-p1") {
+	if !strings.Contains(collected.Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("collected body must keep the agentId trailer, got %q", collected.Content)
 	}
 
@@ -222,8 +222,8 @@ func TestBackgroundSubagentAlreadyDelivered(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1"}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -239,7 +239,7 @@ func TestBackgroundSubagentAlreadyDelivered(t *testing.T) {
 	if second == nil {
 		t.Fatalf("no result for the second collection")
 	}
-	if !strings.Contains(second.Content, "already delivered") || !strings.Contains(second.Content, "subagent-p1") {
+	if !strings.Contains(second.Content, "already delivered") || !strings.Contains(second.Content, "subagent-s1-p1") {
 		t.Fatalf("second collection must report already-delivered with the id, got %q", second.Content)
 	}
 	if strings.Contains(second.Content, "CHILD FINDINGS") {
@@ -261,7 +261,7 @@ func TestSubagentStatusPollBeforeDone(t *testing.T) {
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -280,7 +280,7 @@ func TestSubagentStatusPollBeforeDone(t *testing.T) {
 	if roster == nil || roster.IsError {
 		t.Fatalf("roster poll must succeed, got %+v", roster)
 	}
-	if !strings.Contains(roster.Content, "subagent-p1") || !strings.Contains(roster.Content, "running") {
+	if !strings.Contains(roster.Content, "subagent-s1-p1") || !strings.Contains(roster.Content, "running") {
 		t.Fatalf("roster must list the running child by id, got %q", roster.Content)
 	}
 	if !strings.Contains(roster.Content, "background") {
@@ -351,7 +351,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 	}
 
 	// Persisted cancelled — the loss mitigation.
-	saved, err := store.Load(context.Background(), "subagent-p1")
+	saved, err := store.Load(context.Background(), "subagent-s1-p1")
 	if err != nil || saved == nil {
 		t.Fatalf("run-end-cancelled background child must be persisted: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 
 	// Resumable in a NEW run (cancelled→Interrupt recovery).
 	parent2 := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("q1", "Subagent", `{"prompt":"continue","resume":"subagent-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("q1", "Subagent", `{"prompt":"continue","resume":"subagent-s1-p1"}`)),
 		mockllm.TextTurn("parent 2 done"),
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
@@ -390,7 +390,7 @@ func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run it","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -437,7 +437,7 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run it","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -447,7 +447,7 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 	evs := drainObserving(t, r, func(ev session.Event) {
 		switch {
 		case ev.Type == session.EvPermissionAsk && ev.Ask != nil:
-			r.CancelChild("subagent-p1")
+			r.CancelChild("subagent-s1-p1")
 		case ev.Type == session.EvPermissionRetract && ev.Ask != nil:
 			retracts = append(retracts, ev.Ask.AskID)
 		}
@@ -464,7 +464,7 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 	}
 	if !strings.Contains(collected.Content, "[subagent cancelled by user]") ||
 		!strings.Contains(collected.Content, "partial findings") ||
-		!strings.Contains(collected.Content, "agentId: subagent-p1") {
+		!strings.Contains(collected.Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("collected cancel note/partial text/trailer missing: %q", collected.Content)
 	}
 }
@@ -550,7 +550,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	}
 
 	// Persisted cancelled + resumable (the loss mitigation).
-	saved, err := store.Load(context.Background(), "subagent-p1")
+	saved, err := store.Load(context.Background(), "subagent-s1-p1")
 	if err != nil || saved == nil {
 		t.Fatalf("run-end-cancelled child must be persisted: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 		t.Fatalf("persisted child state = %q, want cancelled", saved.State)
 	}
 	parent2 := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("q1", "Subagent", `{"prompt":"continue","resume":"subagent-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("q1", "Subagent", `{"prompt":"continue","resume":"subagent-s1-p1"}`)),
 		mockllm.TextTurn("parent 2 done"),
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
@@ -602,7 +602,7 @@ func TestBackgroundGateFullFailFast(t *testing.T) {
 	if failed == nil || !failed.IsError {
 		t.Fatalf("gate-full background start must be a fail-fast tool error, got %+v", failed)
 	}
-	if !strings.Contains(failed.Content, "concurrency limit") || !strings.Contains(failed.Content, "subagent-p1") {
+	if !strings.Contains(failed.Content, "concurrency limit") || !strings.Contains(failed.Content, "subagent-s1-p1") {
 		t.Fatalf("gate-full error must name the limit and list the live background ids, got %q", failed.Content)
 	}
 	// The failing call's OWN id (subagent-p2) must be ABSENT from the error: its
@@ -615,7 +615,7 @@ func TestBackgroundGateFullFailFast(t *testing.T) {
 		t.Fatalf("gate-full error must point at the recoverable action, got %q", failed.Content)
 	}
 	roster := results["p3"]
-	if roster == nil || !strings.Contains(roster.Content, "subagent-p1") {
+	if roster == nil || !strings.Contains(roster.Content, "subagent-s1-p1") {
 		t.Fatalf("roster must list the live child, got %+v", roster)
 	}
 	if strings.Contains(roster.Content, "subagent-p2") {
@@ -639,7 +639,7 @@ func TestBackgroundStructuredOutput(t *testing.T) {
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent",
 			`{"prompt":"extract","background":true,"output_schema":{"type":"object","properties":{"name":{"type":"string"},"age":{"type":"integer"}},"required":["name","age"]}}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -650,7 +650,7 @@ func TestBackgroundStructuredOutput(t *testing.T) {
 	if collected == nil || collected.IsError {
 		t.Fatalf("structured background collection must succeed, got %+v", collected)
 	}
-	if !strings.Contains(collected.Content, `"Ada"`) || !strings.Contains(collected.Content, "agentId: subagent-p1") {
+	if !strings.Contains(collected.Content, `"Ada"`) || !strings.Contains(collected.Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("collected result must be the validated payload + trailer, got %q", collected.Content)
 	}
 }
@@ -672,7 +672,7 @@ func TestCompactionDuringLiveBackgroundChild(t *testing.T) {
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p2", "Probe", `{}`)),
 		mockllm.ToolCallTurn(toolCall("p3", "Probe", `{}`)),
-		mockllm.ToolCallTurn(toolCall("p4", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p4", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{
@@ -721,7 +721,7 @@ func TestSubagentStatusWaitRespectsRunCancel(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":120000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":120000}`)),
 		mockllm.TextTurn("never reached"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -753,8 +753,8 @@ func TestBackgroundComposesWithResume(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"first"}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"go deeper","resume":"subagent-p1","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"go deeper","resume":"subagent-s1-p1","background":true}`)),
+		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -809,7 +809,7 @@ func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -867,7 +867,7 @@ func TestBackgroundSubagentFailureAdvertisesResume(t *testing.T) {
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-p1","wait_ms":30000}`)),
+		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})

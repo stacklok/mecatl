@@ -245,7 +245,7 @@ func TestParentResumesFailedSubagentByTrailerID(t *testing.T) {
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent",
 			json.RawMessage(`{"prompt":"trace the FIRST code path"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("p2", "Subagent",
-			json.RawMessage(`{"resume":"subagent-p1","prompt":"continue"}`))),
+			json.RawMessage(`{"resume":"subagent-s1-p1","prompt":"continue"}`))),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, subTool)})
@@ -264,8 +264,8 @@ func TestParentResumesFailedSubagentByTrailerID(t *testing.T) {
 		t.Fatalf("the first delegation must fail: %+v", results[0])
 	}
 	failedID := extractAgentID(t, results[0].Content)
-	if failedID != "subagent-p1" {
-		t.Fatalf("failed trailer id = %q, want subagent-p1", failedID)
+	if failedID != "subagent-s1-p1" {
+		t.Fatalf("failed trailer id = %q, want subagent-s1-p1", failedID)
 	}
 	if results[1].IsError {
 		t.Fatalf("resuming the failed child must succeed (issue #318), got: %q", results[1].Content)

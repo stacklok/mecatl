@@ -673,7 +673,7 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, env tool.
 	}
 
 	be := branchEmitter{emit: emit, parentCallID: string(call.ID),
-		childID: func(i int) string { return string(t.childSessionID(call.ID, i)) }}
+		childID: func(i int) string { return string(t.childSessionID(caps.parentSessionID, call.ID, i)) }}
 	be.start(join, len(tasks))
 
 	switch join {
@@ -877,7 +877,7 @@ func (t *ParallelTool) runBranches(ctx context.Context, callID session.ToolCallI
 func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, callID session.ToolCallID, i int, task, shared string, env tool.Environment, be branchEmitter, caps parentCaps) branchResult {
 	branchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	childID := t.childSessionID(callID, i)
+	childID := t.childSessionID(caps.parentSessionID, callID, i)
 	caps.registerChildRun(childID, childFamilyParallelBranch, branchLabel(i), cancel, false)
 	select {
 	case sem <- struct{}{}:
@@ -993,7 +993,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// childID is the branch's child session id, set up front so EVERY terminal (incl.
 	// fork-failed / errored / cancelled) carries the discoverable "branch id:" — the
 	// same id the registry/emitter use and WithParallelStore persists under.
-	res := branchResult{index: i, label: label, childID: string(t.childSessionID(callID, i))}
+	res := branchResult{index: i, label: label, childID: string(t.childSessionID(caps.parentSessionID, callID, i))}
 
 	// OPT-IN model router (ADR 0034): classify this branch's composed prompt ONCE (each
 	// branch routes at most once — this is the only call site, on the per-branch
@@ -1047,7 +1047,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	res.childEnv = childEnv
 
 	childSess := session.New(
-		t.childSessionID(callID, i),
+		t.childSessionID(caps.parentSessionID, callID, i),
 		t.childMode,
 		childEnv.Workspace().Root(),
 		t.limits,
@@ -1177,9 +1177,16 @@ func (t *ParallelTool) persistBranch(ctx context.Context, child *session.Session
 	_ = t.store.Save(ctx, child)
 }
 
-// childSessionID derives a stable, unique id for a branch's child session.
-func (t *ParallelTool) childSessionID(callID session.ToolCallID, i int) session.SessionID {
-	return session.SessionID(fmt.Sprintf("%s-%s-%d", t.idPrefix, callID, i))
+// childSessionID derives a stable, unique id for a branch's child session,
+// namespaced under the PARENT SESSION's id (review finding 2, issue #368;
+// see SubagentTool.childSessionID's doc for the collision rationale).
+// parentID is empty only on a caps-less drive (plain Execute, no parent
+// session threaded), which keeps the pre-fix call-id-only id.
+func (t *ParallelTool) childSessionID(parentID session.SessionID, callID session.ToolCallID, i int) session.SessionID {
+	if parentID == "" {
+		return session.SessionID(fmt.Sprintf("%s-%s-%d", t.idPrefix, callID, i))
+	}
+	return session.SessionID(fmt.Sprintf("%s-%s-%s-%d", t.idPrefix, parentID, callID, i))
 }
 
 // nonEmptyTasks trims and drops blank task prompts, preserving order.

@@ -327,7 +327,20 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 		return session.NewToolError(call.ID, "Team: "+msg), nil
 	}
 
+	// Namespace the team id under the PARENT session's own id (review finding 2,
+	// issue #368; see SubagentTool.childSessionID's doc for the collision
+	// rationale): deriving from call.ID alone let two different top-level
+	// sessions issuing equal or adversarially-chosen call ids collide on the
+	// IDENTICAL team id, so MemberSessionID(teamID, member) — the same
+	// derivation InspectMember uses from the model-supplied team_id — could
+	// silently overwrite another owner's persisted member transcript.
+	// caps.parentSessionID is empty only on a caps-less drive (plain
+	// Execute/ExecuteObserved, no parent session threaded), which keeps the
+	// pre-fix call-id-only id.
 	teamID := string(call.ID)
+	if caps.parentSessionID != "" {
+		teamID = string(caps.parentSessionID) + "-" + string(call.ID)
+	}
 	tm := team.New(teamID)
 	factory := func(spec MemberSpec, routedModel string) MemberBuild { return t.factory(tm, spec, routedModel) }
 
@@ -336,8 +349,9 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 		// synthesis as the team's TRUSTED top-level instruction (the parent model
 		// authored args.Goal from the user's own prompt — its provenance is the
 		// principal, not a peer, which is exactly the trusted case), and namespace
-		// member-session ids by the team id (the parent call id) so two concurrent
-		// teams sharing a member name get distinct, collision-free stored ids. The
+		// member-session ids by the team id (parent-session-id + parent call id,
+		// see the teamID derivation above) so two concurrent teams sharing a
+		// member name get distinct, collision-free stored ids. The
 		// prefix MUST match MemberSessionID's scheme so the inspect tool can derive the
 		// same id: "team-<teamID>" → ids "team-<teamID>-<member>". No WithUntrustedGoal
 		// here: the in-loop Team tool's goal is always principal-authored and trusted.

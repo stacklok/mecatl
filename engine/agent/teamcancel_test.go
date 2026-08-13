@@ -326,7 +326,7 @@ func TestCancelChildReachesTeamMember(t *testing.T) {
 	// parent Team call id) — the single-handle convention, no derivation drift.
 	for _, ev := range evs {
 		if ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.Member == "worker" {
-			if want := string(agent.MemberSessionID("p1", "worker")); ev.Team.MemberSessionID != want {
+			if want := string(agent.MemberSessionID("s1-p1", "worker")); ev.Team.MemberSessionID != want {
 				t.Fatalf("worker MemberSessionID = %q, want %q", ev.Team.MemberSessionID, want)
 			}
 			break
@@ -359,7 +359,7 @@ func TestCancelChildReachesTeamMember(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("the Team result must not be an error after a member cancel: %q", res.Content)
 	}
-	if !strings.Contains(res.Content, "Team id: p1") {
+	if !strings.Contains(res.Content, "Team id: s1-p1") {
 		t.Fatalf("the Team result must keep its id header: %q", res.Content)
 	}
 	if got := lastResult(t, evs); got.Stop == session.StopError || got.Stop == session.StopCancelled {

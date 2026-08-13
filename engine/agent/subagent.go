@@ -176,6 +176,20 @@ type parentCaps struct {
 	// OWNERLESS parent (the no-auth path), which yields an ownerless child: never
 	// a fabricated one, and never a rejection.
 	owner *session.Principal
+	// parentSessionID is the PARENT session's own SessionID (review finding 2,
+	// issue #368), handed down so every derived child/branch/member session id
+	// is namespaced under it. A durable delegation id previously derived ONLY
+	// from the provider tool-call id (session.ToolCallID) — a value the LLM API
+	// supplies and does not guarantee unique across independent conversations,
+	// let alone across owners. Two different top-level sessions (necessarily
+	// distinct SessionIDs — session creation is already atomically
+	// owner-scoped) issuing equal or adversarially-chosen call ids would
+	// otherwise derive the IDENTICAL child SessionID and silently overwrite
+	// each other's persisted transcript before any inspect/resume
+	// authorization ever runs. Empty for a caps-less drive (plain
+	// Execute/ExecuteObserved, no parent session threaded) — the legacy
+	// call-id-only id, unaffected outside real dispatch.
+	parentSessionID session.SessionID
 }
 
 // inheritOwner stamps the parent session's owner onto a freshly-minted child
@@ -2291,7 +2305,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// is detected even while the second call would otherwise block on the gate. A BACKGROUND
 	// child holds its id until its detached goroutine ends, so `resume` of a still-running
 	// background child is rejected here, unchanged.
-	childID := t.childSessionID(call.ID)
+	childID := t.childSessionID(caps.parentSessionID, call.ID)
 	if resuming {
 		childID = session.SessionID(args.Resume)
 	}
@@ -4392,10 +4406,21 @@ func (t *SubagentTool) unknownAgentHint(name string) string {
 	return fmt.Sprintf("unknown agent %q; available agents: %s", name, strings.Join(names, ", "))
 }
 
-// childSessionID derives a stable, unique id for a child session from the parent
-// tool call id.
-func (t *SubagentTool) childSessionID(callID session.ToolCallID) session.SessionID {
-	return session.SessionID(fmt.Sprintf("%s-%s", t.idPrefix, callID))
+// childSessionID derives a stable, unique id for a child session from the
+// PARENT SESSION's id plus the parent tool call id (review finding 2, issue
+// #368): deriving from the call id ALONE let two different top-level sessions
+// (already collision-safe across owners — session creation is atomically
+// owner-scoped) issuing equal or adversarially-chosen call ids collide on the
+// SAME durable child id, silently overwriting each other's persisted
+// transcript. parentID is empty only on a caps-less drive (plain
+// Execute/ExecuteObserved, no parent session threaded — tests and the rare
+// direct-call path), which keeps the pre-fix call-id-only id; every real
+// dispatch path threads a non-empty parentID via parentCaps.
+func (t *SubagentTool) childSessionID(parentID session.SessionID, callID session.ToolCallID) session.SessionID {
+	if parentID == "" {
+		return session.SessionID(fmt.Sprintf("%s-%s", t.idPrefix, callID))
+	}
+	return session.SessionID(fmt.Sprintf("%s-%s-%s", t.idPrefix, parentID, callID))
 }
 
 // Compile-time assertion that SubagentTool satisfies the Tool contract and the

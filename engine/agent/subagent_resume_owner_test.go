@@ -155,7 +155,7 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 			r := seedParent.Run(context.Background(), seedSess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
 			drainObserving(t, r, nil)
 
-			childID := session.SessionID("subagent-p1")
+			childID := session.SessionID("subagent-owner-parent-p1")
 			before := snapshotResumeSession(t, store, childID)
 			if before.owner == nil || before.owner.Subject != "alice" {
 				t.Fatalf("seeded child owner = %+v, want alice", before.owner)

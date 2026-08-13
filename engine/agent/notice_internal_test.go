@@ -85,7 +85,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 	task := NewSubagentTool(childEngine)
 
 	holder := &noticeRunHolder{ready: make(chan struct{})}
-	await := &awaitChildrenDoneTool{holder: holder, ids: []string{"subagent-p1", "subagent-p2"}}
+	await := &awaitChildrenDoneTool{holder: holder, ids: []string{"subagent-notice-batch-p1", "subagent-notice-batch-p2"}}
 
 	mkCall := func(id, args string) session.ToolCall {
 		return session.NewToolCall(session.ToolCallID(id), "Subagent", json.RawMessage(args))
@@ -126,7 +126,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 		}
 	}
 
-	want := "[harness note: 2 background subagent(s) finished: subagent-p1 (end_turn), subagent-p2 (end_turn). " +
+	want := "[harness note: 2 background subagent(s) finished: subagent-notice-batch-p1 (end_turn), subagent-notice-batch-p2 (end_turn). " +
 		"Collect each result with SubagentStatus before relying on it.]"
 	var notices []string
 	for _, m := range sess.Conversation.Messages {
@@ -142,7 +142,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 	}
 	// The never-collected results are still sitting in the (now sealed) registry —
 	// collectible up to the run's end, simply dropped with it.
-	for _, id := range []string{"subagent-p1", "subagent-p2"} {
+	for _, id := range []string{"subagent-notice-batch-p1", "subagent-notice-batch-p2"} {
 		if res, _, outcome := r.children.collect(id); outcome != collectOK || res == nil {
 			t.Fatalf("child %s result must have remained uncollected (still stored), got outcome %v", id, outcome)
 		}

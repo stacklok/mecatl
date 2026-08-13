@@ -42,7 +42,7 @@ func TestSubagentStructuredOutputHappyPath(t *testing.T) {
 	}
 	// The agentId trailer is UNIVERSAL — it must ride the structured-output success path
 	// too, not only the free-text path (QA SHOULD #6).
-	if !strings.Contains(results[0].Content, "agentId: subagent-p1") {
+	if !strings.Contains(results[0].Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("structured-output success must carry the agentId trailer, got %q", results[0].Content)
 	}
 }
@@ -118,7 +118,7 @@ func TestSubagentStructuredOutputExhaustionFails(t *testing.T) {
 	}
 	// The agentId trailer is UNIVERSAL — it must ride the StopStructuredOutput error
 	// path too, so the model can InspectSubagent the failed child.
-	if !strings.Contains(results[0].Content, "agentId: subagent-p1") {
+	if !strings.Contains(results[0].Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("structured-output failure must carry the agentId trailer, got %q", results[0].Content)
 	}
 }
@@ -156,7 +156,7 @@ func TestSubagentAgentIdTrailerInResultText(t *testing.T) {
 	if len(results) != 1 || results[0].IsError {
 		t.Fatalf("want 1 success result, got %+v", results[0])
 	}
-	if !strings.Contains(results[0].Content, "agentId: subagent-p1") {
+	if !strings.Contains(results[0].Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("result text must carry the agentId trailer (discoverability), got %q", results[0].Content)
 	}
 }
@@ -231,7 +231,7 @@ func TestStructuredOutputBudgetTripsAcrossDrives(t *testing.T) {
 		t.Fatalf("result reads as a structured-output validation failure (retries exhausted) — the cross-drive budget did NOT trip: %q", results[0].Content)
 	}
 	// The agentId trailer rides every terminal.
-	if !strings.Contains(results[0].Content, "agentId: subagent-p1") {
+	if !strings.Contains(results[0].Content, "agentId: subagent-s1-p1") {
 		t.Fatalf("result must carry the agentId trailer, got %q", results[0].Content)
 	}
 }
