@@ -196,24 +196,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 
 	case "response.completed":
-		if st.done {
-			return nil, nil
-		}
-		st.done = true
-		usage := mapUsage(event.Response.Usage)
-		chunks := make([]port.Chunk, 0, 3)
-		// The turn's buffered reasoning items, packed into one replay blob. It
-		// rides out here — the only point at which the full ordered list is known.
-		// ReasoningItemID stays EMPTY: with several ids in play the port's single
-		// id cannot name them, and each id now travels inside the envelope beside
-		// the blob it belongs to (provider/anthropic does the same).
-		if packed := packReasoningItems(st.reasoning); packed != "" {
-			chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
-		}
-		return append(chunks,
-			port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
-			port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
-		), nil
+		return translateCompleted(event, st)
 
 	case "response.incomplete":
 		// An incomplete response still carries usage and a reason (e.g.
@@ -255,6 +238,38 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 	default:
 		return nil, nil
 	}
+}
+
+// translateCompleted handles the terminal response.completed event: it packs the
+// turn's buffered reasoning items into one replay blob, emits the routed
+// downstream provider (when present), and closes with usage + done. Split out of
+// translate only to keep the dispatcher under the cyclomatic-complexity bound.
+func translateCompleted(event responses.ResponseStreamEventUnion, st *streamState) ([]port.Chunk, error) {
+	if st.done {
+		return nil, nil
+	}
+	st.done = true
+	usage := mapUsage(event.Response.Usage)
+	chunks := make([]port.Chunk, 0, 4)
+	// The routed DOWNSTREAM provider (issue #480): the openrouter_metadata
+	// block rides the terminal event's raw JSON when the request armed
+	// X-OpenRouter-Metadata. Emitted FIRST so ordering is deterministic. "" on
+	// a cache hit (metadata stripped) or a non-openrouter response → no chunk.
+	if slug := selectedDownstreamProvider(event.Response.RawJSON()); slug != "" {
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkProviderRoute, Text: slug})
+	}
+	// The turn's buffered reasoning items, packed into one replay blob. It
+	// rides out here — the only point at which the full ordered list is known.
+	// ReasoningItemID stays EMPTY: with several ids in play the port's single
+	// id cannot name them, and each id now travels inside the envelope beside
+	// the blob it belongs to (provider/anthropic does the same).
+	if packed := packReasoningItems(st.reasoning); packed != "" {
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
+	}
+	return append(chunks,
+		port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
+		port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
+	), nil
 }
 
 // translateTextDelta handles a response.output_text.delta event. It enforces the

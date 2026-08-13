@@ -115,6 +115,18 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 | `models.router.default-category` | `string` | `(empty)` | DefaultCategory is the category the classifier is told to choose when none clearly fits (advisory to the classifier; the real safety net is the fail-soft inherit). |
 | `models.router.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (ADR 0042, mirroring GuardrailsSection.Disabled): per ADR 0042 a non-empty taxonomy ENABLES the router, so `disabled: true` is the "taxonomy defined but temporarily off" override. The CLI kill-switch --subagent-model-router=false also sets it (the two OR together). Default false ⇒ the router is enabled whenever categories are present. |
 
+## `openrouter`
+
+Tier: **operator**
+
+OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model preferred DOWNSTREAM provider order, sent as OpenRouter's `provider` request-body object. Setting an order disables OpenRouter's default price load-balancing; allow_fallbacks: false pins hard to the order. A project-tier openrouter: block is IGNORED with a WARN (a project cannot pick the downstream provider).
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `openrouter.models` | `map[string]openroutermodelroute` | `(absent)` | Models maps a model id (or alias, resolved in composition) to its downstream-provider routing preference. |
+| `openrouter.models.order` | `[]string` | `(absent)` | Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic", "google-vertex", "deepinfra/turbo") tried in order. Setting it disables OpenRouter's default price load-balancing. Base-slug matching applies: "google-vertex" matches all its regions/variants (service tiers excepted). |
+| `openrouter.models.allow_fallbacks` | `bool` | `(absent)` | AllowFallbacks, when explicitly false, pins the request to Order with no fallback to other downstreams. A POINTER so "absent" (OpenRouter default true) is distinguishable from an explicit false. |
+
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 
 By design, `settings.yaml` covers the four subtrees above. Several other

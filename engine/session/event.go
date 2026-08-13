@@ -90,6 +90,22 @@ const (
 	// a transient status line, like EvCompaction. It maps to the proto event-type
 	// string verbatim (no proto enum; the wire type field is a string passthrough).
 	EvNoProgress EventType = "no_progress"
+	// EvProviderRoute is emitted once per turn when the serving provider reports
+	// which DOWNSTREAM inference provider actually routed the request (issue #480).
+	// Text carries the downstream provider slug verbatim (e.g. "anthropic",
+	// "google-vertex", "deepinfra/turbo"); Turn is the turn index. Today only the
+	// openrouter registry entry produces it (via the X-OpenRouter-Metadata opt-in);
+	// mecatl's "provider" stays the wire adapter — this is the downstream provider
+	// OpenRouter selected. It is ADVISORY + metadata-only: NOT recorded to the
+	// model's conversation history, NOT a diagnostics line (the event taxonomy owns
+	// it, like EvNoProgress), and gauntlet-#7-clean (a routing slug is harness-side
+	// metadata, never child content). It is CLIENT-VISIBLE — clients render it as a
+	// transient status line. It degrades to ABSENT on a cache hit (OpenRouter
+	// strips openrouter_metadata from cached responses): the loop emits nothing
+	// rather than fabricating a value. It maps to the proto event-type string
+	// verbatim (no proto enum; the wire type field is a string passthrough, like
+	// EvNoProgress — no task generate).
+	EvProviderRoute EventType = "provider.route"
 	// EvRecoverNotice is emitted at the run-entry funnel (in the Service layer,
 	// NOT the agent loop) when a session that failed on a PERMANENT provider error is
 	// recovered for re-entry. Text carries a short human-readable advisory (e.g.

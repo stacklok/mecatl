@@ -466,6 +466,14 @@ type CompactionMsg struct{ Text string }
 // CompactionMsg; it carries only the harness-authored reason Text (no model content).
 type NoProgressMsg struct{ Text string }
 
+// ProviderRouteMsg is a muted advisory notice emitted once per turn when the
+// serving provider reports which DOWNSTREAM inference provider routed the request
+// (issue #480). Text carries the downstream slug verbatim (e.g. "anthropic",
+// "google-vertex"); today only the openrouter entry produces it. It is rendered as
+// a transient status line (like NoProgressMsg); it is ABSENT on a cache hit
+// (OpenRouter strips the metadata) — the footer simply doesn't move.
+type ProviderRouteMsg struct{ Text string }
+
 // RecoverNoticeMsg is an advisory notice emitted at run start when a session that
 // failed on a PERMANENT provider error is recovered for re-entry. It is rendered as
 // a transient status/warning (the run's first event overwrites it); it does NOT
@@ -991,10 +999,6 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 			Tool:     h.GetTool(),
 			Decision: hookDecisionFrom(h.GetDecision()),
 		}
-	case "compaction":
-		return CompactionMsg{Text: ev.GetText()}
-	case "no_progress":
-		return NoProgressMsg{Text: ev.GetText()}
 	case "result":
 		return resultMsg(ev.GetResult())
 	case "approval":
@@ -1014,13 +1018,36 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "compaction.archive":
 		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
-		// The subagent.* / team.* delegation projections are mapped by
-		// delegationEventToMsg (a second switch) to keep this dispatcher under the
-		// cyclomatic-complexity bound. The two switches are total over the documented
-		// type strings ONLY together: a new delegation case must be added there, not
-		// here. An unknown/empty type returns nil so future event kinds are ignored,
+		// The text-only advisory notices (compaction / no_progress / provider.route)
+		// are mapped by advisoryEventToMsg and the subagent.* / team.* delegation
+		// projections by delegationEventToMsg (two split-out switches) to keep this
+		// dispatcher under the cyclomatic-complexity bound. The switches are total
+		// over the documented type strings ONLY together: a new advisory case goes to
+		// advisoryEventToMsg, a new delegation case to delegationEventToMsg, not here.
+		// An unknown/empty type returns nil so future event kinds are ignored,
 		// not fatal.
+		if msg := advisoryEventToMsg(ev); msg != nil {
+			return msg
+		}
 		return delegationEventToMsg(ev)
+	}
+}
+
+// advisoryEventToMsg maps the text-only advisory event types (compaction,
+// no_progress, provider.route) to their tea.Msg. It is split out of EventToMsg
+// only so neither dispatcher grows past the cyclomatic-complexity bound (the
+// delegationEventToMsg precedent). An unmatched type returns nil so the caller
+// falls through to the delegation switch.
+func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
+	switch ev.GetType() {
+	case "compaction":
+		return CompactionMsg{Text: ev.GetText()}
+	case "no_progress":
+		return NoProgressMsg{Text: ev.GetText()}
+	case "provider.route":
+		return ProviderRouteMsg{Text: ev.GetText()}
+	default:
+		return nil
 	}
 }
 

@@ -165,12 +165,33 @@ func writeFieldSkeleton(b *strings.Builder, indent string, f *Field) {
 			}
 			return
 		}
+		// Map-of-struct (e.g. openrouter.models, keyed by model id): render ONE
+		// illustrative entry under a placeholder key so the nested order/allow_fallbacks
+		// shape round-trips through the live schema. The map key is a value the operator
+		// supplies; the skeleton shows the structure with a stand-in key.
+		if strings.HasPrefix(f.Type, "map[") {
+			fmt.Fprintf(b, "%s  %s:\n", indent, mapPlaceholderKey(f))
+			for _, nf := range f.Nested {
+				writeFieldSkeleton(b, indent+"    ", nf)
+			}
+			return
+		}
 		for _, nf := range f.Nested {
 			writeFieldSkeleton(b, indent+"  ", nf)
 		}
 		return
 	}
 	fmt.Fprintf(b, "%s%s: %s\n", indent, f.Key, placeholder(f))
+}
+
+// mapPlaceholderKey renders the stand-in map key a map-of-struct skeleton entry is
+// rendered under (e.g. the openrouter.models per-model entry). It is documentation
+// only — the operator replaces it with a real model id.
+func mapPlaceholderKey(f *Field) string {
+	if f.ExampleMapKey != "" {
+		return f.ExampleMapKey
+	}
+	return `"<key>"`
 }
 
 // placeholder renders a type-shaped example value for a field.

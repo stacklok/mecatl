@@ -835,6 +835,13 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// liveness; that is the intended, non-intrusive behaviour.)
 		m.statusMsg = m.deps.Theme.Style("muted").Render(noticeLine(msg))
 		return m.afterEvent()
+	case client.ProviderRouteMsg:
+		// The routed downstream provider (issue #480) is TRANSIENT: a per-turn
+		// routing notice, not a durable fact, so it rides the footer status like
+		// NoProgressMsg and leaves no scrollback residue. Absent on a cache hit —
+		// the footer simply doesn't move.
+		m.statusMsg = m.deps.Theme.Style("muted").Render("via " + msg.Text)
+		return m.afterEvent()
 	case client.RecoverNoticeMsg:
 		// Recover-notice (permanent-failure advisory) is a DURABLE scrollback
 		// block, not a transient statusMsg: the run's first event would overwrite
@@ -2895,6 +2902,10 @@ func (m *Model) applyReplayEventSecondary(msg tea.Msg) {
 		// Transient in the live path; in a replay it is a durable record of the
 		// run's no-progress boundary, so render it as a muted notice.
 		c.addNotice(noticeLine(msg))
+	case client.ProviderRouteMsg:
+		// Transient in the live path; in a replay render the routed downstream as a
+		// muted notice (issue #480).
+		c.addNotice("via " + msg.Text)
 	case client.SubagentMsg:
 		// The delegation projections route into the transcript's Subagent card /
 		// fleet via the SAME mutators the live applySubagent path uses.

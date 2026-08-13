@@ -283,3 +283,54 @@ models:
 - **Out of scope (this slice):** the allowlist caps **config-file** bindings only — an
   agent-def `model:` literal and the per-session API `model_id` selector are not capped
   here.
+
+## 5b. OpenRouter downstream-provider routing (`openrouter:`, issue #480)
+
+OpenRouter is a *meta-provider*: a single model id (e.g.
+`anthropic/claude-sonnet-4-6`) is served by several **downstream** inference
+providers (Anthropic, Amazon Bedrock, Google Vertex, DeepInfra, …). By default
+OpenRouter load-balances across them on price. mecatl lets an operator steer which
+downstream serves a model **and** see which downstream actually served each turn.
+(mecatl's "provider" stays the wire adapter — these are the *downstream* providers
+OpenRouter routes to.)
+
+### Steering: per-model preferred downstream order
+
+Set a per-model `order:` in your **operator-tier** `settings.yaml`:
+
+```yaml
+# ~/.config/mecatl/settings.yaml  (operator-tier ONLY — NOT a project file)
+openrouter:
+  models:
+    "anthropic/claude-sonnet-4-6":
+      order: ["anthropic", "google-vertex"]
+      allow_fallbacks: false        # default true when absent
+    "openai/gpt-5":
+      order: ["deepinfra/turbo"]
+```
+
+- `order:` lists downstream provider slugs (lowercase-kebab — e.g. `anthropic`,
+  `google-vertex`, `deepinfra/turbo` for an endpoint variant) tried in order.
+  **Setting an order disables OpenRouter's default price load-balancing.**
+  Base-slug matching applies: `google-vertex` matches all its regions/variants
+  (service tiers excepted); use the full slug (`google-vertex/us-east5`,
+  `deepinfra/turbo`) to pin one variant.
+- `allow_fallbacks:` absent ⇒ OpenRouter's default (`true` — after `order` is
+  exhausted, other downstreams are tried). Explicit `false` pins hard to `order`.
+- **Operator-tier only.** A project-tier `openrouter:` block is **ignored with a
+  WARN** — steering requests to a particular downstream is a spend/compliance/
+  capability decision the operator owns (the same gate as `models.default_provider`,
+  `models.allowlist`, `models.router`). Invalid slugs / empty orders are dropped
+  with a build-once WARN, keeping the rest.
+
+### Observability: which downstream served a turn
+
+For the `openrouter` provider mecatl arms OpenRouter's `X-OpenRouter-Metadata`
+opt-in, and the routed downstream echoes back as a `provider.route` event —
+rendered in mecatui as a transient `via <slug>` footer status. It is metadata-only
+and degrades to **absent on a cache hit** (OpenRouter strips the metadata from
+cached responses): no value is ever fabricated.
+
+See the [configuration reference](../configuration-reference.md#openrouter) for the
+full key listing and [ADR 0104](../adr/0104-openrouter-downstream-provider-steering.md)
+for the design.

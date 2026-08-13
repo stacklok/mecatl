@@ -75,6 +75,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/syscaller"
+	"github.com/stacklok/mecatl/provider/openai"
 )
 
 // defaultContextWindowTokens is the model context window the loop uses to decide
@@ -890,6 +891,17 @@ type Config struct {
 	// mirroring envDetector, not an operator knob. Production path unchanged.
 	providerConstructor providerConstructor
 
+	// openRouterRoutes is the resolved OPERATOR-TIER OpenRouter downstream-provider
+	// routing map (issue #480): model id → the downstream-provider preferences
+	// (order + allow_fallbacks) stamped onto that model's `provider` request-body
+	// object. It is populated by foldOperatorOpenRouter from the permconfig
+	// resolver's operator-tier openrouter: block (user-global + CLI ONLY — a
+	// project-tier block is WARN-ignored). nil when nothing is configured, so the
+	// openrouter registry entry builds byte-identical to before. Unexported: a
+	// composition detail, not an operator knob (the YAML is the sole source in v1 —
+	// no CLI flag).
+	openRouterRoutes map[string]openai.ProviderPreferences
+
 	// liveModelHTTPClient is the composition-only test seam for the LIVE model
 	// listers' HTTP transport (mirroring envDetector/providerConstructor). Production
 	// leaves it nil — each lister then builds a default client with a sane timeout.
@@ -1179,6 +1191,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// list comes from YAML (flags cannot express it). This runs after the resolver is
 	// built and before the provider/model fail-fast normalization below.
 	cfg = foldOperatorGuardrails(cfg)
+
+	// OpenRouter downstream-provider routing (issue #480): fold the operator-tier
+	// `openrouter:` YAML subtree (user-global + CLI ONLY — a project file's block is
+	// WARN-ignored) onto cfg.openRouterRoutes, BEFORE the provider registry is built
+	// so the openrouter entry's construct/remint closes over the resolved map. There
+	// is no CLI flag twin in v1, so the YAML is the sole source.
+	cfg = foldOperatorOpenRouter(cfg)
 
 	// Per-slot models (ADR 0030, Phase 1+2): fold the operator-tier `models:` YAML
 	// subtree (user-global + CLI only — a project file's models: block is handled by
@@ -6661,6 +6680,121 @@ func foldOperatorPlanModeAutoApprove(cfg Config) Config {
 		cfg.PlanModeAutoApprove = true
 	}
 	return cfg
+}
+
+// foldOperatorOpenRouter resolves the OPERATOR-TIER openrouter: block (read by the
+// permconfig resolver from the user-global + CLI tiers ONLY — a project-tier block
+// is WARN-ignored) into cfg.openRouterRoutes (issue #480). It validates each
+// model's downstream-provider order fail-soft: an empty model id, an empty order,
+// or an invalid slug is WARN-dropped (keeping the rest), mirroring
+// foldOperatorModelRouter's drop discipline — a malformed preference must never
+// become a startup error, only a loud no-op. There is no CLI flag twin in v1, so
+// the YAML is the sole source (no CLI out-rank). A no-op when no operator-tier
+// block was configured. cfg is taken and returned by value.
+func foldOperatorOpenRouter(cfg Config) Config {
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	sec := res.OperatorOpenRouter()
+	if sec == nil || len(sec.Models) == 0 {
+		return cfg
+	}
+	routes := make(map[string]openai.ProviderPreferences, len(sec.Models))
+	for model, route := range sec.Models {
+		modelID := strings.TrimSpace(model)
+		if modelID == "" {
+			cfg.diag().Log(context.Background(), port.LevelWarn,
+				"openrouter: dropping a route with an empty model id")
+			continue
+		}
+		// Resolve an ALIAS key to its concrete model id (the route must match the
+		// request's resolved model, req.Model — a route keyed by an alias would
+		// otherwise be silently inert). lookupModelAlias resolves operator/builtin
+		// aliases and passes a concrete id through verbatim; an UNKNOWN bare token
+		// (known=false) is dropped fail-soft like any other invalid entry.
+		if id, known := lookupModelAlias(cfg, modelID); known && id != "" {
+			modelID = id
+		} else if !known {
+			cfg.diag().Log(context.Background(), port.LevelWarn,
+				"openrouter: dropping a route whose model key is neither a known alias nor a concrete model id",
+				"model", modelID)
+			continue
+		}
+		if len(route.Order) == 0 {
+			cfg.diag().Log(context.Background(), port.LevelWarn,
+				"openrouter: dropping a route with an empty order (nothing to steer)", "model", modelID)
+			continue
+		}
+		slugs, bad := normaliseDownstreamSlugs(route.Order)
+		if bad != "" {
+			cfg.diag().Log(context.Background(), port.LevelWarn,
+				"openrouter: dropping a route with an invalid downstream provider slug (want lowercase-kebab, e.g. \"anthropic\", \"google-vertex\", \"deepinfra/turbo\")",
+				"model", modelID, "slug", bad)
+			continue
+		}
+		routes[modelID] = openai.ProviderPreferences{Order: slugs, AllowFallbacks: route.AllowFallbacks}
+		cfg.diag().Log(context.Background(), port.LevelInfo,
+			"openrouter: downstream-provider order configured", "model", modelID, "order", slugs)
+	}
+	if len(routes) > 0 {
+		cfg.openRouterRoutes = routes
+	}
+	return cfg
+}
+
+// openRouterRouteFor resolves the downstream-provider preferences for a model id
+// from cfg.openRouterRoutes (issue #480). It returns nil for an unconfigured model
+// (the adapter then stamps no `provider` body key) and is nil-safe on Config. It
+// is the resolver the openrouter registry entry's WithProviderPreferences closure
+// calls per request.
+func (c Config) openRouterRouteFor(model string) *openai.ProviderPreferences {
+	if prefs, ok := c.openRouterRoutes[model]; ok {
+		return &prefs
+	}
+	return nil
+}
+
+// normaliseDownstreamSlugs lowercases + trims each slug and validates the
+// OpenRouter downstream-slug grammar (lowercase-kebab, with an optional
+// "/variant" suffix for endpoint variants like "deepinfra/turbo" or
+// "google-vertex/us-east5"). It returns the normalised slugs and the first
+// invalid slug ("" when all are valid).
+func normaliseDownstreamSlugs(in []string) ([]string, string) {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if !validDownstreamSlug(s) {
+			return nil, s
+		}
+		out = append(out, s)
+	}
+	return out, ""
+}
+
+// validDownstreamSlug reports whether s is a plausible OpenRouter downstream
+// provider slug: lowercase-kebab segments joined by at most one "/" (the
+// endpoint-variant separator). It is deliberately a SHAPE check, not an
+// enumeration — the set of downstreams changes over time and the live `/models`
+// fetch is the authoritative inventory; a malformed slug is the only thing we
+// reject here (a well-formed-but-unknown slug is OpenRouter's to reject).
+func validDownstreamSlug(s string) bool {
+	if s == "" || strings.Count(s, "/") > 1 {
+		return false
+	}
+	for _, seg := range strings.Split(s, "/") {
+		if seg == "" {
+			return false
+		}
+		for _, r := range seg {
+			isLower := r >= 'a' && r <= 'z'
+			isDigit := r >= '0' && r <= '9'
+			if !isLower && !isDigit && r != '-' && r != '.' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // agencyDelta returns the emphatic task-persistence contract appended to the

@@ -8,7 +8,9 @@
 // safely replayed. ChunkText, ChunkToolCall, ChunkUsage, ChunkDone, and ChunkPhase
 // are committing (assembled into session.Message or trigger dispatch). ChunkReasoning
 // and ChunkReasoningItem are NOT committing — they are opaque blobs replayed verbatim
-// on the NEXT turn's context and carry no partial session state mid-stream. This layer
+// on the NEXT turn's context and carry no partial session state mid-stream.
+// ChunkProviderRoute is likewise NOT committing — a display-only routing notice
+// (issue #480) relayed onto an event, mutating no session state. This layer
 // therefore retries failures that arrive before the first committing chunk: it buffers
 // any leading non-committing chunks across a failed attempt and only promotes to the
 // no-retry zone when a committing chunk is in hand. Once any committing chunk has been
@@ -428,11 +430,15 @@ func (p *resilientProvider) recordFailure(now time.Time) {
 // isCommitting reports whether a ChunkKind mutates session state. Once a
 // committing chunk has been observed the stream cannot be safely retried.
 // Non-committing kinds (ChunkReasoning, ChunkReasoningItem) carry opaque blobs
-// replayed on the NEXT turn and are safe to discard on retry.
+// replayed on the NEXT turn and are safe to discard on retry. ChunkProviderRoute
+// is likewise non-committing: it is a display-only routing notice relayed onto an
+// event (issue #480), mutates no session state, and in practice only ever
+// arrives at the terminal response.completed (post-commit by definition) — but
+// classifying it non-committing keeps the pre-commit buffer honest.
 // Default: true — any unrecognised future kind is conservatively committing.
 func isCommitting(kind port.ChunkKind) bool {
 	switch kind {
-	case port.ChunkReasoning, port.ChunkReasoningItem:
+	case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkProviderRoute:
 		return false
 	default:
 		return true
