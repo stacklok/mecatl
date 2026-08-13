@@ -76,6 +76,18 @@ func (r *renderer) renderPermissionModal(ask pendingAsk, expand bool, queued, wi
 // Model.permissionModalBody), so the body the hit-test measures is byte-identical
 // to the body the frame renders.
 func (r *renderer) renderPermissionModalBody(ask pendingAsk, expand bool, queued int) string {
+	body, _ := r.permissionModalBodyParts(ask, expand, queued)
+	return body
+}
+
+// permissionModalBodyParts builds the generic permission modal's body CONTENT AND
+// reports the button box's top row within it. It is the SINGLE source for BOTH the
+// render path (renderPermissionModal) and the mouse hit-test (clickgeom.go
+// askButtonAt via Model.permissionModalBody): the hit-test must not re-derive the
+// buttons row from the trailing write order (a new trailing line would silently
+// desync it), so the builder that LAYS OUT the body also owns where the buttons
+// landed.
+func (r *renderer) permissionModalBodyParts(ask pendingAsk, expand bool, queued int) (body string, buttonsRow int) {
 	th := r.th
 	titleText := "Permission required"
 	if queued > 0 {
@@ -123,22 +135,35 @@ func (r *renderer) renderPermissionModalBody(ask pendingAsk, expand bool, queued
 	// one that actually fires.
 	hk := r.marks
 	buttons := permissionButtonsLine(th, hk, ask)
+	// The buttons row is the NEXT content line after what is written so far (the
+	// leading "\n" joins it below the reason/args). Capture it BEFORE writing so
+	// the hit-test reads the SAME row the render lays out — never a re-derived
+	// offset that a later trailing write would silently move.
+	buttonsRow = lipgloss.Height(b.String())
 	b.WriteString("\n" + buttons)
 	if ask.offerAlways {
 		b.WriteString("\n" + th.Style("muted").Render(approvalAlwaysFootnote(hk.allowAlways)))
 	}
 
-	return b.String()
+	return b.String(), buttonsRow
 }
 
-// permissionModalBody returns the generic permission modal's body CONTENT for the
-// CURRENT front ask, so the mouse hit-test (clickgeom.go askButtonAt) measures the
-// same body the render path lays out. It delegates to the renderer with the model's
-// live expand/queue state; the hit-test path re-applies the askCard style +
-// centering arithmetic itself.
-func (m Model) permissionModalBody() string {
-	return m.rend.renderPermissionModalBody(m.ask, m.expandTools, len(m.askQueue))
+// permissionModalBody returns the generic permission modal's body CONTENT and the
+// button box's top row within it for the CURRENT front ask, so the mouse hit-test
+// (clickgeom.go askButtonAt) measures the same body the render path lays out. It
+// delegates to the renderer with the model's live expand/queue state; the hit-test
+// path re-applies the askCard style + centering arithmetic itself.
+func (m Model) permissionModalBody() (body string, buttonsRow int) {
+	return m.rend.permissionModalBodyParts(m.ask, m.expandTools, len(m.askQueue))
 }
+
+// approvalButtonSep is the exact separator lipgloss.JoinHorizontal places between
+// the styled approval buttons in permissionButtonsLine / planButtonsLine. It is the
+// SINGLE source for BOTH the render (the JoinHorizontal calls below) and the mouse
+// hit-test column arithmetic (clickgeom.go's askButtonRects), so changing the
+// separator keeps the render and the hit-test in lockstep — a bare "  " literal on
+// each side would silently desync them.
+const approvalButtonSep = "  "
 
 // permissionButtonsLine renders the generic permission modal's joined button row
 // (Allow [· Always] · Deny) with the LIVE focus style on the focused button. It is
@@ -158,9 +183,9 @@ func permissionButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
 	deny := th.Style(btnStyle(2)).Render(approvalButtonLabel(hk.deny, "Deny", "deny"))
 	if ask.offerAlways {
 		always := th.Style(btnStyle(1)).Render(approvalButtonLabel(hk.allowAlways, "Always", "always allow"))
-		return lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", always, "  ", deny)
+		return lipgloss.JoinHorizontal(lipgloss.Top, allow, approvalButtonSep, always, approvalButtonSep, deny)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, allow, "  ", deny)
+	return lipgloss.JoinHorizontal(lipgloss.Top, allow, approvalButtonSep, deny)
 }
 
 // planButtonsLine renders the plan-review action bar's joined button row
@@ -179,9 +204,9 @@ func planButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
 	denyBtn := th.Style(btnStyle(2)).Render(planApprovalButtonLabel(hk.deny, "Deny", "iterate"))
 	if ask.offerAlways {
 		always := th.Style(btnStyle(1)).Render(planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits"))
-		return lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", always, "  ", denyBtn)
+		return lipgloss.JoinHorizontal(lipgloss.Top, approve, approvalButtonSep, always, approvalButtonSep, denyBtn)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, approve, "  ", denyBtn)
+	return lipgloss.JoinHorizontal(lipgloss.Top, approve, approvalButtonSep, denyBtn)
 }
 
 // planReviewFooterHeight is the rows reserved at the bottom of the plan-review

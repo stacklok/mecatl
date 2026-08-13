@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -146,6 +147,44 @@ func TestAskButtonAtGenericModalResolvesClick(t *testing.T) {
 		}
 		if got := lastNotice(m); got != tc.wantNotice {
 			t.Errorf("focus %d: notice = %q, want %q", tc.focus, got, tc.wantNotice)
+		}
+	}
+}
+
+// TestAskButtonAtGenericModalBandMatchesRenderedBox pins the hit band to the
+// EXACT rows the rendered button box occupies — the off-by-one class the Spec
+// review caught: the band must cover the box's top-border row and exclude the
+// footnote row below it. It locates the rendered box in the frame by its border
+// glyphs, then asserts the hit rows equal that span.
+func TestAskButtonAtGenericModalBandMatchesRenderedBox(t *testing.T) {
+	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
+	frame := stripANSIstr(m.View().Content)
+	lines := strings.Split(frame, "\n")
+	// Find the button box's three rows in the rendered frame by their rounded
+	// border/middle glyphs (the Allow button's own border-left chars).
+	var boxRows []int
+	for i, ln := range lines {
+		if strings.Contains(ln, "╭──") || strings.Contains(ln, "│  [A]") || strings.Contains(ln, "╰──") {
+			boxRows = append(boxRows, i)
+		}
+	}
+	if len(boxRows) != 3 {
+		t.Fatalf("expected to locate 3 button-box rows in the frame, found %v", boxRows)
+	}
+	top, bottom := boxRows[0], boxRows[2]
+	// Every box row must hit; the rows immediately above and below must not.
+	for y := 0; y < m.height; y++ {
+		hit := false
+		for x := 0; x < m.width; x++ {
+			if _, ok := m.askButtonAt(x, y); ok {
+				hit = true
+				break
+			}
+		}
+		want := y >= top && y <= bottom
+		if hit != want {
+			t.Errorf("row %d: hit=%v, want %v (button box spans rows %d–%d; the footnote row %d must NOT hit)",
+				y, hit, want, top, bottom, bottom+1)
 		}
 	}
 }

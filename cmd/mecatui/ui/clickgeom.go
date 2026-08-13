@@ -16,9 +16,11 @@ import (
 // source for the body's screen position (convTopRow ← chrome()), so they can never
 // disagree.
 
-// buttonGap is the exact two-space separator lipgloss.JoinHorizontal inserts
-// between the styled buttons in permissionButtonsLine / planButtonsLine.
-const buttonGap = 2
+// buttonGap is the cell width of the separator between the styled buttons in the
+// buttons line. It is DERIVED from approvalButtonSep (the shared separator the
+// JoinHorizontal render calls use), never a parallel literal, so the hit-test
+// column arithmetic tracks the render exactly.
+var buttonGap = lipgloss.Width(approvalButtonSep)
 
 // askButtonRects returns the horizontal cell rects of each rendered button within
 // the buttons LINE, in focus order ({0=allow-once, 1=always, 2=deny}; a two-button
@@ -83,17 +85,11 @@ type buttonRect struct {
 // contains reports whether column x falls inside the rect.
 func (r buttonRect) contains(x int) bool { return x >= r.x0 && x < r.x1 }
 
-// buttonsLineRow locates the buttons row within the modal body's CONTENT (the
-// string passed to centerCard): it is the last line, minus one more when the
-// always-allow footnote follows it. It must mirror the b.WriteString ordering in
-// renderPermissionModal (… + "\n" + buttons [+ "\n" + footnote]).
-func buttonsLineRow(bodyContent string, offerAlways bool) int {
-	n := lipgloss.Height(bodyContent)
-	if offerAlways {
-		return n - 2
-	}
-	return n - 1
-}
+// buttonBoxHeight is the on-screen height of one styled approval button (rounded
+// border top + label + border bottom), shared by askButton/askButtonActive. It is
+// the box's row count, so the clickable band spans buttonBoxHeight rows from the
+// box's top.
+const buttonBoxHeight = 3
 
 // centeredCardOrigin returns the screen cell (x, y) where lipgloss.Place puts the
 // top-left of a cardW×cardH card centered in a regionW×regionH region — the exact
@@ -165,28 +161,30 @@ func (m Model) askButtonAt(x, y int) (int, bool) {
 		return 0, false
 	}
 
-	// Generic modal: rebuild the body content exactly as renderPermissionModal does
-	// so the card's rendered size and the buttons row index agree with the frame.
-	body := m.permissionModalBody()
+	// Generic modal: rebuild the body content AND take the button box's top row
+	// from the builder that laid it out (permissionModalBodyParts), so the card's
+	// rendered size and the buttons row index agree with the frame by construction
+	// — never a re-derived offset.
+	body, buttonsRow := m.permissionModalBody()
 	card := th.Style("askCard").Render(body)
 	cardW := lipgloss.Width(card)
 	cardH := lipgloss.Height(card)
 	originX, originY := centeredCardOrigin(cardW, cardH, regionW, regionH)
 
 	// Work in CARD-RELATIVE coordinates (0,0 = the card's top-left border cell),
-	// then translate the buttons row to a screen row. buttonsLineRow returns the
-	// buttons line's index within the CONTENT (the string centerCard frames); the
-	// askCard style adds a 1-row border above that content, so the content's row L
-	// renders at card row 1+L. (The card's padding is INSIDE the content's own
-	// leading/trailing blank lines, so it does not shift the content index.)
+	// then translate the button box's top row to a screen row. buttonsRow is the
+	// box's top row within the CONTENT (the string centerCard frames); the askCard
+	// style adds a 1-row border + 1-row top padding above that content, so content
+	// row L renders at card row (borderTop + padTop) + L.
 	style := th.Style("askCard")
-	buttonsCardRow := style.GetBorderTopSize() + buttonsLineRow(body, m.ask.offerAlways)
+	topInset := style.GetBorderTopSize() + style.GetPaddingTop()
+	buttonsCardRow := topInset + buttonsRow
 	buttonsScreenY := top + originY + buttonsCardRow
-	// A button is a styled box buttonHeight rows tall (rounded border top + label +
-	// border bottom), starting at the buttons row. Match the full box, not just the
-	// label row, so a click on any of the button's three rows resolves it.
-	btnH := lipgloss.Height(th.Style("askButton").Render("x"))
-	if y < buttonsScreenY || y >= buttonsScreenY+btnH {
+	// A button is a styled box buttonBoxHeight rows tall (rounded border top +
+	// label + border bottom), starting at the box's top row. Match the full box so
+	// a click on any of its three rows resolves it — and a click on the footnote
+	// row BELOW the box (offerAlways) does not.
+	if y < buttonsScreenY || y >= buttonsScreenY+buttonBoxHeight {
 		return 0, false
 	}
 	// Horizontal: card's left border+padding insets the content (and the buttons
