@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -246,7 +245,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 	mu.Unlock()
 
 	sess := session.New("codex-inherit", session.ModeDefault, "/ws", session.Limits{MaxTurns: 8}, time.Unix(0, 0))
-	if got := drainRun(result.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "delegate"})); got != "CODEX-PARENT" {
+	if got := drainRun(result.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "delegate"})); got != "CODEX-PARENT" {
 		t.Fatalf("parent final = %q, want CODEX-PARENT (child must inherit selected Codex provider)", got)
 	}
 	mu.Lock()
@@ -286,7 +285,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 		}
 		defer func() { _ = res.Close() }()
 		noFSSess := session.New("codex-nofs", session.ModePlan, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
-		if got := drainRun(res.Engine.Run(ctx, noFSSess, nofs.New(), agent.RunRequest{Text: "answer without files"})); got != "NOFS-CODEX" {
+		if got := drainRun(res.Engine.Run(ctx, noFSSess, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "answer without files"})); got != "NOFS-CODEX" {
 			t.Fatalf("no-FS result = %q", got)
 		}
 		sort.Strings(offered)
