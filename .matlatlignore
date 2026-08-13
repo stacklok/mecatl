@@ -40,6 +40,13 @@ e2e/fixtures/
 # docs/adr/0028-mecatequi.md, which DO stay in the corpus.
 .github/mecatequi/
 
+# GitHub issue and pull-request templates are rendered by GitHub rather than read
+# as repository documentation. Their links are convenience references for a
+# reporter or contributor, not graph navigation, so scanning them makes their
+# intentionally unlinked template roots unreachable under `check --strict`.
+.github/ISSUE_TEMPLATE/
+.github/pull_request_template.md
+
 # CLAUDE.md is a symlink to AGENTS.md (the canonical contract) for Claude Code
 # compatibility. It is not a separate corpus document.
 CLAUDE.md
