@@ -42,6 +42,23 @@ func isolateUserConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 }
 
+// isolatedPermConfigEnv returns an environment for conventional permission-config
+// discovery that reads only from a temporary XDG config directory.
+func isolatedPermConfigEnv(t *testing.T) *xdgconfig.ResolveEnv {
+	t.Helper()
+	configDir := t.TempDir()
+	return &xdgconfig.ResolveEnv{
+		Getenv: func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return configDir
+			}
+			return ""
+		},
+		UserHomeDir: func() (string, error) { return "", errors.New("no home") },
+		ReadFile:    os.ReadFile,
+	}
+}
+
 // trustSettingsEnv returns an injected env whose user-global settings.yaml returns
 // the given bytes, with $XDG_CONFIG_HOME pointed at configDir.
 func trustSettingsEnv(configDir string, settings []byte) xdgconfig.ResolveEnv {

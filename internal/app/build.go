@@ -872,6 +872,12 @@ type Config struct {
 	// "". Unexported: an internal composition detail, not an operator knob.
 	defaultModelPending bool
 
+	// permConfigEnv is the composition-only environment seam for conventional
+	// permission-config discovery. Nil preserves the production xdgconfig.OSEnv
+	// binding; tests inject an isolated XDG config directory so they cannot read
+	// the developer's user-global settings.
+	permConfigEnv *xdgconfig.ResolveEnv
+
 	// envDetector is the injectable environment-lookup seam the provider registry
 	// uses for credential-availability detection (multi-provider S1). It defaults
 	// to os.Getenv (set in Build); tests inject a fake map-backed lookup so registry
@@ -1710,12 +1716,19 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// startMemoryConsolidation lifetime — the goroutine exits on shutdown).
 	startChildGC(ctx, cfg, store, svc.IsLive)
 
+	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
+	// StateRunning session a process crash left behind, INCLUDING the
+	// subagent-*/parallel-*/team-* children the run-entry funnel's own repair
+	// (Step 3) never sees. See internal/app/session_reconcile.go.
+	staleSessionReconcileClose := startStaleSessionReconcile(cfg, svc)
+
 	// Close tears down the main MCP manager AND any per-session client-MCP engines
 	// still registered (svc.Close), so a process exit leaks neither. It also cancels
 	// the live-model refresh goroutine and closes the session-store driver
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
 	closeAll := func() {
+		staleSessionReconcileClose()
 		schedClose()
 		refreshClose()
 		svc.Close()
@@ -2043,10 +2056,6 @@ func sessionEngineFactory(
 		// provider never contaminates compaction/counting.
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		deps.Catalog = cat
-		// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
-		// (created by registerScheduleTool) so every per-run startRun stamps the
-		// executing session's id. nil when scheduling is off.
-		deps.OriginBinder = assets.scheduleOriginBinder
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
 		// schedule-capable store) is the byte-identical no-delivery path.
@@ -2841,10 +2850,6 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// a per-session engine; a store that backs no ScheduleStore withholds the
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
-	// Origin capture (ADR 0075): bind the Schedule tool's session-origin wrapper
-	// (created by registerScheduleTool) so every per-run startRun stamps the
-	// executing session's id. nil when scheduling is off.
-	deps.OriginBinder = assets.scheduleOriginBinder
 	// Fire-result delivery drain (ADR 0075): the loop's Step 2a drain reads
 	// pending fire-result notes for the running session off the durable queue.
 	// nil (no schedule-capable store) is the byte-identical no-delivery path.
@@ -7099,13 +7104,17 @@ func mainEvaluatorOptions(cfg Config) []governance.EvaluatorOption {
 // so the typed-nil guard lives HERE, and the field is a real nil interface when
 // config is off ("nil resolver behaves like NewPolicy" holds everywhere).
 func buildPermResolver(cfg Config) permpolicy.RuleResolver {
-	resolver := permconfig.New(permconfig.Options{
+	env := xdgconfig.OSEnv
+	if cfg.permConfigEnv != nil {
+		env = *cfg.permConfigEnv
+	}
+	resolver := permconfig.NewWithEnv(permconfig.Options{
 		Conventional:  cfg.PermissionsConventional,
 		ImportClaude:  cfg.ImportClaudePermissions,
 		TrustProject:  projectIngestionAdmitted(cfg),
 		ExplicitFiles: cfg.PermissionConfigs,
 		Diagnostics:   cfg.diag(),
-	})
+	}, env)
 	if resolver == nil {
 		return nil
 	}

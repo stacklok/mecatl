@@ -696,6 +696,7 @@ show the plain prompt-hint card.
 | in the permission modal: `w` | always allow (this session; offered for the main agent's asks only, not surfaced subagent asks; rebindable via `AllowAlways`) |
 | in the permission modal: `d`/`n`/`esc` | deny (rebindable via `Deny`) |
 | in the permission modal: `←`/`→`/`tab` | cycle the focused button; `enter` activates it |
+| in the permission modal / plan-review bar: left-click a button | activate it (same as its chord — **alt screen only**). Clicking anywhere else in the modal does nothing (it is a gate, not a form) |
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
 | mouse wheel | scroll the conversation (**alt screen only**; see below) |

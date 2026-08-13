@@ -766,6 +766,17 @@ type Service struct {
 	// ErrPruneUnsupported sticky-disable precedent). Guarded by s.mu.
 	leaseDisabled bool
 
+	// leaseSweepDisabled is the SessionStale-specific sibling of leaseDisabled:
+	// set (once) when a staleness-sweep trial lease Acquire reports
+	// ErrLeaseUnsupported, it stickily disables the whole staleness sweep (not
+	// just the one candidate) for the process lifetime, per issue #475 — a
+	// per-candidate fallback to local-only liveness would reintroduce the
+	// cross-replica unsoundness the lease check exists to prevent. Kept
+	// separate from leaseDisabled because it gates a DIFFERENT seam (the
+	// staleness sweep, not run-entry acquisition) with its own diagnostic.
+	// Guarded by s.mu.
+	leaseSweepDisabled bool
+
 	// draining is the cloud-native drain gate (ADR 0048, mecak8s): once armed by
 	// Drain, acquireLease rejects new run-entries with ErrUnavailable so a
 	// shutting-down replica steers new traffic to a survivor within the
@@ -2218,6 +2229,21 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
 			return nil, fmt.Errorf("server: persist recovered session: %w", serr)
 		}
+		// case session.StateAwaiting: intentionally no-op. Awaiting is the
+		// deliberately-preserved Phase 2 cross-process resume point
+		// (resumeFromAwaiting) — repairing it here would clear its still-resolvable
+		// PendingAsk. It stays terminal-for-loadAndReopen's purposes by falling
+		// through this switch untouched.
+		// case session.StateIdle: intentionally no-op. Idle is already the target
+		// state every other case resets TO — nothing to repair.
+		//
+		// case session.StateRunning is intentionally NOT handled here (issue #475):
+		// a crash-orphaned "running" snapshot is repaired by StartRunContent itself,
+		// AFTER it holds the real lease/lock (see the repair beside runEntryMu/
+		// acquireLease below) — never inside this pre-lock funnel, where a trial
+		// lease could collide with a concurrent caller or a peer's genuine
+		// acquireLease. loadAndReopen has no lock/lease of its own to make that
+		// repair safe.
 	}
 	return sess, nil
 }
@@ -2350,6 +2376,24 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	if text == "" && len(parts) == 0 {
 		return nil, fmt.Errorf("%w: prompt text or parts is required", ErrInvalidArgument)
 	}
+	// Delegation-child ids (subagent-/parallel-/team-, engine/agent/childregistry.go's
+	// exported id-minting convention) are NEVER a legitimate StartRunContent target
+	// (issue #475 follow-up). A child is driven exclusively by its PARENT's in-process
+	// dispatch (driveChild) — that is precisely why Service.IsLive is structurally
+	// blind to it (see the doc comment there and internal/app/childgc.go's isLive
+	// caveat). A caller who learns a child's id from the `agentId:`/Team-id trailer or
+	// InspectSubagent/InspectMember's MemberSessionID scheme could otherwise call the
+	// prompt endpoint directly against it WHILE the parent is genuinely still driving
+	// it: IsLive(childID) reads false (it only tracks top-level runs), so the
+	// StateRunning crash-orphan repair below would Abandon()+Save the child's history
+	// out from under the parent's live drive — reintroducing the dangling-tool_use/
+	// provider-400 hazard issue #475 exists to close, this time self-inflicted via
+	// direct wire access. `sched--`-prefixed schedule-fire sessions are DELIBERATELY
+	// excluded — scheduler_fire.go's own StartRunContent call IS the legitimate way a
+	// fire session is driven, so that family stays untouched.
+	if isDelegationChildSessionID(id) {
+		return nil, fmt.Errorf("%w: session %q is a delegation-child session (subagent/parallel/team) and cannot be started directly; children are driven only by their parent's run", ErrInvalidArgument, id)
+	}
 	// NOTE (ADR 0062): there is NO prompt-channel scan here. The guardrails
 	// approve-once flow is OUT-OF-BAND — a PreToolUse guardrail block surfaces to the
 	// human as an ordinary permission ask (Allow once / Allow & don't ask / Deny) and
@@ -2385,6 +2429,36 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	if err := s.acquireLease(ctx, id); err != nil {
 		return nil, err
 	}
+	// Crash-orphan repair (issue #475): loadAndReopen's switch deliberately does
+	// NOT handle StateRunning (see its no-op comment) because repairing it there
+	// would run before this process holds the real lease/lock, racing a
+	// concurrent caller or rejecting a peer's genuine acquireLease with a trial
+	// lease. Here, by contrast, runEntryMu.lock(id) + the real acquireLease above
+	// have BOTH already succeeded, so this process holds the actual exclusive
+	// right to drive the session — no trial lease, no age-horizon oracle needed:
+	// the successful acquire IS the proof.
+	//
+	// One remaining hazard: runEntryMu only serializes the RUN-ENTRY section, not
+	// a run's full lifetime (it is unlocked as soon as this function returns,
+	// long before the registered run finishes). A second StartRunContent for the
+	// SAME id can therefore enter here while a run this process itself started
+	// earlier is still genuinely live and re-saving StateRunning snapshots
+	// (resumeFromAwaiting cannot collide here — it rejects everything but
+	// StateAwaiting before it ever reaches this repair). Abandoning a genuinely
+	// live session's history out from under it would corrupt an active run, so
+	// IsLive(id) is checked FIRST and, if true, the repair is refused outright
+	// rather than racing it.
+	if sess.State == session.StateRunning {
+		if s.IsLive(id) {
+			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
+		}
+		if err := sess.Abandon(); err != nil {
+			return nil, fmt.Errorf("server: abandon stale running session: %w", err)
+		}
+		if err := s.cfg.Store.Save(ctx, sess); err != nil {
+			return nil, fmt.Errorf("server: persist abandoned session: %w", err)
+		}
+	}
 	engine, ws, err := s.engineAndWorkspaceFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -2392,6 +2466,23 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	run := engine.Run(ctx, sess, ws, agent.RunRequest{Text: text, Parts: parts})
 	s.register(id, run, sess)
 	return run, nil
+}
+
+// isDelegationChildSessionID reports whether id carries one of the delegation
+// families' child-session id prefixes: agent.SubagentSessionPrefix,
+// agent.ParallelSessionPrefix, agent.TeamSessionPrefix — the engine's exported
+// id-minting convention (engine/agent/childregistry.go), the same source
+// internal/app/childgc.go's childSessionPrefixes and
+// internal/app/scheduler_delivery_run.go's isNonDeliverableOrigin both consume
+// (this package cannot import internal/app without a cycle, so the check is
+// duplicated against the SAME upstream constants rather than a shared helper).
+// It deliberately does NOT match the `sched--` schedule-fire prefix: fire
+// sessions ARE legitimately started via StartRunContent (scheduler_fire.go).
+func isDelegationChildSessionID(id session.SessionID) bool {
+	s := string(id)
+	return strings.HasPrefix(s, agent.SubagentSessionPrefix) ||
+		strings.HasPrefix(s, agent.ParallelSessionPrefix) ||
+		strings.HasPrefix(s, agent.TeamSessionPrefix)
 }
 
 // engineAndWorkspaceFor resolves the engine + workspace a loaded session should run
@@ -2841,9 +2932,10 @@ func (s *Service) LookupRun(id session.SessionID) (*agent.Run, bool) {
 // protected from the sweep by age horizon + snapshot freshness instead: they
 // persist at their terminal AND a resumed child re-persists at resume start,
 // so an in-flight child's snapshot is always fresh (see the invariant note in
-// internal/app/childgc.go). The predicate still genuinely protects an
-// API-CLIENT-driven session that happens to carry a child prefix — StartRun
-// on such an id registers it here like any other.
+// internal/app/childgc.go). A client-driven id carrying a delegation-child
+// prefix (subagent-*/parallel-*/team-*) can no longer register here at all —
+// StartRunContent's isDelegationChildSessionID guard rejects it with
+// ErrInvalidArgument before it ever reaches this registry.
 func (s *Service) IsLive(id session.SessionID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3715,6 +3807,178 @@ func (s *Service) releaseLease(id session.SessionID) {
 		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session lease release failed",
 			"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
 	}
+}
+
+// staleSessionWindow is the staleness age horizon for a persisted "running"
+// snapshot (issue #475): a snapshot younger than this is never a candidate,
+// regardless of any liveness signal (mirrors
+// internal/adapter/scheduler/scheduler.go's staleFireWindow/staleFireThreshold
+// idiom — a package var so a test can shrink it). It exists because it is the
+// ONLY defense that covers subagent-*/parallel-*/team-* child sessions at all:
+// IsLive's own doc comment says it never knows about engine children, so a
+// liveness-only oracle would be blind to exactly the population issue #475's
+// confirmed bug came from. It is also why this whole design is honestly
+// "last-write-wins narrowed by a window," not atomic — Store.Save has no
+// fencing/CAS, so nothing here actually stops an already-in-flight e.save from
+// a genuinely live run landing after a sweep's repair; the wide age window is
+// the only thing making that acceptable.
+var staleSessionWindow = 30 * time.Minute
+
+// staleTrialLeaseSuffix names this process's OWN trial-Acquire owner for
+// SessionStale's secondary lease refinement — suffixed onto the real
+// s.cfg.LeaseOwner (never a new unrelated string) so the trial is
+// self-attributable in lease-backend diagnostics.
+const staleTrialLeaseSuffix = "-stale-trial"
+
+// SessionStale reports whether meta's persisted StateRunning snapshot is a
+// crash-orphan (issue #475) rather than a genuinely in-flight run. It decides;
+// it does not write — SettleIfStale performs the actual repair once a caller
+// has decided a candidate is stale. Exported for internal/app's composition-
+// level sweep (Step 4) to consume, mirroring IsLive/Diagnostics.
+//
+// The order matters and mirrors internal/adapter/scheduler/scheduler.go's
+// shouldReconcileStaleFire/isPriorFireLive (age gate first, lease as a
+// secondary refinement, trial lease released immediately, never held across
+// a write) — an earlier draft of this fix inverted that order and is why the
+// design history in the accompanying plan calls this out explicitly:
+//
+//  1. Age horizon (staleSessionWindow) is a HARD PRECONDITION: a fresh
+//     snapshot is never stale, no matter what liveness/lease signals say.
+//  2. IsLive(id): a same-process live run is never stale.
+//  3. If a port.SessionLease is wired, a bounded TRIAL Acquire is the
+//     secondary refinement:
+//     - ErrLeaseHeld, but s.heldLeases[id] shows THIS process already holds
+//     the REAL lease for id: that is the self-held-lease correction — a
+//     run that died without releasing its own lease is evidence of
+//     staleness, not liveness. Treat it as stale.
+//     - ErrLeaseHeld otherwise (a genuinely different, live owner holds it):
+//     not stale.
+//     - success (nobody held it): release the trial immediately (this
+//     function only decides; it never holds a lease across the caller's
+//     later write) and report stale.
+//     - ErrLeaseUnsupported: sticky-disable the WHOLE sweep for the process
+//     lifetime (see LeaseSweepDisabled) rather than silently falling back
+//     to local-only liveness for this one candidate — the fallback would
+//     reintroduce the exact cross-replica unsoundness the lease branch
+//     exists to prevent, for the one backend where this error is actually
+//     reachable. Report not stale.
+//     - any other error/timeout: fail-safe, not stale.
+//  4. No lease wired at all: age + IsLive is the complete policy — a
+//     not-live, past-window candidate IS stale (the single-process/file-
+//     storage default path).
+func (s *Service) SessionStale(ctx context.Context, meta port.SessionMeta) bool {
+	// 1. Age horizon — a hard precondition, checked before anything else.
+	if s.cfg.Now().Sub(meta.ModifiedAt) < staleSessionWindow {
+		return false
+	}
+	// 2. Local liveness.
+	if s.IsLive(meta.ID) {
+		return false
+	}
+	// No lease wired: age + IsLive is the complete policy.
+	if s.cfg.SessionLease == nil {
+		return true
+	}
+	s.mu.Lock()
+	disabled := s.leaseSweepDisabled
+	s.mu.Unlock()
+	if disabled {
+		return false
+	}
+	trialCtx, cancel := context.WithTimeout(ctx, leaseAcquireTimeout)
+	lease, err := s.cfg.SessionLease.Acquire(trialCtx, meta.ID, s.cfg.LeaseOwner+staleTrialLeaseSuffix)
+	cancel()
+	switch {
+	case errors.Is(err, port.ErrLeaseHeld):
+		s.mu.Lock()
+		_, selfHeld := s.heldLeases[meta.ID]
+		s.mu.Unlock()
+		// The self-held-lease correction: ErrLeaseHeld against our OWN trial
+		// call (a different owner string than the real hold, so the backend
+		// sees a genuine conflict) is NOT evidence of a live peer when this
+		// process itself is the one holding the real lease — it is evidence
+		// this process's own prior run died without releasing it.
+		return selfHeld
+	case errors.Is(err, port.ErrLeaseUnsupported):
+		s.mu.Lock()
+		firstTime := !s.leaseSweepDisabled
+		s.leaseSweepDisabled = true
+		s.mu.Unlock()
+		if firstTime {
+			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session staleness sweep: lease backend does not support leasing; disabling the sweep",
+				"owner", s.cfg.LeaseOwner)
+		}
+		return false
+	case err != nil:
+		// Infra error or timeout — fail-safe: never mass-abandon on a flaky
+		// lease backend.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session staleness sweep: trial lease acquire failed; treating as not stale (fail-safe)",
+			"session", string(meta.ID), "err", err.Error())
+		return false
+	}
+	// Success: nobody held it. Release the trial immediately — this function
+	// only decides staleness, it performs no write, so there is nothing to
+	// hold the lease across.
+	relCtx, relCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+	_ = s.cfg.SessionLease.Release(relCtx, lease)
+	relCancel()
+	return true
+}
+
+// LeaseSweepDisabled reports whether SessionStale has stickily disabled the
+// staleness sweep for the process lifetime (an ErrLeaseUnsupported backend).
+// Exported for internal/app's Step 4 sweep to check before scanning, mirroring
+// SessionStale/IsLive/Diagnostics.
+func (s *Service) LeaseSweepDisabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leaseSweepDisabled
+}
+
+// SettleIfStale repairs a session id that a caller has ALREADY decided is
+// stale (via SessionStale): it loads the raw snapshot, re-checks
+// State==StateRunning and !IsLive(id) (closing the TOCTOU between whatever
+// decided staleness and this load — the snapshot may have moved on since, or
+// a genuinely live run may have started in the gap), and if it is genuinely
+// still running and not locally live, abandons it via Session.Abandon() and
+// persists the repair. It performs NO staleness decision of its own.
+//
+// This is the SWEEP's (Step 4) repair path ONLY: the sweep discovers a
+// candidate id from a metadata scan with no in-memory session for it, so it
+// must Load fresh from the store. A caller that already holds an in-memory
+// *session.Session (Step 3's run-entry funnel, `loadAndReopen`) must NOT call
+// this function — repairing the on-disk copy via a fresh Load would leave the
+// funnel's OWN in-memory sess (already loaded, about to be handed to
+// engine.Run) untouched and still carrying its unpaired tool_use, so the
+// HTTP-400 this whole fix exists to prevent would survive unnoticed. The
+// funnel instead calls sess.Abandon() + Store.Save directly on the session it
+// already holds.
+//
+// Returns whether it actually settled something (false, nil is the honest
+// no-op result for a session that already moved on, e.g. a race with a
+// genuinely live re-entry or a peer's own settle).
+func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool, error) {
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("server: load session for stale settle: %w", err)
+	}
+	if sess.State != session.StateRunning {
+		return false, nil
+	}
+	// ponytail: narrows, doesn't close, the TOCTOU window between the sweep's
+	// staleness decision and this write — a real run could still register
+	// between this check and the Save below. Store.Save has no CAS; closing
+	// it fully needs one. See ADR write-up (Step 5).
+	if s.IsLive(id) {
+		return false, nil
+	}
+	if err := sess.Abandon(); err != nil {
+		return false, fmt.Errorf("server: abandon stale running session: %w", err)
+	}
+	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+		return false, fmt.Errorf("server: persist abandoned session: %w", err)
+	}
+	return true, nil
 }
 
 // register records run (and the live session it drives) as the in-flight run

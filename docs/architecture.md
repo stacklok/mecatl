@@ -534,11 +534,18 @@ durable log as the fire's own events). The events project onto the
 dropped from the durable log (the log is session-keyed) and surfaces only via
 the operator diagnostic.
 
-**Fire-result delivery (ADR 0075).** A schedule created in-chat carries
-`ScheduleSpec.OriginSessionID` — the conversation that created it, stamped at
-create-time by the `SessionOriginScheduleManager` wrapper (composition binds the
-per-session id via `Deps.OriginBinder`, set in `startRun`; never a model-supplied
-arg). After a fire reaches its terminal `EvResult` and `RecordFire` persists the
+**Fire-result delivery ([ADR 0075](adr/0075-fire-result-delivery.md), origin
+attribution superseded by [ADR 0104](adr/0104-schedule-origin-run-context.md)).** A
+schedule created in-chat carries `ScheduleSpec.OriginSessionID` — the conversation
+that created it. The shared `startRun` seam places the executing session id on the
+cancellation-derived context with the engine-internal `withSessionOrigin`, so normal runs and
+awaiting-approval resumes inherit the same attribution. The `Schedule` tool reads it
+off that context when it builds the create spec — the one place the field is ever
+assigned (empty when unbound; never a model-supplied arg, since the tool's schema has
+no origin field). Because attribution travels with each run context rather than
+mutable wrapper state, concurrent sessions sharing one `Engine` cannot cross-stamp
+origins. After a
+fire reaches its terminal `EvResult` and `RecordFire` persists the
 record, the scheduler's `SetDeliverFireResult` callback
 (`deliverFireResult`, `internal/app/scheduler_delivery_run.go`) renders the
 outcome as a **fenced-untrusted** harness note (`renderFireDelivery` —

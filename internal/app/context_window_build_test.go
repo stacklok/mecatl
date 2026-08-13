@@ -43,6 +43,7 @@ func TestBuildOperatorContextWindowsFeedEchoListAndPerSessionFactory(t *testing.
 				NoSoul:                  true,
 				TrustProject:            true,
 				PermissionsConventional: true,
+				permConfigEnv:           isolatedPermConfigEnv(t),
 				PermissionConfigs:       []string{operator},
 				ContextWindowOverride:   tc.cli,
 				envDetector:             fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),

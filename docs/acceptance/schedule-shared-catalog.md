@@ -191,11 +191,15 @@ session restored onto the shared engine by `needsRehydration` keeps the tool
   StablePrefix layer) — the [ADR-0070](../adr/0070-model-visible-affordance-gate.md)
   gate, asserted against the layer the instruction owns.
   - verify: `TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote`
-- AC3.3: The shared engine's `OriginBinder` + `DeliveryQueue` (wired at
-  `build.go:2529`/`:2535`) are live once the manager is bound, so a schedule
-  created from a shared-engine session stamps its `OriginSessionID` and its
-  fire's result is delivered back into that chat
-  ([ADR-0075](../adr/0075-fire-result-delivery.md)).
+- AC3.3: The shared engine's origin attribution + `DeliveryQueue` are live once
+  the manager is bound, so a schedule created from a shared-engine session
+  stamps its `OriginSessionID` and its fire's result is delivered back into that
+  chat ([ADR-0075](../adr/0075-fire-result-delivery.md)). The origin half was
+  reimplemented after this plan landed — `Engine.Run` stamps the executing
+  session id onto the run context and the create seam reads it there, replacing
+  the `OriginBinder` wiring this AC originally named
+  ([ADR-0104](../adr/0104-schedule-origin-run-context.md)). The observable
+  behaviour is unchanged, which is why the verifier below still holds.
   - verify: `TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired`
 - AC3.4: A default-profile session persisted, then reloaded via
   `needsRehydration` (the restart path), still resolves the `Schedule` tool —

@@ -485,10 +485,12 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 // captureScheduleOwner resolves the owner a schedule is created with (ADR 0100
 // decision 6), by CREATE SURFACE:
 //
-//   - the Schedule-TOOL path runs inside a session, and the origin binder has
-//     already stamped OriginSessionID with it — so the owner is that EXECUTING
-//     session's owner. The tool's caller context belongs to whoever prompted the
-//     run, which is not necessarily the session's owner, so the session wins.
+//   - the Schedule-TOOL path runs inside a session, and the spec arrives with
+//     OriginSessionID already stamped (ADR 0104: startRun binds the executing
+//     session id onto the run context, and the tool reads it there when it
+//     builds the spec) — so the owner is that EXECUTING session's owner. The
+//     tool's caller context belongs to whoever prompted the run, which is not
+//     necessarily the session's owner, so the session wins.
 //   - an OUT-OF-BAND create (REST/CLI: no origin session) reads the verified
 //     principal riding the context.
 //

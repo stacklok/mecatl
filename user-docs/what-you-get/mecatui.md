@@ -59,6 +59,10 @@ A tool call doesn't dump its full JSON arguments into your terminal by default �
 
 A Subagent card adds delegation visibility: while the child runs, its collapsed line names the child's **live current tool**, and `ctrl+t` shows a Team-format trace — tool chips with bounded previews of the child's args/results and capped message lines. The `ctrl+a` agents overlay gives Subagent and Parallel runs the same bounded-preview traces in their focus panes; the task board, findings, dispositions, and context meter stay Team-only. These previews are capped, control-byte-scrubbed, and client-only — see [Subagents, teams, and parallel](subagents-teams-parallel.md#watching-a-delegation-in-mecatui--bounded-previews).
 
+## Approving actions
+
+When the agent needs permission, a modal asks you to **allow once**, **always allow** (this session), or **deny**. You can answer with the keyboard chords (`a` / `w` / `d` by default, rebindable) or by **left-clicking the button** with the mouse — a click does exactly what its chord does. Plan-mode reviews get the same clickable action bar (**approve & run** / **auto-accept edits** / **iterate**). Clicking anywhere else in the modal does nothing, so a stray click can't accidentally approve something.
+
 ## Remapping keys
 
 Every mecatui action is rebindable — and the `?` help overlay always shows your **live** bindings, so a remap is reflected in the help you see, not just in the keys that fire. Three override layers merge **per action**: the repeatable `--keymap Action=chord[,chord2]` CLI flag wins, over the `keymap:` map in `~/.config/mecatui/settings.yaml` (mecatui's own client settings file), over the deprecated legacy location:

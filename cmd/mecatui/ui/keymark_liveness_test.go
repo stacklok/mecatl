@@ -348,7 +348,7 @@ func TestPlanReviewActionBarReflectsKeyOverride(t *testing.T) {
 	m.phase = phaseAwaitingApproval
 	m.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
 	m.openPlanReviewView(m.ask, 0, "")
-	got := stripANSIstr(m.renderPlanReviewView(m.ask, 120, 30))
+	got := stripANSIstr(m.renderPlanReviewView(m.ask))
 	// A bare-rune override degrades to the honest standalone form ("[Y] approve
 	// & run"), not the wordplay stem ("[Y]pprove & run") — approvalMnemonic
 	// upper-cases the bare rune: y→Y, q→Q, n→N.
@@ -392,7 +392,7 @@ func TestPlanReviewActionBarModifiedChordDegrades(t *testing.T) {
 	m.phase = phaseAwaitingApproval
 	m.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
 	m.openPlanReviewView(m.ask, 0, "")
-	got := stripANSIstr(m.renderPlanReviewView(m.ask, 160, 30))
+	got := stripANSIstr(m.renderPlanReviewView(m.ask))
 	for _, want := range []string{"[ctrl+y] approve & run", "[ctrl+q] auto-accept edits", "[ctrl+n] iterate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan-review button should carry the standalone modified-chord form %q: %q", want, got)
@@ -417,7 +417,7 @@ func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
 	m.phase = phaseAwaitingApproval
 	m.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
 	m.openPlanReviewView(m.ask, 0, "")
-	got := stripANSIstr(m.renderPlanReviewView(m.ask, 120, 30))
+	got := stripANSIstr(m.renderPlanReviewView(m.ask))
 	for _, want := range []string{"[A]pprove & run", "[W] auto-accept edits", "[D] iterate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan-review default button should render %q byte-for-byte: %q", want, got)

@@ -28,6 +28,13 @@ func centerCard(th theme.Theme, body string, width, height int) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
 }
 
+// mouseCaptureEnabled is the exact terminal posture where mecatui owns mouse
+// clicks. It is shared by View and mouse actions so inline/no-mouse modes leave
+// approval controls to the terminal just like selection gestures.
+func mouseCaptureEnabled(m Model) bool {
+	return !m.deps.NoAltScreen && !m.deps.NoMouse
+}
+
 // View assembles the three-region layout (header / viewport / input / footer)
 // into a tea.View. While a permission modal is open it overlays the modal,
 // centred, over the conversation region. Bubble Tea v2 returns a tea.View struct
@@ -51,7 +58,7 @@ func (m Model) View() tea.View {
 	// primary-selection paste, so onMousePress handles tea.MouseMiddle in-app
 	// (shell backend → OSC52 fallback; issue #43); shift+middle-click bypasses
 	// the capture in most terminals and still performs the native paste.
-	if !m.deps.NoAltScreen && !m.deps.NoMouse {
+	if mouseCaptureEnabled(m) {
 		v.MouseMode = tea.MouseModeCellMotion
 	}
 
@@ -87,7 +94,7 @@ func (m Model) renderBody() string {
 			// advanceAsk queued-successor path, relayout/onResize geometry changes)
 			// so the render path is a pure read of m.planVP.View(). See
 			// renderPlanReviewView / openPlanReviewView.
-			return m.renderPlanReviewView(m.ask, m.width, m.vp.Height())
+			return m.renderPlanReviewView(m.ask)
 		}
 		return m.rend.renderPermissionModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height())
 	case m.mcp.view != mcpNone:
