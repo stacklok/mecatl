@@ -1325,6 +1325,11 @@ func (h *HTTPHandler) getUserModel(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	resp.Detail, err = h.svc.GetUserModelDetail(r.Context(), r.URL.Query().Get("key"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

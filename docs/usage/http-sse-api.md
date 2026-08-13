@@ -29,7 +29,7 @@ share one event shape.
 | `GET /v1/skills` | the skills inventory |
 | `GET /v1/commands` | the slash-command palette for a workspace |
 | `GET /v1/soul` | the resolved soul snapshot (provenance, trust, drift) |
-| `GET /v1/usermodel` | the live user-model index |
+| `GET /v1/usermodel` | the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/timestamps/bounded history when available |
 | `GET /v1/mcp/resources` | MCP resource snapshots |
 | `GET /v1/mcp/resources/read` | read one MCP resource by URI |
 | `GET /v1/mcp/prompts` | the MCP prompt inventory |

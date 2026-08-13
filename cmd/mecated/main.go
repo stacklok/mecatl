@@ -236,8 +236,8 @@ type config struct {
 	soulStrict  bool
 
 	// User model (issue #14, Phase 2): a user-scoped, cross-project memory of
-	// durable FACTS about the operator (RememberUser/RecallUser/SearchUserModel +
-	// a turn-0 <user-model> block). ON by default at the conventional
+	// durable FACTS about the operator (explicit user-memory tools plus a live
+	// bounded operator profile in the volatile system suffix). ON by default at the conventional
 	// ~/.config/mecatl/usermodel; noUserModel disables it; userModelDir overrides
 	// the dir. userModelReview is the deprecated alias for completed-trajectory
 	// auto review; userModelReviewInterval is its session-count debounce.
@@ -1452,8 +1452,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.approveSoul, "approve-soul", false, "(re)write the soul DRIFT BASELINE to the current soul's content hash, accepting the file as-is. The baseline is a harness-owned sidecar next to the soul (<soul-path>.sha256); a later run whose hash differs logs a drift WARN. Use this once after intentionally editing your soul")
 	fs.BoolVar(&cfg.soulStrict, "soul-strict", false, "refuse a DRIFTED soul: if the soul's content hash differs from the recorded baseline, contribute NO soul fragment this run (instead of the default warn-and-load). Pair with --approve-soul to accept an edit")
 
-	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "directory for the user-scoped, CROSS-PROJECT user-model store of durable FACTS about the operator (empty = the conventional $XDG_CONFIG_HOME/mecatl/usermodel, fallback ~/.config/mecatl/usermodel). Exposes RememberUser/RecallUser/SearchUserModel and a turn-0 <user-model> block. Holds FACTS about the operator, never rules — how the agent behaves comes from its soul + system rules")
-	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "disable the user-model entirely (the RememberUser/RecallUser/SearchUserModel tools and the <user-model> block)")
+	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "directory for the user-scoped, CROSS-PROJECT user-model store of durable FACTS about the operator (empty = the conventional $XDG_CONFIG_HOME/mecatl/usermodel, fallback ~/.config/mecatl/usermodel). Exposes explicit user-memory lifecycle tools and a live bounded operator profile in the volatile system suffix. Holds FACTS about the operator, never rules — how the agent behaves comes from its soul + system rules")
+	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "disable the user-model entirely (explicit tools and live operator profile)")
 	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "compatibility alias for operator settings learning.mode: auto (scheduled for removal after one release window). Conflicts with an explicit non-auto learning.mode. Runs the synchronous completed-trajectory user-model reviewer; never reopens the user session")
 	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "process-wide completed-session debounce for automatic user-model review: review every Nth eligible completion (1 = every completion). Applies to learning.mode: auto and the compatibility --user-model-review alias")
 	fs.DurationVar(&cfg.userModelConsolidateInterval, "user-model-consolidate-interval", 0, "independent process-wide interval for background consolidation (dream) of the cross-project user-model store's user/ namespace; 0 disables. Requires the user-model store and provider; learning.mode (including a project off ceiling) does not gate this explicit maintenance schedule")

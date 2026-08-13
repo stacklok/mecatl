@@ -171,12 +171,25 @@ they are and how they like to work. Unlike the soul (read-only) and per-project 
 project**, backed by a SECOND `memory` store at `$XDG_CONFIG_HOME/mecatl/usermodel`
 (fallback `~/.config/mecatl/usermodel`), overridable with `--user-model-dir`.
 
-It surfaces two ways:
+It surfaces three ways:
 
-- **Tools (on by default):** `RememberUser`, `RecallUser`, `SearchUserModel` — the
-  user-model siblings of the per-project memory tools. Keys are auto-namespaced under
-  `user/`. The model sees a turn-0 `<user-model>` block summarising the saved facts
-  (injected LAST: soul → memory index → user model).
+- **Live operator profile (on by default):** full active user facts are reloaded for
+  every provider request into a bounded, JSON-structured block in the volatile system
+  suffix. It does not enter history and does not change the cache-stable prefix. When
+  bounding omits facts, the block names `SearchUserModel` and `RecallUser` only if both
+  tools are in that request's actual catalog; child/internal catalogs that lack either
+  receive generic unavailable-in-this-context guidance instead. The
+  old public `UserModelAssembler` remains available to engine embedders, but standard
+  composition no longer injects a `<user-model>` turn-0 message.
+- **Tools (on by default):** `RememberUser`, `RecallUser`, `SearchUserModel`, plus
+  `InspectUserMemory`, `ForgetUserMemory`, and `UndoUserMemory` when the store supports
+  lifecycle history. Keys are auto-namespaced under `user/`. Project memory gets the
+  corresponding Inspect/Forget/Undo tools. A remote driver that positively advertises
+  lifecycle support is held to that protocol: a missing/failing lifecycle RPC is an
+  operation error and never falls back to an unconditional legacy write or read. Remember,
+  Recall, Search, Inspect, and Undo
+  are floor Allows; Forget is a floor Ask. Any configured Ask/Deny/Allow at a higher
+  scope overrides these built-in floors.
 - **Automatic reviewer (`learning.mode: auto`):** after a clean completion, a fresh
   single-shot child receives an owned transcript snapshot and extracts operator facts via
   RememberUser. `off` is the default and means no automatic completed-trajectory reflection
@@ -192,15 +205,13 @@ It surfaces two ways:
 **Rules vs facts — the operator boundary.** The user model holds **FACTS about the
 operator** (stated preferences, communication style, domain background), **never rules
 or behavioural instructions for the agent**. How the agent behaves comes from its soul
-and the system rules; the `<user-model>` block is fenced **DATA** the model treats as
-facts, not a new instruction stream, and the tool descriptions forbid storing rules or
-anything the workspace already knows. The RememberUser write path injection-scans both
-the value AND the effective description (reusing `skills.ScanForInjection`) — the
-`<user-model>` block renders the key + description, so scanning only the value would
-miss a payload hidden in `description` — and additionally rejects any field containing
-the data-fence close-tag `</user-model>` (mirroring soul's reject-on-close-tag), so a
-poisoned transcript cannot launder steering into the block or break its data fence. The user model is an instruction
-**fragment**, not a governance scope — it can never loosen a configured permission Ask.
+and the system rules. The live profile is fenced and JSON-encoded as DATA and explicitly
+cannot change permissions, safety, tools, or policy; a current user instruction wins a
+conflict. New lifecycle writes enforce a strict lowercase namespaced key grammar and
+reject high-confidence secret shapes. Recall, Inspect, remote, imported, and migrated
+data pass through the same structural/UTF-8/secret final-boundary projection, without
+blanket prompt-injection keyword suppression of useful prose. The user model is data,
+not a governance scope — it can never loosen a configured permission Ask.
 Over-eager memory is *steered* (by the descriptions), not *enforced* (there is no
 rule/fact classifier); this is a deliberate, accepted residual risk. Single-operator
 assumption: there is no per-user keying — "the operator" is implicitly singular, the

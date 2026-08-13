@@ -217,7 +217,8 @@ can adapt) and to the client (on ask).
 | Tool | Default effect |
 | --- | --- |
 | `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `Subagent` | `allow` |
-| the six memory tools (`Remember`/`Recall`/`SearchMemory`, `RememberUser`/`RecallUser`/`SearchUserModel`) | `allow` (floor-scoped, config-overridable — see §3) |
+| memory Remember/Recall/Search/Inspect/Undo tools in project and user scopes | `allow` (floor-scoped, config-overridable — see §3) |
+| `ForgetMemory`, `ForgetUserMemory` | `ask` (floor-scoped, config-overridable) |
 | `InspectSubagent`, `InspectMember`, `SubagentStatus`, `BashStatus` (read-only child / background-job observability) | `allow` (floor-scoped, config-overridable) |
 | `soul:apply` (the synthetic soul-load action) | `allow` (floor-scoped, config-overridable — see §3) |
 | `Bash`, `Edit`, `Write`, `Team`, `SkillDraft` | `ask` |

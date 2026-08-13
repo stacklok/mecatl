@@ -19,3 +19,13 @@ func TestFlockStoreConformance(t *testing.T) {
 		return st
 	})
 }
+
+func TestFlockStoreLifecycleConformance(t *testing.T) {
+	memconformance.RunLifecycle(t, func(t *testing.T) (tool.MemoryStore, tool.MemoryLifecycleStore) {
+		st, err := memory.New(t.TempDir())
+		if err != nil {
+			t.Fatalf("memory.New: %v", err)
+		}
+		return st, st
+	})
+}

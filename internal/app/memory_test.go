@@ -27,6 +27,9 @@ func TestBuildCatalogRegistersMemorySearchWhenEnabled(t *testing.T) {
 		memory.SearchMemoryToolName,
 		memory.RecallToolName,
 		memory.RememberToolName,
+		memory.InspectMemoryToolName,
+		memory.ForgetMemoryToolName,
+		memory.UndoMemoryToolName,
 	}
 
 	t.Run("enabled", func(t *testing.T) {

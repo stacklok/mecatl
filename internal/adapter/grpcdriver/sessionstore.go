@@ -3,6 +3,7 @@ package grpcdriver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -172,7 +173,16 @@ func (st *SessionStore) Delete(ctx context.Context, id session.SessionID) error 
 // transient/permanent classification (resilience, if ever needed, is a
 // decorator; see the package doc).
 func rpcErr(ctx context.Context, op string, err error) error {
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	ctxErr := ctx.Err()
+	if ctxErr == nil && status.Code(err) == codes.DeadlineExceeded {
+		// gRPC's transport timer can report the deadline just before the
+		// context timer publishes ctx.Err(). Only classify it as caller-owned
+		// when the caller's actual deadline has elapsed.
+		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+			ctxErr = context.DeadlineExceeded
+		}
+	}
+	if ctxErr != nil {
 		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, ctxErr, err)
 	}
 	return fmt.Errorf("grpcdriver: %s: %w", op, err)

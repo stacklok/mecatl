@@ -129,3 +129,15 @@ func (l userModelIndexLister) List(ctx context.Context) ([]server.UserModelEntry
 	}
 	return out, nil
 }
+
+func (l userModelIndexLister) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
+	if lifecycle, ok := l.store.(tool.MemoryLifecycleStore); ok {
+		return lifecycle.Inspect(ctx, key)
+	}
+	entry, found, err := l.store.Recall(ctx, key)
+	if err != nil || !found {
+		return tool.MemoryRecord{}, found, err
+	}
+	revision := tool.MemoryRevision{Key: entry.Key, Value: entry.Value, Description: entry.Description, Status: tool.MemoryStatusActive, Origin: tool.MemoryOriginImported, UpdatedAt: entry.UpdatedAt}
+	return tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}, true, nil
+}

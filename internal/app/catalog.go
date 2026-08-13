@@ -27,6 +27,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
@@ -182,6 +183,9 @@ type catalogSession struct {
 // closing it would kill MCP for every other session). The close is always
 // non-nil and safe to call.
 func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error) {
+	if profile, ok := a.userModelStore.(prompt.OperatorProfileSource); ok {
+		cfg.operatorProfileSource = profile
+	}
 	cat := tool.NewCatalog()
 	registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
 

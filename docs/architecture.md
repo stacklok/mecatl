@@ -332,6 +332,13 @@ and the one-release parse-compat shim was deleted by [ADR 0089](adr/0089-cli-cle
 a legacy `--output-economy` is now an unknown-flag error, and a top-level `output-economy:`
 settings.yaml key is a named unknown-key rejection.
 
+**Live operator profile (#508 slice).** The optional `prompt.OperatorProfileSource`
+feeds a bounded full-value JSONL data envelope in `System.VolatileSuffix` (32 entries,
+8 KiB by default); `agent` refreshes it before every request, retains a run-local
+last-good snapshot, and never persists it into conversation history. The stable prefix
+is unchanged, and the legacy value-omitting `UserModelAssembler` remains the standard
+composition path for now.
+
 **Skills as slash commands.** The resolved, admitted skills inventory also exposes each skill as a `/<skill-name>` command. A syntactically valid name expands only when it is in that inventory; it then loads through the same activator as the `Skill` tool. An asset-bearing skill prepends its activation-derived base directory and a bounded bundled-file inventory before its instructions; command expansion makes no claim about the availability of `Read` or `Bash`. Only the instruction template follows the ordinary command parser, frontmatter-stripping, and placeholder-substitution path; the activation header is prepended afterward so its metadata remains literal. In the command chain, file-backed commands take precedence over skills, skills over driver commands, and driver commands over MCP prompts; the first matching source wins. See `engine/adapter/skillfs/commandsource.go`, `engine/adapter/skillfs/tool.go`, `engine/prompt/commandsource.go`, and `internal/app/build.go` (`buildCommandExpander`).
 
 **Typed tool results.** A `session.ToolResult` may carry typed content blocks on

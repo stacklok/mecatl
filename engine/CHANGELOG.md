@@ -13,6 +13,23 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Operator-profile core dependency slice** (issue #508) — `engine/tool`
+  adds remotely representable memory lifecycle values, copy-safe attribution
+  context helpers, typed validation/conflict errors, and the optional
+  `MemoryLifecycleStore` capability without changing the six-method `MemoryStore`.
+  `engine/adapter/memmemory` supplies the in-memory reference implementation and
+  shared conformance coverage; `engine/adapter/memorytools` supplies portable
+  project/user Remember, Recall, Search, Inspect, Forget, and Undo bodies, adding
+  lifecycle tools only when the store advertises that capability. `engine/prompt`
+  adds the bounded volatile `OperatorProfileSource`/renderer contract;
+  `agent.Deps.OperatorProfileSource` refreshes it before each request with a
+  run-local last-good fallback. Memory writes receive run/session attribution,
+  with the automatic reviewer preserving the completed parent trajectory as
+  origin. `tool.CanonicalMemoryText` is the shared normalize-before-classify
+  representation for write validation and every memory render boundary. New standalone
+  types, constants, functions, and interfaces are Added
+  (minor); additions to existing public structs are classified Changed below.
+
 - **Optional completed-trajectory learning seam** (issue #507,
   [ADR 0106](../docs/adr/0106-optional-learning-seam.md)) — the new importable
   `engine/learning` package provides the strict `Mode` vocabulary (`off`, `review`,
@@ -663,6 +680,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`session.SubagentPayload.RoutingReason` / `session.ParallelPayload.RoutingReason` / `session.TeamMemberSpec.RoutingReason`, the `session.RoutingReason*` gate constants, and `agent.WithPinnedAgents`** (issue #397) — the three delegation-start events now carry a bounded, bare-metadata reason WHY the OPT-IN semantic model router did not classify a delegation: EMPTY on a routed hit, otherwise one of the gate constants (`RoutingReasonPinnedModel` / `RoutingReasonAgentDefPinned` / `RoutingReasonResume` / `RoutingReasonFork` / `RoutingReasonRouterDisabled` / `RoutingReasonTargetUnavailable` / `RoutingReasonBreakerOpen` / `RoutingReasonAborted`) or a static classifier/composition miss code (`RouterMiss*`, `empty-model`, `category-selector-empty`, …). This lets a UI distinguish router-absent from pinned-model from agent-def-pinned from classifier-failure from breaker-open — previously every miss/gate collapsed to empty `routed_*`. `WithPinnedAgents` carries the composition-computed model-pin set separately from the routable set, so provider-switched and inline-MCP defs are not falsely attributed as model-pinned. If a routed engine factory declines its target, routed fields are cleared and `RoutingReasonTargetUnavailable` records the fallback while `Model` names the engine that actually ran. The Subagent gate attributes the explicit choice gates (resume / fork / per-call `model` / agent-def pin) ahead of the router-absent gate, so a pinned delegation is never mislabeled `router-disabled`. The reason is clamped at the emit site (`routingReasonPayload`, 200-rune cap) AND confined to an event-safe allowlist (`routingReasonEventSafe`): because the missReason channel is open to external engine compositions via the exported `Deps.SubagentModelRouter`, known detailed composition reasons are reduced to their static code and every other non-allowlisted reason (a provider error body, classifier output, a task excerpt) is substituted with the generic `routing-miss` label on the wire while the verbatim text stays in operator diagnostics — gauntlet #7. Classified Added per COMPATIBILITY.md (new struct fields, constants, and option constructor are a minor bump). See ADR 0083.
 
 ### Changed
+
+- **Operator-profile fields on existing public structs** (issue #508) —
+  `prompt.Config.OperatorProfile` and `agent.Deps.OperatorProfileSource` extend
+  existing exported structs. Although keyed literals remain source-compatible,
+  external unkeyed literals no longer compile, so these field additions are
+  Changed/breaking under the engine compatibility contract (a pre-v1 minor bump),
+  not merely Added. `prompt.OperatorProfileConfig` itself is a new type.
 
 - **`Tool.Execute`, the observed/parent seams, `Engine.Run`/`ResumeApproval`,
   and `CommandRunner`/`CommandStreamer` now take `tool.Environment`** (ADR 0105,

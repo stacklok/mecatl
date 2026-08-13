@@ -51,7 +51,11 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
 6. **Run the turn** (`runTurn`): build the `LLMRequest`, call `LLM.Stream`,
    consume chunks, emit `message.delta` for text, accumulate reasoning, collect
    tool calls and usage, capture the stop reason; assemble one assistant
-   `Message`. `ctx` cancellation mid-stream surfaces as a cancellation.
+   `Message`. While building each request, an optional `OperatorProfileSource` is
+   re-read and its last-good active facts are placed only in the volatile system
+   suffix. A read fault warns once and reuses the run-local last-good snapshot;
+   profile bytes are never persisted as conversation messages. `ctx` cancellation
+   mid-stream surfaces as a cancellation.
 7. `RecordAssistant`. If there are **no tool calls**, the model is done →
    complete the run.
 8. **Observe eligible completion**: after the aggregate reaches `completed`, an

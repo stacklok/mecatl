@@ -54,7 +54,7 @@ func TestMemoryIndexAssemblerRendersUserMessage(t *testing.T) {
 	// their OWN lines, and every entry line sits BETWEEN them (a prompt-injection
 	// guard). The fence tokens are matched line-anchored so the mention of
 	// "<memory-index>" inside the header prose is not mistaken for the open fence.
-	open := strings.Index(msg.Text, "\n<memory-index>\n")
+	open := strings.Index(msg.Text, "\n<memory-index encoding=\"jsonl\">\n")
 	closeIdx := strings.Index(msg.Text, "\n</memory-index>")
 	if open < 0 || closeIdx < 0 || open >= closeIdx {
 		t.Fatalf("index body not wrapped in matching <memory-index>...</memory-index> fence:\n%s", msg.Text)

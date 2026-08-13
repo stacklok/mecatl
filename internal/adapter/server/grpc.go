@@ -362,11 +362,16 @@ func (h *HarnessServer) GetSoul(ctx context.Context, _ *mecatlv1.GetSoulRequest)
 }
 
 // GetUserModel returns the current user-model index snapshot.
-func (h *HarnessServer) GetUserModel(ctx context.Context, _ *mecatlv1.GetUserModelRequest) (*mecatlv1.GetUserModelResponse, error) {
+func (h *HarnessServer) GetUserModel(ctx context.Context, req *mecatlv1.GetUserModelRequest) (*mecatlv1.GetUserModelResponse, error) {
 	resp, err := h.svc.GetUserModel(ctx)
 	if err != nil {
 		return nil, toStatus(err)
 	}
+	detail, err := h.svc.GetUserModelDetail(ctx, req.GetKey())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	resp.Detail = detail
 	return resp, nil
 }
 

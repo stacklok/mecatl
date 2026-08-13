@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -101,7 +102,7 @@ func (a MemoryIndexAssembler) maxBytes() int {
 // This is a cheap prompt-injection fence; see the Trust model note in
 // docs/adr/0009-tiered-memory.md for the single-user / single-trust-zone assumption.
 const (
-	memoryIndexOpen  = "<memory-index>"
+	memoryIndexOpen  = `<memory-index encoding="jsonl">`
 	memoryIndexClose = "</memory-index>"
 )
 
@@ -138,7 +139,15 @@ func renderMemoryIndex(entries []tool.MemoryEntry, maxEntries, maxBytes int) str
 
 	shown := 0
 	for _, e := range kept {
-		line := fmt.Sprintf("- %s — %s\n", e.Key, clampLine(e.Description))
+		description := e.Description
+		if tool.SecretShapedMemoryValue(e.Key, description) {
+			description = "[withheld: secret-shaped memory description]"
+		}
+		encoded, _ := json.Marshal(struct {
+			Key         string `json:"key"`
+			Description string `json:"description"`
+		}{Key: validUTF8(e.Key), Description: validUTF8(clampLine(description))})
+		line := string(encoded) + "\n"
 		// Honour the byte ceiling: stop before the body (plus the close fence we
 		// still owe) would overflow.
 		if b.Len()+len(line)+closeLen > maxBytes {

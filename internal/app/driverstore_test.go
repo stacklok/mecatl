@@ -2,15 +2,23 @@ package app
 
 import (
 	"context"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 
+	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
@@ -213,6 +221,44 @@ func TestBuildStoreEventLogURL(t *testing.T) {
 	})
 }
 
+func TestValidateDriverConfigRejectsMemoryDirectoryCollisions(t *testing.T) {
+	dir := t.TempDir()
+	if err := validateDriverConfig(Config{MemoryDir: dir, UserModelDir: dir}); err == nil {
+		t.Fatal("direct memory/user-model directory collision accepted")
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDriverConfig(Config{MemoryDir: dir, UserModelDir: alias}); err == nil {
+		t.Fatal("symlink-aliased memory/user-model directory collision accepted")
+	}
+}
+
+func TestValidateDriverConfigRejectsDefaultUserModelDirectoryCollisions(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("HOME", "")
+	defaultDir := filepath.Join(xdg, userModelSubdir)
+	if err := os.MkdirAll(defaultDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDriverConfig(Config{MemoryDir: defaultDir}); err == nil {
+		t.Fatal("memory/default user-model directory collision accepted")
+	}
+
+	target := t.TempDir()
+	if err := os.RemoveAll(defaultDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, defaultDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDriverConfig(Config{MemoryDir: target}); err == nil {
+		t.Fatal("memory/default symlink-aliased user-model directory collision accepted")
+	}
+}
+
 // TestDriverConnsShareEqualTargets pins the connection cache: two dials of
 // the SAME target share one ClientConn (a deployment pointing both stores at
 // one driver multiplexes one connection), distinct targets do not, and the
@@ -253,20 +299,101 @@ func TestBuildCatalogMemoryDriverRegistersTools(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("x"))
 	hooks := hookexec.New(nil)
 
-	cfg := Config{MemoryStoreURL: "127.0.0.1:7443"}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	driverv1.RegisterMemoryStoreServiceServer(server, grpcdriver.NewMemoryStoreServer(memmemory.New()))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+
+	cfg := Config{MemoryStoreURL: listener.Addr().String()}
 	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog(memory driver): %v", err)
 	}
 	defer closeFn()
 
-	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName} {
+	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName, memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName} {
 		if _, ok := cat.Lookup(name); !ok {
 			t.Errorf("memory driver enabled (MemoryStoreURL set): catalog is missing %q", name)
 		}
 	}
-	if _, ok := assets.memStore.(*grpcdriver.MemoryStore); !ok {
-		t.Errorf("assets.memStore = %T, want *grpcdriver.MemoryStore (the driver branch must have been taken)", assets.memStore)
+	if assets.memStore == nil {
+		t.Error("assets.memStore is nil; driver branch was not taken")
+	}
+}
+
+type appBaseOnlyMemory struct{ tool.MemoryStore }
+
+type appBlockingMemoryCapabilities struct {
+	driverv1.UnimplementedMemoryStoreServiceServer
+}
+
+func (appBlockingMemoryCapabilities) Capabilities(ctx context.Context, _ *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestBuildCatalogMemoryCapabilityTimeoutLeavesNoCatalogOrConnection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	driverv1.RegisterMemoryStoreServiceServer(server, appBlockingMemoryCapabilities{})
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+
+	provider := mockllm.New(mockllm.TextTurn("x"))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	cfg := Config{MemoryStoreURL: listener.Addr().String(), driverConns: newDriverConns()}
+	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	if err == nil || cat != nil || assets.memStore != nil || closeFn != nil {
+		t.Fatalf("timed-out catalog probe returned partial result: cat=%v store=%T close=%v err=%v", cat, assets.memStore, closeFn != nil, err)
+	}
+	dc := cfg.driverConns.conns[cfg.MemoryStoreURL]
+	if dc == nil || dc.conn.GetState() != connectivity.Shutdown {
+		t.Fatalf("failed catalog probe leaked connection: cached=%v state=%v", dc != nil, func() connectivity.State {
+			if dc == nil {
+				return connectivity.Idle
+			}
+			return dc.conn.GetState()
+		}())
+	}
+}
+
+func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	driverv1.RegisterMemoryStoreServiceServer(server, grpcdriver.NewMemoryStoreServer(appBaseOnlyMemory{memmemory.New()}))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+
+	provider := mockllm.New(mockllm.TextTurn("x"))
+	cfg := Config{MemoryStoreURL: listener.Addr().String()}
+	cat, assets, _, _, closeFn, err := buildCatalog(context.Background(), cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName} {
+		if _, ok := cat.Lookup(name); !ok {
+			t.Errorf("base catalog missing %q", name)
+		}
+	}
+	for _, name := range []string{memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName} {
+		if _, ok := cat.Lookup(name); ok {
+			t.Errorf("base-only catalog unexpectedly registered %q", name)
+		}
+	}
+	if _, ok := assets.memStore.(tool.MemoryLifecycleStore); ok {
+		t.Fatalf("base-only assets advertise lifecycle: %T", assets.memStore)
 	}
 }
 

@@ -133,6 +133,10 @@ func (r *UserModelReviewer) reviewMessages(ctx context.Context, sessionID, works
 	// Observe's ctx is the same one Engine.Run's request-edge middleware already
 	// bound it onto — see the callers above.
 	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel"}, noopWorkspace{root: workspace}, nil)
+	ctx = tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{
+		Writer: tool.MemoryWriterModel, Origin: tool.MemoryOriginLearning,
+		Source: tool.MemorySource{SessionID: sessionID},
+	})
 	run := r.engine.Run(ctx, child, reviewEnv, RunRequest{Text: reviewPrompt(transcript)})
 	// Drain the child entirely (auto-denying any ask — the extraction child is
 	// non-interactive). We discard the summary text; the user-model writes are the

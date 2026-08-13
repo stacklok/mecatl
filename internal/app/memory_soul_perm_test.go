@@ -17,10 +17,16 @@ var memoryToolNames = []string{
 	memory.RememberToolName,
 	memory.RecallToolName,
 	memory.SearchMemoryToolName,
+	memory.InspectMemoryToolName,
+	memory.UndoMemoryToolName,
 	memory.RememberUserToolName,
 	memory.RecallUserToolName,
 	memory.SearchUserModelToolName,
+	memory.InspectUserMemoryToolName,
+	memory.UndoUserMemoryToolName,
 }
+
+var forgetMemoryToolNames = []string{memory.ForgetMemoryToolName, memory.ForgetUserMemoryToolName}
 
 // evalDefault evaluates tool against the built-in defaultRules() ruleset (no config,
 // no learned rules) in default mode, returning the resolved effect.
@@ -49,6 +55,22 @@ func TestMemoryToolsDefaultExplicitAllow(t *testing.T) {
 			session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Effect
 		if got != governance.Allow {
 			t.Errorf("memory tool %q should default to Allow (mainRules production assembly), got %v", name, got)
+		}
+	}
+}
+
+func TestForgetMemoryDefaultsToAskAndIsConfigOverridable(t *testing.T) {
+	for _, name := range forgetMemoryToolNames {
+		if got := evalDefault(t, name); got != governance.Ask {
+			t.Errorf("memory tool %q should default to Ask, got %v", name, got)
+		}
+		for _, effect := range []governance.Effect{governance.Allow, governance.Deny} {
+			policy := permpolicy.NewPolicy(append(defaultRules(), governance.Rule{Scope: governance.ScopeUser, Tool: name, Effect: effect}), nil)
+			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
+				session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Effect
+			if got != effect {
+				t.Errorf("configured %v on %q resolved to %v", effect, name, got)
+			}
 		}
 	}
 }

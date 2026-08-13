@@ -474,9 +474,9 @@ type Config struct {
 	SoulStrict  bool
 
 	// User model (issue #14, Phase 2): a user-scoped, cross-PROJECT memory of
-	// durable FACTS about the operator, exposed to the agent as RememberUser /
-	// RecallUser / SearchUserModel tools (2a, default-on) and injected as a turn-0
-	// <user-model> block (LAST, after the soul + project memory index). It is a
+	// durable FACTS about the operator, exposed through explicit user-memory tools
+	// and reloaded per provider request into the bounded volatile system suffix.
+	// It is a
 	// SECOND memory.Store under UserModelDir (or the conventional
 	// <xdg>/mecatl/usermodel). NoUserModel disables it entirely (--no-user-model).
 	//
@@ -500,6 +500,10 @@ type Config struct {
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.
 	operatorLearningMode learning.Mode
+
+	// operatorProfileSource is composition-only wiring inherited by user-facing
+	// delegation engines. Internal-purpose classifier/reviewer/judge engines clear it.
+	operatorProfileSource prompt.OperatorProfileSource
 
 	// Skills: explicit directories (highest precedence) plus the conventional
 	// project/user locations when SkillsConventional is set. SkillsDraftDir enables
@@ -2089,6 +2093,7 @@ func sessionEngineFactory(
 		learningCfg.LearningMode = learningModeForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
+		attachOperatorProfile(&deps, assets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
 		deps.LearningObserver = buildLearningObserver(learningCfg, reg, resolvedProviderID, resolvedProvider, assets.userModelStore, assets.learningAdmission)
 		deps.Catalog = cat
@@ -2838,13 +2843,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	rulesSrc := resolveRulesSeam(ctx, cfg)
 
 	// Instructions seam: RootAssembler (AGENTS.md/CLAUDE.md) always; then rules
-	// (project/user rules, when wired), then the soul (identity, when wired),
-	// then the tier-0 MemoryIndexAssembler (saved facts, when wired) — project
-	// context → persona → saved facts → operator model. The adapters
-	// (*rulesfs.FSSource, *soul.Store, *memory.Store) meet their prompt-defined
-	// ports HERE, in the composition layer — prompt never imports them. All ride
-	// as turn-0 user messages (after the cache breakpoint), so none enters
-	// prompt.Build's StablePrefix.
+	// (project/user rules, when wired), then the soul (identity, when wired), then
+	// the tier-0 project MemoryIndexAssembler. Operator facts no longer ride a
+	// turn-0 user fragment; the same user store is loaded per request into the
+	// volatile system-prompt suffix below.
 	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
 
 	// Guardrails decorate the ordinary hook chain. Completion learning has its own
@@ -2886,6 +2888,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	learningAdmission := newLearningAdmission(cfg.UserModelReviewInterval)
 	assets.learningAdmission = learningAdmission
 	deps := baseEngineDeps(cfg, reg, provider, store, sharedPolicy, mainHooks, mcpProvider, instructions)
+	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
 	deps.LearningObserver = buildLearningObserver(cfg, reg, reg.Default(), provider, userModelStore, learningAdmission)
 	deps.Catalog = cat
@@ -2936,35 +2939,21 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	return agent.NewEngine(deps), assets.globalMgr, mcpProvider, mcpInventory, sessFactory, learned, sharedPolicy, assets, scheduleMgr, mcpClose, nil
 }
 
-// buildInstructionAssembler composes the turn-0 instruction assembler in order:
-// always the RootAssembler (project instruction files); then the SoulAssembler
-// (user-scoped persona/identity) when a soul source is wired (soulSrc non-nil);
-// then the tier-0 MemoryIndexAssembler (saved project facts) when a project memory
-// store is wired (memStore non-nil); then the UserModelAssembler (durable FACTS
-// about the operator) when a user-model store is wired (userModelStore non-nil).
-// Order is identity → saved project facts → operator model (issue #14 ordering).
-// Each nil collaborator is OMITTED entirely, so a soul/memory/user-model-disabled
-// deployment adds no machinery. The sources satisfy prompt.SoulSource /
-// prompt.MemoryIndexSource / prompt.UserModelSource structurally; this is the one
-// place those adapters meet their ports. When nothing but the root is wired, the
-// bare RootAssembler is returned (no Multi).
-// buildInstructionAssembler composes the turn-0 instruction assemblers in their
-// byte-stable order: RootAssembler (AGENTS.md/CLAUDE.md) → rules (project/user
-// rules, when wired) → soul (identity, when wired) → MemoryIndexAssembler (saved
-// facts, when wired) → UserModelAssembler (operator model, when wired) — project
-// context → persona → saved facts → operator model. The adapters (*rulesfs.FSSource,
-// *soul.Store, *memory.Store) meet their prompt-defined ports HERE, in the
-// composition layer — prompt never imports them. All ride as turn-0 user messages
-// (after the cache breakpoint), so none enters prompt.Build's StablePrefix.
-//
-// noRoot omits the RootAssembler (AGENTS.md/CLAUDE.md) — when project ingestion is
-// not admitted (untrusted workspace, or the ingestion grant withheld; issue #359
-// redesign) that project-tier ingestion is suppressed while leaving rules/soul/
-// memory (which carry their own trust provenance) intact. When noRoot AND nothing
-// else is wired, a zero-child MultiAssembler is returned (an honest no-op:
-// Assemble → nil,nil).
+func attachOperatorProfile(deps *agent.Deps, store tool.MemoryStore) {
+	if store != nil {
+		deps.OperatorProfileSource = store
+	}
+}
+
+// buildInstructionAssembler composes the ephemeral turn-0 instruction fragments:
+// RootAssembler (project instructions), rules, soul, then the project memory
+// index. userModelStore remains in the internal signature to keep existing
+// composition tests/source compatibility, but operator facts now load per request
+// through Deps.OperatorProfileSource into the volatile system suffix; they are
+// never emitted as a user-message fragment.
 func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulSource, memStore, userModelStore tool.MemoryStore, noRoot bool) prompt.InstructionAssembler {
-	if rulesSrc == nil && soulSrc == nil && memStore == nil && userModelStore == nil {
+	_ = userModelStore
+	if rulesSrc == nil && soulSrc == nil && memStore == nil {
 		if noRoot {
 			// Project ingestion is not admitted (untrusted workspace, or the
 			// ingestion grant withheld) and no other assembler is wired: a
@@ -2988,11 +2977,6 @@ func buildInstructionAssembler(rulesSrc prompt.RulesSource, soulSrc prompt.SoulS
 	}
 	if memStore != nil {
 		assemblers = append(assemblers, prompt.MemoryIndexAssembler{Src: memStore})
-	}
-	if userModelStore != nil {
-		// LAST in the seam (issue #14 ordering): rules → soul (identity) → memory index
-		// (saved project facts) → user model (who the operator is).
-		assemblers = append(assemblers, prompt.UserModelAssembler{Src: userModelStore})
 	}
 	return prompt.NewMultiAssembler(assemblers...)
 }
@@ -3098,6 +3082,17 @@ func resolveRulesSeam(ctx context.Context, cfg Config) prompt.RulesSource {
 // ~/.config/mecatl/usermodel). Mirrors soul's soulSubpath path convention.
 const userModelSubdir = "mecatl/usermodel"
 
+func resolveUserModelDir(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	base := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, userModelSubdir)
+}
+
 // buildUserModelStore constructs the SECOND, USER-scoped memory store (issue #14,
 // Phase 2) — a cross-project store of durable FACTS about the operator. It returns
 // an untyped nil tool.MemoryStore when user-model is disabled (--no-user-model),
@@ -3114,14 +3109,10 @@ func buildUserModelStore(cfg Config) tool.MemoryStore {
 		cfg.diag().Log(context.Background(), port.LevelInfo, "user model DISABLED (--no-user-model)")
 		return nil
 	}
-	dir := cfg.UserModelDir
+	dir := resolveUserModelDir(cfg.UserModelDir)
 	if dir == "" {
-		base := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
-		if base == "" {
-			cfg.diag().Log(context.Background(), port.LevelInfo, "user model DISABLED (no --user-model-dir and no XDG/home to resolve the conventional location)")
-			return nil
-		}
-		dir = filepath.Join(base, userModelSubdir)
+		cfg.diag().Log(context.Background(), port.LevelInfo, "user model DISABLED (no --user-model-dir and no XDG/home to resolve the conventional location)")
+		return nil
 	}
 	store, err := memory.New(dir)
 	if err != nil {
@@ -3276,15 +3267,16 @@ func engineDepsForProvider(
 		// field was left nil, which silently zeroed EVERY latency observation —
 		// EvTurnEnd.DurationMs/TTFT/inter-token and tool queued/took. Children inherit
 		// it (childEngineDepsForProvider does not clear it).
-		Clock:           wallclock.Clock{},
-		Diagnostics:     cfg.diag(),
-		PromptConfig:    promptConfig(modelCfg, cfg.gitStatus),
-		Model:           model,
-		ContextWindow:   windowFn,
-		CompactionRatio: defaultCompactionRatio,
-		TokenCounter:    counter,
-		Compactor:       buildCompactor(compactorCfg, provider, compactorCounter),
-		CommandExpander: buildCommandExpander(cfg, mcpProvider),
+		Clock:                 wallclock.Clock{},
+		Diagnostics:           cfg.diag(),
+		PromptConfig:          promptConfig(modelCfg, cfg.gitStatus),
+		Model:                 model,
+		ContextWindow:         windowFn,
+		CompactionRatio:       defaultCompactionRatio,
+		OperatorProfileSource: cfg.operatorProfileSource,
+		TokenCounter:          counter,
+		Compactor:             buildCompactor(compactorCfg, provider, compactorCounter),
+		CommandExpander:       buildCommandExpander(cfg, mcpProvider),
 		// No-progress nudge budget: operator-tunable (cfg), inherited by children
 		// (childEngineDepsForProvider keeps this field). Zero → NewEngine applies the
 		// safe default of 2; negative disables.
@@ -4114,6 +4106,8 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 // unlike the default-on local memory.New whose failure stays fail-soft
 // (WARN + tools disabled). On error every connection already made here is
 // torn down before returning.
+//
+//nolint:gocyclo // composition wiring branches by optional adapter capability and configured backend.
 func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, hooks port.HookRunner, agentReg *agents.Registry, store port.SessionStore, scheduleManagerFactory func() port.ScheduleManager) (*tool.Catalog, catalogAssets, mcp.Provider, []mcpsource.SourceInfo, func(), error) {
 	// Connect the MAIN MCP servers FIRST, so the per-agent-def Subagent engines built by
 	// buildSubagentTool can (a) pull a REFERENCED main server's tools out of this manager
@@ -4145,7 +4139,12 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 			mcpClose()
 			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("dial memory-store driver %q: %w", cfg.MemoryStoreURL, err)
 		}
-		memStore = grpcdriver.NewMemoryStore(conn)
+		memStore, err = grpcdriver.NegotiateMemoryStore(ctx, conn)
+		if err != nil {
+			closeFn()
+			mcpClose()
+			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("probe memory-store driver %q: %w", cfg.MemoryStoreURL, err)
+		}
 		memDriverClose = closeFn
 		cfg.diag().Log(ctx, port.LevelInfo, "memory tools ENABLED (Remember/Recall/SearchMemory); permission: allow (built-in default, overridable to ask/deny via settings)", "target", cfg.MemoryStoreURL)
 		startMemoryConsolidation(ctx, cfg, memStore, provider)
@@ -5082,6 +5081,16 @@ func childTelemetryFor(cfg Config, role string) (port.EventSink, port.ToolCallRe
 	return cfg.MetricsRoleScoper(roleFamily(role))
 }
 
+func childOperatorProfileSource(cfg Config, role string) prompt.OperatorProfileSource {
+	switch {
+	case role == "guardrail-checker", role == "ask-reviewer", role == "model-router",
+		role == "usermodel-review", strings.Contains(role, "judge"):
+		return nil
+	default:
+		return cfg.operatorProfileSource
+	}
+}
+
 // newChildEngine bakes in the shared shape every child/member engine assembles:
 // an allow-all (non-interactive) permission policy, an inert hook runner, and the
 // standard context-window / compaction-trigger settings. Call sites supply only
@@ -5145,8 +5154,9 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		// supplies the registry's shared resolver for that pair. Keeping the closure
 		// explicit prevents this default-provider helper from guessing provider identity
 		// and keeps configured/live/catalog windows on the same path as every other engine.
-		ContextWindow:   windowFn,
-		CompactionRatio: defaultCompactionRatio,
+		ContextWindow:         windowFn,
+		CompactionRatio:       defaultCompactionRatio,
+		OperatorProfileSource: childOperatorProfileSource(cfg, role),
 		// ChildAskReviewer is deliberately ABSENT (nil): a child engine never carries
 		// the ask reviewer — no nesting, and the reviewer engine is itself built
 		// through the child deps path, so inheriting it would recurse at
@@ -5201,6 +5211,7 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 	)
 	deps.Catalog = cat
 	deps.PromptConfig = pc
+	deps.OperatorProfileSource = childOperatorProfileSource(cfg, role)
 	// Child engines do NOT expand slash commands (the old newChildEngineWithHooks
 	// path left CommandExpander nil — a sub-agent receives literal instructions, not
 	// user "/cmd" text). engineDepsForProvider built one from cfg; clear it so the
@@ -6392,6 +6403,7 @@ func applyMemberRoute(cfg Config, provReg *providerRegistry, parentProviderID, r
 
 // base-sharing read-only-member backstop stays sound. `a` is read only when noFS.
 func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager, a catalogAssets, noFS bool) server.MemberEngineFactory {
+	cfg.operatorProfileSource, _ = a.userModelStore.(prompt.OperatorProfileSource)
 	return func(t *team.Team, spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 		if noFS {
 			model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
@@ -7168,6 +7180,12 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: memory.RememberUserToolName, Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: memory.RecallUserToolName, Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: memory.SearchUserModelToolName, Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: memory.InspectMemoryToolName, Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: memory.UndoMemoryToolName, Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: memory.ForgetMemoryToolName, Effect: governance.Ask},
+		{Scope: governance.ScopeBuiltinDefault, Tool: memory.InspectUserMemoryToolName, Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: memory.UndoUserMemoryToolName, Effect: governance.Allow},
+		{Scope: governance.ScopeBuiltinDefault, Tool: memory.ForgetUserMemoryToolName, Effect: governance.Ask},
 		// Soul application: the synthetic "soul:apply" action the soul load-gate
 		// consults at build time (selectSoulSource). Pre-approved here so the soul is
 		// applied by default; an operator config Ask/Deny still wins (Ask ⇒ withheld,

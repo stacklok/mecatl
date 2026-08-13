@@ -7,6 +7,10 @@
     ifacemethod func (FileSystem).Glob(ctx context.Context, pattern string) ([]string, error)
     ifacemethod func (FileSystem).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (FileSystem).Stat(ctx context.Context, path string) (FileInfo, error)
+    ifacemethod func (MemoryLifecycleStore).ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
+    ifacemethod func (MemoryLifecycleStore).Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
+    ifacemethod func (MemoryLifecycleStore).RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error)
+    ifacemethod func (MemoryLifecycleStore).UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
     ifacemethod func (MemoryStore).Forget(ctx context.Context, key string) error
     ifacemethod func (MemoryStore).Index(ctx context.Context) ([]MemoryEntry, error)
     ifacemethod func (MemoryStore).List(ctx context.Context, prefix string) ([]MemoryEntry, error)
@@ -39,6 +43,7 @@
     method func (*Catalog).Register(t Tool) error
     method func (*Catalog).Specs(mode session.PermissionMode) []ToolSpec
     method func (*Catalog).Tools() []Tool
+    method func (*MemoryVersionConflictError).Error() string
     method func (*Search).Execute(_ context.Context, in session.ToolCall, _ Environment) (session.ToolResult, error)
     method func (*Search).ReadOnly() bool
     method func (*Search).Spec() ToolSpec
@@ -56,18 +61,41 @@ const AgentOriginUser AgentOrigin = "user"
 const BashToolName untyped string = "Bash"
 const MaxAgentBodyBytes untyped int = 32768
 const MaxAgentDescriptionBytes untyped int = 2000
+const MemoryOriginConsolidation MemoryOrigin = "consolidation"
+const MemoryOriginExplicit MemoryOrigin = "explicit"
+const MemoryOriginImported MemoryOrigin = "imported"
+const MemoryOriginLearning MemoryOrigin = "learning"
+const MemoryOriginUndo MemoryOrigin = "undo"
+const MemoryStatusActive MemoryStatus = "active"
+const MemoryStatusDeleted MemoryStatus = "deleted"
+const MemoryStatusSuperseded MemoryStatus = "superseded"
+const MemoryWriterModel MemoryWriter = "model"
+const MemoryWriterSystem MemoryWriter = "system"
+const MemoryWriterUser MemoryWriter = "user"
 const SkillOriginDriver SkillOrigin = "driver"
 const SkillOriginExplicit SkillOrigin = "explicit"
 const SkillOriginProject SkillOrigin = "project"
 const SkillOriginUser SkillOrigin = "user"
 const ToolSearchName untyped string = "ToolSearch"
+func CanonicalMemoryText(value string) string
+func DirectiveShapedUserMemory(value string) bool
 func LedgerKey(root string, path string) string
+func MemoryAttributionFromContext(ctx context.Context) (MemoryAttribution, bool)
 func MustEnvironment(ref session.EnvironmentRef, ws Workspace, runner CommandRunner) Environment
 func NewCatalog() *Catalog
 func NewEnvironment(ref session.EnvironmentRef, ws Workspace, runner CommandRunner) (Environment, error)
 func NewFileVersion(token string) FileVersion
 func NewToolSearch(cat *Catalog) *Search
+func SecretShapedMemoryValue(key string, value string) bool
+func ValidMemoryKey(key string) bool
 func ValidSkillAssetName(name string) bool
+func ValidateMemoryContent(key string, value string, description string) error
+func ValidateMemoryContentWrite(key string, value string, description string, attribution MemoryAttribution) error
+func ValidateMemoryEntry(entry MemoryEntry) error
+func ValidateMemoryEntryWrite(entry MemoryEntry, attribution MemoryAttribution) error
+func ValidateMemoryWrite(key string, value string) error
+func WithMemoryAttribution(ctx context.Context, attribution MemoryAttribution) context.Context
+func WithMemorySource(ctx context.Context, source MemorySource) context.Context
 type AgentDef struct{Name string; Description string; Tools []string; DisallowedTools []string; Model string; Provider string; PermissionMode string; MaxTurns int; MaxToolCalls int; Color string; Skills []string; MCPServers []AgentMCPServer; Hooks map[string]string; Memory string; Body string; Origin AgentOrigin}
 type AgentDefSource interface{ListAgentDefs(ctx context.Context) ([]AgentDef, error)}
 type AgentMCPServer struct{Name string; URL string; Headers map[string]string}
@@ -84,8 +112,18 @@ type FileInfo struct{Name string; Size int64; Mode fs.FileMode; ModTime time.Tim
 type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, error); Read(ctx context.Context, path string) ([]byte, error); Stat(ctx context.Context, path string) (FileInfo, error)}
 type FileVersion struct{}
 type GrepMatch struct{Path string; Line int; Text string}
+type MemoryAttribution struct{Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
+type MemoryLifecycleStore interface{ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error); Inspect(ctx context.Context, key string) (MemoryRecord, bool, error); RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error); UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)}
+type MemoryOrigin string
+type MemoryRecord struct{Current MemoryRevision; Revisions []MemoryRevision}
+type MemoryRevision struct{Key string; Value string; Description string; Version MemoryVersion; Status MemoryStatus; Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource; UpdatedAt time.Time}
+type MemorySource struct{SessionID string}
+type MemoryStatus string
 type MemoryStore interface{Forget(ctx context.Context, key string) error; Index(ctx context.Context) ([]MemoryEntry, error); List(ctx context.Context, prefix string) ([]MemoryEntry, error); Recall(ctx context.Context, key string) (MemoryEntry, bool, error); RememberEntry(ctx context.Context, e MemoryEntry) error; Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)}
+type MemoryVersion string
+type MemoryVersionConflictError struct{Key string; Expected MemoryVersion; Actual MemoryVersion}
+type MemoryWriter string
 type PlanOnly interface{PlanOnlyTool(); Tool}
 type Search struct{}
 type SearchProvider interface{Search(ctx context.Context, q SearchQuery) ([]SearchResult, error)}
@@ -102,8 +140,12 @@ type Workspace interface{CreateFile(ctx context.Context, path string, data []byt
 type WorkspaceReader interface{Read(ctx context.Context, path string) ([]byte, error); Root() string; Stat(ctx context.Context, path string) (FileInfo, error)}
 var ErrDuplicateTool error
 var ErrEnvironmentNoWorkspace error
+var ErrInstructionMemory error
+var ErrInvalidMemoryKey error
+var ErrMemoryNotFound error
 var ErrNoShell error
 var ErrSearchBackendDown error
 var ErrSearchUnavailable error
+var ErrSecretMemoryValue error
 var ErrSkillAssetNotFound error
 var ErrSkillNotFound error

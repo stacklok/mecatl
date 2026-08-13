@@ -3,20 +3,20 @@
 
 
 
-               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-               ┃                                                                    ┃
-               ┃  User model (operator facts)                                       ┃
-               ┃                                                                    ┃
-               ┃  2 facts · 64 bytes · sha:abc123def456                             ┃
-               ┃                                                                    ┃
-               ┃  name                                                              ┃
-               ┃    the operator's name                                             ┃
-               ┃  stack                                                             ┃
-               ┃    prefers Go + hexagonal architecture                             ┃
-               ┃                                                                    ┃
-               ┃  the agent curates this · Recall loads a fact's value · esc close  ┃
-               ┃                                                                    ┃
-               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                 ┃
+┃  User model (operator facts)                                                                    ┃
+┃                                                                                                 ┃
+┃  2 facts · 64 bytes · sha:abc123def456                                                          ┃
+┃                                                                                                 ┃
+┃  › name                                                                                         ┃
+┃    the operator's name                                                                          ┃
+┃    stack                                                                                        ┃
+┃    prefers Go + hexagonal architecture                                                          ┃
+┃                                                                                                 ┃
+┃  ↑/↓ select · enter inspect · the agent curates this · Recall loads a fact's value · esc close  ┃
+┃                                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

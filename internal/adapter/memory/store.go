@@ -16,6 +16,9 @@ package memory
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -48,6 +51,14 @@ const (
 	// cross-process lock before giving up with a clear error, so a stuck or
 	// crashed holder cannot deadlock a run indefinitely.
 	lockTimeout = 5 * time.Second
+	// Lifecycle resource ceilings are deliberately fixed, conservative defaults:
+	// 64 KiB per value/description, 64 retained revisions per key, 4096 keys, and
+	// an 8 MiB encoded document. They bound one locked transaction without adding
+	// a configurable quota subsystem.
+	maxMemoryFieldBytes   = 64 * 1024
+	maxRevisionsPerKey    = 64
+	maxMemoryEntries      = 4096
+	maxMemoryDocumentSize = 8 * 1024 * 1024
 )
 
 // Store is a file-backed, cross-process-safe tool.MemoryStore. It persists
@@ -87,13 +98,16 @@ const (
 // session-engine map is keyed) rather than calling New per session — do NOT open a
 // second *Store over a dir already owned in-process.
 type Store struct {
-	mu   sync.Mutex
-	path string
-	lock *flock.Flock
+	mu     sync.Mutex
+	path   string
+	lock   *flock.Flock
+	rename func(string, string) error
 }
 
-// Compile-time assertion that *Store implements tool.MemoryStore.
-var _ tool.MemoryStore = (*Store)(nil)
+var (
+	_ tool.MemoryStore          = (*Store)(nil)
+	_ tool.MemoryLifecycleStore = (*Store)(nil)
+)
 
 // New constructs a file-backed Store rooted at dir, creating dir (and parents)
 // if it does not exist. The store is scoped to dir: it owns <dir>/memory.json and
@@ -116,26 +130,41 @@ func New(dir string) (*Store, error) {
 		return nil, fmt.Errorf("memory: create dir %q: %w", dir, err)
 	}
 	return &Store{
-		path: filepath.Join(dir, memoryFileName),
-		lock: flock.New(filepath.Join(dir, lockFileName)),
+		path:   filepath.Join(dir, memoryFileName),
+		lock:   flock.New(filepath.Join(dir, lockFileName)),
+		rename: os.Rename,
 	}, nil
 }
 
-// persisted is the on-disk JSON shape: a map from key to its record. A map keeps
-// the file order-independent; List sorts for deterministic output.
+// persisted remains compatible with the original {"entries": ...} document.
+// History is additive and omitted until the first mutation of a key. Older
+// binaries ignore it while reading, but a downgraded binary that subsequently
+// writes memory.json will discard history; current values remain compatible.
 type persisted struct {
-	Entries map[string]record `json:"entries"`
+	Entries          map[string]record              `json:"entries"`
+	History          map[string][]persistedRevision `json:"history,omitempty"`
+	HistoryTruncated map[string]bool                `json:"history_truncated,omitempty"`
 }
 
-// record is one stored entry on disk. Description is additive: Task-1 files have
-// no "description" key, and omitempty + Go's zero-value decode means they load
-// cleanly with Description == "" (the index then derives one from the value). So
-// migration from the flat Task-1 format is a no-op read — no version bump, no
-// rewrite pass.
+// record is the legacy/current active-value projection. Deleted records are
+// absent here and retained only as lifecycle tombstones in History.
 type record struct {
 	Value       string    `json:"value"`
 	Description string    `json:"description,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type persistedRevision struct {
+	Key         string             `json:"key"`
+	Value       string             `json:"value,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Version     tool.MemoryVersion `json:"version"`
+	Status      tool.MemoryStatus  `json:"status"`
+	Writer      tool.MemoryWriter  `json:"writer,omitempty"`
+	Origin      tool.MemoryOrigin  `json:"origin,omitempty"`
+	Source      tool.MemorySource  `json:"source,omitempty"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	UndoOf      tool.MemoryVersion `json:"undo_of,omitempty"`
 }
 
 // withExclusiveLock acquires s.mu THEN the cross-process EXCLUSIVE flock, runs fn
@@ -159,6 +188,9 @@ func (s *Store) withExclusiveLock(ctx context.Context, fn func(data *persisted) 
 		return err
 	}
 	if err := fn(&data); err != nil {
+		return err
+	}
+	if err := data.enforceLimits(); err != nil {
 		return err
 	}
 	return s.save(data)
@@ -215,15 +247,21 @@ func (s *Store) RememberEntry(ctx context.Context, e tool.MemoryEntry) error {
 	if strings.TrimSpace(e.Key) == "" {
 		return fmt.Errorf("memory: RememberEntry requires a non-empty key")
 	}
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if err := tool.ValidateMemoryContentWrite(e.Key, e.Value, e.Description, attribution); err != nil {
+		return err
+	}
 	lctx, cancel := lockCtx(ctx)
 	defer cancel()
 	return s.withExclusiveLock(lctx, func(data *persisted) error {
-		data.Entries[e.Key] = record{
+		data.materializeLegacy(e.Key)
+		r := record{
 			Value:       e.Value,
 			Description: strings.TrimSpace(e.Description),
 			UpdatedAt:   time.Now().UTC(),
 		}
-		return nil
+		data.Entries[e.Key] = r
+		return data.appendActive(ctx, e.Key, r, tool.MemoryOriginImported)
 	})
 }
 
@@ -371,15 +409,287 @@ func descriptionOrFirstLine(description, value string) string {
 	return ""
 }
 
-// Forget deletes the entry for key. Deleting a missing key is a no-op (not an
-// error).
+// Forget deletes the active entry for key. It remains idempotent for legacy
+// callers, while an existing value is retained as lifecycle history plus a
+// tombstone.
 func (s *Store) Forget(ctx context.Context, key string) error {
 	lctx, cancel := lockCtx(ctx)
 	defer cancel()
 	return s.withExclusiveLock(lctx, func(data *persisted) error {
-		delete(data.Entries, key)
+		if _, ok := data.Entries[key]; !ok {
+			return nil
+		}
+		data.materializeLegacy(key)
+		return data.appendDeleted(ctx, key, tool.MemoryOriginImported, "")
+	})
+}
+
+// RememberVersioned atomically creates or replaces a record when expected is
+// the current opaque version. A legacy flat record is materialized as the first
+// imported revision inside the same locked write.
+func (s *Store) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		if expected != "" {
+			if err := data.compare(entry.Key, expected); err != nil {
+				return err
+			}
+		}
+		data.materializeLegacy(entry.Key)
+		r := record{Value: entry.Value, Description: strings.TrimSpace(entry.Description), UpdatedAt: time.Now().UTC()}
+		data.Entries[entry.Key] = r
+		if err := data.appendActive(ctx, entry.Key, r, tool.MemoryOriginExplicit); err != nil {
+			return err
+		}
+		out = data.snapshot(entry.Key)
 		return nil
 	})
+	return out, err
+}
+
+// Inspect returns the current state and complete history, including deleted
+// tombstones. Legacy flat records are projected as a stable imported baseline
+// without rewriting memory.json.
+func (s *Store) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var (
+		out   tool.MemoryRecord
+		found bool
+	)
+	err := s.withSharedLock(lctx, func(data persisted) error {
+		if _, ok := data.Entries[key]; !ok && len(data.History[key]) == 0 {
+			return nil
+		}
+		data.materializeLegacy(key)
+		out, found = data.snapshot(key), true
+		return nil
+	})
+	return out, found, err
+}
+
+// ForgetVersioned atomically appends a tombstone when expected is current.
+func (s *Store) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		if err := data.compare(key, expected); err != nil {
+			return err
+		}
+		if _, ok := data.Entries[key]; !ok {
+			return fmt.Errorf("memory: %q: %w", key, tool.ErrMemoryNotFound)
+		}
+		data.materializeLegacy(key)
+		if err := data.appendDeleted(ctx, key, tool.MemoryOriginExplicit, ""); err != nil {
+			return err
+		}
+		out = data.snapshot(key)
+		return nil
+	})
+	return out, err
+}
+
+// UndoLatest appends a compensating revision for the newest mutation not already
+// compensated. Recording the target version makes repeated undo walk backward
+// and prevents concurrent callers from reversing one mutation twice.
+func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		if err := data.compare(key, expected); err != nil {
+			return err
+		}
+		data.materializeLegacy(key)
+		history := data.History[key]
+		if len(history) == 0 {
+			return fmt.Errorf("memory: %q: %w", key, tool.ErrMemoryNotFound)
+		}
+		undone := make(map[tool.MemoryVersion]bool)
+		for _, revision := range history {
+			if revision.UndoOf != "" {
+				undone[revision.UndoOf] = true
+			}
+		}
+		target := -1
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].UndoOf == "" && !undone[history[i].Version] {
+				target = i
+				break
+			}
+		}
+		if target < 0 {
+			return fmt.Errorf("memory: %q: no mutation remains to undo", key)
+		}
+		if target == 0 && data.HistoryTruncated[key] {
+			return fmt.Errorf("memory: %q: cannot undo beyond retained history", key)
+		}
+		var previous *persistedRevision
+		if target > 0 {
+			candidate := history[target-1]
+			previous = &candidate
+		}
+		if previous == nil || previous.Status == tool.MemoryStatusDeleted {
+			if err := data.appendDeleted(ctx, key, tool.MemoryOriginUndo, history[target].Version); err != nil {
+				return err
+			}
+		} else {
+			r := record{Value: previous.Value, Description: previous.Description, UpdatedAt: time.Now().UTC()}
+			data.Entries[key] = r
+			if err := data.appendActiveUndo(ctx, key, r, history[target].Version); err != nil {
+				return err
+			}
+		}
+		out = data.snapshot(key)
+		return nil
+	})
+	return out, err
+}
+
+func (data *persisted) compare(key string, expected tool.MemoryVersion) error {
+	actual := data.currentVersion(key)
+	if actual != expected {
+		return &tool.MemoryVersionConflictError{Key: key, Expected: expected, Actual: actual}
+	}
+	return nil
+}
+
+func (data *persisted) currentVersion(key string) tool.MemoryVersion {
+	if history := data.History[key]; len(history) != 0 {
+		return history[len(history)-1].Version
+	}
+	if current, ok := data.Entries[key]; ok {
+		return legacyRevision(key, current).Version
+	}
+	return ""
+}
+
+func (data *persisted) materializeLegacy(key string) {
+	if len(data.History[key]) != 0 {
+		return
+	}
+	current, ok := data.Entries[key]
+	if !ok {
+		return
+	}
+	if data.History == nil {
+		data.History = make(map[string][]persistedRevision)
+	}
+	data.History[key] = []persistedRevision{legacyRevision(key, current)}
+}
+
+func legacyRevision(key string, current record) persistedRevision {
+	digest := sha256.Sum256([]byte(key + "\x00" + current.Value + "\x00" + current.Description + "\x00" + current.UpdatedAt.UTC().Format(time.RFC3339Nano)))
+	return persistedRevision{Key: key, Value: current.Value, Description: current.Description,
+		Version: tool.MemoryVersion("legacy-" + hex.EncodeToString(digest[:12])), Status: tool.MemoryStatusActive,
+		Origin: tool.MemoryOriginImported, UpdatedAt: current.UpdatedAt}
+}
+
+func (data *persisted) appendActive(ctx context.Context, key string, current record, origin tool.MemoryOrigin) error {
+	return data.appendRevision(ctx, persistedRevision{Key: key, Value: current.Value, Description: current.Description, Status: tool.MemoryStatusActive, Origin: origin, UpdatedAt: current.UpdatedAt})
+}
+
+func (data *persisted) appendActiveUndo(ctx context.Context, key string, current record, undoOf tool.MemoryVersion) error {
+	return data.appendRevision(ctx, persistedRevision{Key: key, Value: current.Value, Description: current.Description, Status: tool.MemoryStatusActive, Origin: tool.MemoryOriginUndo, UpdatedAt: current.UpdatedAt, UndoOf: undoOf})
+}
+
+func (data *persisted) appendDeleted(ctx context.Context, key string, origin tool.MemoryOrigin, undoOf tool.MemoryVersion) error {
+	delete(data.Entries, key)
+	return data.appendRevision(ctx, persistedRevision{Key: key, Status: tool.MemoryStatusDeleted, Origin: origin, UpdatedAt: time.Now().UTC(), UndoOf: undoOf})
+}
+
+func (data *persisted) appendRevision(ctx context.Context, revision persistedRevision) error {
+	if data.History == nil {
+		data.History = make(map[string][]persistedRevision)
+	}
+	history := data.History[revision.Key]
+	if len(history) != 0 && history[len(history)-1].Status == tool.MemoryStatusActive {
+		history[len(history)-1].Status = tool.MemoryStatusSuperseded
+	}
+	version, err := newMemoryVersion()
+	if err != nil {
+		return err
+	}
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if attribution.Origin != "" && revision.Origin != tool.MemoryOriginUndo {
+		revision.Origin = attribution.Origin
+	}
+	revision.Version = version
+	revision.Writer = attribution.Writer
+	revision.Source = attribution.Source
+	history = append(history, revision)
+	if len(history) > maxRevisionsPerKey {
+		history = append([]persistedRevision(nil), history[len(history)-maxRevisionsPerKey:]...)
+		data.markHistoryTruncated(revision.Key)
+	}
+	data.History[revision.Key] = history
+	return nil
+}
+
+func (data *persisted) markHistoryTruncated(key string) {
+	if data.HistoryTruncated == nil {
+		data.HistoryTruncated = make(map[string]bool)
+	}
+	data.HistoryTruncated[key] = true
+}
+
+func newMemoryVersion() (tool.MemoryVersion, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("memory: generate revision: %w", err)
+	}
+	return tool.MemoryVersion("local-" + hex.EncodeToString(raw[:])), nil
+}
+
+func (data persisted) snapshot(key string) tool.MemoryRecord {
+	history := data.History[key]
+	revisions := make([]tool.MemoryRevision, len(history))
+	for i, revision := range history {
+		revisions[i] = tool.MemoryRevision{Key: revision.Key, Value: revision.Value, Description: revision.Description,
+			Version: revision.Version, Status: revision.Status, Writer: revision.Writer, Origin: revision.Origin,
+			Source: revision.Source, UpdatedAt: revision.UpdatedAt}
+	}
+	return tool.MemoryRecord{Current: revisions[len(revisions)-1], Revisions: revisions}
+}
+
+func (data *persisted) enforceLimits() error {
+	keys := make(map[string]struct{}, len(data.Entries)+len(data.History))
+	for key, current := range data.Entries {
+		keys[key] = struct{}{}
+		if len(current.Value) > maxMemoryFieldBytes || len(current.Description) > maxMemoryFieldBytes {
+			return fmt.Errorf("memory: %q exceeds the %d-byte value/description limit", key, maxMemoryFieldBytes)
+		}
+	}
+	for key, history := range data.History {
+		keys[key] = struct{}{}
+		for _, revision := range history {
+			if len(revision.Value) > maxMemoryFieldBytes || len(revision.Description) > maxMemoryFieldBytes {
+				return fmt.Errorf("memory: %q exceeds the %d-byte value/description limit", key, maxMemoryFieldBytes)
+			}
+		}
+		if len(history) > maxRevisionsPerKey {
+			data.History[key] = append([]persistedRevision(nil), history[len(history)-maxRevisionsPerKey:]...)
+			data.markHistoryTruncated(key)
+		}
+	}
+	if len(keys) > maxMemoryEntries {
+		return fmt.Errorf("memory: entry limit exceeded (%d > %d)", len(keys), maxMemoryEntries)
+	}
+	raw, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("memory: encode for limit check: %w", err)
+	}
+	if len(raw) > maxMemoryDocumentSize {
+		return fmt.Errorf("memory: document limit exceeded (%d > %d bytes)", len(raw), maxMemoryDocumentSize)
+	}
+	return nil
 }
 
 // load reads and decodes the on-disk file. A missing file is an empty store, not
@@ -430,7 +740,7 @@ func (s *Store) save(data persisted) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("memory: close temp: %w", err)
 	}
-	if err := os.Rename(tmpName, s.path); err != nil {
+	if err := s.rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("memory: rename temp into place: %w", err)
 	}
 	return nil

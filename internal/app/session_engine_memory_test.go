@@ -25,9 +25,15 @@ var allMemoryToolNames = []string{
 	memory.RememberToolName,
 	memory.RecallToolName,
 	memory.SearchMemoryToolName,
+	memory.InspectMemoryToolName,
+	memory.ForgetMemoryToolName,
+	memory.UndoMemoryToolName,
 	memory.RememberUserToolName,
 	memory.RecallUserToolName,
 	memory.SearchUserModelToolName,
+	memory.InspectUserMemoryToolName,
+	memory.ForgetUserMemoryToolName,
+	memory.UndoUserMemoryToolName,
 }
 
 // memoryStoresForTest opens REAL flocked stores in temp dirs — the same concrete

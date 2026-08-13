@@ -238,8 +238,8 @@ type config struct {
 
 	// Embedded-server user-model config (issue #14, Phase 2; used only when hosting
 	// an in-process server). A user-scoped, CROSS-PROJECT memory of durable FACTS
-	// about the operator (RememberUser/RecallUser/SearchUserModel + a turn-0
-	// <user-model> block). ON by default at the conventional
+	// about the operator (explicit user-memory tools plus a live bounded operator
+	// profile in the volatile system suffix). ON by default at the conventional
 	// $XDG_CONFIG_HOME/mecatl/usermodel (fallback ~/.config/mecatl/usermodel).
 	// userModelDir overrides the dir; noUserModel disables it. userModelReview
 	// enables the OPT-IN (off by default) Stop-triggered background reviewer;
@@ -383,8 +383,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	fs.BoolVar(&cfg.noSoul, "no-soul", false, "embedded server only: disable the user-scoped persona/soul fragment entirely")
 	fs.BoolVar(&cfg.approveSoul, "approve-soul", false, "embedded server only: (re)write the soul DRIFT BASELINE to the current soul's content hash, accepting the file as-is. The baseline is a harness-owned sidecar next to the soul (<soul-path>.sha256); a later run whose hash differs logs a drift WARN")
 	fs.BoolVar(&cfg.soulStrict, "soul-strict", false, "embedded server only: refuse a DRIFTED soul — if its content hash differs from the recorded baseline, contribute NO soul fragment this run (instead of the default warn-and-load). Pair with --approve-soul to accept an edit")
-	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "embedded server only: directory for the user-scoped, CROSS-PROJECT user-model store of durable FACTS about the operator (empty = the conventional $XDG_CONFIG_HOME/mecatl/usermodel, fallback ~/.config/mecatl/usermodel). Exposes RememberUser/RecallUser/SearchUserModel and a turn-0 <user-model> block")
-	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "embedded server only: disable the user model entirely (the RememberUser/RecallUser/SearchUserModel tools and the <user-model> block)")
+	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "embedded server only: directory for the user-scoped, CROSS-PROJECT user-model store of durable FACTS about the operator (empty = the conventional $XDG_CONFIG_HOME/mecatl/usermodel, fallback ~/.config/mecatl/usermodel). Exposes explicit user-memory lifecycle tools and a live bounded operator profile")
+	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "embedded server only: disable the user model entirely (explicit tools and live operator profile)")
 	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "embedded server only: DEPRECATED compatibility alias for operator settings learning.mode: auto (one release window); conflicts with an explicit non-auto mode. The synchronous reviewer never reopens the user session")
 	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "embedded server only: process-wide completion debounce for learning.mode: auto and the deprecated --user-model-review alias (1 = every eligible completion)")
 	fs.StringVar(&cfg.commandsDir, "commands-dir", "", "embedded server only: directory of slash-command templates (<name>.md); empty = the conventional dirs (.mecatl/commands, .claude/commands)")

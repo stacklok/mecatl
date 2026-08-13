@@ -204,11 +204,15 @@ type Deps struct {
 	// prompt.Build (the v1 default: coding-agent role/tone/safety + tool
 	// inventory), byte-identical to v0.0.1. A host that needs a fully host-owned
 	// system prompt (e.g. a non-coding agent) supplies a prompt.Builder here; it
-	// receives the same Config the loop builds (Tools + volatile Env filled per
-	// turn) and returns the Layered prompt. Only the MAIN loop's buildRequest
-	// routes through this field — the compaction summarizer (cascade.go) builds
-	// its own prompt.Layered directly and is unaffected.
+	// receives the same Config the loop builds (Tools + volatile Env and live
+	// operator profile filled per turn) and returns the Layered prompt. Only the
+	// MAIN loop's buildRequest routes through this field — the compaction summarizer
+	// (cascade.go) builds its own prompt.Layered directly and is unaffected.
 	PromptBuilder prompt.Builder
+	// OperatorProfileSource supplies full durable user facts. When non-nil it is
+	// read before every model request; failures are fail-soft and retain the last
+	// good snapshot within the run.
+	OperatorProfileSource prompt.OperatorProfileSource
 
 	// Model is the provider model identifier sent on every request.
 	Model string
@@ -658,8 +662,11 @@ type Run struct {
 	// Instructions.Assemble error leaves fragments nil and the run continues. They are
 	// written once (under fragmentsOnce) and read on every turn of the SAME goroutine
 	// (the run loop is single-goroutine for buildRequest), so the Once is belt-and-braces.
-	fragments     []session.Message
-	fragmentsOnce sync.Once
+	fragments             []session.Message
+	fragmentsOnce         sync.Once
+	operatorProfile       []tool.MemoryEntry
+	operatorProfileLoaded bool
+	operatorProfileWarned bool
 }
 
 // runSerial mints the process-unique Run.serial discriminator (see Run.serial).
@@ -924,6 +931,17 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
 	ctx = withSessionOrigin(ctx, sess.ID)
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if attribution.Writer == "" {
+		attribution.Writer = tool.MemoryWriterModel
+	}
+	if attribution.Origin == "" {
+		attribution.Origin = tool.MemoryOriginExplicit
+	}
+	if attribution.Origin != tool.MemoryOriginLearning {
+		attribution.Source.SessionID = string(sess.ID)
+	}
+	ctx = tool.WithMemoryAttribution(ctx, attribution)
 	r := &Run{
 		events:    make(chan session.Event, 64),
 		asks:      newAskRegistry(),
@@ -1963,6 +1981,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	if cfg.Env.Cwd == "" {
 		cfg.Env.Cwd = sess.Workspace
 	}
+	e.refreshOperatorProfile(ctx, r, &cfg)
 	// PromptBuilder (issue #127): a host-supplied builder replaces prompt.Build
 	// when non-nil, so a host embedding the engine for a non-coding agent can
 	// fully own the system prompt. nil → prompt.Build (byte-identical to v0.0.1).
@@ -2015,6 +2034,27 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		Messages: msgs,
 		Tools:    cfg.Tools,
 		Model:    e.deps.Model,
+	}
+}
+
+func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt.Config) {
+	if e.deps.OperatorProfileSource == nil {
+		return
+	}
+	entries, err := e.deps.OperatorProfileSource.List(ctx, "user/")
+	if err != nil {
+		if !r.operatorProfileWarned {
+			r.operatorProfileWarned = true
+			r.diag.Log(ctx, port.LevelWarn, "operator-profile refresh failed; continuing with last good snapshot", "error", err)
+		}
+	} else {
+		r.operatorProfile = append(r.operatorProfile[:0], entries...)
+		r.operatorProfileLoaded = true
+	}
+	if r.operatorProfileLoaded {
+		cfg.OperatorProfile.Entries = append([]tool.MemoryEntry(nil), r.operatorProfile...)
+	} else {
+		cfg.OperatorProfile.Entries = nil
 	}
 }
 

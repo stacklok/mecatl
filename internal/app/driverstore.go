@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -38,26 +39,75 @@ func validateDriverConfig(cfg Config) error {
 	if cfg.MemoryDir != "" && cfg.MemoryStoreURL != "" {
 		return fmt.Errorf("--memory-dir %q and --memory-store-url %q are mutually exclusive: the memory store is either the local flock dir or the remote driver, never both", cfg.MemoryDir, cfg.MemoryStoreURL)
 	}
+	if err := validateMemoryDirIsolation(cfg); err != nil {
+		return err
+	}
+	if err := validateDriverSourceConfig(cfg); err != nil {
+		return err
+	}
+	return validateDriverTLSConfig(cfg)
+}
+
+func validateDriverSourceConfig(cfg Config) error {
 	if cfg.SkillSourceURL != "" && (len(cfg.SkillsDirs) > 0 || cfg.SkillsConventional) {
 		return fmt.Errorf("--skill-source-url %q and --skills-dir/--skills-conventional are mutually exclusive: skills come either from the local directories or from the remote driver, never both", cfg.SkillSourceURL)
 	}
 	if cfg.SoulSourceURL != "" && cfg.SoulPath != "" {
 		return fmt.Errorf("--soul-source-url %q and --soul-file %q are mutually exclusive: the user-slot soul is either the local file or the remote driver, never both (--no-soul still disables either)", cfg.SoulSourceURL, cfg.SoulPath)
 	}
-	// Agent defs: an EXPLICIT --agents-dir clashes with the driver (one source
-	// per seam); the default-true AgentsConventional deliberately does NOT —
-	// it is ON-and-inert by default, so the driver branch SUPERSEDES it with an
-	// INFO narration instead of failing every default deployment (the
-	// asymmetry vs skills, whose conventional discovery is opt-in, is by
-	// design). NO rule for --command-source-url: the command driver COMPOSES
-	// with file commands (file wins on a name collision), never replaces them.
+	// Explicit agent dirs clash with the driver; default conventional discovery
+	// is superseded because it is enabled and inert by default.
 	if cfg.AgentSourceURL != "" && len(cfg.AgentsDirs) > 0 {
 		return fmt.Errorf("--agent-source-url %q and --agents-dir are mutually exclusive: agent definitions come either from the explicit local directories or from the remote driver, never both (the default conventional discovery is superseded, not an error)", cfg.AgentSourceURL)
 	}
+	return nil
+}
+
+func validateDriverTLSConfig(cfg Config) error {
 	if !cfg.DriverTLS && (cfg.DriverTLSCA != "" || cfg.DriverTLSCert != "" || cfg.DriverTLSKey != "") {
 		return fmt.Errorf("--driver-tls-ca/--driver-tls-cert/--driver-tls-key require --driver-tls: without it they would be silently ignored and the driver connection would ride plaintext")
 	}
 	return nil
+}
+
+func validateMemoryDirIsolation(cfg Config) error {
+	if cfg.MemoryDir == "" || cfg.NoUserModel {
+		return nil
+	}
+	userPath := resolveUserModelDir(cfg.UserModelDir)
+	if userPath == "" {
+		return nil
+	}
+	memoryPath := cfg.MemoryDir
+	memoryDir, err := canonicalConfiguredDir(memoryPath)
+	if err != nil {
+		return fmt.Errorf("resolve --memory-dir %q: %w", memoryPath, err)
+	}
+	userDir, err := canonicalConfiguredDir(userPath)
+	if err != nil {
+		return fmt.Errorf("resolve --user-model-dir %q: %w", userPath, err)
+	}
+	if memoryDir == userDir {
+		return fmt.Errorf("--memory-dir %q and --user-model-dir %q resolve to the same directory; project and operator memory must be isolated", memoryPath, userPath)
+	}
+	return nil
+}
+
+func canonicalConfiguredDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	// A not-yet-created leaf cannot be symlink-aliased; resolve its existing parent.
+	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(abs))
+	if parentErr != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(abs)), nil
 }
 
 // driverConns is the per-target driver connection cache: equal URLs share ONE

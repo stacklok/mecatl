@@ -221,6 +221,13 @@ func (c *Consolidator) Consolidate(ctx context.Context) (Report, error) {
 // most Config.MaxForgets entries.
 func (c *Consolidator) apply(ctx context.Context, entries []tool.MemoryEntry, plan Plan) (Report, error) {
 	rewrite, fromMerge := c.stagePlan(entries, plan)
+	ctx = tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	for key, value := range rewrite {
+		if err := tool.ValidateMemoryContentWrite(key, value, "", attribution); err != nil {
+			return Report{}, fmt.Errorf("dream: validate rewrite %q: %w", key, err)
+		}
+	}
 
 	// Tally the merged vs. dropped split from the staged set.
 	var mergedCount, droppedCount int
@@ -233,8 +240,8 @@ func (c *Consolidator) apply(ctx context.Context, entries []tool.MemoryEntry, pl
 	}
 
 	// --- mutate the store -----------------------------------------------------
-	// Rewrites first (re-Remember an existing key with the tightened value), then
-	// forgets. Both touch only keys that already existed in the input.
+	// Consolidation intentionally stays on the six-operation MemoryStore contract,
+	// so a base-only remote executes one coherent plan without partial fallback.
 	for key, val := range rewrite {
 		if err := c.store.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: val}); err != nil {
 			return Report{}, fmt.Errorf("dream: rewrite %q: %w", key, err)

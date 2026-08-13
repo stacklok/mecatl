@@ -5,16 +5,16 @@
 
 
 
-      ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-      ┃                                                                                      ┃
-      ┃  User model (operator facts)                                                         ┃
-      ┃                                                                                      ┃
-      ┃  The user model is not enabled on this server.                                       ┃
-      ┃  Run a mecated without --no-user-model (and with an XDG/home to resolve the store).  ┃
-      ┃                                                                                      ┃
-      ┃  the agent curates this · Recall loads a fact's value · esc close                    ┃
-      ┃                                                                                      ┃
-      ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                 ┃
+┃  User model (operator facts)                                                                    ┃
+┃                                                                                                 ┃
+┃  The user model is not enabled on this server.                                                  ┃
+┃  Run a mecated without --no-user-model (and with an XDG/home to resolve the store).             ┃
+┃                                                                                                 ┃
+┃  ↑/↓ select · enter inspect · the agent curates this · Recall loads a fact's value · esc close  ┃
+┃                                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

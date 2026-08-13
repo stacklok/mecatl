@@ -20,28 +20,60 @@ memory with an LLM call — merging duplicates and dropping stale entries — bu
 deliberately conservative (it never invents keys and is fail-safe on error), run
 once or on a ticker via `RunPeriodically` (`--memory-consolidate-interval`).
 
-**User model (issue #14 Phase 2).** A SECOND `memory.Store` — user-scoped and
+**User model and live operator profile.** A SECOND `memory.Store` — user-scoped and
 **cross-project** (`<xdg>/mecatl/usermodel`, distinct from the per-project store) —
-holds durable FACTS about the operator. It is exposed (2a, default-on) as the
-**RememberUser/RecallUser/SearchUserModel** tool family (the parameterized memory tool
-structs, not duplicates) under an enforced `user/` key prefix, plus a turn-0
-`<user-model>` block (`prompt.UserModelAssembler`, injected LAST — soul → memory index →
-user model). RememberUser injection-scans the value AND the effective description at write time (`skills.ScanForInjection`) and rejects the `</user-model>` fence close-tag in either,
-guarding the block against transcript-sourced poisoning. Optional automatic review is
-controlled by `learning.mode` in operator `settings.yaml`: `off` (default), `review`
-(currently inert because no review queue exists), or `auto`. In `auto`, the completed-
-trajectory observer runs the existing `agent.UserModelReviewer` synchronously from an
-owned transcript snapshot and writes accepted facts through RememberUser; it needs no
-SessionStore and never reopens the terminal user session. The legacy ID-based `Review`
-method alone requires a SessionStore. A project may lower, but never raise, the operator
-mode. The legacy `--user-model-review` flag maps to `auto` for one compatibility window.
-Here, `off` means no automatic completed-trajectory reflection or review; it does not disable
-explicit tools or separately configured maintenance schedules. In particular,
-`--user-model-consolidate-interval > 0` independently authorizes the process-wide
-`dream.Consolidator{Prefix:"user/"}` when its user-model store and provider are available.
-Because that store is cross-project, an effective project `learning.mode: off` cannot suppress
-this operator-configured service. The user-model is a writable instruction FRAGMENT of FACTS,
-NEVER a governance scope; behaviour comes from the soul + system rules, not this block.
+holds durable facts about the operator. Standard composition exposes the portable
+RememberUser/RecallUser/SearchUserModel tools and, for lifecycle-capable stores,
+InspectUserMemory/ForgetUserMemory/UndoUserMemory. The same store satisfies
+`prompt.OperatorProfileSource` through its existing `List` shape: the loop reloads
+current valid `user/` facts for every main, subagent, team-member, and lead-synthesis
+provider request and renders a bounded, JSON-structured `<operator-profile-data>` block
+only in the volatile system suffix. Internal checker/reviewer/judge engines omit it. It
+never enters conversation history, never changes the cache-stable prefix, and can refresh after a tool write in the same run. The public
+`prompt.UserModelAssembler` remains available for engine compatibility but standard
+composition no longer wires its turn-0 user fragment. Project memory keeps only its
+value-omitting turn-0 index.
+
+This user model is **operator-scoped and process-global**, not keyed by the
+authenticated caller. A multi-tenant deployment must isolate user-model stores
+(and normally processes) per operator; caller identity does not provide
+per-principal user-model isolation. Exact detail is exposed only through the same
+already-authorized user-model surface and does not widen its callers.
+
+`tool.MemoryLifecycleStore` is an additive capability beside the unchanged six-method
+`tool.MemoryStore`. Revisions have opaque versions and active/superseded/deleted
+states. Remember with no expected version remains unconditional last-write-wins; a
+non-empty expected version enables CAS and stale versions conflict. Forget appends a
+tombstone, and Undo appends compensation. The local adapter lazily materializes legacy `memory.json`
+entries and commits current state plus history under the same flock and atomic rename
+(no sidecar transaction). Driver lifecycle RPCs are additive and advertised through
+a one-time capability negotiation bounded by a fixed five-second ceiling (shorter caller
+deadlines still win); old drivers return a base-only client, retain all
+six ordinary operations and profile loading through `List`, and do not register
+Inspect/Forget/Undo. Both reference stores retain 64 revisions per key. The local store also
+bounds fields to 64 KiB and caps the store at 4096 keys / 8 MiB. Retention records when the
+oldest predecessor was truncated, so Undo stops without mutation at that boundary instead of
+mistaking it for proof that the retained target created the key.
+
+Remember is floor-Allow as before; Recall/Search/Inspect/Undo are floor-Allow and
+Forget is floor-Ask. All are config-overridable. Automatic review is controlled by
+`learning.mode` (`off` by default); turning it off does not remove explicit tools or
+the live profile. In `auto`, the completed-trajectory observer writes accepted facts
+through RememberUser and preserves the source session attribution. Consolidation is
+independently operator-scheduled and deliberately uses only the six base-store operations,
+so local and old remote stores execute the same coherent plan.
+
+Every final model/wire/TUI projection first uses the shared
+`tool.CanonicalMemoryText` representation: it repairs invalid UTF-8 and strips the exact
+invisible/bidi format and non-LF/tab control set before both classification and rendering.
+High-confidence secret-shaped values and descriptions are then withheld. All base and lifecycle Remember paths validate
+both fields, including high-confidence Bearer/assignment/quote/short-label and indented
+PEM wrappers. New lifecycle writes additionally enforce the strict namespaced key grammar.
+Model-authored user facts pass a narrow directive/role override check before persistence,
+and the final profile/detail boundaries repeat both checks for imported, migrated, or
+remote entries; ordinary facts, useful Unicode, and security prose remain accepted.
+Composition rejects direct or symlink-aliased project-memory/user-model directories,
+and profile enumeration accepts only valid `user/` keys.
 
 ## Prerequisites
 

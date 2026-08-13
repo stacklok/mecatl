@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -125,12 +126,12 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 	aliceTools := Tools(store)
 	bobTools := Tools(store)
 
-	remember := aliceTools[1]
+	remember := aliceTools[0]
 	result, err := remember.Execute(aliceCtx, session.NewToolCall("remember-alice", RememberToolName, memoryArgs(`{"key":"same-key","value":"alice secret","description":"alice fact"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Alice Remember = (%+v, %v)", result, err)
 	}
-	foreignRecall, err := bobTools[0].Execute(bobCtx, session.NewToolCall("recall-bob", RecallToolName, memoryArgs(`{"key":"same-key"}`)), noFSTestEnv)
+	foreignRecall, err := bobTools[1].Execute(bobCtx, session.NewToolCall("recall-bob", RecallToolName, memoryArgs(`{"key":"same-key"}`)), noFSTestEnv)
 	if err != nil || foreignRecall.IsError || strings.Contains(foreignRecall.Content, "alice secret") || !strings.Contains(foreignRecall.Content, "No memory found") {
 		t.Fatalf("Bob foreign Recall = (%+v, %v), want an absent result without Alice's value", foreignRecall, err)
 	}
@@ -138,7 +139,7 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 	if err != nil || foreignSearch.IsError || strings.Contains(foreignSearch.Content, "alice") && !strings.Contains(foreignSearch.Content, "No memory entries") {
 		t.Fatalf("Bob foreign Search = (%+v, %v), want no Alice entry", foreignSearch, err)
 	}
-	result, err = bobTools[1].Execute(bobCtx, session.NewToolCall("remember-bob", RememberToolName, memoryArgs(`{"key":"same-key","value":"bob value","description":"bob fact"}`)), noFSTestEnv)
+	result, err = bobTools[0].Execute(bobCtx, session.NewToolCall("remember-bob", RememberToolName, memoryArgs(`{"key":"same-key","value":"bob value","description":"bob fact"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Bob Remember = (%+v, %v)", result, err)
 	}
@@ -157,15 +158,15 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 	userStore := NewCallerStore(userBase, false)
 	aliceUserTools := NewUserModelTools(userStore)
 	bobUserTools := NewUserModelTools(userStore)
-	result, err = aliceUserTools[1].Execute(aliceCtx, session.NewToolCall("remember-user-alice", RememberUserToolName, memoryArgs(`{"key":"preference","value":"alice user value"}`)), noFSTestEnv)
+	result, err = aliceUserTools[0].Execute(aliceCtx, session.NewToolCall("remember-user-alice", RememberUserToolName, memoryArgs(`{"key":"preference","value":"alice user value"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Alice RememberUser = (%+v, %v)", result, err)
 	}
-	foreignUserRecall, err := bobUserTools[0].Execute(bobCtx, session.NewToolCall("recall-user-bob", RecallUserToolName, memoryArgs(`{"key":"user/preference"}`)), noFSTestEnv)
+	foreignUserRecall, err := bobUserTools[1].Execute(bobCtx, session.NewToolCall("recall-user-bob", RecallUserToolName, memoryArgs(`{"key":"user/preference"}`)), noFSTestEnv)
 	if err != nil || foreignUserRecall.IsError || strings.Contains(foreignUserRecall.Content, "alice user value") || !strings.Contains(foreignUserRecall.Content, "No memory found") {
 		t.Fatalf("Bob foreign RecallUser = (%+v, %v), want an absent result without Alice's value", foreignUserRecall, err)
 	}
-	result, err = bobUserTools[1].Execute(bobCtx, session.NewToolCall("remember-user-bob", RememberUserToolName, memoryArgs(`{"key":"preference","value":"bob user value"}`)), noFSTestEnv)
+	result, err = bobUserTools[0].Execute(bobCtx, session.NewToolCall("remember-user-bob", RememberUserToolName, memoryArgs(`{"key":"preference","value":"bob user value"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Bob RememberUser = (%+v, %v)", result, err)
 	}
@@ -175,5 +176,95 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 	entry, ok, rerr = userStore.Recall(aliceCtx, "user/preference")
 	if rerr != nil || !ok || entry.Value != "alice user value" {
 		t.Fatalf("Alice user-model value after Bob write/delete = (%+v, %t, %v), want unchanged", entry, ok, rerr)
+	}
+}
+
+type baseOnlyMemoryStore struct{ tool.MemoryStore }
+
+func TestCallerStoresPreserveOptionalLifecycleCapability(t *testing.T) {
+	base, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, store := range map[string]tool.MemoryStore{
+		"namespace": NewNamespacedStore(base, "test"),
+		"caller":    NewCallerStore(base, false),
+	} {
+		if _, ok := store.(tool.MemoryLifecycleStore); !ok {
+			t.Errorf("%s wrapper dropped MemoryLifecycleStore", name)
+		}
+	}
+
+	baseOnly := baseOnlyMemoryStore{MemoryStore: base}
+	for name, store := range map[string]tool.MemoryStore{
+		"namespace": NewNamespacedStore(baseOnly, "test"),
+		"caller":    NewCallerStore(baseOnly, false),
+	} {
+		if _, ok := store.(tool.MemoryLifecycleStore); ok {
+			t.Errorf("%s wrapper advertised unsupported MemoryLifecycleStore", name)
+		}
+	}
+}
+
+func TestCallerLifecycleProfileDetailAndHistoryAreIsolated(t *testing.T) {
+	base, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewCallerStore(base, false)
+	lifecycle, ok := store.(tool.MemoryLifecycleStore)
+	if !ok {
+		t.Fatal("caller wrapper did not preserve lifecycle capability")
+	}
+	aliceCtx := callerContext("alice", "")
+	bobCtx := callerContext("bob", "")
+
+	aliceFirst, err := lifecycle.RememberVersioned(aliceCtx, tool.MemoryEntry{Key: "user/preference", Value: "alice-v1", Description: "alice detail"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceSecond, err := lifecycle.RememberVersioned(aliceCtx, tool.MemoryEntry{Key: "user/preference", Value: "alice-v2", Description: "alice current"}, aliceFirst.Current.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobRecord, err := lifecycle.RememberVersioned(bobCtx, tool.MemoryEntry{Key: "user/preference", Value: "bob-v1", Description: "bob detail"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name        string
+		ctx         context.Context
+		wantValue   string
+		wantDetails []string
+		wantHistory int
+	}{
+		{name: "alice", ctx: aliceCtx, wantValue: "alice-v2", wantDetails: []string{"alice detail", "alice current"}, wantHistory: 2},
+		{name: "bob", ctx: bobCtx, wantValue: "bob-v1", wantDetails: []string{"bob detail"}, wantHistory: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile, listErr := store.List(tc.ctx, "user/")
+			if listErr != nil || len(profile) != 1 || profile[0].Value != tc.wantValue {
+				t.Fatalf("profile List = (%+v, %v), want only %q", profile, listErr, tc.wantValue)
+			}
+			record, found, inspectErr := lifecycle.Inspect(tc.ctx, "user/preference")
+			if inspectErr != nil || !found || record.Current.Value != tc.wantValue || len(record.Revisions) != tc.wantHistory {
+				t.Fatalf("detail/history = (%+v, %t, %v)", record, found, inspectErr)
+			}
+			for i, revision := range record.Revisions {
+				if revision.Key != "user/preference" || revision.Description != tc.wantDetails[i] {
+					t.Fatalf("history[%d] = %+v, want logical key and detail %q", i, revision, tc.wantDetails[i])
+				}
+			}
+		})
+	}
+
+	_, err = lifecycle.RememberVersioned(aliceCtx, tool.MemoryEntry{Key: "user/preference", Value: "bad"}, bobRecord.Current.Version)
+	var conflict *tool.MemoryVersionConflictError
+	if !errors.As(err, &conflict) || conflict.Key != "user/preference" || strings.Contains(conflict.Key, "caller/") {
+		t.Fatalf("caller-scoped conflict = %#v (%v), want logical key only", conflict, err)
+	}
+	if aliceSecond.Current.Value != "alice-v2" {
+		t.Fatalf("unexpected Alice current record: %+v", aliceSecond.Current)
 	}
 }

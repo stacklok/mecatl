@@ -183,7 +183,12 @@ The session and memory stores have a **wire seam**: an operator can point
 either at a remote, operator-run **driver process** speaking the
 `mecatl.driver.v1` protocol (`contracts/proto/mecatl/driver/v1/` —
 `SessionStoreService` for `port.SessionStore`, `MemoryStoreService` for
-`tool.MemoryStore`). The durable **schedule registry** has the same seam:
+`tool.MemoryStore`). Memory lifecycle is an additive optional capability: the original
+six memory RPCs stay wire-compatible, while RememberVersioned/InspectMemory/
+ForgetVersioned/UndoLatest carry opaque versions and revision history. The profile
+read deliberately uses original `List`, so old drivers retain profile parity;
+destructive lifecycle calls against an old driver return an honest unsupported error.
+The durable **schedule registry** has the same seam:
 `ScheduleStoreService` + `ScheduleOneShotReArmerService` back
 `port.ScheduleStore` + `port.ScheduleOneShotReArmer` (`--schedule-store-url`,
 INDEPENDENT of the session store — replaces the `ScheduleStore()` discovery;

@@ -5,15 +5,15 @@
 
 
 
-               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-               ┃                                                                    ┃
-               ┃  User model (operator facts)                                       ┃
-               ┃                                                                    ┃
-               ┃  The user model is empty — no operator facts saved yet.            ┃
-               ┃                                                                    ┃
-               ┃  the agent curates this · Recall loads a fact's value · esc close  ┃
-               ┃                                                                    ┃
-               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                 ┃
+┃  User model (operator facts)                                                                    ┃
+┃                                                                                                 ┃
+┃  The user model is empty — no operator facts saved yet.                                         ┃
+┃                                                                                                 ┃
+┃  ↑/↓ select · enter inspect · the agent curates this · Recall loads a fact's value · esc close  ┃
+┃                                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

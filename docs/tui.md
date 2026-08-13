@@ -405,10 +405,13 @@ only displayed here.
 
 **`/usermodel` (read-only user-model inspection).** Gated on `caps.user_model` AND
 a wired user-model lister. It fires `GetUserModel` (a **live** read of the
-user-model store's index, so it reflects facts saved since startup) and shows an
-aggregate line (count · size · hash) over a `key — description` list, name-sorted.
-The per-entry value is omitted — `RecallUser` loads it. `esc` closes; the panel
-never edits the user model (the agent curates it).
+user-model store's bounded index) and shows count · size · hash over a key/description
+list. Move with `↑`/`↓`; `enter` lazily requests the selected key's exact current
+value and up to 16 recent lifecycle revisions. Every server-derived field is terminal-
+sanitized. Old/base-only stores show the current value and honestly report history as
+unavailable. `esc` returns from detail or closes the panel. The surface is read-only:
+Forget/Undo are not RPC actions and continue through ordinary model tools and their
+permission gates.
 
 **`/models` (model picker — the only *selecting* overlay).** Gated on
 `caps.model_selection` (the server advertises ≥1 available provider) AND a wired

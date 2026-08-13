@@ -26,6 +26,7 @@ syntax = "proto3";
 package mecatl.v1;
 
 import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
 
 // HarnessService is the mecatl API: unary session setup/inspection plus
 // the bidi Converse stream that drives one agent run.
@@ -1907,8 +1908,33 @@ message UserModelEntry {
   string description = 2;
 }
 
-// GetUserModelRequest requests the current user-model index.
-message GetUserModelRequest {}
+// GetUserModelRequest requests the current user-model index. When key is set,
+// the server also returns exact-entry detail when the backing store can read it.
+message GetUserModelRequest {
+  string key = 1;
+}
+
+// UserModelRevision is one read-only lifecycle revision for detail inspection.
+message UserModelRevision {
+  string key = 1;
+  string value = 2;
+  string description = 3;
+  string version = 4;
+  string status = 5;
+  string writer = 6;
+  string origin = 7;
+  string source_session_id = 8;
+  reserved 9, 10;
+  reserved "source_event_id", "source_message_id";
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message UserModelDetail {
+  UserModelRevision current = 1;
+  repeated UserModelRevision history = 2;
+  // false means the store supplied only the current legacy value.
+  bool history_available = 3;
+}
 
 // GetUserModelResponse carries the current user-model entries plus aggregate
 // metadata. The entries reflect the LIVE store index at request time.
@@ -1921,6 +1947,8 @@ message GetUserModelResponse {
   // sha256 is the lowercase-hex SHA-256 over the rendered entries, so a client
   // can tell at a glance whether the user model changed between fetches.
   string sha256 = 3;
+  // detail is populated only when request.key exactly matches an entry.
+  UserModelDetail detail = 4;
 }
 
 // --- Model inventory discovery ----------------------------------------------

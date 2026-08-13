@@ -659,6 +659,18 @@ func (f *fakeUserModel) GetUserModel(_ context.Context) (client.UserModel, error
 	return f.model, nil
 }
 
+func (f *fakeUserModel) GetUserModelEntry(_ context.Context, key string) (client.UserModel, error) {
+	f.calls++
+	if f.err != nil {
+		return client.UserModel{}, f.err
+	}
+	model := f.model
+	if model.Detail == nil {
+		model.Detail = &client.UserModelDetail{Current: client.UserModelRevision{Key: key}}
+	}
+	return model, nil
+}
+
 // fakeModels is a scripted client.ModelLister for the /models picker tests:
 // ListModels returns the canned list (+ statuses), or err when set.
 type fakeModels struct {

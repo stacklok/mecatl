@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -135,7 +136,15 @@ func renderUserModel(entries []tool.MemoryEntry, maxEntries, maxBytes int) strin
 
 	shown := 0
 	for _, e := range kept {
-		line := "- " + e.Key + " — " + clampLine(e.Description) + "\n"
+		description := e.Description
+		if tool.SecretShapedMemoryValue(e.Key, description) {
+			description = "[withheld: secret-shaped memory description]"
+		}
+		encoded, _ := json.Marshal(struct {
+			Key         string `json:"key"`
+			Description string `json:"description"`
+		}{Key: validUTF8(e.Key), Description: validUTF8(clampLine(description))})
+		line := string(encoded) + "\n"
 		if b.Len()+len(line)+closeLen > maxBytes {
 			break
 		}

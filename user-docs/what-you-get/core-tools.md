@@ -59,7 +59,7 @@ A session can be created with `profile: "no-fs"` — for a workspace that has no
 
 ## Memory tools
 
-Six memory tools are registered when the memory store is configured (on by default). They are **floor-scoped allows** — pre-approved without requiring an explicit permission rule, but operator-overridable.
+Six base memory tools are registered when the two stores are configured. A lifecycle-capable store adds `InspectMemory`, `ForgetMemory`, and `UndoMemory` for project scope plus `InspectUserMemory`, `ForgetUserMemory`, and `UndoUserMemory` for user scope. Remember/Recall/Search/Inspect/Undo are **floor-scoped allows**; Forget is a **floor-scoped ask**. Every default is operator-overridable.
 
 | Catalog name | Scope | What it does |
 |---|---|---|
@@ -69,10 +69,13 @@ Six memory tools are registered when the memory store is configured (on by defau
 | `RememberUser` | Cross-project (user model) | Stores a durable operator fact under the `user/` namespace, shared across all projects. Requires the user-model store to be configured. |
 | `RecallUser` | Cross-project (user model) | Retrieves a named fact from the cross-project user model. |
 | `SearchUserModel` | Cross-project (user model) | Searches the cross-project user model by query. |
+| `InspectMemory` / `InspectUserMemory` | Both | Reads exact version, provenance, timestamps, and bounded history. |
+| `ForgetMemory` / `ForgetUserMemory` | Both | Writes a reversible tombstone after an approval by default. |
+| `UndoMemory` / `UndoUserMemory` | Both | Appends a compensating revision restoring the previous state. |
 
-The per-project tools (`Remember`/`Recall`/`SearchMemory`) are on by default; the cross-project tools (`RememberUser`/`RecallUser`/`SearchUserModel`) require `--user-model-store` or the conventional path to be present.
+The project tools require project memory to be enabled; the cross-project tools use `--user-model-dir` or its conventional XDG location and disappear with `--no-user-model`.
 
-For the full memory architecture — dream consolidation, the memory index turn-0 block, write-time injection scanning — see [Memory & knowledge](memory.md).
+For the full memory architecture — live operator profile, lifecycle history, dream consolidation, and secret-safe structured rendering — see [Memory & knowledge](memory.md).
 
 ---
 

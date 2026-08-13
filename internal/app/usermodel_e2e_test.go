@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -79,12 +81,59 @@ func TestUserModelE2E(t *testing.T) {
 	}
 	rememberArgs, _ := json.Marshal(map[string]any{
 		"key":         "comm-style",
-		"value":       "Prefers terse, direct answers with no preamble.",
+		"value":       "Préfère 日本語 and terse, direct answers — no preamble.",
 		"description": "communication style",
 	})
 	res, err := remember.Execute(ctx, session.NewToolCall("c1", memory.RememberUserToolName, rememberArgs), memEnvironment("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("RememberUser write: err=%v isError=%v content=%q", err, res.IsError, res.Content)
+	}
+	for _, tc := range []struct {
+		name        string
+		key         string
+		value       string
+		description string
+	}{
+		{name: "compound value name", key: "openrouter_api_key", value: "secretvalue0123456789abc"},
+		{name: "compound description name", key: "provider", value: "openrouter", description: "aws-secret-access-key: descriptionsecret0123456789"},
+	} {
+		args, _ := json.Marshal(map[string]any{"key": tc.key, "value": tc.value, "description": tc.description})
+		got, executeErr := remember.Execute(ctx, session.NewToolCall(session.ToolCallID("secret-"+tc.name), memory.RememberUserToolName, args), memEnvironment("/ws"))
+		if executeErr != nil || !got.IsError {
+			t.Fatalf("RememberUser %s: err=%v isError=%v content=%q", tc.name, executeErr, got.IsError, got.Content)
+		}
+	}
+	benignArgs, _ := json.Marshal(map[string]any{
+		"key": "token-budget", "value": "benignvalue0123456789abc", "description": "token budget identifier",
+	})
+	if got, executeErr := remember.Execute(ctx, session.NewToolCall("benign", memory.RememberUserToolName, benignArgs), memEnvironment("/ws")); executeErr != nil || got.IsError {
+		t.Fatalf("RememberUser benign compound name: err=%v isError=%v content=%q", executeErr, got.IsError, got.Content)
+	}
+
+	// Simulate pre-validation legacy records by editing the original flat-file shape
+	// directly. The final profile boundary must omit both a compound secret key and
+	// a compound secret label in a description.
+	memoryPath := filepath.Join(userModelDir, "memory.json")
+	persistedBytes, err := os.ReadFile(memoryPath)
+	if err != nil {
+		t.Fatalf("read legacy memory fixture: %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(persistedBytes, &persisted); err != nil {
+		t.Fatalf("decode legacy memory fixture: %v", err)
+	}
+	entries, ok := persisted["entries"].(map[string]any)
+	if !ok {
+		t.Fatalf("legacy memory fixture has no entries object: %#v", persisted)
+	}
+	entries["user/legacy_service_token"] = map[string]any{"value": "legacysecret0123456789abc", "updated_at": time.Now().UTC()}
+	entries["user/legacy-provider"] = map[string]any{"value": "provider", "description": "client.credentials: legacydescription0123456789", "updated_at": time.Now().UTC()}
+	persistedBytes, err = json.Marshal(persisted)
+	if err != nil {
+		t.Fatalf("encode legacy memory fixture: %v", err)
+	}
+	if err := os.WriteFile(memoryPath, persistedBytes, 0o600); err != nil {
+		t.Fatalf("write legacy memory fixture: %v", err)
 	}
 
 	// Persistence to disk: the write is durable under the dir (storeA released its
@@ -92,6 +141,14 @@ func TestUserModelE2E(t *testing.T) {
 	// SEPARATE store opened over the SAME dir.
 	if _, ok, _ := storeA.Recall(ctx, "user/comm-style"); !ok {
 		t.Fatalf("RememberUser did not persist to the user-model store")
+	}
+	if _, ok, _ := storeA.Recall(ctx, "user/token-budget"); !ok {
+		t.Fatal("benign compound-name memory was not persisted")
+	}
+	for _, key := range []string{"user/openrouter_api_key", "user/provider"} {
+		if _, ok, _ := storeA.Recall(ctx, key); ok {
+			t.Fatalf("rejected compound-name secret %q was persisted", key)
+		}
 	}
 
 	// --- Session B: the SAME composition wiring (buildInstructionAssembler over a
@@ -109,9 +166,10 @@ func TestUserModelE2E(t *testing.T) {
 	obs := &observedReq{}
 	prov := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(obs.observer())}, mockllm.TextTurn("done"))
 	eng := agent.NewEngine(agent.Deps{
-		LLM:          prov,
-		Catalog:      tool.NewCatalog(),
-		Instructions: asm,
+		LLM:                   prov,
+		Catalog:               tool.NewCatalog(),
+		Instructions:          asm,
+		OperatorProfileSource: storeB,
 	})
 
 	sess := session.New("sB", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
@@ -120,25 +178,35 @@ func TestUserModelE2E(t *testing.T) {
 		_ = ev
 	}
 
-	// The fence rode the REQUEST (a prepended turn-0 user fragment).
+	// The full Unicode fact rides the volatile system suffix, not a user fragment.
 	func() {
 		obs.mu.Lock()
 		defer obs.mu.Unlock()
 		var foundInReq bool
-		for _, um := range obs.userMsgs {
-			if strings.Contains(um, "<user-model>") && strings.Contains(um, "comm-style") {
+		for _, system := range obs.systems {
+			for _, secret := range []string{"legacy_service_token", "legacysecret0123456789abc", "legacy-provider", "legacydescription0123456789"} {
+				if strings.Contains(system, secret) {
+					t.Fatalf("legacy secret-shaped memory %q reached request system suffix: %q", secret, system)
+				}
+			}
+			if strings.Contains(system, "<operator-profile-data") && strings.Contains(system, "comm-style") && strings.Contains(system, "Préfère 日本語 and terse, direct answers — no preamble.") && strings.Contains(system, "token-budget") && strings.Contains(system, "benignvalue0123456789abc") {
 				foundInReq = true
 				break
 			}
 		}
 		if !foundInReq {
-			t.Fatalf("turn-0 request is missing the <user-model> fence with the saved fact:\n%+v", obs.userMsgs)
+			t.Fatalf("request system suffix is missing the operator profile with the saved fact:\n%+v", obs.systems)
+		}
+		for _, userMessage := range obs.userMsgs {
+			if strings.Contains(userMessage, "comm-style") {
+				t.Fatalf("operator profile leaked into a user-message fragment: %q", userMessage)
+			}
 		}
 	}()
 	// Ephemeral: the fence must NOT be persisted into the conversation.
 	for _, m := range sess.Conversation.Messages {
-		if m.Role == session.RoleUser && strings.Contains(m.Text, "<user-model>") {
-			t.Fatalf("the <user-model> fence must NOT be persisted into the conversation (it is ephemeral):\n%+v", messageTexts(sess.Conversation.Messages))
+		if strings.Contains(m.Text, "<user-model>") || strings.Contains(m.Text, "<operator-profile-data") || strings.Contains(m.Text, "Préfère 日本語") {
+			t.Fatalf("operator profile must NOT be persisted into the conversation:\n%+v", messageTexts(sess.Conversation.Messages))
 		}
 	}
 
@@ -175,8 +243,8 @@ func TestUserModelE2E(t *testing.T) {
 		t.Fatalf("GetSession: %v", err)
 	}
 	for _, m := range got.Conversation.Messages {
-		if m.Role == session.RoleUser && strings.Contains(m.Text, "<user-model>") {
-			t.Fatalf("composition path PERSISTED the <user-model> fence into the conversation (it must be ephemeral, ADR 0043):\n%+v", messageTexts(got.Conversation.Messages))
+		if strings.Contains(m.Text, "<user-model>") || strings.Contains(m.Text, "<operator-profile-data") || strings.Contains(m.Text, "Préfère 日本語") {
+			t.Fatalf("composition path persisted operator-profile data:\n%+v", messageTexts(got.Conversation.Messages))
 		}
 	}
 }

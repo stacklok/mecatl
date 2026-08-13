@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -125,6 +127,71 @@ func TestHTTPGetUserModel(t *testing.T) {
 	}
 	if len(resp.GetEntries()) != 2 {
 		t.Fatalf("http entries = %d, want 2", len(resp.GetEntries()))
+	}
+}
+
+type lifecycleUserModel struct {
+	*fakeUserModel
+	record tool.MemoryRecord
+}
+
+func (f *lifecycleUserModel) Inspect(_ context.Context, key string) (tool.MemoryRecord, bool, error) {
+	return f.record, key == f.record.Current.Key, nil
+}
+
+func TestGRPCGetUserModelDetailIsExactReadOnlyProjection(t *testing.T) {
+	revision := tool.MemoryRevision{Key: "user/locale", Value: "日本語 — français", Description: "preferred locale", Version: "v1", Status: tool.MemoryStatusActive, Writer: tool.MemoryWriterUser, Origin: tool.MemoryOriginExplicit, UpdatedAt: time.Unix(10, 0)}
+	lister := &lifecycleUserModel{fakeUserModel: &fakeUserModel{entries: []server.UserModelEntry{{Key: revision.Key, Description: revision.Description}}}, record: tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}}
+	client, cleanup := dialGRPC(t, userModelService(t, lister))
+	defer cleanup()
+	resp, err := client.GetUserModel(context.Background(), &mecatlv1.GetUserModelRequest{Key: revision.Key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.GetDetail().GetCurrent().GetValue() != revision.Value || !resp.GetDetail().GetHistoryAvailable() || len(resp.GetDetail().GetHistory()) != 1 {
+		t.Fatalf("detail = %+v", resp.GetDetail())
+	}
+}
+
+func TestGRPCGetUserModelDetailWithholdsImportedSecret(t *testing.T) {
+	revision := tool.MemoryRevision{Key: "user/token", Value: "ghp_0123456789abcdefghijklmnop", Status: tool.MemoryStatusActive}
+	lister := &lifecycleUserModel{fakeUserModel: &fakeUserModel{entries: []server.UserModelEntry{{Key: revision.Key}}}, record: tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}}
+	client, cleanup := dialGRPC(t, userModelService(t, lister))
+	defer cleanup()
+	resp, err := client.GetUserModel(context.Background(), &mecatlv1.GetUserModelRequest{Key: revision.Key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.GetDetail().GetCurrent().GetValue(); got == revision.Value || got == "" {
+		t.Fatalf("secret projection = %q", got)
+	}
+}
+
+func TestGRPCGetUserModelWithholdsSecretDescriptionsAndSanitizesDetail(t *testing.T) {
+	bad := "bad\x00\x1b\u0085\u202e\u2066\u200b\ufeff" + string([]byte{0xff})
+	secretDescription := "token: ghp_0123456789abcdefghijklmnop"
+	revision := tool.MemoryRevision{Key: "user/detail", Value: "ordinary 日本語 " + bad, Description: secretDescription, Version: tool.MemoryVersion(bad), Status: tool.MemoryStatus(bad), Writer: tool.MemoryWriter(bad), Origin: tool.MemoryOrigin(bad), Source: tool.MemorySource{SessionID: bad}}
+	lister := &lifecycleUserModel{fakeUserModel: &fakeUserModel{entries: []server.UserModelEntry{{Key: revision.Key, Description: secretDescription}}}, record: tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}}
+	client, cleanup := dialGRPC(t, userModelService(t, lister))
+	defer cleanup()
+	resp, err := client.GetUserModel(context.Background(), &mecatlv1.GetUserModelRequest{Key: revision.Key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.GetEntries()[0].GetDescription(); got == secretDescription || !strings.Contains(got, "withheld") {
+		t.Fatalf("secret list description projected as %q", got)
+	}
+	current := resp.GetDetail().GetCurrent()
+	if got := current.GetDescription(); got == secretDescription || !strings.Contains(got, "withheld") {
+		t.Fatalf("secret detail description projected as %q", got)
+	}
+	for name, value := range map[string]string{"key": current.GetKey(), "value": current.GetValue(), "description": current.GetDescription(), "version": current.GetVersion(), "status": current.GetStatus(), "writer": current.GetWriter(), "origin": current.GetOrigin(), "source": current.GetSourceSessionId()} {
+		if !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\x1b\u0085\u202e\u2066\u200b\ufeff") {
+			t.Errorf("%s was not wire-sanitized: %q", name, value)
+		}
+	}
+	if !strings.Contains(current.GetValue(), "ordinary 日本語") {
+		t.Fatalf("ordinary Unicode lost: %q", current.GetValue())
 	}
 }
 

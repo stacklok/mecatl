@@ -63,6 +63,24 @@ service MemoryStoreService {
   // deterministic, with values OMITTED. A blank query yields an empty result,
   // not an error; k <= 0 selects the driver's default page size.
   rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Capabilities negotiates optional additive operations. Old drivers return
+  // UNIMPLEMENTED and are treated as base-only.
+  rpc Capabilities(MemoryStoreCapabilitiesRequest) returns (MemoryStoreCapabilitiesResponse);
+
+  // RememberVersioned atomically appends a revision when expected_version
+  // matches the current revision. Added after the six base RPCs so old drivers
+  // remain wire-compatible and report UNIMPLEMENTED.
+  rpc RememberVersioned(RememberVersionedRequest) returns (MemoryRecordResponse);
+
+  // InspectMemory returns the current revision and bounded history for one key.
+  rpc InspectMemory(InspectMemoryRequest) returns (InspectMemoryResponse);
+
+  // ForgetVersioned appends a tombstone when expected_version matches.
+  rpc ForgetVersioned(ForgetVersionedRequest) returns (MemoryRecordResponse);
+
+  // UndoLatest appends a compensating revision when expected_version matches.
+  rpc UndoLatest(UndoLatestRequest) returns (MemoryRecordResponse);
 }
 
 // MemoryEntry is one cross-session memory record, mirroring tool.MemoryEntry.
@@ -159,3 +177,67 @@ message SearchResponse {
   // state and query), values OMITTED.
   repeated MemoryEntry entries = 1;
 }
+
+// MemorySource carries optional durable provenance handles. Empty means absent.
+message MemorySource {
+  string session_id = 1;
+  reserved 2, 3;
+  reserved "event_id", "message_id";
+}
+
+// MemoryRevision is one immutable lifecycle revision. Status, writer, origin,
+// and version are open string vocabularies so newer drivers remain compatible.
+message MemoryRevision {
+  string key = 1;
+  string value = 2;
+  string description = 3;
+  string version = 4;
+  string status = 5;
+  string writer = 6;
+  string origin = 7;
+  MemorySource source = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+// MemoryRecord carries the current revision and oldest-to-newest history.
+message MemoryRecord {
+  MemoryRevision current = 1;
+  repeated MemoryRevision revisions = 2;
+}
+
+message MemoryStoreCapabilitiesRequest {}
+message MemoryStoreCapabilitiesResponse {
+  // lifecycle is true only when all four lifecycle RPCs are implemented with
+  // their documented atomic semantics.
+  bool lifecycle = 1;
+}
+
+message RememberVersionedRequest {
+  MemoryEntry entry = 1 [(buf.validate.field).required = true];
+  string expected_version = 2;
+  MemoryAttribution attribution = 3;
+}
+
+// MemoryAttribution is informational write provenance and grants no authority.
+message MemoryAttribution {
+  string writer = 1;
+  string origin = 2;
+  MemorySource source = 3;
+}
+
+message InspectMemoryRequest { string key = 1; }
+message InspectMemoryResponse {
+  MemoryRecord record = 1;
+  bool found = 2;
+}
+message ForgetVersionedRequest {
+  string key = 1;
+  string expected_version = 2;
+  MemoryAttribution attribution = 3;
+}
+message UndoLatestRequest {
+  string key = 1;
+  string expected_version = 2;
+  MemoryAttribution attribution = 3;
+}
+message MemoryRecordResponse { MemoryRecord record = 1; }

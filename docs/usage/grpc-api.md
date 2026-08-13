@@ -25,7 +25,7 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `ListWorktrees` | unary | the git worktrees of a repo (discovery only — powers the mecatui `/worktrees` switch; nil-safe on a no-FS/cloud server) |
 | `ListSkills` | unary | the discovered skills inventory (name + one-line description) |
 | `GetSoul` | unary | the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state |
-| `GetUserModel` | unary | the **live** user-model index (entry keys + descriptions; values omitted — `Recall` loads them) |
+| `GetUserModel` | unary | the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions. No mutation rides this RPC — Forget/Undo remain permission-gated tools |
 | `ListMcpResources` / `ReadMcpResource` | unary | static MCP resource snapshots; read one resource by URI |
 | `ListMcpPrompts` / `GetMcpPrompt` | unary | MCP prompt snapshots; expand one prompt to its rendered messages |
 | `ListMcpSources` | unary | the resolved MCP source inventory (static / ToolHive) + diagnostics |

@@ -166,6 +166,29 @@ linters:
           deny:
             - pkg: os
               desc: 'memfs is the in-memory FileSystem fake; it must not touch the real OS'
+        engine-adapter-memmemory:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memmemory/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'memmemory is process-local reference memory; it must not touch the real OS'
+        engine-adapter-memorytools:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memorytools/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'memorytools are portable tool bodies over an injected MemoryStore; they must not touch the real OS'
         engine-adapter-fstools:
           list-mode: strict
           files:

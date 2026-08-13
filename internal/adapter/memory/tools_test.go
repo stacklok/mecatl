@@ -179,9 +179,9 @@ func TestRememberAcceptsDescriptionAndEchoesIndexLine(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("Remember errored: %s", res.Content)
 	}
-	// The result echoes the exact index line (key — description) the write produced.
-	if !strings.Contains(res.Content, "pref/test-runner") || !strings.Contains(res.Content, "preferred test runner") {
-		t.Errorf("Remember result should echo the index line, got %q", res.Content)
+	// Mutation receipts identify the key but never echo descriptions or values.
+	if !strings.Contains(res.Content, "pref/test-runner") || strings.Contains(res.Content, "preferred test runner") || strings.Contains(res.Content, "gotestsum") {
+		t.Errorf("Remember receipt should identify the key without value data, got %q", res.Content)
 	}
 	// The description was persisted.
 	got, _, _ := fs.Recall(context.Background(), "pref/test-runner")
@@ -190,7 +190,7 @@ func TestRememberAcceptsDescriptionAndEchoesIndexLine(t *testing.T) {
 	}
 }
 
-func TestRememberWithoutDescriptionEchoesValueFirstLine(t *testing.T) {
+func TestRememberWithoutDescriptionDoesNotEchoValue(t *testing.T) {
 	fs := newFakeStore()
 	res := exec(t, NewRememberTool(fs), call(t, "Remember", map[string]any{
 		"key": "k", "value": "first line\nsecond line",
@@ -198,9 +198,8 @@ func TestRememberWithoutDescriptionEchoesValueFirstLine(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("Remember errored: %s", res.Content)
 	}
-	// With no explicit description, the echo uses the value's first line.
-	if !strings.Contains(res.Content, "first line") || strings.Contains(res.Content, "second line") {
-		t.Errorf("Remember echo should use value's first line only, got %q", res.Content)
+	if strings.Contains(res.Content, "first line") || strings.Contains(res.Content, "second line") {
+		t.Errorf("Remember receipt leaked value data, got %q", res.Content)
 	}
 }
 

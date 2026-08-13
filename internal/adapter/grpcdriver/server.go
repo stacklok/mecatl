@@ -185,6 +185,11 @@ func NewMemoryStoreServer(st tool.MemoryStore) driverv1.MemoryStoreServiceServer
 	return &memoryStoreServer{store: st}
 }
 
+func (s *memoryStoreServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
+	_, lifecycle := s.store.(tool.MemoryLifecycleStore)
+	return &driverv1.MemoryStoreCapabilitiesResponse{Lifecycle: lifecycle}, nil
+}
+
 // RememberEntry stores the entry; a blank/whitespace-only key is rejected
 // with INVALID_ARGUMENT before the store is consulted (the wrapped store's
 // own rejection remains conformance-tested in-process).
@@ -248,6 +253,97 @@ func (s *memoryStoreServer) Search(ctx context.Context, req *driverv1.SearchRequ
 		return nil, storeStatus(err)
 	}
 	return &driverv1.SearchResponse{Entries: toProtoServerEntries(entries)}, nil
+}
+
+func (s *memoryStoreServer) lifecycle() (tool.MemoryLifecycleStore, error) {
+	lifecycle, ok := s.store.(tool.MemoryLifecycleStore)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "memory store does not support lifecycle operations")
+	}
+	return lifecycle, nil
+}
+
+// RememberVersioned delegates only when the wrapped store advertises lifecycle.
+func (s *memoryStoreServer) RememberVersioned(ctx context.Context, req *driverv1.RememberVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
+	lifecycle, err := s.lifecycle()
+	if err != nil {
+		return nil, err
+	}
+	if req.GetEntry() == nil {
+		return nil, status.Error(codes.InvalidArgument, "entry is required")
+	}
+	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	record, callErr := lifecycle.RememberVersioned(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryVersion(req.GetExpectedVersion()))
+	if callErr != nil {
+		return nil, storeStatus(callErr)
+	}
+	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
+}
+
+func (s *memoryStoreServer) InspectMemory(ctx context.Context, req *driverv1.InspectMemoryRequest) (*driverv1.InspectMemoryResponse, error) {
+	lifecycle, err := s.lifecycle()
+	if err != nil {
+		return nil, err
+	}
+	record, found, callErr := lifecycle.Inspect(ctx, req.GetKey())
+	if callErr != nil {
+		return nil, storeStatus(callErr)
+	}
+	resp := &driverv1.InspectMemoryResponse{Found: found}
+	if found {
+		resp.Record = toProtoRecord(record)
+	}
+	return resp, nil
+}
+
+func (s *memoryStoreServer) ForgetVersioned(ctx context.Context, req *driverv1.ForgetVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
+	lifecycle, err := s.lifecycle()
+	if err != nil {
+		return nil, err
+	}
+	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	record, callErr := lifecycle.ForgetVersioned(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
+	if callErr != nil {
+		return nil, storeStatus(callErr)
+	}
+	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
+}
+
+func (s *memoryStoreServer) UndoLatest(ctx context.Context, req *driverv1.UndoLatestRequest) (*driverv1.MemoryRecordResponse, error) {
+	lifecycle, err := s.lifecycle()
+	if err != nil {
+		return nil, err
+	}
+	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	record, callErr := lifecycle.UndoLatest(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
+	if callErr != nil {
+		return nil, storeStatus(callErr)
+	}
+	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
+}
+
+func withProtoAttribution(ctx context.Context, a *driverv1.MemoryAttribution) context.Context {
+	if a == nil {
+		return ctx
+	}
+	s := a.GetSource()
+	return tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriter(a.GetWriter()), Origin: tool.MemoryOrigin(a.GetOrigin()), Source: tool.MemorySource{SessionID: s.GetSessionId()}})
+}
+
+func toProtoRecord(record tool.MemoryRecord) *driverv1.MemoryRecord {
+	out := &driverv1.MemoryRecord{Current: toProtoRevision(record.Current), Revisions: make([]*driverv1.MemoryRevision, len(record.Revisions))}
+	for i, revision := range record.Revisions {
+		out.Revisions[i] = toProtoRevision(revision)
+	}
+	return out
+}
+
+func toProtoRevision(rev tool.MemoryRevision) *driverv1.MemoryRevision {
+	out := &driverv1.MemoryRevision{Key: valid(rev.Key), Value: valid(rev.Value), Description: valid(rev.Description), Version: valid(string(rev.Version)), Status: valid(string(rev.Status)), Writer: valid(string(rev.Writer)), Origin: valid(string(rev.Origin)), Source: &driverv1.MemorySource{SessionId: valid(rev.Source.SessionID)}}
+	if !rev.UpdatedAt.IsZero() {
+		out.UpdatedAt = timestamppb.New(rev.UpdatedAt)
+	}
+	return out
 }
 
 // skillSourceServer adapts a tool.SkillSource to SkillSourceServiceServer.
@@ -464,9 +560,14 @@ func (s *commandSourceServer) GetCommandBody(ctx context.Context, req *driverv1.
 // vocabulary (the §C table): the not-found sentinel → NOT_FOUND, context
 // errors → CANCELLED / DEADLINE_EXCEEDED, everything else → INTERNAL.
 func storeStatus(err error) error {
+	var conflict *tool.MemoryVersionConflictError
 	switch {
-	case errors.Is(err, port.ErrSessionNotFound):
+	case errors.Is(err, port.ErrSessionNotFound), errors.Is(err, tool.ErrMemoryNotFound):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, tool.ErrInvalidMemoryKey), errors.Is(err, tool.ErrSecretMemoryValue):
+		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.As(err, &conflict):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):

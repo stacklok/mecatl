@@ -62,8 +62,8 @@ func noFSTeamWiring(t *testing.T, provider port.LLMProvider, a catalogAssets) (s
 // TestNoFSTeamMemberSurface drives the REAL buildTeamWiring/buildMemberEngine
 // with noFS=true and pins the member's tool surface: NO file tools and NO shell
 // (even though the config HAS a shell — the no-fs gate beats the shell wiring),
-// while WebFetch, the memory six, the global MCP tool, and the team
-// coordination tools are all present. MemberBuild.MCPToolNames must carry the
+// while WebFetch, both complete lifecycle-capable memory families, the global MCP
+// tool, and coordination tools are all present. MemberBuild.MCPToolNames must carry the
 // catalog's non-workspace mutators (memory writers + MCP tools) — the
 // supervisor's documented exemption the spawn test below depends on.
 func TestNoFSTeamMemberSurface(t *testing.T) {
@@ -79,7 +79,7 @@ func TestNoFSTeamMemberSurface(t *testing.T) {
 			t.Errorf("no-fs member catalog carries %q — a file/shell tool leaked into the file-less member surface", name)
 		}
 	}
-	for _, name := range []string{"WebFetch", "FetchMcpResource", "Remember", "Recall", "SearchMemory", "RememberUser", "RecallUser", "SearchUserModel", "mcp__globe__echo", "CallMcpWithQuery"} {
+	for _, name := range []string{"WebFetch", "FetchMcpResource", "Remember", "Recall", "SearchMemory", "InspectMemory", "ForgetMemory", "UndoMemory", "RememberUser", "RecallUser", "SearchUserModel", "InspectUserMemory", "ForgetUserMemory", "UndoUserMemory", "mcp__globe__echo", "CallMcpWithQuery"} {
 		if !build.Engine.HasTool(name) {
 			t.Errorf("no-fs member catalog is missing %q — the file-less member surface lost a non-FS family", name)
 		}
@@ -99,7 +99,7 @@ func TestNoFSTeamMemberSurface(t *testing.T) {
 	for _, n := range build.MCPToolNames {
 		exempt[n] = true
 	}
-	for _, want := range []string{"Remember", "RememberUser", "mcp__globe__echo"} {
+	for _, want := range []string{"Remember", "ForgetMemory", "UndoMemory", "RememberUser", "ForgetUserMemory", "UndoUserMemory", "mcp__globe__echo"} {
 		if !exempt[want] {
 			t.Errorf("MemberBuild.MCPToolNames is missing %q (got %v) — the non-workspace-mutator exemption drifted", want, build.MCPToolNames)
 		}

@@ -185,6 +185,17 @@ tools (`InspectSubagent`/`InspectMember`/`SubagentStatus`) carry the same floor-
 (issue #37 — see the Subagent-inspection section below for the rationale; guarded by
 `internal/app/inspect_perm_test.go`).
 
+The optional `tool.MemoryLifecycleStore` capability adds versioned `Inspect*`, compare-version
+`Forget*`, and compensating `Undo*` tools through the portable
+`engine/adapter/memorytools/memorytools.go` implementation. The flocked local adapter keeps the
+legacy active projection and revision history in the same atomically-renamed `memory.json`:
+old files are read without rewrite and their imported baseline is materialized by the first
+mutation. The format is current-value compatible with older binaries, but a one-way downgrade
+caveat applies: an older binary that writes the file does not know the additive `history` field
+and discards revision/undo history (not the active values). Lifecycle mutation tools are not
+added to the built-in allow floor; the existing permission fold therefore governs them without
+loosening policy.
+
 ## Domain — `engine/prompt/`
 
 Two-layer prompt assembly + AGENTS.md/CLAUDE.md discovery; the turn-0 `InstructionAssembler`
@@ -214,8 +225,8 @@ unchanged).
 `agent.Deps.PromptBuilder` (`prompt.Builder` = `func(Config) Layered`); nil → `prompt.Build`,
 byte-identical to v0.0.1. A host embedding the engine for a non-coding agent supplies its own
 builder to fully own the role/tone/safety/tool-inventory with no coding-agent defaults (it
-receives the same `Config` the loop builds — `Tools` + volatile `Env` filled per turn — and may
-reuse `prompt.Build`'s helpers if it wants the inventory/env back). Only `buildRequest` routes
+receives the same `Config` the loop builds — `Tools`, volatile `Env`, and live operator profile filled per turn — and may
+reuse `prompt.Build`'s helpers if it wants the inventory/env/profile back). Only `buildRequest` routes
 through it; the compaction summarizer (`engine/agent/cascade.go`) builds its own
 `prompt.Layered{StablePrefix: summarizerSystemPrompt}` directly and is explicitly NOT routed
 through the host builder (the summarizer's structured-output contract is host-independent).
@@ -3435,16 +3446,43 @@ RPC (a build-time snapshot) and wraps the user-model store's read-only `Index` i
 (scrollable) + `/usermodel` mecatui panels — trust/drift computed in composition, only
 displayed in the ui.
 
-### `memory` (issue #14 Phase 2 — see `MEMORY-*.md`)
+### `memory` (operator profile + lifecycle, ADR 0107)
 
-Per-project Remember/Recall/SearchMemory store — AND issue #14 Phase 2's SECOND, user-scoped,
-**cross-project** user-model store: a separate `memory.New(<xdg>/mecatl/usermodel)` exposing
-the parameterized RememberUser/RecallUser/SearchUserModel family under an enforced `user/`
-prefix, satisfying `prompt.UserModelSource`, with a write-time `skills.ScanForInjection` over
-BOTH the value AND the effective description — the `<user-model>` block renders key+description,
-so a value-only scan would miss a payload in `description` — plus a `</user-model>`
-fence-close-tag reject (mirrors soul) — an adapter→adapter edge like `soul`; the WRITABLE
-user-model is FACTS not rules, never a governance scope.
+The unchanged `tool.MemoryStore` base remains the six ordinary operations. The optional
+`tool.MemoryLifecycleStore` adds compare-version Remember, exact Inspect, tombstone Forget,
+and compensating Undo. Portable bodies live in `engine/adapter/memorytools`; both project and
+user families register through the same catalog path, with lifecycle tools conditional on the
+capability. The local adapter keeps legacy entries plus revision history in ONE `memory.json`
+document. `internal/adapter/memory/store.go` (`withExclusiveLock`) holds the in-process mutex
+and stable-sentinel flock across load→mutate→atomic-save; `materializeLegacy` migrates a key
+lazily inside that transaction. No history sidecar exists.
+
+The user-scoped store also satisfies `prompt.OperatorProfileSource`. Standard composition sets
+`agent.Deps.OperatorProfileSource`; `engine/agent/loop.go` (`refreshOperatorProfile`) reloads it
+per request into `prompt.Config.OperatorProfile`, preserving a run-local last-good snapshot on
+a source fault. `engine/prompt/operatorprofile.go` renders active facts as bounded JSON data in
+the volatile system suffix. The cache-stable prefix and persisted conversation stay unchanged.
+`prompt.UserModelAssembler` is retained as a public compatibility surface but is no longer in
+standard turn-0 assembly; the project `MemoryIndexAssembler` remains and never carries values.
+
+The original six `MemoryStoreService` RPCs remain unchanged. Four additive lifecycle RPCs
+preserve opaque versions/history. The grpc client uses original `List` for operator-profile
+parity with old drivers; destructive lifecycle calls never downgrade on `UNIMPLEMENTED`. The
+capability RPC is bounded by a fixed five-second ceiling while retaining any shorter caller
+deadline, and a failed probe closes the partially assembled catalog connection.
+`GetUserModel{key}` is a read-only, lazy exact-detail extension. It exposes no mutation method,
+so Forget/Undo still pass through the normal dispatcher, hooks, and permission evaluator.
+Remember/Recall/Search/Inspect/Undo are built-in floor Allows; Forget is a floor Ask; all lose
+to configured higher-scope rules.
+
+New lifecycle writes reject invalid keys and high-confidence credential shapes. Recall/Inspect,
+profile, driver, server, and TUI projections all use `engine/tool/memorylifecycle.go`
+(`CanonicalMemoryText`) before classification: malformed UTF-8 is repaired and the same Unicode
+format/control set is removed before directive/secret checks and rendering. This applies equally
+to imported, legacy-migrated, local, and remote records without suppressing ordinary Unicode or
+instruction-like prose. Both reference stores retain 64 revisions per key and persist an
+origin-known/truncated marker; Undo may remove a value only when retained history proves the target
+was its creation, and fails without mutation at a truncated predecessor boundary.
 
 **Optional learning seam (#507):** `engine/learning` owns only `Mode`, the owned
 completed `Trajectory`, and synchronous `Observer`. `agent.terminateComplete` invokes it

@@ -629,7 +629,7 @@ func TestOsfsWorkspaceFactoryEmptyRootIntercepted(t *testing.T) {
 
 // TestNoFSChildCatalogExactDelta is the drift kill-switch for the no-fs CHILD
 // surface (the TestNoFSCatalogProfile idiom one level down): noFSChildCatalog
-// must be EXACTLY {the memory six} ∪ {WebFetch, FetchMcpResource, WebSearch}
+// must be EXACTLY {the capability-aware memory families} ∪ {WebFetch, FetchMcpResource, WebSearch}
 // ∪ {the global MCP tools} — nothing more (a file tool or shell leaking into
 // delegation children) and nothing less (a family silently dropped from the
 // children). Mutation-verified (removing a family from noFSChildCatalog fails
@@ -648,9 +648,11 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 	a := catalogAssets{memStore: memStore, userModelStore: userStore, globalMgr: mgr}
 
 	want := []string{
-		// The memory six (the same flocked shared stores the parent uses).
+		// Base and lifecycle tools over the same flocked shared stores.
 		memory.RememberToolName, memory.RecallToolName, memory.SearchMemoryToolName,
+		memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName,
 		memory.RememberUserToolName, memory.RecallUserToolName, memory.SearchUserModelToolName,
+		memory.InspectUserMemoryToolName, memory.ForgetUserMemoryToolName, memory.UndoUserMemoryToolName,
 		// The no-fs core tier: WebFetch + FetchMcpResource (outbound reads) + WebSearch
 		// (search-then-fetch discovery). FetchMcpResource is an outbound read with no
 		// filesystem need (issue #223 Phase 2).
@@ -667,7 +669,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 
 	cat := noFSChildCatalog(context.Background(), Config{Diagnostics: port.NopDiagnostics{}}, a)
 	if onlyWant, onlyGot := diffNameSets(want, sortedNames(cat)); len(onlyWant) > 0 || len(onlyGot) > 0 {
-		t.Fatalf("no-fs CHILD catalog is NOT exactly {memory six} ∪ {WebFetch, FetchMcpResource, WebSearch} ∪ {global MCP}:\n  missing: %v\n  unexpected: %v",
+		t.Fatalf("no-fs CHILD catalog is NOT exactly {capability-aware memory families} ∪ {WebFetch, FetchMcpResource, WebSearch} ∪ {global MCP}:\n  missing: %v\n  unexpected: %v",
 			onlyWant, onlyGot)
 	}
 }

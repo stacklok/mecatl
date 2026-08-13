@@ -405,6 +405,7 @@ type Model struct {
 	agentsInv    agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
 	soul         soulState      // soul (persona) inspection overlay state (view==soulNone when closed)
 	userModel    userModelState // user-model inspection overlay state (view==userModelNone when closed)
+	userModelGen uint64         // monotonic request generation; invalidates delayed detail/index responses
 	models       modelsState    // /models picker overlay state (view==modelsNone when closed)
 	effort       effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
 	worktrees    worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102

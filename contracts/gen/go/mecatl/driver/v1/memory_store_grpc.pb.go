@@ -48,12 +48,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MemoryStoreService_RememberEntry_FullMethodName = "/mecatl.driver.v1.MemoryStoreService/RememberEntry"
-	MemoryStoreService_Recall_FullMethodName        = "/mecatl.driver.v1.MemoryStoreService/Recall"
-	MemoryStoreService_List_FullMethodName          = "/mecatl.driver.v1.MemoryStoreService/List"
-	MemoryStoreService_Forget_FullMethodName        = "/mecatl.driver.v1.MemoryStoreService/Forget"
-	MemoryStoreService_Index_FullMethodName         = "/mecatl.driver.v1.MemoryStoreService/Index"
-	MemoryStoreService_Search_FullMethodName        = "/mecatl.driver.v1.MemoryStoreService/Search"
+	MemoryStoreService_RememberEntry_FullMethodName     = "/mecatl.driver.v1.MemoryStoreService/RememberEntry"
+	MemoryStoreService_Recall_FullMethodName            = "/mecatl.driver.v1.MemoryStoreService/Recall"
+	MemoryStoreService_List_FullMethodName              = "/mecatl.driver.v1.MemoryStoreService/List"
+	MemoryStoreService_Forget_FullMethodName            = "/mecatl.driver.v1.MemoryStoreService/Forget"
+	MemoryStoreService_Index_FullMethodName             = "/mecatl.driver.v1.MemoryStoreService/Index"
+	MemoryStoreService_Search_FullMethodName            = "/mecatl.driver.v1.MemoryStoreService/Search"
+	MemoryStoreService_Capabilities_FullMethodName      = "/mecatl.driver.v1.MemoryStoreService/Capabilities"
+	MemoryStoreService_RememberVersioned_FullMethodName = "/mecatl.driver.v1.MemoryStoreService/RememberVersioned"
+	MemoryStoreService_InspectMemory_FullMethodName     = "/mecatl.driver.v1.MemoryStoreService/InspectMemory"
+	MemoryStoreService_ForgetVersioned_FullMethodName   = "/mecatl.driver.v1.MemoryStoreService/ForgetVersioned"
+	MemoryStoreService_UndoLatest_FullMethodName        = "/mecatl.driver.v1.MemoryStoreService/UndoLatest"
 )
 
 // MemoryStoreServiceClient is the client API for MemoryStoreService service.
@@ -84,6 +89,19 @@ type MemoryStoreServiceClient interface {
 	// deterministic, with values OMITTED. A blank query yields an empty result,
 	// not an error; k <= 0 selects the driver's default page size.
 	Search(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error)
+	// Capabilities negotiates optional additive operations. Old drivers return
+	// UNIMPLEMENTED and are treated as base-only.
+	Capabilities(ctx context.Context, in *MemoryStoreCapabilitiesRequest, opts ...grpc.CallOption) (*MemoryStoreCapabilitiesResponse, error)
+	// RememberVersioned atomically appends a revision when expected_version
+	// matches the current revision. Added after the six base RPCs so old drivers
+	// remain wire-compatible and report UNIMPLEMENTED.
+	RememberVersioned(ctx context.Context, in *RememberVersionedRequest, opts ...grpc.CallOption) (*MemoryRecordResponse, error)
+	// InspectMemory returns the current revision and bounded history for one key.
+	InspectMemory(ctx context.Context, in *InspectMemoryRequest, opts ...grpc.CallOption) (*InspectMemoryResponse, error)
+	// ForgetVersioned appends a tombstone when expected_version matches.
+	ForgetVersioned(ctx context.Context, in *ForgetVersionedRequest, opts ...grpc.CallOption) (*MemoryRecordResponse, error)
+	// UndoLatest appends a compensating revision when expected_version matches.
+	UndoLatest(ctx context.Context, in *UndoLatestRequest, opts ...grpc.CallOption) (*MemoryRecordResponse, error)
 }
 
 type memoryStoreServiceClient struct {
@@ -154,6 +172,56 @@ func (c *memoryStoreServiceClient) Search(ctx context.Context, in *SearchRequest
 	return out, nil
 }
 
+func (c *memoryStoreServiceClient) Capabilities(ctx context.Context, in *MemoryStoreCapabilitiesRequest, opts ...grpc.CallOption) (*MemoryStoreCapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MemoryStoreCapabilitiesResponse)
+	err := c.cc.Invoke(ctx, MemoryStoreService_Capabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *memoryStoreServiceClient) RememberVersioned(ctx context.Context, in *RememberVersionedRequest, opts ...grpc.CallOption) (*MemoryRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MemoryRecordResponse)
+	err := c.cc.Invoke(ctx, MemoryStoreService_RememberVersioned_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *memoryStoreServiceClient) InspectMemory(ctx context.Context, in *InspectMemoryRequest, opts ...grpc.CallOption) (*InspectMemoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectMemoryResponse)
+	err := c.cc.Invoke(ctx, MemoryStoreService_InspectMemory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *memoryStoreServiceClient) ForgetVersioned(ctx context.Context, in *ForgetVersionedRequest, opts ...grpc.CallOption) (*MemoryRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MemoryRecordResponse)
+	err := c.cc.Invoke(ctx, MemoryStoreService_ForgetVersioned_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *memoryStoreServiceClient) UndoLatest(ctx context.Context, in *UndoLatestRequest, opts ...grpc.CallOption) (*MemoryRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MemoryRecordResponse)
+	err := c.cc.Invoke(ctx, MemoryStoreService_UndoLatest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MemoryStoreServiceServer is the server API for MemoryStoreService service.
 // All implementations must embed UnimplementedMemoryStoreServiceServer
 // for forward compatibility.
@@ -182,6 +250,19 @@ type MemoryStoreServiceServer interface {
 	// deterministic, with values OMITTED. A blank query yields an empty result,
 	// not an error; k <= 0 selects the driver's default page size.
 	Search(context.Context, *SearchRequest) (*SearchResponse, error)
+	// Capabilities negotiates optional additive operations. Old drivers return
+	// UNIMPLEMENTED and are treated as base-only.
+	Capabilities(context.Context, *MemoryStoreCapabilitiesRequest) (*MemoryStoreCapabilitiesResponse, error)
+	// RememberVersioned atomically appends a revision when expected_version
+	// matches the current revision. Added after the six base RPCs so old drivers
+	// remain wire-compatible and report UNIMPLEMENTED.
+	RememberVersioned(context.Context, *RememberVersionedRequest) (*MemoryRecordResponse, error)
+	// InspectMemory returns the current revision and bounded history for one key.
+	InspectMemory(context.Context, *InspectMemoryRequest) (*InspectMemoryResponse, error)
+	// ForgetVersioned appends a tombstone when expected_version matches.
+	ForgetVersioned(context.Context, *ForgetVersionedRequest) (*MemoryRecordResponse, error)
+	// UndoLatest appends a compensating revision when expected_version matches.
+	UndoLatest(context.Context, *UndoLatestRequest) (*MemoryRecordResponse, error)
 	mustEmbedUnimplementedMemoryStoreServiceServer()
 }
 
@@ -209,6 +290,21 @@ func (UnimplementedMemoryStoreServiceServer) Index(context.Context, *IndexReques
 }
 func (UnimplementedMemoryStoreServiceServer) Search(context.Context, *SearchRequest) (*SearchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Search not implemented")
+}
+func (UnimplementedMemoryStoreServiceServer) Capabilities(context.Context, *MemoryStoreCapabilitiesRequest) (*MemoryStoreCapabilitiesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Capabilities not implemented")
+}
+func (UnimplementedMemoryStoreServiceServer) RememberVersioned(context.Context, *RememberVersionedRequest) (*MemoryRecordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RememberVersioned not implemented")
+}
+func (UnimplementedMemoryStoreServiceServer) InspectMemory(context.Context, *InspectMemoryRequest) (*InspectMemoryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InspectMemory not implemented")
+}
+func (UnimplementedMemoryStoreServiceServer) ForgetVersioned(context.Context, *ForgetVersionedRequest) (*MemoryRecordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ForgetVersioned not implemented")
+}
+func (UnimplementedMemoryStoreServiceServer) UndoLatest(context.Context, *UndoLatestRequest) (*MemoryRecordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UndoLatest not implemented")
 }
 func (UnimplementedMemoryStoreServiceServer) mustEmbedUnimplementedMemoryStoreServiceServer() {}
 func (UnimplementedMemoryStoreServiceServer) testEmbeddedByValue()                            {}
@@ -339,6 +435,96 @@ func _MemoryStoreService_Search_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MemoryStoreService_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MemoryStoreCapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryStoreServiceServer).Capabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryStoreService_Capabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryStoreServiceServer).Capabilities(ctx, req.(*MemoryStoreCapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MemoryStoreService_RememberVersioned_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RememberVersionedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryStoreServiceServer).RememberVersioned(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryStoreService_RememberVersioned_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryStoreServiceServer).RememberVersioned(ctx, req.(*RememberVersionedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MemoryStoreService_InspectMemory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InspectMemoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryStoreServiceServer).InspectMemory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryStoreService_InspectMemory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryStoreServiceServer).InspectMemory(ctx, req.(*InspectMemoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MemoryStoreService_ForgetVersioned_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForgetVersionedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryStoreServiceServer).ForgetVersioned(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryStoreService_ForgetVersioned_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryStoreServiceServer).ForgetVersioned(ctx, req.(*ForgetVersionedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MemoryStoreService_UndoLatest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UndoLatestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryStoreServiceServer).UndoLatest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryStoreService_UndoLatest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryStoreServiceServer).UndoLatest(ctx, req.(*UndoLatestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MemoryStoreService_ServiceDesc is the grpc.ServiceDesc for MemoryStoreService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -369,6 +555,26 @@ var MemoryStoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Search",
 			Handler:    _MemoryStoreService_Search_Handler,
+		},
+		{
+			MethodName: "Capabilities",
+			Handler:    _MemoryStoreService_Capabilities_Handler,
+		},
+		{
+			MethodName: "RememberVersioned",
+			Handler:    _MemoryStoreService_RememberVersioned_Handler,
+		},
+		{
+			MethodName: "InspectMemory",
+			Handler:    _MemoryStoreService_InspectMemory_Handler,
+		},
+		{
+			MethodName: "ForgetVersioned",
+			Handler:    _MemoryStoreService_ForgetVersioned_Handler,
+		},
+		{
+			MethodName: "UndoLatest",
+			Handler:    _MemoryStoreService_UndoLatest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -33,6 +33,9 @@ type Config struct {
 	// Env is the per-turn environment rendered into the volatile suffix. It MUST
 	// NOT influence the stable prefix.
 	Env Env
+	// OperatorProfile carries full durable user facts for this turn. Build renders
+	// it only in the volatile suffix; changing it never changes StablePrefix.
+	OperatorProfile OperatorProfileConfig
 }
 
 // Default role/tone/safety text used when Config leaves the corresponding field
@@ -169,6 +172,12 @@ func Build(cfg Config) Layered {
 	b.WriteString(inventory)
 
 	suffix := EnvBlock(cfg.Env)
+	if profile := renderOperatorProfile(cfg.OperatorProfile, cfg.Tools); profile != "" {
+		if suffix != "" {
+			suffix += "\n\n"
+		}
+		suffix += profile
+	}
 	if cfg.Env.Mode == "plan" {
 		// Plan-mode reminder rides the VOLATILE suffix only (it varies with the
 		// session mode) — never the cache-stable prefix.

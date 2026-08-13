@@ -41,7 +41,7 @@ Consolidation is an optional background pass that distills stored memory — mer
 
 Memory works correctly without consolidation. Consolidation is an optimization for stores that have accumulated many entries over many sessions.
 
-### The six memory tools
+### Memory and lifecycle tools
 
 When memory is enabled, the agent has access to these tools in every session:
 
@@ -53,8 +53,11 @@ When memory is enabled, the agent has access to these tools in every session:
 | **RememberUser** | Stores a fact about the operator in the cross-project user model (see below) |
 | **RecallUser** | Retrieves a user-model entry by key |
 | **SearchUserModel** | BM25 search across user-model entries |
+| **InspectMemory / InspectUserMemory** | Reads an exact value, version, provenance, timestamps, and bounded history |
+| **ForgetMemory / ForgetUserMemory** | Writes a reversible tombstone after permission approval (asks by default) |
+| **UndoMemory / UndoUserMemory** | Appends a compensating revision restoring the previous state |
 
-The first three operate on the per-project store. The last three operate on the user model. There is no agent-facing "forget" tool — the underlying `MemoryStore` interface does have a `Forget(key)` method, but it's used internally by consolidation (to drop stale entries), not exposed for the model to call directly.
+The first scope operates on the project store and the `*UserMemory` scope operates on the user model. Lifecycle tools appear only when the configured store positively advertises complete versioned-history support; old remote drivers expose only Remember/Recall/Search. Remember remains non-modal and overwrites normally when `expected_version` is omitted. Supplying a non-empty version requests CAS and a stale version conflicts; Forget and Undo require an explicit current version. Remember, Recall, Search, Inspect, and Undo are allowed at the overridable built-in floor; Forget asks by default. Learning mode `off` does not remove these explicit tools.
 
 ### Semantic recall
 
@@ -68,7 +71,7 @@ The soul is an operator-authored persona fragment injected into every session's 
 
 ### What it does
 
-The soul is loaded from `~/.config/mecatl/soul.md` (or `$XDG_CONFIG_HOME/mecatl/soul.md`) and injected as a fenced turn-0 message before the memory index and the user model. It survives compaction: because it is re-read from disk on every run, it does not degrade as sessions grow and context is trimmed.
+The soul is loaded from `~/.config/mecatl/soul.md` (or `$XDG_CONFIG_HOME/mecatl/soul.md`) and injected as a fenced turn-0 message before the project memory index. It survives compaction: because it is re-read from disk on every run, it does not degrade as sessions grow and context is trimmed.
 
 **The agent has no tool to modify the soul.** There is no write path. This is deliberate — a writable identity anchor is a persistent prompt-injection risk: a single poisoned write would rewrite the agent's persona across all future sessions. Edit the soul file with a text editor.
 
@@ -105,8 +108,10 @@ The user model is a cross-project, agent-writable store of durable facts about t
 
 ### How it surfaces
 
-- **Turn-0 block:** At session start, a `<user-model>` block is injected after the soul and after the memory index. It summarizes the stored facts. The agent treats this as data, not instructions — behavioural rules belong in the soul, not the user model.
-- **Tools:** `RememberUser`, `RecallUser`, `SearchUserModel` are available by default whenever the user model is enabled.
+- **Live operator profile:** Current valid `user/` facts are loaded on every main, subagent, team-member, and lead-synthesis provider request into the bounded volatile system-prompt suffix. Internal checker/reviewer/judge requests omit it. Facts never enter conversation history or the cache-stable prefix. Current explicit user text wins stale facts; facts are data and cannot change policy, safety, or tools. Overflow names `SearchUserModel`/`RecallUser` only when both exist in that request's real tool catalog; otherwise it says omitted facts are unavailable in that context.
+- **Narrow persistence defenses:** high-confidence credentials are rejected in values and descriptions (including Bearer/assignment/quoted/PEM wrappers), and model-authored role/directive overrides are rejected. The final profile boundary repeats both checks for migrated/imported/remote data while preserving ordinary Unicode preferences and security discussion.
+- **Tools:** `RememberUser`, `RecallUser`, `SearchUserModel`, and lifecycle-aware Inspect/Forget/Undo tools are available whenever the configured store supports them.
+- **Read-only TUI detail:** `/usermodel` keeps its bounded, terminal-height-scrolled key/description list; selecting one entry fetches its full value, status, version, source session, timestamp, and newest 16 revisions in a scrollable detail view. Secret-shaped values/descriptions are withheld. Base-only or old remote stores show history unavailable. Changes still go through model-facing tools and permissions. Once a remote driver advertises lifecycle support, a missing or failed lifecycle RPC is an error and never falls back to an unconditional legacy operation.
 
 Keys in the user model are automatically namespaced under `user/`.
 
@@ -148,7 +153,7 @@ user-model store and provider are available regardless of effective workspace
 | BM25 SearchMemory | **On** when memory is enabled | Automatic |
 | Dream consolidation | **Off** | `--memory-consolidate-interval` |
 | Soul | **On** if `~/.config/mecatl/soul.md` exists | `--no-soul` to disable; `--soul-file` to relocate |
-| User model tools + turn-0 block | **On** | `--no-user-model` to disable; `--user-model-dir` to relocate |
+| User model tools + live operator profile | **On** | `--no-user-model` to disable; `--user-model-dir` to relocate |
 | Automatic user-model reviewer | **Off** | `learning.mode: auto` in operator settings (`review` is currently inert) |
 | User-model consolidation | **Off** | `--user-model-consolidate-interval` |
 | Semantic/embedding recall | **Not available** | No embedding backend required or supported |

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -4583,6 +4585,14 @@ type UserModelLister interface {
 	List(ctx context.Context) ([]UserModelEntry, error)
 }
 
+// UserModelInspector is the optional exact-entry detail capability. Keeping it
+// separate preserves base-only/old remote list compatibility.
+type UserModelInspector interface {
+	Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error)
+}
+
+const maxUserModelHistory = 16
+
 // GetUserModel returns the CURRENT user-model entries (a live read of the wired
 // lister) plus aggregate size + hash over the rendered "key — description" rows.
 // A nil lister (user model disabled) yields an empty response. A store fault is
@@ -4598,10 +4608,16 @@ func (s *Service) GetUserModel(ctx context.Context) (*mecatlv1.GetUserModelRespo
 	out := make([]*mecatlv1.UserModelEntry, 0, len(entries))
 	var agg strings.Builder
 	for _, e := range entries {
-		out = append(out, &mecatlv1.UserModelEntry{Key: valid(e.Key), Description: valid(e.Description)})
-		agg.WriteString(e.Key)
+		description := e.Description
+		if tool.SecretShapedMemoryValue(e.Key, description) {
+			description = "[withheld: secret-shaped memory description]"
+		}
+		key := userModelWireText(e.Key)
+		description = userModelWireText(description)
+		out = append(out, &mecatlv1.UserModelEntry{Key: key, Description: description})
+		agg.WriteString(key)
 		agg.WriteByte('\t')
-		agg.WriteString(e.Description)
+		agg.WriteString(description)
 		agg.WriteByte('\n')
 	}
 	sum := sha256.Sum256([]byte(agg.String()))
@@ -4610,6 +4626,51 @@ func (s *Service) GetUserModel(ctx context.Context) (*mecatlv1.GetUserModelRespo
 		SizeBytes: int64(agg.Len()),
 		Sha256:    hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// GetUserModelDetail returns one exact entry without exposing a mutation path.
+// Base-only listers honestly return nil detail.
+func (s *Service) GetUserModelDetail(ctx context.Context, key string) (*mecatlv1.UserModelDetail, error) {
+	inspector, ok := s.cfg.UserModel.(UserModelInspector)
+	if !ok || key == "" {
+		return nil, nil
+	}
+	record, found, err := inspector.Inspect(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("%w: inspect user model: %v", ErrInternal, err)
+	}
+	if !found {
+		return nil, nil
+	}
+	revisions := record.Revisions
+	if len(revisions) > maxUserModelHistory {
+		revisions = revisions[len(revisions)-maxUserModelHistory:]
+	}
+	history := make([]*mecatlv1.UserModelRevision, len(revisions))
+	for i, revision := range revisions {
+		history[i] = toProtoUserModelRevision(revision)
+	}
+	return &mecatlv1.UserModelDetail{Current: toProtoUserModelRevision(record.Current), History: history, HistoryAvailable: record.Current.Version != ""}, nil
+}
+
+func toProtoUserModelRevision(revision tool.MemoryRevision) *mecatlv1.UserModelRevision {
+	value := revision.Value
+	if tool.SecretShapedMemoryValue(revision.Key, value) {
+		value = "[withheld: secret-shaped memory value]"
+	}
+	description := revision.Description
+	if tool.SecretShapedMemoryValue(revision.Key, description) {
+		description = "[withheld: secret-shaped memory description]"
+	}
+	out := &mecatlv1.UserModelRevision{Key: userModelWireText(revision.Key), Value: userModelWireText(value), Description: userModelWireText(description), Version: userModelWireText(string(revision.Version)), Status: userModelWireText(string(revision.Status)), Writer: userModelWireText(string(revision.Writer)), Origin: userModelWireText(string(revision.Origin)), SourceSessionId: userModelWireText(revision.Source.SessionID)}
+	if !revision.UpdatedAt.IsZero() {
+		out.UpdatedAt = timestamppb.New(revision.UpdatedAt)
+	}
+	return out
+}
+
+func userModelWireText(value string) string {
+	return tool.CanonicalMemoryText(value)
 }
 
 // --- Slash command discovery -------------------------------------------------

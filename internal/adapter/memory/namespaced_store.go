@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -20,16 +21,28 @@ type NamespacedStore struct {
 
 var _ tool.MemoryStore = (*NamespacedStore)(nil)
 
+type namespacedLifecycleStore struct {
+	*NamespacedStore
+	lifecycle tool.MemoryLifecycleStore
+}
+
+var _ tool.MemoryLifecycleStore = (*namespacedLifecycleStore)(nil)
+
 // NewNamespacedStore confines a MemoryStore to namespace. Namespace is an
-// adapter-private boundary, not a model-visible key prefix.
-func NewNamespacedStore(store tool.MemoryStore, namespace string) *NamespacedStore {
+// adapter-private boundary, not a model-visible key prefix. The returned store
+// advertises MemoryLifecycleStore exactly when the backing store does.
+func NewNamespacedStore(store tool.MemoryStore, namespace string) tool.MemoryStore {
 	if store == nil {
 		panic("memory: NewNamespacedStore requires a non-nil MemoryStore")
 	}
 	if strings.TrimSpace(namespace) == "" {
 		panic("memory: NewNamespacedStore requires a non-empty namespace")
 	}
-	return &NamespacedStore{store: store, namespace: namespace + "\x00"}
+	base := &NamespacedStore{store: store, namespace: strings.TrimSuffix(namespace, "/") + "/"}
+	if lifecycle, ok := store.(tool.MemoryLifecycleStore); ok {
+		return &namespacedLifecycleStore{NamespacedStore: base, lifecycle: lifecycle}
+	}
+	return base
 }
 
 func (s *NamespacedStore) key(key string) string { return s.namespace + key }
@@ -100,6 +113,45 @@ func (s *NamespacedStore) Forget(ctx context.Context, key string) error {
 	return s.store.Forget(ctx, s.key(key))
 }
 
+func (s *namespacedLifecycleStore) trimRecord(record tool.MemoryRecord) tool.MemoryRecord {
+	record.Current.Key = strings.TrimPrefix(record.Current.Key, s.namespace)
+	for i := range record.Revisions {
+		record.Revisions[i].Key = strings.TrimPrefix(record.Revisions[i].Key, s.namespace)
+	}
+	return record
+}
+
+func (s *namespacedLifecycleStore) logicalError(err error) error {
+	var conflict *tool.MemoryVersionConflictError
+	if errors.As(err, &conflict) {
+		logical := *conflict
+		logical.Key = strings.TrimPrefix(logical.Key, s.namespace)
+		return &logical
+	}
+	return err
+}
+
+func (s *namespacedLifecycleStore) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	entry.Key = s.key(entry.Key)
+	record, err := s.lifecycle.RememberVersioned(ctx, entry, expected)
+	return s.trimRecord(record), s.logicalError(err)
+}
+
+func (s *namespacedLifecycleStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
+	record, ok, err := s.lifecycle.Inspect(ctx, s.key(key))
+	return s.trimRecord(record), ok, s.logicalError(err)
+}
+
+func (s *namespacedLifecycleStore) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, err := s.lifecycle.ForgetVersioned(ctx, s.key(key), expected)
+	return s.trimRecord(record), s.logicalError(err)
+}
+
+func (s *namespacedLifecycleStore) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, err := s.lifecycle.UndoLatest(ctx, s.key(key), expected)
+	return s.trimRecord(record), s.logicalError(err)
+}
+
 type memoryWorkspaceKey struct{}
 
 // WithWorkspace annotates a run context for the caller-scoped project memory
@@ -118,16 +170,27 @@ type CallerStore struct {
 
 var _ tool.MemoryStore = (*CallerStore)(nil)
 
+type callerLifecycleStore struct {
+	*CallerStore
+}
+
+var _ tool.MemoryLifecycleStore = (*callerLifecycleStore)(nil)
+
 // NewCallerStore returns a store partitioned by verified caller and, when
-// project is true, by workspace.
-func NewCallerStore(store tool.MemoryStore, project bool) *CallerStore {
+// project is true, by workspace. The returned store advertises
+// MemoryLifecycleStore exactly when the backing store does.
+func NewCallerStore(store tool.MemoryStore, project bool) tool.MemoryStore {
 	if store == nil {
 		panic("memory: NewCallerStore requires a non-nil MemoryStore")
 	}
-	return &CallerStore{store: store, project: project}
+	base := &CallerStore{store: store, project: project}
+	if _, ok := store.(tool.MemoryLifecycleStore); ok {
+		return &callerLifecycleStore{CallerStore: base}
+	}
+	return base
 }
 
-func (s *CallerStore) scoped(ctx context.Context) (*NamespacedStore, error) {
+func (s *CallerStore) scoped(ctx context.Context) (tool.MemoryStore, error) {
 	principal := session.PrincipalFromContext(ctx)
 	if principal == nil {
 		return nil, fmt.Errorf("memory: verified caller is required")
@@ -141,7 +204,7 @@ func (s *CallerStore) scoped(ctx context.Context) (*NamespacedStore, error) {
 		identity += "\x00" + workspace
 	}
 	digest := sha256.Sum256([]byte(identity))
-	return NewNamespacedStore(s.store, fmt.Sprintf("caller/%x", digest[:])), nil
+	return NewNamespacedStore(s.store, fmt.Sprintf("caller/id-%x", digest[:])), nil
 }
 
 // RememberEntry stores entry in the verified caller's namespace.
@@ -196,4 +259,44 @@ func (s *CallerStore) Forget(ctx context.Context, key string) error {
 		return err
 	}
 	return store.Forget(ctx, key)
+}
+
+func (s *callerLifecycleStore) scopedLifecycle(ctx context.Context) (tool.MemoryLifecycleStore, error) {
+	store, err := s.scoped(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return store.(tool.MemoryLifecycleStore), nil
+}
+
+func (s *callerLifecycleStore) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	store, err := s.scopedLifecycle(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.RememberVersioned(ctx, entry, expected)
+}
+
+func (s *callerLifecycleStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
+	store, err := s.scopedLifecycle(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, false, err
+	}
+	return store.Inspect(ctx, key)
+}
+
+func (s *callerLifecycleStore) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	store, err := s.scopedLifecycle(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.ForgetVersioned(ctx, key, expected)
+}
+
+func (s *callerLifecycleStore) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	store, err := s.scopedLifecycle(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.UndoLatest(ctx, key, expected)
 }

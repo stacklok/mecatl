@@ -5,6 +5,7 @@
     ifacemethod func (CommandSource).ListCommands(ctx context.Context) ([]Command, error)
     ifacemethod func (InstructionAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
     ifacemethod func (MemoryIndexSource).Index(ctx context.Context) ([]tool.MemoryEntry, error)
+    ifacemethod func (OperatorProfileSource).List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error)
     ifacemethod func (RulesSource).ListRules(ctx context.Context) ([]Rule, error)
     ifacemethod func (SoulSource).Load(ctx context.Context) (string, error)
     ifacemethod func (UserModelSource).Index(ctx context.Context) ([]tool.MemoryEntry, error)
@@ -23,6 +24,9 @@
     method func (RulesAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
     method func (SoulAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
     method func (UserModelAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
+const DefaultOperatorProfileMaxBytes untyped int = 8192
+const DefaultOperatorProfileMaxEntries untyped int = 32
+const DefaultOperatorProfileMaxRunes untyped int = 4096
 const MaxCommandDescriptionRunes untyped int = 80
 const MaxRuleBytes untyped int = 20480
 const RuleOriginDriver RuleOrigin = "driver"
@@ -46,7 +50,7 @@ type CommandExpander interface{Expand(ctx context.Context, ws tool.Workspace, in
 type CommandLister interface{List(ctx context.Context, ws tool.Workspace) ([]Command, error)}
 type CommandPostExpansionSource interface{CommandBodyWithPost(ctx context.Context, name string) (body string, post string, found bool, err error)}
 type CommandSource interface{CommandBody(ctx context.Context, name string) (body string, found bool, err error); ListCommands(ctx context.Context) ([]Command, error)}
-type Config struct{Role string; Tone string; Safety string; Tools []tool.ToolSpec; Env Env}
+type Config struct{Role string; Tone string; Safety string; Tools []tool.ToolSpec; Env Env; OperatorProfile OperatorProfileConfig}
 type DirCommandExpander struct{}
 type Env struct{Cwd string; OS string; Model string; Date string; Mode string; Shell string; GitStatus string}
 type InstructionAssembler interface{Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)}
@@ -56,6 +60,8 @@ type MemoryIndexSource interface{Index(ctx context.Context) ([]tool.MemoryEntry,
 type MultiAssembler struct{Assemblers []InstructionAssembler}
 type MultiExpander struct{}
 type NoopExpander struct{}
+type OperatorProfileConfig struct{Entries []tool.MemoryEntry; MaxEntries int; MaxBytes int; MaxRunes int}
+type OperatorProfileSource interface{List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error)}
 type RootAssembler struct{}
 type Rule struct{Name string; Body string; Paths []string; Origin RuleOrigin}
 type RuleOrigin string
