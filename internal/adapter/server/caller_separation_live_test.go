@@ -19,11 +19,17 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+// callerSeparationTestEnv wraps a throwaway memfs Workspace into an Environment
+// for these tests' non-FS tools (InspectSubagent/InspectMember/Ask).
+func callerSeparationTestEnv() tool.Environment {
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+}
+
 type callerSeparationAskTool struct{}
 
 func (callerSeparationAskTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: "Ask"} }
 func (callerSeparationAskTool) ReadOnly() bool      { return true }
-func (callerSeparationAskTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (callerSeparationAskTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(call.ID, "done"), nil
 }
 
@@ -192,14 +198,14 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 	}
 	aliceCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
 	bobCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://idp.example", Subject: "bob", GrantType: session.GrantTypeUser})
-	ownerRes, err := inspect.Execute(aliceCtx, session.NewToolCall("owner-inspect", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-alice"}`)), memfs.NewWorkspace("/ws"))
+	ownerRes, err := inspect.Execute(aliceCtx, session.NewToolCall("owner-inspect", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-alice"}`)), callerSeparationTestEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ownerRes.IsError || !strings.Contains(ownerRes.Content, "ALICE SECRET") {
 		t.Fatalf("owner subagent inspect = %+v, want Alice's transcript", ownerRes)
 	}
-	res, err := inspect.Execute(bobCtx, session.NewToolCall("inspect", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-alice"}`)), memfs.NewWorkspace("/ws"))
+	res, err := inspect.Execute(bobCtx, session.NewToolCall("inspect", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-alice"}`)), callerSeparationTestEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,14 +213,14 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 		t.Fatalf("foreign subagent inspect = %+v, want the ordinary absent-handle result", res)
 	}
 	inspectMember := agent.NewInspectMemberToolWithOwnership(store, true)
-	ownerTeamRes, err := inspectMember.Execute(aliceCtx, session.NewToolCall("owner-inspect-team", "InspectMember", json.RawMessage(`{"team_id":"team-alice","member":"researcher"}`)), memfs.NewWorkspace("/ws"))
+	ownerTeamRes, err := inspectMember.Execute(aliceCtx, session.NewToolCall("owner-inspect-team", "InspectMember", json.RawMessage(`{"team_id":"team-alice","member":"researcher"}`)), callerSeparationTestEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ownerTeamRes.IsError || !strings.Contains(ownerTeamRes.Content, "TEAM SECRET") {
 		t.Fatalf("owner team inspect = %+v, want Alice's transcript", ownerTeamRes)
 	}
-	teamRes, err := inspectMember.Execute(bobCtx, session.NewToolCall("inspect-team", "InspectMember", json.RawMessage(`{"team_id":"team-alice","member":"researcher"}`)), memfs.NewWorkspace("/ws"))
+	teamRes, err := inspectMember.Execute(bobCtx, session.NewToolCall("inspect-team", "InspectMember", json.RawMessage(`{"team_id":"team-alice","member":"researcher"}`)), callerSeparationTestEnv())
 	if err != nil {
 		t.Fatal(err)
 	}

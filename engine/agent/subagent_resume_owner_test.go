@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -105,7 +104,7 @@ func runResumeAttempt(t *testing.T, task tool.Tool, childID session.SessionID, b
 	if caller != nil {
 		ctx = session.WithPrincipal(ctx, caller)
 	}
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	res := resultByCallID(evs)[session.ToolCallID("rc")]
 	if res == nil {
@@ -152,7 +151,7 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 			if err := seedSess.RestoreLabels(resumeOwnerAlice, ""); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
-			r := seedParent.Run(context.Background(), seedSess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+			r := seedParent.Run(context.Background(), seedSess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 			drainObserving(t, r, nil)
 
 			childID := session.SessionID("subagent-owner-parent-p1")
@@ -267,7 +266,7 @@ func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) 
 	firstDone := make(chan struct{})
 	go func() {
 		defer close(firstDone)
-		_, _ = task.Execute(ctx, session.NewToolCall("a1", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+		_, _ = task.Execute(ctx, session.NewToolCall("a1", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), agent.MemEnv("/ws"))
 	}()
 	select {
 	case <-block.entered:
@@ -275,11 +274,11 @@ func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) 
 		t.Fatal("owner resume never entered the blocking child")
 	}
 
-	foreign, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerBob), session.NewToolCall("a2", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	foreign, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerBob), session.NewToolCall("a2", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("foreign resume transport error: %v", err)
 	}
-	unknown, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerBob), session.NewToolCall("a3", "Subagent", json.RawMessage(`{"resume":"subagent-missing","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	unknown, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerBob), session.NewToolCall("a3", "Subagent", json.RawMessage(`{"resume":"subagent-missing","prompt":"continue"}`)), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unknown resume transport error: %v", err)
 	}
@@ -289,7 +288,7 @@ func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) 
 		}
 	}
 
-	owner, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerAlice), session.NewToolCall("a4", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	owner, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerAlice), session.NewToolCall("a4", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("owner concurrent resume transport error: %v", err)
 	}

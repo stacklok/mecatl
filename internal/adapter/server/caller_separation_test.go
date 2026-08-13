@@ -454,7 +454,7 @@ func TestCallerSeparation_Scenario2_ScheduleQueryListFiltersForeignSchedules(t *
 	}
 
 	query := agent.NewScheduleQueryTool(svc.ScheduleManager())
-	result, err := query.Execute(bob, session.ToolCall{ID: "list", Name: agent.ScheduleQueryToolName, Args: []byte(`{"verb":"list"}`)}, memfs.NewWorkspace("/ws"))
+	result, err := query.Execute(bob, session.ToolCall{ID: "list", Name: agent.ScheduleQueryToolName, Args: []byte(`{"verb":"list"}`)}, callerSeparationTestEnv())
 	if err != nil {
 		t.Fatalf("ScheduleQuery list: %v", err)
 	}

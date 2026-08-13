@@ -6,12 +6,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 )
 
 func memoryArgs(raw string) json.RawMessage { return json.RawMessage(raw) }
+
+// noFSTestEnv is a stand-in Environment for these tests' memory tools, none of
+// which touch a filesystem.
+var noFSTestEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), nil)
 
 func callerContext(subject, workspace string) context.Context {
 	ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: subject})
@@ -121,19 +126,19 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 	bobTools := Tools(store)
 
 	remember := aliceTools[1]
-	result, err := remember.Execute(aliceCtx, session.NewToolCall("remember-alice", RememberToolName, memoryArgs(`{"key":"same-key","value":"alice secret","description":"alice fact"}`)), nil)
+	result, err := remember.Execute(aliceCtx, session.NewToolCall("remember-alice", RememberToolName, memoryArgs(`{"key":"same-key","value":"alice secret","description":"alice fact"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Alice Remember = (%+v, %v)", result, err)
 	}
-	foreignRecall, err := bobTools[0].Execute(bobCtx, session.NewToolCall("recall-bob", RecallToolName, memoryArgs(`{"key":"same-key"}`)), nil)
+	foreignRecall, err := bobTools[0].Execute(bobCtx, session.NewToolCall("recall-bob", RecallToolName, memoryArgs(`{"key":"same-key"}`)), noFSTestEnv)
 	if err != nil || foreignRecall.IsError || strings.Contains(foreignRecall.Content, "alice secret") || !strings.Contains(foreignRecall.Content, "No memory found") {
 		t.Fatalf("Bob foreign Recall = (%+v, %v), want an absent result without Alice's value", foreignRecall, err)
 	}
-	foreignSearch, err := bobTools[2].Execute(bobCtx, session.NewToolCall("search-bob", SearchMemoryToolName, memoryArgs(`{"query":"alice"}`)), nil)
+	foreignSearch, err := bobTools[2].Execute(bobCtx, session.NewToolCall("search-bob", SearchMemoryToolName, memoryArgs(`{"query":"alice"}`)), noFSTestEnv)
 	if err != nil || foreignSearch.IsError || strings.Contains(foreignSearch.Content, "alice") && !strings.Contains(foreignSearch.Content, "No memory entries") {
 		t.Fatalf("Bob foreign Search = (%+v, %v), want no Alice entry", foreignSearch, err)
 	}
-	result, err = bobTools[1].Execute(bobCtx, session.NewToolCall("remember-bob", RememberToolName, memoryArgs(`{"key":"same-key","value":"bob value","description":"bob fact"}`)), nil)
+	result, err = bobTools[1].Execute(bobCtx, session.NewToolCall("remember-bob", RememberToolName, memoryArgs(`{"key":"same-key","value":"bob value","description":"bob fact"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Bob Remember = (%+v, %v)", result, err)
 	}
@@ -152,15 +157,15 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 	userStore := NewCallerStore(userBase, false)
 	aliceUserTools := NewUserModelTools(userStore)
 	bobUserTools := NewUserModelTools(userStore)
-	result, err = aliceUserTools[1].Execute(aliceCtx, session.NewToolCall("remember-user-alice", RememberUserToolName, memoryArgs(`{"key":"preference","value":"alice user value"}`)), nil)
+	result, err = aliceUserTools[1].Execute(aliceCtx, session.NewToolCall("remember-user-alice", RememberUserToolName, memoryArgs(`{"key":"preference","value":"alice user value"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Alice RememberUser = (%+v, %v)", result, err)
 	}
-	foreignUserRecall, err := bobUserTools[0].Execute(bobCtx, session.NewToolCall("recall-user-bob", RecallUserToolName, memoryArgs(`{"key":"user/preference"}`)), nil)
+	foreignUserRecall, err := bobUserTools[0].Execute(bobCtx, session.NewToolCall("recall-user-bob", RecallUserToolName, memoryArgs(`{"key":"user/preference"}`)), noFSTestEnv)
 	if err != nil || foreignUserRecall.IsError || strings.Contains(foreignUserRecall.Content, "alice user value") || !strings.Contains(foreignUserRecall.Content, "No memory found") {
 		t.Fatalf("Bob foreign RecallUser = (%+v, %v), want an absent result without Alice's value", foreignUserRecall, err)
 	}
-	result, err = bobUserTools[1].Execute(bobCtx, session.NewToolCall("remember-user-bob", RememberUserToolName, memoryArgs(`{"key":"preference","value":"bob user value"}`)), nil)
+	result, err = bobUserTools[1].Execute(bobCtx, session.NewToolCall("remember-user-bob", RememberUserToolName, memoryArgs(`{"key":"preference","value":"bob user value"}`)), noFSTestEnv)
 	if err != nil || result.IsError {
 		t.Fatalf("Bob RememberUser = (%+v, %v)", result, err)
 	}

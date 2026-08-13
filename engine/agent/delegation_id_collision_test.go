@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -42,7 +41,7 @@ func TestSubagentChildSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *testi
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
 		sess := session.New(parentSessionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 		evs := drain(r)
 		res := resultByCallID(evs)["p1"]
 		if res == nil || res.IsError {
@@ -98,7 +97,7 @@ func TestParallelBranchSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *test
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, par)})
 		sess := session.New(parentSessionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 		evs := drain(r)
 		res := resultByCallID(evs)["p1"]
 		if res == nil || res.IsError {
@@ -159,7 +158,7 @@ func TestTeamMemberSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *testing.
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, teamTool)})
 		sess := session.New(parentSessionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix it"})
+		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "fix it"})
 		evs := drain(r)
 		res := resultByCallID(evs)["p1"]
 		if res == nil || res.IsError {

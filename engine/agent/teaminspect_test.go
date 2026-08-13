@@ -109,7 +109,7 @@ func TestInspectMemberOwnershipPolicy(t *testing.T) {
 		{"legacy compatibility: verified foreign caller still denied", agent.NewInspectMemberTool(store), foreignCtx, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := tc.tool.Execute(tc.ctx, call, nil)
+			res, err := tc.tool.Execute(tc.ctx, call, agent.MemEnv("/ws"))
 			if err != nil {
 				t.Fatalf("Execute: %v", err)
 			}
