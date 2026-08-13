@@ -871,6 +871,12 @@ type Config struct {
 	// "". Unexported: an internal composition detail, not an operator knob.
 	defaultModelPending bool
 
+	// permConfigEnv is the composition-only environment seam for conventional
+	// permission-config discovery. Nil preserves the production xdgconfig.OSEnv
+	// binding; tests inject an isolated XDG config directory so they cannot read
+	// the developer's user-global settings.
+	permConfigEnv *xdgconfig.ResolveEnv
+
 	// envDetector is the injectable environment-lookup seam the provider registry
 	// uses for credential-availability detection (multi-provider S1). It defaults
 	// to os.Getenv (set in Build); tests inject a fake map-backed lookup so registry
@@ -6951,13 +6957,17 @@ func mainEvaluatorOptions(cfg Config) []governance.EvaluatorOption {
 // so the typed-nil guard lives HERE, and the field is a real nil interface when
 // config is off ("nil resolver behaves like NewPolicy" holds everywhere).
 func buildPermResolver(cfg Config) permpolicy.RuleResolver {
-	resolver := permconfig.New(permconfig.Options{
+	env := xdgconfig.OSEnv
+	if cfg.permConfigEnv != nil {
+		env = *cfg.permConfigEnv
+	}
+	resolver := permconfig.NewWithEnv(permconfig.Options{
 		Conventional:  cfg.PermissionsConventional,
 		ImportClaude:  cfg.ImportClaudePermissions,
 		TrustProject:  projectIngestionAdmitted(cfg),
 		ExplicitFiles: cfg.PermissionConfigs,
 		Diagnostics:   cfg.diag(),
-	})
+	}, env)
 	if resolver == nil {
 		return nil
 	}

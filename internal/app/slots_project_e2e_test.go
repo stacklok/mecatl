@@ -41,6 +41,7 @@ models:
 		UseMock:                 true,
 		Diagnostics:             diag,
 		PermissionsConventional: true,
+		permConfigEnv:           isolatedPermConfigEnv(t),
 		TrustProject:            true,
 		PermissionConfigs:       []string{opPath},
 	})
@@ -93,6 +94,7 @@ models:
 		UseMock:                 true,
 		Diagnostics:             diag,
 		PermissionsConventional: true,
+		permConfigEnv:           isolatedPermConfigEnv(t),
 		TrustProject:            true,
 		PermissionConfigs:       []string{opPath},
 	})
