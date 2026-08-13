@@ -31,11 +31,15 @@ type noCreatorStore struct {
 
 func newNoCreatorStore() *noCreatorStore { return &noCreatorStore{inner: memschedulestore.New()} }
 
-func (n *noCreatorStore) Save(ctx context.Context, s port.Schedule) error { return n.inner.Save(ctx, s) }
+func (n *noCreatorStore) Save(ctx context.Context, s port.Schedule) error {
+	return n.inner.Save(ctx, s)
+}
 func (n *noCreatorStore) Load(ctx context.Context, name string) (port.Schedule, error) {
 	return n.inner.Load(ctx, name)
 }
-func (n *noCreatorStore) Delete(ctx context.Context, name string) error { return n.inner.Delete(ctx, name) }
+func (n *noCreatorStore) Delete(ctx context.Context, name string) error {
+	return n.inner.Delete(ctx, name)
+}
 func (n *noCreatorStore) List(ctx context.Context) ([]port.Schedule, error) { return n.inner.List(ctx) }
 func (n *noCreatorStore) Due(ctx context.Context, now time.Time) ([]port.Schedule, error) {
 	return n.inner.Due(ctx, now)

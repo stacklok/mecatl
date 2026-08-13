@@ -223,9 +223,10 @@ func RunTeamScenario(ctx context.Context) (agent.TeamOutcome, error) {
 }
 
 // demoBackgroundChildID is the deterministic child session id of the background
-// scenario's subagent ("subagent-<callID>" — the single handle convention), used
-// by the scripted collection turn and asserted by the e2e test.
-const demoBackgroundChildID = "subagent-call-bg-1"
+// scenario's subagent ("subagent-<parentSessionID>-<callID>" — namespaced by
+// the parent session id, review finding 2/issue #368), used by the scripted
+// collection turn and asserted by the e2e test.
+const demoBackgroundChildID = "subagent-demo-background-session-call-bg-1"
 
 // RunBackgroundScenario drives the fully-offline background-subagent flow
 // (BACKGROUND-SUBAGENTS I3a+I3b) through a real agent.Engine: the model starts a
