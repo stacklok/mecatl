@@ -73,14 +73,22 @@ own escape hatch.
   served each turn. Setting an `order` disables OpenRouter's default price
   load-balancing (an explicit choice, surfaced in the config docs);
   `allow_fallbacks: false` pins hard.
+- **Hard pin ⇒ hard fail (live-verified).** With `allow_fallbacks: false`, if
+  OpenRouter can't satisfy *any* downstream in `order` for the model (out of
+  policy on the account, unlisted, or down), the request 404s with
+  `No endpoints found for <model>` and the turn errors — no silent fallback. A
+  downstream can be *listed* healthy on a model's endpoints and still be
+  unroutable on the account. Documented in `docs/usage/model-routing.md`.
 - Two exported engine constants were Added (minor): `port.ChunkProviderRoute`,
   `session.EvProviderRoute`. Recorded in `engine/CHANGELOG.md`; the api-compat
   snapshots regenerated.
 - The echo is best-effort: a cache hit or an OpenRouter change to the metadata
   shape degrades to silence, never an error. The echo carries OpenRouter's
-  DISPLAY name for the downstream (e.g. "Anthropic"), which differs in casing
-  from the lowercase-kebab slug the steering `order` uses ("anthropic") — two
-  different OpenRouter surfaces, never mapped back onto each other.
+  DISPLAY name for the downstream (e.g. "Google"), which differs in vocabulary
+  from the lowercase-kebab slug the steering `order` uses ("google-vertex") —
+  two different OpenRouter surfaces. We relay the display name verbatim and
+  deliberately do NOT map it back to a slug (a guessed slug can be wrong, so the
+  echo is a human readout, not a round-trippable identifier).
 - v1 scope: `order` + `allow_fallbacks` only, config-only (no CLI flag). The rest
   of `ProviderPreferences` (`sort`, `only`/`ignore`, `quantizations`, `max_price`,
   …) can follow as additional `openrouter:` keys without reshaping the seam.

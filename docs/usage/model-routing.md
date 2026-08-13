@@ -317,6 +317,15 @@ openrouter:
   `deepinfra/turbo`) to pin one variant.
 - `allow_fallbacks:` absent ⇒ OpenRouter's default (`true` — after `order` is
   exhausted, other downstreams are tried). Explicit `false` pins hard to `order`.
+  ⚠️ **A hard pin can hard-fail the turn.** With `allow_fallbacks: false`, if
+  OpenRouter cannot satisfy *any* downstream in your `order` for that model (it's
+  out of policy on your account, unlisted for the model, or transiently
+  unavailable), the request fails with a `404 No endpoints found for <model>` and
+  the turn errors — there is no silent fallback. (Verified live: a downstream can
+  be *listed* as healthy on a model's endpoints and still be unroutable because
+  it's out of policy on your OpenRouter account.) List every downstream you'd
+  accept, or leave `allow_fallbacks` at its default so an exhausted `order`
+  degrades to other downstreams instead of erroring.
 - **Operator-tier only.** A project-tier `openrouter:` block is **ignored with a
   WARN** — steering requests to a particular downstream is a spend/compliance/
   capability decision the operator owns (the same gate as `models.default_provider`,
@@ -330,6 +339,16 @@ opt-in, and the routed downstream echoes back as a `provider.route` event —
 rendered in mecatui as a transient `via <slug>` footer status. It is metadata-only
 and degrades to **absent on a cache hit** (OpenRouter strips the metadata from
 cached responses): no value is ever fabricated.
+
+**The echo is a display name, NOT your config slug.** You *send* lowercase-kebab
+slugs (`google-vertex`); OpenRouter *returns* its own display name for the
+downstream (`Google`). These come from two different OpenRouter surfaces (the
+request's `provider` object vs. the response's routing metadata) and use different
+vocabularies. mecatl relays the display name **verbatim** for the status echo and
+deliberately does *not* try to map it back to a config slug (guessing a slug we
+didn't receive could be wrong — e.g. `"Google"` → `google` ≠ `google-vertex`). So
+don't string-match the echo against your `order:` list; treat it as a human
+readout, not a round-trippable identifier.
 
 See the [configuration reference](../configuration-reference.md#openrouter) for the
 full key listing and [ADR 0104](../adr/0104-openrouter-downstream-provider-steering.md)
