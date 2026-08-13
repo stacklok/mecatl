@@ -109,6 +109,8 @@ func unsafeAddress(addr netip.Addr) bool {
 		return true
 	}
 	addr = addr.Unmap()
+	// The shared predicate covers loopback, RFC 1918, link-local, multicast,
+	// CGNAT 100.64.0.0/10, and well-known-prefix NAT64 embeddings.
 	if session.ValidateResolvedIP(net.IP(addr.AsSlice())) != nil {
 		return true
 	}

@@ -47,6 +47,8 @@ func TestUnsafeAddressClasses(t *testing.T) {
 		"0.0.0.0",
 		"127.0.0.1",
 		"10.0.0.1",
+		"100.64.0.1",
+		"100.127.255.254",
 		"169.254.169.254",
 		"224.0.0.1",
 		"192.0.2.1",
@@ -102,6 +104,7 @@ func TestGetRejectsLiteralUnsafeTargetsBeforeRoundTrip(t *testing.T) {
 
 	for _, raw := range []string{
 		"http://127.0.0.1/",
+		"http://100.64.0.1/",
 		"http://169.254.169.254/latest/meta-data/",
 		"http://[::1]/",
 		"http://[::ffff:127.0.0.1]/",
