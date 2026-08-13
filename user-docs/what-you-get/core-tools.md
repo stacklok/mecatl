@@ -29,9 +29,17 @@ These tools are always present in a default session (no extra configuration requ
 | `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
 | `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree. | Yes |
 | `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
-| `WebFetch` | Fetch the content of an HTTP URL. Present in both default and no-filesystem session profiles. | Yes |
+| `WebFetch` | Fetch readable text from a public HTTP(S) URL. Present in both default and no-filesystem session profiles. | Yes |
 | `WebSearch` | Run a web search and return results. Present in both default and no-filesystem session profiles. | Yes |
 | `ToolSearch` | Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled. | Yes |
+
+### Fetching a page without MCP
+
+`WebFetch` works out of the box. Give it one absolute `http://` or `https://` URL and it returns readable text for HTML, Markdown, plain text, CSV, JSON, XML, RSS, or Atom content. Use `WebSearch` when you still need to find the URL; use `WebFetch` once you know what to read.
+
+The fetcher does not use browser cookies, proxy settings, custom headers, or credentials. It rejects private, loopback, link-local, metadata, and reserved destinations, pins the DNS result used for the connection, and repeats those checks on every redirect. URLs are capped at 8 KiB, redirects at five hops, downloads and decompressed bodies at 5 MiB, and model-visible output at 25,000 bytes. Binary files and unsupported content types are rejected.
+
+Fetched text is external input. mecatl strips active HTML elements, converts the remaining page to text, repairs invalid UTF-8, and wraps the result in the same untrusted-content fence used by WebSearch. If you enable model-backed guardrails, their default rules inspect `WebFetch` results before the model sees them.
 
 :::note[Bash is mutating]
 

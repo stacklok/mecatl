@@ -4,8 +4,8 @@
 // (engine/adapter/fstools) so external consumers of engine/agent get them, and
 // their enforced invariants, by import; this package re-exports them via alias.go
 // and adds the host-repo-coupled tools that CANNOT live in the engine module:
-// the WebFetch stub, WebSearch (needs a search provider), and FetchMcpResource
-// (MCP-coupled).
+// FetchMcpResource (MCP-coupled). WebFetch and WebSearch are re-exported from
+// their importable engine reference adapters.
 //
 // All() and Register() cover the always-available tools that need only a
 // Workspace — the fstools filesystem tools plus WebFetch and FetchMcpResource,
@@ -49,7 +49,7 @@ import (
 // it rides in BOTH profiles via All() and NoFS().
 func All() []tool.Tool {
 	return append(fstools.All(),
-		WebFetchTool{},
+		NewWebFetchTool(),
 		FetchMcpResourceTool{},
 	)
 }
@@ -65,7 +65,7 @@ func All() []tool.Tool {
 // needs no filesystem, so it stays in the no-FS profile alongside WebFetch.
 func NoFS() []tool.Tool {
 	return []tool.Tool{
-		WebFetchTool{},
+		NewWebFetchTool(),
 		FetchMcpResourceTool{},
 	}
 }

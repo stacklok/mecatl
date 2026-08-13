@@ -4106,6 +4106,37 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   backend-switching secrets are read from `SEARXNG_URL`/`BRAVE_API_KEY`/`EXA_API_KEY`
   (and `WEBSEARCH_API_KEY` for `--websearch-url`) — env only, never flag values.
 
+### Built-in `WebFetch` reference adapter (ADR 0105)
+
+`WebFetch` is no longer a catalog placeholder. `engine/adapter/webfetch` owns the
+working tool, and `internal/adapter/tools` is a compatibility alias used by the
+shared, per-session, no-FS, and child catalog assembly paths.
+
+- **One-input contract:** `{url}` only, GET only, HTTP(S) only. The adapter never
+  accepts headers, credentials, cookies, a body, or proxy configuration.
+- **One SSRF predicate:** each DNS answer passes `session.ValidateResolvedIP` and
+  the fetch-specific documentation, benchmarking, reserved, local NAT64, and
+  platform-metadata deny ranges. A mixed public/private answer rejects the whole
+  target. The validated address list is the ONLY list the custom dialer uses, so
+  no second DNS lookup can rebind the connection. Relative and absolute redirects
+  repeat the same path; only 301/302/303/307/308 are followed, with five hops max.
+- **Two body limits:** the adapter reads at most 5 MiB of raw response data before
+  decoding `gzip`, then independently limits decoded data to 5 MiB. Missing or
+  unsupported MIME types and non-2xx responses are model-facing errors with no
+  response-body leak.
+- **Non-rendering HTML:** `x/net/html` supplies tolerant parsing. The extractor
+  prefers `main`, then `article`, then `body`, omits active/embedded/form content,
+  and never loads a subresource. Other accepted text formats pass through UTF-8
+  repair and newline normalization.
+- **Prompt-injection boundary:** provenance and page text (including the
+  extracted title) pass through one `agent.FenceUntrusted` block because redirect
+  targets and metadata are attacker-controlled too. Content truncation happens
+  before fencing so the closing marker always survives.
+- **Lifetime:** the resolver/dialer holder lives with the tool, but the HTTP
+  transport and its connection pool are created and closed inside one hop. No
+  goroutine, cache, semaphore, or pool outlives the call, so ADR 0027's resource
+  inventories gain no row.
+
 ### MCP typed tool results (issue #223, ADR 0078)
 
 The MCP adapter's `flattenContent` choke point collapsed an MCP

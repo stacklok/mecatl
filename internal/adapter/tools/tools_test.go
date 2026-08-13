@@ -151,13 +151,13 @@ func TestSpecsHaveDocs(t *testing.T) {
 	}
 }
 
-func TestWebFetchStub(t *testing.T) {
+func TestWebFetchRejectsNonHTTPURLWithoutNetwork(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
-	res := exec(t, WebFetchTool{}, call(t, "WebFetch", map[string]any{"url": "https://example.com"}), ws)
+	res := exec(t, NewWebFetchTool(), call(t, "WebFetch", map[string]any{"url": "file:///etc/passwd"}), ws)
 	if !res.IsError {
-		t.Error("WebFetch stub must return a tool error")
+		t.Error("WebFetch must reject a non-HTTP URL")
 	}
-	if !strings.Contains(res.Content, "not implemented") {
+	if !strings.Contains(res.Content, "http or https") {
 		t.Errorf("WebFetch content = %q", res.Content)
 	}
 }

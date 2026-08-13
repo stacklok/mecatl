@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -37,6 +38,13 @@ func TestFetchMcpResourcePresentInBothCatalogProfiles(t *testing.T) {
 	if _, ok := toolNameSet(sharedCat.Tools())["FetchMcpResource"]; !ok {
 		t.Fatal("FetchMcpResource is MISSING from the default (fs) shared catalog — it must be registered as a core outbound-read tool")
 	}
+	webFetch, ok := sharedCat.Lookup("WebFetch")
+	if !ok {
+		t.Fatal("WebFetch is MISSING from the default (fs) shared catalog")
+	}
+	if description := webFetch.Spec().Description; !strings.Contains(description, "public HTTP(S)") || strings.Contains(description, "NOT IMPLEMENTED") {
+		t.Fatalf("shared catalog carries a non-production WebFetch spec: %q", description)
+	}
 
 	noFSCat, noFSClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
 		provider: oa, providerID: providerOpenAI, model: cfg.Model, narrate: false, noFS: true,
@@ -44,5 +52,9 @@ func TestFetchMcpResourcePresentInBothCatalogProfiles(t *testing.T) {
 	defer func() { _ = noFSClose() }()
 	if _, ok := toolNameSet(noFSCat.Tools())["FetchMcpResource"]; !ok {
 		t.Fatal("FetchMcpResource is MISSING from the no-fs catalog — it is an outbound read with no filesystem need and must ride the no-fs profile alongside WebFetch")
+	}
+	noFSWebFetch, ok := noFSCat.Lookup("WebFetch")
+	if !ok || noFSWebFetch.Spec().Description != webFetch.Spec().Description {
+		t.Fatal("no-fs catalog does not carry the same production WebFetch tool contract")
 	}
 }

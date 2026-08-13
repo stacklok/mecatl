@@ -46,13 +46,14 @@ ignores internal churn:
 
 - **`engine/adapter/*`** — the in-tree REFERENCE adapters (`mockllm`, `memfs`,
   `memstore`, `sessnap`, `permpolicy`, `permstore`, `wallclock`, `nofs`,
-  `search`, `memlease`, `fstools`, `agentfs`, `skillfs`, and the `*conformance`
+  `search`, `webfetch`, `memlease`, `fstools`, `agentfs`, `skillfs`, and the `*conformance`
   suites). These ship as offline test doubles and sane defaults, not as a
   stable API. `fstools` (the Read/Edit/Write/Grep/Glob/Bash tool bodies),
   `agentfs` (the filesystem `.claude/agents` agent-def discovery adapter), and
   `skillfs` (the read-only `.claude/skills` discovery core + Skill tool body), and
   `search` (the WebSearch tool body + Exa/HTTP/SearXNG providers + offline fake),
-  graduated into the importable module per #269 / #328 / #363, are reference bundles: a
+  and `webfetch` (the bounded public HTTP(S) text fetch tool),
+  graduated into the importable module per #269 / #328 / #363 / ADR 0105, are reference bundles: a
   consumer composes its own sources/catalog and may take, subset, swap-by-name,
   or ignore them (see the package docs), so their surface may change without a
   CHANGELOG note. **Note:** the conformance suites' real CONTRACT is the port
