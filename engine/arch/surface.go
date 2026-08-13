@@ -8,7 +8,7 @@ package arch
 // layering walk in layering_test.go.
 const modulePrefix = "github.com/stacklok/mecatl/"
 
-// CorePackages is the SINGLE SOURCE OF TRUTH for the engine module's seven
+// CorePackages is the SINGLE SOURCE OF TRUTH for the engine module's eight
 // compatibility-committed core packages (engine/COMPATIBILITY.md, ADR 0037),
 // as full module-internal import paths. Listed high→low in the layering order:
 // domain leaves (session, governance) → domain (tool, prompt) → port → team →
@@ -27,6 +27,7 @@ const modulePrefix = "github.com/stacklok/mecatl/"
 var CorePackages = []string{
 	modulePrefix + "engine/session",
 	modulePrefix + "engine/governance",
+	modulePrefix + "engine/learning",
 	modulePrefix + "engine/tool",
 	modulePrefix + "engine/prompt",
 	modulePrefix + "engine/port",

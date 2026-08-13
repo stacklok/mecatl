@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -24,22 +25,10 @@ var userModelReviewLimits = session.Limits{
 // the reviewer, so a long session cannot produce an unbounded review prompt.
 const maxReviewTranscriptBytes = 24 * 1024
 
-// UserModelReviewer is the issue #14 Phase 2b background learner: AFTER a user
-// session stops, it re-loads that session's transcript, asks a small FRESH child
-// loop to extract durable FACTS about the operator, and lets the child write them
-// to the user-model store via the RememberUser tool. It is OPT-IN and OFF by
-// default (the composition root only constructs and triggers it under a flag).
-//
-// R10 — it NEVER reopens or re-runs the user's terminal session. It reads the
-// transcript through the SessionStore (a read), then spawns a brand-new, single-
-// shot child session (its own id, own conversation) for the extraction. So the
-// reopen-if-completed invariant (CLAUDE.md) is untouched: the user session stays
-// completed; only a fresh child session is ever run.
-//
-// LAYERING: it depends ONLY on port.SessionStore, *Engine, session, and tool. The
-// child engine (scoped to ONLY the RememberUser tool over the user-model store)
-// and that tool are built and INJECTED by the composition root — engine/agent
-// imports no adapter, exactly like the Subagent tool.
+// UserModelReviewer extracts durable operator facts from completed trajectories.
+// Observe consumes the owned trajectory directly and requires only the injected
+// child engine. The legacy Review method additionally requires a SessionStore so
+// it can load history by session ID.
 type UserModelReviewer struct {
 	// store re-loads the just-finished session's transcript (a read). It is the
 	// SAME port the loop persists through; no new transcript port is introduced.
@@ -54,32 +43,45 @@ type UserModelReviewer struct {
 	idPrefix string
 }
 
-// NewUserModelReviewer constructs a reviewer over store and the injected
-// extraction child engine. Both must be non-nil (a reviewer with no store to read
-// or no engine to run is a composition-root programming error).
+// NewUserModelObserver constructs the standard trajectory observer. It needs no
+// SessionStore because learning.Trajectory already owns the completed history.
+func NewUserModelObserver(engine *Engine) *UserModelReviewer {
+	if engine == nil {
+		panic("agent: NewUserModelObserver requires a non-nil child Engine")
+	}
+	return &UserModelReviewer{engine: engine, idPrefix: "usermodel-review"}
+}
+
+// NewUserModelReviewer constructs the legacy ID-based reviewer. Its SessionStore
+// is used only by Review; automatic trajectory observation should use
+// NewUserModelObserver instead.
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer {
 	if store == nil {
 		panic("agent: NewUserModelReviewer requires a non-nil SessionStore")
 	}
-	if engine == nil {
-		panic("agent: NewUserModelReviewer requires a non-nil child Engine")
-	}
-	return &UserModelReviewer{store: store, engine: engine, idPrefix: "usermodel-review"}
+	r := NewUserModelObserver(engine)
+	r.store = store
+	return r
 }
 
 // Review loads the transcript of the just-finished session sessionID, runs the
 // extraction child loop, and discards everything but completion (the child's
-// RememberUser calls land in the user-model store as a side effect). It is
-// best-effort: an empty/unreadable transcript, or a child that writes nothing, is
-// a clean no-op. It returns an error only for genuinely surprising faults (e.g. a
-// store load error) so a caller logging it has something to log; a fail-soft
-// caller may ignore it.
+// RememberUser calls land in the user-model store as a side effect). Review
+// returns an error when this reviewer was constructed by NewUserModelObserver,
+// because the legacy ID-based path has no SessionStore in that configuration.
+// It is otherwise best-effort: an empty/unreadable transcript, or a child that
+// writes nothing, is a clean no-op. It returns an error only for genuinely
+// surprising faults (e.g. a store load error) so a caller logging it has
+// something to log; a fail-soft caller may ignore it.
 //
 // It runs against a workspace-less child (the extraction needs no filesystem — the
 // only tool is RememberUser, which ignores its Workspace). ctx bounds the run.
 func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil
+	}
+	if r.store == nil {
+		return fmt.Errorf("usermodel review: legacy Review requires a SessionStore")
 	}
 
 	// READ the just-finished transcript via the SessionStore. This is a pure read;
@@ -88,7 +90,18 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 	if err != nil {
 		return fmt.Errorf("usermodel review: load session %q: %w", sessionID, err)
 	}
-	transcript := renderTranscript(sess.Conversation.Messages, maxReviewTranscriptBytes)
+	return r.reviewMessages(ctx, sessionID, sess.Workspace, sess.Conversation.Messages)
+}
+
+// Observe implements learning.Observer from an owned completed-trajectory snapshot.
+// Unlike the legacy Review method it needs no SessionStore reload and therefore
+// observes exactly the history that completed.
+func (r *UserModelReviewer) Observe(ctx context.Context, tr learning.Trajectory) error {
+	return r.reviewMessages(ctx, string(tr.SessionID), tr.Workspace, tr.Messages)
+}
+
+func (r *UserModelReviewer) reviewMessages(ctx context.Context, sessionID, workspace string, messages []session.Message) error {
+	transcript := renderTranscript(messages, maxReviewTranscriptBytes)
 	if strings.TrimSpace(transcript) == "" {
 		// Nothing to learn from (e.g. an empty or tool-only transcript): clean no-op.
 		return nil
@@ -102,12 +115,12 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 		session.ModeDefault,
 		// No workspace root needed: the only tool is RememberUser. Use the user
 		// session's root as a harmless label so logs correlate.
-		sess.Workspace,
+		workspace,
 		userModelReviewLimits,
 		r.engine.now(),
 	)
 
-	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel"}, noopWorkspace{root: sess.Workspace}, nil)
+	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel"}, noopWorkspace{root: workspace}, nil)
 	run := r.engine.Run(ctx, child, reviewEnv, RunRequest{Text: reviewPrompt(transcript)})
 	// Drain the child entirely (auto-denying any ask — the extraction child is
 	// non-interactive). We discard the summary text; the user-model writes are the

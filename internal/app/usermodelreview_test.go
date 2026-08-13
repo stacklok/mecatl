@@ -2,317 +2,390 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
-	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// --- fakes ------------------------------------------------------------------
+type countObserver struct{ calls atomic.Int64 }
 
-// recordingHookRunner is a fake inner port.HookRunner: it records every Run call
-// and returns a fixed outcome so the decorator's "return inner outcome unchanged"
-// contract is testable.
-type recordingHookRunner struct {
-	calls   int
-	outcome governance.HookOutcome
+func (o *countObserver) Observe(context.Context, learning.Trajectory) error {
+	o.calls.Add(1)
+	return nil
 }
 
-func (r *recordingHookRunner) Run(_ context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	r.calls++
-	return r.outcome, nil
-}
-
-// signalStore is a fake port.SessionStore that SIGNALS a channel on every Load and
-// returns a session with an EMPTY transcript — so the reviewer's Review no-ops right
-// after Load (no child engine run, no LLM), making each decorator FIRE observable on
-// the channel without background churn.
-type signalStore struct {
-	loaded    chan struct{}
-	principal chan *session.Principal
-}
-
-func newSignalStore() *signalStore {
-	return &signalStore{loaded: make(chan struct{}, 16), principal: make(chan *session.Principal, 16)}
-}
-
-func (s *signalStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
-	s.principal <- session.PrincipalFromContext(ctx)
-	s.loaded <- struct{}{}
-	// Empty conversation → renderTranscript empty → Review returns before any run.
-	return session.New(id, session.ModeDefault, "/proj", session.Limits{}, time.Now()), nil
-}
-
-func (*signalStore) Save(_ context.Context, _ *session.Session) error { return nil }
-
-// firedWithin reports whether the store's Load was signalled within a short window
-// (a fire), draining exactly one signal. It NEVER sleeps for a fixed period: it
-// waits on the channel with a generous deadline that only matters on failure.
-func (s *signalStore) firedWithin(t *testing.T) bool {
-	t.Helper()
-	select {
-	case <-s.loaded:
-		return true
-	case <-time.After(2 * time.Second):
-		return false
-	}
-}
-
-// didNotFire confirms no fire happened in a short settle window. A tiny bounded wait
-// is acceptable here (a negative assertion); it does not gate correctness timing.
-func (s *signalStore) didNotFire(t *testing.T) bool {
-	t.Helper()
-	select {
-	case <-s.loaded:
-		return false
-	case <-time.After(100 * time.Millisecond):
-		return true
-	}
-}
-
-// minimalReviewer builds a real *agent.UserModelReviewer over the signalStore and a
-// throwaway child engine (never actually run, because the transcript is empty).
-func minimalReviewer(t *testing.T, store port.SessionStore) *agent.UserModelReviewer {
-	t.Helper()
-	eng := newChildEngine(Config{}, "", mockllm.New(mockllm.TextTurn("x")), tool.NewCatalog(), "test-model", fixedDefaultWindow, promptConfig(Config{}, ""))
-	return agent.NewUserModelReviewer(store, eng)
-}
-
-// --- FIX 3: Stop-trigger glue (decorator + detached fire + debounce) ---------
-
-// TestUserModelReviewHooksFiresOnStopDebounced proves the composition-layer
-// Stop-trigger decorator: it fires the reviewer (observed via the store's Load
-// signal) on PhaseStop honouring the session-count debounce ((count-1)%interval==0),
-// never fires on a non-Stop phase, and returns the inner runner's outcome unchanged.
-func TestUserModelReviewHooksFiresOnStopDebounced(t *testing.T) {
-	store := newSignalStore()
-	inner := &recordingHookRunner{outcome: governance.HookOutcome{Block: true, Message: "inner-msg"}}
-	hooks := newUserModelReviewHooks(inner, minimalReviewer(t, store), 3, port.NopDiagnostics{})
-
-	stop := governance.HookEvent{Phase: governance.PhaseStop, SessionID: "s"}
-
-	// 7 Stops with interval 3 → fire on stops 1, 4, 7 (the (count-1)%3==0 set).
-	wantFire := map[int]bool{1: true, 4: true, 7: true}
-	for i := 1; i <= 7; i++ {
-		out, err := hooks.Run(context.Background(), stop)
-		if err != nil {
-			t.Fatalf("stop %d: Run err: %v", i, err)
-		}
-		// Side-effect-only contract: the inner outcome is returned UNCHANGED.
-		if !out.Block || out.Message != "inner-msg" {
-			t.Errorf("stop %d: decorator altered the inner outcome: %+v", i, out)
-		}
-		if wantFire[i] {
-			if !store.firedWithin(t) {
-				t.Errorf("stop %d: expected a review fire (debounce admit), got none", i)
+func TestLearningAdmissionIsGlobalAcrossConcurrentProviderObservers(t *testing.T) {
+	admission := newLearningAdmission(3)
+	a, b := &countObserver{}, &countObserver{}
+	observers := []learning.Observer{newAdmittedObserver(a, admission), newAdmittedObserver(b, admission)}
+	var wg sync.WaitGroup
+	for i := range 10 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := observers[i%len(observers)].Observe(context.Background(), learning.Trajectory{}); err != nil {
+				t.Errorf("Observe: %v", err)
 			}
-		} else {
-			if !store.didNotFire(t) {
-				t.Errorf("stop %d: expected NO review fire (debounced out), but it fired", i)
+		}(i)
+	}
+	wg.Wait()
+	if got := a.calls.Load() + b.calls.Load(); got != 4 {
+		t.Fatalf("globally admitted calls = %d, want 4 (calls 1,4,7,10)", got)
+	}
+}
+
+func learningResolverConfig(t *testing.T, operator, workspace string) Config {
+	t.Helper()
+	cfg := Config{Workspace: workspace, PermissionsConventional: true}
+	if operator != "" {
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := os.WriteFile(path, []byte("learning:\n  mode: "+operator+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg.PermissionConfigs = []string{path}
+	}
+	cfg.permResolver = buildPermResolver(cfg)
+	return cfg
+}
+
+func TestFoldLearningModeDefaultAndOperator(t *testing.T) {
+	got, err := foldLearningMode(learningResolverConfig(t, "", ""))
+	if err != nil || got.LearningMode != learning.Off {
+		t.Fatalf("default = %s, %v", got.LearningMode, err)
+	}
+	got, err = foldLearningMode(learningResolverConfig(t, "auto", ""))
+	if err != nil || got.LearningMode != learning.Auto {
+		t.Fatalf("operator = %s, %v", got.LearningMode, err)
+	}
+}
+
+func TestFoldLearningModeHeadlessUsesSamePolicy(t *testing.T) {
+	cfg := learningResolverConfig(t, "auto", "")
+	cfg.Headless = true
+	got, err := foldLearningMode(cfg)
+	if err != nil || got.LearningMode != learning.Auto {
+		t.Fatalf("headless mode = %s, %v", got.LearningMode, err)
+	}
+}
+
+func TestFoldLearningModeProjectRequiresAdmissionAndCannotRaise(t *testing.T) {
+	for _, trusted := range []bool{false, true} {
+		for _, tc := range []struct {
+			project  string
+			admitted learning.Mode
+		}{{"review", learning.Review}, {"off", learning.Off}, {"auto", learning.Auto}} {
+			t.Run(fmt.Sprintf("trusted=%t/project=%s", trusted, tc.project), func(t *testing.T) {
+				root := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(root, ".mecatl"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, ".mecatl", "settings.yaml"), []byte("learning:\n  mode: "+tc.project+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cfg := learningResolverConfig(t, "auto", root)
+				cfg.TrustProject = trusted
+				cfg.permResolver = buildPermResolver(cfg)
+				got, err := foldLearningMode(cfg)
+				want := learning.Auto
+				if trusted {
+					want = tc.admitted
+				}
+				if err != nil || got.LearningMode != want {
+					t.Fatalf("mode = %s, %v; want %s", got.LearningMode, err, want)
+				}
+			})
+		}
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".mecatl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".mecatl", "settings.yaml"), []byte("learning:\n  mode: auto\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := learningResolverConfig(t, "review", root)
+	cfg.TrustProject = true
+	cfg.permResolver = buildPermResolver(cfg)
+	got, err := foldLearningMode(cfg)
+	if err != nil || got.LearningMode != learning.Review {
+		t.Fatalf("raised mode = %s, %v", got.LearningMode, err)
+	}
+}
+
+func TestLegacyUserModelReviewProjectsToAutoAndConflicts(t *testing.T) {
+	cfg := learningResolverConfig(t, "", "")
+	cfg.UserModelReview = true
+	got, err := foldLearningMode(cfg)
+	if err != nil || got.LearningMode != learning.Auto {
+		t.Fatalf("legacy = %s, %v", got.LearningMode, err)
+	}
+	cfg = learningResolverConfig(t, "review", "")
+	cfg.UserModelReview = true
+	if _, err := foldLearningMode(cfg); err == nil {
+		t.Fatal("legacy flag + review should conflict")
+	}
+	cfg = learningResolverConfig(t, "auto", "")
+	cfg.UserModelReview = true
+	if got, err := foldLearningMode(cfg); err != nil || got.LearningMode != learning.Auto {
+		t.Fatalf("legacy flag + auto = %s, %v", got.LearningMode, err)
+	}
+}
+
+func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	providers := map[string]*mockllm.Provider{}
+	built, err := Build(ctx, Config{
+		Workspace:               workspace,
+		NoSoul:                  true,
+		LearningMode:            learning.Auto,
+		UserModelDir:            t.TempDir(),
+		UserModelReviewInterval: 2,
+		envDetector: fakeEnv(map[string]string{
+			"OPENAI_API_KEY":     "test-key",
+			"OPENROUTER_API_KEY": "test-key",
+		}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			var turns []mockllm.Turn
+			switch id {
+			case providerOpenAI:
+				turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn("default review")}
+			case providerOpenRouter:
+				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn("selected review")}
+			default:
+				turns = []mockllm.Turn{mockllm.TextTurn("unused")}
 			}
-		}
-	}
-
-	// The inner runner saw every Run, fire or not (delegation is unconditional).
-	if inner.calls != 7 {
-		t.Errorf("inner runner Run calls = %d, want 7 (every Run delegates)", inner.calls)
-	}
-}
-
-func TestUserModelReviewHooksPreservesPrincipal(t *testing.T) {
-	store := newSignalStore()
-	hooks := newUserModelReviewHooks(&recordingHookRunner{}, minimalReviewer(t, store), 1, port.NopDiagnostics{})
-	principal := &session.Principal{
-		Issuer:    "https://idp.example",
-		Subject:   "alice",
-		GrantType: session.GrantTypeUser,
-	}
-
-	if _, err := hooks.Run(session.WithPrincipal(context.Background(), principal), governance.HookEvent{
-		Phase: governance.PhaseStop, SessionID: "s",
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !store.firedWithin(t) {
-		t.Fatal("review did not load the source session")
-	}
-	select {
-	case got := <-store.principal:
-		if got == nil || *got != *principal {
-			t.Fatalf("Load principal = %#v, want %#v", got, principal)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Load did not observe a principal")
-	}
-}
-
-// TestUserModelReviewHooksIgnoresNonStop proves a non-Stop phase NEVER fires the
-// reviewer, even though it still delegates to the inner runner.
-func TestUserModelReviewHooksIgnoresNonStop(t *testing.T) {
-	store := newSignalStore()
-	inner := &recordingHookRunner{}
-	hooks := newUserModelReviewHooks(inner, minimalReviewer(t, store), 1, port.NopDiagnostics{})
-
-	if _, err := hooks.Run(context.Background(), governance.HookEvent{Phase: governance.PhasePreToolUse, SessionID: "s"}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !store.didNotFire(t) {
-		t.Errorf("a PreToolUse phase must NOT fire the user-model reviewer")
-	}
-	if inner.calls != 1 {
-		t.Errorf("inner runner should still see the Run, calls = %d", inner.calls)
-	}
-}
-
-// --- FIX 4: 2b + consolidation OFF by default --------------------------------
-
-// TestMaybeWrapUserModelReviewDefaultOff mirrors TestBuildSoulSourceDefaultOnAndDisable:
-// the Stop-trigger wrapper is OFF by default (review disabled → passthrough), AND a
-// no-op when review is requested but the user-model store is nil (the warn branch).
-func TestMaybeWrapUserModelReviewDefaultOff(t *testing.T) {
-	provider := mockllm.New(mockllm.TextTurn("x"))
-	reg := regForTest(provider, providerOpenAI, "test-model")
-	store := memstoreForTest(t)
-
-	t.Run("review disabled (default) is passthrough", func(t *testing.T) {
-		inner := &recordingHookRunner{}
-		// A non-nil user-model store, but UserModelReview is false (the default).
-		um, err := memory.New(t.TempDir())
-		if err != nil {
-			t.Fatalf("memory.New: %v", err)
-		}
-		got := maybeWrapUserModelReview(Config{}, reg, inner, store, provider, um)
-		if got != port.HookRunner(inner) {
-			t.Fatalf("review OFF by default must return the inner runner UNCHANGED, got a wrapper")
-		}
+			p := mockllm.New(turns...)
+			providers[id] = p
+			return p
+		},
 	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
 
-	t.Run("review on but nil store is a no-op", func(t *testing.T) {
-		inner := &recordingHookRunner{}
-		got := maybeWrapUserModelReview(Config{UserModelReview: true}, reg, inner, store, provider, nil)
-		if got != port.HookRunner(inner) {
-			t.Fatalf("review requested with a nil user-model store must return the inner runner UNCHANGED")
-		}
-	})
+	defaultSession, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession(default): %v", err)
+	}
+	defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "first")
+	if err != nil {
+		t.Fatalf("StartRun(default): %v", err)
+	}
+	_ = drainRun(defaultRun)
+	if got := providers[providerOpenAI].Calls(); got != 2 {
+		t.Fatalf("default provider calls after admitted completion = %d, want 2 (run + review)", got)
+	}
 
-	t.Run("review on with a store wraps", func(t *testing.T) {
-		inner := &recordingHookRunner{}
-		um, err := memory.New(t.TempDir())
-		if err != nil {
-			t.Fatalf("memory.New: %v", err)
+	runSelected := func(prompt string) {
+		t.Helper()
+		sess, createErr := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter})
+		if createErr != nil {
+			t.Fatalf("CreateSessionWithProvider: %v", createErr)
 		}
-		got := maybeWrapUserModelReview(Config{UserModelReview: true, Model: "test-model"}, reg, inner, store, provider, um)
-		if got == port.HookRunner(inner) {
-			t.Fatalf("review ENABLED with a store must return a WRAPPER, got the bare inner runner")
+		run, runErr := built.Service.StartRun(ctx, sess.ID, prompt)
+		if runErr != nil {
+			t.Fatalf("StartRun(selected): %v", runErr)
 		}
-	})
+		_ = drainRun(run)
+	}
+
+	runSelected("second")
+	if got := providers[providerOpenRouter].Calls(); got != 1 {
+		t.Fatalf("selected provider calls after globally skipped completion = %d, want 1 (no reviewer call)", got)
+	}
+	runSelected("third")
+	if got := providers[providerOpenRouter].Calls(); got != 3 {
+		t.Fatalf("selected provider calls after next global admission = %d, want 3 (two runs + one review)", got)
+	}
 }
 
-func TestUserModelReviewEngineUsesFinalModelConfiguredWindow(t *testing.T) {
-	const finalModel = "vendor/final-review-id"
-	provider := mockllm.New(mockllm.TextTurn("x"))
-	reg := regForTest(provider, providerOpenAI, finalModel)
+func TestLearningObserverUsesSelectedProviderAndModelWindow(t *testing.T) {
+	const (
+		defaultID     = "default"
+		selectedID    = "selected"
+		selectedModel = "selected/model"
+	)
+	defaultProvider := mockllm.New(mockllm.TextTurn("wrong provider"))
+	selectedProvider := mockllm.New(mockllm.TextTurn("review done"))
+	reg := twoProviderReg(defaultProvider, defaultID, "default/model", selectedProvider, selectedID)
 	cfg := Config{
-		ModelAliases:   map[string]string{"review": finalModel},
-		contextWindows: map[string]map[string]int{providerOpenAI: {finalModel: 444_000}},
+		LearningMode:   learning.Auto,
+		Model:          selectedModel,
+		contextWindows: map[string]map[string]int{selectedID: {selectedModel: 444_000}},
 	}
-	resolved, ok := lookupModelAlias(cfg, "review")
-	if !ok {
-		t.Fatal("review alias did not resolve")
+	userStore, err := memory.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-	cfg.Model = resolved
+	observer := buildLearningObserver(cfg, reg, selectedID, selectedProvider, userStore, newLearningAdmission(1))
+	if observer == nil {
+		t.Fatal("auto observer is nil")
+	}
+	if err := observer.Observe(context.Background(), learning.Trajectory{
+		SessionID: "s", Workspace: "/ws", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if defaultProvider.Calls() != 0 || selectedProvider.Calls() != 1 {
+		t.Fatalf("provider calls: default=%d selected=%d", defaultProvider.Calls(), selectedProvider.Calls())
+	}
+	eng := buildUserModelReviewEngine(cfg, reg, selectedID, selectedProvider, userStore)
+	if got := eng.ContextWindow(); got != 444_000 {
+		t.Fatalf("reviewer context window = %d, want 444000", got)
+	}
+}
+
+func TestLearningCompositionModesAndAutoWrite(t *testing.T) {
+	for _, mode := range []learning.Mode{learning.Off, learning.Review} {
+		t.Run(mode.String(), func(t *testing.T) {
+			provider := mockllm.New(mockllm.TextTurn("must not run"))
+			userStore, err := memory.New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := Config{LearningMode: mode, Model: "model"}
+			if got := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmission(1)); got != nil {
+				t.Fatalf("%s observer must be inert in standard composition", mode)
+			}
+			if provider.Calls() != 0 {
+				t.Fatalf("%s made %d provider calls", mode, provider.Calls())
+			}
+		})
+	}
+
+	userStore, err := memory.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]any{
+		"key": "communication", "value": "Prefers concise answers", "description": "answer style",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("c1", memory.RememberUserToolName, args)),
+		mockllm.TextTurn("done"),
+	)
+	cfg := Config{LearningMode: learning.Auto, Model: "model"}
+	observer := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmission(1))
+	if err := observer.Observe(context.Background(), learning.Trajectory{
+		SessionID: "s", Workspace: "/ws", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := userStore.Recall(context.Background(), "user/communication"); err != nil || !ok {
+		t.Fatalf("automatic learning write: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestUserModelReviewEngineCatalogIsReduced(t *testing.T) {
+	userStore, err := memory.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request port.LLMRequest
+	provider := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) { request = got })},
+		mockllm.TextTurn("done"),
+	)
+	cfg := Config{Model: "review-model"}
+	engine := buildUserModelReviewEngine(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore)
+	reviewer := agent.NewUserModelReviewer(memstore.New(), engine)
+	if err := reviewer.Observe(context.Background(), learning.Trajectory{
+		SessionID: "s", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Tools) != 1 || request.Tools[0].Name != memory.RememberUserToolName {
+		t.Fatalf("review request tools = %v, want only %s", request.Tools, memory.RememberUserToolName)
+	}
+}
+
+func TestUserModelConsolidationRequiresIntervalStoreAndProviderNotLearningMode(t *testing.T) {
 	store, err := memory.New(t.TempDir())
 	if err != nil {
-		t.Fatalf("memory.New: %v", err)
+		t.Fatal(err)
 	}
-	eng := buildUserModelReviewEngine(cfg, reg, providerOpenAI, provider, store)
-	if got := eng.ContextWindow(); got != 444_000 {
-		t.Fatalf("review engine ContextWindow = %d, want configured final-model window 444000", got)
+	provider := mockllm.New(mockllm.TextTurn("unused"))
+	if started := startUserModelConsolidation(context.Background(), Config{}, store, provider); started {
+		t.Fatal("consolidation started without an interval")
+	}
+	if started := startUserModelConsolidation(context.Background(), Config{
+		UserModelConsolidateInterval: time.Hour,
+	}, nil, provider); started {
+		t.Fatal("consolidation started without a store")
+	}
+	if started := startUserModelConsolidation(context.Background(), Config{
+		UserModelConsolidateInterval: time.Hour,
+	}, store, nil); started {
+		t.Fatal("consolidation started without a provider")
+	}
+
+	for _, mode := range []learning.Mode{learning.Off, learning.Review, learning.Auto} {
+		ctx, cancel := context.WithCancel(context.Background())
+		if started := startUserModelConsolidation(ctx, Config{
+			LearningMode: mode, UserModelConsolidateInterval: time.Hour,
+		}, store, provider); !started {
+			t.Errorf("consolidation did not start in %s mode", mode)
+		}
+		cancel()
 	}
 }
 
-// TestUserModelConsolidationOffByDefault proves no consolidator is started for the
-// default (zero) interval, and one IS started for a positive interval — via the
-// started-bool testability seam.
-func TestUserModelConsolidationOffByDefault(t *testing.T) {
-	provider := mockllm.New(mockllm.TextTurn("x"))
-	um, err := memory.New(t.TempDir())
+func TestProjectLearningOffCannotSuppressUserModelConsolidation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".mecatl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".mecatl", "settings.yaml"), []byte("learning:\n  mode: off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := learningResolverConfig(t, "auto", root)
+	cfg.TrustProject = true
+	cfg.UserModelConsolidateInterval = time.Hour
+	cfg.permResolver = buildPermResolver(cfg)
+	cfg, err := foldLearningMode(cfg)
 	if err != nil {
-		t.Fatalf("memory.New: %v", err)
+		t.Fatal(err)
 	}
-
-	if started := startUserModelConsolidation(context.Background(), Config{}, um, provider); started {
-		t.Errorf("user-model consolidation must be OFF by default (interval 0), but a consolidator was started")
+	if cfg.LearningMode != learning.Off {
+		t.Fatalf("effective project learning mode = %s, want off", cfg.LearningMode)
 	}
-
+	store, err := memory.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // stop the background loop promptly
-	if started := startUserModelConsolidation(ctx, Config{UserModelConsolidateInterval: time.Hour}, um, provider); !started {
-		t.Errorf("a positive consolidate interval must start a consolidator")
+	defer cancel()
+	if started := startUserModelConsolidation(ctx, cfg, store, mockllm.New(mockllm.TextTurn("unused"))); !started {
+		t.Fatal("trusted project learning.mode: off suppressed the explicitly scheduled process-wide consolidator")
 	}
 }
 
-// --- FIX 5-A: the reviewer child catalog is genuinely minimal ----------------
-
-// TestUserModelReviewEngineCatalogIsMinimal pins the security claim the review
-// relied on: the child engine the 2b reviewer runs has EXACTLY one tool, RememberUser
-// — no Read/Edit/Write/Bash/Subagent/Parallel. So the reviewer can WRITE the user model but
-// has no other capability.
-func TestUserModelReviewEngineCatalogIsMinimal(t *testing.T) {
-	um, err := memory.New(t.TempDir())
-	if err != nil {
-		t.Fatalf("memory.New: %v", err)
+func TestDreamAndSkillDraftDoNotRaiseLearningMode(t *testing.T) {
+	cfg := learningResolverConfig(t, "off", "")
+	cfg.UserModelConsolidateInterval = 1
+	cfg.SkillsDraftDir = t.TempDir()
+	got, err := foldLearningMode(cfg)
+	if err != nil || got.LearningMode != learning.Off {
+		t.Fatalf("mode = %s, %v", got.LearningMode, err)
 	}
-	provider := mockllm.New(mockllm.TextTurn("x"))
-
-	// Reconstruct the catalog buildUserModelReviewEngine wires, the same way it does,
-	// and assert it is exactly {RememberUser}. (The engine itself does not expose its
-	// catalog; this mirrors the one construction path so the scoping claim is pinned.)
-	names := reviewEngineToolNames(provider, um)
-	if len(names) != 1 {
-		t.Fatalf("review engine catalog has %d tools, want exactly 1 (RememberUser only): %v", len(names), names)
-	}
-	if names[0] != memory.RememberUserToolName {
-		t.Errorf("review engine sole tool = %q, want %q", names[0], memory.RememberUserToolName)
-	}
-	// Defensive: none of the dangerous tools are present.
-	for _, banned := range []string{"Read", "Edit", "Write", "Bash", "Subagent", "Parallel", memory.RecallUserToolName, memory.SearchUserModelToolName} {
-		for _, got := range names {
-			if got == banned {
-				t.Errorf("review engine catalog must NOT contain %q", banned)
-			}
-		}
-	}
-}
-
-// reviewEngineToolNames returns the tool names buildUserModelReviewEngine registers,
-// reproducing its catalog-building logic exactly (the only RememberUser tool from
-// memory.NewUserModelTools), so the test pins the minimal-scope guarantee.
-func reviewEngineToolNames(provider port.LLMProvider, store *memory.Store) []string {
-	cat := tool.NewCatalog()
-	for _, tl := range memory.NewUserModelTools(store) {
-		if tl.Spec().Name == memory.RememberUserToolName {
-			cat.MustRegister(tl)
-		}
-	}
-	// Build the engine to ensure the construction path is exercised (it is otherwise
-	// unused, but constructing it proves the catalog is engine-compatible).
-	_ = newChildEngine(Config{}, "", provider, cat, "test-model", fixedDefaultWindow, promptConfig(Config{}, ""))
-	var names []string
-	for _, tl := range cat.Tools() {
-		names = append(names, tl.Spec().Name)
-	}
-	return names
-}
-
-// memstoreForTest builds an in-memory SessionStore for the decorator tests.
-func memstoreForTest(t *testing.T) port.SessionStore {
-	t.Helper()
-	return newSignalStore()
 }

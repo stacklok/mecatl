@@ -21,6 +21,17 @@ mecatui -p "Summarize the failing tests in this repo" --workspace "$PWD"
 The seed fires once: a `/models` restart or `/clear` rebinds the session but never
 re-submits it. See the [`docs/tui.md` flags reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#seeding-an-initial-prompt) for the full details.
 
+## Changing completed-trajectory learning (`/learning`)
+
+`/learning` cycles the operator setting through **Off → Review → Auto** in
+`$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving unrelated YAML and comments. Off means
+no automatic completed-trajectory reflection or review; Review is currently inert because
+no review queue exists; Auto runs the user-model reviewer after eligible clean completions.
+These modes do not control a separately configured `--user-model-consolidate-interval`,
+which remains an independent process-wide maintenance schedule. The setting is build-time:
+restart local mecatui after saving. In connect mode, mecatui never edits local settings;
+change `learning.mode` on the remote server host and restart that remote server.
+
 ## Switching models mid-conversation (`/models`)
 
 Open the model picker with `/models`, move the cursor to a model, and press `enter` to switch **immediately** — the conversation is always kept. Because a session is pinned to one provider for its lifetime, mecatui makes this happen by closing your current session and creating a fresh one on the new model, seeded with everything you've said and done so far. The new session sees the full prior context; only the header changes to reflect it.

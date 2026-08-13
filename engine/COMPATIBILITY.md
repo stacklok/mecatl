@@ -7,12 +7,13 @@ enforced (issue #114, [ADR 0037](../docs/adr/0037-engine-stability-contract.md))
 
 ## The public surface
 
-The contract covers the exported identifiers of these **seven core packages**:
+The contract covers the exported identifiers of these **eight core packages**:
 
 | Package             | Role                                                      |
 | ------------------- | -------------------------------------------------------- |
 | `engine/session`    | the `Session` aggregate, value objects, event taxonomy   |
 | `engine/governance` | permission `Effect`/`Scope`/`Rule` + `Evaluator`, hooks  |
+| `engine/learning`   | optional completed-trajectory mode, snapshot, observer seam |
 | `engine/tool`       | `Tool`/`Catalog`, the `FileSystem`/`Workspace` + source ports |
 | `engine/prompt`     | prompt assembly + discovery ports                        |
 | `engine/port`       | the port interfaces the loop consumes (incl. `SessionStore`, `PrunableStore`, `SessionLease`, `EventLog`, `ScheduleStore`)                    |
@@ -84,7 +85,7 @@ breaking changes require a major bump per strict SemVer.
 Three machine gates protect the contract, all under `task test` / CI:
 
 1. **`api-compat`** — the `engine/api/*.txt` freshness gate (`task api:check`).
-   It re-derives the exported surface of the seven packages and fails on any
+   It re-derives the exported surface of the eight packages and fails on any
    drift from the committed text baselines.
 2. **engine-standalone build** — `task test:engine-standalone` (`GOWORK=off`)
    proves the module builds + tests against its own tiny dependency closure.

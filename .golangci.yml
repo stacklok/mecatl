@@ -445,6 +445,18 @@ linters:
           deny:
             - pkg: os
               desc: 'scheduleconformance drives the abstract ScheduleStore contract (a test-helper, it may use cronparse to compute expected next fires); it must not touch the real OS'
+        # learning: optional completed-trajectory policy/snapshot domain; session + stdlib only.
+        core-learning:
+          list-mode: strict
+          files:
+            - '**/engine/learning/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/session
+          deny:
+            - pkg: os
+              desc: 'learning is a pure engine domain seam; persistence and scheduling belong to hosts'
         # agent: the APPLICATION loop; imports domain + port + team + stdlib +
         # golang.org/x/sync/errgroup. Adapters are INJECTED, never imported.
         core-agent:
@@ -455,6 +467,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/learning
             - github.com/stacklok/mecatl/engine/governance
             - github.com/stacklok/mecatl/engine/prompt
             - github.com/stacklok/mecatl/engine/tool

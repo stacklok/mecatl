@@ -95,6 +95,12 @@ type Converser interface {
 	OpenConverse(ctx context.Context) (*client.Stream, error)
 }
 
+// LearningSettings atomically advances the operator's completed-trajectory learning
+// mode and returns display-ready labels plus restart guidance. Policy ordering stays outside ui.
+type LearningSettings interface {
+	Advance() (fromLabel, toLabel, restart string, err error)
+}
+
 // Deps are the ui's injected collaborators and presentation config. The ui
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
@@ -138,6 +144,7 @@ type Deps struct {
 	// SelectionStore persists the picked model (last-used). nil disables persistence
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
+	Learning       LearningSettings // operator mecatl settings.yaml; nil disables /learning
 	// InitialModel is the persisted selection loaded at launch (composition-side,
 	// from the state file). The picker seeds its active selection from it (the ●
 	// marker) and the startup CreateSession carries it — AFTER the connect-time

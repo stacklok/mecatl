@@ -494,7 +494,7 @@ func TestBuiltinNameWithArgsFallsThrough(t *testing.T) {
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
 		"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel",
-		"models", "effort", "worktrees", "schedule", "sessions", "posture",
+		"models", "effort", "worktrees", "schedule", "sessions", "learning", "posture",
 	}
 	for _, name := range known {
 		if !isKnownBuiltinName(name) {

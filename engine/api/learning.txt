@@ -1,0 +1,11 @@
+    ifacemethod func (Observer).Observe(context.Context, Trajectory) error
+    method func (Mode).Next() Mode
+    method func (Mode).String() string
+const Auto Mode = 2
+const Off Mode = 0
+const Review Mode = 1
+func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory
+func ParseMode(s string) (Mode, error)
+type Mode uint8
+type Observer interface{Observe(context.Context, Trajectory) error}
+type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message}

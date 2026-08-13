@@ -40,6 +40,7 @@ ships as a client of the same API.
 - **Resilience** — retry/backoff + circuit breaker around the provider (never replays a partially-streamed turn); provider errors surface to clients.
 - **Context management** — two-layer cache-stable prompt; a pluggable `Compactor` (single-summary default + a tiered snip→strip→collapse→summarize cascade) with a `TokenCounter` seam (heuristic or offline tiktoken).
 - **Memory** — conservative tiered memory (Remember/Recall) + optional background "dream" consolidation.
+- **Optional learning seam** — embedders can synchronously observe owned snapshots of cleanly completed trajectories; standard composition defaults `learning.mode` to `off` (no automatic completed-trajectory reflection/review), keeps `review` inert until a review queue exists, and maps `auto` to the durable user-model fact reviewer. Explicit consolidation schedules remain independent.
 - **Persona / soul** — an optional user-scoped, **agent-read-only** persona fragment (`~/.config/mecatl/soul.md`) injected as turn-0 context; injection-scanned, byte-capped, and fail-soft (no tool can write it).
 - **MCP client** — connect to MCP servers over **streaming-HTTP transport only** (stdio is not supported); their tools register namespaced `mcp__server__tool`.
 

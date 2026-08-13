@@ -110,13 +110,30 @@ The user model is a cross-project, agent-writable store of durable facts about t
 
 Keys in the user model are automatically namespaced under `user/`.
 
-### Background reviewer (off by default)
+### Automatic reviewer (off by default)
 
-With `--user-model-review`, mecatl enables a background reviewer that runs after a session completes. It spawns a fresh single-shot child that reads the session transcript and calls `RememberUser` to extract operator facts. It **never reopens or re-runs the user's session** — it is an independent read pass over a finished transcript.
+Set the operator file `$XDG_CONFIG_HOME/mecatl/settings.yaml` to:
 
-The reviewer is off by default to avoid per-session LLM spend. Enable it explicitly when you want the user model to self-populate without the agent manually calling `RememberUser`.
+```yaml
+learning:
+  mode: auto
+```
 
-A separate `--user-model-consolidate-interval` drives a dream consolidator scoped to the `user/` namespace.
+After each clean completion, mecatl synchronously gives an owned transcript snapshot to
+a fresh single-shot reviewer, which calls `RememberUser` for accepted operator facts. It
+never reopens the user's session. `off` means no automatic completed-trajectory reflection
+or review. `review` is available as a policy value but remains inert until a real review
+queue ships; it never silently writes accepted state. A project may lower the operator
+setting, never raise it. The legacy `--user-model-review` flag is a deprecated `auto` alias
+for one compatibility window.
+
+The explicit memory and SkillDraft tools are independent and remain available while
+completed-trajectory learning is off. Dream intervals also do not enable that learning.
+
+A separate `--user-model-consolidate-interval > 0` independently authorizes a process-wide
+dream consolidator scoped to the cross-project `user/` namespace. It runs when the
+user-model store and provider are available regardless of effective workspace
+`learning.mode`; a project `off` setting cannot suppress this operator schedule.
 
 **Disable the user model entirely** with `--no-user-model`.
 
@@ -132,7 +149,7 @@ A separate `--user-model-consolidate-interval` drives a dream consolidator scope
 | Dream consolidation | **Off** | `--memory-consolidate-interval` |
 | Soul | **On** if `~/.config/mecatl/soul.md` exists | `--no-soul` to disable; `--soul-file` to relocate |
 | User model tools + turn-0 block | **On** | `--no-user-model` to disable; `--user-model-dir` to relocate |
-| Background user-model reviewer | **Off** | `--user-model-review` to enable |
+| Automatic user-model reviewer | **Off** | `learning.mode: auto` in operator settings (`review` is currently inert) |
 | User-model consolidation | **Off** | `--user-model-consolidate-interval` |
 | Semantic/embedding recall | **Not available** | No embedding backend required or supported |
 

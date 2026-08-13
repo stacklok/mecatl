@@ -1,6 +1,6 @@
 // Package configgen is the SINGLE SOURCE OF TRUTH for the operator settings.yaml
 // surface (issue #140). It builds ONE model of the permconfig YAML schema — the
-// four top-level subtrees (permissions, guardrails, posture, models) — and renders
+// settings subtrees (permissions, guardrails, posture, learning, models, and peers) — and renders
 // BOTH of the operator-facing artifacts from it:
 //
 //   - the commented settings.yaml SKELETON that `mecated config init` writes, and

@@ -39,6 +39,7 @@ type wiredCollaborators struct {
 	Worktrees  bool
 	Scheduling bool
 	Sessions   bool // /sessions picker — gated on the lister + replayer being wired (NO caps bit)
+	Learning   bool // /learning operator-settings enum
 }
 
 // wiredCollaborators builds the struct from m.deps — the SINGLE construction
@@ -53,6 +54,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
+		Learning: m.deps.Learning != nil,
 	}
 }
 
@@ -172,6 +174,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runSessions,
 		})
 	}
+	out = appendLearningBuiltin(out, w)
 	// /posture prints the server-wide operator posture tier + a line per defense.
 	// Gated on a non-empty caps.Posture (an older server omits the field), so it never
 	// appears against a server that cannot report it. Chrome only — it changes nothing.
@@ -183,6 +186,17 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		})
 	}
 	return out
+}
+
+func appendLearningBuiltin(out []builtin, w wiredCollaborators) []builtin {
+	if !w.Learning {
+		return out
+	}
+	return append(out, builtin{
+		name: "learning",
+		desc: "cycle completed-trajectory learning mode (restart required)",
+		run:  Model.runLearning,
+	})
 }
 
 // builtinByName looks up a built-in by name within the caps-filtered set, for
@@ -298,6 +312,16 @@ func (m Model) runSessions() (tea.Model, tea.Cmd) {
 	return m.openSessions()
 }
 
+func (m Model) runLearning() (tea.Model, tea.Cmd) {
+	from, to, restart, err := m.deps.Learning.Advance()
+	if err != nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("learning settings: " + err.Error())
+		return m, nil
+	}
+	m.statusMsg = m.deps.Theme.Style("success").Render("learning: " + from + " → " + to + "; " + restart)
+	return m, nil
+}
+
 // runPosture shows the server-wide operator posture tier and a compact per-defense
 // summary in the status line. Chrome only — read-only, mutates nothing on the server
 // and acts purely on the Model (like /clear). Only registered when caps.Posture is
@@ -348,7 +372,7 @@ func allBuiltins() map[string]bool {
 	}
 	allWired := wiredCollaborators{
 		MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true,
-		Models: true, Worktrees: true, Scheduling: true, Sessions: true,
+		Models: true, Worktrees: true, Scheduling: true, Sessions: true, Learning: true,
 	}
 	set := make(map[string]bool, 14)
 	for _, b := range builtinCommands(allCaps, allWired) {

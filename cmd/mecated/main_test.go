@@ -90,6 +90,17 @@ func TestRunSkillsPromote(t *testing.T) {
 // defaults to 1m (NOT 0/off), so an on-by-default scheduler + the floor-Allow
 // Schedule tool cannot mint an unbounded tight-cadence recurring fire out of
 // the box. An operator can still set it explicitly (tighter, or 0 to disable).
+func TestLegacyUserModelReviewFlagsMapToAppConfig(t *testing.T) {
+	parsed, err := parseFlags([]string{"--user-model-review", "--user-model-review-interval=7"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	got := appConfig(parsed, nil, nil, nil, nil, nil)
+	if !got.UserModelReview || got.UserModelReviewInterval != 7 {
+		t.Fatalf("legacy learning wiring = enabled:%t interval:%d, want true/7", got.UserModelReview, got.UserModelReviewInterval)
+	}
+}
+
 func TestParseFlagsSchedulerMinIntervalDefault(t *testing.T) {
 	def, err := parseFlags(nil)
 	if err != nil {

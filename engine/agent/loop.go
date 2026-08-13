@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -177,6 +178,11 @@ type Deps struct {
 	// stays silent when no sink is injected). It is DISTINCT from ToolCallRecorder
 	// (the per-tool audit seam) and Sink (the model's conversation stream).
 	Diagnostics port.Diagnostics
+	// LearningMode and LearningObserver install the optional completed-trajectory
+	// observation seam. Observation is synchronous and runs once after each eligible
+	// clean completion. The zero mode, Off, or a nil observer is inert.
+	LearningMode     learning.Mode
+	LearningObserver learning.Observer
 	// Compactor compresses history at the threshold; nil → HeuristicCompactor.
 	Compactor Compactor
 	// TokenCounter estimates history size for the compaction trigger (and is
@@ -2334,12 +2340,31 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 		_ = sess.SetMode(r.planApprovedTarget)
 		e.save(ctx, r, sess)
 	}
+	// Persist the terminal aggregate before a synchronous Observer can block or
+	// perform model work. The result event remains after observation, preserving
+	// event order; persistence failures stay best-effort diagnostics via save.
+	e.save(ctx, r, sess)
+	e.observeCompletion(ctx, r, sess, reason, usage)
 	e.fireStop(ctx, r, sess, reason)
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.
 	e.emitResult(r, sess, reason, text, usage, errMsg, false)
-	e.save(ctx, r, sess)
+}
+
+// observeCompletion invokes the optional host observer after the aggregate has
+// reached a qualifying completed state. The owned message snapshot prevents an
+// observer from mutating the live conversation. Failures are operational facts:
+// they never alter the terminal result and no session event owns them.
+func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, usage session.Usage) {
+	if e.deps.LearningMode == learning.Off || e.deps.LearningObserver == nil ||
+		sess.State != session.StateCompleted || reason == session.StopError || reason == session.StopCancelled {
+		return
+	}
+	tr := learning.NewTrajectory(sess.ID, sess.Workspace, reason, usage, sess.Conversation.Messages)
+	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
+		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)
+	}
 }
 
 // stopTerminalCause synthesises the terminal REASON for a run that ended on a

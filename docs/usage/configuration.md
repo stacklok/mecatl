@@ -17,6 +17,31 @@ For the exhaustive, auto-generated key/type/default/tier table, see the
 this guide are illustrative; the reference page is the complete source of truth
 (generated from the schema, so it never drifts).
 
+### Automatic learning
+
+`learning.mode` in the operator settings file is strict and defaults to `off`:
+
+```yaml
+learning:
+  mode: off # off | review | auto
+```
+
+`review` observes no trajectory yet because no review queue exists; it never writes
+accepted state. `auto` runs the existing user-model fact reviewer after each clean
+completion. `off` means no automatic completed-trajectory reflection or review. A project
+`.mecatl/settings.yaml` may only tighten the operator ceiling (`off < review < auto`).
+Explicit memory/user-model tools remain available in every mode.
+
+Consolidation is a separate maintenance authorization, not a learning mode:
+`--user-model-consolidate-interval > 0` starts the process-wide, cross-project user-model
+dream consolidator when its store and provider are available. An effective project
+`learning.mode: off` cannot suppress that explicit operator schedule. Conversely, dream
+intervals and SkillDraft do not raise `learning.mode` or enable completed-trajectory review.
+
+The legacy `--user-model-review` flag maps to `auto` for one compatibility window and
+conflicts with an explicit non-auto `learning.mode`. Changes are build-time settings and
+require a server restart.
+
 ### Workspace
 
 `--workspace` (server-wide default) and the per-session `workspace` field set

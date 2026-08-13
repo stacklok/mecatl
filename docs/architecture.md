@@ -64,7 +64,7 @@ OpenAI type.
 
 The system is built **hexagonally (ports & adapters) with a DDD core**.
 Dependencies point inward only: a domain of pure value objects and aggregates
-(`session`, `governance`, `tool`, `prompt`), a set of port interfaces the
+(`session`, `governance`, `learning`, `tool`, `prompt`), a set of port interfaces the
 application consumes (`port`), the application use-case layer that is the agent
 loop (`agent`), and adapters that implement the ports (`adapter/*`). The core
 tiers (domain, ports, agent loop) plus a small set of lightweight REFERENCE
@@ -83,8 +83,8 @@ consumers — while the heavy adapters and the composition layer stay under
 committed `go.work`; its standalone dependency closure is just `doublestar` +
 `robfig/cron` + `go.yaml.in/yaml/v3` + `x/net/html` + `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
 pulls in that small set rather than mecatl's full require cone (see
-[ADR 0036](adr/0036-engine-module.md)). The exported identifiers of the **seven
-core packages** (`session`, `governance`, `tool`, `prompt`, `port`, `team`,
+[ADR 0036](adr/0036-engine-module.md)). The exported identifiers of the **eight
+core packages** (`session`, `governance`, `learning`, `tool`, `prompt`, `port`, `team`,
 `agent`) are the engine's STABLE public surface, governed by a compatibility
 contract ([`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md)) and enforced
 by the `api-compat` gate — a change to that surface fails CI until the committed
@@ -670,8 +670,11 @@ placeholder is ever minted (an `AGENTS.md` invariant, pinned by
 all, so they run under an *explicit* system principal instead of an absent one:
 `internal/syscaller/syscaller.go` (`Roots`) is the registry, and the childgc
 sweeper, both dream consolidators, the scheduler's `Start` and the JWKS refresh
-each stamp `mecatl:internal / <root>`. `FireNow` is deliberately **not** wrapped —
-a manual fire keeps its requester's identity.
+each stamp `mecatl:internal / <root>`. The user-model consolidator is a process-wide,
+cross-project maintenance service independently enabled by an explicit positive
+`--user-model-consolidate-interval`; workspace `learning.mode` only controls
+completed-trajectory observation and cannot suppress that schedule. `FireNow` is
+deliberately **not** wrapped — a manual fire keeps its requester's identity.
 
 **Sessions and schedules record an owner.** `CreateSession` stamps the owner from
 the context principal, **write-once and never from the request body**

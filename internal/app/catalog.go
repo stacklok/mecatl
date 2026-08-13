@@ -123,6 +123,9 @@ type catalogAssets struct {
 	// no-delivery path). It is the SAME instance across main + per-session
 	// engines so a note queued during one run drains on the next.
 	deliveryQueue port.DeliveryQueue
+	// learningAdmission is the ONE process-wide completion counter shared by the
+	// default and every per-session/provider reviewer.
+	learningAdmission *learningAdmission
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the

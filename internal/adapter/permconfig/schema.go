@@ -38,6 +38,8 @@ import (
 	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
+
+	"github.com/stacklok/mecatl/engine/learning"
 )
 
 // MaxContextWindowTokens is the sane upper bound for configured and live model
@@ -108,6 +110,9 @@ type Config struct {
 	// returns false and composition keeps the default OFF). The composition layer
 	// interprets the bool; permconfig only reads the scalar.
 	PlanModeAutoApprove bool `yaml:"plan-mode-auto-approve"`
+	// Learning configures optional completed-trajectory observation. The subtree is
+	// strict; composition parses the closed off/review/auto mode vocabulary.
+	Learning *LearningSection `yaml:"learning"`
 	// OpenRouter holds the OPERATOR-TIER OpenRouter downstream-provider routing
 	// config (issue #480): a per-model preferred DOWNSTREAM provider order, sent as
 	// OpenRouter's `provider` request-body object. Like Guardrails/Posture it is
@@ -120,6 +125,29 @@ type Config struct {
 	// key was absent. The composition layer reads + validates the maps; permconfig
 	// only carries them.
 	OpenRouter *OpenRouterSection `yaml:"openrouter"`
+}
+
+// LearningSection is the strict learning: settings subtree.
+type LearningSection struct {
+	// Mode controls automatic completed-trajectory observation: off (default; no
+	// automatic reflection or review of completed trajectories), review (currently
+	// inert until #509 supplies a review queue), or auto (run the durable user-model
+	// reviewer after eligible clean completions). Operator settings establish the
+	// ceiling; project settings may only tighten it under off < review < auto and
+	// never raise autonomy. It does not override separately configured maintenance
+	// schedules such as --user-model-consolidate-interval.
+	Mode string `yaml:"mode"`
+}
+
+// UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
+func (s *LearningSection) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "learning", map[string]any{"mode": &s.Mode}); err != nil {
+		return err
+	}
+	if _, err := learning.ParseMode(s.Mode); err != nil {
+		return err
+	}
+	return nil
 }
 
 // OpenRouterSection is the `openrouter:` operator-tier YAML subtree (issue #480):

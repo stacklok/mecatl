@@ -3446,6 +3446,20 @@ so a value-only scan would miss a payload in `description` — plus a `</user-mo
 fence-close-tag reject (mirrors soul) — an adapter→adapter edge like `soul`; the WRITABLE
 user-model is FACTS not rules, never a governance scope.
 
+**Optional learning seam (#507):** `engine/learning` owns only `Mode`, the owned
+completed `Trajectory`, and synchronous `Observer`. `agent.terminateComplete` invokes it
+after state establishment and excludes error/cancelled terminals. Standard composition maps
+`learning.mode: auto` to the storage-free `agent.NewUserModelObserver` path over the owned
+trajectory; only the legacy ID-based `Review` path requires a SessionStore. `review` is
+inert until #509 supplies a real queue; `off` means no automatic completed-trajectory
+reflection or review. Project settings apply only as a minimum ceiling (`off < review <
+auto`). That ceiling does not control the separately authorized process-wide user-model
+maintenance service: `--user-model-consolidate-interval > 0` starts the cross-project
+consolidator whenever its store and provider are available, even when a project's effective
+mode is `off`. No candidate/evidence schema, goroutine, scheduler, persistence, or promotion
+logic lives in the engine. The legacy `--user-model-review` flag projects to `auto` for one
+compatibility window.
+
 ### `providercatalog` (multi-provider Phase 0 S2)
 
 A pinned `go:embed`-vendored subset of the models.dev catalog — DATA leaf,

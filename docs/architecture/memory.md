@@ -27,14 +27,21 @@ holds durable FACTS about the operator. It is exposed (2a, default-on) as the
 structs, not duplicates) under an enforced `user/` key prefix, plus a turn-0
 `<user-model>` block (`prompt.UserModelAssembler`, injected LAST — soul → memory index →
 user model). RememberUser injection-scans the value AND the effective description at write time (`skills.ScanForInjection`) and rejects the `</user-model>` fence close-tag in either,
-guarding the block against transcript-sourced poisoning. An OPT-IN (off by default,
-`--user-model-review`) Stop-triggered background reviewer (`agent.UserModelReviewer`,
-wired via a composition-layer Stop-hook decorator) re-reads a finished session's
-transcript and extracts operator facts via a FRESH single-shot child — it **never
-reopens the user's terminal session** (R10). A `--user-model-consolidate-interval`
-drives a separate `dream.Consolidator{Prefix:"user/"}`. The user-model is a writable
-instruction FRAGMENT of FACTS, NEVER a governance scope; behaviour comes from the soul +
-system rules, not this block.
+guarding the block against transcript-sourced poisoning. Optional automatic review is
+controlled by `learning.mode` in operator `settings.yaml`: `off` (default), `review`
+(currently inert because no review queue exists), or `auto`. In `auto`, the completed-
+trajectory observer runs the existing `agent.UserModelReviewer` synchronously from an
+owned transcript snapshot and writes accepted facts through RememberUser; it needs no
+SessionStore and never reopens the terminal user session. The legacy ID-based `Review`
+method alone requires a SessionStore. A project may lower, but never raise, the operator
+mode. The legacy `--user-model-review` flag maps to `auto` for one compatibility window.
+Here, `off` means no automatic completed-trajectory reflection or review; it does not disable
+explicit tools or separately configured maintenance schedules. In particular,
+`--user-model-consolidate-interval > 0` independently authorizes the process-wide
+`dream.Consolidator{Prefix:"user/"}` when its user-model store and provider are available.
+Because that store is cross-project, an effective project `learning.mode: off` cannot suppress
+this operator-configured service. The user-model is a writable instruction FRAGMENT of FACTS,
+NEVER a governance scope; behaviour comes from the soul + system rules, not this block.
 
 ## Prerequisites
 

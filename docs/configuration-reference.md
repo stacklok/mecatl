@@ -92,6 +92,16 @@ OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode s
 | --- | --- | --- | --- |
 | `plan-mode-auto-approve` | `bool` | `false` | PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve: key is IGNORED with a WARN (operator-tier only — a project repo enabling autonomous plan approval is a security DOWNGRADE). false = absent (the resolver returns false and composition keeps the default OFF). The composition layer interprets the bool; permconfig only reads the scalar. |
 
+## `learning`
+
+Tier: **operator + project**
+
+Optional completed-trajectory observation policy. Off means no automatic completed-trajectory reflection or review; project settings may only tighten the operator ceiling off < review < auto. Separately configured consolidation schedules are independent.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `learning.mode` | `string` | `off` | Mode controls automatic completed-trajectory observation: off (default; no automatic reflection or review of completed trajectories), review (currently inert until #509 supplies a review queue), or auto (run the durable user-model reviewer after eligible clean completions). Operator settings establish the ceiling; project settings may only tighten it under off < review < auto and never raise autonomy. It does not override separately configured maintenance schedules such as --user-model-consolidate-interval. |
+
 ## `models`
 
 Tier: **operator + project**

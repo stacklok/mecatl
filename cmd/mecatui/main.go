@@ -207,6 +207,7 @@ func run(argv []string) error {
 		Replayer:            cl,
 		LiveStream:          cl,
 		SelectionStore:      store,
+		Learning:            learningSettingsForConfig(cfg),
 		InitialModel:        initialSel,
 		WorkspaceDefault:    wsDefault,
 		WorkspaceDefaultSet: wsDefaultSet,

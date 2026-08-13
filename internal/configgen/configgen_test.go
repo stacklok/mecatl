@@ -36,6 +36,7 @@ func authoritativeKeys() []string {
 	collect("permissions.subagent", permconfig.SubagentPermissions{})
 	collect("guardrails", permconfig.GuardrailsSection{})
 	collect("guardrails.rules", permconfig.GuardrailRuleSpec{})
+	collect("learning", permconfig.LearningSection{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
@@ -90,6 +91,16 @@ func referenceHasKey(reference, full string) bool {
 	normalized := strings.ReplaceAll(reference, "[]", "")
 	normalized = strings.ReplaceAll(normalized, ".<key>", "")
 	return strings.Contains(normalized, "`"+full+"`")
+}
+
+func TestLearningModeReferenceHasFieldDescription(t *testing.T) {
+	reference := configgen.RenderReference(configgen.BuildModel(configgen.Docs{
+		"LearningSection.Mode": "Mode documents off, review, auto, the default, and project tightening.",
+	}))
+	want := "| `learning.mode` | `string` | `off` | Mode documents off, review, auto, the default, and project tightening. |"
+	if !strings.Contains(reference, want) {
+		t.Fatalf("learning.mode reference row is missing its field description:\n%s", reference)
+	}
 }
 
 func TestOpenRouterReferenceShowsDynamicModelKey(t *testing.T) {
@@ -205,6 +216,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
+		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)
 	}

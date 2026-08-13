@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -61,7 +62,7 @@ func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 		syscaller.RootUserModelConsolidation: {paths: []string{"memory.List"}, run: func(ctx context.Context, _ *testing.T, seen observe) {
 			app.StartUserModelConsolidationForTest(ctx,
 				app.Config{UserModelConsolidateInterval: time.Millisecond},
-				probeMemoryStore{seen: seen}, nil)
+				probeMemoryStore{seen: seen}, mockllm.New(mockllm.TextTurn("unused")))
 		}},
 		// The scheduler root fans out into FOUR boundary-crossing paths, all
 		// descending from Start's one syscaller wrap. Every one is asserted: the

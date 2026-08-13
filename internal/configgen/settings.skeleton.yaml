@@ -115,6 +115,21 @@
 #| approval capability).
 # plan-mode-auto-approve: true
 
+#| === learning === (tier: operator + project)
+#| Optional completed-trajectory observation policy. Off means no automatic
+#| completed-trajectory reflection or review; project settings may only tighten the
+#| operator ceiling off < review < auto. Separately configured consolidation schedules
+#| are independent.
+# learning:
+#   # Mode controls automatic completed-trajectory observation: off (default; no automatic
+#   # reflection or review of completed trajectories), review (currently inert until #509
+#   # supplies a review queue), or auto (run the durable user-model reviewer after
+#   # eligible clean completions). Operator settings establish the ceiling; project
+#   # settings may only tighten it under off < review < auto and never raise autonomy. It
+#   # does not override separately configured maintenance schedules such as
+#   # --user-model-consolidate-interval.
+#   mode: off
+
 #| === models === (tier: operator + project)
 #| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the
 #| semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all

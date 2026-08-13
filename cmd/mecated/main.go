@@ -239,9 +239,10 @@ type config struct {
 	// durable FACTS about the operator (RememberUser/RecallUser/SearchUserModel +
 	// a turn-0 <user-model> block). ON by default at the conventional
 	// ~/.config/mecatl/usermodel; noUserModel disables it; userModelDir overrides
-	// the dir. userModelReview enables the OPT-IN (off by default) Stop-triggered
-	// background reviewer; userModelReviewInterval is its session-count debounce;
-	// userModelConsolidateInterval drives a "user/"-scoped dream consolidator.
+	// the dir. userModelReview is the deprecated alias for completed-trajectory
+	// auto review; userModelReviewInterval is its session-count debounce.
+	// userModelConsolidateInterval independently authorizes the process-wide
+	// cross-project "user/" dream consolidator; learning.mode does not gate it.
 	userModelDir                 string
 	noUserModel                  bool
 	userModelReview              bool
@@ -1452,9 +1453,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 
 	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "directory for the user-scoped, CROSS-PROJECT user-model store of durable FACTS about the operator (empty = the conventional $XDG_CONFIG_HOME/mecatl/usermodel, fallback ~/.config/mecatl/usermodel). Exposes RememberUser/RecallUser/SearchUserModel and a turn-0 <user-model> block. Holds FACTS about the operator, never rules — how the agent behaves comes from its soul + system rules")
 	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "disable the user-model entirely (the RememberUser/RecallUser/SearchUserModel tools and the <user-model> block)")
-	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "enable the OPT-IN background user-model reviewer: after a session stops, a fresh single-shot child extracts durable operator FACTS from the transcript and writes them via RememberUser. OFF by default. It NEVER reopens the user session; the write path is injection-scanned")
-	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "session-count debounce for --user-model-review: review every Nth session that stops (1 = every session). Only consulted when --user-model-review is set")
-	fs.DurationVar(&cfg.userModelConsolidateInterval, "user-model-consolidate-interval", 0, "interval for background consolidation (dream) of the user-model store, scoped to the user/ namespace; 0 disables. Only meaningful with the user-model enabled")
+	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "compatibility alias for operator settings learning.mode: auto (scheduled for removal after one release window). Conflicts with an explicit non-auto learning.mode. Runs the synchronous completed-trajectory user-model reviewer; never reopens the user session")
+	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "process-wide completed-session debounce for automatic user-model review: review every Nth eligible completion (1 = every completion). Applies to learning.mode: auto and the compatibility --user-model-review alias")
+	fs.DurationVar(&cfg.userModelConsolidateInterval, "user-model-consolidate-interval", 0, "independent process-wide interval for background consolidation (dream) of the cross-project user-model store's user/ namespace; 0 disables. Requires the user-model store and provider; learning.mode (including a project off ceiling) does not gate this explicit maintenance schedule")
 
 	fs.Var(&cfg.skillsDirs, "skills-dir", "directory to discover progressive-disclosure skills from, laid out as <name>/SKILL.md (repeatable; highest precedence); empty disables the Skill tool unless --skills-conventional is set. TRUST BOUNDARY: a SKILL.md steers the model like AGENTS.md/CLAUDE.md — point this only at directories you trust")
 	fs.BoolVar(&cfg.skillsConventional, "skills-conventional", false, "also discover skills from the conventional locations: <workspace>/"+skills.ProjectDirMecatl+", <workspace>/"+skills.ProjectDirClaude+", $XDG_CONFIG_HOME/mecatl/skills (or ~/.config/mecatl/skills), and ~/.claude/skills (lower precedence than --skills-dir). Default OFF — opt in only for trusted locations (same trust class as AGENTS.md/CLAUDE.md)")

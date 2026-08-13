@@ -43,6 +43,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -475,17 +476,26 @@ type Config struct {
 	// SECOND memory.Store under UserModelDir (or the conventional
 	// <xdg>/mecatl/usermodel). NoUserModel disables it entirely (--no-user-model).
 	//
-	// UserModelReview enables the OPT-IN Phase-2b background reviewer (OFF by
-	// default): after a session stops, a fresh single-shot child extracts operator
-	// facts from the transcript and writes them via RememberUser. It NEVER reopens
-	// the user session (R10). UserModelReviewInterval is a session-count debounce
-	// (0/1 = review every session when enabled). UserModelConsolidateInterval drives
-	// a separate dream.Consolidator scoped to the "user/" namespace (0 = off).
+	// UserModelReview enables the OPT-IN Phase-2b completed-trajectory reviewer
+	// (OFF by default): after a session stops, a fresh single-shot child extracts
+	// operator facts from the transcript and writes them via RememberUser. It NEVER
+	// reopens the user session (R10). UserModelReviewInterval is a session-count
+	// debounce (0/1 = review every session when enabled).
+	// UserModelConsolidateInterval independently authorizes a process-wide
+	// dream.Consolidator scoped to the "user/" namespace (0 = off); learning.mode
+	// controls completed-trajectory observation and does not gate this schedule.
 	UserModelDir                 string
 	NoUserModel                  bool
 	UserModelReview              bool
 	UserModelReviewInterval      int
 	UserModelConsolidateInterval time.Duration
+	// LearningMode is the effective optional completion-observation policy. Off is
+	// the zero/default. The legacy UserModelReview flag projects to Auto for one
+	// compatibility window because it directly writes accepted durable facts.
+	LearningMode learning.Mode
+	// operatorLearningMode retains the pre-project ceiling so per-session engines
+	// can apply their own workspace's tighten-only project setting.
+	operatorLearningMode learning.Mode
 
 	// Skills: explicit directories (highest precedence) plus the conventional
 	// project/user locations when SkillsConventional is set. SkillsDraftDir enables
@@ -1192,6 +1202,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var learningErr error
+	cfg, learningErr = foldLearningMode(cfg)
+	if learningErr != nil {
+		return nil, learningErr
+	}
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
 		if models := resolver.OperatorModelPolicy(); models != nil {
 			cfg.contextWindows = map[string]map[string]int(models.ContextWindows)
@@ -2065,7 +2080,12 @@ func sessionEngineFactory(
 		// engineDepsForProvider is the single source of the provider-closing wiring AND
 		// the shared wiring, so no collaborator is silently dropped and a non-default
 		// provider never contaminates compaction/counting.
+		learningCfg := cfg
+		learningCfg.LearningMode = learningModeForWorkspace(cfg, workspace)
+		learningCfg.Model = resolvedModel
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
+		deps.LearningMode = learningCfg.LearningMode
+		deps.LearningObserver = buildLearningObserver(learningCfg, reg, resolvedProviderID, resolvedProvider, assets.userModelStore, assets.learningAdmission)
 		deps.Catalog = cat
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
@@ -2811,16 +2831,9 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// prompt.Build's StablePrefix.
 	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
 
-	// Phase 2b (OPT-IN, OFF by default): when UserModelReview is set AND a user-model
-	// store is wired, wrap the MAIN engine's HookRunner with a composition-layer
-	// Stop-trigger decorator that, on PhaseStop, fires the background reviewer in a
-	// DETACHED goroutine (debounced by UserModelReviewInterval). The reviewer spawns a
-	// FRESH single-shot child scoped to ONLY the RememberUser tool over the user-model
-	// store — it NEVER reopens the user's terminal session (R10). The decorator is a
-	// composition-layer wrapper around port.HookRunner, NOT a domain port. The
-	// per-session client-MCP engines keep the UNWRAPPED hooks: the reviewer fires once
-	// per MAIN-engine Stop, not per client-MCP session stop.
-	mainHooks := maybeWrapUserModelReview(cfg, reg, hooks, store, provider, userModelStore)
+	// Guardrails decorate the ordinary hook chain. Completion learning has its own
+	// synchronous engine seam and no longer shares Stop-hook ownership.
+	var mainHooks port.HookRunner = hooks
 	// Guardrails (issue #27): decorate the MAIN engine's hooks with the LLM-backed
 	// PreToolUse/PostToolUse content checker. modelhook wraps the userModelReview
 	// chain so the inner hooks run FIRST and the checker SECOND (decision 5). It is
@@ -2854,7 +2867,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// and the un-knobbed auto stay byte-identical.
 	sharedPolicy := newEscapePolicy(policy, cfg.Posture, assets.skillReadRoots,
 		withEscapeGuardrailRoute(buildGuardrailsEscapeChecker(cfg, reg, provider)))
+	learningAdmission := newLearningAdmission(cfg.UserModelReviewInterval)
+	assets.learningAdmission = learningAdmission
 	deps := baseEngineDeps(cfg, reg, provider, store, sharedPolicy, mainHooks, mcpProvider, instructions)
+	deps.LearningMode = cfg.LearningMode
+	deps.LearningObserver = buildLearningObserver(cfg, reg, reg.Default(), provider, userModelStore, learningAdmission)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
 	// SHARED engine too — the SAME wiring the per-session factory applies
@@ -4630,19 +4647,20 @@ func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.Memory
 	}()
 }
 
-// startUserModelConsolidation launches a SEPARATE dream consolidator on the
-// USER-model store, scoped to the "user/" key namespace, when
-// UserModelConsolidateInterval is positive (default 0 = off). It mirrors
-// startMemoryConsolidation but with dream.Config{Prefix: "user/"} so it only ever
-// touches user-model entries, never project memory. It shares ctx and the agent's
-// provider. It returns true when a consolidator was started (a positive interval),
-// false otherwise — a small testability seam so a test can assert the OFF-by-default
-// posture (interval 0 ⇒ no goroutine) without observing the background loop.
+// startUserModelConsolidation launches a SEPARATE process-wide dream consolidator
+// on the USER-model store, scoped to the "user/" key namespace, when the operator
+// explicitly sets UserModelConsolidateInterval positive (default 0 = off). This
+// maintenance authorization is independent of learning.mode, which controls only
+// completed-trajectory observation; a project learning ceiling therefore cannot
+// suppress the cross-project service. It mirrors startMemoryConsolidation but with
+// dream.Config{Prefix: "user/"} so it only ever touches user-model entries, never
+// project memory. It shares ctx and the agent's provider. It returns true when all
+// interval/store/provider prerequisites are present and a consolidator was started.
 func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) bool {
 	// No caller: the consolidator runs as the explicit system principal
 	// (ADR 0100 decision 7).
 	ctx = syscaller.Context(ctx, syscaller.RootUserModelConsolidation)
-	if cfg.UserModelConsolidateInterval <= 0 {
+	if cfg.UserModelConsolidateInterval <= 0 || store == nil || provider == nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model consolidation DISABLED")
 		return false
 	}
@@ -4660,28 +4678,26 @@ func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.Mem
 	return true
 }
 
-// maybeWrapUserModelReview returns hooks wrapped with the Phase-2b Stop-trigger
-// decorator when UserModelReview is enabled AND a user-model store is wired;
-// otherwise it returns hooks unchanged (the feature is OFF by default, so the
-// common path is a passthrough). The decorator builds a child engine scoped to
-// ONLY the RememberUser tool over the user-model store, constructs an
-// agent.UserModelReviewer, and on PhaseStop fires reviewer.Review in a DETACHED
-// goroutine (debounced by UserModelReviewInterval). The reviewer reads the
-// finished session's transcript via the SessionStore and spawns a FRESH child
-// session — it NEVER reopens the user's terminal session (R10).
-func maybeWrapUserModelReview(cfg Config, reg *providerRegistry, hooks port.HookRunner, store port.SessionStore, provider port.LLMProvider, userModelStore tool.MemoryStore) port.HookRunner {
-	if !cfg.UserModelReview {
-		cfg.diag().Log(context.Background(), port.LevelInfo, "user-model background review DISABLED")
-		return hooks
+// buildLearningObserver adapts the existing durable user-model reviewer to the
+// optional completed-trajectory seam. Review is honestly inert until #509 adds a
+// review queue; Auto retains the legacy accepted-fact write behavior.
+func buildLearningObserver(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider, userModelStore tool.MemoryStore, admission *learningAdmission) learning.Observer {
+	switch cfg.LearningMode {
+	case learning.Off:
+		return nil
+	case learning.Review:
+		cfg.diag().Log(context.Background(), port.LevelInfo, "learning review mode is inert (no review queue configured)")
+		return nil
+	case learning.Auto:
+		if userModelStore == nil {
+			cfg.diag().Log(context.Background(), port.LevelWarn, "automatic learning requested but the user-model store is disabled; observation is a no-op")
+			return nil
+		}
+		reviewer := agent.NewUserModelObserver(buildUserModelReviewEngine(cfg, reg, providerID, provider, userModelStore))
+		return newAdmittedObserver(reviewer, admission)
+	default:
+		return nil
 	}
-	if userModelStore == nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "user-model background review requested but the user-model store is disabled; review is a no-op")
-		return hooks
-	}
-	reviewer := agent.NewUserModelReviewer(store, buildUserModelReviewEngine(cfg, reg, reg.Default(), provider, userModelStore))
-	cfg.diag().Log(context.Background(), port.LevelInfo, "user-model background review ENABLED (Stop-triggered, detached fork; never reopens the user session)",
-		"review_interval", cfg.UserModelReviewInterval)
-	return newUserModelReviewHooks(hooks, reviewer, cfg.UserModelReviewInterval, cfg.diag())
 }
 
 // buildUserModelReviewEngine constructs the child *Engine the Phase-2b reviewer

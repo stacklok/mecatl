@@ -84,6 +84,13 @@ var coreImportRules = []coreImportRule{
 		desc:        "governance is the session-free domain leaf: it may import only stdlib (zero internal imports)",
 	},
 	{
+		pkg: modulePrefix + "engine/learning",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/session": true,
+		},
+		desc: "learning may import only session + stdlib (completed-trajectory policy and snapshot values)",
+	},
+	{
 		pkg: modulePrefix + "engine/tool",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/session": true,
@@ -119,6 +126,7 @@ var coreImportRules = []coreImportRule{
 		pkg: modulePrefix + "engine/agent",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/session":    true,
+			modulePrefix + "engine/learning":   true,
 			modulePrefix + "engine/governance": true,
 			modulePrefix + "engine/prompt":     true,
 			modulePrefix + "engine/tool":       true,

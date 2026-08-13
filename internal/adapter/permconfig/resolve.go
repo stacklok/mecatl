@@ -159,6 +159,10 @@ type Resolver struct {
 	// (first-non-empty keeps CLI).
 	operatorPlanModeAutoApprove bool
 
+	// operatorLearning is the first operator-tier learning subtree. Project values
+	// are evaluated separately because they may only tighten this ceiling.
+	operatorLearning *LearningSection
+
 	// operatorModels is the OPERATOR-TIER models: subtree (ADR 0030), read ONCE at
 	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
 	// captureModels from loadUserRules; there is no second capture path). It carries
@@ -228,6 +232,39 @@ func (r *Resolver) OperatorPlanModeAutoApprove() bool {
 		return false
 	}
 	return r.operatorPlanModeAutoApprove
+}
+
+// OperatorLearningMode returns the operator-tier learning mode token, or empty
+// when no learning subtree was configured.
+func (r *Resolver) OperatorLearningMode() string {
+	if r == nil || r.operatorLearning == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.operatorLearning.Mode)
+}
+
+// ProjectLearningModes returns project-tier mode tokens in precedence order.
+// Composition applies them only as autonomy ceilings (off < review < auto).
+func (r *Resolver) ProjectLearningModes(ws tool.WorkspaceReader) []string {
+	if r == nil || ws == nil {
+		return nil
+	}
+	var modes []string
+	for _, src := range r.sources {
+		if src.claude {
+			continue
+		}
+		data, err := ws.Read(context.Background(), src.path)
+		if err != nil {
+			continue
+		}
+		cfg, err := parseYAML(data)
+		if err != nil || cfg.Learning == nil || strings.TrimSpace(cfg.Learning.Mode) == "" {
+			continue
+		}
+		modes = append(modes, strings.TrimSpace(cfg.Learning.Mode))
+	}
+	return modes
 }
 
 // OperatorModelSlots returns the operator-tier models: subtree (user-global + CLI
@@ -693,6 +730,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureReasoningEffort(cfg.ReasoningEffort)
 		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
+		// Operator-tier learning: same first-non-nil-keeps-CLI discipline.
+		r.captureLearning(cfg.Learning)
 		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
 		r.captureModels(cfg.Models)
 		// Operator-tier openrouter: same first-non-nil-keeps-CLI discipline (issue #480).
@@ -722,6 +761,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureReasoningEffort(cfg.ReasoningEffort)
 				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
+				// User-global learning: captured only if no higher CLI file already did.
+				r.captureLearning(cfg.Learning)
 				// User-global models: captured only if no higher CLI file already did.
 				r.captureModels(cfg.Models)
 				// User-global openrouter: captured only if no higher CLI file already did.
@@ -789,6 +830,13 @@ func (r *Resolver) captureReasoningEffort(p string) {
 		return
 	}
 	r.operatorReasoningEffort = strings.TrimSpace(p)
+}
+
+func (r *Resolver) captureLearning(s *LearningSection) {
+	if s == nil || r.operatorLearning != nil {
+		return
+	}
+	r.operatorLearning = s
 }
 
 // capturePlanModeAutoApprove records the FIRST operator-tier plan-mode-auto-approve:

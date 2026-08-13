@@ -54,7 +54,11 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
    `Message`. `ctx` cancellation mid-stream surfaces as a cancellation.
 7. `RecordAssistant`. If there are **no tool calls**, the model is done →
    complete the run.
-8. **Dispatch** the tool calls, `RecordToolResults`, `save`, loop back to (3).
+8. **Observe eligible completion**: after the aggregate reaches `completed`, an
+   optional non-`off` `learning.Observer` receives one owned `learning.Trajectory`
+   snapshot. Failed, cancelled, and awaiting runs are excluded; observer errors are
+   diagnostics only and cannot change the terminal result.
+9. **Dispatch** the tool calls, `RecordToolResults`, `save`, loop back to (3).
 
 The loop terminates the session in exactly one of `Complete`/`Stop`/`Cancel`/
 `Fail` and emits exactly one terminal `result` event carrying cumulative usage.

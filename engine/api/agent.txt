@@ -57,6 +57,7 @@
     method func (*TeamTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*TeamTool).ReadOnly() bool
     method func (*TeamTool).Spec() tool.ToolSpec
+    method func (*UserModelReviewer).Observe(ctx context.Context, tr learning.Trajectory) error
     method func (*UserModelReviewer).Review(ctx context.Context, sessionID string) error
     method func (BashTool).Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (BashTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
@@ -110,6 +111,7 @@ func NewSubagentStatusTool() tool.Tool
 func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
 func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, opts ...SupervisorOption) *Supervisor
 func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
+func NewUserModelObserver(engine *Engine) *UserModelReviewer
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
 func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool)
@@ -180,7 +182,7 @@ type ChildAskReview struct{Allowed bool; Reason string}
 type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
 type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
-type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue}
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)

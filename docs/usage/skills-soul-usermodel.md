@@ -177,12 +177,17 @@ It surfaces two ways:
   user-model siblings of the per-project memory tools. Keys are auto-namespaced under
   `user/`. The model sees a turn-0 `<user-model>` block summarising the saved facts
   (injected LAST: soul → memory index → user model).
-- **Background reviewer (off by default, `--user-model-review`):** after a session
-  stops, a fresh single-shot child reads the transcript and extracts operator facts via
-  RememberUser. It is debounced by `--user-model-review-interval` and **never reopens or
-  re-runs the user's session** — it spawns a brand-new child. A
-  `--user-model-consolidate-interval` points a `dream` consolidator at the `user/`
-  namespace.
+- **Automatic reviewer (`learning.mode: auto`):** after a clean completion, a fresh
+  single-shot child receives an owned transcript snapshot and extracts operator facts via
+  RememberUser. `off` is the default and means no automatic completed-trajectory reflection
+  or review; `review` is honestly inert until a review queue exists.
+  `--user-model-review` remains as a deprecated `auto` alias and
+  `--user-model-review-interval` still debounces admitted completions. The reviewer never
+  reopens or re-runs the user's session.
+- **Scheduled consolidation:** `--user-model-consolidate-interval > 0` independently
+  authorizes a process-wide `dream` consolidator over the cross-project `user/` namespace.
+  It runs when the user-model store and provider are available regardless of effective
+  workspace `learning.mode`; a project `off` ceiling cannot suppress this operator schedule.
 
 **Rules vs facts — the operator boundary.** The user model holds **FACTS about the
 operator** (stated preferences, communication style, domain background), **never rules

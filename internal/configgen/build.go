@@ -25,6 +25,7 @@ func BuildModel(docs Docs) *Model {
 		postureSubtree(docs),
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
+		learningSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
 	}}
@@ -139,6 +140,18 @@ func guardrailsSubtree(docs Docs) *Subtree {
 			"guardrails: block is IGNORED with a WARN (a project cannot weaken a security checker).",
 		EnableNote: "Configuring `model:` ENABLES guardrails; `disabled: true` is the kill-switch " +
 			"(the CLI --guardrails=off also sets it).",
+		CommentedOut: true,
+		Fields:       fields,
+	}
+}
+
+func learningSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("LearningSection", permconfig.LearningSection{}, docs)
+	fields[0].ExampleValue = "off"
+	fields[0].Default = "off"
+	return &Subtree{
+		Key: "learning", Tier: TierProject,
+		Doc:          "Optional completed-trajectory observation policy. Off means no automatic completed-trajectory reflection or review; project settings may only tighten the operator ceiling off < review < auto. Separately configured consolidation schedules are independent.",
 		CommentedOut: true,
 		Fields:       fields,
 	}

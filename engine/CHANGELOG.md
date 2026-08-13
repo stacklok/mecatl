@@ -5,13 +5,23 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); changes
 are classified per [COMPATIBILITY.md](./COMPATIBILITY.md) (Added = minor;
 Changed/Deprecated/Removed = breaking, pre-v1 a minor bump).
 
-The covered surface is the seven core packages (`session`, `governance`, `tool`,
+The covered surface is the eight core packages (`session`, `governance`, `learning`, `tool`,
 `prompt`, `port`, `team`, `agent`); their committed API snapshots live in
 [`engine/api/`](./api/).
 
 ## [Unreleased]
 
 ### Added
+
+- **Optional completed-trajectory learning seam** (issue #507,
+  [ADR 0106](../docs/adr/0106-optional-learning-seam.md)) — the new importable
+  `engine/learning` package provides the strict `Mode` vocabulary (`off`, `review`,
+  `auto`; zero is `off`), an owned `Trajectory` snapshot, and synchronous `Observer`.
+  `agent.Deps` gains additive `LearningMode` and `LearningObserver` fields, and
+  `agent.UserModelReviewer` implements the observer over snapshot history, with
+  `agent.NewUserModelObserver` constructing the storage-free automatic path; its
+  legacy ID-based `Review` path retains the SessionStore-backed constructor. All are
+  new exported identifiers/fields and therefore Added (minor).
 
 - **OpenRouter downstream-provider routing echo** (issue #480) — two new
   constants that surface which DOWNSTREAM inference provider OpenRouter routed a
