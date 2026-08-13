@@ -720,7 +720,11 @@ of use** (one resolver shared by the engine trigger and the `resolved_model` ech
 live-only model whose curated catalog lacks a window self-corrects to its live window
 once the background catalog refresh lands — no engine rebuild. `--context-window-override`
 still forces a fixed window when you need it, and now moves BOTH the compaction trigger
-and the client footer denominator together.
+and the client footer denominator together. Operators can instead set exact stable
+mappings in user-global/explicit `settings.yaml` under `models.context_windows`:
+`provider-id → final-model-id → tokens`. This operator-tier map is consulted after
+alias/slot routing resolves the final ID, before live metadata; project values are
+ignored with a warning. Its exact entries also replace `context_limit` in `ListModels`.
 
 For a provider with **live model listing** (currently **OpenRouter**), the picker
 reflects the provider's **real, live catalog** (336 models) rather than the curated

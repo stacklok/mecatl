@@ -105,6 +105,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	// ── LLM resilience (embedded-only) ────────────────────────────────────
 	"llm-per-attempt-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
 	"llm-stream-idle-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
+	"context-window-override": {group: groupLLMResilience, common: false, local: true, connect: false},
 
 	// ── Permissions (embedded-only) ───────────────────────────────────────
 	"posture":       {group: groupPermissions, common: true, local: true, connect: false},

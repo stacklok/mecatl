@@ -80,8 +80,11 @@ type StoredSession struct {
 // session.State verbatim; an invalid/unknown state is left empty (the row still
 // surfaces its id/mtime, matching the Load-fails zeroed-fields behaviour).
 type SessionMeta struct {
-	// ID is the stored session's real id (decoded from the snapshot, not the
-	// filename — safeName is not invertible).
+	// ID is the stored session's opaque logical id, byte-exact. A backend whose
+	// physical key or filename is a LOSSY transform of the id (so that two
+	// distinct ids could share one) MUST recover the id from stored content
+	// instead of from the key. A lossless key is free to be the source: keying
+	// verbatim, or trimming a fixed prefix, satisfies this.
 	ID session.SessionID
 	// ModifiedAt is the last-write timestamp (file mtime, or the store's
 	// nearest equivalent).

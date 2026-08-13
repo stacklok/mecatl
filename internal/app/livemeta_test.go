@@ -13,6 +13,87 @@ const (
 	catAnthropicOutput = 64000
 )
 
+func TestResolveWindowCorePrecedenceAndExactProviderModel(t *testing.T) {
+	reg := &providerRegistry{meta: newLiveMetaStore()}
+	reg.meta.Swap(map[string][]modelEntry{
+		providerAnthropic: {{ID: catAnthropicModel, ContextLimit: 555_000}},
+		providerOpenAI:    {{ID: catAnthropicModel, ContextLimit: 444_000}},
+	})
+	cfg := Config{contextWindows: map[string]map[string]int{
+		providerAnthropic: {catAnthropicModel: 333_000},
+		providerToolhive:  {"deployment/opaque-routing-id": 222_000},
+	}}
+	if got, _ := reg.resolveWindowCore(cfg, providerAnthropic, catAnthropicModel); got != 333_000 {
+		t.Fatalf("configured exact window = %d, want 333000", got)
+	}
+	if got, _ := reg.resolveWindowCore(cfg, providerOpenAI, catAnthropicModel); got != 444_000 {
+		t.Fatalf("cross-provider configured lookup = %d, want live 444000", got)
+	}
+	if got, _ := reg.resolveWindowCore(cfg, providerToolhive, "deployment/opaque-routing-id"); got != 222_000 {
+		t.Fatalf("opaque ToolHive configured ID = %d, want 222000", got)
+	}
+	if got := reg.windowResolver(cfg, providerAnthropic, "not-catalogued")(); got != defaultContextWindowTokens {
+		t.Fatalf("unknown-model fallback = %d, want %d", got, defaultContextWindowTokens)
+	}
+	cfg.ContextWindowOverride = 111_000
+	if got, _ := reg.resolveWindowCore(cfg, providerAnthropic, catAnthropicModel); got != 111_000 {
+		t.Fatalf("CLI override = %d, want 111000", got)
+	}
+}
+
+func TestConfiguredWindowUsesFinalAliasAndSlotModel(t *testing.T) {
+	const finalModel = "vendor/final-routing-id"
+	cfg := Config{
+		ModelAliases:   map[string]string{"large": finalModel},
+		ModelSlots:     map[string]string{slotCompaction: "large"},
+		contextWindows: map[string]map[string]int{providerOpenAI: {finalModel: 345_000}},
+	}
+	aliasModel, known := lookupModelAlias(cfg, "large")
+	if !known || aliasModel != finalModel {
+		t.Fatalf("alias resolved to (%q, %v), want final id", aliasModel, known)
+	}
+	slotModel, configured := resolveSlotModel(cfg, slotCompaction, "parent/model")
+	if !configured || slotModel != finalModel {
+		t.Fatalf("slot resolved to (%q, %v), want final id", slotModel, configured)
+	}
+	reg := &providerRegistry{meta: newLiveMetaStore()}
+	if got := reg.windowResolver(cfg, providerOpenAI, aliasModel)(); got != 345_000 {
+		t.Fatalf("alias final-id window = %d, want 345000", got)
+	}
+	if got := reg.windowResolver(cfg, providerOpenAI, slotModel)(); got != 345_000 {
+		t.Fatalf("slot final-id window = %d, want 345000", got)
+	}
+}
+
+func TestConfiguredWindowEngineEchoAndModelListAgree(t *testing.T) {
+	const (
+		model  = "provider/model"
+		window = 456_000
+	)
+	cfg := Config{contextWindows: map[string]map[string]int{providerOpenAI: {model: window}}}
+	reg := &providerRegistry{
+		meta:           newLiveMetaStore(),
+		contextWindows: cfg.contextWindows,
+	}
+	reg.meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, ContextLimit: 123_000}}})
+	engineWindow := reg.windowResolver(cfg, providerOpenAI, model)()
+	echoWindow := reg.echoWindowResolver(cfg, providerOpenAI, model)()
+	listedWindow := projectModelEntry(reg, providerOpenAI, modelEntry{ID: model, ContextLimit: 123_000}).GetContextLimit()
+	if engineWindow != window || echoWindow != window || listedWindow != window {
+		t.Fatalf("window disagreement: engine=%d echo=%d list=%d, want %d", engineWindow, echoWindow, listedWindow, window)
+	}
+
+	const globalOverride = 111_000
+	cfg.ContextWindowOverride = globalOverride
+	reg.contextWindowOverride = globalOverride
+	engineWindow = reg.windowResolver(cfg, providerOpenAI, model)()
+	echoWindow = reg.echoWindowResolver(cfg, providerOpenAI, model)()
+	listedWindow = projectModelEntry(reg, providerOpenAI, modelEntry{ID: model, ContextLimit: 123_000}).GetContextLimit()
+	if engineWindow != globalOverride || echoWindow != globalOverride || listedWindow != globalOverride {
+		t.Fatalf("global override disagreement: engine=%d echo=%d list=%d, want %d", engineWindow, echoWindow, listedWindow, globalOverride)
+	}
+}
+
 // TestLiveMetaStoreSeedFromCatalog: a freshly seeded store carries the catalog rows
 // for every available provider, so a resolver read at t=0 (before any live swap)
 // returns the catalog value — never an empty miss.

@@ -39,13 +39,23 @@ compatible endpoints.
 | empty (default) | in-memory (`memstore`) | nothing persists across restarts |
 | set to a dir | JSONL replay (`jsonlstore`) | snapshots + tool-call log on disk |
 
-The JSONL store writes three files per session under `--store-dir`:
+The JSONL store writes canonical session families in the owner-only `sid-v1/`
+subdirectory under `--store-dir`. The `<versioned-token>` is an internal
+reversible `sid-v1-…` encoding; it is **not** the raw logical session id. Logical
+ids are opaque valid-UTF-8 strings (matching JSON/protobuf string requirements).
+Read the `id` field from the latest snapshot line when identifying a session:
 
 ```
-<dir>/<id>.session.jsonl   # one snapshot per Save (latest line wins)
-<dir>/<id>.tools.jsonl     # one record per tool call (call, result, duration)
-<dir>/<id>.events.jsonl    # the relayed event timeline (reasoning, ask/verdict, delegation)
+<dir>/sid-v1/<versioned-token>.session.jsonl   # one snapshot per Save (latest line wins)
+<dir>/sid-v1/<versioned-token>.tools.jsonl     # one record per tool call
+<dir>/sid-v1/<versioned-token>.events.jsonl    # the relayed event timeline
 ```
+
+Older stores may contain lossy legacy families directly under `<dir>`. They are
+readable only when the latest snapshot's embedded `id` exactly matches the
+requested logical id; the next write migrates that verified family into
+`sid-v1/` without rewriting or reordering its records. Mismatched legacy files
+remain untouched.
 
 > **Privacy:** the durable store holds the **raw conversation** — prompts, model
 > output, and tool arguments/results — in **plaintext** on disk. The store

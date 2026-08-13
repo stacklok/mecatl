@@ -984,6 +984,10 @@ type Config struct {
 	// proxy that does. INVARIANT: 0 = disabled = byte-identical production resolution
 	// (the live/catalogued/128k path stands untouched).
 	ContextWindowOverride int
+	// contextWindows is the operator-tier exact provider/model context-window map
+	// captured from settings.yaml. It is unexported because config parsing and model
+	// resolution are both composition details.
+	contextWindows map[string]map[string]int
 
 	// --- Scheduled tasks (issue #189, Phase 1f): the in-process scheduler
 	// (internal/adapter/scheduler) owns the tick loop that polls the durable
@@ -1170,6 +1174,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
+		if models := resolver.OperatorModelPolicy(); models != nil {
+			cfg.contextWindows = map[string]map[string]int(models.ContextWindows)
+		}
+	}
 
 	// Guardrails operator-tier config (issue #27, decision 3): fold the user-global +
 	// CLI `guardrails:` YAML subtree (the resolver collected it from the OPERATOR
@@ -1248,6 +1257,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, err
 	}
+	reg.contextWindows = cfg.contextWindows
+	reg.contextWindowOverride = cfg.ContextWindowOverride
 	// Server-configured deployment-wide default (issue #21): validate
 	// --default-provider/--default-model FAIL-FAST as early as possible after
 	// the registry exists. The registry has already folded the configured
@@ -2764,7 +2775,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// composition-layer wrapper around port.HookRunner, NOT a domain port. The
 	// per-session client-MCP engines keep the UNWRAPPED hooks: the reviewer fires once
 	// per MAIN-engine Stop, not per client-MCP session stop.
-	mainHooks := maybeWrapUserModelReview(cfg, hooks, store, provider, userModelStore)
+	mainHooks := maybeWrapUserModelReview(cfg, reg, hooks, store, provider, userModelStore)
 	// Guardrails (issue #27): decorate the MAIN engine's hooks with the LLM-backed
 	// PreToolUse/PostToolUse content checker. modelhook wraps the userModelReview
 	// chain so the inner hooks run FIRST and the checker SECOND (decision 5). It is
@@ -4608,7 +4619,7 @@ func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.Mem
 // goroutine (debounced by UserModelReviewInterval). The reviewer reads the
 // finished session's transcript via the SessionStore and spawns a FRESH child
 // session — it NEVER reopens the user's terminal session (R10).
-func maybeWrapUserModelReview(cfg Config, hooks port.HookRunner, store port.SessionStore, provider port.LLMProvider, userModelStore tool.MemoryStore) port.HookRunner {
+func maybeWrapUserModelReview(cfg Config, reg *providerRegistry, hooks port.HookRunner, store port.SessionStore, provider port.LLMProvider, userModelStore tool.MemoryStore) port.HookRunner {
 	if !cfg.UserModelReview {
 		cfg.diag().Log(context.Background(), port.LevelInfo, "user-model background review DISABLED")
 		return hooks
@@ -4617,7 +4628,7 @@ func maybeWrapUserModelReview(cfg Config, hooks port.HookRunner, store port.Sess
 		cfg.diag().Log(context.Background(), port.LevelWarn, "user-model background review requested but the user-model store is disabled; review is a no-op")
 		return hooks
 	}
-	reviewer := agent.NewUserModelReviewer(store, buildUserModelReviewEngine(cfg, provider, userModelStore))
+	reviewer := agent.NewUserModelReviewer(store, buildUserModelReviewEngine(cfg, reg, reg.Default(), provider, userModelStore))
 	cfg.diag().Log(context.Background(), port.LevelInfo, "user-model background review ENABLED (Stop-triggered, detached fork; never reopens the user session)",
 		"review_interval", cfg.UserModelReviewInterval)
 	return newUserModelReviewHooks(hooks, reviewer, cfg.UserModelReviewInterval, cfg.diag())
@@ -4633,14 +4644,15 @@ func maybeWrapUserModelReview(cfg Config, hooks port.HookRunner, store port.Sess
 // MODEL: deliberately cfg.Model, NOT Config.SubagentModel — this is a REVIEW hook
 // engine (the Stop-triggered background reviewer of the finished session), not a
 // delegation child, so the cheap child-default does not apply to it.
-func buildUserModelReviewEngine(cfg Config, provider port.LLMProvider, store tool.MemoryStore) *agent.Engine {
+func buildUserModelReviewEngine(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider, store tool.MemoryStore) *agent.Engine {
 	cat := tool.NewCatalog()
 	for _, t := range memory.NewUserModelTools(store) {
 		if t.Spec().Name == memory.RememberUserToolName {
 			cat.MustRegister(t)
 		}
 	}
-	return newChildEngine(cfg, "usermodel-review", provider, cat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
+	return newChildEngine(cfg, "usermodel-review", provider, cat, cfg.Model,
+		reg.windowResolver(cfg, providerID, cfg.Model), promptConfig(cfg, cfg.gitStatus))
 }
 
 // braveSearchEndpoint is the Brave Web Search API endpoint the BRAVE_API_KEY tier
@@ -4927,16 +4939,16 @@ func childTelemetryFor(cfg Config, role string) (port.EventSink, port.ToolCallRe
 // the prompt config. It is the single source of truth for that boilerplate so the
 // five child-engine builders (Subagent explorer, Fork branch, Fork judge, per-def Subagent
 // engine, team member) cannot drift apart.
-func newChildEngine(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, pc prompt.Config) *agent.Engine {
-	return newChildEngineWithHooks(cfg, role, provider, cat, model, pc, hookexec.New(nil))
+func newChildEngine(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, windowFn func() int, pc prompt.Config) *agent.Engine {
+	return newChildEngineWithHooks(cfg, role, provider, cat, model, windowFn, pc, hookexec.New(nil))
 }
 
 // newChildEngineWithHooks is newChildEngine with an explicit HookRunner, so a
 // per-def Subagent/member engine can scope its own lifecycle hooks (from a def's
 // `hooks:` map) instead of the inert default. A nil hooks runner falls back to an
 // inert one, preserving the no-hooks contract.
-func newChildEngineWithHooks(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, pc prompt.Config, hooks port.HookRunner) *agent.Engine {
-	return agent.NewEngine(childEngineDeps(cfg, role, provider, cat, model, pc, hooks))
+func newChildEngineWithHooks(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, windowFn func() int, pc prompt.Config, hooks port.HookRunner) *agent.Engine {
+	return agent.NewEngine(childEngineDeps(cfg, role, provider, cat, model, windowFn, pc, hooks))
 }
 
 // childEngineDeps builds the agent.Deps for the DEFAULT-provider child shape
@@ -4945,7 +4957,7 @@ func newChildEngineWithHooks(cfg Config, role string, provider port.LLMProvider,
 // newChildEngineForProvider: the engine's deps are private, so a test can only
 // assert this literal's fields (e.g. that Clock is wired — issue #53) against
 // the helper, never through the constructed *agent.Engine.
-func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, pc prompt.Config, hooks port.HookRunner) agent.Deps {
+func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, windowFn func() int, pc prompt.Config, hooks port.HookRunner) agent.Deps {
 	if hooks == nil {
 		hooks = hookexec.New(nil)
 	}
@@ -4979,34 +4991,16 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		// Clock: the production wall clock (issue #53) — children time their tool
 		// calls/turns regardless of whether the role-scoped telemetry pair is wired.
 		Clock: wallclock.Clock{},
-		// Honour --context-window-override here too (issue: dual-path drift). The
-		// modern childEngineDepsForProvider gets this via engineDepsForProvider; this
-		// legacy literal path (buildUserModelReviewEngine + buildParallelJudgeEngine)
-		// must resolve the SAME way or the documented "model under-reports / proxy"
-		// workaround silently fails for those two child engines. The resolver is read
-		// at the point of use (override → 128k floor; a live read is harmless here as
-		// these engines pin no catalogued window). Default → the 128k floor.
-		ContextWindow:   childWindowResolver(cfg),
+		// The caller binds this child to an exact resolved provider/model pair and
+		// supplies the registry's shared resolver for that pair. Keeping the closure
+		// explicit prevents this default-provider helper from guessing provider identity
+		// and keeps configured/live/catalog windows on the same path as every other engine.
+		ContextWindow:   windowFn,
 		CompactionRatio: defaultCompactionRatio,
 		// ChildAskReviewer is deliberately ABSENT (nil): a child engine never carries
 		// the ask reviewer — no nesting, and the reviewer engine is itself built
 		// through the child deps path, so inheriting it would recurse at
 		// construction. Same posture as childEngineDepsForProvider.
-	}
-}
-
-// childWindowResolver returns the resolve-at-use window closure for the legacy
-// literal childEngineDeps path (buildUserModelReviewEngine + buildParallelJudgeEngine):
-// the operator's --context-window-override when set, otherwise the conservative 128k
-// default. The modern path resolves the SAME way via reg.windowResolver; this keeps
-// the two child builders from drifting. (These engines pin no catalogued window, so a
-// live read would not apply — the override-or-floor shape is the historical behaviour.)
-func childWindowResolver(cfg Config) func() int {
-	return func() int {
-		if cfg.ContextWindowOverride > 0 {
-			return cfg.ContextWindowOverride
-		}
-		return defaultContextWindowTokens
 	}
 }
 
@@ -5373,8 +5367,9 @@ func buildParallelEngineFactory(cfg Config, provReg *providerRegistry, provider 
 // operator implicitly trusts to the model they chose for the session, while the
 // branches are the bulk-token workers the cheap child default exists for. Pinned
 // by TestParallelJudgeStaysOnParentModel; documented in MULTI-PROVIDER.md.
-func buildParallelJudgeEngine(cfg Config, provider port.LLMProvider) *agent.Engine {
-	return newChildEngine(cfg, "parallel-judge", provider, tool.NewCatalog(), cfg.Model, promptConfig(cfg, cfg.gitStatus))
+func buildParallelJudgeEngine(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider) *agent.Engine {
+	return newChildEngine(cfg, "parallel-judge", provider, tool.NewCatalog(), cfg.Model,
+		reg.windowResolver(cfg, providerID, cfg.Model), promptConfig(cfg, cfg.gitStatus))
 }
 
 // buildAskAdjudicator constructs the OPT-IN automated child-ask reviewer (issue

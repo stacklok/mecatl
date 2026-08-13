@@ -640,9 +640,10 @@ const footerGapPad = 2
 //  1. m.effectiveModel.ContextWindow > 0 — the window the SERVER resolved for THIS
 //     session's model (echoed on SessionReadyMsg, refreshed on every model switch /
 //     GetSession). It is now LIVE-FIRST server-side, so a live-only model heals to
-//     its real window; the operator escape-hatch is mecated's
-//     -context-window-override, which moves this echoed denominator (and the engine
-//     trigger) together — there is no client-side override.
+//     its real window. Exact operator configuration precedes live metadata; the global
+//     escape hatch is mecatui embedded mode's (or an external mecated's)
+//     --context-window-override, which moves this echoed denominator and the engine
+//     trigger together. The client never recomputes the window.
 //  2. 0 — unknown; the meter renderers degrade to the bare "ctx <N>" current size.
 func (m Model) contextWindow() int64 {
 	if m.effectiveModel.ContextWindow > 0 {

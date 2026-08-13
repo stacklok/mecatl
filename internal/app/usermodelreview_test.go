@@ -80,7 +80,7 @@ func (s *signalStore) didNotFire(t *testing.T) bool {
 // throwaway child engine (never actually run, because the transcript is empty).
 func minimalReviewer(t *testing.T, store port.SessionStore) *agent.UserModelReviewer {
 	t.Helper()
-	eng := newChildEngine(Config{}, "", mockllm.New(mockllm.TextTurn("x")), tool.NewCatalog(), "test-model", promptConfig(Config{}, ""))
+	eng := newChildEngine(Config{}, "", mockllm.New(mockllm.TextTurn("x")), tool.NewCatalog(), "test-model", fixedDefaultWindow, promptConfig(Config{}, ""))
 	return agent.NewUserModelReviewer(store, eng)
 }
 
@@ -177,6 +177,7 @@ func TestUserModelReviewHooksIgnoresNonStop(t *testing.T) {
 // no-op when review is requested but the user-model store is nil (the warn branch).
 func TestMaybeWrapUserModelReviewDefaultOff(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("x"))
+	reg := regForTest(provider, providerOpenAI, "test-model")
 	store := memstoreForTest(t)
 
 	t.Run("review disabled (default) is passthrough", func(t *testing.T) {
@@ -186,7 +187,7 @@ func TestMaybeWrapUserModelReviewDefaultOff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory.New: %v", err)
 		}
-		got := maybeWrapUserModelReview(Config{}, inner, store, provider, um)
+		got := maybeWrapUserModelReview(Config{}, reg, inner, store, provider, um)
 		if got != port.HookRunner(inner) {
 			t.Fatalf("review OFF by default must return the inner runner UNCHANGED, got a wrapper")
 		}
@@ -194,7 +195,7 @@ func TestMaybeWrapUserModelReviewDefaultOff(t *testing.T) {
 
 	t.Run("review on but nil store is a no-op", func(t *testing.T) {
 		inner := &recordingHookRunner{}
-		got := maybeWrapUserModelReview(Config{UserModelReview: true}, inner, store, provider, nil)
+		got := maybeWrapUserModelReview(Config{UserModelReview: true}, reg, inner, store, provider, nil)
 		if got != port.HookRunner(inner) {
 			t.Fatalf("review requested with a nil user-model store must return the inner runner UNCHANGED")
 		}
@@ -206,11 +207,34 @@ func TestMaybeWrapUserModelReviewDefaultOff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory.New: %v", err)
 		}
-		got := maybeWrapUserModelReview(Config{UserModelReview: true}, inner, store, provider, um)
+		got := maybeWrapUserModelReview(Config{UserModelReview: true, Model: "test-model"}, reg, inner, store, provider, um)
 		if got == port.HookRunner(inner) {
 			t.Fatalf("review ENABLED with a store must return a WRAPPER, got the bare inner runner")
 		}
 	})
+}
+
+func TestUserModelReviewEngineUsesFinalModelConfiguredWindow(t *testing.T) {
+	const finalModel = "vendor/final-review-id"
+	provider := mockllm.New(mockllm.TextTurn("x"))
+	reg := regForTest(provider, providerOpenAI, finalModel)
+	cfg := Config{
+		ModelAliases:   map[string]string{"review": finalModel},
+		contextWindows: map[string]map[string]int{providerOpenAI: {finalModel: 444_000}},
+	}
+	resolved, ok := lookupModelAlias(cfg, "review")
+	if !ok {
+		t.Fatal("review alias did not resolve")
+	}
+	cfg.Model = resolved
+	store, err := memory.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("memory.New: %v", err)
+	}
+	eng := buildUserModelReviewEngine(cfg, reg, providerOpenAI, provider, store)
+	if got := eng.ContextWindow(); got != 444_000 {
+		t.Fatalf("review engine ContextWindow = %d, want configured final-model window 444000", got)
+	}
 }
 
 // TestUserModelConsolidationOffByDefault proves no consolidator is started for the
@@ -279,7 +303,7 @@ func reviewEngineToolNames(provider port.LLMProvider, store *memory.Store) []str
 	}
 	// Build the engine to ensure the construction path is exercised (it is otherwise
 	// unused, but constructing it proves the catalog is engine-compatible).
-	_ = newChildEngine(Config{}, "", provider, cat, "test-model", promptConfig(Config{}, ""))
+	_ = newChildEngine(Config{}, "", provider, cat, "test-model", fixedDefaultWindow, promptConfig(Config{}, ""))
 	var names []string
 	for _, tl := range cat.Tools() {
 		names = append(names, tl.Spec().Name)

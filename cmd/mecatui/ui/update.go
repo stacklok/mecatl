@@ -642,8 +642,9 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a genuinely-known window (catalogued or live) never triggers it, and it is
 		// bounded by refresh completion — the server stops emitting 0 once settled, so
 		// the RPC fires at most until the first heal lands, never on every turn forever.
-		// There is no client-side override (issue #66 deleted the --context-window flag);
-		// the gate is purely "session live AND window still unknown".
+		// The client never overrides this value. Embedded mode can configure the
+		// server-side resolver with --context-window-override; the gate remains purely
+		// "session live AND window still unknown".
 		if m.sessionID != "" && m.effectiveModel.ContextWindow == 0 {
 			refresh := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
 			return mm, tea.Batch(cmd, refresh)

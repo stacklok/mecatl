@@ -329,8 +329,9 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
 		out = append(out, modelEntry{
-			ID:          m.ID,
-			DisplayName: m.DisplayName,
+			ID:           m.ID,
+			DisplayName:  m.DisplayName,
+			ContextLimit: m.ContextLimit,
 			// ToolCall:true — a coding-agent gateway fronts tool-capable models;
 			// the local gate is not authoritative (the openrouter-image-caps
 			// lesson: an over-permissive local flag fails safe via the
@@ -338,8 +339,8 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 			ToolCall: true,
 			// Reasoning stays false and InputModalities stays nil (image=false,
 			// conservative): the generic OpenAI-shaped /v1/models envelope
-			// carries no modality/reasoning metadata. ContextLimit stays 0, so
-			// the resolve-at-use window resolver applies its 128k floor.
+			// carries no modality/reasoning metadata. An absent context_window
+			// decodes to 0, so the resolver falls back to the catalog then 128k.
 		})
 	}
 	return out, nil
@@ -372,9 +373,10 @@ func (l openCodeLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
 		out = append(out, modelEntry{
-			ID:          m.ID,
-			DisplayName: m.DisplayName,
-			ToolCall:    true, // same rationale as gatewayLister: fail-safe via provider 4xx
+			ID:           m.ID,
+			DisplayName:  m.DisplayName,
+			ContextLimit: m.ContextLimit,
+			ToolCall:     true, // same rationale as gatewayLister: fail-safe via provider 4xx
 			// Adapter-static modalities (openaichat is text+image). Not per-model
 			// truth (the endpoint gives none), but the documented stable fallback.
 			InputModalities: []string{"text", "image"},
@@ -423,13 +425,27 @@ func projectModelEntry(reg *providerRegistry, providerID string, m modelEntry) *
 	if name == "" {
 		name = m.ID // display falls back to the id
 	}
+	contextLimit := m.ContextLimit
+	if reg != nil {
+		// The picker uses the SAME precedence core as engines and session echoes.
+		// At projection time meta already contains this seed/live row; a genuinely
+		// unknown value takes the same conservative floor as the engine.
+		if resolved, known := reg.resolveWindowCore(Config{
+			ContextWindowOverride: reg.contextWindowOverride,
+			contextWindows:        reg.contextWindows,
+		}, providerID, m.ID); known {
+			contextLimit = resolved
+		} else {
+			contextLimit = defaultContextWindowTokens
+		}
+	}
 	return &mecatlv1.ModelInfo{
 		Id:           m.ID,
 		ProviderId:   providerID,
 		DisplayName:  name,
 		Image:        modelAdapterCaps(reg, providerID).Image && hasImageModality(m.InputModalities),
 		Reasoning:    m.Reasoning,
-		ContextLimit: int64(m.ContextLimit),
+		ContextLimit: int64(contextLimit),
 	}
 }
 

@@ -631,14 +631,11 @@ func writeFileAtomic(path string, b []byte) error {
 	return nil
 }
 
-// safeFilePart maps a caller-chosen string (a schedule name or fire id) to a
-// filename-safe token so it cannot traverse out of the store dir. It is the
-// safeFilePart sanitizes a string-typed key (a schedule name or fire id) for use
-// as a filename. It delegates to the existing safeName (which takes a
-// session.SessionID — a typed string — so this is a one-line wrapper) to avoid
-// duplicating the rune allowlist + leading-dot neutralisation.
+// safeFilePart sanitizes a string-typed key (a schedule name or fire id) for
+// use as a filename. Schedules deliberately retain the legacy lossy naming
+// scheme; the reversible session-family codec must not migrate schedule files.
 func safeFilePart(s string) string {
-	return safeName(session.SessionID(s))
+	return legacySafeName(session.SessionID(s))
 }
 
 // cloneSpec returns a copy of spec whose Parts slice AND Owner pointer are

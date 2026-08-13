@@ -62,9 +62,12 @@ func TestListModels_MappingFromFixture(t *testing.T) {
 	if got := byID["claude-sonnet-4-6"].DisplayName; got != "Claude Sonnet 4.6" {
 		t.Errorf("DisplayName = %q", got)
 	}
-	// display_name absent ⇒ empty DisplayName passes through (the id fallback for
-	// display lives in the composition projection, asserted there).
-	if m, ok := byID["no-display-name"]; !ok || m.DisplayName != "" {
+	if got := byID["claude-sonnet-4-6"].ContextLimit; got != 1_000_000 {
+		t.Errorf("ContextLimit = %d, want 1000000", got)
+	}
+	// display_name and context_window absent ⇒ their zero values pass through
+	// (display falls back to id and context to catalog/default in composition).
+	if m, ok := byID["no-display-name"]; !ok || m.DisplayName != "" || m.ContextLimit != 0 {
 		t.Errorf("no-display-name entry: %+v, ok=%v", m, ok)
 	}
 }

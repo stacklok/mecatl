@@ -488,8 +488,9 @@ func TestFooterCountsIdleAsNotWorking(t *testing.T) {
 
 // TestContextWindowPrecedence pins the footer-meter denominator source (issue #65,
 // simplified by the resolve-at-use unification): the SERVER-echoed per-model window
-// (now live-first server-side, and moved by mecated's -context-window-override) is the
-// single source; there is no client-side override. 0 echo ⇒ unknown.
+// (now config/live-first server-side, and moved by embedded mecatui's or external
+// mecated's --context-window-override) is the single source; the client does not
+// recompute it. 0 echo ⇒ unknown.
 func TestContextWindowPrecedence(t *testing.T) {
 	cases := []struct {
 		name      string

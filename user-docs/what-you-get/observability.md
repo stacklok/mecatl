@@ -180,7 +180,7 @@ Build-time composition facts (store kind, compaction strategy, feature flags) ar
 
 `port.ToolCallRecorder` captures one structured record per tool execution with timing (queue wait + execution duration). It is a separate channel from diagnostics and the event stream.
 
-The `jsonlstore` backend (selected with `--store-dir`) implements `ToolCallRecorder` alongside `SessionStore` and `EventLog`. It writes tool records to a `<session-id>.tools.jsonl` sidecar file. The `telemetry` adapter additionally derives counters and a latency histogram from these records — those feed into `mecatl_tool_calls_total` and `mecatl_tool_duration_seconds` on the `/metrics` endpoint.
+The `jsonlstore` backend (selected with `--store-dir`) implements `ToolCallRecorder` alongside `SessionStore` and `EventLog`. It writes tool records to a `.tools.jsonl` sidecar in the session's family directory under `--store-dir` (the filename is derived from the session id but is not reversible — see [Session store](../extension-points/session-store.md)). The `telemetry` adapter additionally derives counters and a latency histogram from these records — those feed into `mecatl_tool_calls_total` and `mecatl_tool_duration_seconds` on the `/metrics` endpoint.
 
 ---
 

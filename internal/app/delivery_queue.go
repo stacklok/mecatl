@@ -301,6 +301,18 @@ func (q *FileDeliveryQueue) pendingLocked(origin session.SessionID) ([]port.Deli
 		if rec.V != DeliveryQueueFormat {
 			return nil, fmt.Errorf("delivery queue: unknown format %q (want %q)", rec.V, DeliveryQueueFormat)
 		}
+		// OWNERSHIP. deliverySafeName is LOSSY, so two origin ids differing only
+		// in a sanitized rune ("a/b" and "a_b") share one log file. Each record
+		// carries its own SessionID, so check it rather than trusting the
+		// filename — the same discipline jsonlstore uses to pay for its lossy
+		// legacy stem. Without this, three things went wrong at once: Pending
+		// returned the OTHER session's notes; the backlog cap below counted the
+		// other session's notes against this one's budget; and the cap's
+		// `drop := pending[0]` could mark the OTHER session's oldest note as
+		// delivered — silently losing a note that was never delivered.
+		if rec.Note.SessionID != origin {
+			continue
+		}
 		if delivered[rec.Note.Seq] {
 			continue
 		}
@@ -325,6 +337,16 @@ func (q *FileDeliveryQueue) nextSeqLocked(origin session.SessionID) uint64 {
 }
 
 // maxSeqLocked scans the enqueue log for the highest seq. Caller holds mu.
+//
+// It deliberately does NOT filter by origin, unlike pendingLocked — do not
+// "fix" this to match. Seqs must be unique per FILE, not per session, because
+// the delivered ledger records bare sequence numbers and carries no session id,
+// so a file shared by two lossy-name-colliding origins has ONE ledger keyed by
+// seq alone. Scanning the whole file keeps those seqs disjoint, which is what
+// makes the shared ledger unambiguous. Filtering here would have both origins
+// mint seq 1, and then either one's MarkDelivered would mark the other's note.
+// The cost is only that a colliding origin's seqs start above 1, which no
+// caller can observe: seq is opaque and ordering-only.
 func (q *FileDeliveryQueue) maxSeqLocked(origin session.SessionID) (uint64, error) {
 	var top uint64
 	f, err := os.Open(q.deliveryPath(origin)) //nolint:gosec // path is sanitized
@@ -416,7 +438,8 @@ func (q *FileDeliveryQueue) writeLedgerLocked(origin session.SessionID, delivere
 }
 
 // deliveryPath / ledgerPath map an origin session id to a filename-safe path
-// under the queue's dir (the safeName discipline, mirroring jsonlstore).
+// under the queue's dir (the safeName discipline, mirroring jsonlstore's
+// legacySafeName).
 func (q *FileDeliveryQueue) deliveryPath(id session.SessionID) string {
 	return filepath.Join(q.dir, deliverySafeName(id)+deliveryFileSuffix)
 }
@@ -507,7 +530,20 @@ func deliveryWriteAtomic(path string, b []byte) error {
 
 // deliverySafeName maps a SessionID to a filename-safe token so it cannot
 // traverse out of the dir. Any rune that is not alphanumeric, '-', '_' or '.'
-// becomes '_'; a leading '.' is neutralized. Mirrors jsonlstore.safeName.
+// becomes '_'; a leading '.' is neutralized. At time of writing this is the
+// same transform as jsonlstore.legacySafeName, kept as a local copy rather
+// than shared: that one is a FROZEN legacy format (it survives only to read
+// and migrate pre-rewrite files), so coupling this live format to it would
+// freeze both. They are identical by history, not by contract.
+//
+// The stem is LOSSY: two ids differing only in a sanitized rune share one log
+// and one ledger. That sharing is GUARDED rather than removed, the same way
+// jsonlstore pays for its lossy legacy stem — by proving ownership from the
+// record rather than trusting the filename. pendingLocked checks each record's
+// own SessionID; maxSeqLocked deliberately does not, so seqs stay unique per
+// FILE and the session-less ledger stays unambiguous (see both comments).
+// Removing the collision outright would mean giving this live format a bounded
+// injective stem, which is a migration, not a comment — see issue #441.
 func deliverySafeName(id session.SessionID) string {
 	s := string(id)
 	if s == "" {

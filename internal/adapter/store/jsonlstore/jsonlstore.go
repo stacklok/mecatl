@@ -7,18 +7,24 @@
 // overwritten, so the files form a replayable audit trail; Load reads the most
 // recent snapshot line, while EventLog.Read scans ALL event lines cumulatively.
 //
-// Layout under the configured dir:
+// SESSION-FAMILY NAMING. Each session's three files share a family stem under
+// the owner-only `sid-v1` subdirectory. The reversible token is `sid-v1-` plus
+// Raw URL-base64 of the complete opaque valid-UTF-8 session id:
 //
-//	<dir>/<id>.session.jsonl   — one snapshot per Save (latest line wins)
-//	<dir>/<id>.tools.jsonl     — one record per ToolCallRecorder.ToolCall
-//	<dir>/<id>.events.jsonl    — one record per EventLog.Append (cumulative)
+//	<dir>/sid-v1/sid-v1-<token>.session.jsonl
+//	<dir>/sid-v1/sid-v1-<token>.tools.jsonl
+//	<dir>/sid-v1/sid-v1-<token>.events.jsonl
+//
+// A pre-rewrite family may still use the lossy legacySafeName stem. The
+// sessionResolver in resolve.go is the single authority for canonical/legacy
+// paths, ownership checks, and write-time migration. Reads never migrate.
 //
 // The .events.jsonl log is PARALLEL to (not a superset of) .tools.jsonl: the
 // tool log is the structured per-tool AUDIT seam (args, queue/exec timing), the
 // event log is the relayed STREAM (reasoning, ask/verdict pairs, delegation
 // lifecycle) the server otherwise discards. Neither subsumes the other.
 //
-// Session ids are sanitized for use as filenames so an id can never escape dir.
+// Physical names are confined to filename-safe tokens under the store dir.
 package jsonlstore
 
 import (
@@ -28,7 +34,6 @@ import (
 	"fmt"
 	"iter"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -45,8 +50,11 @@ var ErrNotFound = fmt.Errorf("jsonlstore: session not found: %w", port.ErrSessio
 
 // Store is an append-only JSONL SessionStore and ToolCallRecorder rooted at a directory.
 type Store struct {
-	dir string
-	mu  sync.Mutex // serializes appends across files
+	// resolver is the single authority for canonical and legacy family paths
+	// (including the plain root dir, resolver.dir — Store has no separate
+	// copy of it).
+	resolver sessionResolver
+	mu       sync.Mutex // serializes appends across files
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
@@ -66,13 +74,28 @@ func New(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create dir: %w", err)
 	}
-	return &Store{dir: dir}, nil
+	resolver := sessionResolver{dir: dir}
+	if err := os.MkdirAll(resolver.canonicalDir(), 0o700); err != nil {
+		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
+	}
+	return &Store{resolver: resolver}, nil
 }
 
 // Save appends a snapshot of s as a single JSON line to the session file.
+//
+// New writes target the canonical versioned-token path. Before writing, the
+// resolver lazily migrates a MATCHING legacy family (one whose legacy snapshot
+// carries an id exactly equal to s.ID) forward — sidecars first, snapshot
+// last — so the new snapshot line appends to the canonical file carrying the
+// migrated history in order and the legacy files are removed. A legacy family
+// whose embedded id does NOT match s.ID is left untouched (it belongs to a
+// different session that the lossy stem happened to collide with).
 func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if s == nil {
 		return sessnap.ErrNilSession
+	}
+	if err := validateSessionID(s.ID); err != nil {
+		return err
 	}
 	line, err := sessnap.Marshal(s)
 	if err != nil {
@@ -80,38 +103,28 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	return appendLine(st.sessionPath(s.ID), line)
+	if err := st.resolver.prepareWrite(s.ID); err != nil {
+		return err
+	}
+	return appendLine(st.resolver.canonicalPath(s.ID, kindSnapshot), line)
 }
 
-// Load reads the session file and reconstructs the latest snapshot line.
+// Load reads the authoritative snapshot without modifying storage. Canonical
+// presence prevents fallback; legacy is accepted only when its latest embedded
+// id exactly matches the requested id.
 func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session, error) {
-	path := st.sessionPath(id)
-	f, err := os.Open(path) //nolint:gosec // path is sanitized via sessionPath
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	line, err := st.resolver.loadSnapshot(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
-		}
-		return nil, fmt.Errorf("jsonlstore: open session file: %w", err)
+		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-
-	var last []byte
-	last, err = scanLastNonBlankLine(f)
-	if err != nil {
-		return nil, fmt.Errorf("jsonlstore: scan session file: %w", err)
-	}
-	if last == nil {
-		return nil, fmt.Errorf("%w: %q (empty file)", ErrNotFound, id)
-	}
-	return sessnap.Unmarshal(last)
+	return sessnap.Unmarshal(line)
 }
 
-// scanLastNonBlankLine returns the last non-blank line of f (seeking to 0 first).
-// It is the shared latest-line-wins snapshot read that Load, decodeSessionID, and
-// readLastLineFull (the metalist fallback) all call — ONE scan discipline across
-// the three "read the latest snapshot line" sites, so a format/scan change fixes
-// once and the picker's fast path cannot drift from Load's truth. The caller owns
-// the returned slice (a fresh copy; the scanner's buffer is reused internally).
+// scanLastNonBlankLine returns the last non-blank line of f. Load and the
+// listing fallback share this latest-snapshot discipline. The caller owns the
+// returned slice (a fresh copy; the scanner's buffer is reused internally).
 func scanLastNonBlankLine(f *os.File) ([]byte, error) {
 	var last []byte
 	sc := newScanner(f)
@@ -168,97 +181,98 @@ type eventLogRecord struct {
 	Ev json.RawMessage `json:"ev"`
 }
 
-// List returns every stored session's id and last-modified time (the session
-// file's mtime). It satisfies the optional port.PrunableStore retention seam.
+// List returns one row per logical session id. IDs come from latest snapshots,
+// never filenames; canonical files win when canonical and legacy coexist.
 //
-// COST: safeName is NOT invertible (distinct ids can collide onto one
-// filename, and a sanitized rune cannot be restored), so the REAL id is
-// decoded from each session file's last snapshot line (the same latest-line
-// the Load path trusts) rather than derived from the filename. That makes
-// List O(total store bytes) in the worst case — acceptable for a
-// retention sweep that runs on a startup/hourly cadence, not a hot path.
+// COST: ids are decoded from each session file's latest snapshot line rather
+// than from filenames (a filename is not invertible back to the id, and now
+// there are two directories — canonical and legacy — to reconcile), so List
+// costs one directory read per dir plus one TAIL read per snapshot file
+// (readLastLine's lastLineSeekWindow, NOT a full scan; the ownership check
+// compares the already-read line and issues no extra syscall). A single
+// snapshot line larger than that window degrades to a full scan of that one
+// file. Fine for a retention sweep on a startup/hourly cadence, NOT a hot
+// path.
 //
-// List enumerates ONLY *.session.jsonl files: a .tools.jsonl sidecar without
-// its session file (an orphan from a pre-fix partial Delete, or hand-pruning)
-// is invisible here and is never swept — accepted as unreachable. Delete's
-// tools-first removal order prevents this store from creating new ones.
+// List enumerates ONLY *.session.jsonl files, which is what makes the
+// sidecars-before-snapshot removal order load-bearing (see familyOrder in
+// resolve.go): a .tools.jsonl or .events.jsonl sidecar without its session
+// file is invisible here and can never be swept. A pre-existing orphan is
+// accepted as unreachable; Delete's ordering prevents this store from
+// creating new ones.
 func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	entries, err := os.ReadDir(st.dir)
+	files, err := st.resolver.snapshotFiles()
 	if err != nil {
-		return nil, fmt.Errorf("jsonlstore: list store dir: %w", err)
+		return nil, err
 	}
-	var out []port.StoredSession
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), sessionFileSuffix) {
-			continue
-		}
-		path := filepath.Join(st.dir, e.Name())
-		id, err := decodeSessionID(path)
-		if err != nil {
-			// A truncated/empty/corrupt session file has no decodable id; skip
-			// it rather than fail the whole inventory (Load of that id would
-			// fail the same way). Best-effort listing, like the sweep itself.
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue // raced with a concurrent delete; tolerate it
-		}
-		out = append(out, port.StoredSession{ID: id, ModifiedAt: info.ModTime()})
+	out := make([]port.StoredSession, 0, len(files))
+	for _, file := range files {
+		out = append(out, port.StoredSession{ID: file.id, ModifiedAt: file.modified})
 	}
 	return out, nil
 }
 
-// Delete removes the session's snapshot file AND its tool-call log. It is
-// idempotent: a missing file is success (port.PrunableStore contract), so
-// concurrent List/Delete races are tolerated by construction.
+// Delete removes canonical sidecars before the canonical snapshot, and a
+// legacy family in the same order — REMOVAL ORDER is load-bearing, see
+// familyOrder's doc comment (resolve.go): the snapshot file is what List
+// enumerates, so removing it last means a partial failure leaves the family
+// still VISIBLE (the next retention sweep retries it), where the reverse
+// order would leave an invisible orphaned sidecar no sweep could ever find.
+// With two families (canonical + legacy) this now has to hold TWICE per
+// call: canonical sidecars before the canonical snapshot, AND — only when
+// the legacy snapshot's embedded id proves it belongs to this session —
+// legacy sidecars before the legacy snapshot. A legacy family that fails
+// ownership (mismatch or absent) is left untouched; that mismatch and
+// absence are both idempotent success.
 //
-// REMOVAL ORDER is load-bearing: the sidecars (tools, then events) go FIRST and
-// the session file LAST, because the session file is what List enumerates. A
-// partial failure then leaves the set still VISIBLE (the session file survives,
-// so the next retention sweep retries the whole Delete); the reverse order would
-// leave an INVISIBLE orphaned sidecar that no future sweep can ever find (List
-// ignores sidecars without a session file — a pre-existing orphan is accepted as
-// unreachable; this ordering prevents us from ever creating one).
+// The canonical family is removed on PRESENCE alone, never on the snapshot
+// parsing: the token is injective, so the file is ours whatever it contains,
+// and gating removal on validity made a torn snapshot line permanently
+// unprunable — every retention sweep re-failed on it while List, which skips
+// undecodable files, never surfaced it. port.PrunableStore requires that a
+// Delete either remove or be idempotent success, so an unreadable snapshot
+// must not be a third outcome.
 func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	for _, path := range []string{st.toolsPath(id), st.eventsPath(id), st.sessionPath(id)} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	canonicalOwned, err := st.resolver.canonicalOwnership(id)
+	if err != nil {
+		return err
+	}
+	legacyOwned, err := st.resolver.legacyOwned(id)
+	if err != nil {
+		return err
+	}
+	for _, kind := range sidecarKinds {
+		if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
 			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+		}
+		if legacyOwned {
+			if err := removeSessionFile(st.resolver.legacyPath(id, kind)); err != nil {
+				return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+			}
+		}
+	}
+	if canonicalOwned {
+		if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
+			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+		}
+	}
+	if legacyOwned {
+		if err := removeSessionFile(st.resolver.legacyPath(id, kindSnapshot)); err != nil {
+			return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
 		}
 	}
 	return nil
 }
 
-// decodeSessionID reads the REAL session id out of a session file's latest
-// snapshot line (only the "id" field is decoded; the rest of the snapshot is
-// skipped). It mirrors Load's latest-line-wins read.
-func decodeSessionID(path string) (session.SessionID, error) {
-	f, err := os.Open(path) //nolint:gosec // path is derived from the store dir listing
-	if err != nil {
-		return "", err
+func removeSessionFile(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	defer func() { _ = f.Close() }()
-	last, err := scanLastNonBlankLine(f)
-	if err != nil {
-		return "", err
-	}
-	if last == nil {
-		return "", fmt.Errorf("jsonlstore: %s: empty session file", path)
-	}
-	var head struct {
-		ID session.SessionID `json:"id"`
-	}
-	if err := json.Unmarshal(last, &head); err != nil {
-		return "", fmt.Errorf("jsonlstore: %s: decode snapshot id: %w", path, err)
-	}
-	if head.ID == "" {
-		return "", fmt.Errorf("jsonlstore: %s: snapshot carries no id", path)
-	}
-	return head.ID, nil
+	return nil
 }
 
 // toolCallRecord is the structured line written by ToolCall. It is a flat,
@@ -299,7 +313,10 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	_ = appendLine(st.toolsPath(id), line)
+	if err := st.resolver.prepareWrite(id); err != nil {
+		return
+	}
+	_ = appendLine(st.resolver.canonicalPath(id, kindTools), line)
 }
 
 // Append records one relayed event under id as a format-tagged JSON line on the
@@ -310,6 +327,9 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 // Store), and is best-effort durable: the relay logs a WARN on a returned error
 // and never aborts the run.
 func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Event) error {
+	if err := validateSessionID(id); err != nil {
+		return err
+	}
 	evJSON, err := json.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("jsonlstore: marshal event: %w", err)
@@ -320,7 +340,10 @@ func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Even
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	return appendLine(st.eventsPath(id), line)
+	if err := st.resolver.prepareWrite(id); err != nil {
+		return err
+	}
+	return appendLine(st.resolver.canonicalPath(id, kindEvents), line)
 }
 
 // Read scans the per-session event log and yields every recorded event in append
@@ -332,18 +355,27 @@ func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Even
 // item, the standard iter.Seq2 error idiom).
 func (st *Store) Read(_ context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
-		f, err := os.Open(st.eventsPath(id)) //nolint:gosec // path is sanitized via eventsPath
+		st.mu.Lock()
+		path, present, err := st.resolver.readablePath(id, kindEvents)
+		st.mu.Unlock()
+		if err != nil {
+			yield(session.Event{}, fmt.Errorf("jsonlstore: resolve event file: %w", err))
+			return
+		}
+		if !present {
+			return
+		}
+		f, err := os.Open(path) //nolint:gosec // resolver-derived path
 		if err != nil {
 			if os.IsNotExist(err) {
-				return // miss → empty sequence (absence is data, not an error)
+				return
 			}
 			yield(session.Event{}, fmt.Errorf("jsonlstore: open event file: %w", err))
 			return
 		}
 		defer func() { _ = f.Close() }()
 
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+		sc := newScanner(f)
 		for sc.Scan() {
 			b := sc.Bytes()
 			if len(strings.TrimSpace(string(b))) == 0 {
@@ -373,14 +405,6 @@ func (st *Store) Read(_ context.Context, id session.SessionID) iter.Seq2[session
 	}
 }
 
-func (st *Store) sessionPath(id session.SessionID) string {
-	return filepath.Join(st.dir, safeName(id)+sessionFileSuffix)
-}
-
-func (st *Store) toolsPath(id session.SessionID) string {
-	return filepath.Join(st.dir, safeName(id)+toolsFileSuffix)
-}
-
 // ScheduleStore returns a port.ScheduleStore backed by the SAME directory as
 // the session store (a sibling struct sharing the dir + the single-process
 // mutex). Composition discovers it via type-assertion on this accessor — NOT
@@ -391,21 +415,46 @@ func (st *Store) toolsPath(id session.SessionID) string {
 // struct, not the session store). A caller that does not need schedules never
 // calls this; the byte-identical default is no schedules.
 func (st *Store) ScheduleStore() port.ScheduleStore {
-	return &scheduleStore{dir: st.dir, mu: &st.mu}
-}
-
-func (st *Store) eventsPath(id session.SessionID) string {
-	return filepath.Join(st.dir, safeName(id)+eventsFileSuffix)
+	return &scheduleStore{dir: st.resolver.dir, mu: &st.mu}
 }
 
 // appendLine appends b followed by a newline to the file at path, opening it
 // for append (creating it if needed). Each line is a complete JSON record.
+//
+// TORN-TAIL REPAIR. A write is one unsynced Write of record+'\n', so a crash,
+// SIGKILL or ENOSPC partway through leaves a truncated final line with NO
+// terminating newline. Appending straight onto that would GLUE the next record
+// to the fragment, so one interrupted write would corrupt the following record
+// too — turning a damaged tail into a permanently unreadable file, and (for the
+// snapshot) destroying the very append that would otherwise have repaired it,
+// since Load is last-line-wins. So: if the file is non-empty and does not end
+// in '\n', emit a leading newline first. The fragment then stands as its own
+// line, where scanLastNonBlankLine and readLastLine both look PAST it to the
+// record just written. Damage stays bounded to the one interrupted record.
 func appendLine(path string, b []byte) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // path is sanitized
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644) //nolint:gosec // path is sanitized
 	if err != nil {
 		return fmt.Errorf("jsonlstore: open for append: %w", err)
 	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	rec := make([]byte, 0, len(b)+2)
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("jsonlstore: stat for append: %w", err)
+	}
+	if size := info.Size(); size > 0 {
+		var tail [1]byte
+		if _, err := f.ReadAt(tail[:], size-1); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("jsonlstore: read tail for append: %w", err)
+		}
+		if tail[0] != '\n' {
+			rec = append(rec, '\n')
+		}
+	}
+	rec = append(rec, b...)
+	rec = append(rec, '\n')
+	if _, err := f.Write(rec); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("jsonlstore: append: %w", err)
 	}
@@ -415,10 +464,11 @@ func appendLine(path string, b []byte) error {
 	return nil
 }
 
-// safeName maps a SessionID to a filename-safe token so it cannot traverse out
-// of the store dir. Any rune that is not alphanumeric, '-', '_' or '.' becomes
-// '_'. A leading '.' is also neutralized.
-func safeName(id session.SessionID) string {
+// legacySafeName maps a SessionID to the pre-v1 filename-safe token. It is
+// intentionally LOSSY and retained only for legacy session-family discovery and
+// schedule-store compatibility. Any rune that is not alphanumeric, '-', '_' or
+// '.' becomes '_'. A leading '.' is also neutralized.
+func legacySafeName(id session.SessionID) string {
 	s := string(id)
 	if s == "" {
 		return "_empty_"
