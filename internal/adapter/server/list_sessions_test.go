@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,16 +60,41 @@ func listSessionsService(t *testing.T, store port.SessionStore) *server.Service 
 	return svc
 }
 
-// setSessionMtime sets the mtime of the session file for the given id, so the
-// test can vary the PrunableStore row mtimes without waiting on real time. It
-// assumes a simple id (no chars safeName would rewrite) — true for the ids
-// these tests use.
+// setSessionMtime locates the physical snapshot by its embedded logical id; the
+// filename codec is private to jsonlstore.
 func setSessionMtime(t *testing.T, dir string, id session.SessionID, mtime time.Time) {
 	t.Helper()
-	path := filepath.Join(dir, string(id)+".session.jsonl")
-	if err := os.Chtimes(path, mtime, mtime); err != nil {
-		t.Fatalf("Chtimes %s: %v", path, err)
+	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v1")} {
+		entries, err := os.ReadDir(scanDir)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".session.jsonl") {
+				continue
+			}
+			path := filepath.Join(scanDir, entry.Name())
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+			if len(lines) == 0 {
+				continue
+			}
+			var head struct {
+				ID session.SessionID `json:"id"`
+			}
+			if json.Unmarshal(lines[len(lines)-1], &head) != nil || head.ID != id {
+				continue
+			}
+			if err := os.Chtimes(path, mtime, mtime); err != nil {
+				t.Fatalf("Chtimes %s: %v", path, err)
+			}
+			return
+		}
 	}
+	t.Fatalf("snapshot for %q not found", id)
 }
 
 // TestListSessionsOverJsonlstore seeds 3 fixture sessions (varying mtimes),

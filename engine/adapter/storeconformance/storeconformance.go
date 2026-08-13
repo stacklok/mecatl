@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -164,6 +165,68 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 		if gotB.ID != b.ID || len(gotB.Conversation.Messages) != 1 || gotB.Conversation.Messages[0].Text != "message for b" {
 			t.Errorf("Load(b) returned id=%q messages=%+v, want b's own snapshot", gotB.ID, gotB.Conversation.Messages)
 		}
+	})
+
+	t.Run("long and opaque session ids", func(t *testing.T) {
+		// session.SessionID is an OPAQUE string with no documented length or
+		// charset bound, and an embedding host may supply a namespaced compound
+		// id through CreateSession. So every backend must cope with a long id,
+		// whatever it does to turn one into a physical key.
+		//
+		// This is stated at the port rather than per-adapter because it is a
+		// property of the contract, and because a backend that encodes the id
+		// INTO a filename can silently acquire a ceiling: jsonlstore briefly
+		// base64'd whole ids into filenames, which inflates 4/3 with no cap and
+		// capped ids at 175 bytes — past that every call returned ENAMETOOLONG,
+		// a pre-existing session became permanently unwritable, and a long
+		// provider-supplied child id was never persisted at all. An in-memory
+		// codec test could not see it; only a real Save/Load could.
+		for _, n := range []int{175, 176, 241, 1024} {
+			t.Run(strconv.Itoa(n), func(t *testing.T) {
+				st := newStore(t)
+				id := session.SessionID(strings.Repeat("L", n))
+				s := newSession(id)
+				mustOK(t, "RecordUserPrompt", s.RecordUserPrompt("long-id message", nil))
+				if err := st.Save(ctx, s); err != nil {
+					t.Fatalf("Save with a %d-byte id: %v", n, err)
+				}
+				got, err := st.Load(ctx, id)
+				if err != nil {
+					t.Fatalf("Load with a %d-byte id: %v", n, err)
+				}
+				if got.ID != id {
+					t.Errorf("Load returned id of %d bytes, want the %d-byte id back byte-exact", len(got.ID), n)
+				}
+				if err := st.Save(ctx, got); err != nil {
+					t.Fatalf("second Save with a %d-byte id: %v", n, err)
+				}
+			})
+		}
+
+		t.Run("long ids differing only in the tail do not alias", func(t *testing.T) {
+			// A bounded encoding must not become lossy: truncating a long id to
+			// fit a key would collapse these two onto one session.
+			st := newStore(t)
+			base := strings.Repeat("P", 200)
+			first, second := session.SessionID(base+"-one"), session.SessionID(base+"-two")
+			a, b := newSession(first), newSession(second)
+			mustOK(t, "RecordUserPrompt(first)", a.RecordUserPrompt("belongs to first", nil))
+			mustOK(t, "RecordUserPrompt(second)", b.RecordUserPrompt("belongs to second", nil))
+			if err := st.Save(ctx, a); err != nil {
+				t.Fatalf("Save(first): %v", err)
+			}
+			if err := st.Save(ctx, b); err != nil {
+				t.Fatalf("Save(second): %v", err)
+			}
+			gotA, err := st.Load(ctx, first)
+			if err != nil {
+				t.Fatalf("Load(first): %v", err)
+			}
+			if gotA.ID != first || gotA.Conversation.Messages[0].Text != "belongs to first" {
+				t.Errorf("Load(first) returned %q / %q; the two long ids aliased onto one session",
+					gotA.ID, gotA.Conversation.Messages[0].Text)
+			}
+		})
 	})
 
 	t.Run("load miss wraps sentinel", func(t *testing.T) {

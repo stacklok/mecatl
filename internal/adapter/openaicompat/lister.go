@@ -15,12 +15,14 @@
 // non-empty (many OpenAI-compatible gateways — including the ToolHive LLM
 // gateway proxy — accept a placeholder credential rather than none at all).
 // The response envelope is
-// {"object":"list","data":[{"id","object","created","owned_by","display_name"}]}
-// — decode only `id` and `display_name`, everything else is ignored by
-// encoding/json. Wire shape pinned to stacklok-enterprise-platform#2270 ("New
-// data-plane GET /v1/models intercept... returns an OpenAI-shaped response
+// {"object":"list","data":[{"id","object","created","owned_by","display_name","context_window"}]}
+// — decode only `id`, `display_name`, and `context_window`; everything else is
+// ignored by encoding/json. Wire shape pinned to
+// stacklok-enterprise-platform#2270 ("New data-plane GET /v1/models intercept...
+// returns an OpenAI-shaped response
 // (`{object:"list", data:[{id, object, created, owned_by, display_name}]}`)"),
-// NOT hand-typed guesses; the fixture in testdata/ mirrors that shape.
+// and extended by stacklok-enterprise-platform#3288; the fixture in testdata/
+// mirrors that shape.
 //
 // # Layering
 //
@@ -70,8 +72,9 @@ const (
 // to its composition-local modelEntry; it never leaves this package's caller
 // as-is and carries nothing provider-private (no key, no URL).
 type Model struct {
-	ID          string
-	DisplayName string
+	ID           string
+	DisplayName  string
+	ContextLimit int
 }
 
 // StatusError is returned when the endpoint answers with a non-2xx status. The
@@ -135,8 +138,9 @@ type wireResponse struct {
 }
 
 type wireModel struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
+	ID            string `json:"id"`
+	DisplayName   string `json:"display_name"`
+	ContextWindow int    `json:"context_window"`
 }
 
 // ListModels GETs the live catalog and maps it to []Model. It is read-only and
@@ -185,8 +189,9 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 			continue // defensive: skip a malformed/hostile entry with no id
 		}
 		out = append(out, Model{
-			ID:          truncateRunes(id, maxIDRunes),
-			DisplayName: truncateRunes(stripControl(w.DisplayName), maxNameRunes),
+			ID:           truncateRunes(id, maxIDRunes),
+			DisplayName:  truncateRunes(stripControl(w.DisplayName), maxNameRunes),
+			ContextLimit: w.ContextWindow,
 		})
 	}
 	return out, nil

@@ -94,10 +94,17 @@
   > survey](../perf-measurement-survey.md) (the technique reference behind that
   > decision).
 - **SessionStore** — `memstore` (default, in-memory), `jsonlstore`
-  (append-only JSONL replay log: `<dir>/<id>.session.jsonl` snapshots +
-  `<dir>/<id>.tools.jsonl` tool records; `jsonlstore` also implements
-  `ToolCallRecorder`),
-  and `grpcdriver.SessionStore` (a **remote store driver** — see below).
+  (append-only JSONL replay log:
+  `<dir>/sid-v1/<versioned-token>.session.jsonl` snapshots plus `.tools.jsonl`
+  and `.events.jsonl` sidecars), and `grpcdriver.SessionStore` (a **remote store
+  driver** — see below). The logical session id is an opaque valid-UTF-8 string
+  stored inside each snapshot; the reversible `sid-v1-` filename token is not
+  an operator API. The owner-only `sid-v1/` directory keeps canonical names
+  disjoint from legacy root-level names. Reads prefer the canonical family. A
+  legacy lossy-name family is used only when its latest snapshot embeds the
+  exact requested id, and a subsequent write migrates that verified family
+  sidecars-first/snapshot-last without rewriting its bytes. Mismatched legacy
+  files are never read or deleted.
   All serialize via **`sessnap`** (`engine/adapter/sessnap`): a `Snapshot` DTO
   that round-trips a `Session` by driving the public state machine on restore
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It

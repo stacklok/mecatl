@@ -66,18 +66,31 @@ $ ls ~/.local/state/mecatui/sessions/   # each subdir is one workspace
 ```
 
 ```console
-$ ls DIR
-8867….session.jsonl   8867….tools.jsonl   8867….events.jsonl
+$ ls DIR/sid-v1
+sid-v1-….session.jsonl   sid-v1-….tools.jsonl   sid-v1-….events.jsonl
+
+# Physical tokens are not logical session ids. Find the embedded valid-UTF-8 ids:
+$ for f in DIR/sid-v1/*.session.jsonl; do printf '%s  ' "$f"; tail -n1 "$f" | jq -r .id; done
+DIR/sid-v1/sid-v1-….session.jsonl  session/logical-id
+
+# Select that snapshot and derive its sidecar stem:
+$ SNAPSHOT=DIR/sid-v1/sid-v1-….session.jsonl
+$ FAMILY=${SNAPSHOT%.session.jsonl}
 
 # Latest session snapshot (last line wins):
-$ tail -n1 DIR/8867….session.jsonl | jq .
+$ tail -n1 "$SNAPSHOT" | jq .
 
 # Every tool call with its result and duration:
-$ jq . DIR/8867….tools.jsonl
+$ jq . "$FAMILY.tools.jsonl"
 
 # The relayed event timeline (reasoning, ask/verdict pairs, delegation lifecycle):
-$ jq . DIR/8867….events.jsonl
+$ jq . "$FAMILY.events.jsonl"
 ```
+
+A pre-`sid-v1/` store may also have legacy `*.session.jsonl` families directly
+under `DIR`. Do not infer their logical IDs from those lossy filenames; inspect
+the latest snapshot `id`. The adapter reads or migrates a legacy family only
+when that embedded id exactly matches the request.
 
 **`✗ … — retrying won't help; the request is rejected.` (permanent provider error)**
 The provider returned a **permanent** rejection — a 4xx status other than 408/429, a

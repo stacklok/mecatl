@@ -342,7 +342,7 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
 		return
 	}
-	e.save(ctx, sess)
+	e.save(ctx, r, sess)
 
 	// Step 5: continue the SHARED loop. total seeds zero (the verdict resolution
 	// recorded no model usage; the budget brake reads the persisted cumulative

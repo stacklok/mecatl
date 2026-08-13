@@ -558,6 +558,14 @@ type Run struct {
 	// NopDiagnostics returns NopDiagnostics. It is set before the run goroutine
 	// starts and only read after, so it needs no synchronisation.
 	diag port.Diagnostics
+	// saveWarned makes the session-persistence WARN sticky per RUN. A store that
+	// is broken is broken for every save, and save runs at least once per turn, so
+	// logging unconditionally would emit up to MaxTurns near-identical lines per
+	// run per session. The flag lives on the Run and not the Engine because an
+	// Engine is often SHARED across sessions — an Engine-level flag would let one
+	// session's failure silence another's. Written and read only from the run's own
+	// goroutine (all save call sites are on it), so it needs no synchronisation.
+	saveWarned bool
 	// childAsks, when non-nil, routes a foreign (child-namespaced) askID passed to
 	// Approve down to the child Run that owns it (a SURFACED subagent ask). It is set
 	// only on an INTERACTIVE main engine's run (drive); a child run's own ask always
@@ -1235,7 +1243,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
-		e.save(ctx, sess)
+		e.save(ctx, r, sess)
 
 		// Plan-approval gate (issue #206): if a plan verdict (approved OR iterate)
 		// is pending this turn, terminate instead of looping back to the model. On
@@ -1318,7 +1326,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 					e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 					return true
 				}
-				e.save(ctx, sess)
+				e.save(ctx, r, sess)
 				return false
 			}
 		}
@@ -1378,7 +1386,7 @@ func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Se
 		e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 		return true
 	}
-	e.save(ctx, sess)
+	e.save(ctx, r, sess)
 	return false
 }
 
@@ -1406,7 +1414,7 @@ func (e *Engine) injectBackgroundNotice(ctx context.Context, r *Run, sess *sessi
 	if err := e.recordContinuation(r, sess, sess.Counters.Turns, backgroundNoticeText(finished)); err != nil {
 		return fmt.Errorf("agent: record background completion notice: %w", err)
 	}
-	e.save(ctx, sess)
+	e.save(ctx, r, sess)
 	return nil
 }
 
@@ -1473,7 +1481,7 @@ func (e *Engine) drainPendingDelivery(ctx context.Context, r *Run, sess *session
 		}
 	}
 	if len(notes) > 0 {
-		e.save(ctx, sess)
+		e.save(ctx, r, sess)
 	}
 	return nil
 }
@@ -2219,7 +2227,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 	}
 	e.fireStop(ctx, r, sess, reason)
 	e.emitResult(r, sess, reason, text, usage, errMsg, permanent)
-	e.save(ctx, sess)
+	e.save(ctx, r, sess)
 }
 
 // planApprovalTerminal is the shared plan-approval termination check the loop runs
@@ -2267,14 +2275,14 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	// approved posture.
 	if r.planApprovedTarget != "" {
 		_ = sess.SetMode(r.planApprovedTarget)
-		e.save(ctx, sess)
+		e.save(ctx, r, sess)
 	}
 	e.fireStop(ctx, r, sess, reason)
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.
 	e.emitResult(r, sess, reason, text, usage, errMsg, false)
-	e.save(ctx, sess)
+	e.save(ctx, r, sess)
 }
 
 // stopTerminalCause synthesises the terminal REASON for a run that ended on a
@@ -2333,9 +2341,24 @@ func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReaso
 }
 
 // save best-effort persists the session if a Store is configured.
-func (e *Engine) save(ctx context.Context, sess *session.Session) {
+//
+// A failure is WARNed once per run, never propagated: a persist failure must not
+// abort a turn that is otherwise fine, and no other channel reports it — there is
+// no session.Event for a persistence failure, no EvResult field, and no tool
+// result, so the operator log is its only home. Discarding the error outright (as
+// this did) made real data loss completely invisible: a child session whose id
+// the store could not name was never persisted, and resume, InspectSubagent and
+// its event log all silently stopped working with no line anywhere. r.diag
+// carries the session id and, for a child engine, the agent role — exactly the
+// correlation that absence made impossible to debug.
+func (e *Engine) save(ctx context.Context, r *Run, sess *session.Session) {
 	if e.deps.Store == nil {
 		return
 	}
-	_ = e.deps.Store.Save(ctx, sess)
+	if err := e.deps.Store.Save(ctx, sess); err != nil && !r.saveWarned {
+		r.saveWarned = true
+		r.diag.Log(ctx, port.LevelWarn,
+			"session persistence failed; this session may not be resumable after a restart",
+			"error", err)
+	}
 }

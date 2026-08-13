@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -647,6 +648,35 @@ func TestChildGCStartupOnlySweepsOnceAndExits(t *testing.T) {
 	}
 }
 
+func jsonlSnapshotPath(t *testing.T, dir string, id session.SessionID) string {
+	t.Helper()
+	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v1")} {
+		entries, err := os.ReadDir(scanDir)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".session.jsonl") {
+				continue
+			}
+			path := filepath.Join(scanDir, entry.Name())
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			var head struct {
+				ID session.SessionID `json:"id"`
+			}
+			if len(lines) > 0 && json.Unmarshal([]byte(lines[len(lines)-1]), &head) == nil && head.ID == id {
+				return path
+			}
+		}
+	}
+	t.Fatalf("snapshot for %q not found", id)
+	return ""
+}
+
 // TestBuildChildGCSweepsStaleJSONLChild is the build-level E2E: a REAL jsonl
 // store dir seeded with a stale subagent-* snapshot (aged via os.Chtimes — the
 // jsonl store's ModifiedAt is the file mtime) plus a fresh main session, fed
@@ -666,8 +696,8 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 			t.Fatalf("seed Save(%q): %v", id, err)
 		}
 	}
-	staleFile := filepath.Join(storeDir, "subagent-stale.session.jsonl")
-	mainFile := filepath.Join(storeDir, "operator-main.session.jsonl")
+	staleFile := jsonlSnapshotPath(t, storeDir, "subagent-stale")
+	mainFile := jsonlSnapshotPath(t, storeDir, "operator-main")
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(staleFile, old, old); err != nil {
 		t.Fatalf("Chtimes(stale child): %v", err)
