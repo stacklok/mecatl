@@ -357,11 +357,11 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	},
 	syscaller.RootMemoryConsolidation: {
 		KindSharedInfrastructure,
-		"project-memory dream consolidation: summarizes ONE caller/workspace namespace's own entries in place via the same CallerStore scoping, never cross-namespace",
+		"project-memory dream consolidation: never starts when ownership is enforced; otherwise operates on the raw single-tenant store, so one namespace exists and no cross-caller boundary can be crossed",
 	},
 	syscaller.RootUserModelConsolidation: {
 		KindSharedInfrastructure,
-		"user-model dream consolidation: summarizes ONE caller's own entries in place via the same CallerStore scoping, never cross-caller",
+		"user-model dream consolidation: never starts when ownership is enforced; otherwise operates on the raw single-tenant store's user/ namespace, so no cross-caller boundary exists",
 	},
 	syscaller.RootScheduler: {
 		KindSharedInfrastructure,

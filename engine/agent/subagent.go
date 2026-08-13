@@ -794,6 +794,11 @@ type SubagentTool struct {
 	// id into a safe filename, so no collision engineering is needed.
 	store port.SessionStore
 
+	// ownershipEnforced records whether the request edge verifies caller identity.
+	// When true, a resume requires the persisted child owner to match the caller;
+	// a missing principal is never treated as an implicit in-process parent.
+	ownershipEnforced bool
+
 	// mu guards inFlight. It is a plain mutex held only for the map's read-modify-write,
 	// never across the child run.
 	mu sync.Mutex
@@ -1029,6 +1034,13 @@ func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption
 // interface, never a concrete adapter, so no layering rule is crossed.
 func WithSubagentStore(store port.SessionStore) SubagentOption {
 	return func(t *SubagentTool) { t.store = store }
+}
+
+// WithSubagentOwnershipEnforced records whether the request edge verifies caller
+// identity. Enabled deployments require a resume caller to match the persisted
+// child owner; disabled deployments retain legacy ownerless compatibility.
+func WithSubagentOwnershipEnforced(ownershipEnforced bool) SubagentOption {
+	return func(t *SubagentTool) { t.ownershipEnforced = ownershipEnforced }
 }
 
 // WithMaxConcurrentChildren bounds how many Subagent children may run CONCURRENTLY —
@@ -2252,6 +2264,9 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 
 	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
 	if !ok {
+		return errResult, nil
+	}
+	if errResult, ok := t.authorizeResumeLookup(ctx, call.ID, session.SessionID(args.Resume), resuming); !ok {
 		return errResult, nil
 	}
 	routedCategory, routedModel, routingReason = reconcileRoutedModel(
@@ -3727,6 +3742,52 @@ func (t *SubagentTool) releaseChildID(childID session.SessionID) {
 	delete(t.inFlight, childID)
 }
 
+// authorizeResumeLookup performs the read-only ownership gate before the shared
+// in-flight guard, for a `resume` call only — a no-op (ok=true) when resuming is
+// false, so run() carries a single branch here instead of nesting "if resuming"
+// around a separate "if !owns". It makes a foreign or unknown id indistinguishable
+// without recovering or otherwise mutating the loaded session.
+func (t *SubagentTool) authorizeResumeLookup(ctx context.Context, callID session.ToolCallID, id session.SessionID, resuming bool) (session.ToolResult, bool) {
+	if !resuming {
+		return session.ToolResult{}, true
+	}
+	_, res, ok := t.loadOwnedResumeSession(ctx, callID, id)
+	return res, ok
+}
+
+// loadOwnedResumeSession is the read-only load+ownership fold shared by
+// authorizeResumeLookup (the pre-in-flight-guard gate) and resolveResumeSession
+// (the later, authoritative load that actually gets mutated/persisted). Each
+// caller performs its OWN fresh Load at its OWN point in time — this helper
+// shares only the CHECK LOGIC, never a loaded session across calls: the
+// pre-guard Load has no exclusion (tryAcquireChildID has not run yet), while
+// resolveResumeSession's Load runs only after a successful claim, under that
+// id's exclusion, on a session about to be Reopen/Interrupt/Recover'd and
+// re-persisted (and, on the background path, resolved later on a DETACHED
+// goroutine) — threading the pre-guard snapshot forward would be a stale read
+// used for a write. A foreign owner's session is treated as absent, not
+// refused: a distinguishing error would itself leak that the id exists under
+// another owner (this plan's "a refusal is indistinguishable from absence"
+// principle), and a model steered to probe ids could use the distinction as
+// an oracle.
+func (t *SubagentTool) loadOwnedResumeSession(ctx context.Context, callID session.ToolCallID, id session.SessionID) (*session.Session, session.ToolResult, bool) {
+	loaded, err := t.store.Load(ctx, id)
+	if err == nil && !callerOwnsTranscriptWhenEnforced(ctx, loaded, t.ownershipEnforced) {
+		err = port.ErrSessionNotFound
+		loaded = nil
+	}
+	switch {
+	case errors.Is(err, port.ErrSessionNotFound) || (err == nil && loaded == nil):
+		return nil, session.NewToolError(callID,
+			fmt.Sprintf("Subagent: no subagent found for resume id %q; use the id exactly as shown on the 'agentId:' line of a previous Subagent result", id)), false
+	case err != nil:
+		return nil, session.NewToolError(callID,
+			fmt.Sprintf("Subagent: failed to load subagent %q for resume: %v", id, err)), false
+	default:
+		return loaded, session.ToolResult{}, true
+	}
+}
+
 // resolveResumeSession loads a persisted subagent session for a `resume` call, recovers
 // its terminal state to StateIdle so it is runnable again, and tightens its preserved
 // Limits by the per-call args. It runs BEFORE the workspace fork so the common error
@@ -3760,23 +3821,9 @@ func (t *SubagentTool) releaseChildID(childID session.SessionID) {
 // It returns the recovered session on success, or a model-addressable error ToolResult
 // (ok=false) on a load failure or non-resumable state.
 func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.ToolCallID, id session.SessionID, args subagentArgs) (*session.Session, session.ToolResult, bool) {
-	loaded, err := t.store.Load(ctx, id)
-	if err == nil && !callerOwnsTranscript(ctx, loaded) {
-		// A foreign owner's session is treated as absent, not refused: a
-		// distinguishing error would itself leak that the id exists under
-		// another owner (this plan's "a refusal is indistinguishable from
-		// absence" principle), and a model steered to probe ids could use
-		// the distinction as an oracle.
-		err = port.ErrSessionNotFound
-		loaded = nil
-	}
-	switch {
-	case errors.Is(err, port.ErrSessionNotFound) || (err == nil && loaded == nil):
-		return nil, session.NewToolError(callID,
-			fmt.Sprintf("Subagent: no subagent found for resume id %q; use the id exactly as shown on the 'agentId:' line of a previous Subagent result", id)), false
-	case err != nil:
-		return nil, session.NewToolError(callID,
-			fmt.Sprintf("Subagent: failed to load subagent %q for resume: %v", id, err)), false
+	loaded, res, ok := t.loadOwnedResumeSession(ctx, callID, id)
+	if !ok {
+		return nil, res, false
 	}
 	switch loaded.State {
 	case session.StateCompleted:

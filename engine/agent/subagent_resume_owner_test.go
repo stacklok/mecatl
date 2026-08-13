@@ -211,6 +211,95 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 	}
 }
 
+func TestSubagentResumeRequiresPrincipalWhenOwnershipEnforced(t *testing.T) {
+	store := memstore.New()
+	childID := session.SessionID("subagent-alice")
+	child := session.New(childID, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	if err := child.RestoreLabels(resumeOwnerAlice, ""); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := store.Save(context.Background(), child); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	task := agent.NewSubagentTool(childEngineWith(mockllm.New(), catalogWith(t)),
+		agent.WithSubagentStore(store),
+		agent.WithSubagentOwnershipEnforced(true),
+	)
+
+	for _, caller := range []*session.Principal{nil, resumeOwnerBob} {
+		res := runResumeAttempt(t, task, childID, false, caller, false)
+		if !res.IsError || !strings.Contains(res.Content, "no subagent found for resume id") {
+			t.Fatalf("enforced resume for caller %#v = %+v, want absence-shaped denial", caller, res)
+		}
+	}
+}
+
+// TestCallerSeparation_SubagentResumeHidesForeignInFlightState ensures the
+// in-flight guard remains observable to the owner but not to a foreign caller.
+func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) {
+	store := memstore.New()
+	childID := session.SessionID("subagent-alice")
+	seed := session.New(childID, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	if err := seed.RestoreLabels(resumeOwnerAlice, ""); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := seed.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil)); err != nil {
+		t.Fatalf("RecordAssistant: %v", err)
+	}
+	if err := seed.Complete(); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if err := store.Save(context.Background(), seed); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	block := &signalThenBlockTool{entered: make(chan struct{}, 1)}
+	task := agent.NewSubagentTool(
+		childEngineWith(mockllm.New(mockllm.ToolCallTurn(toolCall("k", "Block", `{}`))), catalogWith(t, block)),
+		agent.WithSubagentStore(store),
+		agent.WithSubagentOwnershipEnforced(true),
+	)
+	ctx, cancel := context.WithCancel(session.WithPrincipal(context.Background(), resumeOwnerAlice))
+	defer cancel()
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _ = task.Execute(ctx, session.NewToolCall("a1", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	}()
+	select {
+	case <-block.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner resume never entered the blocking child")
+	}
+
+	foreign, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerBob), session.NewToolCall("a2", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	if err != nil {
+		t.Fatalf("foreign resume transport error: %v", err)
+	}
+	unknown, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerBob), session.NewToolCall("a3", "Subagent", json.RawMessage(`{"resume":"subagent-missing","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	if err != nil {
+		t.Fatalf("unknown resume transport error: %v", err)
+	}
+	for _, res := range []session.ToolResult{foreign, unknown} {
+		if !res.IsError || !strings.Contains(res.Content, "no subagent found for resume id") || strings.Contains(res.Content, "already running") {
+			t.Fatalf("foreign/unknown resume exposed liveness: %q", res.Content)
+		}
+	}
+
+	owner, err := task.Execute(session.WithPrincipal(context.Background(), resumeOwnerAlice), session.NewToolCall("a4", "Subagent", json.RawMessage(`{"resume":"subagent-alice","prompt":"continue"}`)), memfs.NewWorkspace("/ws"))
+	if err != nil {
+		t.Fatalf("owner concurrent resume transport error: %v", err)
+	}
+	if !owner.IsError || !strings.Contains(owner.Content, "already running") {
+		t.Fatalf("owner concurrent resume = %q, want already-running guard", owner.Content)
+	}
+	cancel()
+	<-firstDone
+}
+
 func loadResumeSession(t *testing.T, store port.SessionStore, id session.SessionID) session.Session {
 	t.Helper()
 	sess, err := store.Load(context.Background(), id)

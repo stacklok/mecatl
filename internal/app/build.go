@@ -5758,6 +5758,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		// InspectSubagent tool can load its transcript by the agentId trailer (ids verbatim;
 		// the namespace stays disjoint by prefix convention, not engineering).
 		agent.WithSubagentStore(store),
+		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
 	}
 	// Issue #40: when the WORKSPACE-TRUST gate (not --no-bash / an empty shell) is what
 	// nil'd the runner, tell the model honestly via the Spec — otherwise the description
@@ -5924,6 +5925,7 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 	opts := []agent.SubagentOption{
 		agent.WithSubagentStopHook(hooks),
 		agent.WithSubagentStore(store),
+		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
 		agent.WithSubagentNoFSNote(),
 		agent.WithSubagentEngineFactory(func(overrideModel string) (*agent.Engine, bool) {
 			overrideModel = strings.TrimSpace(overrideModel)

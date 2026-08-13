@@ -35,6 +35,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
     relays the slug onto for clients. Advisory + metadata-only, a string
     passthrough on the wire (no proto enum). Both are Added (a minor bump).
 
+- **`agent.WithSubagentOwnershipEnforced`** — wires the verified request edge's
+  ownership policy into `Subagent` resume authorization. When enabled, a resume
+  requires the caller to match the persisted child owner, including when the
+  request context is unexpectedly missing a principal; disabled deployments
+  preserve legacy ownerless compatibility. New exported function: Added (a
+  minor bump).
+
 - **`agent.NewInspectMemberToolWithOwnership` and
   `agent.NewInspectSubagentToolWithOwnership`** — construct persisted-transcript
   inspection tools with the verified request edge's ownership policy. When enabled,

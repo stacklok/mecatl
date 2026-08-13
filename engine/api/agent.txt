@@ -153,6 +153,7 @@ func WithRoutableAgents(names []string) SubagentOption
 func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption
 func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 func WithSubagentNoFSNote() SubagentOption
+func WithSubagentOwnershipEnforced(ownershipEnforced bool) SubagentOption
 func WithSubagentShellDisabledNote(reason string) SubagentOption
 func WithSubagentStopHook(h port.HookRunner) SubagentOption
 func WithSubagentStore(store port.SessionStore) SubagentOption

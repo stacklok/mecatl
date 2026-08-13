@@ -147,8 +147,12 @@ func callerOwnsTranscript(ctx context.Context, sess *session.Session) bool {
 	return caller == nil || (sess != nil && sess.Owner != nil && sess.Owner.SameIdentity(caller))
 }
 
-// callerOwnsTranscriptWhenEnforced is the shared persisted-inspection predicate. The
-// caller may read every transcript only when the verified request edge has not enabled
+// callerOwnsTranscriptWhenEnforced is the shared caller-ownership predicate for
+// every persisted-session read/resume gate that carries an explicit,
+// deployment-sourced enforcement flag: InspectSubagent, InspectMember, and
+// Subagent's resume path (both its pre-in-flight-guard gate and its later
+// authoritative recover-and-mutate load) all call this. The caller may read or
+// resume every transcript only when the verified request edge has not enabled
 // ownership; otherwise an owner and caller must have the same (Issuer, Subject) identity.
 func callerOwnsTranscriptWhenEnforced(ctx context.Context, sess *session.Session, ownershipEnforced bool) bool {
 	if !ownershipEnforced {
