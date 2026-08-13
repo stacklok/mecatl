@@ -100,6 +100,37 @@ func TestValidateSubmitNewlineDistinct(t *testing.T) {
 	}
 }
 
+// TestValidateQuitQuitDDistinct pins rule 6 (issue #504): the two independent
+// double-press quit guards must never share a chord, or arming one would let the
+// other confirm it.
+func TestValidateQuitQuitDDistinct(t *testing.T) {
+	res, err := Parse(map[string][]string{
+		"Quit":  {"ctrl+x"},
+		"QuitD": {"ctrl+x"},
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(res); err == nil {
+		t.Fatalf("expected quit/quitD collision rejection")
+	}
+}
+
+// TestValidateNewActionsParse confirms the two new global actions are recognised
+// and accepted with valid modified chords.
+func TestValidateNewActionsParse(t *testing.T) {
+	res, err := Parse(map[string][]string{
+		"Suspend": {"ctrl+z"},
+		"QuitD":   {"ctrl+d"},
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(res); err != nil {
+		t.Fatalf("validate ctrl+z/ctrl+d should pass: %v", err)
+	}
+}
+
 func TestValidAgentsOverride(t *testing.T) {
 	res, err := Parse(map[string][]string{"Agents": {"ctrl+\\"}})
 	if err != nil {

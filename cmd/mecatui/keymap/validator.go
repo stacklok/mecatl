@@ -24,6 +24,8 @@ var validActions = map[string]struct{}{
 	"EditBack":         {},
 	"Paste":            {},
 	"Quit":             {},
+	"QuitD":            {},
+	"Suspend":          {},
 	"Allow":            {},
 	"AllowAlways":      {},
 	"Deny":             {},
@@ -56,7 +58,8 @@ var validActions = map[string]struct{}{
 // scope membership per action.
 var (
 	globalOpen = map[string]struct{}{
-		"Submit": {}, "Newline": {}, "Cancel": {}, "EditBack": {}, "Paste": {}, "Quit": {},
+		"Submit": {}, "Newline": {}, "Cancel": {}, "EditBack": {}, "Paste": {}, "Quit": {}, "QuitD": {},
+		"Suspend": {},
 		"ScrollU": {}, "ScrollD": {}, "ScrollTop": {}, "ScrollBottom": {},
 		"ModeSwitch": {}, "MCPPanel": {}, "Resources": {}, "Prompts": {},
 		"Agents": {}, "ExpandTools": {}, "Help": {}, "Effort": {},
@@ -124,7 +127,13 @@ func Validate(res Resolved) error {
 		}
 	}
 	// 5) Submit vs Newline distinct.
-	return rejectPairOverlap(res.ByAction["Submit"], res.ByAction["Newline"], "Submit", "Newline")
+	if err := rejectPairOverlap(res.ByAction["Submit"], res.ByAction["Newline"], "Submit", "Newline"); err != nil {
+		return err
+	}
+	// 6) Quit vs QuitD distinct: both are independent double-press guards, so sharing
+	// a chord would arm one and confirm the other (an armed ctrl+c confirmed by
+	// ctrl+d) — the two quit keys must never share a chord.
+	return rejectPairOverlap(res.ByAction["Quit"], res.ByAction["QuitD"], "Quit", "QuitD")
 }
 
 // isBarePrintableRune reports true for a single-rune chord (length==1).

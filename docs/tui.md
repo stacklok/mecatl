@@ -692,6 +692,8 @@ show the plain prompt-hint card.
 | `enter` (idle, **paused queue**, empty input) | resume — send the merged staged follow-ups |
 | `esc` (idle, **paused queue**) | clear staged input → else clear the queue |
 | `ctrl+c` | graceful quit (double-press): with a non-empty prompt the first press **clears the input**; on an empty prompt it **arms** the guard and shows a footer hint — press `ctrl+c` again within 3s to exit. Any other key disarms. The fatal (dead-connection) screen exits on a single press. |
+| `ctrl+d` | the unix EOF-habit quit (double-press, aim **empty prompt only**): on an empty prompt it arms its OWN guard and shows a hint — press `ctrl+d` again within 3s to exit. On a populated prompt it stays the textarea's delete-forward, never a quit. Independent of `ctrl+c` (neither key confirms the other). |
+| `ctrl+z` | **suspend the TUI to the shell** (SIGTSTP); `fg` resumes it. Works in every state — idle, mid-run, even the permission modal (the ask stays pending). **Suspending does NOT stop the embedded `mecated` or an in-flight run** — the engine keeps working in the background and the UI re-syncs on `fg`. A one-line stderr notice naming the session is left behind while suspended. |
 | in the permission modal: `a`/`y` | allow once (rebindable via `Allow`; the button label reflects the live chord — `[A]llow` for the default `a`, `[Y] allow` for an override) |
 | in the permission modal: `w` | always allow (this session; offered for the main agent's asks only, not surfaced subagent asks; rebindable via `AllowAlways`) |
 | in the permission modal: `d`/`n`/`esc` | deny (rebindable via `Deny`) |
@@ -784,6 +786,8 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
 | `Quit` | `ctrl+c` | global | graceful quit (double-press; first press clears the input or arms) |
+| `QuitD` | `ctrl+d` | global | EOF-habit quit (double-press, empty prompt only; independent of `Quit`) |
+| `Suspend` | `ctrl+z` | global | suspend the TUI to the shell (`fg` resumes; the engine keeps running) |
 | `Allow` | `a`, `y`, `enter` | *(approval)* | allow the pending tool call once |
 | `AllowAlways` | `w` | *(approval)* | always allow this exact call (session-scoped; main-agent asks only) |
 | `Deny` | `d`, `n`, `esc` | *(approval)* | deny the pending tool call |

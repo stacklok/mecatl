@@ -45,6 +45,12 @@ Every session persists to disk as append-only JSONL — the conversation, the to
 
 `/sessions` opens a picker over past sessions in the current workspace. Each row shows a relative timestamp, the turn count, a title (taken from your first prompt, or the session id if there isn't one yet), and the model it ran on. Opening one replays its durable history — this is a pure read of what already happened, not a live reconnect, so a session that's still `running` or parked awaiting your approval can't be opened this way (mecatui tells you so rather than showing you a partial, misleading transcript).
 
+## Suspending and quitting like a terminal app
+
+`ctrl+z` **suspends** mecatui to your shell, exactly like `vim` or `top`: the UI drops out of the way and `fg` brings it back. One thing to know — **the engine keeps running while you're suspended.** If a turn was in flight, the embedded `mecated` and the agent keep working in the background; when you `fg`, the UI catches up to wherever the run got to. mecatui leaves a one-line notice on your terminal while suspended so you don't forget the work is continuing. (If you'd rather the run stop, cancel it first, then suspend.)
+
+Quitting follows the unix double-press habit: `ctrl+c` on an empty prompt (or `ctrl+d`, the EOF key) arms a "press again to quit" guard, and a second press within a few seconds exits. The two keys are independent — neither one confirms the other. `ctrl+c` on a *populated* prompt clears your draft instead; `ctrl+d` on a populated prompt stays the usual delete-forward.
+
 ## Working while the model streams
 
 You don't have to wait for a turn to finish before typing your next thing. Pressing `enter` while a run is streaming **queues** your input instead of sending it — queue as many follow-ups as you like, and they're merged into one prompt and sent the moment the current turn ends. If you change your mind, `↑` on an empty input pulls the queued text back into the box for editing, non-destructively.

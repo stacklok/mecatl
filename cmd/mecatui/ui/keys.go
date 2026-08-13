@@ -25,7 +25,17 @@ type keyMap struct {
 	// bracketed paste (tea.PasteMsg, handled by onPaste) which never reaches here.
 	Paste key.Binding
 	Quit  key.Binding
-	Allow key.Binding
+	// QuitD (ctrl+d) is the unix EOF-habit quit: a SECOND double-press guard,
+	// INDEPENDENT of Quit (ctrl+c). It quits only on an empty prompt — a populated
+	// prompt keeps the chord in the textarea. The two guards never share armed state
+	// (validator rule 6 also forbids them sharing a chord).
+	QuitD key.Binding
+	// Suspend (ctrl+z) suspends the whole TUI process to the shell (SIGTSTP via
+	// Bubble Tea's tea.Suspend); fg resumes it. The embedded mecated + any in-flight
+	// run KEEP RUNNING while suspended — the UI re-syncs on resume. Live in EVERY
+	// phase (including the permission modal: the ask stays pending and durable).
+	Suspend key.Binding
+	Allow   key.Binding
 	// AllowAlways (w) resolves the permission modal as always-allow: permit this
 	// call AND learn a session-scoped rule so the exact command is not re-asked.
 	// Offered only for the main agent's asks (never a surfaced subagent ask).
@@ -167,6 +177,14 @@ func defaultKeys() keyMap {
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c"),
 			key.WithHelp("ctrl+c", "quit"),
+		),
+		QuitD: key.NewBinding(
+			key.WithKeys("ctrl+d"),
+			key.WithHelp("ctrl+d", "quit (EOF)"),
+		),
+		Suspend: key.NewBinding(
+			key.WithKeys("ctrl+z"),
+			key.WithHelp("ctrl+z", "suspend"),
 		),
 		Allow: key.NewBinding(
 			key.WithKeys("a", "y", "enter"),
@@ -326,6 +344,12 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		},
 		"Quit": func(chords []string) {
 			km.Quit = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Quit.Help().Desc))
+		},
+		"QuitD": func(chords []string) {
+			km.QuitD = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.QuitD.Help().Desc))
+		},
+		"Suspend": func(chords []string) {
+			km.Suspend = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Suspend.Help().Desc))
 		},
 		"Allow": func(chords []string) {
 			km.Allow = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Allow.Help().Desc))
