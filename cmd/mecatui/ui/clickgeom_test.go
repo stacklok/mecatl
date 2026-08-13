@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -16,13 +17,22 @@ import (
 // through Update, asserting the resolution lands (phase + notice) and that misses
 // resolve nothing.
 
+// leftClickCmd feeds a left mouse-button PRESS through Update and returns the
+// resulting Model and command, so callers can execute and inspect the approval
+// frame sent by resolveAsk.
+func leftClickCmd(t *testing.T, m Model, x, y int) (Model, tea.Cmd) {
+	t.Helper()
+	mm, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	return mm.(Model), cmd
+}
+
 // leftClick feeds a left mouse-button PRESS at (x, y) through Update and returns
 // the resulting Model. The approval-button path resolves on press (no release
 // needed), matching key-chord parity.
 func leftClick(t *testing.T, m Model, x, y int) Model {
 	t.Helper()
-	mm, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
-	return mm.(Model)
+	m, _ = leftClickCmd(t, m, x, y)
+	return m
 }
 
 // hitScan sweeps the whole frame and returns every (focus, x, y) cell
@@ -137,6 +147,7 @@ func TestAskButtonAtGenericModalResolvesClick(t *testing.T) {
 	}
 	for _, tc := range cases {
 		m := driveTo(t, th)
+		m.deps.NoAltScreen = false
 		x, y, ok := buttonCenter(m, tc.focus)
 		if !ok {
 			t.Fatalf("focus %d: no hit found", tc.focus)
@@ -233,6 +244,7 @@ func TestAskButtonAtPlanBarResolvesClick(t *testing.T) {
 	}
 	for _, tc := range cases {
 		m := planAskModel(t, true)
+		m.deps.NoAltScreen = false
 		x, y, found := buttonCenter(m, tc.focus)
 		if !found {
 			t.Fatalf("plan bar focus %d: no hit found", tc.focus)
@@ -247,18 +259,84 @@ func TestAskButtonAtPlanBarResolvesClick(t *testing.T) {
 	}
 }
 
-func TestAskButtonAtPlanBarClampedOffFootnote(t *testing.T) {
-	// The 3-row button box overflows the 3-row plan bar; the hit band must be
-	// clamped so a click on the footnote/scroll-hint rows resolves nothing.
+// TestPlanRenderedButtonLabelClickSendsApproval starts from the displayed label's
+// actual frame coordinates, not hit-test geometry, then executes the returned
+// command and verifies the outgoing approval correlation and verdict.
+func TestPlanRenderedButtonLabelClickSendsApproval(t *testing.T) {
 	m := planAskModel(t, true)
-	top := convTopRow(m)
-	barRow := top + m.vp.Height() - planReviewFooterHeight
-	// Footnote row = barRow+2 (buttons box rows 0,1 then the footnote). A click
-	// anywhere on it must miss.
-	for x := 0; x < m.width; x++ {
-		if _, ok := m.askButtonAt(x, barRow+2); ok {
-			t.Fatalf("footnote row (barRow+2=%d) must not hit a button (x=%d)", barRow+2, x)
+	m.deps.NoAltScreen = false
+	send := &fakeSender{}
+	m.stream = client.NewStream(&fakeRecver{}, send)
+
+	lines := strings.Split(stripANSIstr(m.View().Content), "\n")
+	const label = "[A]pprove & run"
+	for y, line := range lines {
+		if x := strings.Index(line, label); x >= 0 {
+			var cmd tea.Cmd
+			m, cmd = leftClickCmd(t, m, x, y)
+			runBatchLeaves(cmd)
+			apps := approvalFrames(send)
+			if len(apps) != 1 {
+				t.Fatalf("click on rendered label sent %d approval frames, want 1", len(apps))
+			}
+			if apps[0].GetAskId() != "sess-test-0001:1:presentplan-1" || !apps[0].GetAllow() {
+				t.Fatalf("approval = ask_id=%q allow=%v, want plan ask allow-once", apps[0].GetAskId(), apps[0].GetAllow())
+			}
+			return
 		}
+	}
+	t.Fatalf("rendered frame did not contain %q", label)
+}
+
+func TestPlanRenderedFootnoteAndBlankRowsDoNotHit(t *testing.T) {
+	m := planAskModel(t, true)
+	lines := strings.Split(stripANSIstr(m.View().Content), "\n")
+	foundFootnote, foundBlank := false, false
+	for y, line := range lines {
+		isFootnote := strings.Contains(line, "auto-accept allows every edit")
+		isBlank := strings.TrimSpace(line) == ""
+		if !isFootnote && !isBlank {
+			continue
+		}
+		if isFootnote {
+			foundFootnote = true
+		}
+		if isBlank {
+			foundBlank = true
+		}
+		for x := 0; x < m.width; x++ {
+			if _, ok := m.askButtonAt(x, y); ok {
+				t.Fatalf("rendered non-button row %d (%q) hit a button at x=%d", y, line, x)
+			}
+		}
+	}
+	if !foundFootnote || !foundBlank {
+		t.Fatalf("frame must contain a footnote and blank row; footnote=%v blank=%v", foundFootnote, foundBlank)
+	}
+}
+
+func TestApprovalMouseClickRequiresCapture(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		apply func(*Model)
+	}{
+		{"inline", func(m *Model) { m.deps.NoAltScreen = true }},
+		{"no mouse", func(m *Model) { m.deps.NoMouse = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := planAskModel(t, true)
+			send := &fakeSender{}
+			m.stream = client.NewStream(&fakeRecver{}, send)
+			x, y, ok := buttonCenter(m, 0)
+			if !ok {
+				t.Fatal("precondition: allow button must have hit geometry")
+			}
+			tc.apply(&m)
+			m, cmd := leftClickCmd(t, m, x, y)
+			if cmd != nil || m.phase != phaseAwaitingApproval || len(approvalFrames(send)) != 0 {
+				t.Fatalf("uncaptured click resolved approval: cmd=%v phase=%v frames=%d", cmd != nil, m.phase, len(approvalFrames(send)))
+			}
+		})
 	}
 }
 

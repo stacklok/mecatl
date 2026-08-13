@@ -24,52 +24,15 @@ var buttonGap = lipgloss.Width(approvalButtonSep)
 
 // askButtonRects returns the horizontal cell rects of each rendered button within
 // the buttons LINE, in focus order ({0=allow-once, 1=always, 2=deny}; a two-button
-// modal yields entries for focus 0 and 2 only). Each rect is the half-open column
-// span [x0, x1) the button's STYLED label occupies — its width measured with
-// lipgloss.Width on the SAME styled label the renderer places, so a rebound chord's
-// wider standalone form is hit-tested at its true width. Buttons are single-row
-// tall in the JoinHorizontal row; the caller adds the row's screen Y and the card's
-// left inset.
-//
-// It takes the theme and builds the un-focused label of each button directly
-// (rather than re-splitting the joined line) so the rect widths are exact even
-// though JoinHorizontal pads each cell to the row's tallest — every button is
-// already the same height (askButton/askButtonActive share Padding(0,2)+rounded
-// border), so no inter-cell padding is actually added.
+// modal yields entries for focus 0 and 2). Each rect is the half-open column span
+// [x0, x1) the button's STYLED label occupies.
 func askButtonRects(th theme.Theme, hk helpKeys, ask pendingAsk, plan bool) []buttonRect {
-	labelFor := func(focus int) string {
-		style := th.Style("askButton")
-		if ask.focus == focus {
-			style = th.Style("askButtonActive")
-		}
-		if plan {
-			switch focus {
-			case 0:
-				return style.Render(planApprovalButtonLabel(hk.allow, "Allow", "approve & run"))
-			case 1:
-				return style.Render(planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits"))
-			default:
-				return style.Render(planApprovalButtonLabel(hk.deny, "Deny", "iterate"))
-			}
-		}
-		switch focus {
-		case 0:
-			return style.Render(approvalButtonLabel(hk.allow, "Allow", "allow"))
-		case 1:
-			return style.Render(approvalButtonLabel(hk.allowAlways, "Always", "always allow"))
-		default:
-			return style.Render(approvalButtonLabel(hk.deny, "Deny", "deny"))
-		}
-	}
-	foci := []int{0, 2}
-	if ask.offerAlways {
-		foci = []int{0, 1, 2}
-	}
-	rects := make([]buttonRect, 0, len(foci))
+	buttons := approvalButtons(th, hk, ask, plan)
+	rects := make([]buttonRect, 0, len(buttons))
 	x := 0
-	for _, f := range foci {
-		w := lipgloss.Width(labelFor(f))
-		rects = append(rects, buttonRect{x0: x, x1: x + w, focus: f})
+	for _, button := range buttons {
+		w := lipgloss.Width(button.label)
+		rects = append(rects, buttonRect{x0: x, x1: x + w, focus: button.focus})
 		x += w + buttonGap
 	}
 	return rects
@@ -84,12 +47,6 @@ type buttonRect struct {
 
 // contains reports whether column x falls inside the rect.
 func (r buttonRect) contains(x int) bool { return x >= r.x0 && x < r.x1 }
-
-// buttonBoxHeight is the on-screen height of one styled approval button (rounded
-// border top + label + border bottom), shared by askButton/askButtonActive. It is
-// the box's row count, so the clickable band spans buttonBoxHeight rows from the
-// box's top.
-const buttonBoxHeight = 3
 
 // centeredCardOrigin returns the screen cell (x, y) where lipgloss.Place puts the
 // top-left of a cardW×cardH card centered in a regionW×regionH region — the exact
@@ -137,20 +94,12 @@ func (m Model) askButtonAt(x, y int) (int, bool) {
 	hk := m.helpKeyMarkings()
 
 	if isPlanAsk(m.ask.Tool) {
-		// Plan review: the pinned action bar occupies the last planReviewFooterHeight
-		// rows of the body region; the buttons row is its FIRST row. The plan view is
-		// NOT centered — the buttons line starts at the region's left edge (x=0).
-		barRow := top + regionH - planReviewFooterHeight
-		// The 3-row button box (border top + label + border bottom) OVERFLOWS the
-		// 3-row bar (which reserves only 1 row for the buttons + footnote + hint):
-		// the box's bottom border row lands on the footnote row. Clamp the hit band
-		// to the bar so a click on the footnote/scroll-hint rows does NOT resolve a
-		// button — only the 2 rows that are unambiguously the button box count.
-		btnH := lipgloss.Height(th.Style("askButton").Render("x"))
-		if maxH := planReviewFooterHeight - 1; btnH > maxH {
-			btnH = maxH
-		}
-		if y < barRow || y >= barRow+btnH {
+		// The shared layout measures the rendered viewport, its joining newline,
+		// and the three-row Lipgloss buttons. Do not substitute the nominal footer
+		// height here: the button box intentionally extends past that reservation.
+		layout := m.planReviewLayout(m.ask)
+		buttonsScreenY := top + layout.buttonsRow
+		if y < buttonsScreenY || y >= buttonsScreenY+layout.buttonsHeight {
 			return 0, false
 		}
 		for _, r := range askButtonRects(th, hk, m.ask, true) {
@@ -180,11 +129,9 @@ func (m Model) askButtonAt(x, y int) (int, bool) {
 	topInset := style.GetBorderTopSize() + style.GetPaddingTop()
 	buttonsCardRow := topInset + buttonsRow
 	buttonsScreenY := top + originY + buttonsCardRow
-	// A button is a styled box buttonBoxHeight rows tall (rounded border top +
-	// label + border bottom), starting at the box's top row. Match the full box so
-	// a click on any of its three rows resolves it — and a click on the footnote
-	// row BELOW the box (offerAlways) does not.
-	if y < buttonsScreenY || y >= buttonsScreenY+buttonBoxHeight {
+	buttonsHeight := lipgloss.Height(permissionButtonsLine(th, hk, m.ask))
+	// Match the full rendered button box, but not the footnote row below it.
+	if y < buttonsScreenY || y >= buttonsScreenY+buttonsHeight {
 		return 0, false
 	}
 	// Horizontal: card's left border+padding insets the content (and the buttons

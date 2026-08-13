@@ -3132,6 +3132,11 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		// nothing. It deliberately does NOT advance the multi-click count (clicking a
 		// button is not a word/line-select gesture).
 		if m.phase == phaseAwaitingApproval {
+			// Approval buttons are live only while View has captured the mouse.
+			// Inline and --no-mouse modes deliberately leave clicks to the terminal.
+			if !mouseCaptureEnabled(m) {
+				return m, nil
+			}
 			if idx, ok := m.askButtonAt(mo.X, mo.Y); ok {
 				m.ask.focus = idx
 				return m.resolveAsk(focusVerdict(idx))

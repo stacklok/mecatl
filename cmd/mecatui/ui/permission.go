@@ -165,48 +165,72 @@ func (m Model) permissionModalBody() (body string, buttonsRow int) {
 // each side would silently desync them.
 const approvalButtonSep = "  "
 
-// permissionButtonsLine renders the generic permission modal's joined button row
-// (Allow [· Always] · Deny) with the LIVE focus style on the focused button. It is
-// the SINGLE source for BOTH the render path (renderPermissionModal) and the mouse
-// hit-test geometry (clickgeom.go's askButtonAt), so a rebound chord's wider
-// standalone label is laid out and hit-tested at the SAME width — they can never
-// disagree. focus indexes {0=allow-once, 1=always, 2=deny}; a two-button modal
-// (offerAlways=false, a surfaced child ask) renders Allow · Deny only.
-func permissionButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
-	btnStyle := func(idx int) string {
-		if ask.focus == idx {
-			return "askButtonActive"
+// approvalButton is a rendered approval action and the verdict-focus it selects.
+// Both the render and hit-test paths consume this value so their labels, styles, and
+// widths cannot drift.
+type approvalButton struct {
+	focus int
+	label string
+}
+
+func approvalButtons(th theme.Theme, hk helpKeys, ask pendingAsk, plan bool) []approvalButton {
+	label := func(focus int) string {
+		if plan {
+			switch focus {
+			case 0:
+				return planApprovalButtonLabel(hk.allow, "Allow", "approve & run")
+			case 1:
+				return planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits")
+			default:
+				return planApprovalButtonLabel(hk.deny, "Deny", "iterate")
+			}
 		}
-		return "askButton"
+		switch focus {
+		case 0:
+			return approvalButtonLabel(hk.allow, "Allow", "allow")
+		case 1:
+			return approvalButtonLabel(hk.allowAlways, "Always", "always allow")
+		default:
+			return approvalButtonLabel(hk.deny, "Deny", "deny")
+		}
 	}
-	allow := th.Style(btnStyle(0)).Render(approvalButtonLabel(hk.allow, "Allow", "allow"))
-	deny := th.Style(btnStyle(2)).Render(approvalButtonLabel(hk.deny, "Deny", "deny"))
+	foci := []int{0, 2}
 	if ask.offerAlways {
-		always := th.Style(btnStyle(1)).Render(approvalButtonLabel(hk.allowAlways, "Always", "always allow"))
-		return lipgloss.JoinHorizontal(lipgloss.Top, allow, approvalButtonSep, always, approvalButtonSep, deny)
+		foci = []int{0, 1, 2}
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, allow, approvalButtonSep, deny)
+	buttons := make([]approvalButton, 0, len(foci))
+	for _, focus := range foci {
+		style := th.Style("askButton")
+		if ask.focus == focus {
+			style = th.Style("askButtonActive")
+		}
+		buttons = append(buttons, approvalButton{focus: focus, label: style.Render(label(focus))})
+	}
+	return buttons
+}
+
+func renderApprovalButtons(buttons []approvalButton) string {
+	parts := make([]string, 0, len(buttons)*2-1)
+	for i, button := range buttons {
+		if i > 0 {
+			parts = append(parts, approvalButtonSep)
+		}
+		parts = append(parts, button.label)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
+
+// permissionButtonsLine renders the generic permission modal's joined button row
+// (Allow [· Always] · Deny) with the LIVE focus style.
+func permissionButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
+	return renderApprovalButtons(approvalButtons(th, hk, ask, false))
 }
 
 // planButtonsLine renders the plan-review action bar's joined button row
-// (approve & run [· auto-accept edits] · iterate) with the LIVE focus style. It is
-// the plan path's SINGLE source for render (renderPlanReviewView) and hit-test
-// (clickgeom.go), mirroring permissionButtonsLine — the plan labels differ
-// (planApprovalButtonLabel) so it is its own builder, not a shared one.
+// (approve & run [· auto-accept edits] · iterate) with the LIVE focus style. Plan
+// wording intentionally differs from the generic permission modal.
 func planButtonsLine(th theme.Theme, hk helpKeys, ask pendingAsk) string {
-	btnStyle := func(idx int) string {
-		if ask.focus == idx {
-			return "askButtonActive"
-		}
-		return "askButton"
-	}
-	approve := th.Style(btnStyle(0)).Render(planApprovalButtonLabel(hk.allow, "Allow", "approve & run"))
-	denyBtn := th.Style(btnStyle(2)).Render(planApprovalButtonLabel(hk.deny, "Deny", "iterate"))
-	if ask.offerAlways {
-		always := th.Style(btnStyle(1)).Render(planApprovalButtonLabel(hk.allowAlways, "Always", "auto-accept edits"))
-		return lipgloss.JoinHorizontal(lipgloss.Top, approve, approvalButtonSep, always, approvalButtonSep, denyBtn)
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, approve, approvalButtonSep, denyBtn)
+	return renderApprovalButtons(approvalButtons(th, hk, ask, true))
 }
 
 // planReviewFooterHeight is the rows reserved at the bottom of the plan-review
@@ -375,39 +399,21 @@ func planAskFingerprint(ask pendingAsk, queued int, effectiveModel string) strin
 		fmt.Sprintf("%d", queued) + "\x00" + effectiveModel
 }
 
-// renderPlanReviewView renders the full-screen scrollable plan-review view: the
-// plan-review viewport (planVP.View(), already populated by openPlanReviewView)
-// stacked above the PINNED action bar (buttons + auto-accept footnote + scroll
-// hint) that stays reachable regardless of how far the operator has scrolled.
-// It replaces the centered card (renderPlanApprovalModal) for the plan path.
-//
-// The action bar is the LAST rows of the view so it never scrolls away; the
-// operator reads (scrolls planVP), then acts. The footer hint names BOTH the
-// action keys (A/W/D) and the scroll keys so the affordances are discoverable
-// without the "?" help.
-func (m Model) renderPlanReviewView(ask pendingAsk, width, height int) string {
-	th := m.deps.Theme
+// planReviewLayout is the rendered plan-review body and the action button box's
+// exact row span within it. The renderer and mouse hit-test share it so viewport
+// height, the joining newline, and Lipgloss's three-row button box stay in sync.
+type planReviewLayout struct {
+	content                   string
+	buttonsRow, buttonsHeight int
+}
 
-	// The plan-review viewport renders its current scroll window. When planVP is
-	// not yet ready (e.g. a render before openPlanReviewView populated it), render
-	// just the action bar so the view is never empty — the next render after
-	// population shows the full plan.
+func (m Model) planReviewLayout(ask pendingAsk) planReviewLayout {
+	th := m.deps.Theme
 	var vpView string
 	if m.planVPReady {
 		vpView = m.planVP.View()
 	}
 
-	// Pinned action bar: buttons + (optional) auto-accept footnote + scroll hint.
-	// Three buttons: allow-once (approve & run → default mode), always (auto-
-	// accept edits → accept-edits mode), deny (iterate → stay in plan mode).
-	// Always is offered only for the main agent (offerAlways); for a surfaced
-	// child ask (which never reaches plan mode in practice) it is absent and the
-	// button copy strips "auto-accept". The bracketed mnemonics are the LIVE
-	// Allow/AllowAlways/Deny chords so an override propagates (issue #457); with
-	// the default bare-rune chords they render as "[A]pprove & run"/"[W] auto-
-	// accept edits"/"[D] iterate" byte-for-byte, and under an override they
-	// degrade to an honest standalone form (planApprovalButtonLabel) rather than
-	// gluing a rebound chord onto the word's stem.
 	hk := m.helpKeyMarkings()
 	buttons := planButtonsLine(th, hk, ask)
 	var bar strings.Builder
@@ -418,22 +424,25 @@ func (m Model) renderPlanReviewView(ask pendingAsk, width, height int) string {
 	}
 	bar.WriteString("\n" + th.Style("muted").Render(planScrollHint(hk)))
 
-	// Join the viewport window above the pinned bar. The viewport's own Height
-	// already excludes planReviewFooterHeight (set in openPlanReviewView), so the
-	// bar lands flush at the bottom of the body region without overflow.
-	joined := vpView
-	if joined != "" {
-		joined += "\n"
+	layout := planReviewLayout{buttonsHeight: lipgloss.Height(buttons)}
+	layout.content = vpView
+	if layout.content != "" {
+		// Count rendered lines, rather than lipgloss.Height: a viewport can retain a
+		// trailing newline, which occupies a screen row before the joining newline.
+		layout.buttonsRow = strings.Count(layout.content, "\n") + 1
+		layout.content += "\n"
 	}
-	joined += bar.String()
+	layout.content += bar.String()
+	return layout
+}
 
-	// On a tiny/unknown geometry fall back to the bare joined string (no
-	// Place-based centering — the plan fills the region, it is NOT a centered
-	// card). Width/height <= 0 returns the bare view.
-	if width <= 0 || height <= 0 {
-		return joined
-	}
-	return joined
+// renderPlanReviewView renders the full-screen scrollable plan-review view: the
+// plan-review viewport (planVP.View(), already populated by openPlanReviewView)
+// stacked above the PINNED action bar (buttons + auto-accept footnote + scroll
+// hint) that stays reachable regardless of how far the operator has scrolled.
+// It replaces the centered card (renderPlanApprovalModal) for the plan path.
+func (m Model) renderPlanReviewView(ask pendingAsk) string {
+	return m.planReviewLayout(ask).content
 }
 
 // planBodyFromArgs extracts the PresentPlan `plan` (falling back to `note`) from

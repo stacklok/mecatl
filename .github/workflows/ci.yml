@@ -129,7 +129,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,31 +159,33 @@ jobs:
           # version used to build golangci-lint is lower than the targeted Go
           # version". v2.12.2 is the latest v2 release and is built with go1.26.x.
           version: v2.12.2
-          # 8m, not 5m: the repo outgrew the old budget on the 2-core runners —
+          # 10m, not 5m: the repo outgrew the old budget on the 2-core runners —
           # at 5m the run died with exit code 4 ("Timeout exceeded") and the
           # interrupted staticcheck pass reported spurious SA5011s (partial
-          # no-return facts), failing every push since. Keep this below the
-          # job's timeout-minutes so the linter, not the job, reports it.
-          args: --timeout=8m
+          # no-return facts), failing every push since. The module lint steps run
+          # sequentially, so the 30-minute job budget leaves room after a worst-case
+          # root lint for the remaining module lint, vet, and workflow checks; this
+          # lets golangci-lint, not the job, report a timeout.
+          args: --timeout=10m
 
       # engine/ is its own module — lint it with the SHARED root config (no
       # engine-local .golangci.yml) so the depguard layering allowlists stay the
       # single source of truth across the module boundary. Uses the binary the
       # action above installed onto PATH.
       - name: golangci-lint (engine module)
-        run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=8m ./...
+        run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       - name: golangci-lint (OIDC authn module)
-        run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...
+        run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - name: golangci-lint (provider modules)
         run: |
-          (cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
-          (cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
-          (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
-          (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=8m ./...)
+          (cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
       - name: go vet
         run: go vet ./...
