@@ -260,24 +260,40 @@ func (m *scheduleManager) scheduleStore() port.ScheduleStore {
 	return m.schedStore
 }
 
-// scheduleOwnerlessNamespace is the reserved sentinel namespace segment for a
-// nil-owner schedule created while ownership IS enforced (e.g. an
-// unauthenticated out-of-band create, or an ownerless origin session) — see
-// ownerScheduleNamespace. It is distinct from the flat, unprefixed namespace an
-// ownership-DISABLED deployment uses (AC6.4), so List/Due's scan and the
-// collision check always have exactly one well-defined namespace per caller
-// identity, whether or not OIDC is enabled.
+// scheduleOwnerlessNamespace is the reserved sentinel namespace segment
+// ownerScheduleNamespace falls back to if it is ever reached with enforcement
+// on but no verified principal on ctx. Review finding 4 (issue #368) found
+// that reachable from every public verb: a missing principal silently mapped
+// into this SHARED bucket rather than being rejected, so any unauthenticated
+// call path could create/read/mutate any other unauthenticated caller's
+// "ownerless" schedules. requireCaller now gates every public verb BEFORE this
+// helper is reached, so the branch below is unreachable from any of the nine
+// verbs + GetFire — it survives only as an internal fail-safe (never a panic,
+// never a fabricated identity) in case a future caller forgets the gate.
 const scheduleOwnerlessNamespace = "schedule/none\x00"
+
+// requireCaller enforces fail-closed caller presence (review finding 4, issue
+// #368): every public verb calls this FIRST. It returns true when ownership
+// enforcement is off (the byte-identical unenforced path — a nil principal is
+// normal there) or when ctx carries a verified principal; it returns false
+// ONLY when enforcement is on and ctx carries no principal, which the caller
+// must map to an absence-shaped not-found (read/mutate verbs) or a generic
+// refusal (create) — never fall through to ownerScheduleNamespace's shared
+// scheduleOwnerlessNamespace bucket, which any other unauthenticated caller
+// could also reach.
+func (m *scheduleManager) requireCaller(ctx context.Context) bool {
+	return !m.ownershipEnforced || session.PrincipalFromContext(ctx) != nil
+}
 
 // ownerScheduleNamespace derives the store-facing key namespace a schedule
 // name is scoped into (issue #368, ADR-0102 decision 1): a digest of the
 // verified caller's (Issuer, Subject) pair, mirroring
 // memory.CallerStore.scoped's owner-digest scheme. It returns "" when the
 // manager was constructed without ownership enforcement (no verifier wired) —
-// the BYTE-IDENTICAL flat-namespace path required by AC6.4 — and the reserved
-// scheduleOwnerlessNamespace sentinel when enforcement is on but the context
-// carries no verified principal (never fabricated; still ONE well-defined
-// namespace, distinct from the unenforced flat one).
+// the BYTE-IDENTICAL flat-namespace path required by AC6.4. Every caller of
+// this helper is a public verb that has ALREADY passed requireCaller, so the
+// nil-principal branch below is unreachable in practice; it stays as a
+// fail-safe (never a fabricated identity) rather than a panic.
 func (m *scheduleManager) ownerScheduleNamespace(ctx context.Context) string {
 	if !m.ownershipEnforced {
 		return ""
@@ -355,6 +371,9 @@ func fireNotFoundErr(fireID string) error {
 // write-capable posture), and Saves the schedule. It returns the saved
 // schedule.
 func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
+	if !m.requireCaller(ctx) {
+		return port.Schedule{}, fmt.Errorf("%w: unable to create schedule", ErrInvalidArgument)
+	}
 	now := m.now()
 	cronNextFire, originOwner, err := m.validateScheduleSpec(ctx, spec, now)
 	if err != nil {
@@ -698,6 +717,9 @@ func (m *scheduleManager) scheduleMinInterval() time.Duration {
 // owner-namespaced physical key (issue #368). The returned Spec.Name is
 // restored to the caller-supplied literal name — never the physical key.
 func (m *scheduleManager) GetSchedule(ctx context.Context, name string) (port.Schedule, error) {
+	if !m.requireCaller(ctx) {
+		return port.Schedule{}, scheduleNotFoundErr(port.ErrScheduleNotFound, name)
+	}
 	sched, err := m.schedStore.Load(ctx, m.physicalScheduleName(ctx, name))
 	if err != nil {
 		return port.Schedule{}, scheduleNotFoundErr(err, name)
@@ -710,6 +732,13 @@ func (m *scheduleManager) GetSchedule(ctx context.Context, name string) (port.Sc
 // enforcement enabled it filters before exposing any schedule metadata; the
 // ScheduleQuery tool consumes this manager directly rather than the Service.
 func (m *scheduleManager) ListSchedules(ctx context.Context) ([]port.Schedule, error) {
+	if !m.requireCaller(ctx) {
+		// Absence-shaped: a caller-less enumeration under enforcement sees no
+		// schedules (the same result the identity filter below would already
+		// produce for a nil caller — see requireCaller's doc for why this
+		// branch is not the only place that fails closed).
+		return []port.Schedule{}, nil
+	}
 	scheds, err := m.schedStore.List(ctx)
 	if err != nil {
 		return nil, err
@@ -740,6 +769,9 @@ func (m *scheduleManager) ListSchedules(ctx context.Context) ([]port.Schedule, e
 // Loads the existing schedule, validates the new spec, and Saves with the
 // existing State.
 func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
+	if !m.requireCaller(ctx) {
+		return port.Schedule{}, scheduleNotFoundErr(port.ErrScheduleNotFound, spec.Name)
+	}
 	now := m.now()
 	// The computed cron next-fire is not needed here (Update preserves the
 	// existing State, including NextFireAt); the call is still made for its
@@ -779,6 +811,12 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 // DeleteSchedule removes a schedule by name. It is idempotent (the store's
 // Delete discipline).
 func (m *scheduleManager) DeleteSchedule(ctx context.Context, name string) error {
+	if !m.requireCaller(ctx) {
+		// Absence-shaped + idempotent: a caller-less delete under enforcement
+		// sees nothing to delete (Delete's own idempotent-on-unknown-name
+		// discipline), never a shared-bucket mutation.
+		return nil
+	}
 	return m.schedStore.Delete(ctx, m.physicalScheduleName(ctx, name))
 }
 
@@ -786,12 +824,18 @@ func (m *scheduleManager) DeleteSchedule(ctx context.Context, name string) error
 // calls SetEnabled — the dedicated atomic flag update — because Save CANNOT
 // mutate Enabled (Save preserves the existing State half on a Spec overwrite).
 func (m *scheduleManager) PauseSchedule(ctx context.Context, name string) error {
+	if !m.requireCaller(ctx) {
+		return scheduleNotFoundErr(port.ErrScheduleNotFound, name)
+	}
 	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), false), name)
 }
 
 // ResumeSchedule re-enables a paused schedule (Enabled=true). It calls
 // SetEnabled — see PauseSchedule's doc.
 func (m *scheduleManager) ResumeSchedule(ctx context.Context, name string) error {
+	if !m.requireCaller(ctx) {
+		return scheduleNotFoundErr(port.ErrScheduleNotFound, name)
+	}
 	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), true), name)
 }
 
@@ -799,6 +843,9 @@ func (m *scheduleManager) ResumeSchedule(ctx context.Context, name string) error
 // resolves the fire's stored physical parent key directly and authorizes that
 // parent before translating the key for the caller-visible result.
 func (m *scheduleManager) GetFire(ctx context.Context, fireID string) (port.ScheduleFire, error) {
+	if !m.requireCaller(ctx) {
+		return port.ScheduleFire{}, fireNotFoundErr(fireID)
+	}
 	fire, err := m.schedStore.LoadFire(ctx, fireID)
 	if err != nil {
 		return port.ScheduleFire{}, err
@@ -832,6 +879,9 @@ func (m *scheduleManager) GetFire(ctx context.Context, fireID string) (port.Sche
 // physical name). Each returned record's ScheduleName is restored to the
 // caller-supplied literal name.
 func (m *scheduleManager) ListFires(ctx context.Context, scheduleName string) ([]port.ScheduleFire, error) {
+	if !m.requireCaller(ctx) {
+		return nil, scheduleNotFoundErr(port.ErrScheduleNotFound, scheduleName)
+	}
 	fires, err := m.schedStore.ListFires(ctx, m.physicalScheduleName(ctx, scheduleName))
 	if err != nil {
 		return nil, scheduleNotFoundErr(err, scheduleName)
@@ -850,6 +900,9 @@ func (m *scheduleManager) ListFires(ctx context.Context, scheduleName string) ([
 // it (ErrSchedulerNotRunning — the store works fine, there's just nothing to
 // fire a manual request through).
 func (m *scheduleManager) FireNow(ctx context.Context, name string) (port.ScheduleFire, error) {
+	if !m.requireCaller(ctx) {
+		return port.ScheduleFire{}, scheduleNotFoundErr(port.ErrScheduleNotFound, name)
+	}
 	schedPtr := m.scheduler.Load()
 	if schedPtr == nil {
 		// The manager is only ever constructed with a non-nil schedStore, so
