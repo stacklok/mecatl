@@ -317,6 +317,11 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"SetScheduler":           {KindExempt, "composition-time wiring of the scheduler instance"},
 	"SetScheduleMinInterval": {KindExempt, "composition-time configuration of the scheduling frequency floor"},
 	"ScheduleManager":        {KindExempt, "composition-time accessor for the context-free manager handle; Schedule and ScheduleQuery are separately classified caller-owned consumers"},
+
+	// --- exempt: composition-owned session staleness sweep (issue #475), process-wide by design ---
+	"SessionStale":       {KindExempt, "decides staleness for a metadata-scan candidate inside internal/app's composition-owned sweep, never a per-request caller-facing verb (mirrors IsLive)"},
+	"LeaseSweepDisabled": {KindExempt, "reads the process-wide sticky sweep-disabled flag SessionStale sets, consumed only by the composition-owned sweep"},
+	"SettleIfStale":      {KindExempt, "repairs a stale session found by the composition-owned sweep's own metadata scan across every session, not a caller-supplied id from a caller-owned boundary"},
 }
 
 // callerStoreAccessTable classifies memory.CallerStore's exported methods —
